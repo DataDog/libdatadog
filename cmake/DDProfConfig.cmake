@@ -1,0 +1,39 @@
+include(FindPackageHandleStandardArgs)
+
+if (DEFINED ENV{DDProf_ROOT})
+  set(DDProf_ROOT "$ENV{DDProf_ROOT}")
+else ()
+  # If the environment variable is not set, maybe we are part of a build
+  set(DDProf_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
+endif ()
+
+find_path(DDProf_INCLUDE_DIR ddprof/ffi.h
+  HINTS ${DDProf_ROOT}/include
+)
+
+find_library(DDProf_FFI_LIBRARY NAMES ddprof_ffi
+  HINTS ${DDProf_ROOT}/lib
+)
+
+find_package_handle_standard_args(DDProf DEFAULT_MSG
+  DDProf_FFI_LIBRARY
+  DDProf_INCLUDE_DIR
+)
+
+if (DDProf_FOUND)
+  set(DDProf_INCLUDE_DIRS ${DDProf_INCLUDE_DIR})
+  set(DDProf_LIBRARIES ${DDProf_FFI_LIBRARY})
+  mark_as_advanced(
+    DDProf_ROOT
+    DDProf_FFI_LIBRARY
+    DDProf_INCLUDE_DIR
+  )
+
+  add_library(ddprof-ffi INTERFACE)
+  target_include_directories(ddprof-ffi INTERFACE ${DDProf_INCLUDE_DIRS})
+  target_link_libraries(ddprof-ffi INTERFACE ${DDProf_LIBRARIES})
+  target_compile_features(ddprof-ffi INTERFACE c_std_11)
+  add_library(DDProf::FFI ALIAS ddprof-ffi)
+else ()
+  set(DDProf_ROOT "" CACHE STRING "Directory containing libddprof")
+endif ()

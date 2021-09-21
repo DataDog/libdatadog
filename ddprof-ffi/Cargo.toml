@@ -1,0 +1,18 @@
+# Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+# This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+
+[package]
+name = "ddprof-ffi"
+version = "0.1.0"
+edition = "2018"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["lib", "staticlib"]
+
+[dependencies]
+chrono = "0.4"
+ddprof-exporter = { path = "../ddprof-exporter", version = "0.1.0" }
+ddprof-profiles = { path = "../ddprof-profiles", version = "0.1.0" }
+libc = "0.2"
+reqwest = { version = "0.11", features = ["multipart"] }

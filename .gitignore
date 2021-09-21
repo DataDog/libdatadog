@@ -1,0 +1,23 @@
+#==============================================================================#
+# Directories to ignore (do not add trailing '/'s, they skip symlinks).
+#==============================================================================#
+.cache
+.ccls-cache
+.docker-sync
+.idea
+.vs
+.vscode
+build*
+cmake-build-debug
+deliverables
+target
+tmp
+
+#==============================================================================#
+# Files to ignore
+#==============================================================================#
+.DS_Store
+.env
+Cargo.lock
+docker-sync.yml
+

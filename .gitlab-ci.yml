@@ -1,0 +1,15 @@
+variables:
+  # These are gitlab variables so that it's easier to do a manual deploy
+  # If these are set witih value and description, then it gives you UI elements
+  DOWNSTREAM_BRANCH:
+    value: "main"
+    description: "Run a specific datadog-reliability-env branch downstream"
+
+trigger_internal_build:
+  variables:
+    LIBDDPROF_COMMIT_BRANCH: $CI_COMMIT_BRANCH
+    LIBDDPROF_COMMIT_SHA: $CI_COMMIT_SHA
+  trigger:
+    project: DataDog/libddprof-build
+    strategy: depend
+    branch: $DOWNSTREAM_BRANCH
