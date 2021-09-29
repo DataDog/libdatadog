@@ -5,17 +5,18 @@
 
 set -eu
 
-out_dir="$1"
+destdir="$1"
 
-mkdir -v -p "$out_dir/include/ddprof" "$out_dir/lib" "$out_dir/cmake"
+mkdir -v -p "$destdir/include/ddprof" "$destdir/lib" "$destdir/cmake"
 
-cp -v cmake/DDProfConfig.cmake "$out_dir/cmake/"
+cp -v cmake/DDProfConfig.cmake "$destdir/cmake/"
+cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
 RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}" cargo build --release
-cp -v target/release/libddprof_ffi.a "$out_dir/lib/"
+cp -v target/release/libddprof_ffi.a "$destdir/lib/"
 
-cbindgen --crate ddprof-ffi --config ddprof-ffi/cbindgen.toml --output "$out_dir/include/ddprof/ffi.h"
+cbindgen --crate ddprof-ffi --config ddprof-ffi/cbindgen.toml --output "$destdir/include/ddprof/ffi.h"
 
 # CI doesn't have any clang tooling
-# clang-format -i "$out_dir/include/ddprof/ffi.h"
+# clang-format -i "$destdir/include/ddprof/ffi.h"
 
