@@ -7,8 +7,10 @@ set -eu
 
 destdir="$1"
 
-mkdir -v -p "$destdir/include/ddprof" "$destdir/lib" "$destdir/cmake"
+mkdir -v -p "$destdir/include/ddprof" "$destdir/lib/pkgconfig" "$destdir/cmake"
 
+version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < ddprof-ffi/Cargo.toml)
+sed "s/@version@/${version}/g" < ddprof_ffi.pc.in > "$destdir/lib/pkgconfig/ddprof_ffi.pc"
 cp -v cmake/DDProfConfig.cmake "$destdir/cmake/"
 cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 

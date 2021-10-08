@@ -262,7 +262,7 @@ pub unsafe extern "C" fn profile_exporter_build(
                 converted_files.as_slice(),
                 timeout,
             ) {
-                Ok(response) => Some(Box::new(Request(response))),
+                Ok(request) => Some(Box::new(Request(request))),
                 Err(_) => None,
             }
         }
