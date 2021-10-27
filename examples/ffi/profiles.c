@@ -37,8 +37,8 @@ int main(void) {
   };
   struct ddprof_ffi_Sample sample = {
       .locations = {&root_location, 1},
-      .value = {&value, 1},
-      .label = {&label, 1},
+      .values = {&value, 1},
+      .labels = {&label, 1},
   };
   ddprof_ffi_Profile_add(profile, sample);
   ddprof_ffi_Profile_free(profile);

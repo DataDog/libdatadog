@@ -79,7 +79,7 @@ checksum = "ea221b5284a47e40033bf9b66f35f984ec0ea2931eb03505246cd27a963f981b"
 
 [[package]]
 name = "ddprof"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ddprof-exporter",
  "ddprof-ffi",
@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "ddprof-exporter"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -101,7 +101,7 @@ dependencies = [
 
 [[package]]
 name = "ddprof-ffi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "ddprof-exporter",
@@ -112,7 +112,7 @@ dependencies = [
 
 [[package]]
 name = "ddprof-profiles"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "indexmap",
  "libc",

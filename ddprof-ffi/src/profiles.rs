@@ -140,11 +140,11 @@ pub struct Sample<'a> {
     /// When aggregating multiple samples into a single sample, the
     /// result has a list of values that is the element-wise sum of the
     /// lists of the originals.
-    pub value: Slice<'a, i64>,
+    pub values: Slice<'a, i64>,
 
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
-    pub label: Slice<'a, Label<'a>>,
+    pub labels: Slice<'a, Label<'a>>,
 }
 
 impl<'a> TryFrom<Mapping<'a>> for profiles::api::Mapping<'a> {
@@ -261,13 +261,13 @@ impl<'a> TryFrom<Sample<'a>> for profiles::api::Sample<'a> {
             locations.push(location.try_into()?)
         }
 
-        let values: Vec<i64> = unsafe { sample.value.into_slice() }
+        let values: Vec<i64> = unsafe { sample.values.into_slice() }
             .iter()
             .copied()
             .collect();
 
-        let mut labels: Vec<profiles::api::Label> = Vec::with_capacity(sample.label.len);
-        for &label in unsafe { sample.label.into_slice() }.iter() {
+        let mut labels: Vec<profiles::api::Label> = Vec::with_capacity(sample.labels.len);
+        for &label in unsafe { sample.labels.into_slice() }.iter() {
             labels.push(label.try_into()?);
         }
 
@@ -440,8 +440,8 @@ mod test {
 
             let sample = Sample {
                 locations: Slice::from(&locations),
-                value: Slice::from(&values),
-                label: Slice::from(&labels),
+                values: Slice::from(&values),
+                labels: Slice::from(&labels),
             };
 
             let aggregator = &mut *profile;
@@ -505,14 +505,14 @@ mod test {
 
         let main_sample = Sample {
             locations: Slice::from(main_locations.as_slice()),
-            value: Slice::from(values.as_slice()),
-            label: Slice::from(labels.as_slice()),
+            values: Slice::from(values.as_slice()),
+            labels: Slice::from(labels.as_slice()),
         };
 
         let test_sample = Sample {
             locations: Slice::from(test_locations.as_slice()),
-            value: Slice::from(values.as_slice()),
-            label: Slice::from(labels.as_slice()),
+            values: Slice::from(values.as_slice()),
+            labels: Slice::from(labels.as_slice()),
         };
 
         let aggregator = &mut *profile;
