@@ -10,7 +10,7 @@ members = [
 ]
 
 [profile.dev]
-debug = true
+debug = 2 # full debug info
 
 [profile.release]
-debug = true
+debug = 1 # line tables only

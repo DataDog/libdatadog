@@ -9,6 +9,7 @@ trigger_internal_build:
   variables:
     LIBDDPROF_COMMIT_BRANCH: $CI_COMMIT_BRANCH
     LIBDDPROF_COMMIT_SHA: $CI_COMMIT_SHA
+    LIBDDPROF_SHORT_COMMIT_SHA: ${CI_COMMIT_SHORT_SHA}
   trigger:
     project: DataDog/libddprof-build
     strategy: depend
