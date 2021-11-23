@@ -278,9 +278,12 @@ impl<T: Sized + Hash + Eq> DedupExt<T> for IndexSet<T> {
         match self.get_index_of(item) {
             Some(index) => index,
             None => {
-                assert!(self.insert(item.into()));
-                self.get_index_of(item)
-                    .expect("value to exist by this point")
+                let (index, inserted) = self.insert_full(item.into());
+                // This wouldn't make any sense; the item couldn't be found so
+                // it was inserted but then it already existed? Screams race-
+                // -condition to me!
+                assert!(inserted);
+                index
             }
         }
     }
