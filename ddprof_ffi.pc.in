@@ -10,8 +10,8 @@ includedir=${prefix}/include
 
 Name: ddprof_ffi
 Description: Contains common code used to implement Datadog's Continuous Profilers.
-Version: @version@
+Version: @DDProf_FFI_VERSION@
 Requires:
-Libs: -L${libdir} -lddprof_ffi -lpthread -ldl -lm
+Libs: -L${libdir} -lddprof_ffi @DDProf_FFI_LIBRARIES@
 Libs.private:
 Cflags: -I${includedir}
