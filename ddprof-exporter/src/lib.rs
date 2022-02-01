@@ -9,7 +9,10 @@ use reqwest::header::HeaderValue;
 use reqwest::Url;
 use tokio::runtime::Runtime;
 
+mod container_id;
+
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
+const DATADOG_CONTAINER_ID_HEADER: &str = "Datadog-Container-ID";
 
 pub struct Exporter {
     client: reqwest::Client,
@@ -140,6 +143,10 @@ impl ProfileExporterV3 {
                 "DD-API-KEY",
                 HeaderValue::from_str(api_key.as_str()).expect("TODO"),
             );
+        }
+
+        if let Some(container_id) = container_id::get_container_id() {
+            builder = builder.header(DATADOG_CONTAINER_ID_HEADER, container_id);
         }
 
         builder.multipart(form).build()
