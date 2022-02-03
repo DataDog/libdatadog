@@ -1,0 +1,14 @@
+version: '3.2'
+services:
+  push_to_rubygems:
+    image: ruby:3.1
+    platform: linux/x86_64
+    stdin_open: true
+    tty: true
+    command: bash -c 'cd /libddprof/ruby && bundle install && bundle exec rake push_to_rubygems'
+    volumes:
+      - ..:/libddprof
+      - bundle-3.1:/usr/local/bundle
+
+volumes:
+  bundle-3.1:

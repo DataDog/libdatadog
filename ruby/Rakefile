@@ -1,0 +1,151 @@
+# frozen_string_literal: true
+
+require "bundler/gem_tasks"
+require "rspec/core/rake_task"
+require "standard/rake" unless RUBY_VERSION < "2.5"
+
+require "fileutils"
+require "http"
+require "pry"
+require "rubygems/package"
+
+RSpec::Core::RakeTask.new(:spec)
+
+LIB_GITHUB_RELEASES = {
+  "0.2.0" => [
+    {
+      file: "libddprof-x86_64-unknown-linux-gnu.tar.gz",
+      sha256: "cba0f24074d44781d7252b912faff50d330957e84a8f40a172a8138e81001f27",
+      ruby_platform: "x86_64-linux"
+    },
+    {
+      file: "libddprof-x86_64-alpine-linux-musl.tar.gz",
+      sha256: "d519a6241d78260522624b8e79e98502510f11d5d9551f5f80fc1134e95fa146",
+      ruby_platform: "x86_64-linux-musl"
+    }
+  ]
+  # Add more versions here
+}
+
+task default: [
+  :spec,
+  (:'standard:fix' unless RUBY_VERSION < "2.5")
+].compact
+
+desc "Download lib release from github"
+task :fetch do
+  Helpers.each_github_release_variant do |file:, sha256:, target_directory:, target_file:, **_|
+    target_url = "https://github.com/DataDog/libddprof/releases/download/v#{Libddprof::LIB_VERSION}/#{file}"
+
+    if File.exist?(target_file)
+      target_file_hash = Digest::SHA256.hexdigest(File.read(target_file))
+
+      if target_file_hash == sha256
+        puts "Found #{target_file} matching the expected sha256, skipping download"
+        next
+      else
+        puts "Found #{target_file} with hash (#{target_file_hash}) BUT IT DID NOT MATCH THE EXPECTED sha256 (#{sha256}), downloading it again..."
+      end
+    end
+
+    puts "Going to download #{target_url} into #{target_file}"
+
+    File.open(target_file, "wb") do |file|
+      HTTP.follow.get(target_url).body.each { |chunk| file.write(chunk) }
+    end
+
+    if Digest::SHA256.hexdigest(File.read(target_file)) == sha256
+      puts "Success!"
+    else
+      raise "Downloaded file is corrupt, does not match expected sha256"
+    end
+  end
+end
+
+desc "Extract lib downloaded releases"
+task extract: [:fetch] do
+  Helpers.each_github_release_variant do |target_directory:, target_file:, **_|
+    puts "Extracting #{target_file}"
+    File.open(target_file, "rb") do |file|
+      Gem::Package.new("").extract_tar_gz(file, target_directory)
+    end
+  end
+end
+
+desc "Package lib downloaded releases as gems"
+task package: [:spec, :'standard:fix', :extract] do
+  gemspec = eval(File.read("libddprof.gemspec"), nil, "libddprof.gemspec") # standard:disable Security/Eval
+  FileUtils.mkdir_p("pkg")
+
+  Helpers.package_without_binaries(gemspec)
+  Helpers.package_linux_x86_64(gemspec)
+end
+
+desc "Release all packaged gems"
+task push_to_rubygems: [
+  :package,
+  :'release:guard_clean'
+] do
+  system("gem signout") # make sure there are no existing credentials in use
+
+  system("gem push pkg/libddprof-#{Libddprof::VERSION}.gem")
+  system("gem push pkg/libddprof-#{Libddprof::VERSION}-x86_64-linux.gem")
+
+  system("gem signout") # leave no credentials behind
+end
+
+module Helpers
+  def self.each_github_release_variant(version: Libddprof::LIB_VERSION)
+    LIB_GITHUB_RELEASES.fetch(version).each do |variant|
+      file = variant.fetch(:file)
+      sha256 = variant.fetch(:sha256)
+      ruby_platform = variant.fetch(:ruby_platform)
+
+      # These two are so common that we just centralize them here
+      target_directory = "vendor/libddprof-#{version}/#{ruby_platform}"
+      target_file = "#{target_directory}/#{file}"
+
+      FileUtils.mkdir_p(target_directory)
+
+      yield(file: file, sha256: sha256, ruby_platform: ruby_platform, target_directory: target_directory, target_file: target_file)
+    end
+  end
+
+  def self.package_without_binaries(gemspec)
+    target_gemspec = gemspec.dup
+
+    puts "Building a variant without binaries including:"
+    pp target_gemspec.files
+
+    package = Gem::Package.build(target_gemspec)
+    FileUtils.mv(package, "pkg")
+    puts("-" * 80)
+  end
+
+  def self.package_linux_x86_64(gemspec)
+    # We include both glibc and musl variants in the same binary gem to avoid the issues
+    # documented in https://github.com/rubygems/rubygems/issues/3174
+    target_gemspec = gemspec.dup
+    target_gemspec.files += files_for("x86_64-linux", "x86_64-linux-musl")
+    target_gemspec.platform = "x86_64-linux"
+
+    puts "Building for x86_64-linux including: (this can take a while)"
+    pp target_gemspec.files
+
+    package = Gem::Package.build(target_gemspec)
+    FileUtils.mv(package, "pkg")
+    puts("-" * 80)
+  end
+
+  def self.files_for(*included_platforms, version: Libddprof::LIB_VERSION)
+    files = []
+
+    each_github_release_variant(version: version) do |ruby_platform:, target_directory:, target_file:, **_|
+      next unless included_platforms.include?(ruby_platform)
+
+      files += Dir.glob("#{target_directory}/**/*").select { |path| File.file?(path) } - [target_file]
+    end
+
+    files
+  end
+end
