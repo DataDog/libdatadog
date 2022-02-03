@@ -3,7 +3,7 @@
 
 [package]
 name = "ddprof-exporter"
-version = "0.3.0-rc.1"
+version = "0.3.0"
 edition = "2018"
 license = "Apache-2.0"
 
