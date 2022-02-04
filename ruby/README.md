@@ -3,8 +3,8 @@
 `libddprof` provides a shared library containing common code used in the implementation of Datadog's
 [Continuous Profilers](https://docs.datadoghq.com/tracing/profiler/).
 
-**NOTE**: If you're building a new profiler or want to contribute to Datadog's existing profilers, you've come to the
-right place!
+**NOTE**: If you're building a new profiler or want to contribute to Datadog's existing profilers,
+you've come to the right place!
 Otherwise, this is possibly not the droid you were looking for.
 
 ## Development

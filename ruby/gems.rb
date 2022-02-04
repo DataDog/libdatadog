@@ -5,9 +5,9 @@ source "https://rubygems.org"
 # Specify your gem's dependencies in libddprof.gemspec
 gemspec
 
-gem "rake", "~> 13.0"
+gem "rake", ">= 12.0", "< 14"
 gem "rspec", "~> 3.10"
 gem "standard", "~> 1.3" unless RUBY_VERSION < "2.5"
-gem "http", "~> 5.0"
+gem "http", "~> 5.0" unless RUBY_VERSION < "2.5"
 gem "pry"
-gem "pry-byebug"
+gem "pry-byebug" unless RUBY_VERSION > "3.1"

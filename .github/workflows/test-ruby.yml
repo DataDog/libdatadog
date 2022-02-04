@@ -1,0 +1,22 @@
+name: Ruby gem scaffolding
+on:
+  push:
+    paths:
+      - 'ruby/**' # Only run action when ruby-related things are touched
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        ruby: [2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, '3.0', 3.1, head]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v2
+    - uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ matrix.ruby }}
+        bundler-cache: true # runs 'bundle install' and caches installed gems automatically
+        working-directory: ruby/
+    - run: cd ruby && bundle exec rake

@@ -5,7 +5,7 @@ require "rspec/core/rake_task"
 require "standard/rake" unless RUBY_VERSION < "2.5"
 
 require "fileutils"
-require "http"
+require "http" unless RUBY_VERSION < "2.5"
 require "pry"
 require "rubygems/package"
 

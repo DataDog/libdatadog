@@ -23,9 +23,11 @@ RSpec.describe Libddprof do
     end
 
     after do
-      FileUtils.remove_dir(temporary_directory)
-    rescue Errno::ENOENT => _e
-      # Do nothing, it's ok
+      begin # standard:disable Style/RedundantBegin
+        FileUtils.remove_dir(temporary_directory)
+      rescue Errno::ENOENT => _e
+        # Do nothing, it's ok
+      end
     end
 
     context "when no binaries are available in the vendor directory" do

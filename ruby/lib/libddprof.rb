@@ -10,7 +10,7 @@ module Libddprof
 
   # This should only be used for debugging/logging
   def self.available_binaries
-    File.directory?(vendor_directory) ? Dir.children(vendor_directory) : []
+    File.directory?(vendor_directory) ? (Dir.entries(vendor_directory) - [".", ".."]) : []
   end
 
   def self.pkgconfig_folder
