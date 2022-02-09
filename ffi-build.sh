@@ -1,4 +1,4 @@
-#/bin/bash
+#!/usr/bin/env bash
 
 # Unless explicitly stated otherwise all files in this repository are licensed
 # under the Apache License Version 2.0. This product includes software developed
@@ -47,7 +47,7 @@ sed < ddprof_ffi.pc.in "s/@DDProf_FFI_VERSION@/${version}/g" \
     > "$destdir/lib/pkgconfig/ddprof_ffi.pc"
 
 sed < cmake/DDProfConfig.cmake.in \
-    > $destdir/cmake/DDProfConfig.cmake \
+    > "$destdir/cmake/DDProfConfig.cmake" \
     "s/@DDProf_FFI_LIBRARIES@/${native_static_libs}/g"
 
 cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
@@ -55,16 +55,30 @@ cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
 echo "Building the libddprof_ffi.a library (may take some time)..."
-cargo build --release --target ${target}
-cp -v target/${target}/release/libddprof_ffi.a "$destdir/lib/"
+cargo build --release --target "${target}"
+cp -v "target/${target}/release/libddprof_ffi.a" "$destdir/lib/"
 
 echo "Checking that native-static-libs are as expected for this platform..."
 cd ddprof-ffi
-actual_native_static_libs="$(cargo rustc --release --target ${target} -- --print=native-static-libs 2>&1 | awk -F ':' '/note: native-static-libs:/ { print $3 }')"
+actual_native_static_libs="$(cargo rustc --release --target "${target}" -- --print=native-static-libs 2>&1 | awk -F ':' '/note: native-static-libs:/ { print $3 }')"
 echo "Actual native-static-libs:${actual_native_static_libs}"
 echo "Expected native-static-libs:${expected_native_static_libs}"
 
-[ "${expected_native_static_libs}" = "${actual_native_static_libs}" ]
+# Compare unique elements between expected and actual native static libs.
+# If actual libs is different from expected libs but still a subset of expected libs
+# (ie. we will overlink compared to what is actually needed), this is not considered as an error.
+# Raise an error only if some libs are in actual libs but not in expected libs.
+
+# trim leading and trailing spaces, then split the string on " -" by inserting new lines and sort lines while removing duplicates
+unique_expected_libs=$(echo "$expected_native_static_libs "| awk '{ gsub(/^[ \t]+|[ \t]+$/, "");gsub(/ +-/,"\n-")};1' | sort -u)
+unique_libs=$(echo "$actual_native_static_libs "| awk '{ gsub(/^[ \t]+|[ \t]+$/, "");gsub(/ +-/,"\n-")};1' | sort -u)
+
+unexpected_native_libs=$(comm -13 <(echo "$unique_expected_libs") <(echo "$unique_libs"))
+if [ -n "$unexpected_native_libs" ]; then
+    echo "Error - More native static libraries are required for linking than expected:" 1>&2
+    echo $unexpected_native_libs 1>&2
+    exit 1
+fi
 cd -
 
 echo "Generating the ddprof/ffi.h header..."
