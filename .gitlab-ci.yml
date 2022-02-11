@@ -3,7 +3,7 @@ variables:
   # If these are set witih value and description, then it gives you UI elements
   DOWNSTREAM_BRANCH:
     value: "main"
-    description: "Run a specific datadog-reliability-env branch downstream"
+    description: "downstream jobs are triggered on this branch"
 
 trigger_internal_build:
   variables:

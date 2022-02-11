@@ -195,10 +195,10 @@ impl<'a> TryFrom<Slice<'a, u8>> for &'a str {
     }
 }
 
-impl<'a> TryFrom<Slice<'a, c_char>> for &'a str {
+impl<'a> TryFrom<Slice<'a, i8>> for &'a str {
     type Error = Utf8Error;
 
-    fn try_from(slice: Slice<'a, c_char>) -> Result<Self, Self::Error> {
+    fn try_from(slice: Slice<'a, i8>) -> Result<Self, Self::Error> {
         // delegate to Slice<u8> implementation
         let bytes = Slice::new(slice.ptr as *const u8, slice.len);
         bytes.try_into()
