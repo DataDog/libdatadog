@@ -261,10 +261,7 @@ impl<'a> TryFrom<Sample<'a>> for profiles::api::Sample<'a> {
             locations.push(location.try_into()?)
         }
 
-        let values: Vec<i64> = unsafe { sample.values.into_slice() }
-            .iter()
-            .copied()
-            .collect();
+        let values: Vec<i64> = unsafe { sample.values.into_slice() }.to_vec();
 
         let mut labels: Vec<profiles::api::Label> = Vec::with_capacity(sample.labels.len);
         for &label in unsafe { sample.labels.into_slice() }.iter() {

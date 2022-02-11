@@ -189,11 +189,13 @@ impl<'a> ProfileBuilder<'a> {
         }
     }
 
+    #[must_use]
     pub fn sample_types(mut self, mut sample_types: Vec<api::ValueType<'a>>) -> Self {
         std::mem::swap(&mut self.sample_types, &mut sample_types);
         self
     }
 
+    #[must_use]
     pub fn period(mut self, period: Option<api::Period<'a>>) -> Self {
         self.period = period;
         self
@@ -398,7 +400,7 @@ impl Profile {
             return Ok(PProfId(0));
         }
 
-        let values = sample.values.iter().copied().collect();
+        let values = sample.values.to_vec();
         let labels = sample
             .labels
             .iter()
