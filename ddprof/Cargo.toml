@@ -12,5 +12,4 @@ crate-type = ["cdylib", "lib"]
 
 [dependencies]
 ddprof-exporter = { path = "../ddprof-exporter" }
-ddprof-ffi = { path = "../ddprof-ffi" }
 ddprof-profiles = { path = "../ddprof-profiles" }

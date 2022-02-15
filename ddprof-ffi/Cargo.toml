@@ -8,7 +8,9 @@ edition = "2018"
 license = "Apache-2.0"
 
 [lib]
-crate-type = ["lib", "staticlib"]
+# LTO is ignored if "lib" is added as crate type
+# cf. https://github.com/rust-lang/rust/issues/51009
+crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
 chrono = "0.4"

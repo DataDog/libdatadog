@@ -1,5 +1,5 @@
 ---
-root_name: "ddprof, ddprof-exporter, ddprof-ffi"
+root_name: "ddprof, ddprof-exporter, ddprof-profiles"
 third_party_libraries:
   - package_name: aho-corasick
     package_version: 0.7.18
