@@ -12,6 +12,8 @@ mkdir -v -p "$destdir/include/ddprof" "$destdir/lib/pkgconfig" "$destdir/cmake"
 
 version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < ddprof-ffi/Cargo.toml)
 target="$(rustc -vV | awk '/^host:/ { print $2 }')"
+shared_library_suffix=".so"
+remove_rpath=0
 
 # Rust provides this note about the link libraries:
 # note: Link against the following native artifacts when linking against this
@@ -26,10 +28,13 @@ case "$target" in
     "x86_64-alpine-linux-musl"|"aarch64-alpine-linux-musl")
         expected_native_static_libs=" -lssp_nonshared -lgcc_s -lc"
         native_static_libs=" -lssp_nonshared -lc"
+        # on alpine musl, Rust adds some weird runpath to cdylibs
+        remove_rpath=1
         ;;
     "x86_64-apple-darwin")
         expected_native_static_libs=" -framework Security -liconv -lSystem -lresolv -lc -lm -liconv"
         native_static_libs="${expected_native_static_libs}"
+        shared_library_suffix=".dylib"
         ;;
     "x86_64-unknown-linux-gnu"|"aarch64-unknown-linux-gnu")
         expected_native_static_libs=" -ldl -lrt -lpthread -lgcc_s -lc -lm -lrt -lpthread -lutil -ldl -lutil"
@@ -43,8 +48,11 @@ esac
 
 echo "Recognized platform '${target}'. Adding libs: ${native_static_libs}"
 sed < ddprof_ffi.pc.in "s/@DDProf_FFI_VERSION@/${version}/g" \
-    | sed "s/@DDProf_FFI_LIBRARIES@/${native_static_libs}/g" \
     > "$destdir/lib/pkgconfig/ddprof_ffi.pc"
+
+sed < ddprof_ffi-static.pc.in "s/@DDProf_FFI_VERSION@/${version}/g" \
+    | sed "s/@DDProf_FFI_LIBRARIES@/${native_static_libs}/g" \
+    > "$destdir/lib/pkgconfig/ddprof_ffi-static.pc"
 
 sed < cmake/DDProfConfig.cmake.in \
     > "$destdir/cmake/DDProfConfig.cmake" \
@@ -54,9 +62,19 @@ cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
 export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
-echo "Building the libddprof_ffi.a library (may take some time)..."
+echo "Building the libddprof_ffi library (may take some time)..."
 cargo build --release --target "${target}"
-cp -v "target/${target}/release/libddprof_ffi.a" "$destdir/lib/"
+cp -v "target/${target}/release/libddprof_ffi.a" "target/${target}/release/libddprof_ffi${shared_library_suffix}" "$destdir/lib/"
+
+if [[ "$remove_rpath" -eq 1 ]]; then
+    patchelf --remove-rpath "$destdir/lib/libddprof_ffi${shared_library_suffix}"
+fi
+
+# objcopy might not be available on macOS
+if command -v objcopy > /dev/null; then
+    # Remove .llvmbc section which is not useful for clients
+    objcopy --remove-section .llvmbc "$destdir/lib/libddprof_ffi.a"
+fi
 
 echo "Checking that native-static-libs are as expected for this platform..."
 cd ddprof-ffi
