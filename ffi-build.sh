@@ -14,6 +14,7 @@ version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < ddprof-ffi/Cargo.toml)
 target="$(rustc -vV | awk '/^host:/ { print $2 }')"
 shared_library_suffix=".so"
 remove_rpath=0
+fix_macos_rpath=0
 
 # Rust provides this note about the link libraries:
 # note: Link against the following native artifacts when linking against this
