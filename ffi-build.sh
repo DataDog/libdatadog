@@ -35,6 +35,8 @@ case "$target" in
         expected_native_static_libs=" -framework Security -liconv -lSystem -lresolv -lc -lm -liconv"
         native_static_libs="${expected_native_static_libs}"
         shared_library_suffix=".dylib"
+        # fix usage of library in macos via rpath
+        fix_macos_rpath=1
         ;;
     "x86_64-unknown-linux-gnu"|"aarch64-unknown-linux-gnu")
         expected_native_static_libs=" -ldl -lrt -lpthread -lgcc_s -lc -lm -lrt -lpthread -lutil -ldl -lutil"
@@ -49,6 +51,9 @@ esac
 echo "Recognized platform '${target}'. Adding libs: ${native_static_libs}"
 sed < ddprof_ffi.pc.in "s/@DDProf_FFI_VERSION@/${version}/g" \
     > "$destdir/lib/pkgconfig/ddprof_ffi.pc"
+
+sed < ddprof_ffi_with_rpath.pc.in "s/@DDProf_FFI_VERSION@/${version}/g" \
+    > "$destdir/lib/pkgconfig/ddprof_ffi_with_rpath.pc"
 
 sed < ddprof_ffi-static.pc.in "s/@DDProf_FFI_VERSION@/${version}/g" \
     | sed "s/@DDProf_FFI_LIBRARIES@/${native_static_libs}/g" \
@@ -68,6 +73,10 @@ cp -v "target/${target}/release/libddprof_ffi.a" "target/${target}/release/libdd
 
 if [[ "$remove_rpath" -eq 1 ]]; then
     patchelf --remove-rpath "$destdir/lib/libddprof_ffi${shared_library_suffix}"
+fi
+
+if [[ "$fix_macos_rpath" -eq 1 ]]; then
+    install_name_tool -id @rpath/libddprof_ffi${shared_library_suffix} "$destdir/lib/libddprof_ffi${shared_library_suffix}"
 fi
 
 # objcopy might not be available on macOS

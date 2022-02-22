@@ -2,7 +2,7 @@
 
 require "bundler/gem_tasks"
 require "rspec/core/rake_task"
-require "standard/rake" unless RUBY_VERSION < "2.5"
+require "standard/rake" unless RUBY_VERSION < "2.6"
 
 require "fileutils"
 require "http" unless RUBY_VERSION < "2.5"
@@ -12,18 +12,7 @@ require "rubygems/package"
 RSpec::Core::RakeTask.new(:spec)
 
 LIB_GITHUB_RELEASES = {
-  "0.2.0" => [
-    {
-      file: "libddprof-x86_64-alpine-linux-musl.tar.gz",
-      sha256: "d519a6241d78260522624b8e79e98502510f11d5d9551f5f80fc1134e95fa146",
-      ruby_platform: "x86_64-linux-musl"
-    },
-    {
-      file: "libddprof-x86_64-unknown-linux-gnu.tar.gz",
-      sha256: "cba0f24074d44781d7252b912faff50d330957e84a8f40a172a8138e81001f27",
-      ruby_platform: "x86_64-linux"
-    }
-  ],
+  # This should match the version in the version.rb file
   "0.3.0" => [
     {
       file: "libddprof-x86_64-alpine-linux-musl.tar.gz",
@@ -36,12 +25,11 @@ LIB_GITHUB_RELEASES = {
       ruby_platform: "x86_64-linux"
     }
   ]
-  # Add more versions here
 }
 
 task default: [
   :spec,
-  (:'standard:fix' unless RUBY_VERSION < "2.5")
+  (:'standard:fix' unless RUBY_VERSION < "2.6")
 ].compact
 
 desc "Download lib release from github"
@@ -85,12 +73,25 @@ task extract: [:fetch] do
 end
 
 desc "Package lib downloaded releases as gems"
-task package: [:spec, :'standard:fix', :extract] do
+task package: [
+  :spec,
+  (:'standard:fix' unless RUBY_VERSION < "2.6"),
+  :extract
+] do
   gemspec = eval(File.read("libddprof.gemspec"), nil, "libddprof.gemspec") # standard:disable Security/Eval
   FileUtils.mkdir_p("pkg")
 
-  Helpers.package_without_binaries(gemspec)
-  Helpers.package_linux_x86_64(gemspec)
+  # Fallback package without binaries
+  Helpers.package_for(gemspec, ruby_platform: nil, files: [])
+
+  # We include both glibc and musl variants in the same binary gem to avoid the issues
+  # documented in https://github.com/rubygems/rubygems/issues/3174
+  Helpers.package_for(gemspec, ruby_platform: "x86_64-linux", files: Helpers.files_for("x86_64-linux", "x86_64-linux-musl"))
+
+  # Experimental macOS package, not published to rubygems.org at the moment
+  if ENV["LIBDDPROF_PACKAGE_MACOS"] == "true"
+    Helpers.package_for(gemspec, ruby_platform: "x86_64-darwin-19", files: Helpers.files_for("x86_64-darwin-19"))
+  end
 end
 
 desc "Release all packaged gems"
@@ -123,10 +124,12 @@ module Helpers
     end
   end
 
-  def self.package_without_binaries(gemspec)
+  def self.package_for(gemspec, ruby_platform:, files:)
     target_gemspec = gemspec.dup
+    target_gemspec.files += files
+    target_gemspec.platform = ruby_platform if ruby_platform
 
-    puts "Building a variant without binaries including:"
+    puts "Building with ruby_platform=#{ruby_platform.inspect} including: (this can take a while)"
     pp target_gemspec.files
 
     package = Gem::Package.build(target_gemspec)
@@ -134,28 +137,31 @@ module Helpers
     puts("-" * 80)
   end
 
-  def self.package_linux_x86_64(gemspec)
-    # We include both glibc and musl variants in the same binary gem to avoid the issues
-    # documented in https://github.com/rubygems/rubygems/issues/3174
-    target_gemspec = gemspec.dup
-    target_gemspec.files += files_for("x86_64-linux", "x86_64-linux-musl")
-    target_gemspec.platform = "x86_64-linux"
-
-    puts "Building for x86_64-linux including: (this can take a while)"
-    pp target_gemspec.files
-
-    package = Gem::Package.build(target_gemspec)
-    FileUtils.mv(package, "pkg")
-    puts("-" * 80)
-  end
-
-  def self.files_for(*included_platforms, version: Libddprof::LIB_VERSION)
+  def self.files_for(
+    *included_platforms,
+    version: Libddprof::LIB_VERSION,
+    excluded_files: [
+      "ddprof_ffi.pc", # we use the ddprof_ffi_with_rpath.pc variant
+      "libddprof_ffi.a", "ddprof_ffi-static.pc" # We don't use the static library
+    ]
+  )
     files = []
+
+    excluded_files_from_packaging = [
+      *excluded_files,
+      "DDProfConfig.cmake" # We don't compile using cmake
+    ]
 
     each_github_release_variant(version: version) do |ruby_platform:, target_directory:, target_file:, **_|
       next unless included_platforms.include?(ruby_platform)
 
-      files += Dir.glob("#{target_directory}/**/*").select { |path| File.file?(path) } - [target_file]
+      downloaded_release_tarball = target_file
+
+      files +=
+        Dir.glob("#{target_directory}/**/*")
+          .select { |path| File.file?(path) }
+          .reject { |path| path == downloaded_release_tarball }
+          .reject { |path| excluded_files_from_packaging.include?(File.basename(path)) }
     end
 
     files

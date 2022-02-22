@@ -23,7 +23,7 @@ RSpec.describe Libddprof do
     end
 
     after do
-      begin # standard:disable Style/RedundantBegin
+      begin
         FileUtils.remove_dir(temporary_directory)
       rescue Errno::ENOENT => _e
         # Do nothing, it's ok
