@@ -84,6 +84,12 @@ fi
 if command -v objcopy > /dev/null; then
     # Remove .llvmbc section which is not useful for clients
     objcopy --remove-section .llvmbc "$destdir/lib/libddprof_ffi.a"
+
+    # Ship debug information separate from shared library, so that downstream packages can selectively include it
+    # https://sourceware.org/gdb/onlinedocs/gdb/Separate-Debug-Files.html
+    objcopy --only-keep-debug "$destdir/lib/libddprof_ffi${shared_library_suffix}" "$destdir/lib/libddprof_ffi${shared_library_suffix}.debug"
+    strip -S "$destdir/lib/libddprof_ffi${shared_library_suffix}"
+    objcopy --add-gnu-debuglink="$destdir/lib/libddprof_ffi${shared_library_suffix}.debug" "$destdir/lib/libddprof_ffi${shared_library_suffix}"
 fi
 
 echo "Checking that native-static-libs are as expected for this platform..."
