@@ -121,6 +121,19 @@ pub unsafe extern "C" fn buffer_reset(buffer: *mut Buffer) {
     }
 }
 
+/// Used to convert "external" data (e.g. not originated in libddprof) into a libddprof buffer, for
+/// instance, when you want to attach JSON data (such as code_provenance.json or metrics.json) to a
+/// profile.
+///
+/// The resulting buffer should be treated by the caller as opaque data that can only be manipulated
+/// and accessed by libddprof.
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddprof_ffi_Buffer_from_byte_slice(buffer: ByteSlice) -> Box<Buffer> {
+    let buffer_slice: &[u8] = buffer.into();
+    Box::new(Buffer::from_vec(Vec::from(buffer_slice)))
+}
+
 /// Destroys the Exporter.
 #[export_name = "ddprof_ffi_Exporter_delete"]
 pub extern "C" fn exporter_delete(exporter: Option<Box<Exporter>>) {
@@ -399,5 +412,20 @@ mod test {
                 panic!("Should not occur!")
             }
         }
+    }
+
+    #[test]
+    fn byte_slice_to_buffer_conversion() {
+        let raw: &mut [u8] = &mut [104, 101, 108, 108, 111]; // "hello"
+        let slice = Slice::new(raw.as_ptr(), raw.len());
+
+        let converted: Box<Buffer> = unsafe { ddprof_ffi_Buffer_from_byte_slice(slice) };
+        let converted_contents: &[u8] = unsafe { (*converted).as_slice() };
+
+        raw.reverse(); // mutate the original buffer, to validate that a copy is really being made
+
+        assert_eq!(b"hello", converted_contents);
+        assert_eq!(b"olleh", raw);
+        std::mem::drop(converted);
     }
 }
