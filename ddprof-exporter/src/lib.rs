@@ -12,11 +12,12 @@ use tokio::runtime::Runtime;
 
 mod container_id;
 mod multipart;
+mod connector;
 
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
 const DATADOG_CONTAINER_ID_HEADER: &str = "Datadog-Container-ID";
 
-type Client = hyper::Client<hyper::client::HttpConnector>;
+type Client = hyper::Client<connector::Connector>;
 
 pub struct Exporter {
     client: Client,
@@ -224,7 +225,7 @@ impl Exporter {
         // Set idle to 0, which prevents the pipe being broken every 2nd request
         let client = hyper::Client::builder()
             .pool_max_idle_per_host(0)
-            .build(hyper::client::HttpConnector::new());
+            .build(connector::Connector::new());
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
