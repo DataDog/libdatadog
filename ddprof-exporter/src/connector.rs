@@ -24,13 +24,17 @@ impl hyper::service::Service<hyper::Uri> for UnixConnector {
 
 #[derive(Clone)]
 pub struct Connector {
-    tcp: hyper::client::HttpConnector,
+    tcp: hyper_rustls::HttpsConnector<hyper::client::HttpConnector>,
 }
 
 impl Connector {
     pub(crate) fn new() -> Self {
         Self {
-            tcp: hyper::client::HttpConnector::new(),
+            tcp: hyper_rustls::HttpsConnectorBuilder::new()
+                .with_native_roots()
+                .https_or_http()
+                .enable_http1()
+                .build(),
         }
     }
 }
@@ -38,7 +42,7 @@ impl Connector {
 pin_project! {
     #[project = ConnStreamProj]
     pub enum ConnStream {
-        Tcp{ #[pin] transport: tokio::net::TcpStream },
+        Tcp{ #[pin] transport: hyper_rustls::MaybeHttpsStream<tokio::net::TcpStream> },
         Udp{ #[pin] transport: tokio::net::UnixStream },
     }
 }
