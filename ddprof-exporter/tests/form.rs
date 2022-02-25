@@ -1,8 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use ddprof_exporter::{Endpoint, File, ProfileExporterV3, Tag};
-use reqwest::Url;
+use ddprof_exporter::{Endpoint, File, ProfileExporterV3, Tag, Request};
 use std::borrow::Cow;
 use std::error::Error;
 use std::io::Read;
@@ -18,7 +17,7 @@ fn open<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(buffer)
 }
 
-fn multipart(exporter: &ProfileExporterV3) -> reqwest::Request {
+fn multipart(exporter: &ProfileExporterV3) -> Request {
     let small_pprof_name = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/profile.pprof");
     let buffer = open(small_pprof_name).expect("to open file and read its bytes");
 
@@ -37,10 +36,8 @@ fn multipart(exporter: &ProfileExporterV3) -> reqwest::Request {
         .build(start, end, files, timeout)
         .expect("request to be built");
 
-    let actual_timeout = *request.timeout().expect("timeout to exist");
+    let actual_timeout = request.timeout().expect("timeout to exist");
     assert_eq!(actual_timeout, timeout);
-
-    assert!(request.body().is_some());
     request
 }
 
@@ -59,7 +56,7 @@ fn default_tags() -> Vec<Tag> {
 
 #[test]
 fn multipart_agent() {
-    let base_url = Url::parse("http://localhost:8126").expect("url to parse");
+    let base_url = "http://localhost:8126".parse().expect("url to parse");
     let endpoint = Endpoint::agent(base_url).expect("endpoint to construct");
     let exporter =
         ProfileExporterV3::new("php", default_tags(), endpoint).expect("exporter to construct");
@@ -67,7 +64,7 @@ fn multipart_agent() {
     let request = multipart(&exporter);
 
     assert_eq!(
-        request.url().as_str(),
+        request.uri().to_string(),
         "http://localhost:8126/profiling/v1/input"
     );
 
@@ -85,7 +82,7 @@ fn multipart_agentless() {
     let request = multipart(&exporter);
 
     assert_eq!(
-        request.url().as_str(),
+        request.uri().to_string(),
         "https://intake.profile.datadoghq.com/v1/input"
     );
 
