@@ -17,10 +17,10 @@ mod connector;
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
 const DATADOG_CONTAINER_ID_HEADER: &str = "Datadog-Container-ID";
 
-type Client = hyper::Client<connector::Connector>;
+type HttpClient = hyper::Client<connector::Connector, hyper::Body>;
 
 pub struct Exporter {
-    client: Client,
+    client: HttpClient,
     runtime: Runtime,
 }
 
@@ -90,7 +90,7 @@ impl Request {
 
     async fn send(
         self,
-        client: &Client,
+        client: &HttpClient,
     ) -> Result<hyper::Response<hyper::Body>, Box<dyn std::error::Error>> {
         Ok(match self.timeout {
             Some(t) => tokio::time::timeout(t, client.request(self.req)).await?,
