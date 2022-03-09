@@ -118,8 +118,8 @@ impl ProfileExporterV3 {
 
         let mut form = reqwest::multipart::Form::new()
             .text("version", "3")
-            .text("start", start.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-            .text("end", end.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+            .text("start", start.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string())
+            .text("end", end.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string())
             .text("family", String::from(&self.family));
 
         for tag in self.tags.iter() {
