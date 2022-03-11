@@ -120,15 +120,9 @@ int main(int argc, char* argv[])
 
     Holder<ddprof_ffi_ProfileExporterV3> exporter{exporter_new_result.ok};
 
-    ddprof_ffi_Buffer profile_buffer = {
-        .ptr = encoded_profile->buffer.ptr,
-        .len = encoded_profile->buffer.len,
-        .capacity = encoded_profile->buffer.capacity,
-    };
-
     ddprof_ffi_File files_[] = {{
         .name = to_byteslice("auto.pprof"),
-        .file = &profile_buffer,
+        .file = {.ptr = encoded_profile->buffer.ptr, .len = encoded_profile->buffer.len},
     }};
 
     ddprof_ffi_Slice_file files = {

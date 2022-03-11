@@ -121,19 +121,6 @@ pub unsafe extern "C" fn buffer_reset(buffer: *mut Buffer) {
     }
 }
 
-/// Used to convert "external" data (e.g. not originated in libddprof) into a libddprof buffer, for
-/// instance, when you want to attach JSON data (such as code_provenance.json or metrics.json) to a
-/// profile.
-///
-/// The resulting buffer should be treated by the caller as opaque data that can only be manipulated
-/// and accessed by libddprof.
-#[no_mangle]
-#[must_use]
-pub unsafe extern "C" fn ddprof_ffi_Buffer_from_byte_slice(buffer: ByteSlice) -> Box<Buffer> {
-    let buffer_slice: &[u8] = buffer.into();
-    Box::new(Buffer::from_vec(Vec::from(buffer_slice)))
-}
-
 /// Destroys the Exporter.
 #[export_name = "ddprof_ffi_Exporter_delete"]
 pub extern "C" fn exporter_delete(exporter: Option<Box<Exporter>>) {
@@ -155,7 +142,7 @@ pub enum EndpointV3<'a> {
 #[repr(C)]
 pub struct File<'a> {
     name: ByteSlice<'a>,
-    file: Option<NonNull<Buffer>>,
+    file: ByteSlice<'a>,
 }
 
 /// This type only exists to workaround a bug in cbindgen; may be removed in the
@@ -290,7 +277,7 @@ unsafe fn try_into_vec_files<'a>(slice: Slice<'a, File>) -> Option<Vec<ddprof_ex
 
     for file in slice.into_slice().iter() {
         let name = file.name.try_into().ok()?;
-        let bytes: &[u8] = file.file.as_ref()?.as_ref().as_slice();
+        let bytes: &[u8] = file.file.into_slice();
         vec.push(ddprof_exporter::File { name, bytes });
     }
     Some(vec)
@@ -372,6 +359,16 @@ mod test {
     use crate::exporter::*;
     use crate::Slice;
 
+    fn family() -> ByteSlice<'static> {
+        ByteSlice::new("native".as_ptr(), "native".len())
+    }
+    fn base_url() -> &'static str {
+        "https://localhost:1337"
+    }
+    fn endpoint() -> ByteSlice<'static> {
+        ByteSlice::new(base_url().as_ptr(), base_url().len())
+    }
+
     #[test]
     fn exporter_new_and_delete() {
         let exporter = exporter_new();
@@ -391,17 +388,16 @@ mod test {
 
     #[test]
     fn profile_exporter_v3_new_and_delete() {
-        let family = ByteSlice::new("native".as_ptr(), "native".len());
-
         let tags = [Tag {
             name: ByteSlice::new("host".as_ptr(), "host".len()),
             value: ByteSlice::new("localhost".as_ptr(), "localhost".len()),
         }];
 
-        let base_url = "https://localhost:1337";
-        let endpoint = endpoint_agent(ByteSlice::new(base_url.as_ptr(), base_url.len()));
-
-        let result = profile_exporter_new(family, Slice::new(tags.as_ptr(), tags.len()), endpoint);
+        let result = profile_exporter_new(
+            family(),
+            Slice::new(tags.as_ptr(), tags.len()),
+            endpoint_agent(endpoint()),
+        );
 
         match result {
             NewProfileExporterV3Result::Ok(exporter) => unsafe {
@@ -415,17 +411,49 @@ mod test {
     }
 
     #[test]
-    fn byte_slice_to_buffer_conversion() {
-        let raw: &mut [u8] = &mut [104, 101, 108, 108, 111]; // "hello"
-        let slice = Slice::new(raw.as_ptr(), raw.len());
+    fn profile_exporter_v3_build() {
+        let exporter_result =
+            profile_exporter_new(family(), Slice::default(), endpoint_agent(endpoint()));
 
-        let converted: Box<Buffer> = unsafe { ddprof_ffi_Buffer_from_byte_slice(slice) };
-        let converted_contents: &[u8] = unsafe { (*converted).as_slice() };
+        let exporter = match exporter_result {
+            NewProfileExporterV3Result::Ok(exporter) => unsafe {
+                Some(NonNull::new_unchecked(exporter))
+            },
+            NewProfileExporterV3Result::Err(message) => {
+                std::mem::drop(message);
+                panic!("Should not occur!")
+            }
+        };
 
-        raw.reverse(); // mutate the original buffer, to validate that a copy is really being made
+        let files = [File {
+            name: ByteSlice::new("foo.pprof".as_ptr(), "foo.pprof".len()),
+            file: ByteSlice::new("dummy contents".as_ptr(), "dummy contents".len()),
+        }];
 
-        assert_eq!(b"hello", converted_contents);
-        assert_eq!(b"olleh", raw);
-        std::mem::drop(converted);
+        let start = Timespec {
+            seconds: 12,
+            nanoseconds: 34,
+        };
+        let finish = Timespec {
+            seconds: 56,
+            nanoseconds: 78,
+        };
+        let timeout_milliseconds = 90;
+
+        let maybe_request = unsafe {
+            profile_exporter_build(
+                exporter,
+                start,
+                finish,
+                Slice::new(files.as_ptr(), files.len()),
+                timeout_milliseconds,
+            )
+        };
+
+        assert!(maybe_request.is_some());
+
+        // TODO: Currently, we're only testing that a request was built (building did not fail), but we have no
+        // coverage for the request actually being correct.
+        // It'd be nice to actually perform the request, capture its contents, and assert that they are as expected
     }
 }
