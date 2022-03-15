@@ -33,7 +33,7 @@ case "$target" in
         remove_rpath=1
         ;;
     "x86_64-apple-darwin")
-        expected_native_static_libs=" -framework Security -liconv -lSystem -lresolv -lc -lm -liconv"
+        expected_native_static_libs=" -framework Security -framework CoreFoundation -liconv -lSystem -lresolv -lc -lm -liconv"
         native_static_libs="${expected_native_static_libs}"
         shared_library_suffix=".dylib"
         # fix usage of library in macos via rpath

@@ -4,13 +4,14 @@
 use crate::{Buffer, Slice, Timespec};
 use ddprof_exporter as exporter;
 use exporter::{Exporter, ProfileExporterV3};
-use reqwest::header::HeaderMap;
+use hyper::header::HeaderMap;
 use std::borrow::Cow;
 use std::convert::TryInto;
 use std::ffi::CStr;
 use std::io::Write;
 use std::os::raw::c_char;
 use std::ptr::NonNull;
+use std::str::FromStr;
 use std::time::Duration;
 
 #[repr(C)]
@@ -86,17 +87,17 @@ pub unsafe extern "C" fn exporter_send(
         Some(non_null_exporter) => {
             let exporter = non_null_exporter.as_ref();
 
-            match || -> Result<reqwest::Response, Box<dyn std::error::Error>> {
+            match || -> Result<hyper::Response<hyper::Body>, Box<dyn std::error::Error>> {
                 let mut headers_map = HeaderMap::with_capacity(headers.len);
 
                 for field in headers.into_slice().iter() {
                     let name = CStr::from_ptr((*field).name);
                     let value = (*field).value.try_into()?;
-                    let header = reqwest::header::HeaderValue::from_str(value)?;
+                    let header = hyper::header::HeaderValue::from_str(value)?;
                     headers_map.insert(name.to_str()?, header);
                 }
 
-                let method = reqwest::Method::from_bytes(CStr::from_ptr(http_method).to_bytes())?;
+                let method = hyper::Method::from_bytes(CStr::from_ptr(http_method).to_bytes())?;
                 let url_str = CStr::from_ptr(url).to_str()?;
                 let body_slice: &[u8] = body.into();
                 let timeout = Duration::from_millis(timeout_ms);
@@ -147,7 +148,7 @@ pub struct File<'a> {
 
 /// This type only exists to workaround a bug in cbindgen; may be removed in the
 /// future.
-pub struct Request(reqwest::Request);
+pub struct Request(exporter::Request);
 
 #[repr(C)]
 /// cbindgen:field-names=[code]
@@ -216,9 +217,13 @@ fn try_to_tags(tags: Slice<Tag>) -> Result<Vec<ddprof_exporter::Tag>, Box<dyn st
     Ok(converted_tags)
 }
 
-fn try_to_url(slice: ByteSlice) -> Result<reqwest::Url, Box<dyn std::error::Error>> {
-    let str = slice.try_into()?;
-    match reqwest::Url::parse(str) {
+fn try_to_url(slice: ByteSlice) -> Result<hyper::Uri, Box<dyn std::error::Error>> {
+    let str: &str = slice.try_into()?;
+    #[cfg(unix)]
+    if let Some(path) = str.strip_prefix("unix://") {
+        return Ok(ddprof_exporter::socket_path_to_uri(path.as_ref())?);
+    }
+    match hyper::Uri::from_str(str) {
         Ok(url) => Ok(url),
         Err(err) => Err(Box::new(err)),
     }
