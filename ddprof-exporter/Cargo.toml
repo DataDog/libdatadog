@@ -18,8 +18,17 @@ http = "0.2"
 lazy_static = "1.4"
 libc = "0.2"
 regex = "1.5"
-reqwest = { version = "0.11", features = ["blocking", "multipart", "rustls-tls"], default-features = false }
+hyper = { version = "0.14", features = ["http1", "client", "tcp", "stream"], default-features = false }
 tokio = { version = "1.8", features = ["rt"]}
+percent-encoding = "2.1"
+futures-core = { version = "0.3.0", default-features = false }
+futures-util = { version = "0.3.0", default-features = false }
+mime_guess = { version = "2.0", default-features = false }
+http-body = "0.4"
+pin-project-lite = "0.2.0"
+hyper-rustls = { version = "0.23", default-features = false, features = ["native-tokio", "http1", "tls12"] }
+hex = "0.4"
+hyper-multipart-rfc7578 = { git = "https://github.com/paullegranddc/rust-multipart-rfc7578.git", rev = "8dcedc266e50876c04c91d24390fe9ac44f10b96" }
 
 [dev-dependencies]
 maplit = "1.0"
