@@ -60,9 +60,12 @@ sed < ddprof_ffi-static.pc.in "s/@DDProf_FFI_VERSION@/${version}/g" \
     | sed "s/@DDProf_FFI_LIBRARIES@/${native_static_libs}/g" \
     > "$destdir/lib/pkgconfig/ddprof_ffi-static.pc"
 
+# strip leading white space as per CMake policy CMP0004.
+ffi_libraries="$(echo "${native_static_libs}" | sed -e 's/^[[:space:]]*//')"
+
 sed < cmake/DDProfConfig.cmake.in \
     > "$destdir/cmake/DDProfConfig.cmake" \
-    "s/@DDProf_FFI_LIBRARIES@/${native_static_libs}/g"
+    "s/@DDProf_FFI_LIBRARIES@/${ffi_libraries}/g"
 
 cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
@@ -110,7 +113,7 @@ unique_libs=$(echo "$actual_native_static_libs "| awk '{ gsub(/^[ \t]+|[ \t]+$/,
 unexpected_native_libs=$(comm -13 <(echo "$unique_expected_libs") <(echo "$unique_libs"))
 if [ -n "$unexpected_native_libs" ]; then
     echo "Error - More native static libraries are required for linking than expected:" 1>&2
-    echo $unexpected_native_libs 1>&2
+    echo "$unexpected_native_libs" 1>&2
     exit 1
 fi
 cd -

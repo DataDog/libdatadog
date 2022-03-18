@@ -2,21 +2,17 @@ extern "C"
 {
 #include <ddprof/ffi.h>
 }
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdio.h>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
-static ddprof_ffi_ByteSlice to_byteslice(const char *s)
-{
-    return {.ptr = (uint8_t *)s,
-            .len = strlen(s)};
-}
+// A slice constant or slice literal
+#define SLICE_C(str) { .ptr = "" str, .len = sizeof(str) - 1 }
 
 static ddprof_ffi_Slice_c_char to_slice_c_char(const char *s)
 {
-    return {.ptr = s,
-            .len = strlen(s)};
+    return (ddprof_ffi_Slice_c_char){.ptr = s, .len = strlen(s)};
 }
 
 struct Deleter
@@ -106,11 +102,21 @@ int main(int argc, char* argv[])
 
     Holder<ddprof_ffi_EncodedProfile> encoded_profile{ddprof_ffi_Profile_serialize(profile)};
 
-    ddprof_ffi_EndpointV3 endpoint = ddprof_ffi_EndpointV3_agentless(to_byteslice("datad0g.com"), to_byteslice(api_key));
-    ddprof_ffi_Tag tags[] = {{to_byteslice("service"), to_byteslice(service)}};
+    ddprof_ffi_EndpointV3 endpoint = ddprof_ffi_EndpointV3_agentless(
+        SLICE_C("datad0g.com"),
+       to_slice_c_char(api_key)
+    );
+    ddprof_ffi_Tag tags[] = {
+        {SLICE_C("service"), to_slice_c_char(service)},
+    };
     ddprof_ffi_NewProfileExporterV3Result exporter_new_result =
         ddprof_ffi_ProfileExporterV3_new(
-            to_byteslice("native"), ddprof_ffi_Slice_tag{.ptr = tags, .len = sizeof(tags) / sizeof(tags[0])}, endpoint);
+	    SLICE_C("native"),
+	    ddprof_ffi_Slice_tag{
+	        .ptr = tags,
+		.len = sizeof(tags) / sizeof(tags[0]),
+	    },
+	    endpoint);
 
     if (exporter_new_result.tag == DDPROF_FFI_NEW_PROFILE_EXPORTER_V3_RESULT_ERR)
     {
@@ -121,7 +127,7 @@ int main(int argc, char* argv[])
     Holder<ddprof_ffi_ProfileExporterV3> exporter{exporter_new_result.ok};
 
     ddprof_ffi_File files_[] = {{
-        .name = to_byteslice("auto.pprof"),
+        .name = SLICE_C("auto.pprof"),
         .file = {.ptr = encoded_profile->buffer.ptr, .len = encoded_profile->buffer.len},
     }};
 

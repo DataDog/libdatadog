@@ -7,8 +7,9 @@ use std::io::Cursor;
 use std::str::FromStr;
 
 use bytes::Bytes;
+pub use chrono::{DateTime, Utc};
 use hyper::header::HeaderValue;
-use hyper::Uri;
+pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
 use tokio::runtime::Runtime;
 
@@ -44,8 +45,8 @@ pub struct Tag {
 }
 
 pub struct FieldsV3 {
-    pub start: chrono::DateTime<chrono::Utc>,
-    pub end: chrono::DateTime<chrono::Utc>,
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
 }
 
 pub struct Endpoint {

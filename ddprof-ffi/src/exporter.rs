@@ -1,18 +1,14 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use crate::{Buffer, Slice, Timespec};
+use crate::{Buffer, ByteSlice, CharSlice, Slice, Timespec};
 use ddprof_exporter as exporter;
-use exporter::{Exporter, ProfileExporterV3};
-use hyper::header::HeaderMap;
+use exporter::ProfileExporterV3;
 use std::borrow::Cow;
 use std::convert::TryInto;
-use std::ffi::CStr;
 use std::io::Write;
-use std::os::raw::c_char;
 use std::ptr::NonNull;
 use std::str::FromStr;
-use std::time::Duration;
 
 #[repr(C)]
 pub enum SendResult {
@@ -39,78 +35,6 @@ pub unsafe extern "C" fn new_profile_exporter_v3_result_dtor(result: NewProfileE
     }
 }
 
-type ByteSlice<'a> = crate::Slice<'a, u8>;
-
-#[repr(C)]
-pub struct Field<'a> {
-    name: *const c_char,
-    value: ByteSlice<'a>,
-}
-
-/// Create a new Exporter, initializing the TLS stack.
-#[export_name = "ddprof_ffi_Exporter_new"]
-pub extern "C" fn exporter_new() -> Option<Box<Exporter>> {
-    match Exporter::new() {
-        Ok(exporter) => Some(Box::new(exporter)),
-        Err(_) => None,
-    }
-}
-
-/// # Safety
-/// All pointers must point to valid objects for that type. If they are used as
-/// arrays, such as in Slice, then they must be valid for the associated number
-/// of elements. All pointers must be aligned.
-#[export_name = "ddprof_ffi_Exporter_send"]
-pub unsafe extern "C" fn exporter_send(
-    exporter_ptr: Option<NonNull<Exporter>>,
-    http_method: *const c_char,
-    url: *const c_char,
-    headers: Slice<Field>,
-    body: ByteSlice,
-    timeout_ms: u64,
-) -> SendResult {
-    if !crate::is_aligned_and_not_null(http_method) {
-        let vec: &[u8] = b"Failed to export: http_method was null\0";
-        return SendResult::Failure(Buffer::from_vec(Vec::from(vec)));
-    };
-
-    if !crate::is_aligned_and_not_null(url) {
-        let vec: &[u8] = b"Failed to export: url was null\0";
-        return SendResult::Failure(Buffer::from_vec(Vec::from(vec)));
-    };
-
-    match exporter_ptr {
-        None => {
-            let vec: &[u8] = b"Failed to export: exporter was null\0";
-            SendResult::Failure(Buffer::from_vec(Vec::from(vec)))
-        }
-        Some(non_null_exporter) => {
-            let exporter = non_null_exporter.as_ref();
-
-            match || -> Result<hyper::Response<hyper::Body>, Box<dyn std::error::Error>> {
-                let mut headers_map = HeaderMap::with_capacity(headers.len);
-
-                for field in headers.into_slice().iter() {
-                    let name = CStr::from_ptr((*field).name);
-                    let value = (*field).value.try_into()?;
-                    let header = hyper::header::HeaderValue::from_str(value)?;
-                    headers_map.insert(name.to_str()?, header);
-                }
-
-                let method = hyper::Method::from_bytes(CStr::from_ptr(http_method).to_bytes())?;
-                let url_str = CStr::from_ptr(url).to_str()?;
-                let body_slice: &[u8] = body.into();
-                let timeout = Duration::from_millis(timeout_ms);
-
-                exporter.send(method, url_str, headers_map, body_slice, timeout)
-            }() {
-                Ok(response) => SendResult::HttpResponse(HttpStatus(response.status().as_u16())),
-                Err(err) => SendResult::Failure(error_into_buffer(err)),
-            }
-        }
-    }
-}
-
 /// Clears the contents of the Buffer, leaving length and capacity of 0.
 /// # Safety
 /// The `buffer` must be created by Rust, or null.
@@ -122,27 +46,21 @@ pub unsafe extern "C" fn buffer_reset(buffer: *mut Buffer) {
     }
 }
 
-/// Destroys the Exporter.
-#[export_name = "ddprof_ffi_Exporter_delete"]
-pub extern "C" fn exporter_delete(exporter: Option<Box<Exporter>>) {
-    std::mem::drop(exporter)
-}
-
 #[repr(C)]
 pub struct Tag<'a> {
-    name: ByteSlice<'a>,
-    value: ByteSlice<'a>,
+    name: CharSlice<'a>,
+    value: CharSlice<'a>,
 }
 
 #[repr(C)]
 pub enum EndpointV3<'a> {
-    Agent(ByteSlice<'a>),
-    Agentless(ByteSlice<'a>, ByteSlice<'a>),
+    Agent(CharSlice<'a>),
+    Agentless(CharSlice<'a>, CharSlice<'a>),
 }
 
 #[repr(C)]
 pub struct File<'a> {
-    name: ByteSlice<'a>,
+    name: CharSlice<'a>,
     file: ByteSlice<'a>,
 }
 
@@ -156,22 +74,20 @@ pub struct HttpStatus(u16);
 
 /// Creates an endpoint that uses the agent.
 /// # Arguments
-/// * `base_url` - a ByteSlice which contains a URL with scheme, host, and port
-///                e.g. "https://agent:8126/"
+/// * `base_url` - Contains a URL with scheme, host, and port e.g. "https://agent:8126/".
 #[export_name = "ddprof_ffi_EndpointV3_agent"]
-pub extern "C" fn endpoint_agent(base_url: ByteSlice) -> EndpointV3 {
+pub extern "C" fn endpoint_agent(base_url: CharSlice) -> EndpointV3 {
     EndpointV3::Agent(base_url)
 }
 
 /// Creates an endpoint that uses the Datadog intake directly aka agentless.
 /// # Arguments
-/// * `site` - a ByteSlice which contains a host and port e.g.
-///            "datadoghq.com"
-/// * `api_key` - A ByteSlice which contains the Datadog API key.
+/// * `site` - Contains a host and port e.g. "datadoghq.com".
+/// * `api_key` - Contains the Datadog API key.
 #[export_name = "ddprof_ffi_EndpointV3_agentless"]
 pub extern "C" fn endpoint_agentless<'a>(
-    site: ByteSlice<'a>,
-    api_key: ByteSlice<'a>,
+    site: CharSlice<'a>,
+    api_key: CharSlice<'a>,
 ) -> EndpointV3<'a> {
     EndpointV3::Agentless(site, api_key)
 }
@@ -217,11 +133,11 @@ fn try_to_tags(tags: Slice<Tag>) -> Result<Vec<ddprof_exporter::Tag>, Box<dyn st
     Ok(converted_tags)
 }
 
-fn try_to_url(slice: ByteSlice) -> Result<hyper::Uri, Box<dyn std::error::Error>> {
+fn try_to_url(slice: CharSlice) -> Result<hyper::Uri, Box<dyn std::error::Error>> {
     let str: &str = slice.try_into()?;
     #[cfg(unix)]
     if let Some(path) = str.strip_prefix("unix://") {
-        return Ok(ddprof_exporter::socket_path_to_uri(path.as_ref())?);
+        return ddprof_exporter::socket_path_to_uri(path.as_ref());
     }
     match hyper::Uri::from_str(str) {
         Ok(url) => Ok(url),
@@ -257,7 +173,7 @@ fn error_into_buffer(err: Box<dyn std::error::Error>) -> Buffer {
 
 #[export_name = "ddprof_ffi_ProfileExporterV3_new"]
 pub extern "C" fn profile_exporter_new(
-    family: ByteSlice,
+    family: CharSlice,
     tags: Slice<Tag>,
     endpoint: EndpointV3,
 ) -> NewProfileExporterV3Result {
@@ -363,27 +279,24 @@ pub unsafe extern "C" fn profile_exporter_send(
 mod test {
     use crate::exporter::*;
     use crate::Slice;
+    use std::os::raw::c_char;
 
-    fn family() -> ByteSlice<'static> {
-        ByteSlice::new("native".as_ptr(), "native".len())
+    fn family() -> CharSlice<'static> {
+        CharSlice::new("native".as_ptr() as *const c_char, "native".len())
     }
+
     fn base_url() -> &'static str {
         "https://localhost:1337"
     }
-    fn endpoint() -> ByteSlice<'static> {
-        ByteSlice::new(base_url().as_ptr(), base_url().len())
-    }
 
-    #[test]
-    fn exporter_new_and_delete() {
-        let exporter = exporter_new();
-        exporter_delete(exporter);
+    fn endpoint() -> CharSlice<'static> {
+        CharSlice::new(base_url().as_ptr() as *const c_char, base_url().len())
     }
 
     #[test]
     fn empty_tag_name() {
         let tag = Tag {
-            name: Slice::new("".as_ptr(), 0),
+            name: Slice::new("".as_ptr() as *const c_char, 0),
             value: Slice::new("1".as_ptr(), 1),
         };
         let tags = Slice::new((&tag) as *const Tag, 1);
@@ -394,7 +307,7 @@ mod test {
     #[test]
     fn profile_exporter_v3_new_and_delete() {
         let tags = [Tag {
-            name: ByteSlice::new("host".as_ptr(), "host".len()),
+            name: CharSlice::new("host".as_ptr() as *const c_char, "host".len()),
             value: ByteSlice::new("localhost".as_ptr(), "localhost".len()),
         }];
 
@@ -431,7 +344,7 @@ mod test {
         };
 
         let files = [File {
-            name: ByteSlice::new("foo.pprof".as_ptr(), "foo.pprof".len()),
+            name: CharSlice::new("foo.pprof".as_ptr() as *const c_char, "foo.pprof".len()),
             file: ByteSlice::new("dummy contents".as_ptr(), "dummy contents".len()),
         }];
 
@@ -457,8 +370,9 @@ mod test {
 
         assert!(maybe_request.is_some());
 
-        // TODO: Currently, we're only testing that a request was built (building did not fail), but we have no
-        // coverage for the request actually being correct.
-        // It'd be nice to actually perform the request, capture its contents, and assert that they are as expected
+        // TODO: Currently, we're only testing that a request was built (building did not fail), but
+        //     we have no coverage for the request actually being correct.
+        //     It'd be nice to actually perform the request, capture its contents, and assert that
+        //     they are as expected.
     }
 }
