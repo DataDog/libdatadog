@@ -6,7 +6,7 @@ use std::fmt;
 pub(crate) enum Error {
     InvalidUrl,
     OperationTimedOut,
-    UnixSockeUnsuported
+    UnixSockeUnsuported,
 }
 
 impl fmt::Display for Error {
@@ -14,7 +14,7 @@ impl fmt::Display for Error {
         f.write_str(match self {
             Self::InvalidUrl => "invalid url",
             Self::OperationTimedOut => "operation timed out",
-            Self::UnixSockeUnsuported => "unix sockets unsuported on windows"
+            Self::UnixSockeUnsuported => "unix sockets unsuported on windows",
         })
     }
 }

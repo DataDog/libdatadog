@@ -24,7 +24,7 @@ find_package_handle_standard_args(DDProf DEFAULT_MSG
 
 if (DDProf_FOUND)
   set(DDProf_INCLUDE_DIRS ${DDProf_INCLUDE_DIR})
-  set(DDProf_LIBRARIES ${DDProf_FFI_LIBRARY} @DDProf_FFI_LIBRARIES@)
+  set(DDProf_LIBRARIES ${DDProf_FFI_LIBRARY} "@DDProf_FFI_LIBRARIES@")
   mark_as_advanced(
     DDProf_ROOT
     DDProf_FFI_LIBRARY

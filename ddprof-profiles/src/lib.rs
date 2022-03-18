@@ -398,7 +398,7 @@ impl Profile {
             return Ok(PProfId(0));
         }
 
-        let values = sample.values.iter().copied().collect();
+        let values = sample.values.clone();
         let labels = sample
             .labels
             .iter()

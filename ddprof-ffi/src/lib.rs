@@ -104,6 +104,12 @@ pub struct Slice<'a, T> {
     phantom: PhantomData<&'a [T]>,
 }
 
+// Use to represent strings -- should be valid UTF-8.
+type CharSlice<'a> = crate::Slice<'a, c_char>;
+
+/// Use to represent bytes -- does not need to be valid UTF-8.
+type ByteSlice<'a> = crate::Slice<'a, u8>;
+
 /// This exists as an intrinsic, but it is private.
 pub fn is_aligned_and_not_null<T>(ptr: *const T) -> bool {
     !ptr.is_null() && ptr as usize % std::mem::align_of::<T>() == 0

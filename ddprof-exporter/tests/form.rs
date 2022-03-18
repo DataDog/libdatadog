@@ -1,7 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use ddprof_exporter::{Endpoint, File, ProfileExporterV3, Tag, Request};
+use ddprof_exporter::{Endpoint, File, ProfileExporterV3, Request, Tag};
 use std::borrow::Cow;
 use std::error::Error;
 use std::io::Read;
