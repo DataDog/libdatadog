@@ -297,7 +297,7 @@ mod test {
     fn empty_tag_name() {
         let tag = Tag {
             name: Slice::new("".as_ptr() as *const c_char, 0),
-            value: Slice::new("1".as_ptr(), 1),
+            value: Slice::new("1".as_ptr() as *const c_char, 1),
         };
         let tags = Slice::new((&tag) as *const Tag, 1);
         let result = try_to_tags(tags);
@@ -308,7 +308,7 @@ mod test {
     fn profile_exporter_v3_new_and_delete() {
         let tags = [Tag {
             name: CharSlice::new("host".as_ptr() as *const c_char, "host".len()),
-            value: ByteSlice::new("localhost".as_ptr(), "localhost".len()),
+            value: CharSlice::new("localhost".as_ptr() as *const c_char, "localhost".len()),
         }];
 
         let result = profile_exporter_new(
