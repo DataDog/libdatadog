@@ -12,6 +12,11 @@ style = "both"
 no_includes = true
 sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
 
+after_includes = """
+
+#define DDPROF_FFI_CHARSLICE_C(string) \\
+  /* NOTE: Compilation fails if you pass in a char* instead of a literal */ ((ddprof_ffi_CharSlice) {.ptr = "" string, .len = sizeof(string) - 1})"""
+
 [export]
 prefix = "ddprof_ffi_"
 
