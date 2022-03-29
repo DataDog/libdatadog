@@ -31,10 +31,6 @@ RSpec.describe Libddprof do
     end
 
     context "when no binaries are available in the vendor directory" do
-      describe ".binaries?" do
-        it { expect(Libddprof.binaries?).to be false }
-      end
-
       describe ".available_binaries" do
         it { expect(Libddprof.available_binaries).to be_empty }
       end
@@ -46,10 +42,6 @@ RSpec.describe Libddprof do
 
     context "when vendor directory does not exist" do
       let(:temporary_directory) { "does/not/exist" }
-
-      describe ".binaries?" do
-        it { expect(Libddprof.binaries?).to be false }
-      end
 
       describe ".available_binaries" do
         it { expect(Libddprof.available_binaries).to be_empty }
@@ -66,10 +58,6 @@ RSpec.describe Libddprof do
         Dir.mkdir("#{temporary_directory}/mipsel-linux")
       end
 
-      describe ".binaries?" do
-        it { expect(Libddprof.binaries?).to be true }
-      end
-
       describe ".available_binaries" do
         it { expect(Libddprof.available_binaries).to contain_exactly("386-freedos", "mipsel-linux") }
       end
@@ -79,7 +67,7 @@ RSpec.describe Libddprof do
 
         before do
           FileUtils.mkdir_p(pkgconfig_folder)
-          File.open("#{pkgconfig_folder}/ddprof_ffi.pc", "w") {}
+          File.open("#{pkgconfig_folder}/ddprof_ffi_with_rpath.pc", "w") {}
         end
 
         describe ".pkgconfig_folder" do

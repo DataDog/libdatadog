@@ -36,6 +36,7 @@ Gem::Specification.new do |spec|
       .reject do |f|
         [".rspec", ".standard.yml", "Rakefile", "docker-compose.yml", "gems.rb", "README.md"].include?(f)
       end
+      .reject { |f| f.end_with?(".tar.gz") }
   end
   spec.require_paths = ["lib"]
 end

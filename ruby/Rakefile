@@ -13,15 +13,25 @@ RSpec::Core::RakeTask.new(:spec)
 
 LIB_GITHUB_RELEASES = {
   # This should match the version in the version.rb file
-  "0.3.0" => [
+  "0.5.0" => [
+    {
+      file: "libddprof-aarch64-alpine-linux-musl.tar.gz",
+      sha256: "121857f371fed5252654e6eebcb214c6d3a5b089c7e3340e41ab2089df0b9a25",
+      ruby_platform: "aarch64-linux-musl"
+    },
+    {
+      file: "libddprof-aarch64-unknown-linux-gnu.tar.gz",
+      sha256: "ab4cd1fc9bc3975775bd2ff2122ac0b475533d504965b931d377cca122f7b0b3",
+      ruby_platform: "aarch64-linux"
+    },
     {
       file: "libddprof-x86_64-alpine-linux-musl.tar.gz",
-      sha256: "854609c1acc86f6653f539b3fe8780ad1e60d8738f85efdb3b1aa0054e75a217",
+      sha256: "1675e6402973548ca22da0832babe33d0d4ec739ff9979a600677722fd46ff2f",
       ruby_platform: "x86_64-linux-musl"
     },
     {
       file: "libddprof-x86_64-unknown-linux-gnu.tar.gz",
-      sha256: "d9c64567e7ef5f957581dd81892b144b81e1f52fdf5671430c7af0b039b48929",
+      sha256: "2db92e2ad87005a043e415fd62079af1f1df3642be9bed3ade840c5533a61063",
       ruby_platform: "x86_64-linux"
     }
   ]
@@ -81,12 +91,18 @@ task package: [
   gemspec = eval(File.read("libddprof.gemspec"), nil, "libddprof.gemspec") # standard:disable Security/Eval
   FileUtils.mkdir_p("pkg")
 
-  # Fallback package without binaries
-  Helpers.package_for(gemspec, ruby_platform: nil, files: [])
+  # Fallback package with all binaries
+  # This package will get used by (1) platforms that have no matching `ruby_platform` or (2) that have set
+  # "BUNDLE_FORCE_RUBY_PLATFORM" (or its equivalent via code) to avoid precompiled gems.
+  # In a previous version of libddprof, this package had no binaries, but that could mean that we broke customers in case (2).
+  # For customers in case (1), this package is a no-op, and dd-trace-rb will correctly detect and warn that
+  # there are no valid binaries for the platform.
+  Helpers.package_for(gemspec, ruby_platform: nil, files: Helpers.files_for("x86_64-linux", "x86_64-linux-musl", "aarch64-linux", "aarch64-linux-musl"))
 
   # We include both glibc and musl variants in the same binary gem to avoid the issues
   # documented in https://github.com/rubygems/rubygems/issues/3174
   Helpers.package_for(gemspec, ruby_platform: "x86_64-linux", files: Helpers.files_for("x86_64-linux", "x86_64-linux-musl"))
+  Helpers.package_for(gemspec, ruby_platform: "aarch64-linux", files: Helpers.files_for("aarch64-linux", "aarch64-linux-musl"))
 
   # Experimental macOS package, not published to rubygems.org at the moment
   if ENV["LIBDDPROF_PACKAGE_MACOS"] == "true"
@@ -103,6 +119,7 @@ task push_to_rubygems: [
 
   system("gem push pkg/libddprof-#{Libddprof::VERSION}.gem")
   system("gem push pkg/libddprof-#{Libddprof::VERSION}-x86_64-linux.gem")
+  system("gem push pkg/libddprof-#{Libddprof::VERSION}-aarch64-linux.gem")
 
   system("gem signout") # leave no credentials behind
 end
@@ -142,15 +159,12 @@ module Helpers
     version: Libddprof::LIB_VERSION,
     excluded_files: [
       "ddprof_ffi.pc", # we use the ddprof_ffi_with_rpath.pc variant
-      "libddprof_ffi.a", "ddprof_ffi-static.pc" # We don't use the static library
+      "libddprof_ffi.a", "ddprof_ffi-static.pc", # We don't use the static library
+      "libddprof_ffi.so.debug", # We don't include debug info
+      "DDProfConfig.cmake" # We don't compile using cmake
     ]
   )
     files = []
-
-    excluded_files_from_packaging = [
-      *excluded_files,
-      "DDProfConfig.cmake" # We don't compile using cmake
-    ]
 
     each_github_release_variant(version: version) do |ruby_platform:, target_directory:, target_file:, **_|
       next unless included_platforms.include?(ruby_platform)
@@ -161,7 +175,7 @@ module Helpers
         Dir.glob("#{target_directory}/**/*")
           .select { |path| File.file?(path) }
           .reject { |path| path == downloaded_release_tarball }
-          .reject { |path| excluded_files_from_packaging.include?(File.basename(path)) }
+          .reject { |path| excluded_files.include?(File.basename(path)) }
     end
 
     files
