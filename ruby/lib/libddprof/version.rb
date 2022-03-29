@@ -2,11 +2,11 @@
 
 module Libddprof
   # Current libddprof version
-  LIB_VERSION = "0.3.0"
+  LIB_VERSION = "0.5.0"
 
-  GEM_MAJOR_VERSION = "2"
+  GEM_MAJOR_VERSION = "1"
   GEM_MINOR_VERSION = "0"
-  GEM_PRERELEASE_VERSION = ".beta1" # remember to include dot prefix, if needed!
+  GEM_PRERELEASE_VERSION = "" # remember to include dot prefix, if needed!
   private_constant :GEM_MAJOR_VERSION, :GEM_MINOR_VERSION, :GEM_PRERELEASE_VERSION
 
   # The gem version scheme is lib_version.gem_major.gem_minor[.prerelease].
