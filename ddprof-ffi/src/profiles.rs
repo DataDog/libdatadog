@@ -1,7 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use crate::{Buffer, CharSlice, Slice, Timespec};
+use crate::{CharSlice, Slice, Timespec};
 use ddprof_profiles as profiles;
 use std::convert::{TryFrom, TryInto};
 use std::str::Utf8Error;
@@ -222,7 +222,7 @@ impl<'a> TryFrom<Location<'a>> for profiles::api::Location<'a> {
     fn try_from(location: Location<'a>) -> Result<Self, Self::Error> {
         let mapping: profiles::api::Mapping = location.mapping.try_into()?;
         let mut lines: Vec<profiles::api::Line> = Vec::new();
-        for &line in unsafe { location.lines.into_slice() }.iter() {
+        for &line in location.lines.into_iter() {
             lines.push(line.try_into()?);
         }
         Ok(Self {
@@ -256,14 +256,14 @@ impl<'a> TryFrom<Sample<'a>> for profiles::api::Sample<'a> {
 
     fn try_from(sample: Sample<'a>) -> Result<Self, Self::Error> {
         let mut locations: Vec<profiles::api::Location> = Vec::with_capacity(sample.locations.len);
-        for &location in unsafe { sample.locations.into_slice() }.iter() {
+        for &location in sample.locations.into_iter() {
             locations.push(location.try_into()?)
         }
 
-        let values: Vec<i64> = unsafe { sample.values.into_slice() }.to_vec();
+        let values: Vec<i64> = sample.values.into_slice().to_vec();
 
         let mut labels: Vec<profiles::api::Label> = Vec::with_capacity(sample.labels.len);
-        for &label in unsafe { sample.labels.into_slice() }.iter() {
+        for &label in sample.labels.into_iter() {
             labels.push(label.try_into()?);
         }
 
@@ -326,7 +326,7 @@ pub extern "C" fn ddprof_ffi_Profile_add(
 pub struct EncodedProfile {
     start: Timespec,
     end: Timespec,
-    buffer: Buffer,
+    buffer: crate::Vec<u8>,
 }
 
 impl TryFrom<ddprof_profiles::EncodedProfile> for EncodedProfile {
@@ -335,7 +335,7 @@ impl TryFrom<ddprof_profiles::EncodedProfile> for EncodedProfile {
     fn try_from(value: ddprof_profiles::EncodedProfile) -> Result<Self, Self::Error> {
         let start = value.start.try_into()?;
         let end = value.end.try_into()?;
-        let buffer = Buffer::from_vec(value.buffer);
+        let buffer = value.buffer.into();
         Ok(Self { start, end, buffer })
     }
 }
@@ -377,14 +377,6 @@ pub extern "C" fn ddprof_ffi_Profile_serialize(
 #[no_mangle]
 pub extern "C" fn ddprof_ffi_Profile_reset(profile: &mut ddprof_profiles::Profile) -> bool {
     profile.reset().is_some()
-}
-
-#[no_mangle]
-/// # Safety
-/// Only pass buffers which were created by ddprof routines; do not create one
-/// in C and then pass it in. Only call this once per buffer.
-pub unsafe extern "C" fn ddprof_ffi_Buffer_free(buffer: Box<Buffer>) {
-    std::mem::drop(buffer)
 }
 
 #[cfg(test)]

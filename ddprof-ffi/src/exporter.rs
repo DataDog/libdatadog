@@ -1,25 +1,29 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use crate::{Buffer, ByteSlice, CharSlice, Slice, Timespec};
+#![allow(renamed_and_removed_lints)]
+#![allow(clippy::box_vec)]
+
+use crate::{ByteSlice, CharSlice, Slice, Timespec};
 use ddprof_exporter as exporter;
 use exporter::ProfileExporterV3;
 use std::borrow::Cow;
 use std::convert::TryInto;
-use std::io::Write;
+use std::error::Error;
+use std::fmt::{Debug, Display, Formatter};
 use std::ptr::NonNull;
 use std::str::FromStr;
 
 #[repr(C)]
 pub enum SendResult {
     HttpResponse(HttpStatus),
-    Failure(Buffer),
+    Failure(crate::Vec<u8>),
 }
 
 #[repr(C)]
 pub enum NewProfileExporterV3Result {
     Ok(*mut ProfileExporterV3),
-    Err(Buffer),
+    Err(crate::Vec<u8>),
 }
 
 #[export_name = "ddprof_ffi_NewProfileExporterV3Result_dtor"]
@@ -35,22 +39,20 @@ pub unsafe extern "C" fn new_profile_exporter_v3_result_dtor(result: NewProfileE
     }
 }
 
-/// Clears the contents of the Buffer, leaving length and capacity of 0.
-/// # Safety
-/// The `buffer` must be created by Rust, or null.
-#[export_name = "ddprof_ffi_Buffer_reset"]
-pub unsafe extern "C" fn buffer_reset(buffer: *mut Buffer) {
-    match buffer.as_mut() {
-        None => {}
-        Some(buff) => buff.reset(),
-    }
-}
-
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Tag<'a> {
     name: CharSlice<'a>,
     value: CharSlice<'a>,
+}
+
+impl<'a> Tag<'a> {
+    fn new(key: &'a str, value: &'a str) -> Tag<'a> {
+        Tag {
+            name: CharSlice::from(key),
+            value: CharSlice::from(value),
+        }
+    }
 }
 
 #[repr(C)]
@@ -93,31 +95,35 @@ pub extern "C" fn endpoint_agentless<'a>(
     EndpointV3::Agentless(site, api_key)
 }
 
-struct EmptyTagError {}
+struct TagsError {
+    message: String,
+}
 
-impl std::fmt::Display for EmptyTagError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "A tag name must not be empty.")
+impl Debug for TagsError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Tag Error: {:?}.", self.message)
     }
 }
 
-impl std::fmt::Debug for EmptyTagError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "A tag name must not be empty.")
+impl Display for TagsError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Tag Error: {}.", self.message)
     }
 }
 
-impl std::error::Error for EmptyTagError {}
+impl Error for TagsError {}
 
 fn try_to_tags(tags: Slice<Tag>) -> Result<Vec<ddprof_exporter::Tag>, Box<dyn std::error::Error>> {
     let mut converted_tags = Vec::with_capacity(tags.len);
-    for tag in unsafe { tags.into_slice() }.iter() {
+    for tag in tags.into_slice().iter() {
         let name: &str = tag.name.try_into()?;
         let value: &str = tag.value.try_into()?;
 
         // If a tag name is empty, that's an error
         if name.is_empty() {
-            return Err(Box::new(EmptyTagError {}));
+            return Err(Box::new(TagsError {
+                message: "tag name must not be empty".to_string(),
+            }));
         }
 
         /* However, empty tag values are treated as if the tag was not sent;
@@ -162,16 +168,7 @@ fn try_to_endpoint(
     }
 }
 
-fn error_into_buffer(err: Box<dyn std::error::Error>) -> Buffer {
-    let mut vec = Vec::new();
-    /* Ignore the possible but highly unlikely write failure into a
-     * Vec. In case this happens, it will be an empty message, which
-     * will be confusing but safe, and I'm not sure how else to handle
-     * it. */
-    let _ = write!(vec, "{}", err);
-    Buffer::from_vec(vec)
-}
-
+#[must_use]
 #[export_name = "ddprof_ffi_ProfileExporterV3_new"]
 pub extern "C" fn profile_exporter_new(
     family: CharSlice,
@@ -185,7 +182,7 @@ pub extern "C" fn profile_exporter_new(
         ProfileExporterV3::new(converted_family, converted_tags, converted_endpoint)
     }() {
         Ok(exporter) => NewProfileExporterV3Result::Ok(Box::into_raw(Box::new(exporter))),
-        Err(err) => NewProfileExporterV3Result::Err(error_into_buffer(err)),
+        Err(err) => NewProfileExporterV3Result::Err(err.into()),
     }
 }
 
@@ -248,6 +245,7 @@ pub unsafe extern "C" fn profile_exporter_build(
 /// # Safety
 /// If the `exporter` and `request` are non-null, then they need to have been
 /// created by apis in this module.
+#[must_use]
 #[export_name = "ddprof_ffi_ProfileExporterV3_send"]
 pub unsafe extern "C" fn profile_exporter_send(
     exporter: Option<NonNull<ProfileExporterV3>>,
@@ -256,7 +254,7 @@ pub unsafe extern "C" fn profile_exporter_send(
     let exp_ptr = match exporter {
         None => {
             let buf: &[u8] = b"Failed to export: exporter was null";
-            return SendResult::Failure(Buffer::from_vec(Vec::from(buf)));
+            return SendResult::Failure(crate::Vec::from(Vec::from(buf)));
         }
         Some(e) => e,
     };
@@ -264,7 +262,7 @@ pub unsafe extern "C" fn profile_exporter_send(
     let request_ptr = match request {
         None => {
             let buf: &[u8] = b"Failed to export: request was null";
-            return SendResult::Failure(Buffer::from_vec(Vec::from(buf)));
+            return SendResult::Failure(crate::Vec::from(Vec::from(buf)));
         }
         Some(req) => req,
     };
@@ -275,8 +273,105 @@ pub unsafe extern "C" fn profile_exporter_send(
         Ok(HttpStatus(response.status().as_u16()))
     }() {
         Ok(code) => SendResult::HttpResponse(code),
-        Err(err) => SendResult::Failure(error_into_buffer(err)),
+        Err(err) => SendResult::Failure(err.into()),
     }
+}
+
+#[export_name = "ddprof_ffi_SendResult_drop"]
+pub unsafe extern "C" fn send_result_drop(result: SendResult) {
+    std::mem::drop(result)
+}
+
+#[must_use]
+#[export_name = "ddprof_ffi_Vec_tag_new"]
+pub extern "C" fn vec_tag_new<'a>() -> crate::Vec<Tag<'a>> {
+    crate::Vec::default()
+}
+
+/// Pushes the tag into the vec.
+#[export_name = "ddprof_ffi_Vec_tag_push"]
+pub unsafe extern "C" fn vec_tag_push<'a>(vec: &mut crate::Vec<Tag<'a>>, tag: Tag<'a>) {
+    vec.push(tag)
+}
+
+#[allow(clippy::ptr_arg)]
+#[export_name = "ddprof_ffi_Vec_tag_as_slice"]
+pub extern "C" fn vec_tag_as_slice<'a>(vec: &'a crate::Vec<Tag<'a>>) -> Slice<'a, Tag<'a>> {
+    vec.as_slice()
+}
+
+#[export_name = "ddprof_ffi_Vec_tag_drop"]
+pub extern "C" fn vec_tag_drop(vec: crate::Vec<Tag>) {
+    std::mem::drop(vec)
+}
+
+fn parse_tag_chunk(chunk: &str) -> Result<Tag, TagsError> {
+    if let Some(first_colon_position) = chunk.find(':') {
+        if first_colon_position == 0 {
+            return Err(TagsError {
+                message: format!("tag cannot start with a colon: \"{}\"", chunk),
+            });
+        }
+
+        if chunk.ends_with(':') {
+            return Err(TagsError {
+                message: format!("tag cannot end with a colon: \"{}\"", chunk),
+            });
+        }
+        let name = &chunk[..first_colon_position];
+        let value = &chunk[(first_colon_position + 1)..];
+        Ok(Tag::new(name, value))
+    } else {
+        Ok(Tag::new(chunk, ""))
+    }
+}
+
+/// Parse a string of tags typically provided by environment variables
+/// The tags are expected to be either space or comma separated:
+///     "key1:value1,key2:value2"
+///     "key1:value1 key2:value2"
+/// Tag names and values are required and may not be empty.
+fn parse_tags(str: &str) -> Result<crate::Vec<Tag>, TagsError> {
+    let vec: Vec<_> = str
+        .split(&[',', ' '][..])
+        .flat_map(parse_tag_chunk)
+        .collect();
+    Ok(vec.into())
+}
+
+#[repr(C)]
+pub enum VecTagResult<'a> {
+    Ok(crate::Vec<Tag<'a>>),
+    Err(crate::Vec<u8>),
+}
+
+#[export_name = "ddprof_ffi_VecTagResult_drop"]
+pub extern "C" fn vec_tag_result_drop(result: VecTagResult) {
+    std::mem::drop(result)
+}
+
+#[must_use]
+#[export_name = "ddprof_ffi_Vec_tag_parse"]
+pub extern "C" fn vec_tag_parse(string: CharSlice) -> VecTagResult {
+    match string.try_into() {
+        Ok(str) => match parse_tags(str) {
+            Ok(vec) => VecTagResult::Ok(vec),
+            Err(err) => VecTagResult::Err(crate::Vec::from(&err as &dyn Error)),
+        },
+
+        Err(err) => VecTagResult::Err(crate::Vec::from(&err as &dyn Error)),
+    }
+}
+
+#[must_use]
+#[allow(clippy::ptr_arg)]
+#[export_name = "ddprof_ffi_Vec_tag_clone"]
+pub extern "C" fn vec_tag_clone<'a>(vec: &'a crate::Vec<Tag<'a>>) -> VecTagResult {
+    let mut clone = Vec::new();
+    for tag in vec.into_iter() {
+        clone.push(tag.to_owned())
+    }
+    VecTagResult::Ok(crate::Vec::from(clone))
 }
 
 #[cfg(test)]
@@ -379,5 +474,35 @@ mod test {
         //     we have no coverage for the request actually being correct.
         //     It'd be nice to actually perform the request, capture its contents, and assert that
         //     they are as expected.
+    }
+
+    #[test]
+    fn test_parse_tags() {
+        // See the docs for what we convey to users about tags:
+        // https://docs.datadoghq.com/getting_started/tagging/
+
+        let cases = [
+            ("env:staging:east", vec![Tag::new("env", "staging:east")]),
+            ("value", vec![Tag::new("value", "")]),
+            (
+                "state:utah,state:idaho",
+                vec![Tag::new("state", "utah"), Tag::new("state", "idaho")],
+            ),
+            (
+                "key1:value1 key2:value2 key3:value3",
+                vec![
+                    Tag::new("key1", "value1"),
+                    Tag::new("key2", "value2"),
+                    Tag::new("key3", "value3"),
+                ],
+            ),
+            ("key1:", vec![]),
+        ];
+
+        for case in cases {
+            let expected = case.1;
+            let actual = parse_tags(case.0).unwrap();
+            assert_eq!(expected, std::vec::Vec::from(actual));
+        }
     }
 }
