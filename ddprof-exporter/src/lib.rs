@@ -30,15 +30,6 @@ pub struct Exporter {
     runtime: Runtime,
 }
 
-/// All tags are optional. Here are the currently known tag names:
-/// * service
-/// * language
-/// * env
-/// * version
-/// * host - the agent will overwrite this; only useful in practice if the
-///          experimental agent-less mode is being used.
-/// Other tags may be used, such as the ones specified by the user in the
-/// `DD_TAGS` env.
 pub struct Tag {
     pub name: Cow<'static, str>,
     pub value: Cow<'static, str>,
@@ -178,6 +169,7 @@ impl ProfileExporterV3 {
         start: chrono::DateTime<chrono::Utc>,
         end: chrono::DateTime<chrono::Utc>,
         files: &[File],
+        additional_tags: &[Tag],
         timeout: std::time::Duration,
     ) -> Result<Request, Box<dyn Error>> {
         let mut form = multipart::Form::default();
@@ -187,7 +179,7 @@ impl ProfileExporterV3 {
         form.add_text("end", end.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string());
         form.add_text("family", String::from(&self.family));
 
-        for tag in self.tags.iter() {
+        for tag in self.tags.iter().chain(additional_tags.iter()) {
             form.add_text("tags[]", format!("{}:{}", tag.name, tag.value));
         }
 
