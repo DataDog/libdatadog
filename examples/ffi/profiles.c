@@ -11,8 +11,8 @@
  */
 int main(void) {
   const struct ddprof_ffi_ValueType wall_time = {
-      .type_ = {"wall-time", sizeof("wall-time") - 1},
-      .unit = {"nanoseconds", sizeof("nanoseconds") - 1},
+      .type_ = DDPROF_FFI_CHARSLICE_C("wall-time"),
+      .unit = DDPROF_FFI_CHARSLICE_C("nanoseconds"),
   };
   const struct ddprof_ffi_Slice_value_type sample_types = {&wall_time, 1};
   const struct ddprof_ffi_Period period = {wall_time, 60};
@@ -20,8 +20,10 @@ int main(void) {
 
   struct ddprof_ffi_Line root_line = {
       .function =
-          (struct ddprof_ffi_Function){.name = {"{main}", sizeof("{main}") - 1},
-                                       .filename = {"/srv/example/index.php"}},
+          (struct ddprof_ffi_Function){
+              .name = DDPROF_FFI_CHARSLICE_C("{main}"),
+              .filename = DDPROF_FFI_CHARSLICE_C("/srv/example/index.php"),
+          },
       .line = 0,
   };
 
@@ -32,8 +34,8 @@ int main(void) {
   };
   int64_t value = 10;
   const struct ddprof_ffi_Label label = {
-      .key = {"language", sizeof("language") - 1},
-      .str = {"php", sizeof("php") - 1},
+      .key = DDPROF_FFI_CHARSLICE_C("language"),
+      .str = DDPROF_FFI_CHARSLICE_C("php"),
   };
   struct ddprof_ffi_Sample sample = {
       .locations = {&root_location, 1},

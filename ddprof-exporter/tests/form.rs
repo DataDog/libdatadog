@@ -33,7 +33,7 @@ fn multipart(exporter: &ProfileExporterV3) -> Request {
     let timeout = std::time::Duration::from_secs(10);
 
     let request = exporter
-        .build(start, end, files, timeout)
+        .build(start, end, files, &[], timeout)
         .expect("request to be built");
 
     let actual_timeout = request.timeout().expect("timeout to exist");

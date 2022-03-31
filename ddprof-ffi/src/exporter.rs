@@ -47,6 +47,7 @@ pub unsafe extern "C" fn buffer_reset(buffer: *mut Buffer) {
 }
 
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct Tag<'a> {
     name: CharSlice<'a>,
     value: CharSlice<'a>,
@@ -215,6 +216,7 @@ pub unsafe extern "C" fn profile_exporter_build(
     start: Timespec,
     end: Timespec,
     files: Slice<File>,
+    additional_tags: Slice<Tag>,
     timeout_ms: u64,
 ) -> Option<Box<Request>> {
     match exporter {
@@ -222,10 +224,12 @@ pub unsafe extern "C" fn profile_exporter_build(
         Some(exporter) => {
             let timeout = std::time::Duration::from_millis(timeout_ms);
             let converted_files = try_into_vec_files(files)?;
+            let converted_tags = try_to_tags(additional_tags).ok()?;
             match exporter.as_ref().build(
                 start.into(),
                 end.into(),
                 converted_files.as_slice(),
+                converted_tags.as_slice(),
                 timeout,
             ) {
                 Ok(request) => Some(Box::new(Request(request))),
@@ -364,6 +368,7 @@ mod test {
                 start,
                 finish,
                 Slice::new(files.as_ptr(), files.len()),
+                Slice::default(),
                 timeout_milliseconds,
             )
         };
