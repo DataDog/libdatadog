@@ -26,8 +26,8 @@ pub enum NewProfileExporterV3Result {
     Err(crate::Vec<u8>),
 }
 
-#[export_name = "ddprof_ffi_NewProfileExporterV3Result_dtor"]
-pub unsafe extern "C" fn new_profile_exporter_v3_result_dtor(result: NewProfileExporterV3Result) {
+#[export_name = "ddprof_ffi_NewProfileExporterV3Result_drop"]
+pub unsafe extern "C" fn new_profile_exporter_v3_result_drop(result: NewProfileExporterV3Result) {
     match result {
         NewProfileExporterV3Result::Ok(ptr) => {
             let exporter = Box::from_raw(ptr);

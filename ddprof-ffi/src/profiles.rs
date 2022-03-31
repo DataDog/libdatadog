@@ -4,6 +4,7 @@
 use crate::{CharSlice, Slice, Timespec};
 use ddprof_profiles as profiles;
 use std::convert::{TryFrom, TryInto};
+use std::error::Error;
 use std::str::Utf8Error;
 
 #[repr(C)]
@@ -330,7 +331,7 @@ pub struct EncodedProfile {
 }
 
 impl TryFrom<ddprof_profiles::EncodedProfile> for EncodedProfile {
-    type Error = Box<dyn std::error::Error>;
+    type Error = Box<dyn Error>;
 
     fn try_from(value: ddprof_profiles::EncodedProfile) -> Result<Self, Self::Error> {
         let start = value.start.try_into()?;
@@ -340,35 +341,34 @@ impl TryFrom<ddprof_profiles::EncodedProfile> for EncodedProfile {
     }
 }
 
-/// Destroys the `encoded_profile`
-/// # Safety
-/// Only safe on profiles created by `ddprof_ffi_Profile_serialize`.
-#[no_mangle]
-pub unsafe extern "C" fn ddprof_ffi_EncodedProfile_delete(
-    encoded_profile: Option<Box<EncodedProfile>>,
-) {
-    std::mem::drop(encoded_profile)
+#[repr(C)]
+pub enum SerializeResult {
+    Ok(EncodedProfile),
+    Err(crate::Vec<u8>),
 }
 
-/// Serialize the aggregated profile. Be sure to check the return value and if
-/// it's non-null then call `ddprof_ffi_EncodedProfile_delete` on it once
-/// done with it.
-/// result to free it.
+/// Serialize the aggregated profile. Don't forget to clean up the result by
+/// calling ddprof_ffi_SerializeResult_drop.
 #[no_mangle]
 #[must_use]
 pub extern "C" fn ddprof_ffi_Profile_serialize(
     profile: &ddprof_profiles::Profile,
-) -> Option<Box<EncodedProfile>> {
-    match profile.serialize() {
-        Ok(encoded_profile) => {
-            let ffi = encoded_profile.try_into().ok()?;
-            Some(Box::new(ffi))
-        }
-        Err(e) => {
-            eprintln!("Failed to serialize profiles: {}", e);
-            None
-        }
+) -> SerializeResult {
+    match || -> Result<EncodedProfile, Box<dyn Error>> { profile.serialize()?.try_into() }() {
+        Ok(ok) => SerializeResult::Ok(ok),
+        Err(err) => SerializeResult::Err(err.into()),
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddprof_ffi_SerializeResult_drop(result: SerializeResult) {
+    std::mem::drop(result)
+}
+
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn ddprof_ffi_Vec_u8_as_slice(vec: &crate::Vec<u8>) -> Slice<u8> {
+    vec.as_slice()
 }
 
 /// Resets all data in `profile` except the sample types and period. Returns
