@@ -66,7 +66,7 @@ impl<'a, T> IntoIterator for &'a Vec<T> {
     type IntoIter = core::slice::Iter<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.as_slice().into_slice().iter()
+        unsafe { self.as_slice().into_slice() }.iter()
     }
 }
 
@@ -95,7 +95,18 @@ impl<T> Vec<T> {
     }
 
     pub fn as_slice(&self) -> Slice<T> {
-        Slice::new(self.ptr, self.len)
+        unsafe { Slice::new(self.ptr, self.len) }
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<T> {
+        unsafe { self.as_slice().into_slice() }.iter()
+    }
+
+    pub fn last(&self) -> Option<&T> {
+        if self.len == 0 {
+            return None;
+        }
+        unsafe { self.ptr.add(self.len - 1).as_ref() }
     }
 }
 
@@ -134,11 +145,11 @@ mod test {
         assert_eq!(ffi_vec.len(), 2);
         assert!(ffi_vec.capacity >= 2);
 
-        let slice = ffi_vec.as_slice();
-        let first = unsafe { *(slice.ptr) };
-        let second = unsafe { *(slice.ptr).add(1) };
-        assert_eq!(first, 1);
-        assert_eq!(second, 2);
+        let slice = unsafe { ffi_vec.as_slice().as_slice() };
+        let first = slice.get(0).unwrap();
+        let second = slice.get(1).unwrap();
+        assert_eq!(first, &1);
+        assert_eq!(second, &2);
     }
 
     #[test]
