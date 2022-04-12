@@ -1,0 +1,35 @@
+name: Lint
+on: [push]
+env: 
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rustfmt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - name: Cache
+        uses: ./.github/actions/cache
+      - name: Install latest nightly toolchain and rustfmt
+        run: rustup update nightly && rustup default nightly && rustup component add rustfmt
+      - run: cargo fmt --all -- --check
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - name: Cache
+        uses: ./.github/actions/cache
+      - name: Install latest nightly toolchain and clippy
+        run: rustup update nightly && rustup default nightly && rustup component add clippy
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+  licensecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - name: Install licensecheck
+        run: sudo apt-get install -y licensecheck
+      - name: Check licenses
+        run: '! find . -name "*.rs" -o -name "*.c" -o -name "*.sh" | xargs licensecheck -c ".*" | grep -v "Apache License 2.0"'
