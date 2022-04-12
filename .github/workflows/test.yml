@@ -1,0 +1,16 @@
+name: Test
+on: [push]
+env: 
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: cargo test --workspace
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - name: Cache
+        uses: ./.github/actions/cache
+      - run: cargo build --workspace --verbose
+      - run: cargo test --workspace --verbose
