@@ -1,7 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use crate::{CharSlice, Slice, Timespec};
+use crate::{AsBytes, CharSlice, Slice, Timespec};
 use ddprof_profiles as profiles;
 use std::convert::{TryFrom, TryInto};
 use std::error::Error;
@@ -147,12 +147,12 @@ pub struct Sample<'a> {
     pub labels: Slice<'a, Label<'a>>,
 }
 
-impl<'a> TryFrom<Mapping<'a>> for profiles::api::Mapping<'a> {
+impl<'a> TryFrom<&'a Mapping<'a>> for profiles::api::Mapping<'a> {
     type Error = Utf8Error;
 
-    fn try_from(mapping: Mapping<'a>) -> Result<Self, Self::Error> {
-        let filename: &str = mapping.filename.try_into()?;
-        let build_id: &str = mapping.build_id.try_into()?;
+    fn try_from(mapping: &'a Mapping<'a>) -> Result<Self, Self::Error> {
+        let filename = unsafe { mapping.filename.try_to_utf8() }?;
+        let build_id = unsafe { mapping.build_id.try_to_utf8() }?;
         Ok(Self {
             memory_start: mapping.memory_start,
             memory_limit: mapping.memory_limit,
@@ -163,68 +163,65 @@ impl<'a> TryFrom<Mapping<'a>> for profiles::api::Mapping<'a> {
     }
 }
 
-impl<'a> From<ValueType<'a>> for profiles::api::ValueType<'a> {
-    fn from(vt: ValueType<'a>) -> Self {
-        Self {
-            r#type: vt.type_.try_into().unwrap_or(""),
-            unit: vt.unit.try_into().unwrap_or(""),
+impl<'a> From<&'a ValueType<'a>> for profiles::api::ValueType<'a> {
+    fn from(vt: &'a ValueType<'a>) -> Self {
+        unsafe {
+            Self {
+                r#type: vt.type_.try_to_utf8().unwrap_or(""),
+                unit: vt.unit.try_to_utf8().unwrap_or(""),
+            }
         }
     }
 }
 
-impl<'a> From<&ValueType<'a>> for profiles::api::ValueType<'a> {
-    fn from(vt: &ValueType<'a>) -> Self {
+impl<'a> From<&'a Period<'a>> for profiles::api::Period<'a> {
+    fn from(period: &'a Period<'a>) -> Self {
         Self {
-            r#type: vt.type_.try_into().unwrap_or(""),
-            unit: vt.unit.try_into().unwrap_or(""),
-        }
-    }
-}
-
-impl<'a> From<&Period<'a>> for profiles::api::Period<'a> {
-    fn from(period: &Period<'a>) -> Self {
-        Self {
-            r#type: profiles::api::ValueType::from(period.type_),
+            r#type: profiles::api::ValueType::from(&period.type_),
             value: period.value,
         }
     }
 }
 
-impl<'a> TryFrom<Function<'a>> for profiles::api::Function<'a> {
+impl<'a> TryFrom<&'a Function<'a>> for profiles::api::Function<'a> {
     type Error = Utf8Error;
 
-    fn try_from(function: Function<'a>) -> Result<Self, Self::Error> {
-        let name = function.name.try_into()?;
-        let system_name = function.system_name.try_into()?;
-        let filename = function.filename.try_into()?;
-        Ok(Self {
-            name,
-            system_name,
-            filename,
-            start_line: function.start_line,
-        })
+    fn try_from(function: &'a Function<'a>) -> Result<Self, Self::Error> {
+        unsafe {
+            let name = function.name.try_to_utf8()?;
+            let system_name = function.system_name.try_to_utf8()?;
+            let filename = function.filename.try_to_utf8()?;
+            Ok(Self {
+                name,
+                system_name,
+                filename,
+                start_line: function.start_line,
+            })
+        }
     }
 }
 
-impl<'a> TryFrom<Line<'a>> for profiles::api::Line<'a> {
+impl<'a> TryFrom<&'a Line<'a>> for profiles::api::Line<'a> {
     type Error = Utf8Error;
 
-    fn try_from(line: Line<'a>) -> Result<Self, Self::Error> {
+    fn try_from(line: &'a Line<'a>) -> Result<Self, Self::Error> {
         Ok(Self {
-            function: line.function.try_into()?,
+            function: profiles::api::Function::try_from(&line.function)?,
             line: line.line,
         })
     }
 }
 
-impl<'a> TryFrom<Location<'a>> for profiles::api::Location<'a> {
+impl<'a> TryFrom<&'a Location<'a>> for profiles::api::Location<'a> {
     type Error = Utf8Error;
 
-    fn try_from(location: Location<'a>) -> Result<Self, Self::Error> {
-        let mapping: profiles::api::Mapping = location.mapping.try_into()?;
+    fn try_from(location: &'a Location<'a>) -> Result<Self, Self::Error> {
+        let mapping = profiles::api::Mapping::try_from(&location.mapping)?;
         let mut lines: Vec<profiles::api::Line> = Vec::new();
-        for &line in location.lines.into_iter() {
-            lines.push(line.try_into()?);
+        unsafe {
+            for line in location.lines.as_slice().iter() {
+                lines.push(line.try_into()?);
+            }
         }
         Ok(Self {
             mapping,
@@ -235,20 +232,28 @@ impl<'a> TryFrom<Location<'a>> for profiles::api::Location<'a> {
     }
 }
 
-impl<'a> TryFrom<Label<'a>> for profiles::api::Label<'a> {
+impl<'a> TryFrom<&'a Label<'a>> for profiles::api::Label<'a> {
     type Error = Utf8Error;
 
-    fn try_from(label: Label<'a>) -> Result<Self, Self::Error> {
-        let key: &str = label.key.try_into()?;
-        let str: Option<&str> = label.str.into();
-        let num_unit: Option<&str> = label.num_unit.into();
+    fn try_from(label: &'a Label<'a>) -> Result<Self, Self::Error> {
+        unsafe {
+            let key = label.key.try_to_utf8()?;
+            let str = label.str.try_to_utf8()?;
+            let str = if str.is_empty() { None } else { Some(str) };
+            let num_unit = label.num_unit.try_to_utf8()?;
+            let num_unit = if num_unit.is_empty() {
+                None
+            } else {
+                Some(num_unit)
+            };
 
-        Ok(Self {
-            key,
-            str,
-            num: label.num,
-            num_unit,
-        })
+            Ok(Self {
+                key,
+                str,
+                num: label.num,
+                num_unit,
+            })
+        }
     }
 }
 
@@ -256,23 +261,26 @@ impl<'a> TryFrom<Sample<'a>> for profiles::api::Sample<'a> {
     type Error = Utf8Error;
 
     fn try_from(sample: Sample<'a>) -> Result<Self, Self::Error> {
-        let mut locations: Vec<profiles::api::Location> = Vec::with_capacity(sample.locations.len);
-        for &location in sample.locations.into_iter() {
-            locations.push(location.try_into()?)
+        let mut locations: Vec<profiles::api::Location> =
+            Vec::with_capacity(sample.locations.len());
+        unsafe {
+            for location in sample.locations.as_slice().iter() {
+                locations.push(location.try_into()?)
+            }
+
+            let values: Vec<i64> = sample.values.into_slice().to_vec();
+
+            let mut labels: Vec<profiles::api::Label> = Vec::with_capacity(sample.labels.len());
+            for label in sample.labels.as_slice().iter() {
+                labels.push(label.try_into()?);
+            }
+
+            Ok(Self {
+                locations,
+                values,
+                labels,
+            })
         }
-
-        let values: Vec<i64> = sample.values.into_slice().to_vec();
-
-        let mut labels: Vec<profiles::api::Label> = Vec::with_capacity(sample.labels.len);
-        for &label in sample.labels.into_iter() {
-            labels.push(label.try_into()?);
-        }
-
-        Ok(Self {
-            locations,
-            values,
-            labels,
-        })
     }
 }
 

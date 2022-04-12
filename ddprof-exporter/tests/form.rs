@@ -1,8 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use ddprof_exporter::{Endpoint, File, ProfileExporterV3, Request, Tag};
-use std::borrow::Cow;
+use ddprof_exporter::{File, ProfileExporterV3, Request};
 use std::error::Error;
 use std::io::Read;
 use std::ops::Sub;
@@ -33,7 +32,7 @@ fn multipart(exporter: &ProfileExporterV3) -> Request {
     let timeout = std::time::Duration::from_secs(10);
 
     let request = exporter
-        .build(start, end, files, &[], timeout)
+        .build(start, end, files, None, timeout)
         .expect("request to be built");
 
     let actual_timeout = request.timeout().expect("timeout to exist");
@@ -41,55 +40,56 @@ fn multipart(exporter: &ProfileExporterV3) -> Request {
     request
 }
 
-fn default_tags() -> Vec<Tag> {
-    vec![
-        Tag {
-            name: Cow::Borrowed("service"),
-            value: Cow::Borrowed("php"),
-        },
-        Tag {
-            name: Cow::Borrowed("host"),
-            value: Cow::Borrowed("bits"),
-        },
-    ]
-}
+#[cfg(test)]
+mod tests {
+    use crate::multipart;
+    use ddprof_exporter::*;
 
-#[test]
-fn multipart_agent() {
-    let base_url = "http://localhost:8126".parse().expect("url to parse");
-    let endpoint = Endpoint::agent(base_url).expect("endpoint to construct");
-    let exporter =
-        ProfileExporterV3::new("php", default_tags(), endpoint).expect("exporter to construct");
+    fn default_tags() -> Vec<Tag> {
+        vec![
+            Tag::new("service", "php").expect("static tags to be valid"),
+            Tag::new("host", "bits").expect("static tags to be valid"),
+        ]
+    }
 
-    let request = multipart(&exporter);
+    #[test]
+    fn multipart_agent() {
+        let base_url = "http://localhost:8126".parse().expect("url to parse");
+        let endpoint = Endpoint::agent(base_url).expect("endpoint to construct");
+        let exporter = ProfileExporterV3::new("php", Some(default_tags()), endpoint)
+            .expect("exporter to construct");
 
-    assert_eq!(
-        request.uri().to_string(),
-        "http://localhost:8126/profiling/v1/input"
-    );
+        let request = multipart(&exporter);
 
-    let actual_headers = request.headers();
-    assert!(!actual_headers.contains_key("DD-API-KEY"));
-}
+        assert_eq!(
+            request.uri().to_string(),
+            "http://localhost:8126/profiling/v1/input"
+        );
 
-#[test]
-fn multipart_agentless() {
-    let api_key = "1234567890123456789012";
-    let endpoint = Endpoint::agentless("datadoghq.com", api_key).expect("endpoint to construct");
-    let exporter =
-        ProfileExporterV3::new("php", default_tags(), endpoint).expect("exporter to construct");
+        let actual_headers = request.headers();
+        assert!(!actual_headers.contains_key("DD-API-KEY"));
+    }
 
-    let request = multipart(&exporter);
+    #[test]
+    fn multipart_agentless() {
+        let api_key = "1234567890123456789012";
+        let endpoint =
+            Endpoint::agentless("datadoghq.com", api_key).expect("endpoint to construct");
+        let exporter = ProfileExporterV3::new("php", Some(default_tags()), endpoint)
+            .expect("exporter to construct");
 
-    assert_eq!(
-        request.uri().to_string(),
-        "https://intake.profile.datadoghq.com/v1/input"
-    );
+        let request = multipart(&exporter);
 
-    let actual_headers = request.headers();
+        assert_eq!(
+            request.uri().to_string(),
+            "https://intake.profile.datadoghq.com/v1/input"
+        );
 
-    assert_eq!(
-        actual_headers.get("DD-API-KEY").expect("api key to exist"),
-        api_key
-    );
+        let actual_headers = request.headers();
+
+        assert_eq!(
+            actual_headers.get("DD-API-KEY").expect("api key to exist"),
+            api_key
+        );
+    }
 }
