@@ -74,8 +74,9 @@ dependencies = [
 
 [[package]]
 name = "common-multipart-rfc7578"
-version = "0.4.2"
-source = "git+https://github.com/paullegranddc/rust-multipart-rfc7578.git?rev=8dcedc266e50876c04c91d24390fe9ac44f10b96#8dcedc266e50876c04c91d24390fe9ac44f10b96"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22328b3864f1d8dbe7036f3f2fdfdcb1f367af43dca418943d396fbf8c4b8021"
 dependencies = [
  "bytes",
  "futures-core",
@@ -115,6 +116,7 @@ dependencies = [
 name = "ddprof-exporter"
 version = "0.5.0-rc.1"
 dependencies = [
+ "anyhow",
  "bytes",
  "chrono",
  "futures",
@@ -131,9 +133,12 @@ dependencies = [
  "maplit",
  "mime_guess",
  "percent-encoding",
- "pin-project-lite",
+ "pin-project",
  "regex",
+ "rustls",
+ "rustls-native-certs",
  "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]
@@ -365,8 +370,9 @@ dependencies = [
 
 [[package]]
 name = "hyper-multipart-rfc7578"
-version = "0.6.2"
-source = "git+https://github.com/paullegranddc/rust-multipart-rfc7578.git?rev=8dcedc266e50876c04c91d24390fe9ac44f10b96#8dcedc266e50876c04c91d24390fe9ac44f10b96"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63ca8108ac0ae98d310d41cddb11c6b822e8aca865dbe421366934e6f7f72e10"
 dependencies = [
  "bytes",
  "common-multipart-rfc7578",
@@ -567,6 +573,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "pin-project"
+version = "1.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "58ad3879ad3baf4e44784bc6a718a8698867bb991f8ce24d1bcbe2cfb4c3a75e"
+dependencies = [
+ "pin-project-internal",
+]
+
+[[package]]
+name = "pin-project-internal"
+version = "1.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "744b6f092ba29c3650faf274db506afd39944f48420f6c86b17cfe0ee1cb36bb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "pin-project-lite"
 version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -739,6 +765,7 @@ version = "0.20.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4fbfeb8d0ddb84706bc597a5574ab8912817c52a397f819e5b614e2265206921"
 dependencies = [
+ "log",
  "ring",
  "sct",
  "webpki",
@@ -895,7 +922,19 @@ dependencies = [
  "mio",
  "pin-project-lite",
  "socket2",
+ "tokio-macros",
  "winapi",
+]
+
+[[package]]
+name = "tokio-macros"
+version = "1.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b557f72f448c511a979e2564e55d74e6c4432fc96ff4f6241bc6bded342643b7"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

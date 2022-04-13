@@ -11,6 +11,7 @@ license = "Apache-2.0"
 crate-type = ["cdylib", "lib"]
 
 [dependencies]
+anyhow = "1.0"
 bytes = "1.0"
 chrono = "0.4"
 futures = "0.3"
@@ -19,16 +20,19 @@ lazy_static = "1.4"
 libc = "0.2"
 regex = "1.5"
 hyper = { version = "0.14", features = ["http1", "client", "tcp", "stream"], default-features = false }
-tokio = { version = "1.8", features = ["rt"]}
+tokio = { version = "1.8", features = ["rt", "macros"]}
+tokio-rustls = { version = "0.23" }
 percent-encoding = "2.1"
 futures-core = { version = "0.3.0", default-features = false }
 futures-util = { version = "0.3.0", default-features = false }
 mime_guess = { version = "2.0", default-features = false }
 http-body = "0.4"
-pin-project-lite = "0.2.0"
+pin-project = "1"
+rustls = { version = "0.20.4", default-features = false }
+rustls-native-certs = { version = "0.6" }
 hyper-rustls = { version = "0.23", default-features = false, features = ["native-tokio", "http1", "tls12"] }
 hex = "0.4"
-hyper-multipart-rfc7578 = { git = "https://github.com/paullegranddc/rust-multipart-rfc7578.git", rev = "8dcedc266e50876c04c91d24390fe9ac44f10b96" }
+hyper-multipart-rfc7578 = "0.7.0"
 
 [dev-dependencies]
 maplit = "1.0"
