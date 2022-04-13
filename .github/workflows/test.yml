@@ -5,8 +5,11 @@ env:
 
 jobs:
   test:
-    name: cargo test --workspace
-    runs-on: ubuntu-latest
+    name: "cargo test --workspace #${{ matrix.platform }}"
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      matrix:
+        platform: [windows-latest, ubuntu-latest, macos-latest] 
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2

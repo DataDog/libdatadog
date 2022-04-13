@@ -1,5 +1,5 @@
-name: '[rust] Checkout and cache' 
-description: '[rust] Checkout cache'
+name: '[rust] Cache' 
+description: '[rust] Cache'
 
 runs:
   using: composite
