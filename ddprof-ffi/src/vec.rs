@@ -108,6 +108,14 @@ impl<T> Vec<T> {
         }
         unsafe { self.ptr.add(self.len - 1).as_ref() }
     }
+
+    pub fn get(&self, index: usize) -> Option<&T> {
+        if index >= self.len {
+            None
+        } else {
+            unsafe { self.ptr.add(index).as_ref() }
+        }
+    }
 }
 
 impl<T> Default for Vec<T> {

@@ -11,6 +11,7 @@ use chrono::{DateTime, TimeZone, Utc};
 mod exporter;
 mod profiles;
 mod slice;
+mod tags;
 mod vec;
 
 pub use slice::{AsBytes, ByteSlice, CharSlice, Slice};

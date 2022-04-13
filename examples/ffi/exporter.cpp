@@ -82,17 +82,22 @@ int main(int argc, char *argv[]) {
 
   ddprof_ffi_EndpointV3 endpoint = ddprof_ffi_EndpointV3_agentless(
       DDPROF_FFI_CHARSLICE_C("datad0g.com"), to_slice_c_char(api_key));
-  ddprof_ffi_Tag tags[] = {
-      {DDPROF_FFI_CHARSLICE_C("service"), to_slice_c_char(service)},
-  };
+
+  ddprof_ffi_Vec_tag tags = ddprof_ffi_Vec_tag_new();
+  ddprof_ffi_PushTagResult tag_result = ddprof_ffi_Vec_tag_push(
+      &tags, DDPROF_FFI_CHARSLICE_C("service"), to_slice_c_char(service));
+  if (tag_result.tag == DDPROF_FFI_PUSH_TAG_RESULT_ERR) {
+    print_error("Failed to push tag: ", tag_result.err);
+    ddprof_ffi_PushTagResult_drop(tag_result);
+    return 1;
+  }
+
+  ddprof_ffi_PushTagResult_drop(tag_result);
+
   ddprof_ffi_NewProfileExporterV3Result exporter_new_result =
-      ddprof_ffi_ProfileExporterV3_new(
-          DDPROF_FFI_CHARSLICE_C("native"),
-          ddprof_ffi_Slice_tag{
-              .ptr = tags,
-              .len = sizeof(tags) / sizeof(tags[0]),
-          },
-          endpoint);
+      ddprof_ffi_ProfileExporterV3_new(DDPROF_FFI_CHARSLICE_C("native"), &tags,
+                                       endpoint);
+  ddprof_ffi_Vec_tag_drop(tags);
 
   if (exporter_new_result.tag ==
       DDPROF_FFI_NEW_PROFILE_EXPORTER_V3_RESULT_ERR) {
@@ -111,11 +116,9 @@ int main(int argc, char *argv[]) {
   ddprof_ffi_Slice_file files = {.ptr = files_,
                                  .len = sizeof files_ / sizeof *files_};
 
-  ddprof_ffi_Slice_tag additional_tags = {.ptr = nullptr, .len = 0};
-
   ddprof_ffi_Request *request = ddprof_ffi_ProfileExporterV3_build(
-      exporter, encoded_profile->start, encoded_profile->end, files,
-      additional_tags, 10000);
+      exporter, encoded_profile->start, encoded_profile->end, files, nullptr,
+      10000);
 
   int exit_code = 0;
   ddprof_ffi_SendResult send_result =
