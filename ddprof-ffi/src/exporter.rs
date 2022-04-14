@@ -54,6 +54,9 @@ pub struct File<'a> {
 /// future.
 pub struct Request(exporter::Request);
 
+// This type exists only to force cbindgen to expose an CancellationToken as an opaque type.
+pub struct CancellationToken(tokio_util::sync::CancellationToken);
+
 #[repr(C)]
 /// cbindgen:field-names=[code]
 pub struct HttpStatus(u16);
@@ -185,15 +188,16 @@ pub unsafe extern "C" fn profile_exporter_build(
 /// # Arguments
 /// * `exporter` - borrows the exporter for sending the request
 /// * `request` - takes ownership of the request
+/// * `cancel` - borrows the cancel, if any
 ///
 /// # Safety
-/// If the `exporter` and `request` are non-null, then they need to have been
-/// created by apis in this module.
+/// All non-null arguments MUST have been created by created by apis in this module.
 #[must_use]
 #[export_name = "ddprof_ffi_ProfileExporterV3_send"]
 pub unsafe extern "C" fn profile_exporter_send(
     exporter: Option<NonNull<ProfileExporterV3>>,
     request: Option<Box<Request>>,
+    cancel: Option<NonNull<CancellationToken>>,
 ) -> SendResult {
     let exp_ptr = match exporter {
         None => {
@@ -211,14 +215,93 @@ pub unsafe extern "C" fn profile_exporter_send(
         Some(req) => req,
     };
 
+    let cancel_option = unwrap_cancellation_token(cancel);
+
     match || -> Result<HttpStatus, Box<dyn std::error::Error>> {
-        let response = exp_ptr.as_ref().send((*request_ptr).0)?;
+        let response = exp_ptr.as_ref().send((*request_ptr).0, cancel_option)?;
 
         Ok(HttpStatus(response.status().as_u16()))
     }() {
         Ok(code) => SendResult::HttpResponse(code),
         Err(err) => SendResult::Failure(err.into()),
     }
+}
+
+fn unwrap_cancellation_token<'a>(
+    cancel: Option<NonNull<CancellationToken>>,
+) -> Option<&'a tokio_util::sync::CancellationToken> {
+    cancel.map(|c| {
+        let wrapped_reference: &CancellationToken = unsafe { c.as_ref() };
+        let unwrapped_reference: &tokio_util::sync::CancellationToken = &(*wrapped_reference).0;
+
+        unwrapped_reference
+    })
+}
+
+/// Can be passed as an argument to send and then be used to asynchronously cancel it from a different thread.
+#[no_mangle]
+#[must_use]
+pub extern "C" fn ddprof_ffi_CancellationToken_new() -> *mut CancellationToken {
+    Box::into_raw(Box::new(CancellationToken(
+        tokio_util::sync::CancellationToken::new(),
+    )))
+}
+
+#[no_mangle]
+#[must_use]
+/// A cloned CancellationToken is connected to the CancellationToken it was created from.
+/// Either the cloned or the original token can be used to cancel or provided as arguments to send.
+/// The useful part is that they have independent lifetimes and can be dropped separately.
+///
+/// Thus, it's possible to do something like:
+/// ```c
+/// cancel_t1 = ddprof_ffi_CancellationToken_new();
+/// cancel_t2 = ddprof_ffi_CancellationToken_clone(cancel_t1);
+///
+/// // On thread t1:
+///     ddprof_ffi_ProfileExporterV3_send(..., cancel_t1);
+///     ddprof_ffi_CancellationToken_drop(cancel_t1);
+///
+/// // On thread t2:
+///     ddprof_ffi_CancellationToken_cancel(cancel_t2);
+///     ddprof_ffi_CancellationToken_drop(cancel_t2);
+/// ```
+///
+/// Without clone, both t1 and t2 would need to synchronize to make sure neither was using the cancel
+/// before it could be dropped. With clone, there is no need for such synchronization, both threads
+/// have their own cancel and should drop that cancel after they are done with it.
+pub extern "C" fn ddprof_ffi_CancellationToken_clone(
+    cancel: Option<NonNull<CancellationToken>>,
+) -> *mut CancellationToken {
+    match unwrap_cancellation_token(cancel) {
+        Some(reference) => Box::into_raw(Box::new(CancellationToken(reference.clone()))),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Cancel send that is being called in another thread with the given token.
+/// Note that cancellation is a terminal state; cancelling a token more than once does nothing.
+/// Returns `true` if token was successfully cancelled.
+#[no_mangle]
+pub extern "C" fn ddprof_ffi_CancellationToken_cancel(
+    cancel: Option<NonNull<CancellationToken>>,
+) -> bool {
+    let cancel_reference = match unwrap_cancellation_token(cancel) {
+        Some(reference) => reference,
+        None => return false,
+    };
+
+    if cancel_reference.is_cancelled() {
+        return false;
+    }
+    cancel_reference.cancel();
+
+    true
+}
+
+#[no_mangle]
+pub extern "C" fn ddprof_ffi_CancellationToken_drop(_cancel: Option<Box<CancellationToken>>) {
+    // _cancel implicitly dropped because we've turned it into a Box
 }
 
 #[export_name = "ddprof_ffi_SendResult_drop"]

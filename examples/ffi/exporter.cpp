@@ -6,6 +6,7 @@ extern "C" {
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <thread>
 
 static ddprof_ffi_Slice_c_char to_slice_c_char(const char *s) {
   return (ddprof_ffi_Slice_c_char){.ptr = s, .len = strlen(s)};
@@ -18,7 +19,7 @@ struct Deleter {
 };
 
 template <typename T> void print_error(const char *s, const T &err) {
-  printf("%s: (%.*s)\n", s, static_cast<int>(err.len), err.ptr);
+  printf("%s (%.*s)\n", s, static_cast<int>(err.len), err.ptr);
 }
 
 int main(int argc, char *argv[]) {
@@ -118,11 +119,34 @@ int main(int argc, char *argv[]) {
 
   ddprof_ffi_Request *request = ddprof_ffi_ProfileExporterV3_build(
       exporter, encoded_profile->start, encoded_profile->end, files, nullptr,
-      10000);
+      30000);
+
+  ddprof_ffi_CancellationToken *cancel =
+    ddprof_ffi_CancellationToken_new();
+  ddprof_ffi_CancellationToken *cancel_for_background_thread =
+    ddprof_ffi_CancellationToken_clone(cancel);
+
+  // As an example of CancellationToken usage, here we create a background
+  // thread that sleeps for some time and then cancels a request early (e.g.
+  // before the timeout in ddprof_ffi_ProfileExporterV3_send is hit).
+  //
+  // If the request is faster than the sleep time, no cancellation takes place.
+  std::thread trigger_cancel_if_request_takes_too_long_thread(
+      [](ddprof_ffi_CancellationToken *cancel_for_background_thread) {
+        int timeout_ms = 5000;
+        std::this_thread::sleep_for(std::chrono::milliseconds(timeout_ms));
+        printf("Request took longer than %d ms, triggering asynchronous "
+               "cancellation\n",
+               timeout_ms);
+        ddprof_ffi_CancellationToken_cancel(cancel_for_background_thread);
+        ddprof_ffi_CancellationToken_drop(cancel_for_background_thread);
+      },
+      cancel_for_background_thread);
+  trigger_cancel_if_request_takes_too_long_thread.detach();
 
   int exit_code = 0;
   ddprof_ffi_SendResult send_result =
-      ddprof_ffi_ProfileExporterV3_send(exporter, request);
+      ddprof_ffi_ProfileExporterV3_send(exporter, request, cancel);
   if (send_result.tag == DDPROF_FFI_SEND_RESULT_FAILURE) {
     print_error("Failed to send profile: ", send_result.failure);
     exit_code = 1;
@@ -132,5 +156,6 @@ int main(int argc, char *argv[]) {
 
   ddprof_ffi_NewProfileExporterV3Result_drop(exporter_new_result);
   ddprof_ffi_SendResult_drop(send_result);
+  ddprof_ffi_CancellationToken_drop(cancel);
   return exit_code;
 }
