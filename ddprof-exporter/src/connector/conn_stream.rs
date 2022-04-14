@@ -42,7 +42,7 @@ impl ConnStream {
         }
         #[cfg(not(unix))]
         {
-            Err(crate::errors::Error::UnixSockeUnsuported.into())
+            Err(crate::errors::Error::UnixSocketUnsupported.into())
         }
     }
 
