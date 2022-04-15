@@ -16,7 +16,6 @@ use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
 mod connector;
-mod container_id;
 mod errors;
 pub mod tag;
 
@@ -220,7 +219,7 @@ impl ProfileExporterV3 {
             );
         }
 
-        if let Some(container_id) = container_id::get_container_id() {
+        if let Some(container_id) = ddcommon::container_id::get_container_id() {
             builder = builder.header(DATADOG_CONTAINER_ID_HEADER, container_id);
         }
 
