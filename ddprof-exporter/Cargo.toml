@@ -16,9 +16,7 @@ bytes = "1.0"
 chrono = "0.4"
 futures = "0.3"
 http = "0.2"
-lazy_static = "1.4"
 libc = "0.2"
-regex = "1.5"
 hyper = { version = "0.14", features = ["http1", "client", "tcp", "stream"], default-features = false }
 tokio = { version = "1.8", features = ["rt", "macros"]}
 tokio-rustls = { version = "0.23" }
@@ -34,6 +32,7 @@ rustls-native-certs = { version = "0.6" }
 hyper-rustls = { version = "0.23", default-features = false, features = ["native-tokio", "http1", "tls12"] }
 hex = "0.4"
 hyper-multipart-rfc7578 = "0.7.0"
+ddcommon = { path = "../ddcommon" }
 
 [dev-dependencies]
 maplit = "1.0"
