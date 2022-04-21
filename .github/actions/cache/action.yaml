@@ -1,6 +1,11 @@
 name: '[rust] Cache' 
 description: '[rust] Cache'
 
+inputs:
+  rust_version:
+    default: "latest"
+    required: false
+
 runs:
   using: composite
   steps:
@@ -12,4 +17,4 @@ runs:
           ~/.cargo/git/db/
           ~/.cargo/bin/
           target/
-        key: v2-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+        key: v1-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}-${{ inputs.rust_version }}
