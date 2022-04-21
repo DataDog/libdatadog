@@ -1,0 +1,4 @@
+*               @Datadog/libdatadog-core
+ddprof*/        @Datadog/libdatadog-profiling
+ddtelemetry/    @Datadog/libdatadog-telemetry
+ruby/           @Datadog/libdatadog-ruby
