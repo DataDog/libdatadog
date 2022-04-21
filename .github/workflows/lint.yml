@@ -15,17 +15,22 @@ jobs:
         run: rustup update nightly && rustup default nightly && rustup component add rustfmt
       - run: cargo fmt --all -- --check
   clippy:
+    name: "clippy #${{ matrix.version }}"
+    strategy:
+      matrix:
+        version: [nightly, "1.56.1"] 
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
       - name: Cache
         uses: ./.github/actions/cache
-      - name: Install latest nightly toolchain and clippy
-        run: rustup update nightly && rustup default nightly && rustup component add clippy
+      - name: Install ${{ matrix.version }} toolchain and clippy
+        run: rustup install ${{ matrix.version }} && rustup default ${{ matrix.version }} && rustup component add clippy
       - run: cargo clippy --all-targets --all-features -- -D warnings
   licensecheck:
     runs-on: ubuntu-latest
+    name: "Presence of licence headers"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
@@ -33,3 +38,39 @@ jobs:
         run: sudo apt-get install -y licensecheck
       - name: Check licenses
         run: '! find . -name "*.rs" -o -name "*.c" -o -name "*.sh" | xargs licensecheck -c ".*" | grep -v "Apache License 2.0"'
+
+  # todo: fix upstream warnings; from the readme:
+  # The most common cause of missing licenses seems to be workspaces that
+  # don't include forward their license files. Go to the repo for the
+  # workspace and copy the relevant files from there.
+  # A package license may receive a confidence warning stating that
+  # cargo-bundle-licenses is "unsure" or "semi" confident. This means that
+  # when the found license was compared to a template license it was found to
+  # have diverged in more than a few words. You should verify that the licence
+  #  text is in fact correct in these cases.
+  #
+  # If this job fails, you need to regenerate the license, e.g.
+  # CARGO_HOME=/tmp/dd-cargo cargo bundle-licenses --format yaml --output LICENSE-3rdparty.yml
+  license-3rdparty:
+    runs-on: ubuntu-latest
+    name: "Valid LICENSE-3rdparty.yml"
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - run: stat LICENSE-3rdparty.yml
+      - run: cargo install cargo-bundle-licenses
+      - name: "Generate new LICENSE-3rdparty.yml and check against the previous" 
+        env: 
+          CARGO_HOME: "/tmp/dd-cargo"
+        run: > 
+          cargo bundle-licenses \
+            --format yaml \
+            --output /tmp/CI.yaml \
+            --previous LICENSE-3rdparty.yml \
+            --check-previous 
+      - name: export the generated license file on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v1
+        with:
+          name: LICENSE-3rdparty.yml
+          path: /tmp/CI.yaml
