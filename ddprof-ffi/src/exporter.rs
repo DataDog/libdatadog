@@ -16,7 +16,7 @@ use std::str::FromStr;
 #[repr(C)]
 pub enum SendResult {
     HttpResponse(HttpStatus),
-    Failure(crate::Vec<u8>),
+    Err(crate::Vec<u8>),
 }
 
 #[repr(C)]
@@ -202,7 +202,7 @@ pub unsafe extern "C" fn profile_exporter_send(
     let exp_ptr = match exporter {
         None => {
             let buf: &[u8] = b"Failed to export: exporter was null";
-            return SendResult::Failure(crate::Vec::from(Vec::from(buf)));
+            return SendResult::Err(crate::Vec::from(Vec::from(buf)));
         }
         Some(e) => e,
     };
@@ -210,7 +210,7 @@ pub unsafe extern "C" fn profile_exporter_send(
     let request_ptr = match request {
         None => {
             let buf: &[u8] = b"Failed to export: request was null";
-            return SendResult::Failure(crate::Vec::from(Vec::from(buf)));
+            return SendResult::Err(crate::Vec::from(Vec::from(buf)));
         }
         Some(req) => req,
     };
@@ -223,7 +223,7 @@ pub unsafe extern "C" fn profile_exporter_send(
         Ok(HttpStatus(response.status().as_u16()))
     }() {
         Ok(code) => SendResult::HttpResponse(code),
-        Err(err) => SendResult::Failure(err.into()),
+        Err(err) => SendResult::Err(err.into()),
     }
 }
 

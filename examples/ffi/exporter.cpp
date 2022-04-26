@@ -147,8 +147,8 @@ int main(int argc, char *argv[]) {
   int exit_code = 0;
   ddprof_ffi_SendResult send_result =
       ddprof_ffi_ProfileExporterV3_send(exporter, request, cancel);
-  if (send_result.tag == DDPROF_FFI_SEND_RESULT_FAILURE) {
-    print_error("Failed to send profile: ", send_result.failure);
+  if (send_result.tag == DDPROF_FFI_SEND_RESULT_ERR) {
+    print_error("Failed to send profile: ", send_result.err);
     exit_code = 1;
   } else {
     printf("Response code: %d\n", send_result.http_response.code);
