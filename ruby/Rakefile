@@ -13,25 +13,25 @@ RSpec::Core::RakeTask.new(:spec)
 
 LIB_GITHUB_RELEASES = {
   # This should match the version in the version.rb file
-  "0.5.0" => [
+  "0.6.0" => [
     {
       file: "libddprof-aarch64-alpine-linux-musl.tar.gz",
-      sha256: "121857f371fed5252654e6eebcb214c6d3a5b089c7e3340e41ab2089df0b9a25",
+      sha256: "7501d26ed9b2607c2bca79b3fd39971efa4dbb6949226d7d123f095e47ca541c",
       ruby_platform: "aarch64-linux-musl"
     },
     {
       file: "libddprof-aarch64-unknown-linux-gnu.tar.gz",
-      sha256: "ab4cd1fc9bc3975775bd2ff2122ac0b475533d504965b931d377cca122f7b0b3",
+      sha256: "c18351882fdb4b64df76f4cd49dbf567d8871349fa444144aa9a8ddf0532bad2",
       ruby_platform: "aarch64-linux"
     },
     {
       file: "libddprof-x86_64-alpine-linux-musl.tar.gz",
-      sha256: "1675e6402973548ca22da0832babe33d0d4ec739ff9979a600677722fd46ff2f",
+      sha256: "ca5e49636465ee977943d64815442d4bff2de2b74678b1376e6368280534f909",
       ruby_platform: "x86_64-linux-musl"
     },
     {
       file: "libddprof-x86_64-unknown-linux-gnu.tar.gz",
-      sha256: "2db92e2ad87005a043e415fd62079af1f1df3642be9bed3ade840c5533a61063",
+      sha256: "8eaec92d14bcfa8839843ba2ddfeae254804e087a4984985132a508d6f841645",
       ruby_platform: "x86_64-linux"
     }
   ]
