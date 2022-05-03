@@ -2,7 +2,7 @@
 
 module Libddprof
   # Current libddprof version
-  LIB_VERSION = "0.5.0"
+  LIB_VERSION = "0.6.0"
 
   GEM_MAJOR_VERSION = "1"
   GEM_MINOR_VERSION = "0"
