@@ -1,5 +1,6 @@
 name: Ruby gem scaffolding
 on:
+  workflow_dispatch:
   push:
     paths:
       - 'ruby/**' # Only run action when ruby-related things are touched
