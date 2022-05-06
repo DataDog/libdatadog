@@ -9,6 +9,7 @@ members = [
     "ddprof-profiles",
     "ddcommon",
     "ddtelemetry",
+    "datadog-profiler",
 ]
 
 [profile.dev]
