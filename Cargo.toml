@@ -13,7 +13,6 @@ members = [
     "datadog-profiler",
     "datadog-telemetry",
     "datadog-internal-telemetry",
-    "datadog-apm",
     "datadog-appsec",
     "datadog-asm",
     "datadog-waf",
