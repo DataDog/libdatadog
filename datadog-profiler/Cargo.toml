@@ -3,6 +3,7 @@ name = "datadog-profiler"
 version = "0.1.0"
 edition = "2021"
 description = "An empty Datadog crate - Head over to https://docs.datadoghq.com/tracing/profiler/enabling/linux/?tab=environmentvariables for a rust compatible profiler"
+license = "Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
