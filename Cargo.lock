@@ -105,6 +105,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5827cebf4670468b8772dd191856768aedcb1b0278a04f989f7766351917b9dc"
 
 [[package]]
+name = "datadog-profiler"
+version = "0.1.0"
+
+[[package]]
+name = "datadog-telemetry"
+version = "0.1.0"
+
+[[package]]
 name = "ddcommon"
 version = "0.5.0-rc.1"
 dependencies = [
