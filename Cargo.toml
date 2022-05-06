@@ -9,17 +9,17 @@ members = [
     "ddprof-profiles",
     "ddcommon",
     "ddtelemetry",
-    # After this comment: empty crates for now
+    # After this comment: placeholder crates for now
     "datadog-profiler",
     "datadog-telemetry",
-    # "datadog-internal-telemetry",
-    # "datadog-apm",
-    # "datadog-appsec",
-    # "datadog-asm",
-    # "datadog-waf",
-    # "datadog-remote-configuration",
-    # "datadog-remote-config",
-    # "libdatadog",
+    "datadog-internal-telemetry",
+    "datadog-apm",
+    "datadog-appsec",
+    "datadog-asm",
+    "datadog-waf",
+    "datadog-remote-configuration",
+    "datadog-remote-config",
+    "libdatadog",
 ]
 
 [profile.dev]
