@@ -10,6 +10,7 @@ members = [
     "ddcommon",
     "ddtelemetry",
 ]
+resolver = "2"
 
 [profile.dev]
 debug = 2 # full debug info
