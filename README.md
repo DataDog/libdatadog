@@ -1,6 +1,6 @@
-# libddprof
+# libdatadog
 
-`libddprof` provides a shared library containing common code used in the implementation of Datadog's
+`libdatadog` provides a shared library containing common code used in the implementation of Datadog's
 [Continuous Profilers](https://docs.datadoghq.com/tracing/profiler/).
 
 
@@ -16,11 +16,11 @@ See <CONTRIBUTING.md>.
 
 ### Building
 
-Build libddprof as usual with `cargo build`. To package a release with the generated ffi header and CMake module,
-use the `ffi-build.sh` helper script. To stick the output in `/opt/libddprof`, you would do:
+Build libdatadog as usual with `cargo build`. To package a release with the generated ffi header and CMake module,
+use the `ffi-build.sh` helper script. To stick the output in `/opt/libdatadog`, you would do:
 
 ```bash
-bash ffi-build.sh /opt/libddprof
+bash ffi-build.sh /opt/libdatadog
 ```
 
 #### Build Dependencies

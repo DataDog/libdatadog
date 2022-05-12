@@ -71,28 +71,28 @@ cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
 export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
-echo "Building the libddprof_ffi library (may take some time)..."
+echo "Building the libdatadog_ffi library (may take some time)..."
 cargo build --release --target "${target}"
-cp -v "target/${target}/release/libddprof_ffi.a" "target/${target}/release/libddprof_ffi${shared_library_suffix}" "$destdir/lib/"
+cp -v "target/${target}/release/libdatadog_ffi.a" "target/${target}/release/libdatadog_ffi${shared_library_suffix}" "$destdir/lib/"
 
 if [[ "$remove_rpath" -eq 1 ]]; then
-    patchelf --remove-rpath "$destdir/lib/libddprof_ffi${shared_library_suffix}"
+    patchelf --remove-rpath "$destdir/lib/libdatadog_ffi${shared_library_suffix}"
 fi
 
 if [[ "$fix_macos_rpath" -eq 1 ]]; then
-    install_name_tool -id @rpath/libddprof_ffi${shared_library_suffix} "$destdir/lib/libddprof_ffi${shared_library_suffix}"
+    install_name_tool -id @rpath/libdatadog_ffi${shared_library_suffix} "$destdir/lib/libdatadog_ffi${shared_library_suffix}"
 fi
 
 # objcopy might not be available on macOS
 if command -v objcopy > /dev/null; then
     # Remove .llvmbc section which is not useful for clients
-    objcopy --remove-section .llvmbc "$destdir/lib/libddprof_ffi.a"
+    objcopy --remove-section .llvmbc "$destdir/lib/libdatadog_ffi.a"
 
     # Ship debug information separate from shared library, so that downstream packages can selectively include it
     # https://sourceware.org/gdb/onlinedocs/gdb/Separate-Debug-Files.html
-    objcopy --only-keep-debug "$destdir/lib/libddprof_ffi${shared_library_suffix}" "$destdir/lib/libddprof_ffi${shared_library_suffix}.debug"
-    strip -S "$destdir/lib/libddprof_ffi${shared_library_suffix}"
-    objcopy --add-gnu-debuglink="$destdir/lib/libddprof_ffi${shared_library_suffix}.debug" "$destdir/lib/libddprof_ffi${shared_library_suffix}"
+    objcopy --only-keep-debug "$destdir/lib/libdatadog_ffi${shared_library_suffix}" "$destdir/lib/libdatadog_ffi${shared_library_suffix}.debug"
+    strip -S "$destdir/lib/libdatadog_ffi${shared_library_suffix}"
+    objcopy --add-gnu-debuglink="$destdir/lib/libdatadog_ffi${shared_library_suffix}.debug" "$destdir/lib/libdatadog_ffi${shared_library_suffix}"
 fi
 
 echo "Checking that native-static-libs are as expected for this platform..."

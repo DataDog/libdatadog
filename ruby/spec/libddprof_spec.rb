@@ -9,7 +9,7 @@ RSpec.describe Libddprof do
       expect(Libddprof::VERSION).to_not be nil
     end
 
-    it "has an upstream libddprof version number" do
+    it "has an upstream libdatadog version number" do
       expect(Libddprof::LIB_VERSION).to_not be nil
     end
   end
@@ -19,7 +19,7 @@ RSpec.describe Libddprof do
 
     before do
       allow(ENV).to receive(:[]).and_call_original
-      allow(ENV).to receive(:[]).with("LIBDDPROF_VENDOR_OVERRIDE").and_return(temporary_directory)
+      allow(ENV).to receive(:[]).with("LIBDATADOG_VENDOR_OVERRIDE").and_return(temporary_directory)
     end
 
     after do

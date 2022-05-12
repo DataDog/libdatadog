@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative "libddprof/version"
+require_relative "libdatadog/version"
 
 module Libddprof
   # This should only be used for debugging/logging
@@ -21,6 +21,6 @@ module Libddprof
   end
 
   private_class_method def self.vendor_directory
-    ENV["LIBDDPROF_VENDOR_OVERRIDE"] || "#{__dir__}/../vendor/libddprof-#{Libddprof::LIB_VERSION}/"
+    ENV["LIBDATADOG_VENDOR_OVERRIDE"] || "#{__dir__}/../vendor/libdatadog-#{Libddprof::LIB_VERSION}/"
   end
 end

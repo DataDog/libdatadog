@@ -1,12 +1,12 @@
 # Contributing
 
-Community contributions to `libddprof` are welcome 😃! See below for some basic guidelines.
+Community contributions to `libdatadog` are welcome 😃! See below for some basic guidelines.
 
 ## Want to request a new feature?
 
 Many great ideas for new features come from the community, and we'd be happy to consider yours!
 
-To share your request, you can [open a Github issue](https://github.com/datadog/libddprof/issues/new) with the details
+To share your request, you can [open a Github issue](https://github.com/datadog/libdatadog/issues/new) with the details
 about what you'd like to see. At a minimum, please provide:
 
 * The goal of the new feature
@@ -26,8 +26,8 @@ Additionally, if you can, include:
 For any urgent matters (such as outages) or issues concerning the Datadog service or UI, contact our support team via
 https://docs.datadoghq.com/help/ for direct, faster assistance.
 
-You can submit bug reports concerning `libddprof` by
-[opening a Github issue](https://github.com/datadog/libddprof/issues/new). At a minimum, please provide:
+You can submit bug reports concerning `libdatadog` by
+[opening a Github issue](https://github.com/datadog/libdatadog/issues/new). At a minimum, please provide:
 
 * A description of the problem
 * Steps to reproduce
@@ -48,15 +48,15 @@ Reports that include rich detail are better, and ones with code that reproduce t
 ## Have a patch?
 
 We welcome code contributions to the library, which you can
-[submit as a pull request](https://github.com/datadog/libddprof/pull/new/main).
+[submit as a pull request](https://github.com/datadog/libdatadog/pull/new/main).
 To create a pull request:
 
-1. **Fork the repository** from <https://github.com/datadog/libddprof>
+1. **Fork the repository** from <https://github.com/datadog/libdatadog>
 2. **Make any changes** for your patch
 3. **Write tests** that demonstrate how the feature works or how the bug is fixed
 4. **Update any documentation** especially for new features.
 5. **Submit the pull request** from your fork back to the latest revision of the `main` branch on
-   <https://github.com/datadog/libddprof>
+   <https://github.com/datadog/libdatadog>
 
 The pull request will be run through our CI pipeline, and a project member will review the changes with you.
 At a minimum, to be accepted and merged, pull requests must:
