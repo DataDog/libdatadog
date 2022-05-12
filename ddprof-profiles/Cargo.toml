@@ -4,7 +4,7 @@
 [package]
 name = "ddprof-profiles"
 version = "0.6.0"
-edition = "2018"
+edition = "2021"
 build = "build.rs"
 license = "Apache-2.0"
 
@@ -12,10 +12,9 @@ license = "Apache-2.0"
 crate-type = ["cdylib", "lib"]
 
 [build-dependencies]
-prost-build = "0.8"
+prost-build = "0.10"
 
 [dependencies]
-indexmap = "1.6"
+indexmap = "1.8"
 libc = "0.2"
-prost = "0.8"
-ux = "0.1"
+prost = "0.10"

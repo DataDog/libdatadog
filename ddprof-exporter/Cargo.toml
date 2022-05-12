@@ -4,7 +4,7 @@
 [package]
 name = "ddprof-exporter"
 version = "0.6.0"
-edition = "2018"
+edition = "2021"
 license = "Apache-2.0"
 
 [lib]
@@ -12,7 +12,7 @@ crate-type = ["cdylib", "lib"]
 
 [dependencies]
 anyhow = "1.0"
-bytes = "1.0"
+bytes = "1.1"
 chrono = "0.4"
 futures = "0.3"
 http = "0.2"

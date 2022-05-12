@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 use std::fmt::{Debug, Display, Formatter};
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub struct Tag {
     value: Cow<'static, str>,
 }
