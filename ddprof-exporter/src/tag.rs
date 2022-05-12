@@ -135,7 +135,7 @@ mod tests {
         // slide.
         let bytes = &[32, 0b1111_0111];
         let key = String::from_utf8_lossy(bytes);
-        let t = Tag::new(key.as_ref(), "value").unwrap();
+        let t = Tag::new(key, "value").unwrap();
         assert_eq!(" \u{FFFD}:value", t.to_string());
     }
 
@@ -151,11 +151,8 @@ mod tests {
         // that profile tags will then differ or cause failures compared to
         // trace tags. These require cross-team, cross-language collaboration.
         let cases = [
-            (" begins with non-letter".to_string(), "value".to_owned()),
-            (
-                "the-tag-length-is-over-200-characters".repeat(6),
-                "value".to_owned(),
-            ),
+            (" begins with non-letter".to_string(), "value"),
+            ("the-tag-length-is-over-200-characters".repeat(6), "value"),
         ];
 
         for case in cases {
