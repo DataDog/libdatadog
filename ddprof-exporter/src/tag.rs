@@ -56,7 +56,11 @@ impl Tag {
         })
     }
 
-    pub fn new<S: AsRef<str>>(key: S, value: S) -> Result<Self, Cow<'static, str>> {
+    pub fn new<K, V>(key: K, value: V) -> Result<Self, Cow<'static, str>>
+    where
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
         let key = key.as_ref();
         let value = value.as_ref();
 
