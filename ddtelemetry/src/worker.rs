@@ -1,12 +1,16 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use crate::DEFAULT_API_VERSION;
+use crate::{
+    metrics::{ContextKey, MetricBuckets, MetricContexts},
+    DEFAULT_API_VERSION,
+};
 
 use super::{
     data::{self, Application, Dependency, DependencyType, Host, Integration, Log, Telemetry},
     Config,
 };
+
 use std::{
     collections::{hash_map::DefaultHasher, HashMap},
     hash::{Hash, Hasher},
@@ -36,6 +40,10 @@ macro_rules! telemetry_worker_log {
 
 #[derive(Debug)]
 pub enum TelemetryActions {
+    AddPoint((f64, ContextKey, Vec<String>)),
+    FlushMetricAggregate,
+    SendMetrics,
+
     AddDependecy(Dependency),
     SendDependencies,
 
@@ -74,6 +82,8 @@ struct TelemetryWorkerData {
     unflushed_integrations: Vec<Integration>,
     unflushed_dependencies: Vec<Dependency>,
     unflushed_logs: HashMap<LogIdentifier, UnfluhsedLogEntry>,
+    metric_contexts: MetricContexts,
+    metric_buckets: MetricBuckets,
     host: Host,
     app: Application,
 }
@@ -160,6 +170,17 @@ impl TelemetryWorker {
                     self.handle_result(res);
                     return;
                 }
+                AddPoint((point, key, extra_tags)) => self.data.metric_buckets.add_point(
+                    key,
+                    &self.data.metric_contexts,
+                    point,
+                    extra_tags,
+                ),
+                FlushMetricAggregate => self.data.metric_buckets.flush_agregates(),
+                SendMetrics => {
+                    let res = self.flush_series();
+                    self.handle_result(res);
+                }
             }
         }
     }
@@ -186,6 +207,40 @@ impl TelemetryWorker {
             self.handle_result(res);
             self.deadlines.send_logs_done();
         }
+    }
+
+    fn flush_series(&mut self) -> Result<()> {
+        let mut series = Vec::new();
+        for (context_key, extra_tags, points) in self.data.metric_buckets.flush_series() {
+            let context_guard = self.data.metric_contexts.get_context(context_key);
+            let context = match context_guard.read() {
+                Some(context) => context,
+                None => {
+                    telemetry_worker_log!(
+                        self,
+                        ERROR,
+                        "Context not found for key {:?}",
+                        context_key
+                    );
+                    continue;
+                }
+            };
+            let mut tags = extra_tags;
+            tags.extend(context.tags.iter().cloned());
+            series.push(data::metrics::Serie {
+                namespace: context.namespace,
+                metric: context.name.clone(),
+                tags,
+                points,
+                common: context.common,
+                _type: context.metric_type,
+            });
+        }
+        self.send_payload(data::Payload::GenerateMetrics(data::GenerateMetrics {
+            lib_language: self.data.app.language_name.clone(),
+            lib_version: self.data.app.tracer_version.clone(),
+            series,
+        }))
     }
 
     fn send_heartbeat(&mut self) -> Result<()> {
@@ -311,24 +366,29 @@ impl InnerTelemetryShutdown {
 }
 
 #[derive(Clone)]
-pub struct TelemetryWorkerHandle(SyncSender<TelemetryActions>, Arc<InnerTelemetryShutdown>);
+pub struct TelemetryWorkerHandle {
+    sender: SyncSender<TelemetryActions>,
+    shutdown: Arc<InnerTelemetryShutdown>,
+    contexts: MetricContexts,
+}
 
 impl TelemetryWorkerHandle {
     pub fn send_start(&self) -> Result<()> {
-        Ok(self.0.try_send(TelemetryActions::Start)?)
+        Ok(self.sender.try_send(TelemetryActions::Start)?)
     }
 
     pub fn send_stop(&self) -> Result<()> {
-        Ok(self.0.try_send(TelemetryActions::Stop)?)
+        Ok(self.sender.try_send(TelemetryActions::Stop)?)
     }
 
     pub fn add_dependency(&self, name: String, version: Option<String>) -> Result<()> {
-        self.0.try_send(TelemetryActions::AddDependecy(Dependency {
-            name,
-            version,
-            hash: None,
-            type_: DependencyType::PlatformStandard,
-        }))?;
+        self.sender
+            .try_send(TelemetryActions::AddDependecy(Dependency {
+                name,
+                version,
+                hash: None,
+                type_: DependencyType::PlatformStandard,
+            }))?;
         Ok(())
     }
 
@@ -340,7 +400,7 @@ impl TelemetryWorkerHandle {
         enabled: Option<bool>,
         auto_enabled: Option<bool>,
     ) -> Result<()> {
-        self.0
+        self.sender
             .try_send(TelemetryActions::AddIntegration(Integration {
                 name,
                 version,
@@ -360,7 +420,7 @@ impl TelemetryWorkerHandle {
     ) -> Result<()> {
         let mut hasher = DefaultHasher::new();
         identifier.hash(&mut hasher);
-        self.0.try_send(TelemetryActions::AddLog((
+        self.sender.try_send(TelemetryActions::AddLog((
             LogIdentifier {
                 indentifier: hasher.finish(),
             },
@@ -374,7 +434,7 @@ impl TelemetryWorkerHandle {
     }
 
     pub fn wait_for_shutdown(&self) {
-        self.1.wait_for_shutdown();
+        self.shutdown.wait_for_shutdown();
     }
 }
 
@@ -446,33 +506,43 @@ impl TelemetryWorkerBuilder {
             is_shutdown: Mutex::new(false),
             condvar: Condvar::new(),
         });
-        let worker_shutdown = shutdown.clone();
-        std::thread::spawn(move || {
-            let config = Config::read_env_config();
-            let unflushed_dependencies = self.gather_deps();
-            let worker = TelemetryWorker {
-                data: TelemetryWorkerData {
-                    started: false,
-                    app: self.application,
-                    host: self.host,
-                    library_config: self.library_config,
-                    unflushed_dependencies,
-                    unflushed_integrations: Vec::new(),
-                    unflushed_logs: HashMap::new(),
-                },
-                config,
-                mailbox,
-                seq_id: 0,
-                runtime_id: self
-                    .runtime_id
-                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-                client: reqwest::blocking::Client::new(),
-                deadlines: Scheduler::new(),
-            };
-            worker.run();
-            worker_shutdown.shutdown_finished();
+        let contexts = MetricContexts::default();
+        std::thread::spawn({
+            let shutdown = shutdown.clone();
+            let contexts = contexts.clone();
+            move || {
+                let config = Config::read_env_config();
+                let unflushed_dependencies = self.gather_deps();
+                let worker = TelemetryWorker {
+                    data: TelemetryWorkerData {
+                        started: false,
+                        app: self.application,
+                        host: self.host,
+                        library_config: self.library_config,
+                        unflushed_dependencies,
+                        unflushed_integrations: Vec::new(),
+                        unflushed_logs: HashMap::new(),
+                        metric_buckets: MetricBuckets::default(),
+                        metric_contexts: contexts,
+                    },
+                    config,
+                    mailbox,
+                    seq_id: 0,
+                    runtime_id: self
+                        .runtime_id
+                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                    client: reqwest::blocking::Client::new(),
+                    deadlines: Scheduler::new(),
+                };
+                worker.run();
+                shutdown.shutdown_finished();
+            }
         });
-        TelemetryWorkerHandle(tx, shutdown)
+        TelemetryWorkerHandle {
+            sender: tx,
+            shutdown,
+            contexts,
+        }
     }
 }
 

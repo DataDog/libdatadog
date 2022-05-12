@@ -4,18 +4,30 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct CounterGauge {
-    metric: String,
-    points: Vec<(u64, f64)>,
-    tags: Vec<String>,
-    common: bool,
+pub struct Serie {
+    pub namespace: MetricNamespace,
+    pub metric: String,
+    pub points: Vec<(u64, f64)>,
+    pub tags: Vec<String>,
+    pub common: bool,
+    #[serde(rename = "type")]
+    pub _type: MetricType
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "type")]
-pub enum Metric {
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum MetricNamespace {
+    Trace,
+    Profiling,
+    Appsec,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+
+pub enum MetricType {
     #[serde(rename = "gauge")]
-    Gauge(CounterGauge),
-    #[serde(rename = "gauge")]
-    Counter(CounterGauge),
+    Gauge,
+    #[serde(rename = "count")]
+    Count,
 }
