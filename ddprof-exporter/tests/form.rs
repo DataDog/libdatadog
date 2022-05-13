@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn multipart_agent() {
         let base_url = "http://localhost:8126".parse().expect("url to parse");
-        let endpoint = Endpoint::agent(base_url).expect("endpoint to construct");
+        let endpoint = config::agent(base_url).expect("endpoint to construct");
         let exporter = ProfileExporterV3::new("php", Some(default_tags()), endpoint)
             .expect("exporter to construct");
 
@@ -73,8 +73,7 @@ mod tests {
     #[test]
     fn multipart_agentless() {
         let api_key = "1234567890123456789012";
-        let endpoint =
-            Endpoint::agentless("datadoghq.com", api_key).expect("endpoint to construct");
+        let endpoint = config::agentless("datadoghq.com", api_key).expect("endpoint to construct");
         let exporter = ProfileExporterV3::new("php", Some(default_tags()), endpoint)
             .expect("exporter to construct");
 

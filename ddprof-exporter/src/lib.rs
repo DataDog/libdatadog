@@ -5,29 +5,25 @@ use std::borrow::Cow;
 use std::error::Error;
 use std::future;
 use std::io::Cursor;
-use std::str::FromStr;
 
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
-use hyper::header::HeaderValue;
 pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
-mod connector;
+use ddcommon::{connector, HttpClient, HttpResponse};
+pub mod config;
 mod errors;
 pub mod tag;
-
+pub use ddcommon::Endpoint;
 pub use tag::*;
 
 #[cfg(unix)]
 pub use connector::uds::socket_path_to_uri;
 
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
-const DATADOG_CONTAINER_ID_HEADER: &str = "Datadog-Container-ID";
-
-type HttpClient = hyper::Client<connector::Connector, hyper::Body>;
 
 pub struct Exporter {
     client: HttpClient,
@@ -39,16 +35,16 @@ pub struct FieldsV3 {
     pub end: DateTime<Utc>,
 }
 
-pub struct Endpoint {
-    url: Uri,
-    api_key: Option<Cow<'static, str>>,
-}
-
 pub struct ProfileExporterV3 {
     exporter: Exporter,
     endpoint: Endpoint,
     family: Cow<'static, str>,
     tags: Option<Vec<Tag>>,
+}
+
+pub struct File<'a> {
+    pub name: &'a str,
+    pub bytes: &'a [u8],
 }
 
 pub struct Request {
@@ -108,60 +104,6 @@ impl Request {
     }
 }
 
-pub struct File<'a> {
-    pub name: &'a str,
-    pub bytes: &'a [u8],
-}
-
-impl Endpoint {
-    /// Creates an Endpoint for talking to the Datadog agent.
-    ///
-    /// # Arguments
-    /// * `base_url` - has protocol, host, and port e.g. http://localhost:8126/
-    pub fn agent(base_url: Uri) -> Result<Endpoint, Box<dyn Error>> {
-        let mut parts = base_url.into_parts();
-        let p_q = match parts.path_and_query {
-            None => None,
-            Some(pq) => {
-                let path = pq.path();
-                let path = path.strip_suffix('/').unwrap_or(path);
-                Some(format!("{}/profiling/v1/input", path).parse()?)
-            }
-        };
-        parts.path_and_query = p_q;
-        let url = Uri::from_parts(parts)?;
-        Ok(Endpoint { url, api_key: None })
-    }
-
-    /// Creates an Endpoint for talking to the Datadog agent though a unix socket.
-    ///
-    /// # Arguments
-    /// * `socket_path` - file system path to the socket
-    #[cfg(unix)]
-    pub fn agent_uds(path: &std::path::Path) -> Result<Endpoint, Box<dyn Error>> {
-        let base_url = socket_path_to_uri(path)?;
-        Self::agent(base_url)
-    }
-
-    /// Creates an Endpoint for talking to Datadog intake without using the agent.
-    /// This is an experimental feature.
-    ///
-    /// # Arguments
-    /// * `site` - e.g. "datadoghq.com".
-    /// * `api_key`
-    pub fn agentless<AsStrRef: AsRef<str>, IntoCow: Into<Cow<'static, str>>>(
-        site: AsStrRef,
-        api_key: IntoCow,
-    ) -> Result<Endpoint, Box<dyn Error>> {
-        let intake_url: String = format!("https://intake.profile.{}/v1/input", site.as_ref());
-
-        Ok(Endpoint {
-            url: Uri::from_str(intake_url.as_str())?,
-            api_key: Some(api_key.into()),
-        })
-    }
-}
-
 impl ProfileExporterV3 {
     pub fn new<IntoCow: Into<Cow<'static, str>>>(
         family: IntoCow,
@@ -206,22 +148,12 @@ impl ProfileExporterV3 {
             )
         }
 
-        let mut builder = hyper::Request::builder()
+        let builder = self
+            .endpoint
+            .into_request_builder(concat!("DDProf/", env!("CARGO_PKG_VERSION")))?
             .method(http::Method::POST)
-            .uri(self.endpoint.url.clone())
             .header("User-Agent", concat!("DDProf/", env!("CARGO_PKG_VERSION")))
             .header("Connection", "close");
-
-        if let Some(api_key) = &self.endpoint.api_key {
-            builder = builder.header(
-                "DD-API-KEY",
-                HeaderValue::from_str(api_key).expect("Error setting api_key"),
-            );
-        }
-
-        if let Some(container_id) = ddcommon::container_id::get_container_id() {
-            builder = builder.header(DATADOG_CONTAINER_ID_HEADER, container_id);
-        }
 
         Ok(
             Request::from(form.set_body_convert::<hyper::Body, multipart::Body>(builder)?)
@@ -233,7 +165,7 @@ impl ProfileExporterV3 {
         &self,
         request: Request,
         cancel: Option<&CancellationToken>,
-    ) -> Result<hyper::Response<hyper::Body>, Box<dyn Error>> {
+    ) -> Result<HttpResponse, Box<dyn Error>> {
         self.exporter
             .runtime
             .block_on(request.send(&self.exporter.client, cancel))

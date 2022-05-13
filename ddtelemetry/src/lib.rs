@@ -8,14 +8,13 @@ use std::{
 };
 
 use ddcommon::container_id;
+use http::header::CONTENT_TYPE;
 use lazy_static::lazy_static;
 
 use self::{
-    comms::request,
     config::Config,
     data::{Application, Telemetry},
 };
-pub mod comms;
 pub mod config;
 pub mod data;
 pub mod info;
@@ -105,13 +104,16 @@ pub async fn build_full(header: &mut Header) -> Telemetry<'_> {
 }
 
 pub async fn push_telemetry(telemetry: &Telemetry<'_>) -> anyhow::Result<()> {
-    let url = Config::get().telemetry_url();
-    let resp = request(
-        url,
-        serde_json::to_string(telemetry)?,
-        Config::get().api_key(),
-    )
-    .await?;
+    let config = Config::get();
+    let client = config.http_client();
+    let req = config
+        .into_request_builder()?
+        .method(http::Method::POST)
+        .header(CONTENT_TYPE, "application/json")
+        .body(serde_json::to_string(telemetry)?.into())?;
+
+    let resp = client.request(req).await?;
+
     if !resp.status().is_success() {
         Err(anyhow::Error::msg(format!(
             "Telemetry error: response status: {}",
