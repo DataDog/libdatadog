@@ -72,7 +72,7 @@ impl FromEnv {
         }
     }
 
-    fn build_endpoint(agent_url: &String) -> Option<Endpoint> {
+    fn build_endpoint(agent_url: &str) -> Option<Endpoint> {
         let api_key = env::var(DD_API_KEY).ok().filter(|p| !p.is_empty());
 
         let telemetry_url = if api_key.is_some() {

@@ -1,11 +1,12 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+#[cfg(unix)]
 use ddcommon::connector::uds;
-use std::{borrow::Cow, error::Error, str::FromStr};
-
 use ddcommon::Endpoint;
+
 use http::Uri;
+use std::{borrow::Cow, error::Error, str::FromStr};
 
 /// Creates an Endpoint for talking to the Datadog agent.
 ///
