@@ -23,8 +23,6 @@ use std::{
 use anyhow::Result;
 use reqwest::{blocking, header};
 
-const TELEMETRY_HEARBEAT_DELAY: time::Duration = time::Duration::from_secs(30);
-
 macro_rules! telemetry_worker_log {
     ($worker:expr , ERROR , $fmt_str:tt, $($arg:tt)*) => {
         if $worker.config.is_telemetry_debug_logging_enabled() {
@@ -170,16 +168,23 @@ impl TelemetryWorker {
                     self.handle_result(res);
                     return;
                 }
-                AddPoint((point, key, extra_tags)) => self.data.metric_buckets.add_point(
-                    key,
-                    &self.data.metric_contexts,
-                    point,
-                    extra_tags,
-                ),
-                FlushMetricAggregate => self.data.metric_buckets.flush_agregates(),
+                AddPoint((point, key, extra_tags)) => {
+                    self.deadlines.schedule_next_send_metrics();
+                    self.data.metric_buckets.add_point(
+                        key,
+                        &self.data.metric_contexts,
+                        point,
+                        extra_tags,
+                    )
+                }
+                FlushMetricAggregate => {
+                    self.data.metric_buckets.flush_agregates();
+                    self.deadlines.flush_aggreg_done();
+                }
                 SendMetrics => {
                     let res = self.flush_series();
                     self.handle_result(res);
+                    self.deadlines.send_metrics_done();
                 }
             }
         }
@@ -235,6 +240,9 @@ impl TelemetryWorker {
                 common: context.common,
                 _type: context.metric_type,
             });
+        }
+        if series.is_empty() {
+            return Ok(());
         }
         self.send_payload(data::Payload::GenerateMetrics(data::GenerateMetrics {
             lib_language: self.data.app.language_name.clone(),
@@ -373,6 +381,18 @@ pub struct TelemetryWorkerHandle {
 }
 
 impl TelemetryWorkerHandle {
+    pub fn register_metric_context(
+        &self,
+        name: String,
+        tags: Vec<String>,
+        metric_type: data::metrics::MetricType,
+        common: bool,
+        namespace: data::metrics::MetricNamespace,
+    ) -> ContextKey {
+        self.contexts
+            .register_metric_context(name, tags, metric_type, common, namespace)
+    }
+
     pub fn send_start(&self) -> Result<()> {
         Ok(self.sender.try_send(TelemetryActions::Start)?)
     }
@@ -430,6 +450,17 @@ impl TelemetryWorkerHandle {
                 stack_trace,
             },
         )))?;
+        Ok(())
+    }
+
+    pub fn add_point(
+        &self,
+        value: f64,
+        context: &ContextKey,
+        extra_tags: Vec<String>,
+    ) -> Result<()> {
+        self.sender
+            .try_send(TelemetryActions::AddPoint((value, *context, extra_tags)))?;
         Ok(())
     }
 
@@ -555,10 +586,20 @@ impl TelemetryWorkerBuilder {
 /// Once an action has been executed, the corresponding <action>_done should be called
 /// to update the Scheduler state
 struct Scheduler {
+    // Triggered at fixed interval every 60s
+    // If a message has been sent while this delay is pending, the  next heartbeat will be rescheduled
     heartbeat: time::Instant,
+    // Triggered a few seconds after a dependecy is received to batch them together
     flush_dependencies: Option<time::Instant>,
+    // Triggered a few seconds after an integrations is received to batch them together
     flush_integrations: Option<time::Instant>,
+    // Triggered after 60s aggregating logs
+    // to be able to deduplicate them
     flush_logs: Option<time::Instant>,
+    // Triggered after some time aggregating metrics to send multiple points in a payload
+    flush_metrics: Option<time::Instant>,
+    // Triggered every 10s to add a point to the series we hold
+    aggregate_metrics: time::Instant,
     delays: Delays,
 }
 
@@ -568,27 +609,34 @@ struct Delays {
     deps_flush: time::Duration,
     intgs_flush: time::Duration,
     logs_flush: time::Duration,
-}
-
-impl Default for Delays {
-    fn default() -> Self {
-        Self {
-            heartbeat: time::Duration::from_secs(30),
-            deps_flush: time::Duration::from_secs(2),
-            intgs_flush: time::Duration::from_secs(2),
-            logs_flush: time::Duration::from_secs(60),
-        }
-    }
+    metrics_aggregation: time::Duration,
+    metrics_flush: time::Duration,
 }
 
 impl Scheduler {
+    const DEFAULT_DELAYS: Delays = Delays {
+        heartbeat: time::Duration::from_secs(60),
+        deps_flush: time::Duration::from_secs(2),
+        intgs_flush: time::Duration::from_secs(2),
+        logs_flush: time::Duration::from_secs(60),
+        metrics_aggregation: time::Duration::from_secs(10),
+        metrics_flush: time::Duration::from_secs(60),
+    };
+
     fn new() -> Self {
+        Self::new_with_delays(Self::DEFAULT_DELAYS)
+    }
+
+    fn new_with_delays(delays: Delays) -> Self {
+        let now = time::Instant::now();
         Self {
-            heartbeat: time::Instant::now() + TELEMETRY_HEARBEAT_DELAY,
+            heartbeat: now + delays.heartbeat,
             flush_dependencies: None,
             flush_integrations: None,
             flush_logs: None,
-            delays: Delays::default(),
+            aggregate_metrics: now + delays.metrics_aggregation,
+            flush_metrics: None,
+            delays,
         }
     }
 
@@ -611,6 +659,12 @@ impl Scheduler {
         }
     }
 
+    fn schedule_next_send_metrics(&mut self) {
+        if self.flush_metrics.is_none() {
+            self.flush_metrics = Some(time::Instant::now() + self.delays.metrics_flush)
+        }
+    }
+
     fn send_dependency_done(&mut self) {
         self.flush_dependencies = None;
         self.schedule_next_heartbeat();
@@ -626,15 +680,30 @@ impl Scheduler {
         self.schedule_next_heartbeat();
     }
 
+    fn flush_aggreg_done(&mut self) {
+        self.aggregate_metrics = time::Instant::now() + self.delays.metrics_aggregation;
+    }
+
+    fn send_metrics_done(&mut self) {
+        self.flush_metrics = None;
+        self.schedule_next_heartbeat();
+    }
+
     #[inline(always)]
     fn deadlines(&self) -> impl Iterator<Item = (time::Instant, TelemetryActions)> {
         IntoIterator::into_iter([
             Some((self.heartbeat, TelemetryActions::Heartbeat)),
+            Some((
+                self.aggregate_metrics,
+                TelemetryActions::FlushMetricAggregate,
+            )),
             self.flush_dependencies
                 .map(|d| (d, TelemetryActions::SendDependencies)),
             self.flush_integrations
                 .map(|d| (d, TelemetryActions::SendIntegrations)),
             self.flush_logs.map(|d| (d, TelemetryActions::SendLogs)),
+            self.flush_metrics
+                .map(|d| (d, TelemetryActions::SendMetrics)),
         ])
         .flatten()
     }
@@ -672,6 +741,11 @@ mod test {
     use std::mem::discriminant;
     use std::time::{Duration, Instant};
 
+    const TEST_DELAYS: Delays = Delays {
+        metrics_aggregation: Duration::from_secs(999),
+        ..Scheduler::DEFAULT_DELAYS
+    };
+
     fn expect_scheduled(
         scheduler: &Scheduler,
         expected_action: TelemetryActions,
@@ -692,7 +766,7 @@ mod test {
 
     #[test]
     fn test_scheduler_next_heartbeat() {
-        let mut scheduler = Scheduler::new();
+        let mut scheduler = Scheduler::new_with_delays(TEST_DELAYS);
 
         let next_deadline = scheduler.next_deadline().unwrap();
         expect_scheduled(
@@ -715,7 +789,7 @@ mod test {
 
     #[test]
     fn test_scheduler_send_dependency() {
-        let mut scheduler = Scheduler::new();
+        let mut scheduler = Scheduler::new_with_delays(TEST_DELAYS);
 
         let flush_delay_ms = 222;
         scheduler.delays.deps_flush = Duration::from_millis(flush_delay_ms);
@@ -737,7 +811,7 @@ mod test {
 
     #[test]
     fn test_scheduler_send_integrations() {
-        let mut scheduler = Scheduler::new();
+        let mut scheduler = Scheduler::new_with_delays(TEST_DELAYS);
 
         let flush_delay_ms = 333;
         scheduler.delays.intgs_flush = Duration::from_millis(flush_delay_ms);
@@ -760,10 +834,8 @@ mod test {
 
     #[test]
     fn test_scheduler_send_logs() {
-        let mut scheduler = Scheduler::new();
-
-        let flush_delay_ms = 99;
-        scheduler.delays.logs_flush = Duration::from_millis(flush_delay_ms);
+        let mut scheduler = Scheduler::new_with_delays(TEST_DELAYS);
+        scheduler.delays.logs_flush = Duration::from_millis(99);
 
         scheduler.schedule_next_send_logs();
         expect_scheduled(
@@ -778,6 +850,46 @@ mod test {
             &scheduler,
             TelemetryActions::Heartbeat,
             scheduler.delays.heartbeat,
+        );
+    }
+
+    #[test]
+    fn test_scheduler_send_metrics() {
+        let mut scheduler = Scheduler::new_with_delays(TEST_DELAYS);
+        scheduler.delays.metrics_flush = Duration::from_millis(99);
+
+        scheduler.schedule_next_send_metrics();
+        expect_scheduled(
+            &scheduler,
+            TelemetryActions::SendMetrics,
+            scheduler.delays.metrics_flush,
+        );
+
+        scheduler.send_metrics_done();
+
+        expect_scheduled(
+            &scheduler,
+            TelemetryActions::Heartbeat,
+            scheduler.delays.heartbeat,
+        );
+    }
+
+    #[test]
+    fn test_scheduler_aggreg_metrics() {
+        let mut scheduler = Scheduler::new_with_delays(Delays {
+            metrics_aggregation: Duration::from_millis(88),
+            ..TEST_DELAYS
+        });
+        expect_scheduled(
+            &scheduler,
+            TelemetryActions::FlushMetricAggregate,
+            scheduler.delays.metrics_aggregation,
+        );
+        scheduler.flush_aggreg_done();
+        expect_scheduled(
+            &scheduler,
+            TelemetryActions::FlushMetricAggregate,
+            scheduler.delays.metrics_aggregation,
         );
     }
 }
