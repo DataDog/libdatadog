@@ -26,6 +26,18 @@ fn main() {
     )
     .run();
 
+    let test_telemetry_ping_metric = handle.register_metric_context(
+        "test_telemetry.ping".into(),
+        Vec::new(),
+        data::metrics::MetricType::Count,
+        false,
+        data::metrics::MetricNamespace::Trace,
+    );
+
+    handle
+        .add_point(1.0, &test_telemetry_ping_metric, Vec::new())
+        .unwrap();
+
     handle.send_start().unwrap();
     std::thread::sleep(std::time::Duration::from_secs(10));
 
@@ -52,6 +64,10 @@ fn main() {
             data::LogLevel::Error,
             Some("At line 56".into()),
         )
+        .unwrap();
+
+    handle
+        .add_point(1.0, &test_telemetry_ping_metric, Vec::new())
         .unwrap();
 
     // About 200ms (the time it takes to send a app-closing request)
