@@ -11,7 +11,7 @@ pub struct Serie {
     pub tags: Vec<String>,
     pub common: bool,
     #[serde(rename = "type")]
-    pub _type: MetricType
+    pub _type: MetricType,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]

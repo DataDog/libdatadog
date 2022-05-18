@@ -19,8 +19,8 @@ pub mod comms;
 pub mod config;
 pub mod data;
 pub mod info;
-pub mod worker;
 pub mod metrics;
+pub mod worker;
 
 const DEFAULT_API_VERSION: data::ApiVersion = data::ApiVersion::V1;
 

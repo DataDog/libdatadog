@@ -65,7 +65,7 @@ pub struct MetricBuckets {
 }
 
 impl MetricBuckets {
-    pub fn flush_agregates<'a>(&mut self) {
+    pub fn flush_agregates(&mut self) {
         let timestamp = unix_timestamp_now();
         for (key, bucket) in self.buckets.drain() {
             self.series
@@ -75,9 +75,9 @@ impl MetricBuckets {
         }
     }
 
-    pub fn flush_series<'a>(
-        &'a mut self,
-    ) -> impl Iterator<Item = (ContextKey, Vec<String>, Vec<(u64, f64)>)> + 'a {
+    pub fn flush_series(
+        &mut self,
+    ) -> impl Iterator<Item = (ContextKey, Vec<String>, Vec<(u64, f64)>)> + '_ {
         self.series.drain().map(
             |(
                 BucketKey {
@@ -91,19 +91,19 @@ impl MetricBuckets {
 
     pub fn add_point(
         &mut self,
-        key: ContextKey,
+        context_key: ContextKey,
         contexts: &MetricContexts,
         point: f64,
         extra_tags: Vec<String>,
     ) {
         let bucket_key = BucketKey {
-            context_key: key,
-            extra_tags: extra_tags,
+            context_key,
+            extra_tags,
         };
         self.buckets
             .entry(bucket_key)
             .or_insert_with(|| {
-                let metric_type = contexts.get_metric_type(key).unwrap();
+                let metric_type = contexts.get_metric_type(context_key).unwrap();
                 MetricBucket::new(metric_type)
             })
             .add_point(point)
