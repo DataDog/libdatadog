@@ -7,10 +7,7 @@ use std::future;
 use std::io::Cursor;
 use std::str::FromStr;
 
-use ddcommon::{
-    container_id::get_container_id,
-    tag::Tag,
-};
+use ddcommon::{container_id::get_container_id, tag::Tag};
 
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};

@@ -454,12 +454,7 @@ impl TelemetryWorkerHandle {
         Ok(())
     }
 
-    pub fn add_point(
-        &self,
-        value: f64,
-        context: &ContextKey,
-        extra_tags: Vec<Tag>,
-    ) -> Result<()> {
+    pub fn add_point(&self, value: f64, context: &ContextKey, extra_tags: Vec<Tag>) -> Result<()> {
         self.sender
             .try_send(TelemetryActions::AddPoint((value, *context, extra_tags)))?;
         Ok(())
