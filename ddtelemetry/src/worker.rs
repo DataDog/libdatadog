@@ -21,6 +21,7 @@ use std::{
 };
 
 use anyhow::Result;
+use ddcommon::tag::Tag;
 use reqwest::{blocking, header};
 
 macro_rules! telemetry_worker_log {
@@ -38,7 +39,7 @@ macro_rules! telemetry_worker_log {
 
 #[derive(Debug)]
 pub enum TelemetryActions {
-    AddPoint((f64, ContextKey, Vec<String>)),
+    AddPoint((f64, ContextKey, Vec<Tag>)),
     FlushMetricAggregate,
     SendMetrics,
 
@@ -384,7 +385,7 @@ impl TelemetryWorkerHandle {
     pub fn register_metric_context(
         &self,
         name: String,
-        tags: Vec<String>,
+        tags: Vec<Tag>,
         metric_type: data::metrics::MetricType,
         common: bool,
         namespace: data::metrics::MetricNamespace,
@@ -457,7 +458,7 @@ impl TelemetryWorkerHandle {
         &self,
         value: f64,
         context: &ContextKey,
-        extra_tags: Vec<String>,
+        extra_tags: Vec<Tag>,
     ) -> Result<()> {
         self.sender
             .try_send(TelemetryActions::AddPoint((value, *context, extra_tags)))?;

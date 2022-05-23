@@ -7,6 +7,8 @@ use std::{
     time,
 };
 
+use ddcommon::tag::Tag;
+
 use crate::data;
 
 fn unix_timestamp_now() -> u64 {
@@ -58,7 +60,7 @@ pub struct ContextKey(usize);
 #[derive(Debug, PartialEq, Eq, Hash)]
 struct BucketKey {
     context_key: ContextKey,
-    extra_tags: Vec<String>,
+    extra_tags: Vec<Tag>,
 }
 
 #[derive(Debug, Default)]
@@ -73,14 +75,14 @@ impl MetricBuckets {
         for (key, bucket) in self.buckets.drain() {
             self.series
                 .entry(key)
-                .or_insert(Vec::new())
+                .or_insert_with(Vec::new)
                 .push((timestamp, bucket.value()))
         }
     }
 
     pub fn flush_series(
         &mut self,
-    ) -> impl Iterator<Item = (ContextKey, Vec<String>, Vec<(u64, f64)>)> + '_ {
+    ) -> impl Iterator<Item = (ContextKey, Vec<Tag>, Vec<(u64, f64)>)> + '_ {
         self.series.drain().map(
             |(
                 BucketKey {
@@ -97,7 +99,7 @@ impl MetricBuckets {
         context_key: ContextKey,
         contexts: &MetricContexts,
         point: f64,
-        extra_tags: Vec<String>,
+        extra_tags: Vec<Tag>,
     ) {
         let bucket_key = BucketKey {
             context_key,
@@ -117,7 +119,7 @@ impl MetricBuckets {
 pub struct MetricContext {
     pub namespace: data::metrics::MetricNamespace,
     pub name: String,
-    pub tags: Vec<String>,
+    pub tags: Vec<Tag>,
     pub metric_type: data::metrics::MetricType,
     pub common: bool,
 }
@@ -147,7 +149,7 @@ impl MetricContexts {
     pub fn register_metric_context(
         &self,
         name: String,
-        tags: Vec<String>,
+        tags: Vec<Tag>,
         metric_type: data::metrics::MetricType,
         common: bool,
         namespace: data::metrics::MetricNamespace,

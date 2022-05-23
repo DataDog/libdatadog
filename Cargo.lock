@@ -111,6 +111,7 @@ dependencies = [
  "lazy_static",
  "maplit",
  "regex",
+ "serde",
 ]
 
 [[package]]
@@ -155,6 +156,7 @@ name = "ddprof-ffi"
 version = "0.6.0"
 dependencies = [
  "chrono",
+ "ddcommon",
  "ddprof-exporter",
  "ddprof-profiles",
  "hyper",

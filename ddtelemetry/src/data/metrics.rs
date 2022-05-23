@@ -1,20 +1,21 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use ddcommon::tag::Tag;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 pub struct Serie {
     pub namespace: MetricNamespace,
     pub metric: String,
     pub points: Vec<(u64, f64)>,
-    pub tags: Vec<String>,
+    pub tags: Vec<Tag>,
     pub common: bool,
     #[serde(rename = "type")]
     pub _type: MetricType,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Debug, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricNamespace {
     Trace,

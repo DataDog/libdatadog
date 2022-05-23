@@ -6,7 +6,7 @@
 
 use crate::{AsBytes, ByteSlice, CharSlice, Slice, Timespec};
 use ddprof_exporter as exporter;
-use ddprof_exporter::Tag;
+use ddcommon::tag::Tag;
 use exporter::ProfileExporterV3;
 use std::borrow::Cow;
 use std::error::Error;
