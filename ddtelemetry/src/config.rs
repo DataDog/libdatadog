@@ -72,7 +72,7 @@ impl Config {
             api_key,
             agent_url,
             telemetry_url,
-            telemetry_debug_logging_enabled: false,
+            telemetry_debug_logging_enabled: true,
         }
     }
 
