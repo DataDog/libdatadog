@@ -4,7 +4,10 @@
 use std::borrow::Cow;
 use std::fmt::{Debug, Display, Formatter};
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+use serde::Serialize;
+
+#[derive(Clone, Eq, PartialEq, Hash, Serialize)]
+#[serde(transparent)]
 pub struct Tag {
     value: Cow<'static, str>,
 }
@@ -113,7 +116,7 @@ pub fn parse_tags(str: &str) -> (Vec<Tag>, Option<String>) {
 
 #[cfg(test)]
 mod tests {
-    use crate::{parse_tags, Tag};
+    use super::{parse_tags, Tag};
 
     #[test]
     fn test_empty_key() {

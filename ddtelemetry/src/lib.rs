@@ -1,6 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 #![allow(clippy::mutex_atomic)]
+#![allow(clippy::nonminimal_bool)]
 
 use std::{
     sync::atomic::{AtomicU64, Ordering},
@@ -19,6 +20,7 @@ pub mod comms;
 pub mod config;
 pub mod data;
 pub mod info;
+pub mod metrics;
 pub mod worker;
 
 const DEFAULT_API_VERSION: data::ApiVersion = data::ApiVersion::V1;

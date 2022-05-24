@@ -16,6 +16,7 @@ crate-type = ["staticlib", "cdylib"]
 chrono = "0.4"
 ddprof-exporter = { path = "../ddprof-exporter", version = "0.7.0-rc.1" }
 ddprof-profiles = { path = "../ddprof-profiles", version = "0.7.0-rc.1" }
+ddcommon = { path = "../ddcommon", version = "0.7.0-rc.1" }
 libc = "0.2"
 hyper = { version = "0.14", default-features = false }
 tokio-util = "0.7.1"

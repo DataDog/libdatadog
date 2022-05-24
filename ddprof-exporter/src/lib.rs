@@ -7,6 +7,8 @@ use std::future;
 use std::io::Cursor;
 use std::str::FromStr;
 
+use ddcommon::{container_id::get_container_id, tag::Tag};
+
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
 use hyper::header::HeaderValue;
@@ -17,9 +19,6 @@ use tokio_util::sync::CancellationToken;
 
 mod connector;
 mod errors;
-pub mod tag;
-
-pub use tag::*;
 
 #[cfg(unix)]
 pub use connector::uds::socket_path_to_uri;
@@ -219,7 +218,7 @@ impl ProfileExporterV3 {
             );
         }
 
-        if let Some(container_id) = ddcommon::container_id::get_container_id() {
+        if let Some(container_id) = get_container_id() {
             builder = builder.header(DATADOG_CONTAINER_ID_HEADER, container_id);
         }
 
