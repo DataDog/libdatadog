@@ -180,3 +180,129 @@ impl MetricContexts {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::fmt::Debug;
+
+    use super::*;
+    use crate::data::metrics::{MetricNamespace, MetricType};
+
+    macro_rules! assert_approx_eq {
+        ($a:expr, $b:expr) => {{
+            let (a, b) = (&$a, &$b);
+            assert!(
+                (*a - *b).abs() < 1.0e-6,
+                "{} is not approximately equal to {}",
+                *a,
+                *b
+            );
+        }};
+    }
+
+    // Test util used to run assertions against an unsorted list
+    fn check_iter<'a, U: 'a + Debug, T: Iterator<Item = &'a U>>(
+        elems: T,
+        assertions: &[&dyn Fn(&U) -> bool],
+    ) {
+        let used = vec![false; assertions.len()];
+        for e in elems {
+            let mut found = false;
+            for (i, &a) in assertions.iter().enumerate() {
+                if a(e) {
+                    if used[i] {
+                        panic!("Assertion {} has been used multiple times", i);
+                    }
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                panic!("No assertion found for elem {:?}", e)
+            }
+        }
+    }
+
+    #[test]
+    fn test_bucket_flushes() {
+        let mut buckets = MetricBuckets::default();
+        let contexts = MetricContexts::default();
+
+        let context_key_1 = contexts.register_metric_context(
+            "metric1".into(),
+            Vec::new(),
+            MetricType::Gauge,
+            false,
+            MetricNamespace::Trace,
+        );
+        let context_key_2 = contexts.register_metric_context(
+            "metric2".into(),
+            Vec::new(),
+            MetricType::Gauge,
+            false,
+            MetricNamespace::Trace,
+        );
+        let extra_tags = vec![Tag::from_value("service:foobar").unwrap()];
+
+        buckets.add_point(context_key_1, &contexts, 0.1, Vec::new());
+        buckets.add_point(context_key_1, &contexts, 0.2, Vec::new());
+        assert_eq!(buckets.buckets.len(), 1);
+
+        buckets.add_point(context_key_2, &contexts, 0.3, Vec::new());
+        assert_eq!(buckets.buckets.len(), 2);
+
+        buckets.add_point(context_key_2, &contexts, 0.4, extra_tags.clone());
+        assert_eq!(buckets.buckets.len(), 3);
+
+        buckets.flush_agregates();
+        assert_eq!(buckets.buckets.len(), 0);
+        assert_eq!(buckets.series.len(), 3);
+
+        buckets.add_point(context_key_1, &contexts, 0.5, Vec::new());
+        buckets.add_point(context_key_2, &contexts, 0.6, extra_tags);
+        assert_eq!(buckets.buckets.len(), 2);
+
+        buckets.flush_agregates();
+        assert_eq!(buckets.buckets.len(), 0);
+        assert_eq!(buckets.series.len(), 3);
+
+        let series: Vec<_> = buckets.flush_series().collect();
+        assert_eq!(buckets.buckets.len(), 0);
+        assert_eq!(buckets.series.len(), 0);
+        assert_eq!(series.len(), 3);
+
+        dbg!(&series);
+
+        check_iter(
+            series.iter(),
+            &[
+                &|(c, t, points)| {
+                    if !(c == &context_key_1 && t.is_empty()) {
+                        return false;
+                    }
+                    assert_eq!(points.len(), 2);
+                    assert_approx_eq!(points[0].1, 0.2);
+                    assert_approx_eq!(points[1].1, 0.5);
+                    true
+                },
+                &|(c, t, points)| {
+                    if !(c == &context_key_2 && t.is_empty()) {
+                        return false;
+                    }
+                    assert_eq!(points.len(), 1);
+                    assert_approx_eq!(points[0].1, 0.3);
+                    true
+                },
+                &|(c, t, points)| {
+                    if !(c == &context_key_2 && !t.is_empty()) {
+                        return false;
+                    }
+                    assert_eq!(points.len(), 2);
+                    assert_approx_eq!(points[0].1, 0.4);
+                    assert_approx_eq!(points[1].1, 0.6);
+                    true
+                },
+            ],
+        );
+    }
+}

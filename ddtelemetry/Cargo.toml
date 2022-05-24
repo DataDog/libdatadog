@@ -23,3 +23,7 @@ uuid = {version = "0.8.2", features = ["v4"]}
 
 [dev-dependencies]
 tokio = {version = "1.17", features = ["macros"]}
+
+[[bin]]
+name = "tm-worker-test"
+path = "examples/tm-worker-test.rs"

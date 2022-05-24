@@ -1,6 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use ddcommon::tag::Tag;
 use ddtelemetry::{data, worker};
 
 macro_rules! timeit {
@@ -33,13 +34,20 @@ fn main() {
         false,
         data::metrics::MetricNamespace::Trace,
     );
+    handle.send_start().unwrap();
 
     handle
         .add_point(1.0, &test_telemetry_ping_metric, Vec::new())
         .unwrap();
 
-    handle.send_start().unwrap();
-    std::thread::sleep(std::time::Duration::from_secs(10));
+    let tags = vec![Tag::from_value("foo:bar").unwrap()];
+    handle
+        .add_point(2.0, &test_telemetry_ping_metric, tags)
+        .unwrap();
+
+    timeit!("sleep", {
+        std::thread::sleep(std::time::Duration::from_secs(20));
+    });
 
     handle
         .add_log(
@@ -67,7 +75,7 @@ fn main() {
         .unwrap();
 
     handle
-        .add_point(1.0, &test_telemetry_ping_metric, Vec::new())
+        .add_point(2.0, &test_telemetry_ping_metric, Vec::new())
         .unwrap();
 
     // About 200ms (the time it takes to send a app-closing request)

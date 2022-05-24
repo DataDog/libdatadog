@@ -161,10 +161,12 @@ impl TelemetryWorker {
                     if !self.data.started {
                         return;
                     }
+                    self.data.metric_buckets.flush_agregates();
                     // TODO: do concurrently when we switch to async implem
                     self.flush_deps();
                     self.flush_intgs();
                     self.flush_logs();
+                    self.flush_series();
                     let res = self.send_app_stop();
                     self.handle_result(res);
                     return;
@@ -183,8 +185,7 @@ impl TelemetryWorker {
                     self.deadlines.flush_aggreg_done();
                 }
                 SendMetrics => {
-                    let res = self.flush_series();
-                    self.handle_result(res);
+                    self.flush_series();
                     self.deadlines.send_metrics_done();
                 }
             }
@@ -215,7 +216,7 @@ impl TelemetryWorker {
         }
     }
 
-    fn flush_series(&mut self) -> Result<()> {
+    fn flush_series(&mut self) {
         let mut series = Vec::new();
         for (context_key, extra_tags, points) in self.data.metric_buckets.flush_series() {
             let context_guard = self.data.metric_contexts.get_context(context_key);
@@ -243,13 +244,14 @@ impl TelemetryWorker {
             });
         }
         if series.is_empty() {
-            return Ok(());
+            return;
         }
-        self.send_payload(data::Payload::GenerateMetrics(data::GenerateMetrics {
+        let res = self.send_payload(data::Payload::GenerateMetrics(data::GenerateMetrics {
             lib_language: self.data.app.language_name.clone(),
             lib_version: self.data.app.tracer_version.clone(),
             series,
-        }))
+        }));
+        self.handle_result(res);
     }
 
     fn send_heartbeat(&mut self) -> Result<()> {
