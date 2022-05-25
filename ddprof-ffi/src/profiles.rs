@@ -417,14 +417,18 @@ pub unsafe extern "C" fn ddprof_ffi_Vec_u8_as_slice(vec: &crate::Vec<u8>) -> Sli
 ///
 /// # Arguments
 /// * `profile` - A mutable reference to the profile to be reset.
-/// * `time` - The time of the profile (after reset).
+/// * `time` - The time of the profile (after reset). Pass None/null to use the current time.
+///
+/// # Safety
+/// The `profile` must meet all the requirements of a mutable reference to the profile. Given this
+/// can be called across an FFI boundary, the compiler cannot enforce this.
+/// If `time` is not null, it must point to a valid Timespec object.
 #[no_mangle]
-pub extern "C" fn ddprof_ffi_Profile_reset(
+pub unsafe extern "C" fn ddprof_ffi_Profile_reset(
     profile: &mut ddprof_profiles::Profile,
-    time: Timespec,
+    time: Option<&Timespec>,
 ) -> bool {
-    let time = SystemTime::from(time);
-    profile.reset(Some(time)).is_some()
+    profile.reset(time.map(SystemTime::from)).is_some()
 }
 
 #[cfg(test)]
