@@ -753,11 +753,15 @@ mod api_test {
         let (value, period_type) = profile.period.expect("profile to have a period");
         assert_eq!(value, period.unwrap().0);
         assert_eq!(
-            profile.get_string(period_type.r#type).expect("string to be found"),
+            profile
+                .get_string(period_type.r#type)
+                .expect("string to be found"),
             "wall-time"
         );
         assert_eq!(
-            profile.get_string(period_type.unit).expect("string to be found"),
+            profile
+                .get_string(period_type.unit)
+                .expect("string to be found"),
             "nanoseconds"
         );
     }

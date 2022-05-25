@@ -6,7 +6,7 @@ use ddprof_profiles as profiles;
 use std::convert::{TryFrom, TryInto};
 use std::error::Error;
 use std::str::Utf8Error;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -370,14 +370,35 @@ pub enum SerializeResult {
 /// * `profile` - a reference to the profile being serialized.
 ///
 /// # Safety
+/// The `profile` must point to a valid profile object.
 /// The `end_time` must be null or otherwise point to a valid TimeSpec object.
 #[no_mangle]
 pub unsafe extern "C" fn ddprof_ffi_Profile_serialize(
     profile: &ddprof_profiles::Profile,
+    end_time: Option<&Timespec>,
 ) -> SerializeResult {
-    match || -> Result<_, Box<dyn Error>> { Ok(profile.serialize(None)?) }() {
+    let end_time = end_time.map(SystemTime::from);
+    match || -> Result<_, Box<dyn Error>> { Ok(profile.serialize(end_time)?) }() {
         Ok(ok) => SerializeResult::Ok(ok.into()),
         Err(err) => SerializeResult::Err(err.into()),
+    }
+}
+
+/// Sets the profile's duration. If the `duration_nanos` is negative, then the duration will be set
+/// to None/zero.
+///
+/// # Safety
+/// The `profile` must meet all the requirements to be a valid mutable reference.
+#[no_mangle]
+pub unsafe extern "C" fn ddprof_ffi_Profile_set_duration(
+    profile: &mut ddprof_profiles::Profile,
+    duration_nanos: i64,
+) {
+    if duration_nanos < 0 {
+        profile.set_duration(None);
+    } else {
+        let duration = Duration::from_nanos(duration_nanos as u64);
+        profile.set_duration(Some(duration));
     }
 }
 
