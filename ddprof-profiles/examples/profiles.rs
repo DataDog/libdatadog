@@ -4,6 +4,7 @@
 use ddprof_profiles::{api, Profile};
 use std::io::Write;
 use std::process::exit;
+use std::time::Instant;
 
 // Keep this in-sync with profiles.c
 fn main() {
@@ -59,10 +60,13 @@ fn main() {
         labels: vec![],
     };
 
+    // Not setting .time intentionally to use the current time.
     let mut profile: Profile = Profile::builder()
         .sample_types(sample_types)
         .period(Some(period))
         .build();
+
+    let started = Instant::now();
 
     match profile.add(sample) {
         Ok(id) => {
@@ -71,6 +75,9 @@ fn main() {
         }
         Err(_) => exit(1),
     }
+
+    let duration = started.elapsed();
+    profile.set_duration(Some(duration));
 
     match profile.serialize(None) {
         Ok(encoded_profile) => {
