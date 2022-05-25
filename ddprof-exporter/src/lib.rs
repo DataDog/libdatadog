@@ -6,6 +6,8 @@ use std::error::Error;
 use std::future;
 use std::io::Cursor;
 
+use ddcommon::tag::Tag;
+
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
 pub use hyper::Uri;
@@ -16,9 +18,7 @@ use tokio_util::sync::CancellationToken;
 use ddcommon::{connector, HttpClient, HttpResponse};
 pub mod config;
 mod errors;
-pub mod tag;
 pub use ddcommon::Endpoint;
-pub use tag::*;
 
 #[cfg(unix)]
 pub use connector::uds::socket_path_to_uri;
@@ -152,7 +152,6 @@ impl ProfileExporterV3 {
             .endpoint
             .into_request_builder(concat!("DDProf/", env!("CARGO_PKG_VERSION")))?
             .method(http::Method::POST)
-            .header("User-Agent", concat!("DDProf/", env!("CARGO_PKG_VERSION")))
             .header("Connection", "close");
 
         Ok(

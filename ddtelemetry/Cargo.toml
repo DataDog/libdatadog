@@ -30,3 +30,9 @@ required-features = ["tracing"]
 [dev-dependencies]
 tokio = {version = "1.17", features = ["macros", "rt-multi-thread"]}
 tracing-subscriber = {version = "0.3.11"}
+
+[[bin]]
+name = "tm-worker-test"
+path = "examples/tm-worker-test.rs"
+required-features = ["tracing"]
+# TODO ?

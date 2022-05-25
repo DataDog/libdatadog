@@ -5,8 +5,8 @@
 #![allow(clippy::box_vec)]
 
 use crate::{AsBytes, ByteSlice, CharSlice, Slice, Timespec};
+use ddcommon::tag::Tag;
 use ddprof_exporter as exporter;
-use ddprof_exporter::Tag;
 use exporter::ProfileExporterV3;
 use std::borrow::Cow;
 use std::error::Error;

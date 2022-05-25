@@ -2,8 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2022-Present Datadog, Inc.
 
 use crate::{AsBytes, CharSlice};
-use ddprof_exporter::parse_tags;
-use ddprof_exporter::tag::Tag;
+use ddcommon::tag::{parse_tags, Tag};
 
 #[must_use]
 #[no_mangle]

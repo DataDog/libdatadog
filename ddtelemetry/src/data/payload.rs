@@ -2,9 +2,9 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use crate::data::*;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 #[serde(tag = "request_type", content = "payload")]
 pub enum Payload {
     #[serde(rename = "app-started")]

@@ -3,6 +3,7 @@
 
 use std::{error::Error, time::Duration};
 
+use ddcommon::tag::Tag;
 use ddtelemetry::{data, worker};
 use tokio::time::Instant;
 use tracing::Level;
@@ -34,8 +35,27 @@ fn main() -> Result<(), Box<dyn Error>> {
     )
     .run()?;
 
+    let test_telemetry_ping_metric = handle.register_metric_context(
+        "test_telemetry.ping".into(),
+        Vec::new(),
+        data::metrics::MetricType::Count,
+        false,
+        data::metrics::MetricNamespace::Trace,
+    );
     handle.send_start().unwrap();
-    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    handle
+        .add_point(1.0, &test_telemetry_ping_metric, Vec::new())
+        .unwrap();
+
+    let tags = vec![Tag::from_value("foo:bar").unwrap()];
+    handle
+        .add_point(2.0, &test_telemetry_ping_metric, tags)
+        .unwrap();
+
+    timeit!("sleep", {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    });
 
     handle
         .add_log(
@@ -60,6 +80,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             data::LogLevel::Error,
             Some("At line 56".into()),
         )
+        .unwrap();
+
+    handle
+        .add_point(2.0, &test_telemetry_ping_metric, Vec::new())
         .unwrap();
 
     // About 200ms (the time it takes to send a app-closing request)

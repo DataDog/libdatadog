@@ -7,6 +7,7 @@ use hyper::header::HeaderValue;
 
 pub mod connector;
 pub mod container_id;
+pub mod tag;
 
 pub mod header {
     pub const DATADOG_CONTAINER_ID: &str = "Datadog-Container-ID";
