@@ -23,7 +23,7 @@ impl fmt::Display for Error {
                 "cannot establish requested secure TLS connection"
             }
             Self::NoValidCertifacteRootsFound => {
-                "native tls couldn't find any valid certifacte roots"
+                "missing or not valid system HTTPS/TLS certificate roots"
             }
         })
     }
