@@ -21,7 +21,7 @@ use std::{
 
 use anyhow::Result;
 use ddcommon::HttpClient;
-use futures::{future::{self, join_all}, Future, FutureExt};
+use futures::{future, Future, FutureExt};
 use http::Request;
 
 use tokio::{runtime::Runtime, sync::mpsc, time::Instant};
@@ -184,18 +184,16 @@ impl TelemetryWorker {
                     if !self.data.started {
                         return;
                     }
-                    let deps = self.send_dependencies_loaded();
-                    let intgs = self.send_integrations_change();
-                    let stop = self.send_app_stop();
-                    let mut fs = vec![deps.boxed(), intgs.boxed(), stop.boxed()];
+                    let mut futures = vec![self.send_dependencies_loaded().boxed(), self.send_integrations_change().boxed(), self.send_app_stop().boxed()];
 
                     self.data.metric_buckets.flush_agregates();
                     if let Some(series) = self.send_metrics_series() {
-                        fs.push(series.boxed());
+                        futures.push(series.boxed());
                     };
 
-                    let res = join_all(fs).await;
+                    let res = future::join_all(futures).await;
                     res.iter().for_each(|r| self.handle_result(r));
+
                     return;
                 }
                 AddPoint((point, key, extra_tags)) => {
@@ -788,7 +786,6 @@ impl Scheduler {
     }
 
     fn next_deadline(&self) -> Option<(time::Instant, TelemetryActions)> {
-        // Unwrap safe because there always is the heartbeat in the iterator
         self.deadlines().min_by_key(|(d, _)| *d)
     }
 
