@@ -26,5 +26,5 @@ If possible, add logs and screenshots to help explain your problem, or even bett
 **Additional context**
 Add any other context about the problem here.
 
-**How does `libddprof` help you?**
-Optionally, tell us why you're using `libddprof`, and what your overall experience with it is!
+**How does `libdatadog` help you?**
+Optionally, tell us why you're using `libdatadog`, and what your overall experience with it is!
