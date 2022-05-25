@@ -72,7 +72,7 @@ fn main() {
         Err(_) => exit(1),
     }
 
-    match profile.serialize() {
+    match profile.serialize(None) {
         Ok(encoded_profile) => {
             let buffer = &encoded_profile.buffer;
             assert!(buffer.len() > 100);

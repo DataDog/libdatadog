@@ -43,7 +43,7 @@ int main(int argc, char *argv[]) {
   const ddprof_ffi_Slice_value_type sample_types = {&wall_time, 1};
   const ddprof_ffi_Period period = {wall_time, 60};
   std::unique_ptr<ddprof_ffi_Profile, Deleter> profile{
-      ddprof_ffi_Profile_new(sample_types, &period)};
+      ddprof_ffi_Profile_new(sample_types, &period, nullptr)};
 
   ddprof_ffi_Line root_line = {
       .function =
@@ -121,10 +121,9 @@ int main(int argc, char *argv[]) {
       exporter, encoded_profile->start, encoded_profile->end, files, nullptr,
       30000);
 
-  ddprof_ffi_CancellationToken *cancel =
-    ddprof_ffi_CancellationToken_new();
+  ddprof_ffi_CancellationToken *cancel = ddprof_ffi_CancellationToken_new();
   ddprof_ffi_CancellationToken *cancel_for_background_thread =
-    ddprof_ffi_CancellationToken_clone(cancel);
+      ddprof_ffi_CancellationToken_clone(cancel);
 
   // As an example of CancellationToken usage, here we create a background
   // thread that sleeps for some time and then cancels a request early (e.g.

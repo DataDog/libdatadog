@@ -6,6 +6,7 @@ use ddprof_profiles as profiles;
 use std::convert::{TryFrom, TryInto};
 use std::error::Error;
 use std::str::Utf8Error;
+use std::time::SystemTime;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -286,6 +287,12 @@ impl<'a> TryFrom<Sample<'a>> for profiles::api::Sample<'a> {
 
 /// Create a new profile with the given sample types. Must call
 /// `ddprof_ffi_Profile_free` when you are done with the profile.
+///
+/// # Arguments
+/// * `sample_types`
+/// * `period` - Optional period of the profile. Passing None/null translates to zero values.
+/// * `time` - Optional time the profile started at. Passing None/null will use the current time.
+///
 /// # Safety
 /// All slices must be have pointers that are suitably aligned for their type
 /// and must have the correct number of elements for the slice.
@@ -294,12 +301,15 @@ impl<'a> TryFrom<Sample<'a>> for profiles::api::Sample<'a> {
 pub unsafe extern "C" fn ddprof_ffi_Profile_new(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
+    time: Option<&Timespec>,
 ) -> Box<ddprof_profiles::Profile> {
     let types: Vec<ddprof_profiles::api::ValueType> =
         sample_types.into_slice().iter().map(Into::into).collect();
+
     let builder = ddprof_profiles::Profile::builder()
+        .period(period.map(Into::into))
         .sample_types(types)
-        .period(period.map(Into::into));
+        .time(time.map(SystemTime::from));
 
     Box::new(builder.build())
 }
@@ -338,14 +348,12 @@ pub struct EncodedProfile {
     buffer: crate::Vec<u8>,
 }
 
-impl TryFrom<ddprof_profiles::EncodedProfile> for EncodedProfile {
-    type Error = Box<dyn Error>;
-
-    fn try_from(value: ddprof_profiles::EncodedProfile) -> Result<Self, Self::Error> {
-        let start = value.start.try_into()?;
-        let end = value.end.try_into()?;
+impl From<ddprof_profiles::EncodedProfile> for EncodedProfile {
+    fn from(value: ddprof_profiles::EncodedProfile) -> Self {
+        let start = value.start.into();
+        let end = value.end.into();
         let buffer = value.buffer.into();
-        Ok(Self { start, end, buffer })
+        Self { start, end, buffer }
     }
 }
 
@@ -357,21 +365,24 @@ pub enum SerializeResult {
 
 /// Serialize the aggregated profile. Don't forget to clean up the result by
 /// calling ddprof_ffi_SerializeResult_drop.
+///
+/// # Arguments
+/// * `profile` - a reference to the profile being serialized.
+///
+/// # Safety
+/// The `end_time` must be null or otherwise point to a valid TimeSpec object.
 #[no_mangle]
-#[must_use]
-pub extern "C" fn ddprof_ffi_Profile_serialize(
+pub unsafe extern "C" fn ddprof_ffi_Profile_serialize(
     profile: &ddprof_profiles::Profile,
 ) -> SerializeResult {
-    match || -> Result<EncodedProfile, Box<dyn Error>> { profile.serialize()?.try_into() }() {
-        Ok(ok) => SerializeResult::Ok(ok),
+    match || -> Result<_, Box<dyn Error>> { Ok(profile.serialize(None)?) }() {
+        Ok(ok) => SerializeResult::Ok(ok.into()),
         Err(err) => SerializeResult::Err(err.into()),
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddprof_ffi_SerializeResult_drop(result: SerializeResult) {
-    std::mem::drop(result)
-}
+pub unsafe extern "C" fn ddprof_ffi_SerializeResult_drop(_result: SerializeResult) {}
 
 #[must_use]
 #[no_mangle]
@@ -382,9 +393,17 @@ pub unsafe extern "C" fn ddprof_ffi_Vec_u8_as_slice(vec: &crate::Vec<u8>) -> Sli
 /// Resets all data in `profile` except the sample types and period. Returns
 /// true if it successfully reset the profile and false otherwise. The profile
 /// remains valid if false is returned.
+///
+/// # Arguments
+/// * `profile` - A mutable reference to the profile to be reset.
+/// * `time` - The time of the profile (after reset).
 #[no_mangle]
-pub extern "C" fn ddprof_ffi_Profile_reset(profile: &mut ddprof_profiles::Profile) -> bool {
-    profile.reset().is_some()
+pub extern "C" fn ddprof_ffi_Profile_reset(
+    profile: &mut ddprof_profiles::Profile,
+    time: Timespec,
+) -> bool {
+    let time = SystemTime::from(time);
+    profile.reset(Some(time)).is_some()
 }
 
 #[cfg(test)]
@@ -396,7 +415,7 @@ mod test {
     fn ctor_and_dtor() {
         unsafe {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
-            let profile = ddprof_ffi_Profile_new(Slice::new(sample_type, 1), None);
+            let profile = ddprof_ffi_Profile_new(Slice::new(sample_type, 1), None, None);
             ddprof_ffi_Profile_free(profile);
         }
     }
@@ -405,7 +424,7 @@ mod test {
     fn aggregate_samples() {
         unsafe {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
-            let mut profile = ddprof_ffi_Profile_new(Slice::new(sample_type, 1), None);
+            let mut profile = ddprof_ffi_Profile_new(Slice::new(sample_type, 1), None, None);
 
             let lines = &vec![Line {
                 function: Function {
@@ -454,7 +473,7 @@ mod test {
 
     unsafe fn provide_distinct_locations_ffi() -> ddprof_profiles::Profile {
         let sample_type: *const ValueType = &ValueType::new("samples", "count");
-        let mut profile = ddprof_ffi_Profile_new(Slice::new(sample_type, 1), None);
+        let mut profile = ddprof_ffi_Profile_new(Slice::new(sample_type, 1), None, None);
 
         let main_lines = vec![Line {
             function: Function {
