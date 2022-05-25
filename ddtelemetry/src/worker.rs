@@ -184,7 +184,11 @@ impl TelemetryWorker {
                     if !self.data.started {
                         return;
                     }
-                    let mut futures = vec![self.send_dependencies_loaded().boxed(), self.send_integrations_change().boxed(), self.send_app_stop().boxed()];
+                    let mut futures = vec![
+                        self.send_dependencies_loaded().boxed(),
+                        self.send_integrations_change().boxed(),
+                        self.send_app_stop().boxed(),
+                    ];
 
                     self.data.metric_buckets.flush_agregates();
                     if let Some(series) = self.send_metrics_series() {
@@ -254,7 +258,7 @@ impl TelemetryWorker {
         self.send_request(req).await
     }
 
-    fn send_metrics_series(&mut self) -> Option<impl Future<Output=Result<()>>> {
+    fn send_metrics_series(&mut self) -> Option<impl Future<Output = Result<()>>> {
         let mut series = Vec::new();
         for (context_key, extra_tags, points) in self.data.metric_buckets.flush_series() {
             let context_guard = self.data.metric_contexts.get_context(context_key);

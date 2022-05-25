@@ -4,7 +4,7 @@
 use std::error;
 use std::fmt;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
     InvalidUrl,
     OperationTimedOut,
