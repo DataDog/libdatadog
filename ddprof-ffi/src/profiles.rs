@@ -291,7 +291,8 @@ impl<'a> TryFrom<Sample<'a>> for profiles::api::Sample<'a> {
 /// # Arguments
 /// * `sample_types`
 /// * `period` - Optional period of the profile. Passing None/null translates to zero values.
-/// * `time` - Optional time the profile started at. Passing None/null will use the current time.
+/// * `start_time` - Optional time the profile started at. Passing None/null will use the current
+///                  time.
 ///
 /// # Safety
 /// All slices must be have pointers that are suitably aligned for their type
@@ -301,7 +302,7 @@ impl<'a> TryFrom<Sample<'a>> for profiles::api::Sample<'a> {
 pub unsafe extern "C" fn ddprof_ffi_Profile_new(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
-    time: Option<&Timespec>,
+    start_time: Option<&Timespec>,
 ) -> Box<ddprof_profiles::Profile> {
     let types: Vec<ddprof_profiles::api::ValueType> =
         sample_types.into_slice().iter().map(Into::into).collect();
@@ -309,7 +310,7 @@ pub unsafe extern "C" fn ddprof_ffi_Profile_new(
     let builder = ddprof_profiles::Profile::builder()
         .period(period.map(Into::into))
         .sample_types(types)
-        .time(time.map(SystemTime::from));
+        .time(start_time.map(SystemTime::from));
 
     Box::new(builder.build())
 }
@@ -318,9 +319,7 @@ pub unsafe extern "C" fn ddprof_ffi_Profile_new(
 /// # Safety
 /// The `profile` must point to an object created by another FFI routine in this
 /// module, such as `ddprof_ffi_Profile_with_sample_types`.
-pub extern "C" fn ddprof_ffi_Profile_free(profile: Box<ddprof_profiles::Profile>) {
-    std::mem::drop(profile)
-}
+pub unsafe extern "C" fn ddprof_ffi_Profile_free(_profile: Box<ddprof_profiles::Profile>) {}
 
 #[no_mangle]
 /// # Safety

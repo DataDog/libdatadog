@@ -82,12 +82,10 @@ pub struct Profile {
     functions: IndexSet<Function>,
     strings: IndexSet<String>,
     start_time: SystemTime,
-    duration: Option<Duration>,
     period: Option<(i64, ValueType)>,
 }
 
 pub struct ProfileBuilder<'a> {
-    duration: Option<Duration>,
     period: Option<api::Period<'a>>,
     sample_types: Vec<api::ValueType<'a>>,
     time: Option<SystemTime>,
@@ -96,16 +94,10 @@ pub struct ProfileBuilder<'a> {
 impl<'a> ProfileBuilder<'a> {
     pub fn new() -> Self {
         ProfileBuilder {
-            duration: None,
             period: None,
             sample_types: vec![],
             time: None,
         }
-    }
-
-    pub fn duration(mut self, duration: Duration) -> Self {
-        self.duration = Some(duration);
-        self
     }
 
     pub fn period(mut self, period: Option<api::Period<'a>>) -> Self {
@@ -125,8 +117,6 @@ impl<'a> ProfileBuilder<'a> {
 
     pub fn build(self) -> Profile {
         let mut profile = Profile::new(self.time.unwrap_or_else(SystemTime::now));
-
-        profile.duration = self.duration;
 
         profile.sample_types = self
             .sample_types
@@ -214,10 +204,9 @@ pub struct EncodedProfile {
 }
 
 impl Profile {
-    /// Creates a profile with "now" for the start time.
-    /// Initializes the string table to include the empty string.
-    /// All other fields are default.
-    pub fn new(time: SystemTime) -> Self {
+    /// Creates a profile with `start_time`. Initializes the string table to
+    /// include the empty string. All other fields are default.
+    pub fn new(start_time: SystemTime) -> Self {
         /* Do not use Profile's default() impl here or it will cause a stack
          * overflow, since that default impl calls this method.
          */
@@ -228,8 +217,7 @@ impl Profile {
             locations: Default::default(),
             functions: Default::default(),
             strings: Default::default(),
-            start_time: time,
-            duration: None,
+            start_time,
             period: None,
         };
 
@@ -445,9 +433,6 @@ impl Profile {
 
 impl From<&Profile> for pprof::Profile {
     fn from(profile: &Profile) -> Self {
-        let duration = profile.duration.unwrap_or(Duration::ZERO).as_nanos();
-        let duration_nanos: i64 = duration.min(i64::MAX as u128) as i64;
-
         let (period, period_type) = match profile.period {
             Some(tuple) => (tuple.0, Some(tuple.1)),
             None => (0, None),
@@ -507,7 +492,6 @@ impl From<&Profile> for pprof::Profile {
                 .map_or(0, |duration| {
                     duration.as_nanos().min(i64::MAX as u128) as i64
                 }),
-            duration_nanos,
             period,
             period_type,
             ..Default::default()
