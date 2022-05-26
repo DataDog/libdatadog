@@ -13,6 +13,8 @@ mkdir -v -p "$destdir/include/ddprof" "$destdir/lib/pkgconfig" "$destdir/cmake"
 version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < ddprof-ffi/Cargo.toml)
 target="$(rustc -vV | awk '/^host:/ { print $2 }')"
 shared_library_suffix=".so"
+static_library_suffix=".a"
+library_prefix="lib"
 remove_rpath=0
 fix_macos_rpath=0
 
@@ -32,6 +34,7 @@ case "$target" in
         # on alpine musl, Rust adds some weird runpath to cdylibs
         remove_rpath=1
         ;;
+
     "x86_64-apple-darwin")
         expected_native_static_libs=" -framework Security -framework CoreFoundation -liconv -lSystem -lresolv -lc -lm -liconv"
         native_static_libs="${expected_native_static_libs}"
@@ -39,10 +42,20 @@ case "$target" in
         # fix usage of library in macos via rpath
         fix_macos_rpath=1
         ;;
+
     "x86_64-unknown-linux-gnu"|"aarch64-unknown-linux-gnu")
         expected_native_static_libs=" -ldl -lrt -lpthread -lgcc_s -lc -lm -lrt -lpthread -lutil -ldl -lutil"
         native_static_libs=" -ldl -lrt -lpthread -lc -lm -lrt -lpthread -lutil -ldl -lutil"
         ;;
+
+    "x86_64-pc-windows-msvc")
+        expected_native_static_libs="" # I don't know what to expect
+        native_static_libs="" # I don't know what to expect
+        shared_library_suffix=".dll"
+        static_library_suffix=".lib"
+        library_prefix=""
+        ;;
+
     *)
         >&2 echo "Unknown platform '${target}'"
         exit 1
@@ -71,28 +84,31 @@ cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
 export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
-echo "Building the libddprof_ffi library (may take some time)..."
+echo "Building the ddprof_ffi library (may take some time)..."
 cargo build --release --target "${target}"
-cp -v "target/${target}/release/libddprof_ffi.a" "target/${target}/release/libddprof_ffi${shared_library_suffix}" "$destdir/lib/"
+
+shared_library_name="${library_prefix}ddprof_ffi${shared_library_suffix}"
+static_library_name="${library_prefix}ddprof_ffi${static_library_suffix}"
+cp -v "target/${target}/release/$static_library_name" "target/${target}/release/$shared_library_name" "$destdir/lib/"
 
 if [[ "$remove_rpath" -eq 1 ]]; then
-    patchelf --remove-rpath "$destdir/lib/libddprof_ffi${shared_library_suffix}"
+    patchelf --remove-rpath "$destdir/lib/${shared_library_name}"
 fi
 
 if [[ "$fix_macos_rpath" -eq 1 ]]; then
-    install_name_tool -id @rpath/libddprof_ffi${shared_library_suffix} "$destdir/lib/libddprof_ffi${shared_library_suffix}"
+    install_name_tool -id @rpath/${shared_library_name} "$destdir/lib/${shared_library_name}"
 fi
 
 # objcopy might not be available on macOS
 if command -v objcopy > /dev/null; then
     # Remove .llvmbc section which is not useful for clients
-    objcopy --remove-section .llvmbc "$destdir/lib/libddprof_ffi.a"
+    objcopy --remove-section .llvmbc "$destdir/lib/${static_library_name}"
 
     # Ship debug information separate from shared library, so that downstream packages can selectively include it
     # https://sourceware.org/gdb/onlinedocs/gdb/Separate-Debug-Files.html
-    objcopy --only-keep-debug "$destdir/lib/libddprof_ffi${shared_library_suffix}" "$destdir/lib/libddprof_ffi${shared_library_suffix}.debug"
-    strip -S "$destdir/lib/libddprof_ffi${shared_library_suffix}"
-    objcopy --add-gnu-debuglink="$destdir/lib/libddprof_ffi${shared_library_suffix}.debug" "$destdir/lib/libddprof_ffi${shared_library_suffix}"
+    objcopy --only-keep-debug "$destdir/lib/$shared_library_name" "$destdir/lib/$shared_library_name.debug"
+    strip -S "$destdir/lib/$shared_library_name"
+    objcopy --add-gnu-debuglink="$destdir/lib/$shared_library_name.debug" "$destdir/lib/$shared_library_name"
 fi
 
 echo "Checking that native-static-libs are as expected for this platform..."
