@@ -4,7 +4,6 @@
 use ddprof_profiles::{api, Profile};
 use std::io::Write;
 use std::process::exit;
-use std::time::Instant;
 
 // Keep this in-sync with profiles.c
 fn main() {
@@ -66,8 +65,6 @@ fn main() {
         .period(Some(period))
         .build();
 
-    let started = Instant::now();
-
     match profile.add(sample) {
         Ok(id) => {
             let index: u64 = id.into();
@@ -76,10 +73,7 @@ fn main() {
         Err(_) => exit(1),
     }
 
-    let duration = started.elapsed();
-    profile.set_duration(Some(duration));
-
-    match profile.serialize(None) {
+    match profile.serialize(None, None) {
         Ok(encoded_profile) => {
             let buffer = &encoded_profile.buffer;
             assert!(buffer.len() > 100);

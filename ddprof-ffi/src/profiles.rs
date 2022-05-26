@@ -368,37 +368,33 @@ pub enum SerializeResult {
 ///
 /// # Arguments
 /// * `profile` - a reference to the profile being serialized.
+/// * `end_time` - optional end time of the profile. If None/null is passed, the current time will
+///                be used.
+/// * `duration_nanos` - Optional duration of the profile. Passing None or a negative duration will
+///                      means the duration will based on the end time minus the start time, but
+///                      under anomalous conditions this may fail as system clocks can be adjusted,
+///                      or the programmer accidentally passed an earlier time. The duration of
+///                      the serialized profile will be set to zero for these cases.
 ///
 /// # Safety
 /// The `profile` must point to a valid profile object.
 /// The `end_time` must be null or otherwise point to a valid TimeSpec object.
+/// The `duration_nanos` must be null or otherwise point to a valid i64.
 #[no_mangle]
 pub unsafe extern "C" fn ddprof_ffi_Profile_serialize(
     profile: &ddprof_profiles::Profile,
     end_time: Option<&Timespec>,
+    duration_nanos: Option<&i64>,
 ) -> SerializeResult {
     let end_time = end_time.map(SystemTime::from);
-    match || -> Result<_, Box<dyn Error>> { Ok(profile.serialize(end_time)?) }() {
+    let duration = match duration_nanos {
+        None => None,
+        Some(x) if *x < 0 => None,
+        Some(x) => Some(Duration::from_nanos((*x) as u64)),
+    };
+    match || -> Result<_, Box<dyn Error>> { Ok(profile.serialize(end_time, duration)?) }() {
         Ok(ok) => SerializeResult::Ok(ok.into()),
         Err(err) => SerializeResult::Err(err.into()),
-    }
-}
-
-/// Sets the profile's duration. If the `duration_nanos` is negative, then the duration will be set
-/// to None/zero.
-///
-/// # Safety
-/// The `profile` must meet all the requirements to be a valid mutable reference.
-#[no_mangle]
-pub unsafe extern "C" fn ddprof_ffi_Profile_set_duration(
-    profile: &mut ddprof_profiles::Profile,
-    duration_nanos: i64,
-) {
-    if duration_nanos < 0 {
-        profile.set_duration(None);
-    } else {
-        let duration = Duration::from_nanos(duration_nanos as u64);
-        profile.set_duration(Some(duration));
     }
 }
 

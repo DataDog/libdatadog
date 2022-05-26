@@ -227,8 +227,8 @@ pub unsafe extern "C" fn profile_exporter_send(
     }
 }
 
-#[export_name = "ddprof_ffi_Request_drop"]
-pub extern "C" fn request_drop(_request: Option<Box<Request>>) {}
+#[no_mangle]
+pub extern "C" fn ddprof_ffi_Request_drop(_request: Option<Box<Request>>) {}
 
 fn unwrap_cancellation_token<'a>(
     cancel: Option<NonNull<CancellationToken>>,

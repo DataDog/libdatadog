@@ -73,7 +73,7 @@ int main(int argc, char *argv[]) {
   ddprof_ffi_Profile_add(profile.get(), sample);
 
   ddprof_ffi_SerializeResult serialize_result =
-      ddprof_ffi_Profile_serialize(profile.get());
+      ddprof_ffi_Profile_serialize(profile.get(), nullptr, nullptr);
   if (serialize_result.tag == DDPROF_FFI_SERIALIZE_RESULT_ERR) {
     print_error("Failed to serialize profile: ", serialize_result.err);
     return 1;

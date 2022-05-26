@@ -81,7 +81,7 @@ pub struct Profile {
     locations: IndexSet<Location>,
     functions: IndexSet<Function>,
     strings: IndexSet<String>,
-    time: SystemTime,
+    start_time: SystemTime,
     duration: Option<Duration>,
     period: Option<(i64, ValueType)>,
 }
@@ -228,7 +228,7 @@ impl Profile {
             locations: Default::default(),
             functions: Default::default(),
             strings: Default::default(),
-            time,
+            start_time: time,
             duration: None,
             period: None,
         };
@@ -406,23 +406,36 @@ impl Profile {
         Some(profile)
     }
 
-    /// Sets the duration of the prfi
-    pub fn set_duration(&mut self, duration: Option<Duration>) {
-        self.duration = duration;
-    }
+    /// Serialize the aggregated profile, adding the end time and duration.
+    /// # Arguments
+    /// * `end_time` - Optional end time of the profile. Passing None will use the current time.
+    /// * `duration` - Optional duration of the profile. Passing None will try to calculate the
+    ///                duration based on the end time minus the start time, but under anomalous
+    ///                conditions this may fail as system clocks can be adjusted. The programmer
+    ///                may also accidentally pass an earlier time. The duration will be set to zero
+    ///                these cases.
+    pub fn serialize(
+        &self,
+        end_time: Option<SystemTime>,
+        duration: Option<Duration>,
+    ) -> Result<EncodedProfile, EncodeError> {
+        let end = end_time.unwrap_or_else(SystemTime::now);
+        let start = self.start_time;
+        let mut profile: pprof::Profile = self.into();
+        profile.duration_nanos = duration
+            .unwrap_or_else(|| {
+                end.duration_since(start).unwrap_or({
+                    // Let's not throw away the whole profile just because the clocks were wrong.
+                    // todo: log that the clock went backward (or programmer mistake).
+                    Duration::ZERO
+                })
+            })
+            .as_nanos()
+            .min(i64::MAX as u128) as i64;
 
-    /// Serialize the aggregated profile. If end_time is None, then the
-    /// current time will be used. Although pprof doesn't require an end time
-    /// (it uses start time plus duration), the profile HTTP payload does.
-    pub fn serialize(&self, end_time: Option<SystemTime>) -> Result<EncodedProfile, EncodeError> {
-        let profile: pprof::Profile = self.into();
         let mut buffer: Vec<u8> = Vec::new();
         profile.encode(&mut buffer)?;
-        Ok(EncodedProfile {
-            start: self.time,
-            end: end_time.unwrap_or_else(SystemTime::now),
-            buffer,
-        })
+        Ok(EncodedProfile { start, end, buffer })
     }
 
     pub fn get_string(&self, id: i64) -> Option<&String> {
@@ -489,7 +502,7 @@ impl From<&Profile> for pprof::Profile {
                 .collect(),
             string_table: profile.strings.iter().map(Into::into).collect(),
             time_nanos: profile
-                .time
+                .start_time
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .map_or(0, |duration| {
                     duration.as_nanos().min(i64::MAX as u128) as i64
