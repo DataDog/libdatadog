@@ -310,7 +310,7 @@ pub unsafe extern "C" fn ddprof_ffi_Profile_new(
     let builder = ddprof_profiles::Profile::builder()
         .period(period.map(Into::into))
         .sample_types(types)
-        .time(start_time.map(SystemTime::from));
+        .start_time(start_time.map(SystemTime::from));
 
     Box::new(builder.build())
 }
@@ -412,7 +412,7 @@ pub unsafe extern "C" fn ddprof_ffi_Vec_u8_as_slice(vec: &crate::Vec<u8>) -> Sli
 ///
 /// # Arguments
 /// * `profile` - A mutable reference to the profile to be reset.
-/// * `time` - The time of the profile (after reset). Pass None/null to use the current time.
+/// * `start_time` - The time of the profile (after reset). Pass None/null to use the current time.
 ///
 /// # Safety
 /// The `profile` must meet all the requirements of a mutable reference to the profile. Given this
@@ -421,9 +421,9 @@ pub unsafe extern "C" fn ddprof_ffi_Vec_u8_as_slice(vec: &crate::Vec<u8>) -> Sli
 #[no_mangle]
 pub unsafe extern "C" fn ddprof_ffi_Profile_reset(
     profile: &mut ddprof_profiles::Profile,
-    time: Option<&Timespec>,
+    start_time: Option<&Timespec>,
 ) -> bool {
-    profile.reset(time.map(SystemTime::from)).is_some()
+    profile.reset(start_time.map(SystemTime::from)).is_some()
 }
 
 #[cfg(test)]

@@ -88,7 +88,7 @@ pub struct Profile {
 pub struct ProfileBuilder<'a> {
     period: Option<api::Period<'a>>,
     sample_types: Vec<api::ValueType<'a>>,
-    time: Option<SystemTime>,
+    start_time: Option<SystemTime>,
 }
 
 impl<'a> ProfileBuilder<'a> {
@@ -96,7 +96,7 @@ impl<'a> ProfileBuilder<'a> {
         ProfileBuilder {
             period: None,
             sample_types: vec![],
-            time: None,
+            start_time: None,
         }
     }
 
@@ -110,13 +110,13 @@ impl<'a> ProfileBuilder<'a> {
         self
     }
 
-    pub fn time(mut self, time: Option<SystemTime>) -> Self {
-        self.time = time;
+    pub fn start_time(mut self, start_time: Option<SystemTime>) -> Self {
+        self.start_time = start_time;
         self
     }
 
     pub fn build(self) -> Profile {
-        let mut profile = Profile::new(self.time.unwrap_or_else(SystemTime::now));
+        let mut profile = Profile::new(self.start_time.unwrap_or_else(SystemTime::now));
 
         profile.sample_types = self
             .sample_types
@@ -366,7 +366,7 @@ impl Profile {
 
     /// Resets all data except the sample types and period. Returns the
     /// previous Profile on success.
-    pub fn reset(&mut self, time: Option<SystemTime>) -> Option<Profile> {
+    pub fn reset(&mut self, start_time: Option<SystemTime>) -> Option<Profile> {
         /* We have to map over the types because the order of the strings is
          * not generally guaranteed, so we can't just copy the underlying
          * structures.
@@ -387,7 +387,7 @@ impl Profile {
         let mut profile = ProfileBuilder::new()
             .sample_types(sample_types)
             .period(period)
-            .time(time)
+            .start_time(start_time)
             .build();
 
         std::mem::swap(&mut *self, &mut profile);
