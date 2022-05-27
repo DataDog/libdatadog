@@ -370,7 +370,7 @@ pub enum SerializeResult {
 /// * `end_time` - optional end time of the profile. If None/null is passed, the current time will
 ///                be used.
 /// * `duration_nanos` - Optional duration of the profile. Passing None or a negative duration will
-///                      means the duration will based on the end time minus the start time, but
+///                      mean the duration will based on the end time minus the start time, but
 ///                      under anomalous conditions this may fail as system clocks can be adjusted,
 ///                      or the programmer accidentally passed an earlier time. The duration of
 ///                      the serialized profile will be set to zero for these cases.
