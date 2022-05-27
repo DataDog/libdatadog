@@ -9,7 +9,7 @@ use std::borrow::Borrow;
 use std::convert::TryInto;
 use std::hash::Hash;
 use std::ops::AddAssign;
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use indexmap::{IndexMap, IndexSet};
 use pprof::{Function, Label, Line, Location, ValueType};
@@ -81,28 +81,23 @@ pub struct Profile {
     locations: IndexSet<Location>,
     functions: IndexSet<Function>,
     strings: IndexSet<String>,
-    started_at: Instant,
     start_time: SystemTime,
-    period: i64,
-    period_type: Option<ValueType>,
+    period: Option<(i64, ValueType)>,
 }
 
 pub struct ProfileBuilder<'a> {
-    sample_types: Vec<api::ValueType<'a>>,
     period: Option<api::Period<'a>>,
+    sample_types: Vec<api::ValueType<'a>>,
+    start_time: Option<SystemTime>,
 }
 
 impl<'a> ProfileBuilder<'a> {
     pub fn new() -> Self {
         ProfileBuilder {
-            sample_types: vec![],
             period: None,
+            sample_types: vec![],
+            start_time: None,
         }
-    }
-
-    pub fn sample_types(mut self, mut sample_types: Vec<api::ValueType<'a>>) -> Self {
-        std::mem::swap(&mut self.sample_types, &mut sample_types);
-        self
     }
 
     pub fn period(mut self, period: Option<api::Period<'a>>) -> Self {
@@ -110,8 +105,19 @@ impl<'a> ProfileBuilder<'a> {
         self
     }
 
+    pub fn sample_types(mut self, sample_types: Vec<api::ValueType<'a>>) -> Self {
+        self.sample_types = sample_types;
+        self
+    }
+
+    pub fn start_time(mut self, start_time: Option<SystemTime>) -> Self {
+        self.start_time = start_time;
+        self
+    }
+
     pub fn build(self) -> Profile {
-        let mut profile = Profile::new();
+        let mut profile = Profile::new(self.start_time.unwrap_or_else(SystemTime::now));
+
         profile.sample_types = self
             .sample_types
             .iter()
@@ -121,12 +127,14 @@ impl<'a> ProfileBuilder<'a> {
             })
             .collect();
 
-        if let Some(p) = self.period {
-            profile.period = p.value;
-            profile.period_type = Some(ValueType {
-                r#type: profile.intern(p.r#type.r#type),
-                unit: profile.intern(p.r#type.unit),
-            });
+        if let Some(period) = self.period {
+            profile.period = Some((
+                period.value,
+                ValueType {
+                    r#type: profile.intern(period.r#type.r#type),
+                    unit: profile.intern(period.r#type.unit),
+                },
+            ));
         };
 
         profile
@@ -196,10 +204,9 @@ pub struct EncodedProfile {
 }
 
 impl Profile {
-    /// Creates a profile with "now" for the start time.
-    /// Initializes the string table to include the empty string.
-    /// All other fields are default.
-    pub fn new() -> Self {
+    /// Creates a profile with `start_time`. Initializes the string table to
+    /// include the empty string. All other fields are default.
+    pub fn new(start_time: SystemTime) -> Self {
         /* Do not use Profile's default() impl here or it will cause a stack
          * overflow, since that default impl calls this method.
          */
@@ -210,10 +217,8 @@ impl Profile {
             locations: Default::default(),
             functions: Default::default(),
             strings: Default::default(),
-            started_at: Instant::now(),
-            start_time: SystemTime::now(),
-            period: 0,
-            period_type: None,
+            start_time,
+            period: None,
         };
 
         profile.intern("");
@@ -361,41 +366,64 @@ impl Profile {
 
     /// Resets all data except the sample types and period. Returns the
     /// previous Profile on success.
-    pub fn reset(&mut self) -> Option<Profile> {
+    pub fn reset(&mut self, start_time: Option<SystemTime>) -> Option<Profile> {
         /* We have to map over the types because the order of the strings is
          * not generally guaranteed, so we can't just copy the underlying
          * structures.
          */
         let sample_types: Vec<api::ValueType> = self.extract_api_sample_types()?;
 
+        let period = match &self.period {
+            Some(t) => Some(api::Period {
+                r#type: api::ValueType {
+                    r#type: self.get_string(t.1.r#type)?.as_str(),
+                    unit: self.get_string(t.1.unit)?.as_str(),
+                },
+                value: t.0,
+            }),
+            None => None,
+        };
+
         let mut profile = ProfileBuilder::new()
             .sample_types(sample_types)
-            .period(match &self.period_type {
-                Some(t) => Some(api::Period {
-                    r#type: api::ValueType {
-                        r#type: self.get_string(t.r#type)?.as_str(),
-                        unit: self.get_string(t.unit)?.as_str(),
-                    },
-                    value: self.period,
-                }),
-                None => None,
-            })
+            .period(period)
+            .start_time(start_time)
             .build();
 
         std::mem::swap(&mut *self, &mut profile);
         Some(profile)
     }
 
-    /// Serialize the aggregated profile.
-    pub fn serialize(&self) -> Result<EncodedProfile, EncodeError> {
-        let profile: pprof::Profile = self.into();
+    /// Serialize the aggregated profile, adding the end time and duration.
+    /// # Arguments
+    /// * `end_time` - Optional end time of the profile. Passing None will use the current time.
+    /// * `duration` - Optional duration of the profile. Passing None will try to calculate the
+    ///                duration based on the end time minus the start time, but under anomalous
+    ///                conditions this may fail as system clocks can be adjusted. The programmer
+    ///                may also accidentally pass an earlier time. The duration will be set to zero
+    ///                these cases.
+    pub fn serialize(
+        &self,
+        end_time: Option<SystemTime>,
+        duration: Option<Duration>,
+    ) -> Result<EncodedProfile, EncodeError> {
+        let end = end_time.unwrap_or_else(SystemTime::now);
+        let start = self.start_time;
+        let mut profile: pprof::Profile = self.into();
+        profile.duration_nanos = duration
+            .unwrap_or_else(|| {
+                end.duration_since(start).unwrap_or({
+                    // Let's not throw away the whole profile just because the clocks were wrong.
+                    // todo: log that the clock went backward (or programmer mistake).
+                    Duration::ZERO
+                })
+            })
+            .as_nanos()
+            .min(i64::MAX as u128) as i64;
+
         let mut buffer: Vec<u8> = Vec::new();
         profile.encode(&mut buffer)?;
-        Ok(EncodedProfile {
-            start: self.start_time,
-            end: SystemTime::now(),
-            buffer,
-        })
+        Ok(EncodedProfile { start, end, buffer })
     }
 
     pub fn get_string(&self, id: i64) -> Option<&String> {
@@ -403,14 +431,13 @@ impl Profile {
     }
 }
 
-impl Default for Profile {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl From<&Profile> for pprof::Profile {
     fn from(profile: &Profile) -> Self {
+        let (period, period_type) = match profile.period {
+            Some(tuple) => (tuple.0, Some(tuple.1)),
+            None => (0, None),
+        };
+
         pprof::Profile {
             sample_type: profile.sample_types.clone(),
             sample: profile
@@ -462,15 +489,11 @@ impl From<&Profile> for pprof::Profile {
             time_nanos: profile
                 .start_time
                 .duration_since(SystemTime::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos() as i64),
-            duration_nanos: profile
-                .started_at
-                .elapsed()
-                .as_nanos()
-                .try_into()
-                .unwrap_or(0),
-            period: profile.period,
-            period_type: profile.period_type,
+                .map_or(0, |duration| {
+                    duration.as_nanos().min(i64::MAX as u128) as i64
+                }),
+            period,
+            period_type,
             ..Default::default()
         }
     }
@@ -684,9 +707,9 @@ mod api_test {
         assert!(!profile.mappings.is_empty());
         assert!(!profile.samples.is_empty());
         assert!(!profile.sample_types.is_empty());
-        assert!(profile.period_type.is_none());
+        assert!(profile.period.is_none());
 
-        let prev = profile.reset().expect("reset to succeed");
+        let prev = profile.reset(None).expect("reset to succeed");
 
         // These should all be empty now
         assert!(profile.functions.is_empty());
@@ -695,16 +718,12 @@ mod api_test {
         assert!(profile.samples.is_empty());
 
         assert_eq!(profile.period, prev.period);
-        assert_eq!(profile.period_type, prev.period_type);
         assert_eq!(profile.sample_types, prev.sample_types);
 
         // The string table should have at least the empty string:
         assert!(!profile.strings.is_empty());
         // The empty string should be at position 0
         assert_eq!(profile.get_string(0).expect("index 0 to be found"), "");
-
-        // The start time should be newer after reset, as Instant is monotonic.
-        assert!(profile.started_at >= prev.started_at);
     }
 
     #[test]
@@ -714,29 +733,32 @@ mod api_test {
          */
         let mut profile = provide_distinct_locations();
 
-        let period: i64 = 10000;
-        profile.period_type = Some(ValueType {
-            r#type: profile.intern("wall-time"),
-            unit: profile.intern("nanoseconds"),
-        });
+        let period = Some((
+            10_000_000,
+            ValueType {
+                r#type: profile.intern("wall-time"),
+                unit: profile.intern("nanoseconds"),
+            },
+        ));
         profile.period = period;
 
-        let prev = profile.reset().expect("reset to succeed");
-        assert_eq!(profile.period, prev.period);
-        assert_eq!(profile.period, period);
+        let prev = profile.reset(None).expect("reset to succeed");
+        assert_eq!(period, prev.period);
 
-        /* The strings may not be interned to the same location, but they should
-         * still match if we resolve them.
-         */
-        let period_type = profile.period_type.unwrap();
-        let r#type = period_type.r#type;
-        let unit = period_type.unit;
+        // Resolve the string values to check that they match (their string
+        // table offsets may not match).
+        let (value, period_type) = profile.period.expect("profile to have a period");
+        assert_eq!(value, period.unwrap().0);
         assert_eq!(
-            profile.get_string(r#type).expect("string to be found"),
+            profile
+                .get_string(period_type.r#type)
+                .expect("string to be found"),
             "wall-time"
         );
         assert_eq!(
-            profile.get_string(unit).expect("string to be found"),
+            profile
+                .get_string(period_type.unit)
+                .expect("string to be found"),
             "nanoseconds"
         );
     }

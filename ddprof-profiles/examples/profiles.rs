@@ -59,6 +59,7 @@ fn main() {
         labels: vec![],
     };
 
+    // Not setting .start_time intentionally to use the current time.
     let mut profile: Profile = Profile::builder()
         .sample_types(sample_types)
         .period(Some(period))
@@ -72,7 +73,7 @@ fn main() {
         Err(_) => exit(1),
     }
 
-    match profile.serialize() {
+    match profile.serialize(None, None) {
         Ok(encoded_profile) => {
             let buffer = &encoded_profile.buffer;
             assert!(buffer.len() > 100);

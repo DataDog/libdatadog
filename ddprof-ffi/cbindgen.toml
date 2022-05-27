@@ -32,4 +32,4 @@ must_use = "__attribute__((warn_unused_result))"
 
 [parse]
 parse_deps = true
-include = ["ddprof-exporter", "ddprof-profiles", "ux"]
+include = ["ddcommon", "ddprof-exporter", "ddprof-profiles", "ux"]

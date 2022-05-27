@@ -7,10 +7,10 @@ use std::future;
 use std::io::Cursor;
 use std::str::FromStr;
 
-use ddcommon::{container_id::get_container_id, tag::Tag};
-
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
+use ddcommon::container_id::get_container_id;
+pub use ddcommon::tag::Tag;
 use hyper::header::HeaderValue;
 pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
