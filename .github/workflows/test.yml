@@ -53,6 +53,7 @@ jobs:
         uses: ./.github/actions/cache
         with:
           rust_version: ${{ matrix.rust_version }}
+          build_profile: "release"
       - name: Install Rust ${{ matrix.rust_version }}
         if: ${{ matrix.rust_version != '' }}
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
