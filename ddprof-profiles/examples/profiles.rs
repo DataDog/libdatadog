@@ -59,7 +59,7 @@ fn main() {
         labels: vec![],
     };
 
-    // Not setting .time intentionally to use the current time.
+    // Not setting .start_time intentionally to use the current time.
     let mut profile: Profile = Profile::builder()
         .sample_types(sample_types)
         .period(Some(period))
