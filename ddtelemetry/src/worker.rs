@@ -2,6 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use crate::{
+    config::{self, ProvideConfig},
     metrics::{ContextKey, MetricBuckets, MetricContexts},
     DEFAULT_API_VERSION,
 };
@@ -14,25 +15,41 @@ use super::{
 use std::{
     collections::{hash_map::DefaultHasher, HashMap},
     hash::{Hash, Hasher},
-    str::FromStr,
-    sync::mpsc::{sync_channel, Receiver, RecvError, RecvTimeoutError, SyncSender},
     sync::{Arc, Condvar, Mutex},
     time,
 };
 
 use anyhow::Result;
+use ddcommon::HttpClient;
+use futures::{future, Future, FutureExt};
+use http::Request;
+
+use tokio::{runtime::Runtime, sync::mpsc, time::Instant};
+use tokio_util::sync::CancellationToken;
+
+fn time_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .ok()
+        .unwrap_or_default()
+        .as_secs_f64()
+}
+
 use ddcommon::tag::Tag;
-use reqwest::{blocking, header};
 
 macro_rules! telemetry_worker_log {
     ($worker:expr , ERROR , $fmt_str:tt, $($arg:tt)*) => {
+        #[cfg(feature = "tracing")]
+        tracing::error!($fmt_str, $($arg)*);
         if $worker.config.is_telemetry_debug_logging_enabled() {
-            eprintln!(concat!("Telemetry worker ERROR: ", $fmt_str), $($arg)*);
+            eprintln!(concat!("{}: Telemetry worker ERROR: ", $fmt_str), time_now(), $($arg)*);
         }
     };
     ($worker:expr , DEBUG , $fmt_str:tt, $($arg:tt)*) => {
+        #[cfg(feature = "tracing")]
+        tracing::debug!($fmt_str, $($arg)*);
         if $worker.config.is_telemetry_debug_logging_enabled() {
-            println!(concat!("Telemetry worker DEBUG: ", $fmt_str), $($arg)*);
+            println!(concat!("{}: Telemetry worker DEBUG: ", $fmt_str), time_now(), $($arg)*);
         }
     };
 }
@@ -89,36 +106,42 @@ struct TelemetryWorkerData {
 
 pub struct TelemetryWorker {
     config: Config,
-    mailbox: Receiver<TelemetryActions>,
+    mailbox: mpsc::Receiver<TelemetryActions>,
+    cancellation_token: CancellationToken,
     seq_id: u64,
     runtime_id: String,
-    client: blocking::Client,
+    client: HttpClient,
     deadlines: Scheduler,
     data: TelemetryWorkerData,
 }
 
 impl TelemetryWorker {
-    fn handle_result(&self, result: Result<()>) {
+    fn handle_result(&self, result: &Result<()>) {
         if let Err(err) = result {
             telemetry_worker_log!(self, ERROR, "{}", err);
         }
     }
 
-    fn recv_next_action(&self) -> TelemetryActions {
-        self.deadlines.recv_next_action(&self.mailbox)
+    async fn recv_next_action(&mut self) -> TelemetryActions {
+        self.deadlines.recv_next_action(&mut self.mailbox).await
     }
 
     // Runs a state machine that waits for actions, either from the worker's
     // mailbox, or scheduled actions from the worker's deadline object.
-    fn run(mut self) {
+    async fn run(mut self) {
         use TelemetryActions::*;
+
         loop {
-            let action = self.recv_next_action();
+            if self.cancellation_token.is_cancelled() {
+                return;
+            }
+
+            let action = self.recv_next_action().await;
             telemetry_worker_log!(self, DEBUG, "Handling action {:?}", action);
             match action {
                 Start => {
-                    let res = self.send_app_started();
-                    self.handle_result(res);
+                    let res = self.send_app_started().await;
+                    self.handle_result(&res);
                     self.deadlines.schedule_next_heartbeat();
                     self.data.started = true;
                 }
@@ -147,13 +170,13 @@ impl TelemetryWorker {
                         self.deadlines.schedule_next_send_logs();
                     }
                 }
-                SendDependencies => self.flush_deps(),
-                SendIntegrations => self.flush_intgs(),
-                SendLogs => self.flush_logs(),
+                SendDependencies => self.flush_deps().await,
+                SendIntegrations => self.flush_intgs().await,
+                SendLogs => self.flush_logs().await,
                 Heartbeat => {
                     if self.data.started {
-                        let res = self.send_heartbeat();
-                        self.handle_result(res);
+                        let res = self.send_heartbeat().await;
+                        self.handle_result(&res);
                     }
                     self.deadlines.schedule_next_heartbeat();
                 }
@@ -161,14 +184,20 @@ impl TelemetryWorker {
                     if !self.data.started {
                         return;
                     }
+                    let mut futures = vec![
+                        self.send_dependencies_loaded().boxed(),
+                        self.send_integrations_change().boxed(),
+                        self.send_app_stop().boxed(),
+                    ];
+
                     self.data.metric_buckets.flush_agregates();
-                    // TODO: do concurrently when we switch to async implem
-                    self.flush_deps();
-                    self.flush_intgs();
-                    self.flush_logs();
-                    self.flush_series();
-                    let res = self.send_app_stop();
-                    self.handle_result(res);
+                    if let Some(series) = self.send_metrics_series() {
+                        futures.push(series.boxed());
+                    };
+
+                    let res = future::join_all(futures).await;
+                    res.iter().for_each(|r| self.handle_result(r));
+
                     return;
                 }
                 AddPoint((point, key, extra_tags)) => {
@@ -185,38 +214,51 @@ impl TelemetryWorker {
                     self.deadlines.flush_aggreg_done();
                 }
                 SendMetrics => {
-                    self.flush_series();
+                    if let Some(series) = self.send_metrics_series() {
+                        let res = series.await;
+                        self.handle_result(&res);
+                    };
                     self.deadlines.send_metrics_done();
                 }
             }
         }
     }
 
-    fn flush_deps(&mut self) {
-        if !self.data.unflushed_dependencies.is_empty() {
-            let res = self.send_dependencies_loaded();
-            self.handle_result(res);
-            self.deadlines.send_dependency_done();
+    async fn flush_deps(&mut self) {
+        if self.data.unflushed_dependencies.is_empty() {
+            return;
         }
+        let res = self.send_dependencies_loaded().await;
+        self.handle_result(&res);
+        self.deadlines.send_dependency_done();
     }
 
-    fn flush_intgs(&mut self) {
-        if !self.data.unflushed_integrations.is_empty() {
-            let res = self.send_integrations_change();
-            self.handle_result(res);
-            self.deadlines.send_integrations_done();
+    async fn flush_intgs(&mut self) {
+        if self.data.unflushed_integrations.is_empty() {
+            return;
         }
+
+        let res = self.send_integrations_change().await;
+        self.handle_result(&res);
+        self.deadlines.send_integrations_done();
     }
 
-    fn flush_logs(&mut self) {
-        if !self.data.unflushed_logs.is_empty() {
-            let res = self.send_logs();
-            self.handle_result(res);
-            self.deadlines.send_logs_done();
+    async fn flush_logs(&mut self) {
+        if self.data.unflushed_logs.is_empty() {
+            return;
         }
+
+        let res = self.send_logs().await;
+        self.handle_result(&res);
+        self.deadlines.send_logs_done();
     }
 
-    fn flush_series(&mut self) {
+    async fn send_heartbeat(&mut self) -> Result<()> {
+        let req = self.build_request(data::Payload::AppHearbeat(()));
+        self.send_request(req).await
+    }
+
+    fn send_metrics_series(&mut self) -> Option<impl Future<Output = Result<()>>> {
         let mut series = Vec::new();
         for (context_key, extra_tags, points) in self.data.metric_buckets.flush_series() {
             let context_guard = self.data.metric_contexts.get_context(context_key);
@@ -244,49 +286,51 @@ impl TelemetryWorker {
             });
         }
         if series.is_empty() {
-            return;
+            return None;
         }
-        let res = self.send_payload(data::Payload::GenerateMetrics(data::GenerateMetrics {
+        let req = self.build_request(data::Payload::GenerateMetrics(data::GenerateMetrics {
             lib_language: self.data.app.language_name.clone(),
             lib_version: self.data.app.tracer_version.clone(),
             series,
         }));
-        self.handle_result(res);
+
+        Some(self.send_request(req))
     }
 
-    fn send_heartbeat(&mut self) -> Result<()> {
-        self.send_payload(data::Payload::AppHearbeat(()))
+    fn send_app_stop(&mut self) -> impl Future<Output = Result<()>> {
+        let req = self.build_request(data::Payload::AppClosing(()));
+        self.send_request(req)
     }
 
-    fn send_app_stop(&mut self) -> Result<()> {
-        self.send_payload(data::Payload::AppClosing(()))
-    }
-
-    fn send_app_started(&mut self) -> Result<()> {
+    fn send_app_started(&mut self) -> impl Future<Output = Result<()>> {
         let app_started = data::AppStarted {
             integrations: std::mem::take(&mut self.data.unflushed_integrations),
             dependencies: std::mem::take(&mut self.data.unflushed_dependencies),
             config: std::mem::take(&mut self.data.library_config),
         };
-        self.send_payload(data::Payload::AppStarted(app_started))
+        let req = self.build_request(data::Payload::AppStarted(app_started));
+        self.send_request(req)
     }
 
-    fn send_dependencies_loaded(&mut self) -> Result<()> {
+    fn send_dependencies_loaded(&mut self) -> impl Future<Output = Result<()>> {
         let deps_loaded = data::Payload::AppDependenciesLoaded(data::AppDependenciesLoaded {
             dependencies: std::mem::take(&mut self.data.unflushed_dependencies),
         });
-        self.send_payload(deps_loaded)
+
+        let req = self.build_request(deps_loaded);
+        self.send_request(req)
     }
 
-    fn send_integrations_change(&mut self) -> Result<()> {
+    fn send_integrations_change(&mut self) -> impl Future<Output = Result<()>> {
         let integrations_change =
             data::Payload::AppIntegrationsChange(data::AppIntegrationsChange {
                 integrations: std::mem::take(&mut self.data.unflushed_integrations),
             });
-        self.send_payload(integrations_change)
+        let req = self.build_request(integrations_change);
+        self.send_request(req)
     }
 
-    fn send_logs(&mut self) -> Result<()> {
+    async fn send_logs(&mut self) -> Result<()> {
         let logs = self
             .data
             .unflushed_logs
@@ -304,7 +348,8 @@ impl TelemetryWorker {
                 e.log
             })
             .collect();
-        self.send_payload(data::Payload::Logs(logs))
+        let req = self.build_request(data::Payload::Logs(logs));
+        self.send_request(req).await
     }
 
     fn next_seq_id(&mut self) -> u64 {
@@ -312,7 +357,7 @@ impl TelemetryWorker {
         self.seq_id
     }
 
-    fn send_payload(&mut self, payload: data::Payload) -> Result<()> {
+    fn build_request(&mut self, payload: data::Payload) -> Result<Request<hyper::Body>> {
         let seq_id = self.next_seq_id();
         let tel = Telemetry {
             api_version: DEFAULT_API_VERSION,
@@ -326,31 +371,46 @@ impl TelemetryWorker {
             application: &self.data.app,
             payload,
         };
-        telemetry_worker_log!(self, DEBUG, "Sending payload: {:?}", tel);
 
-        self.push_telemetry(&tel)
+        telemetry_worker_log!(self, DEBUG, "Prepared payload: {:?}", tel);
+
+        let req = self
+            .config
+            .into_request_builder()?
+            .method(http::Method::POST)
+            .header(http::header::CONTENT_TYPE, "application/json");
+
+        let body = hyper::Body::from(serde_json::to_vec(&tel)?);
+        Ok(req.body(body)?)
     }
 
-    fn push_telemetry(&self, payload: &Telemetry) -> Result<()> {
-        let mut req = blocking::Request::new(
-            http::Method::POST,
-            reqwest::Url::from_str(self.config.telemetry_url())?,
-        );
+    fn send_request(
+        &mut self,
+        req: Result<Request<hyper::Body>>,
+    ) -> impl Future<Output = Result<()>> {
+        let req = match req {
+            Ok(req) => req,
+            Err(err) => return future::err(err).boxed(), // boxed to force match the signature
+        };
+        let token = self.cancellation_token.clone();
 
-        req.headers_mut().insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static("application/json"),
-        );
-        if let Some(api_key) = self.config.api_key() {
-            req.headers_mut()
-                .insert("DD-API-KEY", header::HeaderValue::from_str(api_key)?);
+        let response = self.client.request(req);
+        async move {
+            tokio::select! {
+                _ = token.cancelled() => {
+                    Err(anyhow::anyhow!("Request cancelled"))
+                },
+                r = response => {
+                    match r {
+                        Ok(_) => {
+                            Ok(())
+                        }
+                        Err(e) => Err(e.into()),
+                    }
+                }
+            }
         }
-
-        let body = serde_json::to_vec(&payload)?;
-        *req.body_mut() = Some(blocking::Body::from(body));
-
-        self.client.execute(req)?.error_for_status()?;
-        Ok(())
+        .boxed()
     }
 }
 
@@ -378,8 +438,10 @@ impl InnerTelemetryShutdown {
 
 #[derive(Clone)]
 pub struct TelemetryWorkerHandle {
-    sender: SyncSender<TelemetryActions>,
+    sender: mpsc::Sender<TelemetryActions>,
     shutdown: Arc<InnerTelemetryShutdown>,
+    cancellation_token: CancellationToken,
+    runtime: Arc<Runtime>,
     contexts: MetricContexts,
 }
 
@@ -402,6 +464,15 @@ impl TelemetryWorkerHandle {
 
     pub fn send_stop(&self) -> Result<()> {
         Ok(self.sender.try_send(TelemetryActions::Stop)?)
+    }
+
+    pub fn cancel_requests_with_deadline(&self, deadline: Instant) {
+        let token = self.cancellation_token.clone();
+        let f = async move {
+            tokio::time::sleep_until(deadline).await;
+            token.cancel()
+        };
+        self.runtime.spawn(f);
     }
 
     pub fn add_dependency(&self, name: String, version: Option<String>) -> Result<()> {
@@ -529,49 +600,61 @@ impl TelemetryWorkerBuilder {
         Vec::new() // Dummy dependencies
     }
 
-    pub fn run(self) -> TelemetryWorkerHandle {
-        let (tx, mailbox) = sync_channel(5000);
+    pub fn run(self) -> Result<TelemetryWorkerHandle> {
+        let (tx, mailbox) = mpsc::channel(5000);
         let shutdown = Arc::new(InnerTelemetryShutdown {
             is_shutdown: Mutex::new(false),
             condvar: Condvar::new(),
         });
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let runtime = Arc::from(runtime);
+
         let contexts = MetricContexts::default();
-        std::thread::spawn({
-            let shutdown = shutdown.clone();
-            let contexts = contexts.clone();
-            move || {
-                let config = Config::read_env_config();
-                let unflushed_dependencies = self.gather_deps();
-                let worker = TelemetryWorker {
-                    data: TelemetryWorkerData {
-                        started: false,
-                        app: self.application,
-                        host: self.host,
-                        library_config: self.library_config,
-                        unflushed_dependencies,
-                        unflushed_integrations: Vec::new(),
-                        unflushed_logs: HashMap::new(),
-                        metric_buckets: MetricBuckets::default(),
-                        metric_contexts: contexts,
-                    },
-                    config,
-                    mailbox,
-                    seq_id: 0,
-                    runtime_id: self
-                        .runtime_id
-                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-                    client: reqwest::blocking::Client::new(),
-                    deadlines: Scheduler::new(),
-                };
-                worker.run();
-                shutdown.shutdown_finished();
-            }
+        let token = CancellationToken::new();
+        let config = config::FromEnv::config();
+        let unflushed_dependencies = self.gather_deps();
+        let client = config.http_client();
+        let worker = TelemetryWorker {
+            data: TelemetryWorkerData {
+                started: false,
+                library_config: self.library_config,
+                unflushed_integrations: Vec::new(),
+                unflushed_dependencies,
+                unflushed_logs: HashMap::new(),
+                metric_contexts: contexts.clone(),
+                metric_buckets: MetricBuckets::default(),
+                host: self.host,
+                app: self.application,
+            },
+            config,
+            mailbox,
+            seq_id: 0,
+            runtime_id: self
+                .runtime_id
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            client,
+            deadlines: Scheduler::new(),
+            cancellation_token: token.clone(),
+        };
+
+        let notify_shutdown = shutdown.clone();
+
+        let shared_runtime = runtime.clone();
+        std::thread::spawn(move || {
+            shared_runtime.block_on(worker.run());
+            notify_shutdown.shutdown_finished();
         });
-        TelemetryWorkerHandle {
+
+        Ok(TelemetryWorkerHandle {
             sender: tx,
             shutdown,
+            cancellation_token: token,
+            runtime,
             contexts,
-        }
+        })
     }
 }
 
@@ -707,29 +790,31 @@ impl Scheduler {
     }
 
     fn next_deadline(&self) -> Option<(time::Instant, TelemetryActions)> {
-        // Unwrap safe because there always is the heartbeat in the iterator
         self.deadlines().min_by_key(|(d, _)| *d)
     }
 
-    fn recv_next_action(&self, mailbox: &Receiver<TelemetryActions>) -> TelemetryActions {
-        if let Some((deadline, deadline_action)) = self.next_deadline() {
-            // This circus is necessary because Receiver::recv_deadline has been unstable for 4 years!!
-            // https://github.com/rust-lang/rust/issues/46316
-            let timeout = match deadline.checked_duration_since(time::Instant::now()) {
-                None => return deadline_action,
-                Some(timeout) => timeout,
+    async fn recv_next_action(
+        &self,
+        mailbox: &mut mpsc::Receiver<TelemetryActions>,
+    ) -> TelemetryActions {
+        let action = if let Some((deadline, deadline_action)) = self.next_deadline() {
+            if deadline
+                .checked_duration_since(time::Instant::now())
+                .is_none()
+            {
+                return deadline_action;
             };
-            match mailbox.recv_timeout(timeout) {
+
+            match tokio::time::timeout_at(deadline.into(), mailbox.recv()).await {
                 Ok(mailbox_action) => mailbox_action,
-                Err(RecvTimeoutError::Timeout) => deadline_action,
-                Err(RecvTimeoutError::Disconnected) => TelemetryActions::Stop,
+                Err(_) => Some(deadline_action),
             }
         } else {
-            match mailbox.recv() {
-                Err(RecvError) => TelemetryActions::Stop,
-                Ok(action) => action,
-            }
-        }
+            mailbox.recv().await
+        };
+
+        // when no action is received, then it means the channel is stopped
+        action.unwrap_or(TelemetryActions::Stop)
     }
 }
 
