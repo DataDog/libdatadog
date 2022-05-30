@@ -227,6 +227,9 @@ pub unsafe extern "C" fn profile_exporter_send(
     }
 }
 
+#[no_mangle]
+pub extern "C" fn ddprof_ffi_Request_drop(_request: Option<Box<Request>>) {}
+
 fn unwrap_cancellation_token<'a>(
     cancel: Option<NonNull<CancellationToken>>,
 ) -> Option<&'a tokio_util::sync::CancellationToken> {

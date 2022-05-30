@@ -6,10 +6,9 @@ use std::error::Error;
 use std::future;
 use std::io::Cursor;
 
-use ddcommon::tag::Tag;
-
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
+pub use ddcommon::tag::Tag;
 pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
 use tokio::runtime::Runtime;

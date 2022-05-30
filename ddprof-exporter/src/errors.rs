@@ -4,7 +4,7 @@
 use std::error;
 use std::fmt;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(dead_code)]
 pub(crate) enum Error {
     InvalidUrl,
