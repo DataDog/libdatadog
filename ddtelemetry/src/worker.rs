@@ -21,7 +21,7 @@ use std::{
 
 use anyhow::Result;
 use ddcommon::HttpClient;
-use futures::{future, Future, FutureExt};
+use futures::future;
 use http::Request;
 
 use tokio::{runtime::Runtime, sync::mpsc, time::Instant};
@@ -140,8 +140,8 @@ impl TelemetryWorker {
             telemetry_worker_log!(self, DEBUG, "Handling action {:?}", action);
             match action {
                 Start => {
-                    let res = self.send_app_started().await;
-                    self.handle_result(&res);
+                    let req = self.build_app_started();
+                    self.send_request(req).await;
                     self.deadlines.schedule_next_heartbeat();
                     self.data.started = true;
                 }
@@ -175,8 +175,8 @@ impl TelemetryWorker {
                 SendLogs => self.flush_logs().await,
                 Heartbeat => {
                     if self.data.started {
-                        let res = self.send_heartbeat().await;
-                        self.handle_result(&res);
+                        let req = self.build_heartbeat();
+                        self.send_request(req).await;
                     }
                     self.deadlines.schedule_next_heartbeat();
                 }
@@ -184,19 +184,15 @@ impl TelemetryWorker {
                     if !self.data.started {
                         return;
                     }
-                    let mut futures = vec![
-                        self.send_dependencies_loaded().boxed(),
-                        self.send_integrations_change().boxed(),
-                        self.send_app_stop().boxed(),
-                    ];
-
                     self.data.metric_buckets.flush_agregates();
-                    if let Some(series) = self.send_metrics_series() {
-                        futures.push(series.boxed());
-                    };
-
-                    let res = future::join_all(futures).await;
-                    res.iter().for_each(|r| self.handle_result(r));
+                    let requests = IntoIterator::into_iter([
+                        self.build_app_stop(),
+                        self.build_integrations_change(),
+                        self.build_dependencies_loaded(),
+                    ])
+                    .chain(self.build_metrics_series())
+                    .map(|r| self.send_request(r));
+                    future::join_all(requests).await;
 
                     return;
                 }
@@ -214,9 +210,8 @@ impl TelemetryWorker {
                     self.deadlines.flush_aggreg_done();
                 }
                 SendMetrics => {
-                    if let Some(series) = self.send_metrics_series() {
-                        let res = series.await;
-                        self.handle_result(&res);
+                    if let Some(req) = self.build_metrics_series() {
+                        self.send_request(req).await;
                     };
                     self.deadlines.send_metrics_done();
                 }
@@ -228,8 +223,8 @@ impl TelemetryWorker {
         if self.data.unflushed_dependencies.is_empty() {
             return;
         }
-        let res = self.send_dependencies_loaded().await;
-        self.handle_result(&res);
+        let req = self.build_dependencies_loaded();
+        self.send_request(req).await;
         self.deadlines.send_dependency_done();
     }
 
@@ -238,8 +233,8 @@ impl TelemetryWorker {
             return;
         }
 
-        let res = self.send_integrations_change().await;
-        self.handle_result(&res);
+        let req = self.build_integrations_change();
+        self.send_request(req).await;
         self.deadlines.send_integrations_done();
     }
 
@@ -248,17 +243,16 @@ impl TelemetryWorker {
             return;
         }
 
-        let res = self.send_logs().await;
-        self.handle_result(&res);
+        let req = self.build_logs();
+        self.send_request(req).await;
         self.deadlines.send_logs_done();
     }
 
-    async fn send_heartbeat(&mut self) -> Result<()> {
-        let req = self.build_request(data::Payload::AppHearbeat(()));
-        self.send_request(req).await
+    fn build_heartbeat(&mut self) -> Result<Request<hyper::Body>> {
+        self.build_request(data::Payload::AppHearbeat(()))
     }
 
-    fn send_metrics_series(&mut self) -> Option<impl Future<Output = Result<()>>> {
+    fn build_metrics_series(&mut self) -> Option<Result<Request<hyper::Body>>> {
         let mut series = Vec::new();
         for (context_key, extra_tags, points) in self.data.metric_buckets.flush_series() {
             let context_guard = self.data.metric_contexts.get_context(context_key);
@@ -288,49 +282,46 @@ impl TelemetryWorker {
         if series.is_empty() {
             return None;
         }
-        let req = self.build_request(data::Payload::GenerateMetrics(data::GenerateMetrics {
-            lib_language: self.data.app.language_name.clone(),
-            lib_version: self.data.app.tracer_version.clone(),
-            series,
-        }));
 
-        Some(self.send_request(req))
+        Some(
+            self.build_request(data::Payload::GenerateMetrics(data::GenerateMetrics {
+                lib_language: self.data.app.language_name.clone(),
+                lib_version: self.data.app.tracer_version.clone(),
+                series,
+            })),
+        )
     }
 
-    fn send_app_stop(&mut self) -> impl Future<Output = Result<()>> {
-        let req = self.build_request(data::Payload::AppClosing(()));
-        self.send_request(req)
+    fn build_app_stop(&mut self) -> Result<Request<hyper::Body>> {
+        self.build_request(data::Payload::AppClosing(()))
     }
 
-    fn send_app_started(&mut self) -> impl Future<Output = Result<()>> {
+    fn build_app_started(&mut self) -> Result<Request<hyper::Body>> {
         let app_started = data::AppStarted {
             integrations: std::mem::take(&mut self.data.unflushed_integrations),
             dependencies: std::mem::take(&mut self.data.unflushed_dependencies),
             config: std::mem::take(&mut self.data.library_config),
         };
-        let req = self.build_request(data::Payload::AppStarted(app_started));
-        self.send_request(req)
+        self.build_request(data::Payload::AppStarted(app_started))
     }
 
-    fn send_dependencies_loaded(&mut self) -> impl Future<Output = Result<()>> {
+    fn build_dependencies_loaded(&mut self) -> Result<Request<hyper::Body>> {
         let deps_loaded = data::Payload::AppDependenciesLoaded(data::AppDependenciesLoaded {
             dependencies: std::mem::take(&mut self.data.unflushed_dependencies),
         });
 
-        let req = self.build_request(deps_loaded);
-        self.send_request(req)
+        self.build_request(deps_loaded)
     }
 
-    fn send_integrations_change(&mut self) -> impl Future<Output = Result<()>> {
+    fn build_integrations_change(&mut self) -> Result<Request<hyper::Body>> {
         let integrations_change =
             data::Payload::AppIntegrationsChange(data::AppIntegrationsChange {
                 integrations: std::mem::take(&mut self.data.unflushed_integrations),
             });
-        let req = self.build_request(integrations_change);
-        self.send_request(req)
+        self.build_request(integrations_change)
     }
 
-    async fn send_logs(&mut self) -> Result<()> {
+    fn build_logs(&mut self) -> Result<Request<hyper::Body>> {
         let logs = self
             .data
             .unflushed_logs
@@ -348,8 +339,7 @@ impl TelemetryWorker {
                 e.log
             })
             .collect();
-        let req = self.build_request(data::Payload::Logs(logs));
-        self.send_request(req).await
+        self.build_request(data::Payload::Logs(logs))
     }
 
     fn next_seq_id(&mut self) -> u64 {
@@ -384,23 +374,13 @@ impl TelemetryWorker {
         Ok(req.body(body)?)
     }
 
-    fn send_request(
-        &mut self,
-        req: Result<Request<hyper::Body>>,
-    ) -> impl Future<Output = Result<()>> {
-        let req = match req {
-            Ok(req) => req,
-            Err(err) => return future::err(err).boxed(), // boxed to force match the signature
-        };
-        let token = self.cancellation_token.clone();
-
-        let response = self.client.request(req);
-        async move {
+    async fn send_request(&self, req: Result<Request<hyper::Body>>) {
+        let res = (|| async {
             tokio::select! {
-                _ = token.cancelled() => {
+                _ = self.cancellation_token.cancelled() => {
                     Err(anyhow::anyhow!("Request cancelled"))
                 },
-                r = response => {
+                r = self.client.request(req?) => {
                     match r {
                         Ok(_) => {
                             Ok(())
@@ -409,8 +389,9 @@ impl TelemetryWorker {
                     }
                 }
             }
-        }
-        .boxed()
+        })()
+        .await;
+        self.handle_result(&res);
     }
 }
 
