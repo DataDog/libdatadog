@@ -2,7 +2,7 @@
 
 require "pry"
 
-require "libddprof"
+require "libdatadog"
 
 RSpec.configure do |config|
   # Enable flags like --only-failures and --next-failure

@@ -2,25 +2,25 @@
 
 lib = File.expand_path("../lib", __FILE__)
 $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
-require "libddprof/version"
+require "libdatadog/version"
 
 Gem::Specification.new do |spec|
-  spec.name = "libddprof"
-  spec.version = Libddprof::VERSION
+  spec.name = "libdatadog"
+  spec.version = Libdatadog::VERSION
   spec.authors = ["Datadog, Inc."]
   spec.email = ["dev@datadoghq.com"]
 
   spec.summary = "Library of common code used by Datadog Continuous Profiler for Ruby"
   spec.description =
-    "libddprof contains implementation bits used by Datadog's ddtrace gem as part of its Continuous Profiler feature."
-  spec.homepage = "https://docs.datadoghq.com/tracing/profiler/"
+    "libdatadog is a Rust-based utility library for Datadog's ddtrace gem."
+  spec.homepage = "https://docs.datadoghq.com/tracing/"
   spec.license = "Apache-2.0"
   spec.required_ruby_version = ">= 2.1.0"
 
   spec.metadata["allowed_push_host"] = "https://rubygems.org"
 
   spec.metadata["homepage_uri"] = spec.homepage
-  spec.metadata["source_code_uri"] = "https://github.com/DataDog/libddprof/tree/main/ruby"
+  spec.metadata["source_code_uri"] = "https://github.com/datadog/libdatadog/tree/main/ruby"
 
   # Require releases on rubygems.org to be coming from multi-factor-auth-authenticated accounts
   spec.metadata["rubygems_mfa_required"] = "true"

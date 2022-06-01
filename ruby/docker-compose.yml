@@ -5,9 +5,9 @@ services:
     platform: linux/x86_64
     stdin_open: true
     tty: true
-    command: bash -c 'cd /libddprof/ruby && bundle install && bundle exec rake push_to_rubygems'
+    command: bash -c 'cd /libdatadog/ruby && bundle install && bundle exec rake push_to_rubygems'
     volumes:
-      - ..:/libddprof
+      - ..:/libdatadog
       - bundle-3.1:/usr/local/bundle
 
 volumes:

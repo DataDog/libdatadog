@@ -3,14 +3,14 @@
 require "tmpdir"
 require "fileutils"
 
-RSpec.describe Libddprof do
+RSpec.describe Libdatadog do
   describe "version constants" do
     it "has a version number" do
-      expect(Libddprof::VERSION).to_not be nil
+      expect(Libdatadog::VERSION).to_not be nil
     end
 
-    it "has an upstream libddprof version number" do
-      expect(Libddprof::LIB_VERSION).to_not be nil
+    it "has an upstream libdatadog version number" do
+      expect(Libdatadog::LIB_VERSION).to_not be nil
     end
   end
 
@@ -19,7 +19,7 @@ RSpec.describe Libddprof do
 
     before do
       allow(ENV).to receive(:[]).and_call_original
-      allow(ENV).to receive(:[]).with("LIBDDPROF_VENDOR_OVERRIDE").and_return(temporary_directory)
+      allow(ENV).to receive(:[]).with("LIBDATADOG_VENDOR_OVERRIDE").and_return(temporary_directory)
     end
 
     after do
@@ -32,11 +32,11 @@ RSpec.describe Libddprof do
 
     context "when no binaries are available in the vendor directory" do
       describe ".available_binaries" do
-        it { expect(Libddprof.available_binaries).to be_empty }
+        it { expect(Libdatadog.available_binaries).to be_empty }
       end
 
       describe ".pkgconfig_folder" do
-        it { expect(Libddprof.pkgconfig_folder).to be nil }
+        it { expect(Libdatadog.pkgconfig_folder).to be nil }
       end
     end
 
@@ -44,11 +44,11 @@ RSpec.describe Libddprof do
       let(:temporary_directory) { "does/not/exist" }
 
       describe ".available_binaries" do
-        it { expect(Libddprof.available_binaries).to be_empty }
+        it { expect(Libdatadog.available_binaries).to be_empty }
       end
 
       describe ".pkgconfig_folder" do
-        it { expect(Libddprof.pkgconfig_folder).to be nil }
+        it { expect(Libdatadog.pkgconfig_folder).to be nil }
       end
     end
 
@@ -59,7 +59,7 @@ RSpec.describe Libddprof do
       end
 
       describe ".available_binaries" do
-        it { expect(Libddprof.available_binaries).to contain_exactly("386-freedos", "mipsel-linux") }
+        it { expect(Libdatadog.available_binaries).to contain_exactly("386-freedos", "mipsel-linux") }
       end
 
       context "for the current platform" do
@@ -72,14 +72,14 @@ RSpec.describe Libddprof do
 
         describe ".pkgconfig_folder" do
           it "returns the folder containing the pkgconfig file" do
-            expect(Libddprof.pkgconfig_folder).to eq pkgconfig_folder
+            expect(Libdatadog.pkgconfig_folder).to eq pkgconfig_folder
           end
         end
       end
 
       context "but not for the current platform" do
         describe ".pkgconfig_folder" do
-          it { expect(Libddprof.pkgconfig_folder).to be nil }
+          it { expect(Libdatadog.pkgconfig_folder).to be nil }
         end
       end
     end
