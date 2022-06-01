@@ -2,12 +2,11 @@ use std::{
     fmt::Debug,
     io::Write,
     sync::atomic::{AtomicU32, Ordering},
-    time::Duration,
 };
 
 use bytes::BytesMut;
 use ddtelemetry::{
-    fork::{self, getpid},
+    fork,
     sockets::{
         self, ConnectionListener, ConnectorProvider, IntoConnectionListener, IntoConnectorProvider,
     },
@@ -75,8 +74,6 @@ where
                 socket.write_all(&Payload::default().to_lenght_delimeted_bytes()?)?;
                 socket.write_all(&Payload::default().to_lenght_delimeted_bytes()?)?;
                 socket.flush()?;
-
-                println!("Sent! {}", getpid());
                 std::process::exit(0);
             }
         }
@@ -96,6 +93,7 @@ async fn handle_messages(stream: UnixStream) -> anyhow::Result<()> {
     while let Some(msg) = deserialized.try_next().await? {
         println!("rcvd: {:?}", msg);
     }
+    println!("handler-exiting");
     Ok(())
 }
 
@@ -105,7 +103,6 @@ where
 {
     loop {
         let stream = listener.stream_accept().await?;
-        println!("ehlo - accept");
         tokio::spawn(async move { handle_messages(stream).await });
     }
 }
@@ -126,20 +123,18 @@ where
 }
 
 fn main() -> anyhow::Result<()> {
-    let glue =
+    let ipc =
         sockets::named::NamedSocket::new(format!("/tmp/ddtelemetry-{}.sock", fork::getpid()))?;
-    // let glue = sockets::passfd::SharedSocket::init()?; // some race conditions still exist
+    // let ipc = sockets::passfd::SharedSocket::init()?; // some race conditions still seem to exist
     match fork::fork().unwrap() {
         fork::Fork::Parent(_child_pid) => {
-            std::thread::sleep(Duration::from_millis(100));
-            let provider = glue.into_connector_provider()?;
+            let provider = ipc.into_connector_provider()?;
             spawn_multiple(provider)?;
         }
         fork::Fork::Child => {
-            agent(glue).unwrap();
-            println!("bye");
+            agent(ipc).unwrap();
         }
     }
-    std::thread::sleep(Duration::from_secs(10));
+
     Ok(())
 }
