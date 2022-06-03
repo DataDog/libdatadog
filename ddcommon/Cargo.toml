@@ -2,7 +2,7 @@
 # This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 [package]
-edition = "2018"
+edition = "2021"
 license = "Apache-2.0"
 name = "ddcommon"
 version = "0.7.0-rc.1"
