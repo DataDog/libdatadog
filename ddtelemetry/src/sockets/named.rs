@@ -1,46 +1,47 @@
 use std::{
     os::unix::net::{UnixListener as StdUnixListener, UnixStream as StdUnixStream},
-    path::Path,
+    path::{Path, PathBuf},
     pin::Pin,
 };
 
 use futures::Future;
 use tokio::net::{UnixListener, UnixStream};
 
-use super::{ConnectionListener, ConnectorProvider, IntoConnectionListener, IntoConnectorProvider};
+use super::*;
 
-pub struct NamedSocket<P: AsRef<Path>> {
-    path: P,
+pub struct NamedSocket {
+    path: PathBuf,
     listener: StdUnixListener,
 }
 
-impl<P: AsRef<Path>> NamedSocket<P> {
-    pub fn new(path: P) -> anyhow::Result<Self> {
+impl NamedSocket {
+    pub fn new<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let listener = StdUnixListener::bind(&path)?;
+        let path = path.as_ref().to_path_buf();
         Ok(NamedSocket { path, listener })
     }
 }
 
-impl<P: AsRef<Path>> IntoConnectionListener<UnixListener> for NamedSocket<P> {
-    fn into_connection_listener(self) -> anyhow::Result<UnixListener> {
-        Ok(UnixListener::from_std(self.listener)?)
+type UninitializedListener = Box<dyn FnOnce() -> UnixListener>;
+impl ForkSafe for UninitializedListener {}
+
+impl IpcSystem<UnixListener, NamedSocketConnector, UnixStreamWriterHandle> for NamedSocket {
+    type UninitializedListener = UninitializedListener;
+
+    fn into_pair(self) -> (Self::UninitializedListener, NamedSocketConnector) {
+        let listener = self.listener;
+        (
+            Box::from(move || UnixListener::from_std(listener).unwrap()),
+            NamedSocketConnector { path: self.path },
+        )
     }
 }
 
-pub struct NamedSocketConnector<P: AsRef<Path>> {
-    path: P,
+pub struct NamedSocketConnector {
+    path: PathBuf,
 }
 
-impl<P: AsRef<Path>> IntoConnectorProvider<NamedSocketConnector<P>> for NamedSocket<P> {
-    fn into_connector_provider(self) -> anyhow::Result<NamedSocketConnector<P>>
-    where
-        NamedSocketConnector<P>: super::ConnectorProvider,
-    {
-        Ok(NamedSocketConnector { path: self.path })
-    }
-}
-
-impl<P: AsRef<Path>> ConnectorProvider for NamedSocketConnector<P> {
+impl ConnectorProvider for NamedSocketConnector {
     fn provide_connector(&self) -> anyhow::Result<StdUnixStream> {
         Ok(StdUnixStream::connect(&self.path)?)
     }

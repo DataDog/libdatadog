@@ -46,7 +46,7 @@ fork_safe!(UnixDatagram, UnixStream);
 fork_safe!(u8, u16, u32, u64, u128, i8, i16, i32, i64);
 
 macro_rules! impl_forksafe_for_tuple {
-    () => { };
+    () => { impl ForkSafe for () {} };
     ($A:ident $($I:ident)*) => {
         impl_forksafe_for_tuple!($($I)*);
 

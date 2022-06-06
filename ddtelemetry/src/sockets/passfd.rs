@@ -10,7 +10,9 @@ use futures::{Future, FutureExt};
 use sendfd::{RecvWithFd, SendWithFd};
 use tokio::net::{UnixDatagram, UnixStream};
 
-use super::{ConnectionListener, ConnectorProvider, IntoConnectionListener, IntoConnectorProvider};
+use crate::fork::ForkSafe;
+
+use super::{ConnectionListener, IpcSystem, UnixStreamWriterHandle, WriterHandleProvider};
 
 pub struct SocketReceiver {
     source: UnixDatagram,
@@ -70,19 +72,22 @@ impl SharedSocket {
     }
 }
 
-impl IntoConnectionListener<SocketReceiver> for SharedSocket {
-    fn into_connection_listener(self) -> anyhow::Result<SocketReceiver> {
-        Ok(SocketReceiver {
-            source: UnixDatagram::from_std(self.child_socket)?,
-        })
-    }
-}
+type UninitializedListener = Box<dyn FnOnce() -> SocketReceiver>;
+impl ForkSafe for UninitializedListener {}
 
-impl IntoConnectorProvider<SharedSocketConnector> for SharedSocket {
-    fn into_connector_provider(self) -> anyhow::Result<SharedSocketConnector> {
-        Ok(SharedSocketConnector {
-            socket: self.parent_socket,
-        })
+impl IpcSystem<SocketReceiver, SharedSocketConnector, UnixStreamWriterHandle> for SharedSocket {
+    type UninitializedListener = UninitializedListener;
+
+    fn into_pair(self) -> (Self::UninitializedListener, SharedSocketConnector) {
+        let child_socket = self.child_socket;
+        (
+            Box::from(move || SocketReceiver {
+                source: UnixDatagram::from_std(child_socket).unwrap(),
+            }),
+            SharedSocketConnector {
+                socket: self.parent_socket,
+            },
+        )
     }
 }
 
@@ -90,14 +95,14 @@ pub struct SharedSocketConnector {
     socket: StdUnixDatagram,
 }
 
-impl ConnectorProvider for SharedSocketConnector {
-    fn provide_connector(&self) -> anyhow::Result<StdUnixStream> {
+impl WriterHandleProvider<UnixStreamWriterHandle> for SharedSocketConnector {
+    fn take_writer_handle(&self) -> anyhow::Result<UnixStreamWriterHandle> {
         let (peer, own) = StdUnixStream::pair()?;
         let buf = [0; 100];
         let fds = [peer.as_raw_fd()];
 
         self.socket.send_with_fd(&buf, &fds)?;
-        Ok(own)
+        Ok(own.into())
     }
 }
 
