@@ -147,7 +147,7 @@ pub(crate) mod tests {
         let (listener, provider) = ipc.into_pair();
 
         let pid = fork::safer_fork((listener, send), |(listener, mut send)| {
-            fork::tests::set_fork_panic_handler();
+            fork::set_default_child_panic_handler();
 
             let runtime = runtime::Builder::new_current_thread()
                 .enable_all()
