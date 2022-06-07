@@ -37,6 +37,7 @@ impl IpcSystem<UnixListener, NamedSocketConnector, UnixStreamWriterHandle> for N
     }
 }
 
+#[derive(Clone)]
 pub struct NamedSocketConnector {
     path: PathBuf,
 }

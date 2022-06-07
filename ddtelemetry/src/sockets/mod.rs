@@ -44,7 +44,7 @@ where
 }
 
 #[derive(Clone)]
-struct UnixStreamWriterHandle(Arc<Mutex<StdUnixStream>>);
+pub struct UnixStreamWriterHandle(Arc<Mutex<StdUnixStream>>);
 
 pub trait WriterHandle: Clone + Send + io::Write {}
 
