@@ -185,7 +185,7 @@ impl<'a> From<&'a str> for Slice<'a, c_char> {
 mod test {
     use std::os::raw::c_char;
 
-    use crate::*;
+    use crate::slice::*;
 
     #[test]
     fn slice_from_into_slice() {

@@ -4,7 +4,8 @@
 #![allow(renamed_and_removed_lints)]
 #![allow(clippy::box_vec)]
 
-use crate::{AsBytes, ByteSlice, CharSlice, Slice, Timespec};
+use crate::Timespec;
+use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use ddcommon::tag::Tag;
 use ddprof_exporter as exporter;
 use exporter::ProfileExporterV3;
@@ -16,13 +17,13 @@ use std::str::FromStr;
 #[repr(C)]
 pub enum SendResult {
     HttpResponse(HttpStatus),
-    Err(crate::Vec<u8>),
+    Err(ddcommon_ffi::Vec<u8>),
 }
 
 #[repr(C)]
 pub enum NewProfileExporterV3Result {
     Ok(*mut ProfileExporterV3),
-    Err(crate::Vec<u8>),
+    Err(ddcommon_ffi::Vec<u8>),
 }
 
 #[export_name = "ddprof_ffi_NewProfileExporterV3Result_drop"]
@@ -118,7 +119,7 @@ unsafe fn try_to_endpoint(
 #[export_name = "ddprof_ffi_ProfileExporterV3_new"]
 pub extern "C" fn profile_exporter_new(
     family: CharSlice,
-    tags: Option<&crate::Vec<Tag>>,
+    tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: EndpointV3,
 ) -> NewProfileExporterV3Result {
     match || -> Result<ProfileExporterV3, Box<dyn Error>> {
@@ -160,7 +161,7 @@ pub unsafe extern "C" fn profile_exporter_build(
     start: Timespec,
     end: Timespec,
     files: Slice<File>,
-    additional_tags: Option<&crate::Vec<Tag>>,
+    additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
     timeout_ms: u64,
 ) -> Option<Box<Request>> {
     match exporter {
@@ -202,7 +203,7 @@ pub unsafe extern "C" fn profile_exporter_send(
     let exp_ptr = match exporter {
         None => {
             let buf: &[u8] = b"Failed to export: exporter was null";
-            return SendResult::Err(crate::Vec::from(Vec::from(buf)));
+            return SendResult::Err(ddcommon_ffi::Vec::from(Vec::from(buf)));
         }
         Some(e) => e,
     };
@@ -210,7 +211,7 @@ pub unsafe extern "C" fn profile_exporter_send(
     let request_ptr = match request {
         None => {
             let buf: &[u8] = b"Failed to export: request was null";
-            return SendResult::Err(crate::Vec::from(Vec::from(buf)));
+            return SendResult::Err(ddcommon_ffi::Vec::from(Vec::from(buf)));
         }
         Some(req) => req,
     };
@@ -315,7 +316,7 @@ pub unsafe extern "C" fn send_result_drop(result: SendResult) {
 #[cfg(test)]
 mod test {
     use crate::exporter::*;
-    use crate::Slice;
+    use ddcommon_ffi::Slice;
 
     fn family() -> CharSlice<'static> {
         CharSlice::from("native")
@@ -331,7 +332,7 @@ mod test {
 
     #[test]
     fn profile_exporter_v3_new_and_delete() {
-        let mut tags = crate::Vec::default();
+        let mut tags = ddcommon_ffi::Vec::default();
         let host = Tag::new("host", "localhost").expect("static tags to be valid");
         tags.push(host);
 

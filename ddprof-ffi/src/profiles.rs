@@ -1,7 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use crate::{AsBytes, CharSlice, Slice, Timespec};
+use crate::Timespec;
+use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
 use ddprof_profiles as profiles;
 use std::convert::{TryFrom, TryInto};
 use std::error::Error;
@@ -344,7 +345,7 @@ pub extern "C" fn ddprof_ffi_Profile_add(
 pub struct EncodedProfile {
     start: Timespec,
     end: Timespec,
-    buffer: crate::Vec<u8>,
+    buffer: ddcommon_ffi::Vec<u8>,
 }
 
 impl From<ddprof_profiles::EncodedProfile> for EncodedProfile {
@@ -359,7 +360,7 @@ impl From<ddprof_profiles::EncodedProfile> for EncodedProfile {
 #[repr(C)]
 pub enum SerializeResult {
     Ok(EncodedProfile),
-    Err(crate::Vec<u8>),
+    Err(ddcommon_ffi::Vec<u8>),
 }
 
 /// Serialize the aggregated profile. Don't forget to clean up the result by
@@ -402,7 +403,7 @@ pub unsafe extern "C" fn ddprof_ffi_SerializeResult_drop(_result: SerializeResul
 
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn ddprof_ffi_Vec_u8_as_slice(vec: &crate::Vec<u8>) -> Slice<u8> {
+pub unsafe extern "C" fn ddprof_ffi_Vec_u8_as_slice(vec: &ddcommon_ffi::Vec<u8>) -> Slice<u8> {
     vec.as_slice()
 }
 
@@ -429,7 +430,7 @@ pub unsafe extern "C" fn ddprof_ffi_Profile_reset(
 #[cfg(test)]
 mod test {
     use crate::profiles::*;
-    use crate::Slice;
+    use ddcommon_ffi::Slice;
 
     #[test]
     fn ctor_and_dtor() {

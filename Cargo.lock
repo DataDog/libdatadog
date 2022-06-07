@@ -146,6 +146,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ddcommon-ffi"
+version = "0.7.0-rc.1"
+dependencies = [
+ "anyhow",
+ "ddcommon",
+]
+
+[[package]]
 name = "ddprof"
 version = "0.7.0-rc.1"
 dependencies = [
@@ -182,6 +190,7 @@ version = "0.7.0-rc.1"
 dependencies = [
  "chrono",
  "ddcommon",
+ "ddcommon-ffi",
  "ddprof-exporter",
  "ddprof-profiles",
  "hyper",
