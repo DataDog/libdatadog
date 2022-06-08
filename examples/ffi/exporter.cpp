@@ -9,7 +9,7 @@ extern "C" {
 #include <thread>
 
 static ddprof_ffi_Slice_c_char to_slice_c_char(const char *s) {
-  return (ddprof_ffi_Slice_c_char){.ptr = s, .len = strlen(s)};
+  return ddprof_ffi_Slice_c_char({.ptr = s, .len = strlen(s)});
 }
 
 struct Deleter {
