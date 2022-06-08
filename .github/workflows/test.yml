@@ -13,7 +13,7 @@ jobs:
         rust_version: [""]
         include:
           - platform: "ubuntu-latest"
-            rust_version: "1.56.1"
+            rust_version: "1.60"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
