@@ -5,8 +5,8 @@
 #![allow(clippy::box_vec)]
 
 use crate::Timespec;
-use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use ddcommon::tag::Tag;
+use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use ddprof_exporter as exporter;
 use exporter::ProfileExporterV3;
 use std::borrow::Cow;
