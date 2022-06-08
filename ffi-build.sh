@@ -100,7 +100,7 @@ if [[ "$fix_macos_rpath" -eq 1 ]]; then
 fi
 
 # objcopy might not be available on macOS
-if command -v objcopy > /dev/null; then
+if command -v objcopy > /dev/null && [[ "$target" != "x86_64-pc-windows-msvc" ]]; then
     # Remove .llvmbc section which is not useful for clients
     objcopy --remove-section .llvmbc "$destdir/lib/${static_library_name}"
 
