@@ -134,7 +134,7 @@ if [ -n "$unexpected_native_libs" ]; then
 fi
 cd -
 
-echo "Generating the ddprof/ffi.h header..."
+echo "Generating the $destdir/ddprof/ffi.h header..."
 cbindgen --crate ddprof-ffi --config ddprof-ffi/cbindgen.toml --output "$destdir/include/ddprof/ffi.h"
 
 # CI doesn't have any clang tooling

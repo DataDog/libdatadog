@@ -57,5 +57,15 @@ jobs:
         run: "echo ::set-output name=version::$(rustc --version)"
       - name: "Generate FFI"
         run: bash ffi-build.sh /tmp/libddprof
+
+      - name: 'Publish libdatadog'
+        uses: actions/upload-artifact@v2
+        if: '${{ always() }}'
+        with:
+          if-no-files-found: error
+          name: libdatadog.${{ matrix.platform }}
+          path: /tmp/libddprof
+          retention-days: 1
+
       - name: "Test building C bindings"
         run: mkdir examples/ffi/build && cd examples/ffi/build && cmake -S .. -DDDProf_ROOT=/tmp/libddprof && cmake --build .
