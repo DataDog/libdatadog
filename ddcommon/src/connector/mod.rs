@@ -4,6 +4,7 @@
 use futures::future::BoxFuture;
 use futures::{future, FutureExt};
 use hyper::client::HttpConnector;
+
 use rustls::ClientConfig;
 use std::future::Future;
 use std::pin::Pin;
@@ -11,6 +12,8 @@ use std::task::{Context, Poll};
 
 #[cfg(unix)]
 pub mod uds;
+
+pub mod errors;
 
 mod conn_stream;
 use conn_stream::{ConnStream, ConnStreamError};
@@ -21,8 +24,14 @@ pub enum Connector {
     Https(hyper_rustls::HttpsConnector<hyper::client::HttpConnector>),
 }
 
+impl Default for Connector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Connector {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         match build_https_connector() {
             Ok(connector) => Connector::Https(connector),
             Err(_) => Connector::Http(HttpConnector::new()),
@@ -38,7 +47,7 @@ impl Connector {
             Self::Http(c) => {
                 if require_tls {
                     future::err::<ConnStream, ConnStreamError>(
-                        crate::errors::Error::CannotEstablishTlsConnection.into(),
+                        errors::Error::CannotEstablishTlsConnection.into(),
                     )
                     .boxed()
                 } else {
@@ -76,7 +85,7 @@ fn load_root_certs() -> anyhow::Result<rustls::RootCertStore> {
         roots.add(&cert).ok();
     }
     if roots.is_empty() {
-        return Err(crate::errors::Error::NoValidCertifacteRootsFound.into());
+        return Err(errors::Error::NoValidCertifacteRootsFound.into());
     }
     Ok(roots)
 }
@@ -137,8 +146,8 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(
-            *stream.downcast::<crate::errors::Error>().unwrap(),
-            crate::errors::Error::CannotEstablishTlsConnection
+            *stream.downcast::<errors::Error>().unwrap(),
+            errors::Error::CannotEstablishTlsConnection
         );
 
         env::set_var(ENV_SSL_CERT_FILE, old_value);

@@ -11,31 +11,34 @@ require "rubygems/package"
 
 RSpec::Core::RakeTask.new(:spec)
 
-LIB_GITHUB_RELEASES = {
-  # This should match the version in the version.rb file
-  "0.6.0" => [
-    {
-      file: "libddprof-aarch64-alpine-linux-musl.tar.gz",
-      sha256: "7501d26ed9b2607c2bca79b3fd39971efa4dbb6949226d7d123f095e47ca541c",
-      ruby_platform: "aarch64-linux-musl"
-    },
-    {
-      file: "libddprof-aarch64-unknown-linux-gnu.tar.gz",
-      sha256: "c18351882fdb4b64df76f4cd49dbf567d8871349fa444144aa9a8ddf0532bad2",
-      ruby_platform: "aarch64-linux"
-    },
-    {
-      file: "libddprof-x86_64-alpine-linux-musl.tar.gz",
-      sha256: "ca5e49636465ee977943d64815442d4bff2de2b74678b1376e6368280534f909",
-      ruby_platform: "x86_64-linux-musl"
-    },
-    {
-      file: "libddprof-x86_64-unknown-linux-gnu.tar.gz",
-      sha256: "8eaec92d14bcfa8839843ba2ddfeae254804e087a4984985132a508d6f841645",
-      ruby_platform: "x86_64-linux"
-    }
-  ]
-}
+LIB_VERSION_TO_PACKAGE = "0.7.0-rc.1"
+unless LIB_VERSION_TO_PACKAGE.start_with?(Libdatadog::LIB_VERSION)
+  raise "`LIB_VERSION_TO_PACKAGE` setting in <Rakefile> (#{LIB_VERSION_TO_PACKAGE}) does not match " \
+    "`LIB_VERSION` setting in <lib/libdatadog/version.rb> (#{Libdatadog::LIB_VERSION})"
+end
+
+LIB_GITHUB_RELEASES = [
+  {
+    file: "libdatadog-aarch64-alpine-linux-musl.tar.gz",
+    sha256: "d3a6d71f45ce0f95978dcb31525389ee3ea02ea0170f00be466ff6ce1a1f6047",
+    ruby_platform: "aarch64-linux-musl"
+  },
+  {
+    file: "libdatadog-aarch64-unknown-linux-gnu.tar.gz",
+    sha256: "e792c923d5cdc6d581da87d12ab789ae578fa588fb2a220f72660f8d25df6de8",
+    ruby_platform: "aarch64-linux"
+  },
+  {
+    file: "libdatadog-x86_64-alpine-linux-musl.tar.gz",
+    sha256: "402a1f40b55e1bad022d1391793a4ed79c8b41bfd9265cad721960be77c12f1e",
+    ruby_platform: "x86_64-linux-musl"
+  },
+  {
+    file: "libdatadog-x86_64-unknown-linux-gnu.tar.gz",
+    sha256: "9b43711b23e42e76684eeced9e8d25183d350060d087d755622fa6748fa79aa5",
+    ruby_platform: "x86_64-linux"
+  }
+]
 
 task default: [
   :spec,
@@ -45,7 +48,7 @@ task default: [
 desc "Download lib release from github"
 task :fetch do
   Helpers.each_github_release_variant do |file:, sha256:, target_directory:, target_file:, **_|
-    target_url = "https://github.com/DataDog/libddprof/releases/download/v#{Libddprof::LIB_VERSION}/#{file}"
+    target_url = "https://github.com/datadog/libdatadog/releases/download/v#{LIB_VERSION_TO_PACKAGE}/#{file}"
 
     if File.exist?(target_file)
       target_file_hash = Digest::SHA256.hexdigest(File.read(target_file))
@@ -88,13 +91,13 @@ task package: [
   (:'standard:fix' unless RUBY_VERSION < "2.6"),
   :extract
 ] do
-  gemspec = eval(File.read("libddprof.gemspec"), nil, "libddprof.gemspec") # standard:disable Security/Eval
+  gemspec = eval(File.read("libdatadog.gemspec"), nil, "libdatadog.gemspec") # standard:disable Security/Eval
   FileUtils.mkdir_p("pkg")
 
   # Fallback package with all binaries
   # This package will get used by (1) platforms that have no matching `ruby_platform` or (2) that have set
   # "BUNDLE_FORCE_RUBY_PLATFORM" (or its equivalent via code) to avoid precompiled gems.
-  # In a previous version of libddprof, this package had no binaries, but that could mean that we broke customers in case (2).
+  # In a previous version of libdatadog, this package had no binaries, but that could mean that we broke customers in case (2).
   # For customers in case (1), this package is a no-op, and dd-trace-rb will correctly detect and warn that
   # there are no valid binaries for the platform.
   Helpers.package_for(gemspec, ruby_platform: nil, files: Helpers.files_for("x86_64-linux", "x86_64-linux-musl", "aarch64-linux", "aarch64-linux-musl"))
@@ -105,7 +108,7 @@ task package: [
   Helpers.package_for(gemspec, ruby_platform: "aarch64-linux", files: Helpers.files_for("aarch64-linux", "aarch64-linux-musl"))
 
   # Experimental macOS package, not published to rubygems.org at the moment
-  if ENV["LIBDDPROF_PACKAGE_MACOS"] == "true"
+  if ENV["LIBDATADOG_PACKAGE_MACOS"] == "true"
     Helpers.package_for(gemspec, ruby_platform: "x86_64-darwin-19", files: Helpers.files_for("x86_64-darwin-19"))
   end
 end
@@ -117,22 +120,22 @@ task push_to_rubygems: [
 ] do
   system("gem signout") # make sure there are no existing credentials in use
 
-  system("gem push pkg/libddprof-#{Libddprof::VERSION}.gem")
-  system("gem push pkg/libddprof-#{Libddprof::VERSION}-x86_64-linux.gem")
-  system("gem push pkg/libddprof-#{Libddprof::VERSION}-aarch64-linux.gem")
+  system("gem push pkg/libdatadog-#{Libdatadog::VERSION}.gem")
+  system("gem push pkg/libdatadog-#{Libdatadog::VERSION}-x86_64-linux.gem")
+  system("gem push pkg/libdatadog-#{Libdatadog::VERSION}-aarch64-linux.gem")
 
   system("gem signout") # leave no credentials behind
 end
 
 module Helpers
-  def self.each_github_release_variant(version: Libddprof::LIB_VERSION)
-    LIB_GITHUB_RELEASES.fetch(version).each do |variant|
+  def self.each_github_release_variant
+    LIB_GITHUB_RELEASES.each do |variant|
       file = variant.fetch(:file)
       sha256 = variant.fetch(:sha256)
       ruby_platform = variant.fetch(:ruby_platform)
 
       # These two are so common that we just centralize them here
-      target_directory = "vendor/libddprof-#{version}/#{ruby_platform}"
+      target_directory = "vendor/libdatadog-#{Libdatadog::LIB_VERSION}/#{ruby_platform}"
       target_file = "#{target_directory}/#{file}"
 
       FileUtils.mkdir_p(target_directory)
@@ -156,7 +159,6 @@ module Helpers
 
   def self.files_for(
     *included_platforms,
-    version: Libddprof::LIB_VERSION,
     excluded_files: [
       "ddprof_ffi.pc", # we use the ddprof_ffi_with_rpath.pc variant
       "libddprof_ffi.a", "ddprof_ffi-static.pc", # We don't use the static library
@@ -166,7 +168,7 @@ module Helpers
   )
     files = []
 
-    each_github_release_variant(version: version) do |ruby_platform:, target_directory:, target_file:, **_|
+    each_github_release_variant do |ruby_platform:, target_directory:, target_file:, **_|
       next unless included_platforms.include?(ruby_platform)
 
       downloaded_release_tarball = target_file

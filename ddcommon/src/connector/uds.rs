@@ -19,14 +19,14 @@ pub fn socket_path_to_uri(path: &Path) -> Result<hyper::Uri, Box<dyn Error>> {
 
 pub fn socket_path_from_uri(uri: &hyper::Uri) -> anyhow::Result<PathBuf> {
     if uri.scheme_str() != Some("unix") {
-        return Err(crate::errors::Error::InvalidUrl.into());
+        return Err(super::errors::Error::InvalidUrl.into());
     }
     let path = hex::decode(
         uri.authority()
-            .ok_or(crate::errors::Error::InvalidUrl)?
+            .ok_or(super::errors::Error::InvalidUrl)?
             .as_str(),
     )
-    .map_err(|_| crate::errors::Error::InvalidUrl)?;
+    .map_err(|_| super::errors::Error::InvalidUrl)?;
     Ok(PathBuf::from(OsString::from_vec(path)))
 }
 

@@ -101,12 +101,12 @@ unsafe fn try_to_endpoint(
     match endpoint {
         EndpointV3::Agent(url) => {
             let base_url = try_to_url(url)?;
-            ddprof_exporter::Endpoint::agent(base_url)
+            ddprof_exporter::config::agent(base_url)
         }
         EndpointV3::Agentless(site, api_key) => {
             let site_str = site.try_to_utf8()?;
             let api_key_str = api_key.try_to_utf8()?;
-            ddprof_exporter::Endpoint::agentless(
+            ddprof_exporter::config::agentless(
                 Cow::Owned(site_str.to_owned()),
                 Cow::Owned(api_key_str.to_owned()),
             )

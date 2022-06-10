@@ -42,7 +42,7 @@ impl ConnStream {
         }
         #[cfg(not(unix))]
         {
-            Err(crate::errors::Error::UnixSocketUnsupported.into())
+            Err(super::errors::Error::UnixSocketUnsupported.into())
         }
     }
 
@@ -66,7 +66,7 @@ impl ConnStream {
             hyper_rustls::MaybeHttpsStream::Http(t) => {
                 if require_tls {
                     future::ready(Err(
-                        crate::errors::Error::CannotEstablishTlsConnection.into()
+                        super::errors::Error::CannotEstablishTlsConnection.into()
                     ))
                 } else {
                     future::ready(Ok(ConnStream::Tcp { transport: t }))
