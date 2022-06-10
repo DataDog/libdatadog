@@ -8,8 +8,9 @@ add_executable(exporter exporter.cpp)
 add_executable(profiles profiles.c)
 
 set(EXTERNAL_LIBS DDProf::FFI)
+
 if (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-    list(append EXTERNAL_LIBS NtDll UserEnv Bcrypt crypt32 wsock32 ws2_32 shlwapi)
+    set(EXTERNAL_LIBS "${EXTERNAL_LIBS};NtDll;UserEnv;Bcrypt;crypt32;wsock32;ws2_32;shlwapi")
 endif()
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
