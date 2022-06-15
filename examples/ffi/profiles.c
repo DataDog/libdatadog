@@ -3,7 +3,8 @@
 // developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present
 // Datadog, Inc.
 
-#include <ddprof/ffi.h>
+#include <libdatadog/ddcommon.h>
+#include <libdatadog/ddprof.h>
 #include <stdint.h>
 
 /* Creates a profile with one sample type "wall-time" with period of "wall-time"

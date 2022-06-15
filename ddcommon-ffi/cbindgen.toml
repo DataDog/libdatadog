@@ -6,12 +6,16 @@ tab_width = 2
 header = """// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 """
-include_guard = "DDPROF_FFI_H"
+include_guard = "DDCOMMON_FFI_H"
 style = "both"
 
 no_includes = true
 sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
-includes = ["libdatadog/ddcommon.h"]
+
+after_includes = """
+
+#define DDPROF_FFI_CHARSLICE_C(string) \\
+  /* NOTE: Compilation fails if you pass in a char* instead of a literal */ ((ddprof_ffi_CharSlice) {.ptr = "" string, .len = sizeof(string) - 1})"""
 
 [export]
 prefix = "ddprof_ffi_"
@@ -28,4 +32,4 @@ must_use = "__attribute__((warn_unused_result))"
 
 [parse]
 parse_deps = true
-include = ["ddcommon", "ddcommon-ffi", "ddprof-exporter", "ddprof-profiles", "ux"]
+include = ["ddcommon"]
