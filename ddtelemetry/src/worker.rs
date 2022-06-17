@@ -24,7 +24,7 @@ use ddcommon::HttpClient;
 use futures::future;
 use http::Request;
 
-use tokio::{runtime::Runtime, sync::mpsc, time::Instant};
+use tokio::{runtime, sync::mpsc, time::Instant};
 use tokio_util::sync::CancellationToken;
 
 fn time_now() -> f64 {
@@ -424,7 +424,7 @@ pub struct TelemetryWorkerHandle {
     sender: mpsc::Sender<TelemetryActions>,
     shutdown: Arc<InnerTelemetryShutdown>,
     cancellation_token: CancellationToken,
-    runtime: Arc<Runtime>,
+    runtime: runtime::Handle,
     contexts: MetricContexts,
 }
 
@@ -531,14 +531,14 @@ pub struct TelemetryWorkerBuilder {
 }
 
 impl TelemetryWorkerBuilder {
-    pub async fn new_fetch_host(
+    pub fn new_fetch_host(
         service_name: String,
         language_name: String,
         language_version: String,
         tracer_version: String,
     ) -> Self {
         Self {
-            host: crate::build_host().await,
+            host: crate::build_host(),
             application: Application {
                 service_name,
                 language_name,
@@ -593,7 +593,6 @@ impl TelemetryWorkerBuilder {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let runtime = Arc::from(runtime);
 
         let contexts = MetricContexts::default();
         let token = CancellationToken::new();
@@ -625,9 +624,9 @@ impl TelemetryWorkerBuilder {
 
         let notify_shutdown = shutdown.clone();
 
-        let shared_runtime = runtime.clone();
+        let runtime_handle = runtime.handle().clone();
         std::thread::spawn(move || {
-            shared_runtime.block_on(worker.run());
+            runtime.block_on(worker.run());
             notify_shutdown.shutdown_finished();
         });
 
@@ -635,7 +634,7 @@ impl TelemetryWorkerBuilder {
             sender: tx,
             shutdown,
             cancellation_token: token,
-            runtime,
+            runtime: runtime_handle,
             contexts,
         })
     }
