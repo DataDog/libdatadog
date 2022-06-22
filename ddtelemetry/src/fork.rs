@@ -1,3 +1,5 @@
+// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 use std::os::unix::net::{UnixDatagram, UnixStream};
 
 pub enum Fork {
@@ -7,8 +9,11 @@ pub enum Fork {
 
 pub trait ForkSafe {}
 
+/// Forkable is meant to hold instances considered ForkSafe
+///
 #[derive(Clone)]
-pub struct Forkable<T: ?Sized> {
+#[repr(transparent)]
+pub struct Forkable<T: ?Sized + 'static> {
     inner: T,
 }
 

@@ -124,6 +124,7 @@ impl<T> Default for Vec<T> {
     }
 }
 
+#[allow(clippy::get_first)]
 #[cfg(test)]
 mod test {
     use crate::vec::*;
