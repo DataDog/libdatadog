@@ -5,16 +5,19 @@ inputs:
   rust_version:
     default: "latest"
     required: false
+  build_profile:
+    default: "unspecified"
+    required: false
 
 runs:
   using: composite
   steps:
     - name: ⚡ Cache
-      uses: actions/cache@v2
+      uses: actions/cache@v3
       with:
         path: |
           ~/.cargo/registry/
           ~/.cargo/git/db/
           ~/.cargo/bin/
           target/
-        key: v1-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}-${{ inputs.rust_version }}
+        key: v1-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}-${{ inputs.rust_version }}-${{ inputs.build_profile }}
