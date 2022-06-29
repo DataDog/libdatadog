@@ -82,7 +82,7 @@ pub unsafe fn fork() -> Result<Fork, std::io::Error> {
     }
 }
 
-/// Forks supplied funciton pointer into a new process returning Pid of the process and call exit(0) once child function pointers
+/// Forks supplied function pointer into a new process returning Pid of the process and call exit(0) once child function pointers
 /// stops executing
 ///
 /// Function pointer is used to prevent capturing values in a closure, and all Args must be marked as ForkSafe
