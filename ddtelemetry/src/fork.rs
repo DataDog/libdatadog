@@ -56,6 +56,9 @@ macro_rules! impl_forksafe_for_tuple {
         impl<$A : ForkSafe, $($I: ForkSafe),*> ForkSafe for ($A, $($I),*) {}
     }
 }
+
+impl<T: ForkSafe> ForkSafe for Option<T> {}
+
 // Implement tuples "auto_trait" ForkSafe for *all tuples that contain only ForkSafe valuess
 impl_forksafe_for_tuple!(A B C D E F G H I J K L M);
 
@@ -70,10 +73,10 @@ impl_forksafe_for_tuple!(A B C D E F G H I J K L M);
 /// Existing state of the process must allow safe forking, e.g. no background threads should be running
 /// as any locks held by these threads will be locked forever
 ///
-pub unsafe fn fork() -> anyhow::Result<Fork> {
+pub unsafe fn fork() -> Result<Fork, std::io::Error> {
     let res = libc::fork();
     match res {
-        -1 => Err(anyhow::format_err!("Can't fork child process")),
+        -1 => Err(std::io::Error::last_os_error()),
         0 => Ok(Fork::Child),
         res => Ok(Fork::Parent(res)),
     }
@@ -91,7 +94,7 @@ pub unsafe fn fork() -> anyhow::Result<Fork> {
 /// function will return an Error if
 ///
 /// This function will return an error if .
-pub fn safer_fork<Args>(args: Args, f: fn(Args) -> ()) -> anyhow::Result<libc::pid_t>
+pub fn safer_fork<Args>(args: Args, f: fn(Args) -> ()) -> Result<libc::pid_t, std::io::Error>
 where
     Args: ForkSafe,
 {
@@ -109,22 +112,22 @@ pub fn getpid() -> libc::pid_t {
     unsafe { libc::getpid() }
 }
 
-/// Sets test panic handler that will ensure exit(1) is called after
-/// the original panic handler
-pub fn set_default_child_panic_handler() {
-    let old_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |p| {
-        old_hook(p);
-        std::process::exit(1);
-    }));
-}
-
 #[cfg(test)]
 pub mod tests {
     use std::{
         io::{Read, Write},
         os::unix::net::UnixStream,
     };
+
+    /// Sets test panic handler that will ensure exit(1) is called after
+    /// the original panic handler
+    pub fn set_default_child_panic_handler() {
+        let old_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |p| {
+            old_hook(p);
+            std::process::exit(1);
+        }));
+    }
 
     #[macro_export]
     macro_rules! assert_child_exit {
@@ -148,7 +151,7 @@ pub mod tests {
         }};
     }
 
-    use crate::fork::{getpid, set_default_child_panic_handler, Forkable};
+    use crate::fork::{getpid, Forkable};
 
     use super::safer_fork;
 
@@ -178,6 +181,21 @@ pub mod tests {
             set_default_child_panic_handler();
 
             assert_eq!(a, b.take());
+        })
+        .unwrap();
+        assert_child_exit!(pid);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_fork_trigger_error() {
+        let pid = safer_fork((), |_| {
+            set_default_child_panic_handler();
+
+            // Limit the number of processes the child process tree is able to contain
+            rlimit::setrlimit(rlimit::Resource::NPROC, 1, 1).unwrap();
+            let err = safer_fork((), |_| {}).unwrap_err();
+            assert_eq!(std::io::ErrorKind::WouldBlock, err.kind());
         })
         .unwrap();
         assert_child_exit!(pid);
