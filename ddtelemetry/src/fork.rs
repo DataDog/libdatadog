@@ -59,7 +59,7 @@ macro_rules! impl_forksafe_for_tuple {
 
 impl<T: ForkSafe> ForkSafe for Option<T> {}
 
-// Implement tuples "auto_trait" ForkSafe for *all tuples that contain only ForkSafe valuess
+// Implement tuples "auto_trait" ForkSafe for *all tuples that contain only ForkSafe values
 impl_forksafe_for_tuple!(A B C D E F G H I J K L M);
 
 /// Forks process into a new standalone process
