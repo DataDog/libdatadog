@@ -122,9 +122,10 @@ echo "Building tools"
 cargo build --package tools --bins
 
 echo "Generating the ddprof/ffi.h header..."
-cbindgen --crate ddcommon-ffi --config ddcommon-ffi/cbindgen.toml --output "$destdir/include/libdatadog/ddcommon.h"
-cbindgen --crate ddprof-ffi --config ddprof-ffi/cbindgen.toml --output "$destdir/include/libdatadog/ddprof.h"
-./target/debug/dedup_headers "$destdir/include/libdatadog/ddcommon.h" "$destdir/include/libdatadog/ddprof.h"
+rustup run nightly -- cbindgen --crate ddcommon-ffi --config ddcommon-ffi/cbindgen.toml --output "$destdir/include/libdatadog/ddcommon.h"
+rustup run nightly -- cbindgen --crate ddprof-ffi --config ddprof-ffi/cbindgen.toml --output "$destdir/include/libdatadog/ddprof.h"
+rustup run nightly -- cbindgen --crate ddtelemetry-ffi --config ddtelemetry-ffi/cbindgen.toml --output "$destdir/include/libdatadog/ddtelemetry.h"
+./target/debug/dedup_headers "$destdir/include/libdatadog/ddcommon.h" "$destdir/include/libdatadog/ddprof.h" "$destdir/include/libdatadog/ddtelemetry.h"
 
 # CI doesn't have any clang tooling
 # clang-format -i "$destdir/include/ddprof/ffi.h"

@@ -55,11 +55,9 @@ fn build_request<'a>(
         payload,
     }
 }
-pub async fn build_host() -> data::Host {
+pub fn build_host() -> data::Host {
     data::Host {
-        hostname: info::os::real_hostname()
-            .await
-            .unwrap_or_else(|_| String::from("unknown_hostname")),
+        hostname: info::os::real_hostname().unwrap_or_else(|_| String::from("unknown_hostname")),
         container_id: container_id::get_container_id().map(|f| f.to_string()),
         os: Some(String::from(info::os::os_name())),
         os_version: info::os::os_version().ok(),
@@ -84,11 +82,11 @@ pub struct Header {
 }
 
 // TODO: these are quick and dirty functions to get some examples running
-pub async fn build_full(header: &mut Header) -> Telemetry<'_> {
+pub fn build_full(header: &mut Header) -> Telemetry<'_> {
     let Header { host, app } = header;
     let host = match host {
         None => {
-            *host = Some(build_host().await);
+            *host = Some(build_host());
             host.as_ref().unwrap()
         }
         Some(host) => host,

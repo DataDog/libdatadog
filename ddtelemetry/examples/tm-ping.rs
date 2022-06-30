@@ -5,7 +5,7 @@
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut header = Default::default();
-    let telemetry = ddtelemetry::build_full(&mut header).await;
+    let telemetry = ddtelemetry::build_full(&mut header);
 
     println!(
         "Payload to be sent: {}",
