@@ -18,6 +18,7 @@ use self::{
 };
 pub mod config;
 pub mod data;
+#[cfg(not(windows))]
 pub mod fork;
 pub mod info;
 pub mod metrics;
