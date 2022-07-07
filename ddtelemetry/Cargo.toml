@@ -2,7 +2,7 @@
 edition = "2018"
 license = "Apache 2.0"
 name = "ddtelemetry"
-version = "0.7.0-rc.1"
+version = "0.7.0"
 
 [dependencies]
 anyhow = {version = "1.0"}
