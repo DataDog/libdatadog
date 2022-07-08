@@ -17,8 +17,7 @@ int main(void) {
   const struct ddprof_ffi_Slice_value_type sample_types = {&wall_time, 1};
   const struct ddprof_ffi_Period period = {wall_time, 60};
 
-  ddprof_ffi_Profile *profile =
-      ddprof_ffi_Profile_new(sample_types, &period, NULL);
+  ddprof_ffi_Profile *profile = ddprof_ffi_Profile_new(sample_types, &period, NULL);
 
   struct ddprof_ffi_Line root_line = {
       .function =
