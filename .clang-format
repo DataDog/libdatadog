@@ -1,0 +1,7 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+
+# Match Rust here since it's predominantly a Rust codebase
+ColumnLimit: 100
+---
