@@ -656,7 +656,8 @@ mod api_test {
 
     #[test]
     fn impl_from_profile_for_pprof_profile() {
-        let profile: pprof::Profile = (&provide_distinct_locations()).into();
+        let locations = provide_distinct_locations();
+        let profile = pprof::Profile::from(&locations);
 
         assert_eq!(profile.sample.len(), 2);
         assert_eq!(profile.mapping.len(), 1);
