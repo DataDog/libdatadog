@@ -32,7 +32,7 @@ int main(void) {
 
   struct ddprof_ffi_Location root_location = {
       // yes, a zero-initialized mapping is valid
-      .mapping = (struct ddprof_ffi_Mapping){},
+      .mapping = (struct ddprof_ffi_Mapping){0},
       .lines = (struct ddprof_ffi_Slice_line){&root_line, 1},
   };
   int64_t value = 10;

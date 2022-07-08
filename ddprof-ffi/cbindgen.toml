@@ -24,7 +24,7 @@ prefix_with_name = true
 rename_variants = "ScreamingSnakeCase"
 
 [fn]
-must_use = "__attribute__((warn_unused_result))"
+must_use = "DD_CHECK_RETURN"
 
 [parse]
 parse_deps = true
