@@ -236,7 +236,7 @@ fn unwrap_cancellation_token<'a>(
 ) -> Option<&'a tokio_util::sync::CancellationToken> {
     cancel.map(|c| {
         let wrapped_reference: &CancellationToken = unsafe { c.as_ref() };
-        let unwrapped_reference: &tokio_util::sync::CancellationToken = &(wrapped_reference.0);
+        let unwrapped_reference: &tokio_util::sync::CancellationToken = &(*wrapped_reference).0;
 
         unwrapped_reference
     })

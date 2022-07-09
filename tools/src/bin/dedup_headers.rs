@@ -23,12 +23,16 @@ fn collect_definitions(header: &str) -> Vec<regex::Match<'_>> {
 }
 
 fn read(f: &mut BufReader<&File>, until: Option<usize>) -> String {
-    let mut s = vec![0; until.unwrap_or(0)];
-    if until.is_some() {
-        f.read_exact(&mut s).unwrap();
-    } else {
-        f.read_to_end(&mut s).unwrap();
-    }
+    let mut s = Vec::new();
+    match until {
+        Some(until) => {
+            s.resize(until, 0);
+            f.read_exact(&mut s).unwrap()
+        }
+        None => {
+            f.read_to_end(&mut s).unwrap();
+        }
+    };
 
     String::from_utf8(s).unwrap()
 }
