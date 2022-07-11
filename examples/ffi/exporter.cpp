@@ -1,6 +1,6 @@
 extern "C" {
-#include <datadog/ddcommon.h>
-#include <datadog/ddprof.h>
+#include <libdatadog/ddcommon.h>
+#include <libdatadog/ddprof.h>
 }
 #include <cstdint>
 #include <cstdio>
