@@ -13,7 +13,7 @@ use std::io::{self, BufReader, BufWriter, Read, Seek, Write};
 
 fn collect_definitions(header: &str) -> Vec<regex::Match<'_>> {
     lazy_static::lazy_static! {
-        static ref HEADER_TYPE_DECL_RE: Regex = RegexBuilder::new(r"^(/\*.*?\*/\n)?typedef (struct|enum) [a-zA-Z_0-9]+ +(\{.*?\} )?[a-zA-Z_0-9]+;\n+")
+        static ref HEADER_TYPE_DECL_RE: Regex = RegexBuilder::new(r"^(/\*\*.*?\*/\n)?typedef (struct|enum) [a-zA-Z_0-9]+ +(\{.*?\} )?[a-zA-Z_0-9]+;\n+")
             .multi_line(true)
             .dot_matches_new_line(true)
             .build()
@@ -84,7 +84,6 @@ fn main() {
     let base_defs_set: HashSet<_> = base_defs.iter().map(Match::as_str).collect();
 
     let mut base_new_parts = vec![&base_header_content[..base_defs.last().unwrap().end()]];
-
     for child_def in &unique_child_defs {
         if base_defs_set.contains(child_def.as_str()) {
             continue;
