@@ -22,18 +22,9 @@ fn collect_definitions(header: &str) -> Vec<regex::Match<'_>> {
     HEADER_TYPE_DECL_RE.find_iter(header).collect()
 }
 
-fn read(f: &mut BufReader<&File>, until: Option<usize>) -> String {
+fn read(f: &mut BufReader<&File>) -> String {
     let mut s = Vec::new();
-    match until {
-        Some(until) => {
-            s.resize(until, 0);
-            f.read_exact(&mut s).unwrap()
-        }
-        None => {
-            f.read_to_end(&mut s).unwrap();
-        }
-    };
-
+    f.read_to_end(&mut s).unwrap();
     String::from_utf8(s).unwrap()
 }
 
@@ -65,7 +56,7 @@ fn main() {
     for child_def in args[2..].iter().flat_map(|p| {
         let child_header = OpenOptions::new().read(true).write(true).open(p).unwrap();
 
-        let child_header_content = read(&mut BufReader::new(&child_header), None);
+        let child_header_content = read(&mut BufReader::new(&child_header));
         let child_defs = collect_definitions(&child_header_content);
         let new_content_parts = content_without_defs(&child_header_content, &child_defs);
 
@@ -88,7 +79,7 @@ fn main() {
         .write(true)
         .open(&args[1])
         .unwrap();
-    let base_header_content = read(&mut BufReader::new(&base_header), None);
+    let base_header_content = read(&mut BufReader::new(&base_header));
     let base_defs = collect_definitions(&base_header_content);
     let base_defs_set: HashSet<_> = base_defs.iter().map(Match::as_str).collect();
 
