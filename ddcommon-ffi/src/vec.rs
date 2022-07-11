@@ -124,7 +124,6 @@ impl<T> Default for Vec<T> {
     }
 }
 
-#[allow(clippy::get_first)]
 #[cfg(test)]
 mod test {
     use crate::vec::*;
@@ -155,10 +154,9 @@ mod test {
         assert!(ffi_vec.capacity >= 2);
 
         let slice = unsafe { ffi_vec.as_slice().as_slice() };
-        let first = slice.get(0).unwrap();
-        let second = slice.get(1).unwrap();
-        assert_eq!(first, &1);
-        assert_eq!(second, &2);
+        let [first, second]: [_; 2] = slice.try_into().expect("slice to have 2 items");
+        assert_eq!(first, 1);
+        assert_eq!(second, 2);
     }
 
     #[test]

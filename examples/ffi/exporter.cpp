@@ -13,9 +13,7 @@ static ddprof_ffi_Slice_c_char to_slice_c_char(const char *s) {
 }
 
 struct Deleter {
-  void operator()(ddprof_ffi_Profile *object) {
-    ddprof_ffi_Profile_free(object);
-  }
+  void operator()(ddprof_ffi_Profile *object) { ddprof_ffi_Profile_free(object); }
 };
 
 template <typename T> void print_error(const char *s, const T &err) {
@@ -85,8 +83,8 @@ int main(int argc, char *argv[]) {
       DDPROF_FFI_CHARSLICE_C("datad0g.com"), to_slice_c_char(api_key));
 
   ddprof_ffi_Vec_tag tags = ddprof_ffi_Vec_tag_new();
-  ddprof_ffi_PushTagResult tag_result = ddprof_ffi_Vec_tag_push(
-      &tags, DDPROF_FFI_CHARSLICE_C("service"), to_slice_c_char(service));
+  ddprof_ffi_PushTagResult tag_result =
+      ddprof_ffi_Vec_tag_push(&tags, DDPROF_FFI_CHARSLICE_C("service"), to_slice_c_char(service));
   if (tag_result.tag == DDPROF_FFI_PUSH_TAG_RESULT_ERR) {
     print_error("Failed to push tag: ", tag_result.err);
     ddprof_ffi_PushTagResult_drop(tag_result);
@@ -96,12 +94,10 @@ int main(int argc, char *argv[]) {
   ddprof_ffi_PushTagResult_drop(tag_result);
 
   ddprof_ffi_NewProfileExporterV3Result exporter_new_result =
-      ddprof_ffi_ProfileExporterV3_new(DDPROF_FFI_CHARSLICE_C("native"), &tags,
-                                       endpoint);
+      ddprof_ffi_ProfileExporterV3_new(DDPROF_FFI_CHARSLICE_C("native"), &tags, endpoint);
   ddprof_ffi_Vec_tag_drop(tags);
 
-  if (exporter_new_result.tag ==
-      DDPROF_FFI_NEW_PROFILE_EXPORTER_V3_RESULT_ERR) {
+  if (exporter_new_result.tag == DDPROF_FFI_NEW_PROFILE_EXPORTER_V3_RESULT_ERR) {
     print_error("Failed to create exporter: ", exporter_new_result.err);
     ddprof_ffi_NewProfileExporterV3Result_drop(exporter_new_result);
     return 1;
@@ -114,12 +110,10 @@ int main(int argc, char *argv[]) {
       .file = ddprof_ffi_Vec_u8_as_slice(&encoded_profile->buffer),
   }};
 
-  ddprof_ffi_Slice_file files = {.ptr = files_,
-                                 .len = sizeof files_ / sizeof *files_};
+  ddprof_ffi_Slice_file files = {.ptr = files_, .len = sizeof files_ / sizeof *files_};
 
   ddprof_ffi_Request *request = ddprof_ffi_ProfileExporterV3_build(
-      exporter, encoded_profile->start, encoded_profile->end, files, nullptr,
-      30000);
+      exporter, encoded_profile->start, encoded_profile->end, files, nullptr, 30000);
 
   ddprof_ffi_CancellationToken *cancel = ddprof_ffi_CancellationToken_new();
   ddprof_ffi_CancellationToken *cancel_for_background_thread =
@@ -144,8 +138,7 @@ int main(int argc, char *argv[]) {
   trigger_cancel_if_request_takes_too_long_thread.detach();
 
   int exit_code = 0;
-  ddprof_ffi_SendResult send_result =
-      ddprof_ffi_ProfileExporterV3_send(exporter, request, cancel);
+  ddprof_ffi_SendResult send_result = ddprof_ffi_ProfileExporterV3_send(exporter, request, cancel);
   if (send_result.tag == DDPROF_FFI_SEND_RESULT_ERR) {
     print_error("Failed to send profile: ", send_result.err);
     exit_code = 1;

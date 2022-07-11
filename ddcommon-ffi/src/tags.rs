@@ -54,6 +54,9 @@ pub struct ParseTagsResult {
     error_message: Option<Box<crate::Vec<u8>>>,
 }
 
+/// # Safety
+/// The `string`'s .ptr must point to a valid object at least as large as its
+/// .len property.
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddprof_ffi_Vec_tag_parse(string: CharSlice) -> ParseTagsResult {
