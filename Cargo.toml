@@ -9,6 +9,16 @@ members = [
     "ddprof-profiles",
     "ddcommon",
     "ddtelemetry",
+    # After this comment: placeholder crates for now
+    "datadog-profiler",
+    "datadog-telemetry",
+    "datadog-internal-telemetry",
+    "datadog-appsec",
+    "datadog-asm",
+    "datadog-waf",
+    "datadog-remote-configuration",
+    "datadog-remote-config",
+    "libdatadog",
 ]
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"

@@ -123,6 +123,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5827cebf4670468b8772dd191856768aedcb1b0278a04f989f7766351917b9dc"
 
 [[package]]
+name = "datadog-appsec"
+version = "0.1.0"
+
+[[package]]
+name = "datadog-asm"
+version = "0.1.0"
+
+[[package]]
+name = "datadog-internal-telemetry"
+version = "0.1.0"
+
+[[package]]
+name = "datadog-profiler"
+version = "0.1.0"
+
+[[package]]
+name = "datadog-remote-config"
+version = "0.1.0"
+
+[[package]]
+name = "datadog-remote-configuration"
+version = "0.1.0"
+
+[[package]]
+name = "datadog-telemetry"
+version = "0.1.0"
+
+[[package]]
+name = "datadog-waf"
+version = "0.1.0"
+
+[[package]]
 name = "ddcommon"
 version = "0.7.0-rc.1"
 dependencies = [
@@ -512,6 +544,10 @@ name = "libc"
 version = "0.2.125"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5916d2ae698f6de9bfb891ad7a8d65c09d232dc58cc4ac433c7da3b2fd84bc2b"
+
+[[package]]
+name = "libdatadog"
+version = "0.1.0"
 
 [[package]]
 name = "log"
