@@ -256,9 +256,8 @@ impl TelemetryWorker {
         let mut series = Vec::new();
         for (context_key, extra_tags, points) in self.data.metric_buckets.flush_series() {
             let context_guard = self.data.metric_contexts.get_context(context_key);
-
-            #[allow(clippy::significant_drop_in_scrutinee)]
-            let context = match context_guard.read() {
+            let maybe_context = context_guard.read();
+            let context = match maybe_context {
                 Some(context) => context,
                 None => {
                     telemetry_worker_log!(
