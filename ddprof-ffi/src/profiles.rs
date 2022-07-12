@@ -287,7 +287,7 @@ impl<'a> TryFrom<Sample<'a>> for profiles::api::Sample<'a> {
 }
 
 /// Create a new profile with the given sample types. Must call
-/// `ddprof_ffi_Profile_free` when you are done with the profile.
+/// `ddog_Profile_free` when you are done with the profile.
 ///
 /// # Arguments
 /// * `sample_types`
@@ -300,7 +300,7 @@ impl<'a> TryFrom<Sample<'a>> for profiles::api::Sample<'a> {
 /// and must have the correct number of elements for the slice.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddprof_ffi_Profile_new(
+pub unsafe extern "C" fn ddog_Profile_new(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
     start_time: Option<&Timespec>,
@@ -319,8 +319,8 @@ pub unsafe extern "C" fn ddprof_ffi_Profile_new(
 #[no_mangle]
 /// # Safety
 /// The `profile` must point to an object created by another FFI routine in this
-/// module, such as `ddprof_ffi_Profile_with_sample_types`.
-pub unsafe extern "C" fn ddprof_ffi_Profile_free(_profile: Box<ddprof_profiles::Profile>) {}
+/// module, such as `ddog_Profile_with_sample_types`.
+pub unsafe extern "C" fn ddog_Profile_free(_profile: Box<ddprof_profiles::Profile>) {}
 
 #[no_mangle]
 /// # Safety
@@ -328,10 +328,7 @@ pub unsafe extern "C" fn ddprof_ffi_Profile_free(_profile: Box<ddprof_profiles::
 /// module. All pointers inside the `sample` need to be valid for the duration
 /// of this call.
 /// This call is _NOT_ thread-safe.
-pub extern "C" fn ddprof_ffi_Profile_add(
-    profile: &mut ddprof_profiles::Profile,
-    sample: Sample,
-) -> u64 {
+pub extern "C" fn ddog_Profile_add(profile: &mut ddprof_profiles::Profile, sample: Sample) -> u64 {
     match sample.try_into().map(|s| profile.add(s)) {
         Ok(r) => match r {
             Ok(id) => id.into(),
@@ -364,7 +361,7 @@ pub enum SerializeResult {
 }
 
 /// Serialize the aggregated profile. Don't forget to clean up the result by
-/// calling ddprof_ffi_SerializeResult_drop.
+/// calling ddog_SerializeResult_drop.
 ///
 /// # Arguments
 /// * `profile` - a reference to the profile being serialized.
@@ -381,7 +378,7 @@ pub enum SerializeResult {
 /// The `end_time` must be null or otherwise point to a valid TimeSpec object.
 /// The `duration_nanos` must be null or otherwise point to a valid i64.
 #[no_mangle]
-pub unsafe extern "C" fn ddprof_ffi_Profile_serialize(
+pub unsafe extern "C" fn ddog_Profile_serialize(
     profile: &ddprof_profiles::Profile,
     end_time: Option<&Timespec>,
     duration_nanos: Option<&i64>,
@@ -399,11 +396,11 @@ pub unsafe extern "C" fn ddprof_ffi_Profile_serialize(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddprof_ffi_SerializeResult_drop(_result: SerializeResult) {}
+pub unsafe extern "C" fn ddog_SerializeResult_drop(_result: SerializeResult) {}
 
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn ddprof_ffi_Vec_u8_as_slice(vec: &ddcommon_ffi::Vec<u8>) -> Slice<u8> {
+pub unsafe extern "C" fn ddog_Vec_u8_as_slice(vec: &ddcommon_ffi::Vec<u8>) -> Slice<u8> {
     vec.as_slice()
 }
 
@@ -420,7 +417,7 @@ pub unsafe extern "C" fn ddprof_ffi_Vec_u8_as_slice(vec: &ddcommon_ffi::Vec<u8>)
 /// can be called across an FFI boundary, the compiler cannot enforce this.
 /// If `time` is not null, it must point to a valid Timespec object.
 #[no_mangle]
-pub unsafe extern "C" fn ddprof_ffi_Profile_reset(
+pub unsafe extern "C" fn ddog_Profile_reset(
     profile: &mut ddprof_profiles::Profile,
     start_time: Option<&Timespec>,
 ) -> bool {
@@ -436,8 +433,8 @@ mod test {
     fn ctor_and_dtor() {
         unsafe {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
-            let profile = ddprof_ffi_Profile_new(Slice::new(sample_type, 1), None, None);
-            ddprof_ffi_Profile_free(profile);
+            let profile = ddog_Profile_new(Slice::new(sample_type, 1), None, None);
+            ddog_Profile_free(profile);
         }
     }
 
@@ -445,7 +442,7 @@ mod test {
     fn aggregate_samples() {
         unsafe {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
-            let mut profile = ddprof_ffi_Profile_new(Slice::new(sample_type, 1), None, None);
+            let mut profile = ddog_Profile_new(Slice::new(sample_type, 1), None, None);
 
             let lines = &vec![Line {
                 function: Function {
@@ -482,19 +479,19 @@ mod test {
 
             let aggregator = &mut *profile;
 
-            let sample_id1 = ddprof_ffi_Profile_add(aggregator, sample);
+            let sample_id1 = ddog_Profile_add(aggregator, sample);
             assert_eq!(sample_id1, 1);
 
-            let sample_id2 = ddprof_ffi_Profile_add(aggregator, sample);
+            let sample_id2 = ddog_Profile_add(aggregator, sample);
             assert_eq!(sample_id1, sample_id2);
 
-            ddprof_ffi_Profile_free(profile);
+            ddog_Profile_free(profile);
         }
     }
 
     unsafe fn provide_distinct_locations_ffi() -> ddprof_profiles::Profile {
         let sample_type: *const ValueType = &ValueType::new("samples", "count");
-        let mut profile = ddprof_ffi_Profile_new(Slice::new(sample_type, 1), None, None);
+        let mut profile = ddog_Profile_new(Slice::new(sample_type, 1), None, None);
 
         let main_lines = vec![Line {
             function: Function {
@@ -553,10 +550,10 @@ mod test {
 
         let aggregator = &mut *profile;
 
-        let sample_id1 = ddprof_ffi_Profile_add(aggregator, main_sample);
+        let sample_id1 = ddog_Profile_add(aggregator, main_sample);
         assert_eq!(sample_id1, 1);
 
-        let sample_id2 = ddprof_ffi_Profile_add(aggregator, test_sample);
+        let sample_id2 = ddog_Profile_add(aggregator, test_sample);
         assert_eq!(sample_id2, 2);
 
         *profile
