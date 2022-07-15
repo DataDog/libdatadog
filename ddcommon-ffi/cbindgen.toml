@@ -23,14 +23,14 @@ after_includes = """
 #endif
 
 #if defined(__cplusplus) && (__cplusplus >= 201703L)
-#  define DD_CHECK_RETURN [[nodiscard]]
+#  define DDOG_CHECK_RETURN [[nodiscard]]
 #elif defined(_Check_return_) /* SAL */
-#  define DD_CHECK_RETURN _Check_return_
+#  define DDOG_CHECK_RETURN _Check_return_
 #elif (defined(__has_attribute) && __has_attribute(warn_unused_result)) || \\
       (defined(__GNUC__) && (__GNUC__ >= 4))
-#  define DD_CHECK_RETURN __attribute__((__warn_unused_result__))
+#  define DDOG_CHECK_RETURN __attribute__((__warn_unused_result__))
 #else
-#  define DD_CHECK_RETURN
+#  define DDOG_CHECK_RETURN
 #endif"""
 
 [export]
@@ -44,7 +44,7 @@ prefix_with_name = true
 rename_variants = "ScreamingSnakeCase"
 
 [fn]
-must_use = "DD_CHECK_RETURN"
+must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
