@@ -4,8 +4,9 @@
 #![allow(renamed_and_removed_lints)]
 #![allow(clippy::box_vec)]
 
-use crate::{AsBytes, ByteSlice, CharSlice, Slice, Timespec};
+use crate::Timespec;
 use ddcommon::tag::Tag;
+use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use ddprof_exporter as exporter;
 use exporter::ProfileExporterV3;
 use std::borrow::Cow;
@@ -16,16 +17,16 @@ use std::str::FromStr;
 #[repr(C)]
 pub enum SendResult {
     HttpResponse(HttpStatus),
-    Err(crate::Vec<u8>),
+    Err(ddcommon_ffi::Vec<u8>),
 }
 
 #[repr(C)]
 pub enum NewProfileExporterV3Result {
     Ok(*mut ProfileExporterV3),
-    Err(crate::Vec<u8>),
+    Err(ddcommon_ffi::Vec<u8>),
 }
 
-#[export_name = "ddprof_ffi_NewProfileExporterV3Result_drop"]
+#[export_name = "ddog_NewProfileExporterV3Result_drop"]
 pub unsafe extern "C" fn new_profile_exporter_v3_result_drop(result: NewProfileExporterV3Result) {
     match result {
         NewProfileExporterV3Result::Ok(ptr) => {
@@ -64,7 +65,7 @@ pub struct HttpStatus(u16);
 /// Creates an endpoint that uses the agent.
 /// # Arguments
 /// * `base_url` - Contains a URL with scheme, host, and port e.g. "https://agent:8126/".
-#[export_name = "ddprof_ffi_EndpointV3_agent"]
+#[export_name = "ddog_EndpointV3_agent"]
 pub extern "C" fn endpoint_agent(base_url: CharSlice) -> EndpointV3 {
     EndpointV3::Agent(base_url)
 }
@@ -73,7 +74,7 @@ pub extern "C" fn endpoint_agent(base_url: CharSlice) -> EndpointV3 {
 /// # Arguments
 /// * `site` - Contains a host and port e.g. "datadoghq.com".
 /// * `api_key` - Contains the Datadog API key.
-#[export_name = "ddprof_ffi_EndpointV3_agentless"]
+#[export_name = "ddog_EndpointV3_agentless"]
 pub extern "C" fn endpoint_agentless<'a>(
     site: CharSlice<'a>,
     api_key: CharSlice<'a>,
@@ -115,10 +116,10 @@ unsafe fn try_to_endpoint(
 }
 
 #[must_use]
-#[export_name = "ddprof_ffi_ProfileExporterV3_new"]
+#[export_name = "ddog_ProfileExporterV3_new"]
 pub extern "C" fn profile_exporter_new(
     family: CharSlice,
-    tags: Option<&crate::Vec<Tag>>,
+    tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: EndpointV3,
 ) -> NewProfileExporterV3Result {
     match || -> Result<ProfileExporterV3, Box<dyn Error>> {
@@ -132,7 +133,7 @@ pub extern "C" fn profile_exporter_new(
     }
 }
 
-#[export_name = "ddprof_ffi_ProfileExporterV3_delete"]
+#[export_name = "ddog_ProfileExporterV3_delete"]
 pub extern "C" fn profile_exporter_delete(exporter: Option<Box<ProfileExporterV3>>) {
     std::mem::drop(exporter)
 }
@@ -154,13 +155,13 @@ unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<ddprof_exporter::Fil
 /// # Safety
 /// The `exporter` and the files inside of the `files` slice need to have been
 /// created by this module.
-#[export_name = "ddprof_ffi_ProfileExporterV3_build"]
+#[export_name = "ddog_ProfileExporterV3_build"]
 pub unsafe extern "C" fn profile_exporter_build(
     exporter: Option<NonNull<ProfileExporterV3>>,
     start: Timespec,
     end: Timespec,
     files: Slice<File>,
-    additional_tags: Option<&crate::Vec<Tag>>,
+    additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
     timeout_ms: u64,
 ) -> Option<Box<Request>> {
     match exporter {
@@ -193,7 +194,7 @@ pub unsafe extern "C" fn profile_exporter_build(
 /// # Safety
 /// All non-null arguments MUST have been created by created by apis in this module.
 #[must_use]
-#[export_name = "ddprof_ffi_ProfileExporterV3_send"]
+#[export_name = "ddog_ProfileExporterV3_send"]
 pub unsafe extern "C" fn profile_exporter_send(
     exporter: Option<NonNull<ProfileExporterV3>>,
     request: Option<Box<Request>>,
@@ -202,7 +203,7 @@ pub unsafe extern "C" fn profile_exporter_send(
     let exp_ptr = match exporter {
         None => {
             let buf: &[u8] = b"Failed to export: exporter was null";
-            return SendResult::Err(crate::Vec::from(Vec::from(buf)));
+            return SendResult::Err(ddcommon_ffi::Vec::from(Vec::from(buf)));
         }
         Some(e) => e,
     };
@@ -210,7 +211,7 @@ pub unsafe extern "C" fn profile_exporter_send(
     let request_ptr = match request {
         None => {
             let buf: &[u8] = b"Failed to export: request was null";
-            return SendResult::Err(crate::Vec::from(Vec::from(buf)));
+            return SendResult::Err(ddcommon_ffi::Vec::from(Vec::from(buf)));
         }
         Some(req) => req,
     };
@@ -228,7 +229,7 @@ pub unsafe extern "C" fn profile_exporter_send(
 }
 
 #[no_mangle]
-pub extern "C" fn ddprof_ffi_Request_drop(_request: Option<Box<Request>>) {}
+pub extern "C" fn ddog_Request_drop(_request: Option<Box<Request>>) {}
 
 fn unwrap_cancellation_token<'a>(
     cancel: Option<NonNull<CancellationToken>>,
@@ -244,7 +245,7 @@ fn unwrap_cancellation_token<'a>(
 /// Can be passed as an argument to send and then be used to asynchronously cancel it from a different thread.
 #[no_mangle]
 #[must_use]
-pub extern "C" fn ddprof_ffi_CancellationToken_new() -> *mut CancellationToken {
+pub extern "C" fn ddog_CancellationToken_new() -> *mut CancellationToken {
     Box::into_raw(Box::new(CancellationToken(
         tokio_util::sync::CancellationToken::new(),
     )))
@@ -258,22 +259,22 @@ pub extern "C" fn ddprof_ffi_CancellationToken_new() -> *mut CancellationToken {
 ///
 /// Thus, it's possible to do something like:
 /// ```c
-/// cancel_t1 = ddprof_ffi_CancellationToken_new();
-/// cancel_t2 = ddprof_ffi_CancellationToken_clone(cancel_t1);
+/// cancel_t1 = ddog_CancellationToken_new();
+/// cancel_t2 = ddog_CancellationToken_clone(cancel_t1);
 ///
 /// // On thread t1:
-///     ddprof_ffi_ProfileExporterV3_send(..., cancel_t1);
-///     ddprof_ffi_CancellationToken_drop(cancel_t1);
+///     ddog_ProfileExporterV3_send(..., cancel_t1);
+///     ddog_CancellationToken_drop(cancel_t1);
 ///
 /// // On thread t2:
-///     ddprof_ffi_CancellationToken_cancel(cancel_t2);
-///     ddprof_ffi_CancellationToken_drop(cancel_t2);
+///     ddog_CancellationToken_cancel(cancel_t2);
+///     ddog_CancellationToken_drop(cancel_t2);
 /// ```
 ///
 /// Without clone, both t1 and t2 would need to synchronize to make sure neither was using the cancel
 /// before it could be dropped. With clone, there is no need for such synchronization, both threads
 /// have their own cancel and should drop that cancel after they are done with it.
-pub extern "C" fn ddprof_ffi_CancellationToken_clone(
+pub extern "C" fn ddog_CancellationToken_clone(
     cancel: Option<NonNull<CancellationToken>>,
 ) -> *mut CancellationToken {
     match unwrap_cancellation_token(cancel) {
@@ -286,7 +287,7 @@ pub extern "C" fn ddprof_ffi_CancellationToken_clone(
 /// Note that cancellation is a terminal state; cancelling a token more than once does nothing.
 /// Returns `true` if token was successfully cancelled.
 #[no_mangle]
-pub extern "C" fn ddprof_ffi_CancellationToken_cancel(
+pub extern "C" fn ddog_CancellationToken_cancel(
     cancel: Option<NonNull<CancellationToken>>,
 ) -> bool {
     let cancel_reference = match unwrap_cancellation_token(cancel) {
@@ -303,11 +304,11 @@ pub extern "C" fn ddprof_ffi_CancellationToken_cancel(
 }
 
 #[no_mangle]
-pub extern "C" fn ddprof_ffi_CancellationToken_drop(_cancel: Option<Box<CancellationToken>>) {
+pub extern "C" fn ddog_CancellationToken_drop(_cancel: Option<Box<CancellationToken>>) {
     // _cancel implicitly dropped because we've turned it into a Box
 }
 
-#[export_name = "ddprof_ffi_SendResult_drop"]
+#[export_name = "ddog_SendResult_drop"]
 pub unsafe extern "C" fn send_result_drop(result: SendResult) {
     std::mem::drop(result)
 }
@@ -315,7 +316,7 @@ pub unsafe extern "C" fn send_result_drop(result: SendResult) {
 #[cfg(test)]
 mod test {
     use crate::exporter::*;
-    use crate::Slice;
+    use ddcommon_ffi::Slice;
 
     fn family() -> CharSlice<'static> {
         CharSlice::from("native")
@@ -331,7 +332,7 @@ mod test {
 
     #[test]
     fn profile_exporter_v3_new_and_delete() {
-        let mut tags = crate::Vec::default();
+        let mut tags = ddcommon_ffi::Vec::default();
         let host = Tag::new("host", "localhost").expect("static tags to be valid");
         tags.push(host);
 

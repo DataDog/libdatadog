@@ -8,12 +8,6 @@ use chrono::{DateTime, TimeZone, Utc};
 
 mod exporter;
 mod profiles;
-mod slice;
-mod tags;
-mod vec;
-
-pub use slice::{AsBytes, ByteSlice, CharSlice, Slice};
-pub use vec::Vec;
 
 /// Represents time since the Unix Epoch in seconds plus nanoseconds.
 #[repr(C)]

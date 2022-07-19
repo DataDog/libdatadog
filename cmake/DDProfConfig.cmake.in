@@ -9,7 +9,7 @@ else ()
   set(DDProf_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 endif ()
 
-find_path(DDProf_INCLUDE_DIR ddprof/ffi.h
+find_path(DDProf_INCLUDE_DIR datadog/profiling.h
   HINTS ${DDProf_ROOT}/include
 )
 

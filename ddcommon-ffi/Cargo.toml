@@ -1,0 +1,14 @@
+# Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+# This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+
+[package]
+name = "ddcommon-ffi"
+version = "0.7.0-rc.1"
+edition = "2021"
+license = "Apache-2.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ddcommon = { path = "../ddcommon", version = "0.7.0-rc.1" }
+anyhow = "1.0"

@@ -3,7 +3,7 @@
 
 extern crate alloc;
 
-use crate::Slice;
+use crate::slice::Slice;
 use std::io::Write;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
