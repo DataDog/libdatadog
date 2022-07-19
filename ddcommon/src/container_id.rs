@@ -37,7 +37,7 @@ Following environments are supported:
       `1:name=systemd:/ecs/8cd79a803caf4d2aa945152e934a5c00/8cd79a803caf4d2aa945152e934a5c00-1053176469`
 */
 
-const CGROUP_PATH: &str = "/proc/self/cgroup";
+pub const CGROUP_PATH: &str = "/proc/self/cgroup";
 
 const UUID_SOURCE: &str =
     r"[0-9a-f]{8}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{12}";
@@ -74,7 +74,13 @@ fn parse_line(line: &str) -> Option<&str> {
 
 fn extract_container_id(filepath: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let file = File::open(filepath)?;
-    let reader = BufReader::new(file);
+    extract_container_id_from_reader(file)
+}
+
+pub fn extract_container_id_from_reader<R: std::io::Read>(
+    reader: R,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let reader = BufReader::new(reader);
 
     for line in reader.lines() {
         if let Some(container_id) = parse_line(&line?) {
