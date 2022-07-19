@@ -8,7 +8,7 @@ use crate::Timespec;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use ddprof_exporter as exporter;
-use exporter::ProfileExporterV3;
+use exporter::ProfileExporter;
 use std::borrow::Cow;
 use std::error::Error;
 use std::ptr::NonNull;
@@ -21,26 +21,26 @@ pub enum SendResult {
 }
 
 #[repr(C)]
-pub enum NewProfileExporterV3Result {
-    Ok(*mut ProfileExporterV3),
+pub enum NewProfileExporterResult {
+    Ok(*mut ProfileExporter),
     Err(ddcommon_ffi::Vec<u8>),
 }
 
-#[export_name = "ddog_NewProfileExporterV3Result_drop"]
-pub unsafe extern "C" fn new_profile_exporter_v3_result_drop(result: NewProfileExporterV3Result) {
+#[export_name = "ddog_NewProfileExporterResult_drop"]
+pub unsafe extern "C" fn new_profile_exporter_result_drop(result: NewProfileExporterResult) {
     match result {
-        NewProfileExporterV3Result::Ok(ptr) => {
+        NewProfileExporterResult::Ok(ptr) => {
             let exporter = Box::from_raw(ptr);
             std::mem::drop(exporter);
         }
-        NewProfileExporterV3Result::Err(message) => {
+        NewProfileExporterResult::Err(message) => {
             std::mem::drop(message);
         }
     }
 }
 
 #[repr(C)]
-pub enum EndpointV3<'a> {
+pub enum Endpoint<'a> {
     Agent(CharSlice<'a>),
     Agentless(CharSlice<'a>, CharSlice<'a>),
 }
@@ -65,21 +65,21 @@ pub struct HttpStatus(u16);
 /// Creates an endpoint that uses the agent.
 /// # Arguments
 /// * `base_url` - Contains a URL with scheme, host, and port e.g. "https://agent:8126/".
-#[export_name = "ddog_EndpointV3_agent"]
-pub extern "C" fn endpoint_agent(base_url: CharSlice) -> EndpointV3 {
-    EndpointV3::Agent(base_url)
+#[export_name = "ddog_Endpoint_agent"]
+pub extern "C" fn endpoint_agent(base_url: CharSlice) -> Endpoint {
+    Endpoint::Agent(base_url)
 }
 
 /// Creates an endpoint that uses the Datadog intake directly aka agentless.
 /// # Arguments
 /// * `site` - Contains a host and port e.g. "datadoghq.com".
 /// * `api_key` - Contains the Datadog API key.
-#[export_name = "ddog_EndpointV3_agentless"]
+#[export_name = "ddog_Endpoint_agentless"]
 pub extern "C" fn endpoint_agentless<'a>(
     site: CharSlice<'a>,
     api_key: CharSlice<'a>,
-) -> EndpointV3<'a> {
-    EndpointV3::Agentless(site, api_key)
+) -> Endpoint<'a> {
+    Endpoint::Agentless(site, api_key)
 }
 
 unsafe fn try_to_url(slice: CharSlice) -> Result<hyper::Uri, Box<dyn std::error::Error>> {
@@ -95,16 +95,16 @@ unsafe fn try_to_url(slice: CharSlice) -> Result<hyper::Uri, Box<dyn std::error:
 }
 
 unsafe fn try_to_endpoint(
-    endpoint: EndpointV3,
+    endpoint: Endpoint,
 ) -> Result<ddprof_exporter::Endpoint, Box<dyn std::error::Error>> {
     // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
     // a failed result is likely to be an error.
     match endpoint {
-        EndpointV3::Agent(url) => {
+        Endpoint::Agent(url) => {
             let base_url = try_to_url(url)?;
             ddprof_exporter::config::agent(base_url)
         }
-        EndpointV3::Agentless(site, api_key) => {
+        Endpoint::Agentless(site, api_key) => {
             let site_str = site.try_to_utf8()?;
             let api_key_str = api_key.try_to_utf8()?;
             ddprof_exporter::config::agentless(
@@ -116,25 +116,25 @@ unsafe fn try_to_endpoint(
 }
 
 #[must_use]
-#[export_name = "ddog_ProfileExporterV3_new"]
+#[export_name = "ddog_ProfileExporter_new"]
 pub extern "C" fn profile_exporter_new(
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoint: EndpointV3,
-) -> NewProfileExporterV3Result {
-    match || -> Result<ProfileExporterV3, Box<dyn Error>> {
+    endpoint: Endpoint,
+) -> NewProfileExporterResult {
+    match || -> Result<ProfileExporter, Box<dyn Error>> {
         let family = unsafe { family.to_utf8_lossy() }.into_owned();
         let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
         let tags = tags.map(|tags| tags.iter().map(|tag| tag.clone().into_owned()).collect());
-        ProfileExporterV3::new(family, tags, converted_endpoint)
+        ProfileExporter::new(family, tags, converted_endpoint)
     }() {
-        Ok(exporter) => NewProfileExporterV3Result::Ok(Box::into_raw(Box::new(exporter))),
-        Err(err) => NewProfileExporterV3Result::Err(err.into()),
+        Ok(exporter) => NewProfileExporterResult::Ok(Box::into_raw(Box::new(exporter))),
+        Err(err) => NewProfileExporterResult::Err(err.into()),
     }
 }
 
-#[export_name = "ddog_ProfileExporterV3_delete"]
-pub extern "C" fn profile_exporter_delete(exporter: Option<Box<ProfileExporterV3>>) {
+#[export_name = "ddog_ProfileExporter_delete"]
+pub extern "C" fn profile_exporter_delete(exporter: Option<Box<ProfileExporter>>) {
     std::mem::drop(exporter)
 }
 
@@ -155,9 +155,9 @@ unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<ddprof_exporter::Fil
 /// # Safety
 /// The `exporter` and the files inside of the `files` slice need to have been
 /// created by this module.
-#[export_name = "ddog_ProfileExporterV3_build"]
+#[export_name = "ddog_ProfileExporter_build"]
 pub unsafe extern "C" fn profile_exporter_build(
-    exporter: Option<NonNull<ProfileExporterV3>>,
+    exporter: Option<NonNull<ProfileExporter>>,
     start: Timespec,
     end: Timespec,
     files: Slice<File>,
@@ -194,9 +194,9 @@ pub unsafe extern "C" fn profile_exporter_build(
 /// # Safety
 /// All non-null arguments MUST have been created by created by apis in this module.
 #[must_use]
-#[export_name = "ddog_ProfileExporterV3_send"]
+#[export_name = "ddog_ProfileExporter_send"]
 pub unsafe extern "C" fn profile_exporter_send(
-    exporter: Option<NonNull<ProfileExporterV3>>,
+    exporter: Option<NonNull<ProfileExporter>>,
     request: Option<Box<Request>>,
     cancel: Option<NonNull<CancellationToken>>,
 ) -> SendResult {
@@ -263,7 +263,7 @@ pub extern "C" fn ddog_CancellationToken_new() -> *mut CancellationToken {
 /// cancel_t2 = ddog_CancellationToken_clone(cancel_t1);
 ///
 /// // On thread t1:
-///     ddog_ProfileExporterV3_send(..., cancel_t1);
+///     ddog_ProfileExporter_send(..., cancel_t1);
 ///     ddog_CancellationToken_drop(cancel_t1);
 ///
 /// // On thread t2:
@@ -331,7 +331,7 @@ mod test {
     }
 
     #[test]
-    fn profile_exporter_v3_new_and_delete() {
+    fn profile_exporter_new_and_delete() {
         let mut tags = ddcommon_ffi::Vec::default();
         let host = Tag::new("host", "localhost").expect("static tags to be valid");
         tags.push(host);
@@ -339,10 +339,10 @@ mod test {
         let result = profile_exporter_new(family(), Some(&tags), endpoint_agent(endpoint()));
 
         match result {
-            NewProfileExporterV3Result::Ok(exporter) => unsafe {
+            NewProfileExporterResult::Ok(exporter) => unsafe {
                 profile_exporter_delete(Some(Box::from_raw(exporter)))
             },
-            NewProfileExporterV3Result::Err(message) => {
+            NewProfileExporterResult::Err(message) => {
                 std::mem::drop(message);
                 panic!("Should not occur!")
             }
@@ -350,14 +350,14 @@ mod test {
     }
 
     #[test]
-    fn profile_exporter_v3_build() {
+    fn test_build() {
         let exporter_result = profile_exporter_new(family(), None, endpoint_agent(endpoint()));
 
         let exporter = match exporter_result {
-            NewProfileExporterV3Result::Ok(exporter) => unsafe {
+            NewProfileExporterResult::Ok(exporter) => unsafe {
                 Some(NonNull::new_unchecked(exporter))
             },
-            NewProfileExporterV3Result::Err(message) => {
+            NewProfileExporterResult::Err(message) => {
                 std::mem::drop(message);
                 panic!("Should not occur!")
             }

@@ -29,12 +29,12 @@ pub struct Exporter {
     runtime: Runtime,
 }
 
-pub struct FieldsV3 {
+pub struct Fields {
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
 }
 
-pub struct ProfileExporterV3 {
+pub struct ProfileExporter {
     exporter: Exporter,
     endpoint: Endpoint,
     family: Cow<'static, str>,
@@ -103,12 +103,12 @@ impl Request {
     }
 }
 
-impl ProfileExporterV3 {
+impl ProfileExporter {
     pub fn new<IntoCow: Into<Cow<'static, str>>>(
         family: IntoCow,
         tags: Option<Vec<Tag>>,
         endpoint: Endpoint,
-    ) -> Result<ProfileExporterV3, Box<dyn Error>> {
+    ) -> Result<ProfileExporter, Box<dyn Error>> {
         Ok(Self {
             exporter: Exporter::new()?,
             endpoint,
