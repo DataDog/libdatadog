@@ -1,7 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use ddprof_exporter::{File, ProfileExporterV3, Request};
+use ddprof_exporter::{File, ProfileExporter, Request};
 use std::error::Error;
 use std::io::Read;
 use std::ops::Sub;
@@ -16,7 +16,7 @@ fn open<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(buffer)
 }
 
-fn multipart(exporter: &ProfileExporterV3) -> Request {
+fn multipart(exporter: &ProfileExporter) -> Request {
     let small_pprof_name = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/profile.pprof");
     let buffer = open(small_pprof_name).expect("to open file and read its bytes");
 
@@ -57,7 +57,7 @@ mod tests {
     fn multipart_agent() {
         let base_url = "http://localhost:8126".parse().expect("url to parse");
         let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let exporter = ProfileExporterV3::new("php", Some(default_tags()), endpoint)
+        let exporter = ProfileExporter::new("php", Some(default_tags()), endpoint)
             .expect("exporter to construct");
 
         let request = multipart(&exporter);
@@ -75,7 +75,7 @@ mod tests {
     fn multipart_agentless() {
         let api_key = "1234567890123456789012";
         let endpoint = config::agentless("datadoghq.com", api_key).expect("endpoint to construct");
-        let exporter = ProfileExporterV3::new("php", Some(default_tags()), endpoint)
+        let exporter = ProfileExporter::new("php", Some(default_tags()), endpoint)
             .expect("exporter to construct");
 
         let request = multipart(&exporter);

@@ -80,7 +80,7 @@ int main(int argc, char *argv[]) {
 
   ddog_EncodedProfile *encoded_profile = &serialize_result.ok;
 
-  ddog_EndpointV3 endpoint = ddog_EndpointV3_agentless(
+  ddog_Endpoint endpoint = ddog_Endpoint_agentless(
       DDOG_CHARSLICE_C("datad0g.com"), to_slice_c_char(api_key));
 
   ddog_Vec_tag tags = ddog_Vec_tag_new();
@@ -94,13 +94,13 @@ int main(int argc, char *argv[]) {
 
   ddog_PushTagResult_drop(tag_result);
 
-  ddog_NewProfileExporterV3Result exporter_new_result =
-      ddog_ProfileExporterV3_new(DDOG_CHARSLICE_C("native"), &tags, endpoint);
+  ddog_NewProfileExporterResult exporter_new_result =
+      ddog_ProfileExporter_new(DDOG_CHARSLICE_C("native"), &tags, endpoint);
   ddog_Vec_tag_drop(tags);
 
-  if (exporter_new_result.tag == DDOG_NEW_PROFILE_EXPORTER_V3_RESULT_ERR) {
+  if (exporter_new_result.tag == DDOG_NEW_PROFILE_EXPORTER_RESULT_ERR) {
     print_error("Failed to create exporter: ", exporter_new_result.err);
-    ddog_NewProfileExporterV3Result_drop(exporter_new_result);
+    ddog_NewProfileExporterResult_drop(exporter_new_result);
     return 1;
   }
 
@@ -113,7 +113,7 @@ int main(int argc, char *argv[]) {
 
   ddog_Slice_file files = {.ptr = files_, .len = sizeof files_ / sizeof *files_};
 
-  ddog_Request *request = ddog_ProfileExporterV3_build(
+  ddog_Request *request = ddog_ProfileExporter_build(
       exporter, encoded_profile->start, encoded_profile->end, files, nullptr, 30000);
 
   ddog_CancellationToken *cancel = ddog_CancellationToken_new();
@@ -122,7 +122,7 @@ int main(int argc, char *argv[]) {
 
   // As an example of CancellationToken usage, here we create a background
   // thread that sleeps for some time and then cancels a request early (e.g.
-  // before the timeout in ddog_ProfileExporterV3_send is hit).
+  // before the timeout in ddog_ProfileExporter_send is hit).
   //
   // If the request is faster than the sleep time, no cancellation takes place.
   std::thread trigger_cancel_if_request_takes_too_long_thread(
@@ -139,7 +139,7 @@ int main(int argc, char *argv[]) {
   trigger_cancel_if_request_takes_too_long_thread.detach();
 
   int exit_code = 0;
-  ddog_SendResult send_result = ddog_ProfileExporterV3_send(exporter, request, cancel);
+  ddog_SendResult send_result = ddog_ProfileExporter_send(exporter, request, cancel);
   if (send_result.tag == DDOG_SEND_RESULT_ERR) {
     print_error("Failed to send profile: ", send_result.err);
     exit_code = 1;
@@ -147,7 +147,7 @@ int main(int argc, char *argv[]) {
     printf("Response code: %d\n", send_result.http_response.code);
   }
 
-  ddog_NewProfileExporterV3Result_drop(exporter_new_result);
+  ddog_NewProfileExporterResult_drop(exporter_new_result);
   ddog_SendResult_drop(send_result);
   ddog_CancellationToken_drop(cancel);
   return exit_code;
