@@ -18,8 +18,10 @@ use self::{
 };
 pub mod config;
 pub mod data;
+pub mod fork;
 pub mod info;
 pub mod metrics;
+pub mod sockets;
 pub mod worker;
 
 const DEFAULT_API_VERSION: data::ApiVersion = data::ApiVersion::V1;
