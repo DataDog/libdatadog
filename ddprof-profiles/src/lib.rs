@@ -220,6 +220,12 @@ impl Endpoints {
     }
 }
 
+impl Default for Endpoints {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Profile {
     /// Creates a profile with `start_time`. Initializes the string table to
     /// include the empty string. All other fields are default.
@@ -414,7 +420,7 @@ impl Profile {
     }
 
     pub fn add_endpoint(&mut self, local_root_span_id: Cow<str>, endpoint: Cow<str>) {
-        if self.endpoints.mappings.len() == 0 {
+        if self.endpoints.mappings.is_empty() {
             self.endpoints.local_root_span_id_label = self.intern("local root span id");
             self.endpoints.endpoint_label = self.intern("trace endpoint");
         }
@@ -482,7 +488,7 @@ impl From<&Profile> for pprof::Profile {
             })
             .collect();
 
-        if profile.endpoints.mappings.len() > 0 {
+        if !profile.endpoints.mappings.is_empty() {
             for sample in samples.iter_mut() {
                 let mut endpoint: Option<&i64> = None;
 
@@ -835,16 +841,6 @@ mod api_test {
                 unit: "nanoseconds",
             },
         ];
-
-        let mapping = api::Mapping {
-            filename: "php",
-            ..Default::default()
-        };
-
-        let index = api::Function {
-            filename: "index.php",
-            ..Default::default()
-        };
 
         let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
 
