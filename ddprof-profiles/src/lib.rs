@@ -5,7 +5,7 @@ pub mod api;
 pub mod pprof;
 
 use core::fmt;
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 use std::convert::TryInto;
 use std::hash::Hash;
 use std::ops::AddAssign;
@@ -14,6 +14,7 @@ use std::time::{Duration, SystemTime};
 use indexmap::{IndexMap, IndexSet};
 use pprof::{Function, Label, Line, Location, ValueType};
 use prost::{EncodeError, Message};
+
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
@@ -83,6 +84,13 @@ pub struct Profile {
     strings: IndexSet<String>,
     start_time: SystemTime,
     period: Option<(i64, ValueType)>,
+    endpoints: Endpoints,
+}
+
+pub struct Endpoints {
+    mappings: IndexMap<i64, i64>,
+    local_root_span_id_label: i64,
+    endpoint_label: i64
 }
 
 pub struct ProfileBuilder<'a> {
@@ -203,6 +211,16 @@ pub struct EncodedProfile {
     pub buffer: Vec<u8>,
 }
 
+impl Endpoints {
+    pub fn new() -> Self {
+        Self {
+            mappings: Default::default(),
+            local_root_span_id_label: Default::default(),
+            endpoint_label: Default::default()
+        }
+    }
+}
+
 impl Profile {
     /// Creates a profile with `start_time`. Initializes the string table to
     /// include the empty string. All other fields are default.
@@ -219,6 +237,7 @@ impl Profile {
             strings: Default::default(),
             start_time,
             period: None,
+            endpoints: Endpoints::new(),
         };
 
         profile.intern("");
@@ -350,6 +369,7 @@ impl Profile {
                 PProfId(index + 1)
             }
         };
+
         Ok(id)
     }
 
@@ -394,6 +414,18 @@ impl Profile {
         Some(profile)
     }
 
+    pub fn add_endpoint(&mut self, local_root_span_id: Cow<str>, endpoint: Cow<str>) {
+        if self.endpoints.mappings.len() == 0 {
+            self.endpoints.local_root_span_id_label = self.intern("local root span id");
+            self.endpoints.endpoint_label = self.intern("trace endpoint");
+        }
+
+        let interned_span_id = self.intern(local_root_span_id.as_ref());
+        let interned_endpoint = self.intern(endpoint.as_ref());
+
+        self.endpoints.mappings.insert(interned_span_id, interned_endpoint);
+    }
+
     /// Serialize the aggregated profile, adding the end time and duration.
     /// # Arguments
     /// * `end_time` - Optional end time of the profile. Passing None will use the current time.
@@ -410,6 +442,7 @@ impl Profile {
         let end = end_time.unwrap_or_else(SystemTime::now);
         let start = self.start_time;
         let mut profile: pprof::Profile = self.into();
+
         profile.duration_nanos = duration
             .unwrap_or_else(|| {
                 end.duration_since(start).unwrap_or({
@@ -438,17 +471,41 @@ impl From<&Profile> for pprof::Profile {
             None => (0, None),
         };
 
+        let mut samples : Vec<pprof::Sample> = profile
+            .samples
+            .iter()
+            .map(|(sample, values)| pprof::Sample {
+                location_id: sample.locations.iter().map(Into::into).collect(),
+                value: values.to_vec(),
+                label: sample.labels.clone(),
+            })
+            .collect();
+
+        if profile.endpoints.mappings.len() > 0 {
+            for sample in samples.iter_mut() {
+                let mut endpoint : Option<&i64> = None;
+
+                for label in &sample.label {
+                    if label.key == profile.endpoints.local_root_span_id_label {
+                        endpoint = profile.endpoints.mappings.get(&label.str);
+                        break;
+                    }
+                }
+
+                if let Some(endpoint_value) = endpoint {
+                    sample.label.push(pprof::Label {
+                        key: profile.endpoints.endpoint_label,
+                        str: *endpoint_value,
+                        num: 0,
+                        num_unit: 0
+                    });
+                }
+            }
+        }
+
         pprof::Profile {
             sample_type: profile.sample_types.clone(),
-            sample: profile
-                .samples
-                .iter()
-                .map(|(sample, values)| pprof::Sample {
-                    location_id: sample.locations.iter().map(Into::into).collect(),
-                    value: values.to_vec(),
-                    label: sample.labels.clone(),
-                })
-                .collect(),
+            sample: samples,
             mapping: profile
                 .mappings
                 .iter()
@@ -501,6 +558,7 @@ impl From<&Profile> for pprof::Profile {
 
 #[cfg(test)]
 mod api_test {
+    use std::borrow::Cow;
     use crate::{api, pprof, PProfId, Profile, ValueType};
 
     #[test]
@@ -762,5 +820,101 @@ mod api_test {
                 .expect("string to be found"),
             "nanoseconds"
         );
+    }
+
+    #[test]
+    fn lazy_endpoints() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mapping = api::Mapping {
+            filename: "php",
+            ..Default::default()
+        };
+
+        let index = api::Function {
+            filename: "index.php",
+            ..Default::default()
+        };
+
+        let mut profile : Profile = Profile::builder().sample_types(sample_types).build();
+
+        let id_label = api::Label {
+            key: "local root span id",
+            str: Some("10"),
+            num: 0,
+            num_unit: None
+        };
+
+        let id2_label = api::Label {
+            key: "local root span id",
+            str: Some("11"),
+            num: 0,
+            num_unit: None
+        };
+
+        let other_label = api::Label {
+            key: "other",
+            str: Some("test"),
+            num: 0,
+            num_unit: None
+        };
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000],
+            labels: vec![id_label, other_label],
+        };
+
+        let sample2 = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000],
+            labels: vec![id2_label, other_label],
+        };
+
+        profile.add(sample1)
+            .expect("add to success");
+
+        profile.add(sample2)
+            .expect("add to success");
+
+        profile.add_endpoint(Cow::from("10"), Cow::from("my endpoint"));
+
+        let serialized_profile: pprof::Profile = (&profile).into();
+
+        assert_eq!(serialized_profile.sample.len(), 2);
+
+        let s1 = serialized_profile.sample.get(0).expect("sample");
+
+        // The trace endpoint label should be added to the first sample
+        assert_eq!(s1.label.len(), 3);
+
+        let l1 = s1.label.get(0).expect("label");
+
+        assert_eq!(serialized_profile.string_table.get(l1.key as usize).unwrap(), "local root span id");
+        assert_eq!(serialized_profile.string_table.get(l1.str as usize).unwrap(), "10");
+
+        let l2 = s1.label.get(1).expect("label");
+
+        assert_eq!(serialized_profile.string_table.get(l2.key as usize).unwrap(), "other");
+        assert_eq!(serialized_profile.string_table.get(l2.str as usize).unwrap(), "test");
+
+        let l3 = s1.label.get(2).expect("label");
+
+        assert_eq!(serialized_profile.string_table.get(l3.key as usize).unwrap(), "trace endpoint");
+        assert_eq!(serialized_profile.string_table.get(l3.str as usize).unwrap(), "my endpoint");
+
+        let s2 = serialized_profile.sample.get(1).expect("sample");
+
+        // The trace endpoint label shouldn't be added to second sample because the span id doesn't match
+        assert_eq!(s2.label.len(), 2);
     }
 }
