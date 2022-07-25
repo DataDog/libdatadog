@@ -18,7 +18,7 @@ jobs:
     name: "clippy #${{ matrix.version }}"
     strategy:
       matrix:
-        version: [nightly, "1.60"]
+        version: [nightly]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
