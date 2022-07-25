@@ -344,7 +344,7 @@ pub extern "C" fn ddprof_ffi_Profile_add(
 pub unsafe extern "C" fn ddprof_ffi_Profile_set_endpoint<'a>(
     profile: &mut ddprof_profiles::Profile,
     local_root_span_id: CharSlice<'a>,
-    endpoint: CharSlice<'a>
+    endpoint: CharSlice<'a>,
 ) {
     let local_root_span_id = local_root_span_id.to_utf8_lossy();
     let endpoint = endpoint.to_utf8_lossy();
@@ -403,7 +403,6 @@ pub unsafe extern "C" fn ddprof_ffi_Profile_serialize(
         Some(x) if *x < 0 => None,
         Some(x) => Some(Duration::from_nanos((*x) as u64)),
     };
-
     match || -> Result<_, Box<dyn Error>> { Ok(profile.serialize(end_time, duration)?) }() {
         Ok(ok) => SerializeResult::Ok(ok.into()),
         Err(err) => SerializeResult::Err(err.into()),

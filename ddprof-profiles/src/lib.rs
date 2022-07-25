@@ -15,7 +15,6 @@ use indexmap::{IndexMap, IndexSet};
 use pprof::{Function, Label, Line, Location, ValueType};
 use prost::{EncodeError, Message};
 
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
 pub struct PProfId(usize);
@@ -90,7 +89,7 @@ pub struct Profile {
 pub struct Endpoints {
     mappings: IndexMap<i64, i64>,
     local_root_span_id_label: i64,
-    endpoint_label: i64
+    endpoint_label: i64,
 }
 
 pub struct ProfileBuilder<'a> {
@@ -216,7 +215,7 @@ impl Endpoints {
         Self {
             mappings: Default::default(),
             local_root_span_id_label: Default::default(),
-            endpoint_label: Default::default()
+            endpoint_label: Default::default(),
         }
     }
 }
@@ -423,7 +422,9 @@ impl Profile {
         let interned_span_id = self.intern(local_root_span_id.as_ref());
         let interned_endpoint = self.intern(endpoint.as_ref());
 
-        self.endpoints.mappings.insert(interned_span_id, interned_endpoint);
+        self.endpoints
+            .mappings
+            .insert(interned_span_id, interned_endpoint);
     }
 
     /// Serialize the aggregated profile, adding the end time and duration.
@@ -471,7 +472,7 @@ impl From<&Profile> for pprof::Profile {
             None => (0, None),
         };
 
-        let mut samples : Vec<pprof::Sample> = profile
+        let mut samples: Vec<pprof::Sample> = profile
             .samples
             .iter()
             .map(|(sample, values)| pprof::Sample {
@@ -483,7 +484,7 @@ impl From<&Profile> for pprof::Profile {
 
         if profile.endpoints.mappings.len() > 0 {
             for sample in samples.iter_mut() {
-                let mut endpoint : Option<&i64> = None;
+                let mut endpoint: Option<&i64> = None;
 
                 for label in &sample.label {
                     if label.key == profile.endpoints.local_root_span_id_label {
@@ -497,7 +498,7 @@ impl From<&Profile> for pprof::Profile {
                         key: profile.endpoints.endpoint_label,
                         str: *endpoint_value,
                         num: 0,
-                        num_unit: 0
+                        num_unit: 0,
                     });
                 }
             }
@@ -558,8 +559,8 @@ impl From<&Profile> for pprof::Profile {
 
 #[cfg(test)]
 mod api_test {
-    use std::borrow::Cow;
     use crate::{api, pprof, PProfId, Profile, ValueType};
+    use std::borrow::Cow;
 
     #[test]
     fn interning() {
@@ -845,27 +846,27 @@ mod api_test {
             ..Default::default()
         };
 
-        let mut profile : Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
 
         let id_label = api::Label {
             key: "local root span id",
             str: Some("10"),
             num: 0,
-            num_unit: None
+            num_unit: None,
         };
 
         let id2_label = api::Label {
             key: "local root span id",
             str: Some("11"),
             num: 0,
-            num_unit: None
+            num_unit: None,
         };
 
         let other_label = api::Label {
             key: "other",
             str: Some("test"),
             num: 0,
-            num_unit: None
+            num_unit: None,
         };
 
         let sample1 = api::Sample {
@@ -880,11 +881,9 @@ mod api_test {
             labels: vec![id2_label, other_label],
         };
 
-        profile.add(sample1)
-            .expect("add to success");
+        profile.add(sample1).expect("add to success");
 
-        profile.add(sample2)
-            .expect("add to success");
+        profile.add(sample2).expect("add to success");
 
         profile.add_endpoint(Cow::from("10"), Cow::from("my endpoint"));
 
@@ -899,18 +898,54 @@ mod api_test {
 
         let l1 = s1.label.get(0).expect("label");
 
-        assert_eq!(serialized_profile.string_table.get(l1.key as usize).unwrap(), "local root span id");
-        assert_eq!(serialized_profile.string_table.get(l1.str as usize).unwrap(), "10");
+        assert_eq!(
+            serialized_profile
+                .string_table
+                .get(l1.key as usize)
+                .unwrap(),
+            "local root span id"
+        );
+        assert_eq!(
+            serialized_profile
+                .string_table
+                .get(l1.str as usize)
+                .unwrap(),
+            "10"
+        );
 
         let l2 = s1.label.get(1).expect("label");
 
-        assert_eq!(serialized_profile.string_table.get(l2.key as usize).unwrap(), "other");
-        assert_eq!(serialized_profile.string_table.get(l2.str as usize).unwrap(), "test");
+        assert_eq!(
+            serialized_profile
+                .string_table
+                .get(l2.key as usize)
+                .unwrap(),
+            "other"
+        );
+        assert_eq!(
+            serialized_profile
+                .string_table
+                .get(l2.str as usize)
+                .unwrap(),
+            "test"
+        );
 
         let l3 = s1.label.get(2).expect("label");
 
-        assert_eq!(serialized_profile.string_table.get(l3.key as usize).unwrap(), "trace endpoint");
-        assert_eq!(serialized_profile.string_table.get(l3.str as usize).unwrap(), "my endpoint");
+        assert_eq!(
+            serialized_profile
+                .string_table
+                .get(l3.key as usize)
+                .unwrap(),
+            "trace endpoint"
+        );
+        assert_eq!(
+            serialized_profile
+                .string_table
+                .get(l3.str as usize)
+                .unwrap(),
+            "my endpoint"
+        );
 
         let s2 = serialized_profile.sample.get(1).expect("sample");
 
