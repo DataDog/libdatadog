@@ -340,6 +340,22 @@ pub extern "C" fn ddprof_ffi_Profile_add(
     }
 }
 
+/// Associate an endpoint to a given local root span id.
+/// During the serialization of the profile, an endpoint label will be added
+/// to all samples that contain a matching local root span id label.
+///
+/// Note: calling this API causes the "trace endpoint" and "local root span id" strings
+/// to be interned, even if no matching sample is found.
+///
+/// # Arguments
+/// * `profile` - a reference to the profile that will contain the samples.
+/// * `local_root_span_id` - the value of the local root span id label to look for.
+/// * `endpoint` - the value of the endpoint label to add for matching samples.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module.
+/// This call is _NOT_ thread-safe.
 #[no_mangle]
 pub unsafe extern "C" fn ddprof_ffi_Profile_set_endpoint<'a>(
     profile: &mut ddprof_profiles::Profile,

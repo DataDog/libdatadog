@@ -242,7 +242,7 @@ impl Profile {
             strings: Default::default(),
             start_time,
             period: None,
-            endpoints: Endpoints::new(),
+            endpoints: Default::default(),
         };
 
         profile.intern("");
