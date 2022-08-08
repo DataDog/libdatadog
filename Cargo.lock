@@ -123,6 +123,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5827cebf4670468b8772dd191856768aedcb1b0278a04f989f7766351917b9dc"
 
 [[package]]
+name = "datadog-profiling"
+version = "0.7.0-rc.1"
+dependencies = [
+ "indexmap",
+ "libc",
+ "prost",
+ "prost-build",
+]
+
+[[package]]
 name = "ddcommon"
 version = "0.7.0-rc.1"
 dependencies = [
@@ -157,8 +167,8 @@ dependencies = [
 name = "ddprof"
 version = "0.7.0-rc.1"
 dependencies = [
+ "datadog-profiling",
  "ddprof-exporter",
- "ddprof-profiles",
 ]
 
 [[package]]
@@ -189,23 +199,13 @@ name = "ddprof-ffi"
 version = "0.7.0-rc.1"
 dependencies = [
  "chrono",
+ "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
  "ddprof-exporter",
- "ddprof-profiles",
  "hyper",
  "libc",
  "tokio-util",
-]
-
-[[package]]
-name = "ddprof-profiles"
-version = "0.7.0-rc.1"
-dependencies = [
- "indexmap",
- "libc",
- "prost",
- "prost-build",
 ]
 
 [[package]]

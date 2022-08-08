@@ -2,7 +2,7 @@
 # This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 [package]
-name = "ddprof-profiles"
+name = "datadog-profiling"
 version = "0.7.0-rc.1"
 edition = "2021"
 build = "build.rs"
