@@ -1,7 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use ddprof_exporter::{File, ProfileExporter, Request};
+use datadog_profiling::exporter::{File, ProfileExporter, Request};
 use std::error::Error;
 use std::io::Read;
 use std::ops::Sub;
@@ -44,7 +44,7 @@ fn multipart(exporter: &ProfileExporter) -> Request {
 mod tests {
     use crate::multipart;
     use ddcommon::tag::Tag;
-    use ddprof_exporter::*;
+    use datadog_profiling::exporter::*;
 
     fn default_tags() -> Vec<Tag> {
         vec![

@@ -11,5 +11,4 @@ license = "Apache-2.0"
 crate-type = ["cdylib", "lib"]
 
 [dependencies]
-ddprof-exporter = { path = "../ddprof-exporter" }
 datadog-profiling = { path = "../profiling" }

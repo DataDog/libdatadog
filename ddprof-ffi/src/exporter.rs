@@ -7,7 +7,7 @@
 use crate::Timespec;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use ddprof_exporter as exporter;
+use datadog_profiling::exporter as exporter;
 use exporter::ProfileExporter;
 use std::borrow::Cow;
 use std::error::Error;
@@ -86,7 +86,7 @@ unsafe fn try_to_url(slice: CharSlice) -> Result<hyper::Uri, Box<dyn std::error:
     let str: &str = slice.try_to_utf8()?;
     #[cfg(unix)]
     if let Some(path) = str.strip_prefix("unix://") {
-        return ddprof_exporter::socket_path_to_uri(path.as_ref());
+        return exporter::socket_path_to_uri(path.as_ref());
     }
     match hyper::Uri::from_str(str) {
         Ok(url) => Ok(url),
@@ -96,18 +96,18 @@ unsafe fn try_to_url(slice: CharSlice) -> Result<hyper::Uri, Box<dyn std::error:
 
 unsafe fn try_to_endpoint(
     endpoint: Endpoint,
-) -> Result<ddprof_exporter::Endpoint, Box<dyn std::error::Error>> {
+) -> Result<exporter::Endpoint, Box<dyn std::error::Error>> {
     // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
     // a failed result is likely to be an error.
     match endpoint {
         Endpoint::Agent(url) => {
             let base_url = try_to_url(url)?;
-            ddprof_exporter::config::agent(base_url)
+            exporter::config::agent(base_url)
         }
         Endpoint::Agentless(site, api_key) => {
             let site_str = site.try_to_utf8()?;
             let api_key_str = api_key.try_to_utf8()?;
-            ddprof_exporter::config::agentless(
+            exporter::config::agentless(
                 Cow::Owned(site_str.to_owned()),
                 Cow::Owned(api_key_str.to_owned()),
             )
@@ -138,14 +138,14 @@ pub extern "C" fn profile_exporter_delete(exporter: Option<Box<ProfileExporter>>
     std::mem::drop(exporter)
 }
 
-unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<ddprof_exporter::File<'a>> {
+unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> {
     slice
         .into_slice()
         .iter()
         .map(|file| {
             let name = file.name.try_to_utf8().unwrap_or("{invalid utf-8}");
             let bytes = file.file.as_slice();
-            ddprof_exporter::File { name, bytes }
+            exporter::File { name, bytes }
         })
         .collect()
 }

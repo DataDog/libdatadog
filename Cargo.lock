@@ -126,10 +126,26 @@ checksum = "5827cebf4670468b8772dd191856768aedcb1b0278a04f989f7766351917b9dc"
 name = "datadog-profiling"
 version = "0.7.0-rc.1"
 dependencies = [
+ "anyhow",
+ "bytes",
+ "chrono",
+ "ddcommon",
+ "futures",
+ "futures-core",
+ "futures-util",
+ "http",
+ "http-body",
+ "hyper",
+ "hyper-multipart-rfc7578",
  "indexmap",
  "libc",
+ "maplit",
+ "mime_guess",
+ "percent-encoding",
  "prost",
  "prost-build",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -168,30 +184,6 @@ name = "ddprof"
 version = "0.7.0-rc.1"
 dependencies = [
  "datadog-profiling",
- "ddprof-exporter",
-]
-
-[[package]]
-name = "ddprof-exporter"
-version = "0.7.0-rc.1"
-dependencies = [
- "anyhow",
- "bytes",
- "chrono",
- "ddcommon",
- "futures",
- "futures-core",
- "futures-util",
- "http",
- "http-body",
- "hyper",
- "hyper-multipart-rfc7578",
- "libc",
- "maplit",
- "mime_guess",
- "percent-encoding",
- "tokio",
- "tokio-util",
 ]
 
 [[package]]
@@ -202,7 +194,6 @@ dependencies = [
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
- "ddprof-exporter",
  "hyper",
  "libc",
  "tokio-util",

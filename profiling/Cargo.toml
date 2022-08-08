@@ -15,6 +15,25 @@ crate-type = ["cdylib", "lib"]
 prost-build = "0.10"
 
 [dependencies]
+anyhow = "1.0"
+bytes = "1.1"
+chrono = "0.4"
+futures = "0.3"
+futures-core = {version = "0.3.0", default-features = false}
+futures-util = {version = "0.3.0", default-features = false}
+http = "0.2"
+http-body = "0.4"
+hyper = {version = "0.14", features = ["client"], default-features = false}
+hyper-multipart-rfc7578 = "0.7.0"
 indexmap = "1.8"
 libc = "0.2"
+mime_guess = {version = "2.0", default-features = false}
+percent-encoding = "2.1"
 prost = "0.10"
+tokio = {version = "1.8", features = ["rt", "macros"]}
+tokio-util = "0.7.1"
+
+ddcommon = {path = "../ddcommon"}
+
+[dev-dependencies]
+maplit = "1.0"
