@@ -11,6 +11,7 @@ members = [
     "ddtelemetry",
     # After this comment: placeholder crates for now
     "datadog-profiler",
+    "datadog-profiling",
     "datadog-telemetry",
     "datadog-internal-telemetry",
     "datadog-appsec",
