@@ -2,8 +2,8 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use crate::Timespec;
-use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
 use datadog_profiling::profile as profiles;
+use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
 use std::convert::{TryFrom, TryInto};
 use std::error::Error;
 use std::str::Utf8Error;
@@ -328,7 +328,10 @@ pub unsafe extern "C" fn ddog_Profile_free(_profile: Box<datadog_profiling::prof
 /// module. All pointers inside the `sample` need to be valid for the duration
 /// of this call.
 /// This call is _NOT_ thread-safe.
-pub extern "C" fn ddog_Profile_add(profile: &mut datadog_profiling::profile::Profile, sample: Sample) -> u64 {
+pub extern "C" fn ddog_Profile_add(
+    profile: &mut datadog_profiling::profile::Profile,
+    sample: Sample,
+) -> u64 {
     match sample.try_into().map(|s| profile.add(s)) {
         Ok(r) => match r {
             Ok(id) => id.into(),

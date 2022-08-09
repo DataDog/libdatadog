@@ -43,8 +43,8 @@ fn multipart(exporter: &ProfileExporter) -> Request {
 #[cfg(test)]
 mod tests {
     use crate::multipart;
-    use ddcommon::tag::Tag;
     use datadog_profiling::exporter::*;
+    use ddcommon::tag::Tag;
 
     fn default_tags() -> Vec<Tag> {
         vec![

@@ -5,9 +5,9 @@
 #![allow(clippy::box_vec)]
 
 use crate::Timespec;
+use datadog_profiling::exporter;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use datadog_profiling::exporter as exporter;
 use exporter::ProfileExporter;
 use std::borrow::Cow;
 use std::error::Error;
