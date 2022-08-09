@@ -28,4 +28,4 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["ddcommon", "ddcommon-ffi", "ddprof-exporter", "ddprof-profiles", "ux"]
+include = ["ddcommon", "ddcommon-ffi", "datadog-profiling", "ux"]

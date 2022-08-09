@@ -5,7 +5,7 @@ include!(concat!(env!("OUT_DIR"), "/pprof.rs"));
 
 #[cfg(test)]
 mod test {
-    use crate::pprof::{Function, Line, Location, Mapping, Profile, Sample, ValueType};
+    use crate::profile::pprof::{Function, Line, Location, Mapping, Profile, Sample, ValueType};
     use prost::Message;
 
     #[test]

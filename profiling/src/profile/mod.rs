@@ -565,7 +565,7 @@ impl From<&Profile> for pprof::Profile {
 
 #[cfg(test)]
 mod api_test {
-    use crate::{api, pprof, PProfId, Profile, ValueType};
+    use crate::profile::{api, pprof, PProfId, Profile, ValueType};
     use std::borrow::Cow;
 
     #[test]

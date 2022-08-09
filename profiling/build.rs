@@ -15,8 +15,11 @@ fn main() -> Result<(), std::io::Error> {
         .type_attribute("pprof.Sample", "#[derive(Eq, Hash)]")
         .type_attribute("pprof.ValueType", "#[derive(Copy, Eq, Hash)]");
 
-    let protos = &[concat!(env!("CARGO_MANIFEST_DIR"), "/src/profile.proto")];
-    let includes = &[concat!(env!("CARGO_MANIFEST_DIR"), "/src")];
+    let protos = &[concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/profile/profile.proto"
+    )];
+    let includes = &[concat!(env!("CARGO_MANIFEST_DIR"), "/src/profile")];
     config.compile_protos(protos, includes)?;
     Ok(())
 }

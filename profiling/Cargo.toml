@@ -2,13 +2,17 @@
 # This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 [package]
-name = "ddprof-exporter"
+name = "datadog-profiling"
 version = "0.7.0-rc.1"
 edition = "2021"
+build = "build.rs"
 license = "Apache-2.0"
 
 [lib]
 crate-type = ["cdylib", "lib"]
+
+[build-dependencies]
+prost-build = "0.10"
 
 [dependencies]
 anyhow = "1.0"
@@ -21,9 +25,11 @@ http = "0.2"
 http-body = "0.4"
 hyper = {version = "0.14", features = ["client"], default-features = false}
 hyper-multipart-rfc7578 = "0.7.0"
+indexmap = "1.8"
 libc = "0.2"
 mime_guess = {version = "2.0", default-features = false}
 percent-encoding = "2.1"
+prost = "0.10"
 tokio = {version = "1.8", features = ["rt", "macros"]}
 tokio-util = "0.7.1"
 

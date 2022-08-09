@@ -90,12 +90,12 @@ impl Request {
                     // If no token is provided, future::pending() provides a no-op future that never resolves
                     None => future::pending().await,
                 }}
-            => Err(crate::errors::Error::UserRequestedCancellation.into()),
+            => Err(crate::exporter::errors::Error::UserRequestedCancellation.into()),
             result = async {
                 Ok(match self.timeout {
                     Some(t) => tokio::time::timeout(t, client.request(self.req))
                         .await
-                        .map_err(|_| crate::errors::Error::OperationTimedOut)?,
+                        .map_err(|_| crate::exporter::errors::Error::OperationTimedOut)?,
                     None => client.request(self.req).await,
                 }?)}
             => result,
