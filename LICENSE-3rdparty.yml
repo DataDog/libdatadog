@@ -1,5 +1,5 @@
 ---
-root_name: "ddprof, ddprof-exporter, ddcommon, ddprof-profiling, ddprof-ffi, ddcommon-ffi, ddtelemetry"
+root_name: "ddprof-ffi, datadog-profiling, ddcommon, ddcommon-ffi, ddtelemetry"
 third_party_libraries:
   - package_name: aho-corasick
     package_version: 0.7.18
