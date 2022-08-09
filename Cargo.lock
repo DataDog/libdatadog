@@ -180,13 +180,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ddprof"
-version = "0.7.0-rc.1"
-dependencies = [
- "datadog-profiling",
-]
-
-[[package]]
 name = "ddprof-ffi"
 version = "0.7.0-rc.1"
 dependencies = [

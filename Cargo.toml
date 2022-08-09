@@ -3,7 +3,6 @@
 
 [workspace]
 members = [
-    "ddprof",
     "ddprof-ffi",
     "profiling",
     "ddcommon",
