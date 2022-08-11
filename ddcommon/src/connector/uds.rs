@@ -1,14 +1,13 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use std::error::Error;
 use std::ffi::OsString;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
 /// Creates a new Uri, with the `unix` scheme, and the path to the socket
 /// encoded as a hex string, to prevent special characters in the url authority
-pub fn socket_path_to_uri(path: &Path) -> Result<hyper::Uri, Box<dyn Error>> {
+pub fn socket_path_to_uri(path: &Path) -> Result<hyper::Uri, hyper::http::Error> {
     let path = hex::encode(path.as_os_str().as_bytes());
     Ok(hyper::Uri::builder()
         .scheme("unix")

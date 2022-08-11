@@ -82,11 +82,11 @@ pub extern "C" fn endpoint_agentless<'a>(
     Endpoint::Agentless(site, api_key)
 }
 
-unsafe fn try_to_url(slice: CharSlice) -> Result<hyper::Uri, Box<dyn std::error::Error>> {
+unsafe fn try_to_url(slice: CharSlice) -> Result<hyper::Uri, Box<dyn Error>> {
     let str: &str = slice.try_to_utf8()?;
     #[cfg(unix)]
     if let Some(path) = str.strip_prefix("unix://") {
-        return exporter::socket_path_to_uri(path.as_ref());
+        return Ok(exporter::socket_path_to_uri(path.as_ref())?);
     }
     match hyper::Uri::from_str(str) {
         Ok(url) => Ok(url),
@@ -96,7 +96,7 @@ unsafe fn try_to_url(slice: CharSlice) -> Result<hyper::Uri, Box<dyn std::error:
 
 unsafe fn try_to_endpoint(
     endpoint: Endpoint,
-) -> Result<exporter::Endpoint, Box<dyn std::error::Error>> {
+) -> Result<exporter::Endpoint, Box<dyn Error>> {
     // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
     // a failed result is likely to be an error.
     match endpoint {
