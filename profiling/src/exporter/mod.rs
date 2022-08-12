@@ -20,7 +20,7 @@ mod errors;
 pub use ddcommon::Endpoint;
 
 #[cfg(unix)]
-pub use connector::uds::socket_path_to_uri;
+pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
 
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
 
