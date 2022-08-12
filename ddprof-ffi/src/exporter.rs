@@ -94,9 +94,7 @@ unsafe fn try_to_url(slice: CharSlice) -> Result<hyper::Uri, Box<dyn Error>> {
     }
 }
 
-unsafe fn try_to_endpoint(
-    endpoint: Endpoint,
-) -> Result<exporter::Endpoint, Box<dyn Error>> {
+unsafe fn try_to_endpoint(endpoint: Endpoint) -> Result<exporter::Endpoint, Box<dyn Error>> {
     // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
     // a failed result is likely to be an error.
     match endpoint {
