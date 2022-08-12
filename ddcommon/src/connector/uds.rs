@@ -9,11 +9,11 @@ use std::path::{Path, PathBuf};
 /// encoded as a hex string, to prevent special characters in the url authority
 pub fn socket_path_to_uri(path: &Path) -> Result<hyper::Uri, hyper::http::Error> {
     let path = hex::encode(path.as_os_str().as_bytes());
-    Ok(hyper::Uri::builder()
+    hyper::Uri::builder()
         .scheme("unix")
         .authority(path)
         .path_and_query("")
-        .build()?)
+        .build()
 }
 
 pub fn socket_path_from_uri(uri: &hyper::Uri) -> anyhow::Result<PathBuf> {
