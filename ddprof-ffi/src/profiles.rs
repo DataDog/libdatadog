@@ -358,7 +358,7 @@ pub extern "C" fn ddog_Profile_add(
 /// module.
 /// This call is _NOT_ thread-safe.
 #[no_mangle]
-pub unsafe extern "C" fn ddprof_ffi_Profile_set_endpoint<'a>(
+pub unsafe extern "C" fn ddog_Profile_set_endpoint<'a>(
     profile: &mut datadog_profiling::profile::Profile,
     local_root_span_id: CharSlice<'a>,
     endpoint: CharSlice<'a>,
