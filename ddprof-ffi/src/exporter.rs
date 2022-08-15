@@ -82,19 +82,16 @@ pub extern "C" fn endpoint_agentless<'a>(
     Endpoint::Agentless(site, api_key)
 }
 
-unsafe fn try_to_url(slice: CharSlice) -> Result<hyper::Uri, Box<dyn Error>> {
+unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
     let str: &str = slice.try_to_utf8()?;
     #[cfg(unix)]
     if let Some(path) = str.strip_prefix("unix://") {
         return Ok(exporter::socket_path_to_uri(path.as_ref())?);
     }
-    match hyper::Uri::from_str(str) {
-        Ok(url) => Ok(url),
-        Err(err) => Err(Box::new(err)),
-    }
+    Ok(hyper::Uri::from_str(str)?)
 }
 
-unsafe fn try_to_endpoint(endpoint: Endpoint) -> Result<exporter::Endpoint, Box<dyn Error>> {
+unsafe fn try_to_endpoint(endpoint: Endpoint) -> anyhow::Result<exporter::Endpoint> {
     // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
     // a failed result is likely to be an error.
     match endpoint {
@@ -216,7 +213,7 @@ pub unsafe extern "C" fn profile_exporter_send(
 
     let cancel_option = unwrap_cancellation_token(cancel);
 
-    match || -> Result<HttpStatus, Box<dyn std::error::Error>> {
+    match || -> Result<HttpStatus, Box<dyn Error>> {
         let response = exp_ptr.as_ref().send((*request_ptr).0, cancel_option)?;
 
         Ok(HttpStatus(response.status().as_u16()))

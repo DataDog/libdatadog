@@ -6,13 +6,14 @@ use ddcommon::connector::uds;
 use ddcommon::Endpoint;
 
 use http::Uri;
-use std::{borrow::Cow, error::Error, str::FromStr};
+use std::borrow::Cow;
+use std::str::FromStr;
 
 /// Creates an Endpoint for talking to the Datadog agent.
 ///
 /// # Arguments
 /// * `base_url` - has protocol, host, and port e.g. http://localhost:8126/
-pub fn agent(base_url: Uri) -> Result<Endpoint, Box<dyn Error>> {
+pub fn agent(base_url: Uri) -> anyhow::Result<Endpoint> {
     let mut parts = base_url.into_parts();
     let p_q = match parts.path_and_query {
         None => None,
@@ -32,7 +33,7 @@ pub fn agent(base_url: Uri) -> Result<Endpoint, Box<dyn Error>> {
 /// # Arguments
 /// * `socket_path` - file system path to the socket
 #[cfg(unix)]
-pub fn agent_uds(path: &std::path::Path) -> Result<Endpoint, Box<dyn Error>> {
+pub fn agent_uds(path: &std::path::Path) -> anyhow::Result<Endpoint> {
     let base_url = uds::socket_path_to_uri(path)?;
     agent(base_url)
 }
@@ -46,7 +47,7 @@ pub fn agent_uds(path: &std::path::Path) -> Result<Endpoint, Box<dyn Error>> {
 pub fn agentless<AsStrRef: AsRef<str>, IntoCow: Into<Cow<'static, str>>>(
     site: AsStrRef,
     api_key: IntoCow,
-) -> Result<Endpoint, Box<dyn Error>> {
+) -> anyhow::Result<Endpoint> {
     let intake_url: String = format!("https://intake.profile.{}/v1/input", site.as_ref());
 
     Ok(Endpoint {
