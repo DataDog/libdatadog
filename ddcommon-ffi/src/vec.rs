@@ -47,17 +47,11 @@ impl<T> From<alloc::vec::Vec<T>> for Vec<T> {
     }
 }
 
-impl From<&dyn std::error::Error> for Vec<u8> {
-    fn from(err: &dyn std::error::Error) -> Self {
+impl From<anyhow::Error> for Vec<u8> {
+    fn from(err: anyhow::Error) -> Self {
         let mut vec = vec![];
         write!(vec, "{}", err).expect("write to vec to always succeed");
         Self::from(vec)
-    }
-}
-
-impl From<Box<dyn std::error::Error>> for Vec<u8> {
-    fn from(err: Box<dyn std::error::Error>) -> Self {
-        Self::from(&*err)
     }
 }
 

@@ -5,7 +5,6 @@ use crate::Timespec;
 use datadog_profiling::profile as profiles;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
 use std::convert::{TryFrom, TryInto};
-use std::error::Error;
 use std::str::Utf8Error;
 use std::time::{Duration, SystemTime};
 
@@ -420,7 +419,9 @@ pub unsafe extern "C" fn ddog_Profile_serialize(
         Some(x) if *x < 0 => None,
         Some(x) => Some(Duration::from_nanos((*x) as u64)),
     };
-    match || -> Result<_, Box<dyn Error>> { Ok(profile.serialize(end_time, duration)?) }() {
+    match || -> anyhow::Result<datadog_profiling::profile::EncodedProfile> {
+        Ok(profile.serialize(end_time, duration)?)
+    }() {
         Ok(ok) => SerializeResult::Ok(ok.into()),
         Err(err) => SerializeResult::Err(err.into()),
     }
