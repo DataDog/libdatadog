@@ -2,7 +2,6 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use std::borrow::Cow;
-use std::error::Error;
 use std::future;
 use std::io::Cursor;
 
@@ -125,7 +124,7 @@ impl ProfileExporter {
         files: &[File],
         additional_tags: Option<&Vec<Tag>>,
         timeout: std::time::Duration,
-    ) -> Result<Request, Box<dyn Error>> {
+    ) -> anyhow::Result<Request> {
         let mut form = multipart::Form::default();
 
         form.add_text("version", "3");
