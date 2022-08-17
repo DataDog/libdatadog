@@ -12,7 +12,7 @@ macro_rules! c_setters {
                 #[no_mangle]
                 #[allow(clippy::redundant_closure_call)]
                 #[allow(clippy::missing_safety_doc)]
-                pub unsafe extern "C" fn [<dd_shared_ $object_name _with_ $path $(_ $path_rest)* >](
+                pub unsafe extern "C" fn [<ddog_ $object_name _with_ $path $(_ $path_rest)* >](
                     $object_name: &mut $object_ty,
                     param: $input_type,
                 ) -> MaybeError {
@@ -35,7 +35,7 @@ macro_rules! c_setters {
                 " # Available properties:\n\n",
                 $(" * ", stringify!($path $(. $path_rest)*) , "\n\n",)+
             )]
-            pub unsafe extern "C" fn [<dd_shared_ $object_name _with_property >](
+            pub unsafe extern "C" fn [<ddog_ $object_name _with_property >](
                 $object_name: &mut $object_ty,
                 property: [<$object_ty Property >],
                 param: $input_type,
@@ -61,7 +61,7 @@ macro_rules! c_setters {
                     " * ", stringify!($path $(. $path_rest)*) , "\n\n",
                 )+
             )]
-            pub unsafe extern "C" fn [<dd_shared_ $object_name _with_str_property >](
+            pub unsafe extern "C" fn [<ddog_ $object_name _with_str_property >](
                 $object_name: &mut $object_ty,
                 property: ffi::CharSlice,
                 param: $input_type,
@@ -97,7 +97,7 @@ macro_rules! try_c {
 /// # Safety
 /// * builder should be a non null pointer to a null pointer to a builder
 #[no_mangle]
-pub unsafe extern "C" fn dd_shared_builder_instantiate(
+pub unsafe extern "C" fn ddog_builder_instantiate(
     builder: &mut *mut TelemetryWorkerBuilder,
     service_name: ffi::CharSlice,
     language_name: ffi::CharSlice,
@@ -119,7 +119,7 @@ pub unsafe extern "C" fn dd_shared_builder_instantiate(
 #[no_mangle]
 /// # Safety
 /// * builder should be a non null pointer to a null pointer to a builder
-pub unsafe extern "C" fn dd_shared_builder_instantiate_with_hostname(
+pub unsafe extern "C" fn ddog_builder_instantiate_with_hostname(
     builder: &mut *mut TelemetryWorkerBuilder,
     hostname: ffi::CharSlice,
     service_name: ffi::CharSlice,
@@ -164,7 +164,7 @@ c_setters!(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-pub unsafe extern "C" fn dd_shared_builder_with_native_deps(
+pub unsafe extern "C" fn ddog_builder_with_native_deps(
     builder: &mut TelemetryWorkerBuilder,
     include_native_deps: bool,
 ) -> MaybeError {
@@ -174,7 +174,7 @@ pub unsafe extern "C" fn dd_shared_builder_with_native_deps(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-pub unsafe extern "C" fn dd_shared_builder_with_rust_shared_lib_deps(
+pub unsafe extern "C" fn ddog_builder_with_rust_shared_lib_deps(
     builder: &mut TelemetryWorkerBuilder,
     include_rust_shared_lib_deps: bool,
 ) -> MaybeError {
@@ -184,7 +184,7 @@ pub unsafe extern "C" fn dd_shared_builder_with_rust_shared_lib_deps(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-pub unsafe extern "C" fn dd_shared_builder_with_config(
+pub unsafe extern "C" fn ddog_builder_with_config(
     builder: &mut TelemetryWorkerBuilder,
     name: ffi::CharSlice,
     value: ffi::CharSlice,
@@ -198,7 +198,7 @@ pub unsafe extern "C" fn dd_shared_builder_with_config(
 #[no_mangle]
 /// # Safety
 /// * handle should be a non null pointer to a null pointer
-pub unsafe extern "C" fn dd_shared_builder_run(
+pub unsafe extern "C" fn ddog_builder_run(
     builder: Box<TelemetryWorkerBuilder>,
     handle: *mut Box<TelemetryWorkerHandle>,
 ) -> MaybeError {
@@ -208,7 +208,7 @@ pub unsafe extern "C" fn dd_shared_builder_run(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-pub unsafe extern "C" fn dd_shared_handle_add_dependency(
+pub unsafe extern "C" fn ddog_handle_add_dependency(
     handle: &TelemetryWorkerHandle,
     dependency_name: ffi::CharSlice,
     dependency_version: ffi::CharSlice,
@@ -223,7 +223,7 @@ pub unsafe extern "C" fn dd_shared_handle_add_dependency(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-pub unsafe extern "C" fn dd_shared_handle_add_integration(
+pub unsafe extern "C" fn ddog_handle_add_integration(
     handle: &TelemetryWorkerHandle,
     dependency_name: ffi::CharSlice,
     dependency_version: ffi::CharSlice,
@@ -247,7 +247,7 @@ pub unsafe extern "C" fn dd_shared_handle_add_integration(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-pub unsafe extern "C" fn dd_shared_handle_add_log(
+pub unsafe extern "C" fn ddog_handle_add_log(
     handle: &TelemetryWorkerHandle,
     indentifier: ffi::CharSlice,
     message: ffi::CharSlice,
@@ -266,31 +266,29 @@ pub unsafe extern "C" fn dd_shared_handle_add_log(
 }
 
 #[no_mangle]
-pub extern "C" fn dd_shared_handle_start(handle: &TelemetryWorkerHandle) -> MaybeError {
+pub extern "C" fn ddog_handle_start(handle: &TelemetryWorkerHandle) -> MaybeError {
     try_c!(handle.send_start());
     MaybeError::None
 }
 
 #[no_mangle]
-pub extern "C" fn dd_shared_handle_clone(
-    handle: &TelemetryWorkerHandle,
-) -> Box<TelemetryWorkerHandle> {
+pub extern "C" fn ddog_handle_clone(handle: &TelemetryWorkerHandle) -> Box<TelemetryWorkerHandle> {
     Box::new(handle.clone())
 }
 
 #[no_mangle]
-pub extern "C" fn dd_shared_handle_stop(handle: &TelemetryWorkerHandle) -> MaybeError {
+pub extern "C" fn ddog_handle_stop(handle: &TelemetryWorkerHandle) -> MaybeError {
     try_c!(handle.send_stop());
     MaybeError::None
 }
 
 #[no_mangle]
-pub extern "C" fn dd_shared_handle_wait_for_shutdown(handle: Box<TelemetryWorkerHandle>) {
+pub extern "C" fn ddog_handle_wait_for_shutdown(handle: Box<TelemetryWorkerHandle>) {
     handle.wait_for_shutdown()
 }
 
 #[no_mangle]
-pub extern "C" fn dd_shared_handle_drop(handle: Box<TelemetryWorkerHandle>) {
+pub extern "C" fn ddog_handle_drop(handle: Box<TelemetryWorkerHandle>) {
     drop(handle);
 }
 
@@ -304,7 +302,7 @@ mod test_c_setters {
 
         unsafe {
             assert_eq!(
-                dd_shared_builder_instantiate(
+                ddog_builder_instantiate(
                     &mut builder,
                     ffi::CharSlice::from("service_name"),
                     ffi::CharSlice::from("language_name"),
@@ -317,7 +315,7 @@ mod test_c_setters {
             let mut builder = Box::from_raw(builder);
 
             assert_eq!(
-                dd_shared_builder_with_str_property(
+                ddog_builder_with_str_property(
                     &mut builder,
                     ffi::CharSlice::from("runtime_id"),
                     ffi::CharSlice::from("abcd")
@@ -327,7 +325,7 @@ mod test_c_setters {
             assert_eq!(builder.runtime_id.as_deref(), Some("abcd"));
 
             assert_eq!(
-                dd_shared_builder_with_str_property(
+                ddog_builder_with_str_property(
                     &mut builder,
                     ffi::CharSlice::from("application.runtime_name"),
                     ffi::CharSlice::from("rust")
@@ -337,7 +335,7 @@ mod test_c_setters {
             assert_eq!(builder.application.runtime_name.as_deref(), Some("rust"));
 
             assert_eq!(
-                dd_shared_builder_with_str_property(
+                ddog_builder_with_str_property(
                     &mut builder,
                     ffi::CharSlice::from("host.kernel_version"),
                     ffi::CharSlice::from("ダタドグ")
@@ -346,7 +344,7 @@ mod test_c_setters {
             );
             assert_eq!(builder.host.kernel_version.as_deref(), Some("ダタドグ"));
 
-            assert!(dd_shared_builder_with_str_property(
+            assert!(ddog_builder_with_str_property(
                 &mut builder,
                 ffi::CharSlice::from("doesnt exist"),
                 ffi::CharSlice::from("abc")
@@ -362,7 +360,7 @@ mod test_c_setters {
 
         unsafe {
             assert_eq!(
-                dd_shared_builder_instantiate(
+                ddog_builder_instantiate(
                     &mut builder,
                     ffi::CharSlice::from("service_name"),
                     ffi::CharSlice::from("language_name"),
@@ -375,7 +373,7 @@ mod test_c_setters {
             let mut builder = Box::from_raw(builder);
 
             assert_eq!(
-                dd_shared_builder_with_property(
+                ddog_builder_with_property(
                     &mut builder,
                     TelemetryWorkerBuilderProperty::RuntimeId,
                     ffi::CharSlice::from("abcd")
@@ -385,7 +383,7 @@ mod test_c_setters {
             assert_eq!(builder.runtime_id.as_deref(), Some("abcd"));
 
             assert_eq!(
-                dd_shared_builder_with_property(
+                ddog_builder_with_property(
                     &mut builder,
                     TelemetryWorkerBuilderProperty::ApplicationRuntimeName,
                     ffi::CharSlice::from("rust")
@@ -395,7 +393,7 @@ mod test_c_setters {
             assert_eq!(builder.application.runtime_name.as_deref(), Some("rust"));
 
             assert_eq!(
-                dd_shared_builder_with_property(
+                ddog_builder_with_property(
                     &mut builder,
                     TelemetryWorkerBuilderProperty::HostKernelVersion,
                     ffi::CharSlice::from("ダタドグ")

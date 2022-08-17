@@ -6,7 +6,10 @@ name = "ddtelemetry-ffi"
 version = "0.8.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+# LTO is ignored if "lib" is added as crate type
+# cf. https://github.com/rust-lang/rust/issues/51009
+crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
 ddtelemetry = { path = "../ddtelemetry", version = "0.8.0" }
