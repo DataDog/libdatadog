@@ -183,6 +183,7 @@ dependencies = [
 name = "ddprof-ffi"
 version = "0.7.0-rc.1"
 dependencies = [
+ "anyhow",
  "chrono",
  "datadog-profiling",
  "ddcommon",

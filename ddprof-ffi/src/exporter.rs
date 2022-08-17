@@ -10,7 +10,6 @@ use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use exporter::ProfileExporter;
 use std::borrow::Cow;
-use std::error::Error;
 use std::ptr::NonNull;
 use std::str::FromStr;
 
@@ -82,19 +81,16 @@ pub extern "C" fn endpoint_agentless<'a>(
     Endpoint::Agentless(site, api_key)
 }
 
-unsafe fn try_to_url(slice: CharSlice) -> Result<hyper::Uri, Box<dyn Error>> {
+unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
     let str: &str = slice.try_to_utf8()?;
     #[cfg(unix)]
     if let Some(path) = str.strip_prefix("unix://") {
         return Ok(exporter::socket_path_to_uri(path.as_ref())?);
     }
-    match hyper::Uri::from_str(str) {
-        Ok(url) => Ok(url),
-        Err(err) => Err(Box::new(err)),
-    }
+    Ok(hyper::Uri::from_str(str)?)
 }
 
-unsafe fn try_to_endpoint(endpoint: Endpoint) -> Result<exporter::Endpoint, Box<dyn Error>> {
+unsafe fn try_to_endpoint(endpoint: Endpoint) -> anyhow::Result<exporter::Endpoint> {
     // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
     // a failed result is likely to be an error.
     match endpoint {
@@ -120,7 +116,7 @@ pub extern "C" fn profile_exporter_new(
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: Endpoint,
 ) -> NewProfileExporterResult {
-    match || -> Result<ProfileExporter, Box<dyn Error>> {
+    match || -> anyhow::Result<ProfileExporter> {
         let family = unsafe { family.to_utf8_lossy() }.into_owned();
         let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
         let tags = tags.map(|tags| tags.iter().map(|tag| tag.clone().into_owned()).collect());
@@ -216,7 +212,7 @@ pub unsafe extern "C" fn profile_exporter_send(
 
     let cancel_option = unwrap_cancellation_token(cancel);
 
-    match || -> Result<HttpStatus, Box<dyn std::error::Error>> {
+    match || -> anyhow::Result<HttpStatus> {
         let response = exp_ptr.as_ref().send((*request_ptr).0, cancel_option)?;
 
         Ok(HttpStatus(response.status().as_u16()))

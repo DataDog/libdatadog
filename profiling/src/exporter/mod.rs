@@ -2,7 +2,6 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use std::borrow::Cow;
-use std::error::Error;
 use std::future;
 use std::io::Cursor;
 
@@ -83,7 +82,7 @@ impl Request {
         self,
         client: &HttpClient,
         cancel: Option<&CancellationToken>,
-    ) -> Result<hyper::Response<hyper::Body>, Box<dyn std::error::Error>> {
+    ) -> anyhow::Result<hyper::Response<hyper::Body>> {
         tokio::select! {
             _ = async { match cancel {
                     Some(cancellation_token) => cancellation_token.cancelled().await,
@@ -108,7 +107,7 @@ impl ProfileExporter {
         family: IntoCow,
         tags: Option<Vec<Tag>>,
         endpoint: Endpoint,
-    ) -> Result<ProfileExporter, Box<dyn Error>> {
+    ) -> anyhow::Result<ProfileExporter> {
         Ok(Self {
             exporter: Exporter::new()?,
             endpoint,
@@ -125,7 +124,7 @@ impl ProfileExporter {
         files: &[File],
         additional_tags: Option<&Vec<Tag>>,
         timeout: std::time::Duration,
-    ) -> Result<Request, Box<dyn Error>> {
+    ) -> anyhow::Result<Request> {
         let mut form = multipart::Form::default();
 
         form.add_text("version", "3");
@@ -163,7 +162,7 @@ impl ProfileExporter {
         &self,
         request: Request,
         cancel: Option<&CancellationToken>,
-    ) -> Result<HttpResponse, Box<dyn Error>> {
+    ) -> anyhow::Result<HttpResponse> {
         self.exporter
             .runtime
             .block_on(request.send(&self.exporter.client, cancel))
@@ -172,7 +171,7 @@ impl ProfileExporter {
 
 impl Exporter {
     /// Creates a new Exporter, initializing the TLS stack.
-    pub fn new() -> Result<Self, Box<dyn Error>> {
+    pub fn new() -> anyhow::Result<Self> {
         // Set idle to 0, which prevents the pipe being broken every 2nd request
         let client = hyper::Client::builder()
             .pool_max_idle_per_host(0)
@@ -190,7 +189,7 @@ impl Exporter {
         mut headers: hyper::header::HeaderMap,
         body: &[u8],
         timeout: std::time::Duration,
-    ) -> Result<hyper::Response<hyper::Body>, Box<dyn std::error::Error>> {
+    ) -> anyhow::Result<hyper::Response<hyper::Body>> {
         self.runtime.block_on(async {
             let mut request = hyper::Request::builder()
                 .method(http_method)

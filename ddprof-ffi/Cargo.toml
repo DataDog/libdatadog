@@ -13,6 +13,7 @@ license = "Apache-2.0"
 crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
+anyhow = "1.0"
 chrono = "0.4"
 datadog-profiling = { path = "../profiling", version = "0.7.0-rc.1" }
 hyper = {version = "0.14", default-features = false}
