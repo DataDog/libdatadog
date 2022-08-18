@@ -93,7 +93,6 @@ RSpec.describe Libdatadog do
             allow(Gem::Platform).to receive(:local).and_return("x86_64-linux")
 
             ["x86_64-linux", "x86_64-linux-musl"].each do |arch|
-              Dir.mkdir("#{temporary_directory}/#{arch}")
               create_dummy_pkgconfig_file("#{temporary_directory}/#{arch}/some/folder/containing/the/pkgconfig/file")
             end
           end
