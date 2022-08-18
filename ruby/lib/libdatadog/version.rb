@@ -5,7 +5,7 @@ module Libdatadog
   LIB_VERSION = "0.7.0"
 
   GEM_MAJOR_VERSION = "1"
-  GEM_MINOR_VERSION = "0"
+  GEM_MINOR_VERSION = "1"
   GEM_PRERELEASE_VERSION = "" # remember to include dot prefix, if needed!
   private_constant :GEM_MAJOR_VERSION, :GEM_MINOR_VERSION, :GEM_PRERELEASE_VERSION
 
