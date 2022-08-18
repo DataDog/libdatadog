@@ -70,8 +70,13 @@ RSpec.describe Libdatadog do
         end
 
         def create_dummy_pkgconfig_file(pkgconfig_folder)
-          FileUtils.mkdir_p(pkgconfig_folder)
-          File.open("#{pkgconfig_folder}/ddprof_ffi_with_rpath.pc", "w") {}
+          begin
+            FileUtils.mkdir_p(pkgconfig_folder)
+          rescue Errno::EEXIST
+            # No problem, a few specs try to create the same folder
+          end
+
+          File.open("#{pkgconfig_folder}/ddprof_ffi_with_rpath.pc", "w+") {}
         end
 
         describe ".pkgconfig_folder" do
