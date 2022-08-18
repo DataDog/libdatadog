@@ -66,6 +66,10 @@ RSpec.describe Libdatadog do
         let(:pkgconfig_folder) { "#{temporary_directory}/#{Gem::Platform.local}/some/folder/containing/the/pkgconfig/file" }
 
         before do
+          create_dummy_pkgconfig_file(pkgconfig_folder)
+        end
+
+        def create_dummy_pkgconfig_file(pkgconfig_folder)
           FileUtils.mkdir_p(pkgconfig_folder)
           File.open("#{pkgconfig_folder}/ddprof_ffi_with_rpath.pc", "w") {}
         end
@@ -73,6 +77,24 @@ RSpec.describe Libdatadog do
         describe ".pkgconfig_folder" do
           it "returns the folder containing the pkgconfig file" do
             expect(Libdatadog.pkgconfig_folder).to eq pkgconfig_folder
+          end
+        end
+
+        context "when `RbConfig::CONFIG[\"arch\"]` indicates we're on musl libc, but `Gem::Platform.local.to_s` does not detect it" do
+          # Fix for https://github.com/DataDog/dd-trace-rb/issues/2222
+
+          before do
+            allow(RbConfig::CONFIG).to receive(:[]).with("arch").and_return("x86_64-linux-musl")
+            allow(Gem::Platform).to receive(:local).and_return("x86_64-linux")
+
+            ["x86_64-linux", "x86_64-linux-musl"].each do |arch|
+              Dir.mkdir("#{temporary_directory}/#{arch}")
+              create_dummy_pkgconfig_file("#{temporary_directory}/#{arch}/some/folder/containing/the/pkgconfig/file")
+            end
+          end
+
+          it "returns the folder containing the pkgconfig file for the musl variant" do
+            expect(Libdatadog.pkgconfig_folder).to eq "#{temporary_directory}/x86_64-linux-musl/some/folder/containing/the/pkgconfig/file"
           end
         end
       end
