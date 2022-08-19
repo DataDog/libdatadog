@@ -5,7 +5,7 @@
 edition = "2021"
 license = "Apache-2.0"
 name = "ddcommon"
-version = "0.8.0-alpha.1"
+version = "0.8.0-rc.1"
 
 [lib]
 crate-type = ["lib"]

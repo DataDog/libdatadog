@@ -3,7 +3,7 @@
 
 [package]
 name = "datadog-profiling-ffi"
-version = "0.8.0-alpha.1"
+version = "0.8.0-rc.1"
 edition = "2021"
 license = "Apache-2.0"
 
