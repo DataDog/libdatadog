@@ -1,8 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use super::Timespec;
-use crate::profile as profiles;
+use crate::Timespec;
+use datadog_profiling::profile as profiles;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
 use std::convert::{TryFrom, TryInto};
 use std::str::Utf8Error;
@@ -303,11 +303,11 @@ pub unsafe extern "C" fn ddog_Profile_new(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
     start_time: Option<&Timespec>,
-) -> Box<crate::profile::Profile> {
-    let types: Vec<crate::profile::api::ValueType> =
+) -> Box<datadog_profiling::profile::Profile> {
+    let types: Vec<datadog_profiling::profile::api::ValueType> =
         sample_types.into_slice().iter().map(Into::into).collect();
 
-    let builder = crate::profile::Profile::builder()
+    let builder = datadog_profiling::profile::Profile::builder()
         .period(period.map(Into::into))
         .sample_types(types)
         .start_time(start_time.map(SystemTime::from));
@@ -319,7 +319,7 @@ pub unsafe extern "C" fn ddog_Profile_new(
 /// # Safety
 /// The `profile` must point to an object created by another FFI routine in this
 /// module, such as `ddog_Profile_with_sample_types`.
-pub unsafe extern "C" fn ddog_Profile_free(_profile: Box<crate::profile::Profile>) {}
+pub unsafe extern "C" fn ddog_Profile_free(_profile: Box<datadog_profiling::profile::Profile>) {}
 
 #[no_mangle]
 /// # Safety
@@ -327,7 +327,10 @@ pub unsafe extern "C" fn ddog_Profile_free(_profile: Box<crate::profile::Profile
 /// module. All pointers inside the `sample` need to be valid for the duration
 /// of this call.
 /// This call is _NOT_ thread-safe.
-pub extern "C" fn ddog_Profile_add(profile: &mut crate::profile::Profile, sample: Sample) -> u64 {
+pub extern "C" fn ddog_Profile_add(
+    profile: &mut datadog_profiling::profile::Profile,
+    sample: Sample,
+) -> u64 {
     match sample.try_into().map(|s| profile.add(s)) {
         Ok(r) => match r {
             Ok(id) => id.into(),
@@ -355,7 +358,7 @@ pub extern "C" fn ddog_Profile_add(profile: &mut crate::profile::Profile, sample
 /// This call is _NOT_ thread-safe.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_Profile_set_endpoint<'a>(
-    profile: &mut crate::profile::Profile,
+    profile: &mut datadog_profiling::profile::Profile,
     local_root_span_id: CharSlice<'a>,
     endpoint: CharSlice<'a>,
 ) {
@@ -372,8 +375,8 @@ pub struct EncodedProfile {
     buffer: ddcommon_ffi::Vec<u8>,
 }
 
-impl From<crate::profile::EncodedProfile> for EncodedProfile {
-    fn from(value: crate::profile::EncodedProfile) -> Self {
+impl From<datadog_profiling::profile::EncodedProfile> for EncodedProfile {
+    fn from(value: datadog_profiling::profile::EncodedProfile) -> Self {
         let start = value.start.into();
         let end = value.end.into();
         let buffer = value.buffer.into();
@@ -406,7 +409,7 @@ pub enum SerializeResult {
 /// The `duration_nanos` must be null or otherwise point to a valid i64.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_Profile_serialize(
-    profile: &crate::profile::Profile,
+    profile: &datadog_profiling::profile::Profile,
     end_time: Option<&Timespec>,
     duration_nanos: Option<&i64>,
 ) -> SerializeResult {
@@ -416,7 +419,7 @@ pub unsafe extern "C" fn ddog_Profile_serialize(
         Some(x) if *x < 0 => None,
         Some(x) => Some(Duration::from_nanos((*x) as u64)),
     };
-    match || -> anyhow::Result<crate::profile::EncodedProfile> {
+    match || -> anyhow::Result<datadog_profiling::profile::EncodedProfile> {
         Ok(profile.serialize(end_time, duration)?)
     }() {
         Ok(ok) => SerializeResult::Ok(ok.into()),
@@ -447,7 +450,7 @@ pub unsafe extern "C" fn ddog_Vec_u8_as_slice(vec: &ddcommon_ffi::Vec<u8>) -> Sl
 /// If `time` is not null, it must point to a valid Timespec object.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_Profile_reset(
-    profile: &mut crate::profile::Profile,
+    profile: &mut datadog_profiling::profile::Profile,
     start_time: Option<&Timespec>,
 ) -> bool {
     profile.reset(start_time.map(SystemTime::from)).is_some()
@@ -455,7 +458,7 @@ pub unsafe extern "C" fn ddog_Profile_reset(
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use crate::profiles::*;
     use ddcommon_ffi::Slice;
 
     #[test]
@@ -518,7 +521,7 @@ mod test {
         }
     }
 
-    unsafe fn provide_distinct_locations_ffi() -> crate::profile::Profile {
+    unsafe fn provide_distinct_locations_ffi() -> datadog_profiling::profile::Profile {
         let sample_type: *const ValueType = &ValueType::new("samples", "count");
         let mut profile = ddog_Profile_new(Slice::new(sample_type, 1), None, None);
 

@@ -9,13 +9,7 @@ build = "build.rs"
 license = "Apache-2.0"
 
 [lib]
-# LTO is ignored if "lib" is added as crate type
-# cf. https://github.com/rust-lang/rust/issues/51009
-crate-type = ["cdylib", "staticlib", "lib"]
-
-[features]
-default = []
-datadog_profiling_ffi = ["dep:ddcommon-ffi"]
+crate-type = ["lib"]
 
 [build-dependencies]
 prost-build = "0.10"
@@ -25,7 +19,6 @@ anyhow = "1.0"
 bytes = "1.1"
 chrono = "0.4"
 ddcommon = {path = "../ddcommon"}
-ddcommon-ffi = { path = "../ddcommon-ffi", optional = true }
 futures = "0.3"
 futures-core = {version = "0.3.0", default-features = false}
 futures-util = {version = "0.3.0", default-features = false}

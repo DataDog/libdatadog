@@ -42,7 +42,8 @@ if(Datadog_FOUND)
                 wsock32
                 ws2_32
                 shlwapi
-                Secur32)
+                Secur32
+                Ncrypt)
   endif()
 
   add_library(Datadog::Profiling ALIAS datadog_profiling)

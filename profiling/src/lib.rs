@@ -3,6 +3,3 @@
 
 pub mod exporter;
 pub mod profile;
-
-#[cfg(feature = "datadog_profiling_ffi")]
-pub mod ffi;

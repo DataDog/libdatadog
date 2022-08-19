@@ -130,7 +130,6 @@ dependencies = [
  "bytes",
  "chrono",
  "ddcommon",
- "ddcommon-ffi",
  "futures",
  "futures-core",
  "futures-util",
@@ -145,6 +144,20 @@ dependencies = [
  "prost",
  "prost-build",
  "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "datadog-profiling-ffi"
+version = "0.8.0-alpha.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "datadog-profiling",
+ "ddcommon",
+ "ddcommon-ffi",
+ "hyper",
+ "libc",
  "tokio-util",
 ]
 

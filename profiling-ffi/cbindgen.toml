@@ -13,9 +13,6 @@ no_includes = true
 sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
 includes = ["datadog/common.h"]
 
-[defines]
-"feature = datadog_profiling_ffi" = "DATADOG_PROFILING_FFI"
-
 [export]
 prefix = "ddog_"
 
@@ -31,4 +28,4 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["ddcommon", "ddcommon-ffi", "ux"]
+include = ["ddcommon", "ddcommon-ffi", "datadog-profiling", "ux"]

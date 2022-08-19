@@ -63,7 +63,7 @@ case "$target" in
 esac
 
 echo "Recognized platform '${target}'. Adding libs: ${native_static_libs}"
-cd profiling
+cd profiling-ffi
 sed < datadog_profiling.pc.in "s/@Datadog_VERSION@/${version}/g" \
     > "$destdir/lib/pkgconfig/datadog_profiling.pc"
 
@@ -86,12 +86,21 @@ cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
 export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
-echo "Building the datadog profiling library (may take some time)..."
-cargo build --package=datadog-profiling --features=datadog_profiling_ffi --release --target "${target}"
+datadog_profiling_ffi="datadog-profiling-ffi"
+echo "Building the ${datadog_profiling_ffi} crate (may take some time)..."
+cargo build --package="${datadog_profiling_ffi}" --release --target "${target}"
 
-shared_library_name="${library_prefix}datadog_profiling${shared_library_suffix}"
-static_library_name="${library_prefix}datadog_profiling${static_library_suffix}"
-cp -v "target/${target}/release/$static_library_name" "target/${target}/release/$shared_library_name" "$destdir/lib/"
+# Remove _ffi suffix when copying
+shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"
+static_library_name="${library_prefix}datadog_profiling_ffi${static_library_suffix}"
+shared_library_rename="${library_prefix}datadog_profiling${shared_library_suffix}"
+static_library_rename="${library_prefix}datadog_profiling${static_library_suffix}"
+
+cp -v "target/${target}/release/${shared_library_name}" "$destdir/lib/${shared_library_rename}"
+cp -v "target/${target}/release/${static_library_rename}" "$destdir/lib/${static_library_rename}"
+
+shared_library_name="${shared_library_rename}"
+static_library_name="${static_library_rename}"
 
 if [[ "$remove_rpath" -eq 1 ]]; then
     patchelf --remove-rpath "$destdir/lib/${shared_library_name}"
@@ -114,8 +123,8 @@ if command -v objcopy > /dev/null && [[ "$target" != "x86_64-pc-windows-msvc" ]]
 fi
 
 echo "Checking that native-static-libs are as expected for this platform..."
-cd profiling
-actual_native_static_libs="$(cargo rustc --features=datadog_profiling_ffi --release --target "${target}" -- --print=native-static-libs 2>&1 | awk -F ':' '/note: native-static-libs:/ { print $3 }')"
+cd profiling-ffi
+actual_native_static_libs="$(cargo rustc --release --target "${target}" -- --print=native-static-libs 2>&1 | awk -F ':' '/note: native-static-libs:/ { print $3 }')"
 echo "Actual native-static-libs:${actual_native_static_libs}"
 echo "Expected native-static-libs:${expected_native_static_libs}"
 
@@ -140,8 +149,12 @@ echo "Building tools"
 cargo build --package tools --bins
 
 echo "Generating $destdir/include/libdatadog headers..."
-cbindgen --crate ddcommon-ffi --config ddcommon-ffi/cbindgen.toml --output "$destdir/include/datadog/common.h"
-cbindgen --crate datadog-profiling --config profiling/cbindgen.toml --output "$destdir/include/datadog/profiling.h"
+cbindgen --crate ddcommon-ffi \
+    --config ddcommon-ffi/cbindgen.toml \
+    --output "$destdir/include/datadog/common.h"
+cbindgen --crate "${datadog_profiling_ffi}" \
+    --config profiling-ffi/cbindgen.toml \
+    --output "$destdir/include/datadog/profiling.h"
 ./target/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h"
 
 echo "Done."
