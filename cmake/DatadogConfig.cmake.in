@@ -1,0 +1,53 @@
+# Unless explicitly stated otherwise all files in this repository are licensed
+# under the Apache License Version 2.0. This product includes software developed
+# at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+include(FindPackageHandleStandardArgs)
+
+if(DEFINED ENV{Datadog_ROOT})
+  set(Datadog_ROOT "$ENV{Datadog_ROOT}")
+else()
+  # If the environment variable is not set, maybe we are part of a build
+  set(Datadog_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
+endif()
+
+find_path(Datadog_INCLUDE_DIR datadog/profiling.h HINTS ${Datadog_ROOT}/include)
+
+find_library(
+  Datadog_LIBRARY
+  NAMES datadog_profiling
+  HINTS ${Datadog_ROOT}/lib)
+
+find_package_handle_standard_args(Datadog DEFAULT_MSG Datadog_LIBRARY
+                                  Datadog_INCLUDE_DIR)
+
+if(Datadog_FOUND)
+  set(Datadog_INCLUDE_DIRS ${Datadog_INCLUDE_DIR})
+  set(Datadog_LIBRARIES ${Datadog_LIBRARY} "@Datadog_LIBRARIES@")
+  mark_as_advanced(Datadog_ROOT Datadog_LIBRARY Datadog_INCLUDE_DIR)
+
+  add_library(datadog_profiling INTERFACE)
+  target_include_directories(datadog_profiling
+                             INTERFACE ${Datadog_INCLUDE_DIRS})
+  target_link_libraries(datadog_profiling INTERFACE ${Datadog_LIBRARIES})
+  target_compile_features(datadog_profiling INTERFACE c_std_11)
+
+  if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+    target_link_libraries(
+      datadog_profiling
+      INTERFACE NtDll
+                UserEnv
+                Bcrypt
+                crypt32
+                wsock32
+                ws2_32
+                shlwapi
+                Secur32
+                Ncrypt)
+  endif()
+
+  add_library(Datadog::Profiling ALIAS datadog_profiling)
+else()
+  set(Datadog_ROOT
+      ""
+      CACHE STRING "Directory containing libdatadog")
+endif()

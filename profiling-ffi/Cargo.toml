@@ -2,8 +2,8 @@
 # This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 [package]
-name = "ddprof-ffi"
-version = "0.7.0-rc.1"
+name = "datadog-profiling-ffi"
+version = "0.8.0-alpha.1"
 edition = "2021"
 license = "Apache-2.0"
 
@@ -15,9 +15,9 @@ crate-type = ["staticlib", "cdylib"]
 [dependencies]
 anyhow = "1.0"
 chrono = "0.4"
-datadog-profiling = { path = "../profiling", version = "0.7.0-rc.1" }
+datadog-profiling = { path = "../profiling"}
 hyper = {version = "0.14", default-features = false}
-ddcommon = { path = "../ddcommon", version = "0.7.0-rc.1" }
-ddcommon-ffi = { path = "../ddcommon-ffi", version = "0.7.0-rc.1" }
+ddcommon = { path = "../ddcommon"}
+ddcommon-ffi = { path = "../ddcommon-ffi"}
 libc = "0.2"
 tokio-util = "0.7.1"

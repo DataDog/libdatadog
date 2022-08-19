@@ -72,8 +72,8 @@ jobs:
       - name: "Generate FFI"
         shell: bash
         run: |
-           chmod +x ffi-build.sh
-           ./ffi-build.sh ${OUTPUT_FOLDER}
+           chmod +x build-profiling-ffi.sh
+           ./build-profiling-ffi.sh ${OUTPUT_FOLDER}
 
       - name: 'Publish libdatadog'
         uses: actions/upload-artifact@v2
@@ -89,5 +89,5 @@ jobs:
         run: |
           mkdir examples/ffi/build
           cd examples/ffi/build
-          cmake -S .. -DDDProf_ROOT=$OUTPUT_FOLDER
+          cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER
           cmake --build .
