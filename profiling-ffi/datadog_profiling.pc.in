@@ -14,4 +14,4 @@ Version: @Datadog_VERSION@
 Requires:
 Libs: -L${libdir} -ldatadog_profiling
 Libs.private:
-Cflags: -I${includedir} -DDATADOG_PROFILING_FFI
+Cflags: -I${includedir}

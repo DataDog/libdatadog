@@ -14,4 +14,4 @@ Version: @DDog_VERSION@
 Requires:
 Libs: -L${libdir} -ldatadog_profiling -Wl,-rpath,${libdir}
 Libs.private:
-Cflags: -I${includedir} -DDATADOG_PROFILING_FFI
+Cflags: -I${includedir}
