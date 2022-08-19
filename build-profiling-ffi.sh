@@ -92,12 +92,13 @@ cargo build --package="${datadog_profiling_ffi}" --release --target "${target}"
 
 # Remove _ffi suffix when copying
 shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"
-static_library_name="${library_prefix}datadog_profiling_ffi${static_library_suffix}"
 shared_library_rename="${library_prefix}datadog_profiling${shared_library_suffix}"
+
+static_library_name="${library_prefix}datadog_profiling_ffi${static_library_suffix}"
 static_library_rename="${library_prefix}datadog_profiling${static_library_suffix}"
 
 cp -v "target/${target}/release/${shared_library_name}" "$destdir/lib/${shared_library_rename}"
-cp -v "target/${target}/release/${static_library_rename}" "$destdir/lib/${static_library_rename}"
+cp -v "target/${target}/release/${static_library_name}" "$destdir/lib/${static_library_rename}"
 
 shared_library_name="${shared_library_rename}"
 static_library_name="${static_library_rename}"
