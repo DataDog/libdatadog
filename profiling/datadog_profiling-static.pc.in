@@ -8,10 +8,10 @@ exec_prefix=${prefix}
 libdir=${exec_prefix}/lib
 includedir=${prefix}/include
 
-Name: ddprof_ffi
+Name: datadog_profiling
 Description: Contains common code used to implement Datadog's Continuous Profilers. (Static linking variant)
-Version: @DDProf_FFI_VERSION@
+Version: @Datadog_VERSION@
 Requires:
-Libs: -L${libdir} ${libdir}/libddprof_ffi.a @DDProf_FFI_LIBRARIES@
+Libs: -L${libdir} ${libdir}/libdatadog_profiling.a @Datadog_LIBRARIES@
 Libs.private:
-Cflags: -I${includedir}
+Cflags: -I${includedir} -DDATADOG_PROFILING_FFI

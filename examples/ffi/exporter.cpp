@@ -9,9 +9,7 @@ extern "C" {
 #include <memory>
 #include <thread>
 
-static ddog_Slice_c_char to_slice_c_char(const char *s) {
-  return {.ptr = s, .len = strlen(s)};
-}
+static ddog_Slice_c_char to_slice_c_char(const char *s) { return {.ptr = s, .len = strlen(s)}; }
 
 struct Deleter {
   void operator()(ddog_Profile *object) { ddog_Profile_free(object); }
@@ -41,8 +39,7 @@ int main(int argc, char *argv[]) {
 
   const ddog_Slice_value_type sample_types = {&wall_time, 1};
   const ddog_Period period = {wall_time, 60};
-  std::unique_ptr<ddog_Profile, Deleter> profile{
-      ddog_Profile_new(sample_types, &period, nullptr)};
+  std::unique_ptr<ddog_Profile, Deleter> profile{ddog_Profile_new(sample_types, &period, nullptr)};
 
   ddog_Line root_line = {
       .function =
@@ -71,8 +68,7 @@ int main(int argc, char *argv[]) {
   };
   ddog_Profile_add(profile.get(), sample);
 
-  ddog_SerializeResult serialize_result =
-      ddog_Profile_serialize(profile.get(), nullptr, nullptr);
+  ddog_SerializeResult serialize_result = ddog_Profile_serialize(profile.get(), nullptr, nullptr);
   if (serialize_result.tag == DDOG_SERIALIZE_RESULT_ERR) {
     print_error("Failed to serialize profile: ", serialize_result.err);
     return 1;
@@ -80,8 +76,8 @@ int main(int argc, char *argv[]) {
 
   ddog_EncodedProfile *encoded_profile = &serialize_result.ok;
 
-  ddog_Endpoint endpoint = ddog_Endpoint_agentless(
-      DDOG_CHARSLICE_C("datad0g.com"), to_slice_c_char(api_key));
+  ddog_Endpoint endpoint =
+      ddog_Endpoint_agentless(DDOG_CHARSLICE_C("datad0g.com"), to_slice_c_char(api_key));
 
   ddog_Vec_tag tags = ddog_Vec_tag_new();
   ddog_PushTagResult tag_result =
@@ -113,12 +109,11 @@ int main(int argc, char *argv[]) {
 
   ddog_Slice_file files = {.ptr = files_, .len = sizeof files_ / sizeof *files_};
 
-  ddog_Request *request = ddog_ProfileExporter_build(
-      exporter, encoded_profile->start, encoded_profile->end, files, nullptr, 30000);
+  ddog_Request *request = ddog_ProfileExporter_build(exporter, encoded_profile->start,
+                                                     encoded_profile->end, files, nullptr, 30000);
 
   ddog_CancellationToken *cancel = ddog_CancellationToken_new();
-  ddog_CancellationToken *cancel_for_background_thread =
-      ddog_CancellationToken_clone(cancel);
+  ddog_CancellationToken *cancel_for_background_thread = ddog_CancellationToken_clone(cancel);
 
   // As an example of CancellationToken usage, here we create a background
   // thread that sleeps for some time and then cancels a request early (e.g.

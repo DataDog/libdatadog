@@ -8,9 +8,9 @@ set -eu
 
 destdir="$1"
 
-mkdir -v -p "$destdir/include/ddprof" "$destdir/lib/pkgconfig" "$destdir/cmake"
+mkdir -v -p "$destdir/include/datadog" "$destdir/lib/pkgconfig" "$destdir/cmake"
 
-version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < ddprof-ffi/Cargo.toml)
+version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < profiling/Cargo.toml)
 target="$(rustc -vV | awk '/^host:/ { print $2 }')"
 shared_library_suffix=".so"
 static_library_suffix=".a"
@@ -63,32 +63,34 @@ case "$target" in
 esac
 
 echo "Recognized platform '${target}'. Adding libs: ${native_static_libs}"
-sed < ddprof_ffi.pc.in "s/@DDProf_FFI_VERSION@/${version}/g" \
-    > "$destdir/lib/pkgconfig/ddprof_ffi.pc"
+cd profiling
+sed < datadog_profiling.pc.in "s/@Datadog_VERSION@/${version}/g" \
+    > "$destdir/lib/pkgconfig/datadog_profiling.pc"
 
-sed < ddprof_ffi_with_rpath.pc.in "s/@DDProf_FFI_VERSION@/${version}/g" \
-    > "$destdir/lib/pkgconfig/ddprof_ffi_with_rpath.pc"
+sed < datadog_profiling_with_rpath.pc.in "s/@Datadog_VERSION@/${version}/g" \
+    > "$destdir/lib/pkgconfig/datadog_profiling_with_rpath.pc"
 
-sed < ddprof_ffi-static.pc.in "s/@DDProf_FFI_VERSION@/${version}/g" \
-    | sed "s/@DDProf_FFI_LIBRARIES@/${native_static_libs}/g" \
-    > "$destdir/lib/pkgconfig/ddprof_ffi-static.pc"
+sed < datadog_profiling-static.pc.in "s/@Datadog_VERSION@/${version}/g" \
+    | sed "s/@Datadog_LIBRARIES@/${native_static_libs}/g" \
+    > "$destdir/lib/pkgconfig/datadog_profiling-static.pc"
 
 # strip leading white space as per CMake policy CMP0004.
 ffi_libraries="$(echo "${native_static_libs}" | sed -e 's/^[[:space:]]*//')"
 
-sed < cmake/DDProfConfig.cmake.in \
-    > "$destdir/cmake/DDProfConfig.cmake" \
-    "s/@DDProf_FFI_LIBRARIES@/${ffi_libraries}/g"
+sed < ../cmake/DatadogConfig.cmake.in \
+    > "$destdir/cmake/DatadogConfig.cmake" \
+    "s/@Datadog_LIBRARIES@/${ffi_libraries}/g"
+cd -
 
 cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
 export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
-echo "Building the ddprof_ffi library (may take some time)..."
-cargo build --release --target "${target}"
+echo "Building the datadog profiling library (may take some time)..."
+cargo build --package=datadog-profiling --features=datadog_profiling_ffi --release --target "${target}"
 
-shared_library_name="${library_prefix}ddprof_ffi${shared_library_suffix}"
-static_library_name="${library_prefix}ddprof_ffi${static_library_suffix}"
+shared_library_name="${library_prefix}datadog_profiling${shared_library_suffix}"
+static_library_name="${library_prefix}datadog_profiling${static_library_suffix}"
 cp -v "target/${target}/release/$static_library_name" "target/${target}/release/$shared_library_name" "$destdir/lib/"
 
 if [[ "$remove_rpath" -eq 1 ]]; then
@@ -112,8 +114,8 @@ if command -v objcopy > /dev/null && [[ "$target" != "x86_64-pc-windows-msvc" ]]
 fi
 
 echo "Checking that native-static-libs are as expected for this platform..."
-cd ddprof-ffi
-actual_native_static_libs="$(cargo rustc --release --target "${target}" -- --print=native-static-libs 2>&1 | awk -F ':' '/note: native-static-libs:/ { print $3 }')"
+cd profiling
+actual_native_static_libs="$(cargo rustc --features=datadog_profiling_ffi --release --target "${target}" -- --print=native-static-libs 2>&1 | awk -F ':' '/note: native-static-libs:/ { print $3 }')"
 echo "Actual native-static-libs:${actual_native_static_libs}"
 echo "Expected native-static-libs:${expected_native_static_libs}"
 
@@ -139,10 +141,7 @@ cargo build --package tools --bins
 
 echo "Generating $destdir/include/libdatadog headers..."
 cbindgen --crate ddcommon-ffi --config ddcommon-ffi/cbindgen.toml --output "$destdir/include/datadog/common.h"
-cbindgen --crate ddprof-ffi --config ddprof-ffi/cbindgen.toml --output "$destdir/include/datadog/profiling.h"
+cbindgen --crate datadog-profiling --config profiling/cbindgen.toml --output "$destdir/include/datadog/profiling.h"
 ./target/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h"
-
-# CI doesn't have any clang tooling
-# clang-format -i "$destdir/include/ddprof/ffi.h"
 
 echo "Done."

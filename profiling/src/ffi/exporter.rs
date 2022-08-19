@@ -4,11 +4,11 @@
 #![allow(renamed_and_removed_lints)]
 #![allow(clippy::box_vec)]
 
-use crate::Timespec;
-use datadog_profiling::exporter;
+use super::Timespec;
+use crate::exporter;
+use crate::exporter::ProfileExporter;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use exporter::ProfileExporter;
 use std::borrow::Cow;
 use std::ptr::NonNull;
 use std::str::FromStr;
@@ -304,12 +304,12 @@ pub extern "C" fn ddog_CancellationToken_drop(_cancel: Option<Box<CancellationTo
 
 #[export_name = "ddog_SendResult_drop"]
 pub unsafe extern "C" fn send_result_drop(result: SendResult) {
-    std::mem::drop(result)
+    drop(result)
 }
 
 #[cfg(test)]
 mod test {
-    use crate::exporter::*;
+    use super::*;
     use ddcommon_ffi::Slice;
 
     fn family() -> CharSlice<'static> {
@@ -336,8 +336,7 @@ mod test {
             NewProfileExporterResult::Ok(exporter) => unsafe {
                 profile_exporter_delete(Some(Box::from_raw(exporter)))
             },
-            NewProfileExporterResult::Err(message) => {
-                std::mem::drop(message);
+            NewProfileExporterResult::Err(_) => {
                 panic!("Should not occur!")
             }
         }
@@ -351,8 +350,7 @@ mod test {
             NewProfileExporterResult::Ok(exporter) => unsafe {
                 Some(NonNull::new_unchecked(exporter))
             },
-            NewProfileExporterResult::Err(message) => {
-                std::mem::drop(message);
+            NewProfileExporterResult::Err(_) => {
                 panic!("Should not occur!")
             }
         };
