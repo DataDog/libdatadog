@@ -3,7 +3,7 @@
 
 [package]
 name = "ddcommon-ffi"
-version = "0.8.0-rc.1"
+version = "0.8.0"
 edition = "2021"
 license = "Apache-2.0"
 
