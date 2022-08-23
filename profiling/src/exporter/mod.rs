@@ -21,6 +21,9 @@ pub use ddcommon::Endpoint;
 #[cfg(unix)]
 pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
 
+#[cfg(windows)]
+pub use connector::named_pipe::{socket_path_to_uri, socket_path_from_uri};
+
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
 
 pub struct Exporter {

@@ -2,8 +2,12 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 #[cfg(unix)]
-use ddcommon::connector::uds;
+use ddcommon::connector::uds ;
 use ddcommon::Endpoint;
+
+#[cfg(windows)]
+use ddcommon::connector::named_pipe;
+
 
 use http::Uri;
 use std::borrow::Cow;
@@ -35,6 +39,16 @@ pub fn agent(base_url: Uri) -> anyhow::Result<Endpoint> {
 #[cfg(unix)]
 pub fn agent_uds(path: &std::path::Path) -> anyhow::Result<Endpoint> {
     let base_url = uds::socket_path_to_uri(path)?;
+    agent(base_url)
+}
+
+/// Createsan Endpoint for talking to the Datadog agent though a windows named pipe.
+///
+/// # Arguments
+/// * `path` - file system path to the named pipe 
+#[cfg(windows)]
+pub fn agent_named_pipe(path: &std::path::Path) -> anyhow::Result<Endpoint> {
+    let base_url = named_pipe::socket_path_to_uri(path)?;
     agent(base_url)
 }
 
