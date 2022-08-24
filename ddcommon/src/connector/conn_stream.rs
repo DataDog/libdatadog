@@ -38,30 +38,32 @@ pub type ConnStreamError = Box<dyn std::error::Error + Send + Sync>;
 
 use hyper::{client::HttpConnector, service::Service};
 impl ConnStream {
-    pub async fn from_uds_uri(_uri: hyper::Uri) -> Result<ConnStream, ConnStreamError> {
+    pub async fn from_uds_uri(uri: hyper::Uri) -> Result<ConnStream, ConnStreamError> {
         #[cfg(unix)]
         {
-            let path = super::uds::socket_path_from_uri(&_uri)?;
+            let path = super::uds::socket_path_from_uri(&uri)?;
             Ok(ConnStream::Udp {
                 transport: tokio::net::UnixStream::connect(path).await?,
             })
         }
         #[cfg(not(unix))]
         {
+            let _ = uri;
             Err(super::errors::Error::UnixSocketUnsupported.into())
         }
     }
 
-    pub async fn from_named_pipe_uri(_uri: hyper::Uri) -> Result<ConnStream, ConnStreamError> {
+    pub async fn from_named_pipe_uri(uri: hyper::Uri) -> Result<ConnStream, ConnStreamError> {
         #[cfg(windows)]
         {
-            let path = super::named_pipe::named_pipe_path_from_uri(&_uri)?;
+            let path = super::named_pipe::named_pipe_path_from_uri(&uri)?;
             Ok(ConnStream::NamedPipe {
                 transport: tokio::net::windows::named_pipe::ClientOptions::new().open(path)?,
             })
         }
         #[cfg(not(windows))]
         {
+            let _ = uri;
             Err(super::errors::Error::WindowsNamedPipeUnsupported.into())
         }
     }
