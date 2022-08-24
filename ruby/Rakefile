@@ -160,10 +160,10 @@ module Helpers
   def self.files_for(
     *included_platforms,
     excluded_files: [
-      "ddprof_ffi.pc", # we use the ddprof_ffi_with_rpath.pc variant
-      "libddprof_ffi.a", "ddprof_ffi-static.pc", # We don't use the static library
-      "libddprof_ffi.so.debug", # We don't include debug info
-      "DDProfConfig.cmake" # We don't compile using cmake
+      "datadog_profiling.pc", # we use the datadog_profiling_with_rpath.pc variant
+      "libdatadog_profiling.a", "datadog_profiling-static.pc", # We don't use the static library
+      "libdatadog_profiling.so.debug", # We don't include debug info
+      "DatadogConfig.cmake" # We don't compile using cmake
     ]
   )
     files = []
