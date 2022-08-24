@@ -15,7 +15,7 @@ pub fn socket_path_to_uri(path: &Path) -> Result<hyper::Uri, hyper::http::Error>
 pub fn socket_path_from_uri(uri: &hyper::Uri) -> anyhow::Result<PathBuf> {
     if uri.scheme_str() != Some("windows") {
         return Err(super::errors::Error::InvalidUrl.into());
-    } 
+    }
 
     let path = hex::decode(
         uri.authority()
@@ -23,7 +23,7 @@ pub fn socket_path_from_uri(uri: &hyper::Uri) -> anyhow::Result<PathBuf> {
             .as_str(),
     )
     .map_err(|_| super::errors::Error::InvalidUrl)?;
-    
+
     return match String::from_utf8(path) {
         Ok(s) => Ok(PathBuf::from(s.as_str())),
         _ => Err(super::errors::Error::InvalidUrl.into()),
@@ -45,7 +45,7 @@ fn test_encode_named_pipe_for_remote_server() {
     let expected_path = r"\\servername\pipe\pipename".as_ref();
     let uri = socket_path_to_uri(expected_path).unwrap();
     assert_eq!(uri.scheme_str(), Some("windows"));
-    
+
     let actual_path = socket_path_from_uri(&uri).unwrap();
     assert_eq!(actual_path.as_path(), Path::new(expected_path));
 }

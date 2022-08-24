@@ -20,7 +20,7 @@ pub fn socket_path_from_uri(uri: &hyper::Uri) -> anyhow::Result<PathBuf> {
     if uri.scheme_str() != Some("unix") {
         return Err(super::errors::Error::InvalidUrl.into());
     }
-    
+
     let path = hex::decode(
         uri.authority()
             .ok_or(super::errors::Error::InvalidUrl)?

@@ -52,11 +52,13 @@ impl ConnStream {
         }
     }
 
-    pub async fn from_namedpipe_uri(uri : hyper::Uri) -> Result<ConnStream, ConnStreamError> {
+    pub async fn from_named_pipe_uri(uri: hyper::Uri) -> Result<ConnStream, ConnStreamError> {
         #[cfg(windows)]
         {
             let path = super::named_pipe::socket_path_from_uri(&uri)?;
-            Ok(ConnStream::NamedPipe { transport: tokio::net::windows::named_pipe::ClientOptions::new().open(path)? })
+            Ok(ConnStream::NamedPipe {
+                transport: tokio::net::windows::named_pipe::ClientOptions::new().open(path)?,
+            })
         }
         #[cfg(not(windows))]
         {
@@ -142,7 +144,7 @@ impl tokio::io::AsyncWrite for ConnStream {
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_write(cx, buf),
             #[cfg(windows)]
-            ConnStreamProj::NamedPipe { transport } =>  transport.poll_write(cx, buf)
+            ConnStreamProj::NamedPipe { transport } => transport.poll_write(cx, buf),
         }
     }
 
