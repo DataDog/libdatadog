@@ -58,6 +58,10 @@ impl ConnStream {
             let path = super::named_pipe::socket_path_from_uri(&uri)?;
             Ok(ConnStream::NamedPipe { transport: tokio::net::windows::named_pipe::ClientOptions::new().open(path)? })
         }
+        #[cfg(not(windows))]
+        {
+            Err(super::errors::Error::WindowsNamedPipeUnsupported.into())
+        }
     }
 
     pub fn from_http_connector_with_uri(
