@@ -26,6 +26,12 @@ pub enum ConnStream {
         #[pin]
         transport: tokio::net::UnixStream,
     },
+
+    #[cfg(windows)]
+    NamedPipe {
+        #[pin]
+        transport: tokio::net::windows::named_pipe::NamedPipeClient,
+    },
 }
 
 pub type ConnStreamError = Box<dyn std::error::Error + Send + Sync>;
@@ -42,7 +48,23 @@ impl ConnStream {
         }
         #[cfg(not(unix))]
         {
+            let _ = uri;
             Err(super::errors::Error::UnixSocketUnsupported.into())
+        }
+    }
+
+    pub async fn from_named_pipe_uri(uri: hyper::Uri) -> Result<ConnStream, ConnStreamError> {
+        #[cfg(windows)]
+        {
+            let path = super::named_pipe::named_pipe_path_from_uri(&uri)?;
+            Ok(ConnStream::NamedPipe {
+                transport: tokio::net::windows::named_pipe::ClientOptions::new().open(path)?,
+            })
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = uri;
+            Err(super::errors::Error::WindowsNamedPipeUnsupported.into())
         }
     }
 
@@ -90,6 +112,8 @@ impl tokio::io::AsyncRead for ConnStream {
             ConnStreamProj::Tls { transport } => transport.poll_read(cx, buf),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_read(cx, buf),
+            #[cfg(windows)]
+            ConnStreamProj::NamedPipe { transport } => transport.poll_read(cx, buf),
         }
     }
 }
@@ -104,6 +128,8 @@ impl hyper::client::connect::Connection for ConnStream {
             }
             #[cfg(unix)]
             Self::Udp { transport: _ } => hyper::client::connect::Connected::new(),
+            #[cfg(windows)]
+            Self::NamedPipe { transport: _ } => hyper::client::connect::Connected::new(),
         }
     }
 }
@@ -119,6 +145,8 @@ impl tokio::io::AsyncWrite for ConnStream {
             ConnStreamProj::Tls { transport } => transport.poll_write(cx, buf),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_write(cx, buf),
+            #[cfg(windows)]
+            ConnStreamProj::NamedPipe { transport } => transport.poll_write(cx, buf),
         }
     }
 
@@ -131,6 +159,8 @@ impl tokio::io::AsyncWrite for ConnStream {
             ConnStreamProj::Tls { transport } => transport.poll_shutdown(cx),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_shutdown(cx),
+            #[cfg(windows)]
+            ConnStreamProj::NamedPipe { transport } => transport.poll_shutdown(cx),
         }
     }
 
@@ -140,6 +170,8 @@ impl tokio::io::AsyncWrite for ConnStream {
             ConnStreamProj::Tls { transport } => transport.poll_flush(cx),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_flush(cx),
+            #[cfg(windows)]
+            ConnStreamProj::NamedPipe { transport } => transport.poll_flush(cx),
         }
     }
 }

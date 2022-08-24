@@ -13,6 +13,9 @@ use std::task::{Context, Poll};
 #[cfg(unix)]
 pub mod uds;
 
+#[cfg(windows)]
+pub mod named_pipe;
+
 pub mod errors;
 
 mod conn_stream;
@@ -102,6 +105,7 @@ impl hyper::service::Service<hyper::Uri> for Connector {
     fn call(&mut self, uri: hyper::Uri) -> Self::Future {
         match uri.scheme_str() {
             Some("unix") => conn_stream::ConnStream::from_uds_uri(uri).boxed(),
+            Some("windows") => conn_stream::ConnStream::from_named_pipe_uri(uri).boxed(),
             Some("https") => self.build_conn_stream(uri, true),
             _ => self.build_conn_stream(uri, false),
         }
