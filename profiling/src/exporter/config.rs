@@ -47,7 +47,7 @@ pub fn agent_uds(path: &std::path::Path) -> anyhow::Result<Endpoint> {
 /// * `path` - file system path to the named pipe
 #[cfg(windows)]
 pub fn agent_named_pipe(path: &std::path::Path) -> anyhow::Result<Endpoint> {
-    let base_url = named_pipe::socket_path_to_uri(path)?;
+    let base_url = named_pipe::named_pipe_path_to_uri(path)?;
     agent(base_url)
 }
 
