@@ -76,7 +76,7 @@ RSpec.describe Libdatadog do
             # No problem, a few specs try to create the same folder
           end
 
-          File.open("#{pkgconfig_folder}/ddprof_ffi_with_rpath.pc", "w+") {}
+          File.open("#{pkgconfig_folder}/datadog_profiling_with_rpath.pc", "w+") {}
         end
 
         describe ".pkgconfig_folder" do

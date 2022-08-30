@@ -8,7 +8,7 @@ module Libdatadog
     File.directory?(vendor_directory) ? (Dir.entries(vendor_directory) - [".", ".."]) : []
   end
 
-  def self.pkgconfig_folder(pkgconfig_file_name = "ddprof_ffi_with_rpath.pc")
+  def self.pkgconfig_folder(pkgconfig_file_name = "datadog_profiling_with_rpath.pc")
     current_platform = Gem::Platform.local.to_s
 
     if RbConfig::CONFIG["arch"].include?("-musl") && !current_platform.include?("-musl")

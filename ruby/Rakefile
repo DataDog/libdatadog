@@ -11,7 +11,7 @@ require "rubygems/package"
 
 RSpec::Core::RakeTask.new(:spec)
 
-LIB_VERSION_TO_PACKAGE = "0.7.0"
+LIB_VERSION_TO_PACKAGE = "0.8.0"
 unless LIB_VERSION_TO_PACKAGE.start_with?(Libdatadog::LIB_VERSION)
   raise "`LIB_VERSION_TO_PACKAGE` setting in <Rakefile> (#{LIB_VERSION_TO_PACKAGE}) does not match " \
     "`LIB_VERSION` setting in <lib/libdatadog/version.rb> (#{Libdatadog::LIB_VERSION})"
@@ -20,22 +20,22 @@ end
 LIB_GITHUB_RELEASES = [
   {
     file: "libdatadog-aarch64-alpine-linux-musl.tar.gz",
-    sha256: "de0ba9c95da07d89b487d99b36f767f763f1272ebdff5b532b576473d64f3c66",
+    sha256: "68919ddf9bc6491927bf16fb819b18fd052209d77774097b57f7879ebafc9bdf",
     ruby_platform: "aarch64-linux-musl"
   },
   {
     file: "libdatadog-aarch64-unknown-linux-gnu.tar.gz",
-    sha256: "256750fe9ebcd9bf8426b83f89f52572f01559ae5f4add3a4c46df84fc122eb6",
+    sha256: "9c6dd7058c7d0c9af8ffe18b4565fcda08462debc81f60ce0eb87aa5f7b74a0b",
     ruby_platform: "aarch64-linux"
   },
   {
     file: "libdatadog-x86_64-alpine-linux-musl.tar.gz",
-    sha256: "0ae6b3d9d37e6af8e31a44286424c34ddd4945022efbaed6978fc60a8b923ba6",
+    sha256: "e410300255d93f016562e7e072dcb09f94d0550ff3e289f97fff4cd155a4d3a4",
     ruby_platform: "x86_64-linux-musl"
   },
   {
     file: "libdatadog-x86_64-unknown-linux-gnu.tar.gz",
-    sha256: "b5f617d08e637e9a201437198e715b2f3688d5367d0af572988c80dd3c2e6b81",
+    sha256: "94f52edaed31f8c2a25cd569b0b065f8bb221120706d57ef2ca592b0512333f2",
     ruby_platform: "x86_64-linux"
   }
 ]
@@ -160,10 +160,10 @@ module Helpers
   def self.files_for(
     *included_platforms,
     excluded_files: [
-      "ddprof_ffi.pc", # we use the ddprof_ffi_with_rpath.pc variant
-      "libddprof_ffi.a", "ddprof_ffi-static.pc", # We don't use the static library
-      "libddprof_ffi.so.debug", # We don't include debug info
-      "DDProfConfig.cmake" # We don't compile using cmake
+      "datadog_profiling.pc", # we use the datadog_profiling_with_rpath.pc variant
+      "libdatadog_profiling.a", "datadog_profiling-static.pc", # We don't use the static library
+      "libdatadog_profiling.so.debug", # We don't include debug info
+      "DatadogConfig.cmake" # We don't compile using cmake
     ]
   )
     files = []
