@@ -63,24 +63,23 @@ case "$target" in
 esac
 
 echo "Recognized platform '${target}'. Adding libs: ${native_static_libs}"
-cd profiling-ffi
-sed < datadog_profiling.pc.in "s/@Datadog_VERSION@/${version}/g" \
+# cd profiling-ffi
+sed < profiling-ffi/datadog_profiling.pc.in "s/@Datadog_VERSION@/${version}/g" \
     > "$destdir/lib/pkgconfig/datadog_profiling.pc"
 
-sed < datadog_profiling_with_rpath.pc.in "s/@Datadog_VERSION@/${version}/g" \
+sed < profiling-ffi/datadog_profiling_with_rpath.pc.in "s/@Datadog_VERSION@/${version}/g" \
     > "$destdir/lib/pkgconfig/datadog_profiling_with_rpath.pc"
 
-sed < datadog_profiling-static.pc.in "s/@Datadog_VERSION@/${version}/g" \
+sed < profiling-ffi/datadog_profiling-static.pc.in "s/@Datadog_VERSION@/${version}/g" \
     | sed "s/@Datadog_LIBRARIES@/${native_static_libs}/g" \
     > "$destdir/lib/pkgconfig/datadog_profiling-static.pc"
 
 # strip leading white space as per CMake policy CMP0004.
 ffi_libraries="$(echo "${native_static_libs}" | sed -e 's/^[[:space:]]*//')"
 
-sed < ../cmake/DatadogConfig.cmake.in \
+sed < cmake/DatadogConfig.cmake.in \
     > "$destdir/cmake/DatadogConfig.cmake" \
     "s/@Datadog_LIBRARIES@/${ffi_libraries}/g"
-cd -
 
 cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
