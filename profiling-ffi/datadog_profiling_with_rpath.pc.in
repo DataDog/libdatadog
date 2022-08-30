@@ -10,7 +10,7 @@ includedir=${prefix}/include
 
 Name: datadog_profiling
 Description: Contains common code used to implement Datadog's Continuous Profilers. (Dynamic linking variant, sets rpath)
-Version: @DDog_VERSION@
+Version: @Datadog_VERSION@
 Requires:
 Libs: -L${libdir} -ldatadog_profiling -Wl,-rpath,${libdir}
 Libs.private:
