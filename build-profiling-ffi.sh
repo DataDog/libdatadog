@@ -63,7 +63,6 @@ case "$target" in
 esac
 
 echo "Recognized platform '${target}'. Adding libs: ${native_static_libs}"
-# cd profiling-ffi
 sed < profiling-ffi/datadog_profiling.pc.in "s/@Datadog_VERSION@/${version}/g" \
     > "$destdir/lib/pkgconfig/datadog_profiling.pc"
 
