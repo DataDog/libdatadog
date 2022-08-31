@@ -22,12 +22,23 @@ after_includes = """
 /* NOTE: Compilation fails if you pass in a char* instead of a literal */ ((ddog_CharSlice){ .ptr = "" string, .len = sizeof(string) - 1 })
 #endif
 
+#if defined __GNUC__
+#  define DDOG_GNUC_VERSION(major) __GNUC__ >= 4
+#else
+#  define DDOG_GNUC_VERSION(major) (0)
+#endif
+
+#if defined __has_attribute
+#  define DDOG_HAS_ATTRIBUTE(attribute, major) __has_attribute(attribute)
+#else
+#  define DDOG_HAS_ATTRIBUTE(attribute, major) DDOG_GNUC_VERSION(major)
+#endif
+
 #if defined(__cplusplus) && (__cplusplus >= 201703L)
 #  define DDOG_CHECK_RETURN [[nodiscard]]
 #elif defined(_Check_return_) /* SAL */
 #  define DDOG_CHECK_RETURN _Check_return_
-#elif (defined(__has_attribute) && __has_attribute(warn_unused_result)) || \\
-      (defined(__GNUC__) && (__GNUC__ >= 4))
+#elif DDOG_HAS_ATTRIBUTE(warn_unused_result, 4)
 #  define DDOG_CHECK_RETURN __attribute__((__warn_unused_result__))
 #else
 #  define DDOG_CHECK_RETURN
