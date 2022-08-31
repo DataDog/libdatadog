@@ -23,7 +23,7 @@ after_includes = """
 #endif
 
 #if defined __GNUC__
-#  define DDOG_GNUC_VERSION(major) __GNUC__ >= 4
+#  define DDOG_GNUC_VERSION(major) __GNUC__ >= major
 #else
 #  define DDOG_GNUC_VERSION(major) (0)
 #endif
