@@ -36,14 +36,12 @@ pub unsafe fn fork() -> Result<Fork, std::io::Error> {
 /// Existing state of the process must allow safe forking, e.g. no background threads should be running
 /// as any locks held by these threads will be locked forever
 ///
-pub unsafe fn fork_fn<F>(mut f: F) -> Result<libc::pid_t, std::io::Error>
-where
-    F: FnMut(),
+pub unsafe fn fork_fn<Args>(args: Args, mut f: fn(Args) -> ()) -> Result<libc::pid_t, std::io::Error>
 {
     match fork()? {
         Fork::Parent(pid) => Ok(pid),
         Fork::Child => {
-            f();
+            f(args);
             std::process::exit(0)
         }
     }
@@ -105,21 +103,20 @@ pub mod tests {
 
     #[test]
     fn test_fork_subprocess() {
-        let (mut sock_a, mut sock_b) = UnixStream::pair().unwrap();
+        let (mut sock_a, sock_b) = UnixStream::pair().unwrap();
         let pid = unsafe {
-            fork_fn(|| {
+            fork_fn((sock_a.as_raw_fd(), sock_b.as_raw_fd()), |(sock_a, sock_b)| {
                 set_default_child_panic_handler();
                 {
                     // Free unused socket
-                    OwnedFd::from_raw_fd(sock_a.as_raw_fd());
+                    OwnedFd::from_raw_fd(sock_a);
                 }
-                println!("CJK");
-
+                let mut sock_b = UnixStream::from_raw_fd(sock_b);
+                
                 sock_b
                     .write_all(format!("child-{}", getpid()).as_bytes())
                     .unwrap();
 
-                println!("CJK 2");
             })
         }
         .unwrap();
@@ -140,12 +137,12 @@ pub mod tests {
     #[cfg(unix)]
     fn test_fork_trigger_error() {
         let pid = unsafe {
-            fork_fn(|| {
+            fork_fn((), |_| {
                 set_default_child_panic_handler();
 
                 // Limit the number of processes the child process tree is able to contain
                 rlimit::setrlimit(rlimit::Resource::NPROC, 1, 1).unwrap();
-                let err = fork_fn(|| {}).unwrap_err();
+                let err = fork_fn((), |_| {}).unwrap_err();
                 assert_eq!(std::io::ErrorKind::WouldBlock, err.kind());
             })
         }

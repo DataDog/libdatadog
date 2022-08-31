@@ -119,7 +119,7 @@ mod tests {
         let pair = ForkableUnixHandlePair::new().unwrap();
 
         let pid = unsafe {
-            fork_fn(|| {
+            fork_fn((&pair, &lock_path), |(pair, lock_path)| {
                 set_default_child_panic_handler();
                 let _l = FLock::rw_lock(&lock_path).unwrap();
                 let mut c = pair.remote().unwrap().into_instance().unwrap();

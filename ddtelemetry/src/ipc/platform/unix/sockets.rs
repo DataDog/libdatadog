@@ -5,14 +5,9 @@ use std::{
     io,
     os::unix::{
         net::{UnixListener, UnixStream},
-        prelude::{AsRawFd, FromRawFd, OsStrExt},
+        prelude::{AsRawFd, FromRawFd},
     },
     path::Path,
-};
-
-use io_lifetimes::OwnedFd;
-use nix::sys::socket::{
-    bind, connect, listen, socket, AddressFamily, SockFlag, SockType, UnixAddr,
 };
 
 use super::PlatformHandle;
@@ -30,45 +25,63 @@ impl IsListening for UnixListener {
     }
 }
 
-// PlatformHandle is only used as an intermediare to ensure the fd will be closed in case of errors
-//  a more lightweight FD container can be used if necessary from performance PoV
-fn socket_stream() -> io::Result<OwnedFd> {
-    let fd = socket(
-        AddressFamily::Unix,
-        SockType::Stream,
-        SockFlag::SOCK_CLOEXEC,
-        None,
-    )?;
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::{
+        io,
+        os::unix::{
+            net::{UnixListener, UnixStream},
+            prelude::{AsRawFd, FromRawFd, OsStrExt},
+        },
+        path::Path,
+    };
 
-    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
-}
+    use io_lifetimes::OwnedFd;
+    use nix::sys::socket::{
+        bind, connect, listen, socket, AddressFamily, SockFlag, SockType, UnixAddr,
+    };
 
-pub trait UnixStreamConnectAbstract {
-    fn connect_abstract<P: AsRef<Path>>(path: P) -> io::Result<UnixStream>;
-}
+    fn socket_stream() -> io::Result<OwnedFd> {
+        let fd = socket(
+            AddressFamily::Unix,
+            SockType::Stream,
+            SockFlag::SOCK_CLOEXEC,
+            None,
+        )?;
 
-impl UnixStreamConnectAbstract for UnixStream {
-    fn connect_abstract<P: AsRef<Path>>(path: P) -> io::Result<UnixStream> {
-        let sock = socket_stream()?;
-        let addr = UnixAddr::new_abstract(path.as_ref().as_os_str().as_bytes())?;
-        connect(sock.as_raw_fd(), &addr)?;
-        Ok(sock.into())
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+
+    pub trait UnixStreamConnectAbstract {
+        fn connect_abstract<P: AsRef<Path>>(path: P) -> io::Result<UnixStream>;
+    }
+
+    impl UnixStreamConnectAbstract for UnixStream {
+        fn connect_abstract<P: AsRef<Path>>(path: P) -> io::Result<UnixStream> {
+            let sock = socket_stream()?;
+            let addr = UnixAddr::new_abstract(path.as_ref().as_os_str().as_bytes())?;
+            connect(sock.as_raw_fd(), &addr)?;
+            Ok(sock.into())
+        }
+    }
+
+    pub trait UnixListenerBindAbstract {
+        fn bind_abstract<P: AsRef<Path>>(path: P) -> io::Result<UnixListener>;
+    }
+
+    impl UnixListenerBindAbstract for UnixListener {
+        fn bind_abstract<P: AsRef<Path>>(path: P) -> io::Result<UnixListener> {
+            let sock = socket_stream()?;
+            let addr = UnixAddr::new_abstract(path.as_ref().as_os_str().as_bytes())?;
+            bind(sock.as_raw_fd(), &addr)?;
+            listen(sock.as_raw_fd(), 128)?;
+            Ok(sock.into())
+        }
     }
 }
 
-pub trait UnixListenerBindAbstract {
-    fn bind_abstract<P: AsRef<Path>>(path: P) -> io::Result<UnixListener>;
-}
-
-impl UnixListenerBindAbstract for UnixListener {
-    fn bind_abstract<P: AsRef<Path>>(path: P) -> io::Result<UnixListener> {
-        let sock = socket_stream()?;
-        let addr = UnixAddr::new_abstract(path.as_ref().as_os_str().as_bytes())?;
-        bind(sock.as_raw_fd(), &addr)?;
-        listen(sock.as_raw_fd(), 128)?;
-        Ok(sock.into())
-    }
-}
+#[cfg(target_os = "linux")]
+pub use linux::*;
 
 #[derive(Debug, Clone)]
 pub struct ForkableUnixHandlePair {

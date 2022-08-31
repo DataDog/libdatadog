@@ -22,6 +22,7 @@ tokio = {version = "1.17", features = ["sync"]}
 tokio-serde = {version = "0.8", features = ["messagepack", "cbor", "bincode"]}
 tokio-util = {version = "0.6.9", features = ["codec"]}
 tracing = {version = "0.1", default-features = false, features = ["std"], optional = true}
+tracing-subscriber = {version="0.3", default-features = false, features = ["std", "fmt"], optional = true}
 uuid = {version = "0.8.2", features = ["v4"]}
 io-lifetimes = { version = "0.7" }
 
@@ -33,7 +34,7 @@ default = []
 
 [[example]]
 name = "tm-worker-test"
-required-features = ["tracing"]
+required-features = ["tracing", "tracing-subscriber"]
 
 [dev-dependencies]
 libc = {version = "0.2"}

@@ -14,11 +14,6 @@ use crate::ipc::platform::{FLock, IsListening};
 
 use super::Liaison;
 
-pub enum NamedSocketState {
-    Server(UnixListener),
-    Client(UnixStream),
-}
-
 fn ensure_dir_world_writable<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let mut perm = path.as_ref().metadata()?.permissions();
     perm.set_mode(0o777);
@@ -36,12 +31,12 @@ fn ensure_dir_exists<P: AsRef<Path>>(path: P) -> io::Result<()> {
     Ok(())
 }
 
-pub struct DirSharedLiaison {
+pub struct SharedDirLiaison {
     socket_path: PathBuf,
     lock_path: PathBuf,
 }
 
-impl Liaison<UnixStream, UnixListener> for DirSharedLiaison {
+impl Liaison for SharedDirLiaison {
     fn connect_to_server(&self) -> io::Result<UnixStream> {
         UnixStream::connect(&self.socket_path)
     }
@@ -68,7 +63,7 @@ impl Liaison<UnixStream, UnixListener> for DirSharedLiaison {
     }
 }
 
-impl DirSharedLiaison {
+impl SharedDirLiaison {
     pub fn new<P: AsRef<Path>>(base_dir: P) -> Self {
         let versioned_socket_basename = concat!("libdd.", env!("CARGO_PKG_VERSION"), ".sock");
         let base_dir = base_dir.as_ref();
@@ -107,7 +102,7 @@ mod linux {
         path: PathBuf,
     }
 
-    impl Liaison<UnixStream, UnixListener> for AbstractUnixSocketLiaison {
+    impl Liaison for AbstractUnixSocketLiaison {
         fn connect_to_server(&self) -> io::Result<UnixStream> {
             UnixStream::connect_abstract(&self.path)
         }
@@ -137,16 +132,13 @@ mod linux {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        io::{self, Read, Write},
-        os::unix::net::{UnixListener, UnixStream},
-    };
+    use std::io::{self, Read, Write};
 
     use crate::ipc::setup::Liaison;
 
     #[test]
     fn test_tmp_dir_can_connect_to_socket() -> anyhow::Result<()> {
-        let liaison = super::DirSharedLiaison::new_tmp_dir();
+        let liaison = super::SharedDirLiaison::new_tmp_dir();
         basic_liaison_connection_test(&liaison).unwrap();
         // socket file will still exist - even if we close everything
         assert!(liaison.socket_path.exists());
@@ -155,7 +147,7 @@ mod tests {
 
     pub fn basic_liaison_connection_test<T>(liaison: &T) -> Result<(), anyhow::Error>
     where
-        T: Liaison<UnixStream, UnixListener>,
+        T: Liaison,
     {
         {
             let listener = liaison.attempt_listen().unwrap().unwrap();
