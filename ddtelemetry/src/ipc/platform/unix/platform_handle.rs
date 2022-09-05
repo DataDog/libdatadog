@@ -193,7 +193,6 @@ mod tests {
         for _ in 0..100 {
             let shared = shared.clone();
             let th = thread::spawn(move || {
-                print!(".");
                 let mut file = &*shared.as_filelike_view().unwrap();
                 writeln!(file, "test").unwrap();
                 1

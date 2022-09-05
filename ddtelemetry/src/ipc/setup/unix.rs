@@ -12,7 +12,13 @@ use std::{
 
 use crate::ipc::platform::{FLock, IsListening};
 
-use super::Liaison;
+/// Implementations of this interface must provide behavior repeatable across processes with the same version
+/// of library.
+/// Allowing all instances of the same version of the library to establish a shared connection
+pub trait Liaison {
+    fn connect_to_server(&self) -> io::Result<UnixStream>;
+    fn attempt_listen(&self) -> io::Result<Option<UnixListener>>;
+}
 
 fn ensure_dir_world_writable<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let mut perm = path.as_ref().metadata()?.permissions();
@@ -100,11 +106,10 @@ mod linux {
 
     use crate::{
         fork::getpid,
-        ipc::{
-            platform::{UnixListenerBindAbstract, UnixStreamConnectAbstract},
-            setup::Liaison,
-        },
+        ipc::platform::{UnixListenerBindAbstract, UnixStreamConnectAbstract},
     };
+
+    use super::Liaison;
 
     pub struct AbstractUnixSocketLiaison {
         path: PathBuf,
@@ -159,7 +164,7 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use crate::ipc::setup::Liaison;
+    use super::Liaison;
 
     #[test]
     fn test_shared_dir_can_connect_to_socket() -> anyhow::Result<()> {
