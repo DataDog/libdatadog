@@ -69,11 +69,6 @@ impl Tag {
 
         Tag::from_value(format!("{}:{}", key, value))
     }
-
-    pub fn into_owned(mut self) -> Self {
-        self.value = Cow::Owned(self.value.into_owned());
-        self
-    }
 }
 
 /// Parse a string of tags typically provided by environment variables
