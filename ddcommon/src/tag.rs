@@ -71,7 +71,7 @@ impl Tag {
     }
 
     pub fn into_owned(mut self) -> Self {
-        self.value = self.value.to_owned();
+        self.value = Cow::Owned(self.value.into_owned());
         self
     }
 }
