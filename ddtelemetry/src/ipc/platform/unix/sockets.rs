@@ -5,7 +5,7 @@ use std::{
     io,
     os::unix::{
         net::{UnixListener, UnixStream},
-        prelude::{AsRawFd, FromRawFd},
+        prelude::{FromRawFd, IntoRawFd, RawFd},
     },
     path::Path,
 };
@@ -80,21 +80,22 @@ mod linux {
     }
 }
 
+use io_lifetimes::OwnedFd;
 #[cfg(target_os = "linux")]
 pub use linux::*;
 
 #[derive(Debug, Clone)]
 pub struct ForkableUnixHandlePair {
-    local: PlatformHandle<UnixStream>,
-    remote: PlatformHandle<UnixStream>,
+    local: RawFd,
+    remote: RawFd,
 }
 
 impl ForkableUnixHandlePair {
     pub fn new() -> io::Result<Self> {
         let (local, remote) = UnixStream::pair()?;
         Ok(Self {
-            local: local.into(),
-            remote: remote.into(),
+            local: local.into_raw_fd(),
+            remote: remote.into_raw_fd(),
         })
     }
 
@@ -103,11 +104,11 @@ impl ForkableUnixHandlePair {
     /// # Safety
     ///
     /// Caller must call the method only once per process instance
-    pub unsafe fn local(&self) -> io::Result<PlatformHandle<UnixStream>> {
-        let local = Self::steal_handle_post_fork(&self.local);
-        let _remote = Self::steal_handle_post_fork(&self.remote);
+    pub unsafe fn local(&self) -> PlatformHandle<UnixStream> {
+        let local = PlatformHandle::from_raw_fd(self.local);
+        let _remote: PlatformHandle<OwnedFd> = PlatformHandle::from_raw_fd(self.remote);
 
-        Ok(local)
+        local
     }
 
     /// returns socket from pair meant to used in spawned process
@@ -115,14 +116,9 @@ impl ForkableUnixHandlePair {
     /// # Safety
     ///
     /// Caller must call the method only once per process instance
-    pub unsafe fn remote(&self) -> io::Result<PlatformHandle<UnixStream>> {
-        let _local = Self::steal_handle_post_fork(&self.local);
-        let remote = Self::steal_handle_post_fork(&self.remote);
+    pub unsafe fn remote(&self) -> PlatformHandle<UnixStream> {
+        let _local: PlatformHandle<OwnedFd> = PlatformHandle::from_raw_fd(self.local);
 
-        Ok(remote)
-    }
-
-    unsafe fn steal_handle_post_fork<T>(handle: &PlatformHandle<T>) -> PlatformHandle<T> {
-        PlatformHandle::from_raw_fd(handle.as_raw_fd())
+        PlatformHandle::from_raw_fd(self.remote)
     }
 }

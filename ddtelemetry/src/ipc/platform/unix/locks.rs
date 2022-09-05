@@ -100,20 +100,28 @@ impl Drop for FLock {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{self, Read, Write};
+    use std::{
+        io::{self, Read, Write},
+        time::Duration,
+    };
 
     use tempfile::tempdir;
 
     use crate::{
         assert_child_exit,
-        fork::{fork_fn, tests::set_default_child_panic_handler},
+        fork::{
+            fork_fn,
+            tests::{prevent_concurrent_tests, set_default_child_panic_handler},
+        },
         ipc::platform::ForkableUnixHandlePair,
     };
 
     use super::FLock;
 
     #[test]
+    #[ignore]
     fn test_file_locking_works_as_expected() {
+        let _g = prevent_concurrent_tests();
         let d = tempdir().unwrap();
         let lock_path = d.path().join("file.lock");
         let pair = ForkableUnixHandlePair::new().unwrap();
@@ -122,19 +130,21 @@ mod tests {
             fork_fn((&pair, &lock_path), |(pair, lock_path)| {
                 set_default_child_panic_handler();
                 let _l = FLock::rw_lock(&lock_path).unwrap();
-                let mut c = pair.remote().unwrap().into_instance().unwrap();
+                let mut c = pair.remote().into_instance().unwrap();
 
                 c.write_all(&[0]).unwrap(); // signal readiness
                 let mut buf = [0; 10];
-                assert!(c.read(&mut buf).unwrap() > 0); // wait for signal to close
+                assert!(c.read(&mut buf).unwrap() > 0); // wait for signal to closepp
 
                 std::process::exit(0); // exit without explicitly freeing
             })
         }
         .unwrap();
 
-        let mut c = unsafe { pair.local() }.unwrap().into_instance().unwrap();
+        let mut c = unsafe { pair.local() }.into_instance().unwrap();
         let mut buf = [0; 10];
+        c.set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
         // wait for child to signal its ready
         assert!(c.read(&mut buf).unwrap() > 0);
 

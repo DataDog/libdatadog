@@ -824,12 +824,8 @@ mod test {
             discriminant(&next_deadline.1),
             discriminant(&expected_action)
         );
-        assert!(
-            expected_scheduled_after - Duration::from_millis(5) < scheduled_in
-        );
-        assert!(
-            scheduled_in < expected_scheduled_after
-        );
+        assert!(expected_scheduled_after - Duration::from_millis(5) < scheduled_in);
+        assert!(scheduled_in < expected_scheduled_after);
     }
 
     #[test]

@@ -49,12 +49,17 @@ impl Liaison for SharedDirLiaison {
             Ok(lock) => lock,
             // failing to acquire lock
             // means that another process is creating the socket
-            Err(_) => return Ok(None),
+            Err(err) => {
+                println!("failed_locking");
+                return Err(err);
+            }
         };
 
         if self.socket_path.exists() {
             // if socket is already listening, then creating listener is not available
             if UnixListener::is_listening(&self.socket_path)? {
+                println!("already_listening");
+                // return Err(io::Error::new(io::ErrorKind::Other, "already listening"));
                 return Ok(None);
             }
             fs::remove_file(&self.socket_path)?;
@@ -93,9 +98,12 @@ mod linux {
         path::PathBuf,
     };
 
-    use crate::ipc::{
-        platform::{UnixListenerBindAbstract, UnixStreamConnectAbstract},
-        setup::Liaison,
+    use crate::{
+        fork::getpid,
+        ipc::{
+            platform::{UnixListenerBindAbstract, UnixStreamConnectAbstract},
+            setup::Liaison,
+        },
     };
 
     pub struct AbstractUnixSocketLiaison {
@@ -116,29 +124,47 @@ mod linux {
         }
     }
 
-    impl Default for AbstractUnixSocketLiaison {
-        fn default() -> Self {
+    impl AbstractUnixSocketLiaison {
+        pub fn ipc_shared() -> Self {
             let path = PathBuf::from(concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".sock"));
+            Self { path }
+        }
+
+        pub fn ipc_in_process() -> Self {
+            let path = PathBuf::from(format!(
+                concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".{}.sock"),
+                getpid()
+            ));
             Self { path }
         }
     }
 
     #[test]
     fn test_abstract_socket_can_connect() {
-        let l = AbstractUnixSocketLiaison::default();
+        let l = AbstractUnixSocketLiaison::ipc_in_process();
         super::tests::basic_liaison_connection_test(&l).unwrap();
     }
 }
 
+#[cfg(target_os = "linux")]
+pub use linux::*;
+
 #[cfg(test)]
 mod tests {
-    use std::io::{self, Read, Write};
+    use std::{
+        io::{self, Read, Write},
+        thread,
+        time::Duration,
+    };
+
+    use tempfile::tempdir;
 
     use crate::ipc::setup::Liaison;
 
     #[test]
-    fn test_tmp_dir_can_connect_to_socket() -> anyhow::Result<()> {
-        let liaison = super::SharedDirLiaison::new_tmp_dir();
+    fn test_shared_dir_can_connect_to_socket() -> anyhow::Result<()> {
+        let tmpdir = tempdir().unwrap();
+        let liaison = super::SharedDirLiaison::new(tmpdir.path());
         basic_liaison_connection_test(&liaison).unwrap();
         // socket file will still exist - even if we close everything
         assert!(liaison.socket_path.exists());
@@ -175,6 +201,8 @@ mod tests {
             drop(listener);
             drop(client);
         }
+        // sleep to give time to OS to free up resources
+        thread::sleep(Duration::from_millis(10));
 
         // we should be able to open new listener now
         let _listener = liaison.attempt_listen().unwrap().unwrap();

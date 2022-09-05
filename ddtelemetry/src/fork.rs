@@ -36,8 +36,7 @@ pub unsafe fn fork() -> Result<Fork, std::io::Error> {
 /// Existing state of the process must allow safe forking, e.g. no background threads should be running
 /// as any locks held by these threads will be locked forever
 ///
-pub unsafe fn fork_fn<Args>(args: Args, mut f: fn(Args) -> ()) -> Result<libc::pid_t, std::io::Error>
-{
+pub unsafe fn fork_fn<Args>(args: Args, f: fn(Args) -> ()) -> Result<libc::pid_t, std::io::Error> {
     match fork()? {
         Fork::Parent(pid) => Ok(pid),
         Fork::Child => {
@@ -55,12 +54,14 @@ pub fn getpid() -> libc::pid_t {
 #[cfg(test)]
 pub mod tests {
     use io_lifetimes::OwnedFd;
+    use lazy_static::lazy_static;
     use std::{
         io::{Read, Write},
         os::unix::{
             net::UnixStream,
             prelude::{AsRawFd, FromRawFd},
         },
+        sync::{Mutex, MutexGuard},
     };
 
     use super::fork_fn;
@@ -73,6 +74,13 @@ pub mod tests {
             old_hook(p);
             std::process::exit(1);
         }));
+    }
+    lazy_static! {
+        static ref PREVENT_CONCURRENT_TESTS: Mutex<()> = Mutex::new(());
+    }
+
+    pub fn prevent_concurrent_tests<'a>() -> MutexGuard<'a, ()> {
+        PREVENT_CONCURRENT_TESTS.lock().unwrap()
     }
 
     #[macro_export]
@@ -102,22 +110,26 @@ pub mod tests {
     use super::getpid;
 
     #[test]
+    #[ignore]
     fn test_fork_subprocess() {
+        let _g = prevent_concurrent_tests();
         let (mut sock_a, sock_b) = UnixStream::pair().unwrap();
         let pid = unsafe {
-            fork_fn((sock_a.as_raw_fd(), sock_b.as_raw_fd()), |(sock_a, sock_b)| {
-                set_default_child_panic_handler();
-                {
-                    // Free unused socket
-                    OwnedFd::from_raw_fd(sock_a);
-                }
-                let mut sock_b = UnixStream::from_raw_fd(sock_b);
-                
-                sock_b
-                    .write_all(format!("child-{}", getpid()).as_bytes())
-                    .unwrap();
+            fork_fn(
+                (sock_a.as_raw_fd(), sock_b.as_raw_fd()),
+                |(sock_a, sock_b)| {
+                    set_default_child_panic_handler();
+                    {
+                        // Free unused socket
+                        OwnedFd::from_raw_fd(sock_a);
+                    }
+                    let mut sock_b = UnixStream::from_raw_fd(sock_b);
 
-            })
+                    sock_b
+                        .write_all(format!("child-{}", getpid()).as_bytes())
+                        .unwrap();
+                },
+            )
         }
         .unwrap();
         assert_ne!(pid, getpid());
@@ -134,8 +146,10 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     #[cfg(unix)]
     fn test_fork_trigger_error() {
+        let _g = prevent_concurrent_tests();
         let pid = unsafe {
             fork_fn((), |_| {
                 set_default_child_panic_handler();

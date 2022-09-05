@@ -109,7 +109,7 @@ impl<T> PlatformHandle<T>
 where
     T: FilelikeViewType,
 {
-    pub fn as_filelike_view(&self) -> io::Result<FilelikeView<T>> {
+    pub fn as_filelike_view(&self) -> io::Result<FilelikeView<'_, T>> {
         Ok(self.as_owned_fd()?.as_filelike_view())
     }
 }
@@ -193,6 +193,7 @@ mod tests {
         for _ in 0..100 {
             let shared = shared.clone();
             let th = thread::spawn(move || {
+                print!(".");
                 let mut file = &*shared.as_filelike_view().unwrap();
                 writeln!(file, "test").unwrap();
                 1
@@ -201,9 +202,8 @@ mod tests {
         }
         let cnt: i32 = joins.into_iter().map(|j| j.join().unwrap()).sum();
         assert_eq!(100, cnt);
-        // let owned = shared.into_owned_handle().unwrap();
 
-        // let mut file = owned.into_instance().unwrap();
-        // writeln!(file, "test").unwrap();
+        let mut file = &*shared.as_filelike_view().unwrap();
+        writeln!(file, "test").unwrap();
     }
 }
