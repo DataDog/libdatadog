@@ -133,7 +133,7 @@ impl ProfileExporter {
         form.add_text("version", "3");
         form.add_text("start", start.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string());
         form.add_text("end", end.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string());
-        form.add_text("family", self.family.to_owned());
+        form.add_text("family", self.family.clone());
 
         for tags in self.tags.as_ref().iter().chain(additional_tags.iter()) {
             for tag in tags.iter() {
