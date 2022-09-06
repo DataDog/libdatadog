@@ -10,8 +10,6 @@ use std::{
     path::Path,
 };
 
-use super::PlatformHandle;
-
 pub trait IsListening {
     fn is_listening<P: AsRef<Path>>(path: P) -> io::Result<bool>;
 }
@@ -84,6 +82,7 @@ use io_lifetimes::OwnedFd;
 #[cfg(target_os = "linux")]
 pub use linux::*;
 
+#[must_use]
 #[derive(Debug, Clone)]
 pub struct ForkableUnixHandlePair {
     local: RawFd,
@@ -104,11 +103,10 @@ impl ForkableUnixHandlePair {
     /// # Safety
     ///
     /// Caller must call the method only once per process instance
-    pub unsafe fn local(&self) -> PlatformHandle<UnixStream> {
-        let local = PlatformHandle::from_raw_fd(self.local);
-        let _remote: PlatformHandle<OwnedFd> = PlatformHandle::from_raw_fd(self.remote);
+    pub unsafe fn local(&self) -> UnixStream {
+        let _remote: OwnedFd = OwnedFd::from_raw_fd(self.remote);
 
-        local
+        UnixStream::from_raw_fd(self.local)
     }
 
     /// returns socket from pair meant to used in spawned process
@@ -116,9 +114,9 @@ impl ForkableUnixHandlePair {
     /// # Safety
     ///
     /// Caller must call the method only once per process instance
-    pub unsafe fn remote(&self) -> PlatformHandle<UnixStream> {
-        let _local: PlatformHandle<OwnedFd> = PlatformHandle::from_raw_fd(self.local);
+    pub unsafe fn remote(&self) -> UnixStream {
+        let _local: OwnedFd = OwnedFd::from_raw_fd(self.local);
 
-        PlatformHandle::from_raw_fd(self.remote)
+        UnixStream::from_raw_fd(self.remote)
     }
 }

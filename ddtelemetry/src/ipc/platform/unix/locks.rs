@@ -130,7 +130,7 @@ mod tests {
             fork_fn((&pair, &lock_path), |(pair, lock_path)| {
                 set_default_child_panic_handler();
                 let _l = FLock::rw_lock(lock_path).unwrap();
-                let mut c = pair.remote().into_instance().unwrap();
+                let mut c = pair.remote();
 
                 c.write_all(&[0]).unwrap(); // signal readiness
                 let mut buf = [0; 10];
@@ -141,7 +141,7 @@ mod tests {
         }
         .unwrap();
 
-        let mut c = unsafe { pair.local() }.into_instance().unwrap();
+        let mut c = unsafe { pair.local() };
         let mut buf = [0; 10];
         c.set_read_timeout(Some(Duration::from_millis(500)))
             .unwrap();
