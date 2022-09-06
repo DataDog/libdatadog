@@ -13,7 +13,8 @@ use hyper_multipart_rfc7578::client::multipart;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
-use ddcommon::{connector, HttpClient, HttpResponse};
+use ddcommon::{azure_app_services, connector, HttpClient, HttpResponse};
+
 pub mod config;
 mod errors;
 pub use ddcommon::Endpoint;
@@ -139,6 +140,11 @@ impl ProfileExporter {
             for tag in tags.iter() {
                 form.add_text("tags[]", tag.to_string());
             }
+        }
+
+        if let Some(aas_resource_id) = azure_app_services::get_resource_id() {
+            let tag = Tag::new("aas.resource.id", aas_resource_id).unwrap();
+            form.add_text("tags[]", tag.to_string());
         }
 
         for file in files {
