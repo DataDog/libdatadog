@@ -123,7 +123,7 @@ pub extern "C" fn profile_exporter_new(
     match || -> anyhow::Result<ProfileExporter> {
         let family = unsafe { family.to_utf8_lossy() }.into_owned();
         let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
-        let tags = tags.map(|tags| tags.iter().map(|tag| tag.clone().into_owned()).collect());
+        let tags = tags.map(|tags| tags.iter().map(Tag::clone).collect());
         ProfileExporter::new(family, tags, converted_endpoint)
     }() {
         Ok(exporter) => NewProfileExporterResult::Ok(Box::into_raw(Box::new(exporter))),
