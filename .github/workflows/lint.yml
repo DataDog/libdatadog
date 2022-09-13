@@ -2,6 +2,8 @@ name: Lint
 on: [push]
 env: 
   CARGO_TERM_COLOR: always
+  PINNED_NIGHTLY_VERSION: nightly-2022-08-25
+  RUST_VERSION: "1.60.0"
 
 jobs:
   rustfmt:
@@ -14,19 +16,32 @@ jobs:
       - name: Install latest nightly toolchain and rustfmt
         run: rustup update nightly && rustup default nightly && rustup component add rustfmt
       - run: cargo fmt --all -- --check
+  setup-clippy-matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup matrix combinations
+        id: setup-clippy-matrix
+        run: 
+          echo ::set-output name=versions::[\"nightly\", \"${{ env.PINNED_NIGHTLY_VERSION }}\", \"${{ env.RUST_VERSION }}\"]
+    outputs:
+      versions: ${{ steps.setup-clippy-matrix.outputs.versions }}
+ 
   clippy:
-    name: "clippy #${{ matrix.version }}"
+    name: "clippy #${{ matrix.rust_version }}"
+    needs: setup-clippy-matrix
     strategy:
       matrix:
-        version: [nightly, "1.60"]
+        rust_version: ${{ fromJson(needs.setup-clippy-matrix.outputs.versions) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
       - name: Cache
         uses: ./.github/actions/cache
+        with:
+          rust_version: ${{ matrix.rust_version }}
       - name: Install ${{ matrix.version }} toolchain and clippy
-        run: rustup install ${{ matrix.version }} && rustup default ${{ matrix.version }} && rustup component add clippy
+        run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }} && rustup component add clippy
       - run: cargo clippy --all-targets --all-features -- -D warnings
   licensecheck:
     runs-on: ubuntu-latest
