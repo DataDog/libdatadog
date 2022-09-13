@@ -80,8 +80,9 @@ jobs:
             ~/.cargo/registry/
             ~/.cargo/git/db/
             ~/.cargo/bin/
-          key: v0.5.0
-      - run: cargo install --force cargo-bundle-licenses
+            ~/.cargo/.crates.toml
+          key: "v1-0.5.0"
+      - run: cargo install cargo-bundle-licenses 
       - name: "Generate new LICENSE-3rdparty.yml and check against the previous" 
         env: 
           CARGO_HOME: "/tmp/dd-cargo"
