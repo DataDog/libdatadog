@@ -73,7 +73,15 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v2
       - run: stat LICENSE-3rdparty.yml
-      - run: cargo install cargo-bundle-licenses
+      - name: Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/db/
+            ~/.cargo/bin/
+          key: v0.5.0
+      - run: cargo install --force cargo-bundle-licenses
       - name: "Generate new LICENSE-3rdparty.yml and check against the previous" 
         env: 
           CARGO_HOME: "/tmp/dd-cargo"
