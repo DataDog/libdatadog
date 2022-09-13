@@ -30,6 +30,7 @@ jobs:
     name: "clippy #${{ matrix.rust_version }}"
     needs: setup-clippy-matrix
     strategy:
+      fail-fast: false
       matrix:
         rust_version: ${{ fromJson(needs.setup-clippy-matrix.outputs.versions) }}
     runs-on: ubuntu-latest
