@@ -122,8 +122,8 @@ impl ProfileExporter {
     /// Build a Request object representing the profile information provided.
     pub fn build(
         &self,
-        start: chrono::DateTime<chrono::Utc>,
-        end: chrono::DateTime<chrono::Utc>,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
         files: &[File],
         additional_tags: Option<&Vec<Tag>>,
         timeout: std::time::Duration,
@@ -133,7 +133,7 @@ impl ProfileExporter {
         form.add_text("version", "3");
         form.add_text("start", start.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string());
         form.add_text("end", end.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string());
-        form.add_text("family", self.family.to_owned());
+        form.add_text("family", self.family.as_ref());
 
         for tags in self.tags.as_ref().iter().chain(additional_tags.iter()) {
             for tag in tags.iter() {
