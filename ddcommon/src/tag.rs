@@ -18,6 +18,12 @@ impl Debug for Tag {
     }
 }
 
+impl AsRef<str> for Tag {
+    fn as_ref(&self) -> &str {
+        self.value.as_ref()
+    }
+}
+
 // Any type which implements Display automatically has to_string.
 impl Display for Tag {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
