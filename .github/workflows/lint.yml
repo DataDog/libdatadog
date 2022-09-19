@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust_version: ["nightly", "1.60.0", "nightly-2022-09-19"]
+        rust_version: ["nightly", "1.60.0", "stable"]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
