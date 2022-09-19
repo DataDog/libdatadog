@@ -2,8 +2,6 @@ name: Lint
 on: [push]
 env: 
   CARGO_TERM_COLOR: always
-  PINNED_NIGHTLY_VERSION: nightly-2022-08-25
-  RUST_VERSION: "1.60.0"
 
 jobs:
   rustfmt:
@@ -16,23 +14,12 @@ jobs:
       - name: Install latest nightly toolchain and rustfmt
         run: rustup update nightly && rustup default nightly && rustup component add rustfmt
       - run: cargo fmt --all -- --check
-  setup-clippy-matrix:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Setup matrix combinations
-        id: setup-clippy-matrix
-        run: 
-          echo ::set-output name=versions::[\"nightly\", \"${{ env.PINNED_NIGHTLY_VERSION }}\", \"${{ env.RUST_VERSION }}\"]
-    outputs:
-      versions: ${{ steps.setup-clippy-matrix.outputs.versions }}
- 
   clippy:
     name: "clippy #${{ matrix.rust_version }}"
-    needs: setup-clippy-matrix
     strategy:
       fail-fast: false
       matrix:
-        rust_version: ${{ fromJson(needs.setup-clippy-matrix.outputs.versions) }}
+        rust_version: ["nightly", "1.60.0", "nightly-2022-09-19"]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
