@@ -9,12 +9,18 @@ use serde::Serialize;
 #[derive(Clone, Eq, PartialEq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct Tag {
-    value: Cow<'static, str>,
+    value: String,
 }
 
 impl Debug for Tag {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Tag").field("value", &self.value).finish()
+    }
+}
+
+impl AsRef<str> for Tag {
+    fn as_ref(&self) -> &str {
+        self.value.as_ref()
     }
 }
 
@@ -28,9 +34,10 @@ impl Display for Tag {
 impl Tag {
     /// It's recommended to use Tag::new when possible, as tags that are in
     /// the <KEY>:<VALUE> format are preferred.
-    pub fn from_value<'a, IntoCow: Into<Cow<'a, str>>>(
-        chunk: IntoCow,
-    ) -> Result<Self, Cow<'static, str>> {
+    pub fn from_value<'a, IntoCow>(chunk: IntoCow) -> Result<Self, Cow<'static, str>>
+    where
+        IntoCow: Into<Cow<'a, str>>,
+    {
         let chunk = chunk.into();
 
         /* The docs have various rules, which we are choosing not to enforce:
@@ -55,7 +62,7 @@ impl Tag {
         }
 
         Ok(Tag {
-            value: chunk.into_owned().into(),
+            value: chunk.into_owned(),
         })
     }
 
@@ -68,11 +75,6 @@ impl Tag {
         let value = value.as_ref();
 
         Tag::from_value(format!("{}:{}", key, value))
-    }
-
-    pub fn into_owned(mut self) -> Self {
-        self.value = self.value.to_owned();
-        self
     }
 }
 
