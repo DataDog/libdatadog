@@ -172,6 +172,7 @@ dependencies = [
  "hex",
  "hyper",
  "hyper-rustls",
+ "indexmap",
  "lazy_static",
  "log",
  "maplit",

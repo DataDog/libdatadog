@@ -142,9 +142,32 @@ impl ProfileExporter {
             }
         }
 
-        if let Some(aas_resource_id) = azure_app_services::get_resource_id() {
-            let tag = Tag::new("aas.resource.id", aas_resource_id).unwrap();
-            form.add_text("tags[]", tag.to_string());
+        let aas_metadata = azure_app_services::get_metadata();
+        if aas_metadata.is_relevant() {
+            let aas_tags = [
+                ("aas.resource.id", aas_metadata.get_resource_id()),
+                (
+                    "aas.environment.extension_version",
+                    aas_metadata.get_extension_version(),
+                ),
+                (
+                    "aas.environment.instance_id",
+                    aas_metadata.get_instance_id(),
+                ),
+                (
+                    "aas.environment.instance_name",
+                    aas_metadata.get_instance_name(),
+                ),
+                ("aas.environment.os", aas_metadata.get_operating_system()),
+                ("aas.resource.group", aas_metadata.get_resource_group()),
+                ("aas.site.name", aas_metadata.get_site_name()),
+                ("aas.site.kind", aas_metadata.get_site_kind()),
+                ("aas.site.type", aas_metadata.get_site_type()),
+                ("aas.subscription.id", aas_metadata.get_subscription_id()),
+            ];
+            aas_tags
+                .into_iter()
+                .for_each(|(name, value)| form.add_text(name, value));
         }
 
         for file in files {
