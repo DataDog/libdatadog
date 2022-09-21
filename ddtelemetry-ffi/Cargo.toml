@@ -1,0 +1,17 @@
+# Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+# This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+
+[package]
+name = "ddtelemetry-ffi"
+version = "0.8.0"
+edition = "2021"
+
+[lib]
+# LTO is ignored if "lib" is added as crate type
+# cf. https://github.com/rust-lang/rust/issues/51009
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+ddtelemetry = { path = "../ddtelemetry", version = "0.8.0" }
+ddcommon-ffi = { path = "../ddcommon-ffi", version = "0.8.0" }
+paste = "1"

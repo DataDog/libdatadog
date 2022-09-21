@@ -13,12 +13,21 @@ use std::mem::ManuallyDrop;
 /// The names ptr and len were chosen to minimize conversion from a previous
 /// Buffer type which this has replaced to become more general.
 #[repr(C)]
+#[derive(Debug)]
 pub struct Vec<T: Sized> {
     ptr: *const T,
     len: usize,
     capacity: usize,
     _marker: PhantomData<T>,
 }
+
+impl<T: PartialEq> PartialEq for Vec<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.into_iter().zip(other.into_iter()).all(|(s, o)| s == o)
+    }
+}
+
+impl<T: Eq> Eq for Vec<T> {}
 
 impl<T> Drop for Vec<T> {
     fn drop(&mut self) {
