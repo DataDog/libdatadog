@@ -154,16 +154,14 @@ impl ProfileExporter {
             "start": start.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
             "end": end.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
             "family": self.family.as_ref(),
-            "version":"4",
+            "version": "4",
         })
         .to_string();
 
-        let mut encoder = FrameEncoder::new(Vec::new());
-        encoder.write_all(event.as_bytes())?;
-
+        // event.json shouldn't be compressed
         form.add_reader_file_with_mime(
             "event",
-            Cursor::new(encoder.finish()?),
+            Cursor::new(event),
             "event.json",
             mime::APPLICATION_JSON,
         );
