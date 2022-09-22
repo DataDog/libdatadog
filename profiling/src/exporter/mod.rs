@@ -164,11 +164,7 @@ impl ProfileExporter {
         );
 
         for file in files {
-            form.add_reader_file(
-                format!("data[{}]", file.name),
-                Cursor::new(file.bytes.to_owned()),
-                file.name,
-            )
+            form.add_reader_file(file.name, Cursor::new(file.bytes.to_owned()), file.name)
         }
 
         let builder = self
