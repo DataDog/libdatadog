@@ -135,16 +135,14 @@ impl ProfileExporter {
     ) -> anyhow::Result<Request> {
         let mut form = multipart::Form::default();
 
+        // combine tags and additional_tags
         let mut tags_profiler = String::new();
-
-        for tags in self.tags.as_ref().iter().chain(additional_tags.iter()) {
-            for tag in tags.iter() {
-                tags_profiler += tag.as_ref();
-                tags_profiler += ",";
-            }
+        let other_tags = additional_tags.into_iter();
+        for tag in self.tags.iter().chain(other_tags).flatten() {
+            tags_profiler.push_str(tag.as_ref());
+            tags_profiler.push(',');
         }
-
-        tags_profiler.pop();
+        tags_profiler.pop(); // clean up the trailing comma
 
         let attachments: Vec<String> = files.iter().map(|file| file.name.to_owned()).collect();
 
