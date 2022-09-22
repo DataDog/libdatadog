@@ -10,8 +10,10 @@ pub use chrono::{DateTime, Utc};
 pub use ddcommon::tag::Tag;
 pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
+use lz4_flex::frame::FrameEncoder;
 use mime;
 use serde_json::json;
+use std::io::Write;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
@@ -156,15 +158,20 @@ impl ProfileExporter {
         })
         .to_string();
 
+        let mut encoder = FrameEncoder::new(Vec::new());
+        encoder.write_all(event.as_bytes())?;
+
         form.add_reader_file_with_mime(
             "event",
-            Cursor::new(event),
+            Cursor::new(encoder.finish()?),
             "event.json",
             mime::APPLICATION_JSON,
         );
 
         for file in files {
-            form.add_reader_file(file.name, Cursor::new(file.bytes.to_owned()), file.name)
+            let mut encoder = FrameEncoder::new(Vec::new());
+            encoder.write_all(file.bytes)?;
+            form.add_reader_file(file.name, Cursor::new(encoder.finish()?), file.name)
         }
 
         let builder = self

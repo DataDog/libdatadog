@@ -28,6 +28,7 @@ hyper = {version = "0.14", features = ["client"], default-features = false}
 hyper-multipart-rfc7578 = "0.7.0"
 indexmap = "1.8"
 libc = "0.2"
+lz4_flex = { version = "0.9", default-features = false, features = ["std", "safe-encode", "frame"] }
 mime = "0.3.16"
 mime_guess = {version = "2.0", default-features = false}
 percent-encoding = "2.1"
