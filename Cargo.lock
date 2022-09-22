@@ -139,10 +139,12 @@ dependencies = [
  "hyper-multipart-rfc7578",
  "indexmap",
  "libc",
+ "mime",
  "mime_guess",
  "percent-encoding",
  "prost",
  "prost-build",
+ "serde_json",
  "tokio",
  "tokio-util",
 ]

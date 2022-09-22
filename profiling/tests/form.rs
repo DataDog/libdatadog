@@ -32,7 +32,7 @@ fn multipart(exporter: &ProfileExporter) -> Request {
     let timeout = std::time::Duration::from_secs(10);
 
     let request = exporter
-        .build(start, end, files, None, timeout)
+        .build(start, end, files, None, timeout, "dd-trace-foo", "1.2.3")
         .expect("request to be built");
 
     let actual_timeout = request.timeout().expect("timeout to exist");
@@ -82,7 +82,7 @@ mod tests {
 
         assert_eq!(
             request.uri().to_string(),
-            "https://intake.profile.datadoghq.com/v1/input"
+            "https://intake.profile.datadoghq.com/api/v2/profile"
         );
 
         let actual_headers = request.headers();

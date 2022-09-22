@@ -10,6 +10,8 @@ pub use chrono::{DateTime, Utc};
 pub use ddcommon::tag::Tag;
 pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
+use mime;
+use serde_json::json;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
@@ -120,6 +122,7 @@ impl ProfileExporter {
     }
 
     /// Build a Request object representing the profile information provided.
+    #[allow(clippy::too_many_arguments)]
     pub fn build(
         &self,
         start: DateTime<Utc>,
@@ -127,19 +130,40 @@ impl ProfileExporter {
         files: &[File],
         additional_tags: Option<&Vec<Tag>>,
         timeout: std::time::Duration,
+        profile_library_name: &str,
+        profile_library_version: &str,
     ) -> anyhow::Result<Request> {
         let mut form = multipart::Form::default();
 
-        form.add_text("version", "3");
-        form.add_text("start", start.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string());
-        form.add_text("end", end.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string());
-        form.add_text("family", self.family.as_ref());
+        let mut tags_profiler = String::new();
 
         for tags in self.tags.as_ref().iter().chain(additional_tags.iter()) {
             for tag in tags.iter() {
-                form.add_text("tags[]", tag.to_string());
+                tags_profiler += tag.as_ref();
+                tags_profiler += ",";
             }
         }
+
+        tags_profiler.pop();
+
+        let attachments: Vec<String> = files.iter().map(|file| file.name.to_owned()).collect();
+
+        let event = json!({
+            "attachments": attachments,
+            "tags_profiler": tags_profiler,
+            "start": start.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
+            "end": end.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
+            "family": self.family.as_ref(),
+            "version":"4",
+        })
+        .to_string();
+
+        form.add_reader_file_with_mime(
+            "event",
+            Cursor::new(event),
+            "event.json",
+            mime::APPLICATION_JSON,
+        );
 
         for file in files {
             form.add_reader_file(
@@ -153,7 +177,9 @@ impl ProfileExporter {
             .endpoint
             .into_request_builder(concat!("DDProf/", env!("CARGO_PKG_VERSION")))?
             .method(http::Method::POST)
-            .header("Connection", "close");
+            .header("Connection", "close")
+            .header("DD-EVP-ORIGIN", profile_library_name)
+            .header("DD-EVP-ORIGIN-VERSION", profile_library_version);
 
         Ok(
             Request::from(form.set_body_convert::<hyper::Body, multipart::Body>(builder)?)

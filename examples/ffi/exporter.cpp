@@ -109,8 +109,16 @@ int main(int argc, char *argv[]) {
 
   ddog_Slice_file files = {.ptr = files_, .len = sizeof files_ / sizeof *files_};
 
-  ddog_Request *request = ddog_ProfileExporter_build(exporter, encoded_profile->start,
-                                                     encoded_profile->end, files, nullptr, 30000);
+  ddog_Request *request = ddog_ProfileExporter_build(
+    exporter,
+    encoded_profile->start,
+    encoded_profile->end,
+    files,
+    nullptr,
+    30000,
+    DDOG_CHARSLICE_C("exporter-example"),
+    DDOG_CHARSLICE_C("1.2.3")
+  );
 
   ddog_CancellationToken *cancel = ddog_CancellationToken_new();
   ddog_CancellationToken *cancel_for_background_thread = ddog_CancellationToken_clone(cancel);

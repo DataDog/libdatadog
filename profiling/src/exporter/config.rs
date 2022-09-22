@@ -61,7 +61,7 @@ pub fn agentless<AsStrRef: AsRef<str>, IntoCow: Into<Cow<'static, str>>>(
     site: AsStrRef,
     api_key: IntoCow,
 ) -> anyhow::Result<Endpoint> {
-    let intake_url: String = format!("https://intake.profile.{}/v1/input", site.as_ref());
+    let intake_url: String = format!("https://intake.profile.{}/api/v2/profile", site.as_ref());
 
     Ok(Endpoint {
         url: Uri::from_str(intake_url.as_str())?,
