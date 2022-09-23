@@ -187,9 +187,21 @@ impl TelemetryWorker {
                     self.data.metric_buckets.flush_agregates();
                     let requests = IntoIterator::into_iter([
                         self.build_app_stop(),
-                        self.build_integrations_change(),
-                        self.build_dependencies_loaded(),
                     ])
+                    .chain(
+                        if self.data.unflushed_integrations.is_empty() {
+                            None
+                        } else {
+                            Some(self.build_integrations_change())
+                        }
+                    )
+                    .chain(
+                        if self.data.unflushed_dependencies.is_empty() {
+                            None
+                        } else {
+                            Some(self.build_dependencies_loaded())
+                        }
+                    )
                     .chain(self.build_metrics_series())
                     .map(|r| self.send_request(r));
                     future::join_all(requests).await;
@@ -393,6 +405,7 @@ impl TelemetryWorker {
             }
         })()
         .await;
+        telemetry_worker_log!(self, DEBUG, "Sent request: Result {:?}", res);
         self.handle_result(&res);
     }
 }
