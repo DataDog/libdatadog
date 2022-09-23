@@ -132,8 +132,8 @@ impl ProfileExporter {
         files: &[File],
         additional_tags: Option<&Vec<Tag>>,
         timeout: std::time::Duration,
-        profile_library_name: &str,
-        profile_library_version: &str,
+        profiling_library_name: &str,
+        profiling_library_version: &str,
     ) -> anyhow::Result<Request> {
         let mut form = multipart::Form::default();
 
@@ -177,8 +177,8 @@ impl ProfileExporter {
             .into_request_builder(concat!("DDProf/", env!("CARGO_PKG_VERSION")))?
             .method(http::Method::POST)
             .header("Connection", "close")
-            .header("DD-EVP-ORIGIN", profile_library_name)
-            .header("DD-EVP-ORIGIN-VERSION", profile_library_version);
+            .header("DD-EVP-ORIGIN", profiling_library_name)
+            .header("DD-EVP-ORIGIN-VERSION", profiling_library_version);
 
         Ok(
             Request::from(form.set_body_convert::<hyper::Body, multipart::Body>(builder)?)

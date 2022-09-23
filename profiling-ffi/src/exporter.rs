@@ -161,8 +161,8 @@ pub unsafe extern "C" fn profile_exporter_build(
     files: Slice<File>,
     additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
     timeout_ms: u64,
-    profile_library_name: CharSlice,
-    profile_library_version: CharSlice,
+    profiling_library_name: CharSlice,
+    profiling_library_version: CharSlice,
 ) -> Option<Box<Request>> {
     match exporter {
         None => None,
@@ -176,8 +176,8 @@ pub unsafe extern "C" fn profile_exporter_build(
                 converted_files.as_slice(),
                 tags.as_ref(),
                 timeout,
-                profile_library_name.to_utf8_lossy().as_ref(),
-                profile_library_version.to_utf8_lossy().as_ref(),
+                profiling_library_name.to_utf8_lossy().as_ref(),
+                profiling_library_version.to_utf8_lossy().as_ref(),
             ) {
                 Ok(request) => Some(Box::new(Request(request))),
                 Err(_) => None,
