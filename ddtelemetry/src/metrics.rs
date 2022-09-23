@@ -9,7 +9,7 @@ use std::{
 
 use ddcommon::tag::Tag;
 
-use crate::data;
+pub use crate::data::metrics::*;
 
 fn unix_timestamp_now() -> u64 {
     time::SystemTime::now()
@@ -30,11 +30,11 @@ enum MetricAggreg {
 }
 
 impl MetricBucket {
-    fn new(metric_type: data::metrics::MetricType) -> Self {
+    fn new(metric_type: MetricType) -> Self {
         Self {
             aggreg: match metric_type {
-                data::metrics::MetricType::Count => MetricAggreg::Count { count: 0.0 },
-                data::metrics::MetricType::Gauge => MetricAggreg::Gauge { value: 0.0 },
+                MetricType::Count => MetricAggreg::Count { count: 0.0 },
+                MetricType::Gauge => MetricAggreg::Gauge { value: 0.0 },
             },
         }
     }
@@ -55,6 +55,7 @@ impl MetricBucket {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[repr(C)]
 pub struct ContextKey(usize);
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -117,10 +118,10 @@ impl MetricBuckets {
 
 #[derive(Debug)]
 pub struct MetricContext {
-    pub namespace: data::metrics::MetricNamespace,
+    pub namespace: MetricNamespace,
     pub name: String,
     pub tags: Vec<Tag>,
-    pub metric_type: data::metrics::MetricType,
+    pub metric_type: MetricType,
     pub common: bool,
 }
 
@@ -150,9 +151,9 @@ impl MetricContexts {
         &self,
         name: String,
         tags: Vec<Tag>,
-        metric_type: data::metrics::MetricType,
+        metric_type: MetricType,
         common: bool,
-        namespace: data::metrics::MetricNamespace,
+        namespace: MetricNamespace,
     ) -> ContextKey {
         let mut contexts = self.inner.lock().unwrap();
         let key = ContextKey(contexts.store.len());
@@ -166,7 +167,7 @@ impl MetricContexts {
         key
     }
 
-    fn get_metric_type(&self, key: ContextKey) -> Option<data::metrics::MetricType> {
+    fn get_metric_type(&self, key: ContextKey) -> Option<MetricType> {
         let guard = self.inner.lock().unwrap();
         // Safe if the Vec is never popped, because the only way to obtain to get a ContextKey is to call register_metric_context
         let MetricContext { metric_type, .. } = guard.store.get(key.0)?;
@@ -186,7 +187,6 @@ mod test {
     use std::fmt::Debug;
 
     use super::*;
-    use crate::data::metrics::{MetricNamespace, MetricType};
 
     macro_rules! assert_approx_eq {
         ($a:expr, $b:expr) => {{

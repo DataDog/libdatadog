@@ -2,6 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use ddcommon_ffi as ffi;
+use ddtelemetry::metrics;
 use ddtelemetry::worker::{TelemetryWorkerBuilder, TelemetryWorkerHandle};
 use ffi::slice::AsBytes;
 
@@ -269,6 +270,33 @@ pub extern "C" fn ddog_handle_wait_for_shutdown(handle: Box<TelemetryWorkerHandl
 #[no_mangle]
 pub extern "C" fn ddog_handle_drop(handle: Box<TelemetryWorkerHandle>) {
     drop(handle);
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_handle_register_metric_context(
+    handle: &TelemetryWorkerHandle,
+    name: ffi::CharSlice,
+    tags: ffi::Vec<ddcommon::tag::Tag>,
+    metric_type: metrics::MetricType,
+    common: bool,
+    namespace: metrics::MetricNamespace,
+) -> metrics::ContextKey {
+    let name = name.to_utf8_lossy().into_owned();
+    let tags = tags.into();
+    handle.register_metric_context(name, tags, metric_type, common, namespace)
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_handle_add_point(
+    handle: &TelemetryWorkerHandle,
+    context: &metrics::ContextKey,
+    value: f64,
+    extra_tags: ffi::Vec<ddcommon::tag::Tag>,
+) -> MaybeError {
+    try_c!(handle.add_point(value, context, extra_tags.into()));
+    MaybeError::None
 }
 
 #[cfg(test)]
