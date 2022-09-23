@@ -164,26 +164,6 @@ c_setters!(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_builder_with_native_deps(
-    builder: &mut TelemetryWorkerBuilder,
-    include_native_deps: bool,
-) -> MaybeError {
-    builder.native_deps = include_native_deps;
-    MaybeError::None
-}
-
-#[allow(clippy::missing_safety_doc)]
-#[no_mangle]
-pub unsafe extern "C" fn ddog_builder_with_rust_shared_lib_deps(
-    builder: &mut TelemetryWorkerBuilder,
-    include_rust_shared_lib_deps: bool,
-) -> MaybeError {
-    builder.rust_shared_lib_deps = include_rust_shared_lib_deps;
-    MaybeError::None
-}
-
-#[allow(clippy::missing_safety_doc)]
-#[no_mangle]
 pub unsafe extern "C" fn ddog_builder_with_config(
     builder: &mut TelemetryWorkerBuilder,
     name: ffi::CharSlice,

@@ -526,8 +526,6 @@ pub struct TelemetryWorkerBuilder {
     pub application: Application,
     pub runtime_id: Option<String>,
     pub library_config: Vec<(String, String)>,
-    pub native_deps: bool,
-    pub rust_shared_lib_deps: bool,
 }
 
 impl TelemetryWorkerBuilder {
@@ -548,8 +546,6 @@ impl TelemetryWorkerBuilder {
             },
             runtime_id: None,
             library_config: Vec::new(),
-            native_deps: true,
-            rust_shared_lib_deps: false,
         }
     }
 
@@ -574,8 +570,6 @@ impl TelemetryWorkerBuilder {
             },
             runtime_id: None,
             library_config: Vec::new(),
-            native_deps: true,
-            rust_shared_lib_deps: false,
         }
     }
 
