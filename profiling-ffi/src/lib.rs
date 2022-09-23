@@ -6,6 +6,8 @@ use std::time::SystemTime;
 
 use chrono::{DateTime, TimeZone, Utc};
 
+use ddtelemetry_ffi::*;
+
 mod exporter;
 mod profiles;
 

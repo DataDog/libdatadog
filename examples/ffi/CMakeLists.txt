@@ -14,3 +14,6 @@ endif()
 
 add_executable(profiles profiles.c)
 target_link_libraries(profiles PRIVATE Datadog::Profiling)
+
+add_executable(telemetry telemetry.c)
+target_link_libraries(telemetry PRIVATE Datadog::Profiling)

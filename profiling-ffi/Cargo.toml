@@ -16,6 +16,7 @@ crate-type = ["staticlib", "cdylib"]
 anyhow = "1.0"
 chrono = "0.4"
 datadog-profiling = { path = "../profiling"}
+ddtelemetry-ffi = { path = "../ddtelemetry-ffi" }
 hyper = {version = "0.14", default-features = false}
 ddcommon = { path = "../ddcommon"}
 ddcommon-ffi = { path = "../ddcommon-ffi"}

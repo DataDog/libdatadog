@@ -9,9 +9,10 @@ edition = "2021"
 [lib]
 # LTO is ignored if "lib" is added as crate type
 # cf. https://github.com/rust-lang/rust/issues/51009
-crate-type = ["staticlib", "cdylib"]
+crate-type = ["lib", "staticlib", "cdylib"]
 
 [dependencies]
 ddtelemetry = { path = "../ddtelemetry", version = "0.8.0" }
 ddcommon-ffi = { path = "../ddcommon-ffi", version = "0.8.0" }
+ddcommon = { path = "../ddcommon", version = "0.8.0" }
 paste = "1"

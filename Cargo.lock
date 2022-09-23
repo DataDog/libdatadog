@@ -156,6 +156,7 @@ dependencies = [
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
+ "ddtelemetry-ffi",
  "hyper",
  "libc",
  "tokio-util",
@@ -217,6 +218,7 @@ dependencies = [
 name = "ddtelemetry-ffi"
 version = "0.8.0"
 dependencies = [
+ "ddcommon",
  "ddcommon-ffi",
  "ddtelemetry",
  "paste",
