@@ -16,7 +16,11 @@ fn open<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(buffer)
 }
 
-fn multipart(exporter: &ProfileExporter) -> Request {
+fn multipart(
+    exporter: &ProfileExporter,
+    profiling_library_name: &str,
+    profiling_library_version: &str,
+) -> Request {
     let small_pprof_name = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/profile.pprof");
     let buffer = open(small_pprof_name).expect("to open file and read its bytes");
 
@@ -32,7 +36,15 @@ fn multipart(exporter: &ProfileExporter) -> Request {
     let timeout = std::time::Duration::from_secs(10);
 
     let request = exporter
-        .build(start, end, files, None, timeout, "dd-trace-foo", "1.2.3")
+        .build(
+            start,
+            end,
+            files,
+            None,
+            timeout,
+            profiling_library_name,
+            profiling_library_version,
+        )
         .expect("request to be built");
 
     let actual_timeout = request.timeout().expect("timeout to exist");
@@ -60,7 +72,9 @@ mod tests {
         let exporter = ProfileExporter::new("php", Some(default_tags()), endpoint)
             .expect("exporter to construct");
 
-        let request = multipart(&exporter);
+        let profiling_library_name = "dd-trace-foo";
+        let profiling_library_version = "1.2.3";
+        let request = multipart(&exporter, profiling_library_name, profiling_library_version);
 
         assert_eq!(
             request.uri().to_string(),
@@ -69,6 +83,14 @@ mod tests {
 
         let actual_headers = request.headers();
         assert!(!actual_headers.contains_key("DD-API-KEY"));
+        assert_eq!(
+            actual_headers.get("DD-EVP-ORIGIN").unwrap(),
+            profiling_library_name
+        );
+        assert_eq!(
+            actual_headers.get("DD-EVP-ORIGIN-VERSION").unwrap(),
+            profiling_library_version
+        );
     }
 
     #[test]
@@ -78,7 +100,9 @@ mod tests {
         let exporter = ProfileExporter::new("php", Some(default_tags()), endpoint)
             .expect("exporter to construct");
 
-        let request = multipart(&exporter);
+        let profiling_library_name = "dd-trace-foo";
+        let profiling_library_version = "1.2.3";
+        let request = multipart(&exporter, profiling_library_name, profiling_library_version);
 
         assert_eq!(
             request.uri().to_string(),
@@ -87,9 +111,16 @@ mod tests {
 
         let actual_headers = request.headers();
 
+        assert_eq!(actual_headers.get("DD-API-KEY").unwrap(), api_key);
+
         assert_eq!(
-            actual_headers.get("DD-API-KEY").expect("api key to exist"),
-            api_key
+            actual_headers.get("DD-EVP-ORIGIN").unwrap(),
+            profiling_library_name
+        );
+
+        assert_eq!(
+            actual_headers.get("DD-EVP-ORIGIN-VERSION").unwrap(),
+            profiling_library_version
         );
     }
 }
