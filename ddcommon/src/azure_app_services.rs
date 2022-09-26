@@ -69,7 +69,6 @@ pub struct AzureMetadata {
     operating_system: Option<String>,
     instance_name: Option<String>,
     instance_id: Option<String>,
-    is_relevant: bool,
     site_kind: String,
     site_type: String,
 }
@@ -115,11 +114,16 @@ impl AzureMetadata {
         }
     }
 
-    pub fn new<T: QueryEnv>(query: T) -> Self {
+    pub fn new<T: QueryEnv>(query: T) -> Option<Self> {
         let is_relevant = query
             .get_var(SERVICE_CONTEXT)
             .map(|s| s.to_bool())
             .unwrap_or(false);
+
+        if !is_relevant {
+            return None;
+        }
+
         let subscription_id =
             AzureMetadata::extract_subscription_id(query.get_var(WEBSITE_ONWER_NAME));
         let site_name = query.get_var(WEBSITE_SITE_NAME);
@@ -140,7 +144,7 @@ impl AzureMetadata {
         let instance_name = query.get_var(INSTANCE_NAME);
         let instance_id = query.get_var(INSTANCE_ID);
 
-        AzureMetadata {
+        Some(AzureMetadata {
             resource_id,
             subscription_id,
             site_name,
@@ -149,14 +153,9 @@ impl AzureMetadata {
             operating_system,
             instance_name,
             instance_id,
-            is_relevant,
             site_kind,
             site_type,
-        }
-    }
-
-    pub fn is_relevant(&self) -> bool {
-        self.is_relevant
+        })
     }
 
     pub fn get_resource_id(&self) -> &str {
@@ -200,11 +199,11 @@ impl AzureMetadata {
     }
 }
 
-pub fn get_metadata() -> &'static AzureMetadata {
+pub fn get_metadata() -> &'static Option<AzureMetadata> {
     lazy_static! {
-        static ref AAS_RESOURCE_ID: AzureMetadata = AzureMetadata::new(RealEnv {});
+        static ref AAS_METATDATA: Option<AzureMetadata> = AzureMetadata::new(RealEnv {});
     }
-    &AAS_RESOURCE_ID
+    &AAS_METATDATA
 }
 
 #[cfg(test)]
@@ -242,7 +241,7 @@ mod tests {
         let mocked_env = MockEnv::new(&[]);
 
         let metadata = AzureMetadata::new(mocked_env);
-        assert!(!metadata.is_relevant());
+        assert!(metadata.is_none());
     }
 
     #[test]
@@ -250,7 +249,7 @@ mod tests {
         let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "true")]);
 
         let metadata = AzureMetadata::new(mocked_env);
-        assert!(metadata.is_relevant());
+        assert!(metadata.is_some());
     }
 
     #[test]
@@ -258,7 +257,7 @@ mod tests {
         let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "t")]);
 
         let metadata = AzureMetadata::new(mocked_env);
-        assert!(metadata.is_relevant());
+        assert!(metadata.is_some());
     }
 
     #[test]
@@ -266,7 +265,7 @@ mod tests {
         let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "TrUe")]);
 
         let metadata = AzureMetadata::new(mocked_env);
-        assert!(metadata.is_relevant());
+        assert!(metadata.is_some());
     }
 
     #[test]
@@ -274,7 +273,7 @@ mod tests {
         let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "1")]);
 
         let metadata = AzureMetadata::new(mocked_env);
-        assert!(metadata.is_relevant());
+        assert!(metadata.is_some());
     }
 
     #[test]
@@ -282,7 +281,7 @@ mod tests {
         let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "yEs")]);
 
         let metadata = AzureMetadata::new(mocked_env);
-        assert!(metadata.is_relevant());
+        assert!(metadata.is_some());
     }
 
     #[test]
@@ -290,7 +289,7 @@ mod tests {
         let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "Y")]);
 
         let metadata = AzureMetadata::new(mocked_env);
-        assert!(metadata.is_relevant());
+        assert!(metadata.is_some());
     }
 
     #[test]
@@ -298,24 +297,25 @@ mod tests {
         let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "0")]);
 
         let metadata = AzureMetadata::new(mocked_env);
-        assert!(!metadata.is_relevant());
+        assert!(metadata.is_none());
     }
 
     #[test]
     fn test_extract_subscription_without_plus_sign() {
-        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "foo")]);
+        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "foo"), (SERVICE_CONTEXT, "1")]);
 
-        let metadata = AzureMetadata::new(mocked_env);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         let expected_id = "foo";
+
         assert_eq!(metadata.get_subscription_id(), expected_id);
     }
 
     #[test]
     fn test_extract_subscription_with_plus_sign() {
-        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "foo+bar")]);
+        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "foo+bar"), (SERVICE_CONTEXT, "1")]);
 
-        let metadata = AzureMetadata::new(mocked_env);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         let expected_id = "foo";
         assert_eq!(metadata.get_subscription_id(), expected_id);
@@ -323,45 +323,45 @@ mod tests {
 
     #[test]
     fn test_extract_subscription_with_empty_string() {
-        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "")]);
+        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, ""), (SERVICE_CONTEXT, "1")]);
 
-        let metadata = AzureMetadata::new(mocked_env);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         assert_eq!(metadata.get_subscription_id(), UNKNOWN_VALUE);
     }
 
     #[test]
     fn test_extract_subscription_with_only_whitespaces() {
-        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "    ")]);
+        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "    "), (SERVICE_CONTEXT, "1")]);
 
-        let metadata = AzureMetadata::new(mocked_env);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         assert_eq!(metadata.get_subscription_id(), UNKNOWN_VALUE);
     }
 
     #[test]
     fn test_extract_subscription_with_only_plus_sign() {
-        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "+")]);
+        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "+"), (SERVICE_CONTEXT, "1")]);
 
-        let metadata = AzureMetadata::new(mocked_env);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         assert_eq!(metadata.get_subscription_id(), UNKNOWN_VALUE);
     }
 
     #[test]
     fn test_extract_subscription_with_whitespaces_separated_by_plus() {
-        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "   + ")]);
+        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "   + "), (SERVICE_CONTEXT, "1")]);
 
-        let metadata = AzureMetadata::new(mocked_env);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         assert_eq!(metadata.get_subscription_id(), UNKNOWN_VALUE);
     }
 
     #[test]
     fn test_extract_subscription_plus_sign_and_other_string() {
-        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "+other")]);
+        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "+other"), (SERVICE_CONTEXT, "1")]);
 
-        let metadata = AzureMetadata::new(mocked_env);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         assert_eq!(metadata.get_subscription_id(), UNKNOWN_VALUE);
     }
@@ -372,9 +372,10 @@ mod tests {
             (WEBSITE_ONWER_NAME, "foo"),
             (WEBSITE_SITE_NAME, "my_website"),
             (WEBSITE_RESOURCE_GROUP, "resource_group"),
+            (SERVICE_CONTEXT, "1"),
         ]);
 
-        let metadata = AzureMetadata::new(mocked_env);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         assert_eq!(
             metadata.get_resource_id(),
@@ -387,9 +388,10 @@ mod tests {
         let mocked_env = MockEnv::new(&[
             (WEBSITE_SITE_NAME, "my_website"),
             (WEBSITE_RESOURCE_GROUP, "resource_group"),
+            (SERVICE_CONTEXT, "1"),
         ]);
 
-        let metadata = AzureMetadata::new(mocked_env);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         assert_eq!(metadata.get_resource_id(), UNKNOWN_VALUE)
     }
@@ -399,9 +401,10 @@ mod tests {
         let mocked_env = MockEnv::new(&[
             (WEBSITE_ONWER_NAME, "foo"),
             (WEBSITE_RESOURCE_GROUP, "resource_group"),
+            (SERVICE_CONTEXT, "1"),
         ]);
 
-        let metadata = AzureMetadata::new(mocked_env);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         assert_eq!(metadata.get_resource_id(), UNKNOWN_VALUE)
     }
@@ -411,25 +414,26 @@ mod tests {
         let mocked_env = MockEnv::new(&[
             (WEBSITE_ONWER_NAME, "foo"),
             (WEBSITE_SITE_NAME, "my_website"),
+            (SERVICE_CONTEXT, "1"),
         ]);
 
-        let metadata = AzureMetadata::new(mocked_env);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         assert_eq!(metadata.get_resource_id(), UNKNOWN_VALUE)
     }
 
     #[test]
     fn test_build_resource_id_with_missing_info() {
-        let mocked_env = MockEnv::new(&[]);
-        let metadata = AzureMetadata::new(mocked_env);
+        let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "1")]);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         assert_eq!(metadata.get_resource_id(), UNKNOWN_VALUE)
     }
 
     #[test]
     fn test_site_type_and_kind_default() {
-        let mocked_env = MockEnv::new(&[]);
-        let metadata = AzureMetadata::new(mocked_env);
+        let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "1")]);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         assert_eq!(metadata.get_site_type(), "app");
         assert_eq!(metadata.get_site_kind(), "app")
@@ -437,8 +441,11 @@ mod tests {
 
     #[test]
     fn test_site_type_and_kind_if_worker_runtime_not_specified() {
-        let mocked_env = MockEnv::new(&[(FUNCTIONS_WORKER_RUNTIME, "my_runtime")]);
-        let metadata = AzureMetadata::new(mocked_env);
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_WORKER_RUNTIME, "my_runtime"),
+            (SERVICE_CONTEXT, "1"),
+        ]);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         assert_eq!(metadata.get_site_kind(), "functionapp");
         assert_eq!(metadata.get_site_type(), "function")
@@ -446,8 +453,11 @@ mod tests {
 
     #[test]
     fn test_site_type_and_kind_if_extension_version_not_specified() {
-        let mocked_env = MockEnv::new(&[(FUNCTIONS_EXTENSION_VERSION, "next_version")]);
-        let metadata = AzureMetadata::new(mocked_env);
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_EXTENSION_VERSION, "next_version"),
+            (SERVICE_CONTEXT, "1"),
+        ]);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         assert_eq!(metadata.get_site_kind(), "functionapp");
         assert_eq!(metadata.get_site_type(), "function")
@@ -458,8 +468,9 @@ mod tests {
         let mocked_env = MockEnv::new(&[
             (FUNCTIONS_WORKER_RUNTIME, "my_runtime"),
             (FUNCTIONS_EXTENSION_VERSION, "next_version"),
+            (SERVICE_CONTEXT, "1"),
         ]);
-        let metadata = AzureMetadata::new(mocked_env);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         assert_eq!(metadata.get_site_kind(), "functionapp");
         assert_eq!(metadata.get_site_type(), "function")
@@ -481,9 +492,10 @@ mod tests {
             (WEBSITE_OS, expected_operating_system.as_str()),
             (INSTANCE_NAME, expected_instance_name.as_str()),
             (INSTANCE_ID, expected_instance_id.as_str()),
+            (SERVICE_CONTEXT, "1"),
         ]);
 
-        let metadata = AzureMetadata::new(mocked_env);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         assert_eq!(expected_site_name, metadata.get_site_name());
         assert_eq!(expected_resource_group, metadata.get_resource_group());
