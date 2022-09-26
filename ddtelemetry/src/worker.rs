@@ -185,25 +185,19 @@ impl TelemetryWorker {
                         return;
                     }
                     self.data.metric_buckets.flush_agregates();
-                    let requests = IntoIterator::into_iter([
-                        self.build_app_stop(),
-                    ])
-                    .chain(
-                        if self.data.unflushed_integrations.is_empty() {
+                    let requests = IntoIterator::into_iter([self.build_app_stop()])
+                        .chain(if self.data.unflushed_integrations.is_empty() {
                             None
                         } else {
                             Some(self.build_integrations_change())
-                        }
-                    )
-                    .chain(
-                        if self.data.unflushed_dependencies.is_empty() {
+                        })
+                        .chain(if self.data.unflushed_dependencies.is_empty() {
                             None
                         } else {
                             Some(self.build_dependencies_loaded())
-                        }
-                    )
-                    .chain(self.build_metrics_series())
-                    .map(|r| self.send_request(r));
+                        })
+                        .chain(self.build_metrics_series())
+                        .map(|r| self.send_request(r));
                     future::join_all(requests).await;
 
                     return;
