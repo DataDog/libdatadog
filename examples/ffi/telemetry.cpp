@@ -3,16 +3,16 @@
 // developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present
 // Datadog, Inc.
 
+extern "C" {
 #include <datadog/common.h>
 #include <datadog/telemetry.h>
-#include <stdint.h>
-#include <stdio.h>
-
-#ifdef _WIN32
-#include <Windows.h>
-#else
-#include <unistd.h>
-#endif
+}
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <memory>
+#include <thread>
 
 
 #define TRY(operation, error_message) do { \
@@ -85,7 +85,7 @@ int main(void) {
   }
   ddog_handle_add_point(handle, &libbdatadog_test_key, 7.0, parsed_tags.tags);
 
-  sleep(20);
+  std::this_thread::sleep_for(std::chrono::seconds(20));
 
   TRY(
     ddog_handle_stop(handle),
