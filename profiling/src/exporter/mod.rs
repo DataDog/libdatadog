@@ -167,11 +167,10 @@ impl ProfileExporter {
         .to_string();
 
         form.add_reader_file_with_mime(
-            // intake will look for a field of this name
+            // Intake does not look for filename=event.json, it looks for name=event.
             "event",
             // this one shouldn't be compressed
             Cursor::new(event),
-            // intake doesn't care about filename in this case but RFC uses event.json
             "event.json",
             mime::APPLICATION_JSON,
         );
@@ -180,7 +179,11 @@ impl ProfileExporter {
             let mut encoder = FrameEncoder::new(Vec::new());
             encoder.write_all(file.bytes)?;
             let encoded = encoder.finish()?;
-            // intake does not care about these name of the form field for these
+            /* The Datadog RFC examples strip off the file extension, but the exact behavior isn't
+             * specified. This does the simple thing of using the filename without modification for
+             * the form name because intake does not care about these name of the form field for
+             * these attachments.
+             */
             form.add_reader_file(file.name, Cursor::new(encoded), file.name)
         }
 
