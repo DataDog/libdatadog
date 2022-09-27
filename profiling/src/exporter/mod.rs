@@ -166,10 +166,12 @@ impl ProfileExporter {
         })
         .to_string();
 
-        // event.json shouldn't be compressed
         form.add_reader_file_with_mime(
+            // intake will look for a field of this name
             "event",
+            // this one shouldn't be compressed
             Cursor::new(event),
+            // intake doesn't care about filename in this case but RFC uses event.json
             "event.json",
             mime::APPLICATION_JSON,
         );
@@ -178,6 +180,7 @@ impl ProfileExporter {
             let mut encoder = FrameEncoder::new(Vec::new());
             encoder.write_all(file.bytes)?;
             let encoded = encoder.finish()?;
+            // intake does not care about these name of the form field for these
             form.add_reader_file(file.name, Cursor::new(encoded), file.name)
         }
 
