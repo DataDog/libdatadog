@@ -44,6 +44,8 @@ pub struct ProfileExporter {
     exporter: Exporter,
     endpoint: Endpoint,
     family: Cow<'static, str>,
+    profiling_library_name: Cow<'static, str>,
+    profiling_library_version: Cow<'static, str>,
     tags: Option<Vec<Tag>>,
 }
 
@@ -110,21 +112,29 @@ impl Request {
 }
 
 impl ProfileExporter {
-    pub fn new<IntoCow: Into<Cow<'static, str>>>(
-        family: IntoCow,
+    pub fn new<F, N, V>(
+        profiling_library_name: N,
+        profiling_library_version: V,
+        family: F,
         tags: Option<Vec<Tag>>,
         endpoint: Endpoint,
-    ) -> anyhow::Result<ProfileExporter> {
+    ) -> anyhow::Result<ProfileExporter>
+    where
+        F: Into<Cow<'static, str>>,
+        N: Into<Cow<'static, str>>,
+        V: Into<Cow<'static, str>>,
+    {
         Ok(Self {
             exporter: Exporter::new()?,
             endpoint,
             family: family.into(),
+            profiling_library_name: profiling_library_name.into(),
+            profiling_library_version: profiling_library_version.into(),
             tags,
         })
     }
 
     /// Build a Request object representing the profile information provided.
-    #[allow(clippy::too_many_arguments)]
     pub fn build(
         &self,
         start: DateTime<Utc>,
@@ -132,8 +142,6 @@ impl ProfileExporter {
         files: &[File],
         additional_tags: Option<&Vec<Tag>>,
         timeout: std::time::Duration,
-        profiling_library_name: &str,
-        profiling_library_version: &str,
     ) -> anyhow::Result<Request> {
         let mut form = multipart::Form::default();
 
@@ -169,7 +177,8 @@ impl ProfileExporter {
         for file in files {
             let mut encoder = FrameEncoder::new(Vec::new());
             encoder.write_all(file.bytes)?;
-            form.add_reader_file(file.name, Cursor::new(encoder.finish()?), file.name)
+            let encoded = encoder.finish()?;
+            form.add_reader_file(file.name, Cursor::new(encoded), file.name)
         }
 
         let builder = self
@@ -177,8 +186,11 @@ impl ProfileExporter {
             .into_request_builder(concat!("DDProf/", env!("CARGO_PKG_VERSION")))?
             .method(http::Method::POST)
             .header("Connection", "close")
-            .header("DD-EVP-ORIGIN", profiling_library_name)
-            .header("DD-EVP-ORIGIN-VERSION", profiling_library_version);
+            .header("DD-EVP-ORIGIN", self.profiling_library_name.as_ref())
+            .header(
+                "DD-EVP-ORIGIN-VERSION",
+                self.profiling_library_version.as_ref(),
+            );
 
         Ok(
             Request::from(form.set_body_convert::<hyper::Body, multipart::Body>(builder)?)
