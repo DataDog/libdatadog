@@ -10,6 +10,10 @@ pub use chrono::{DateTime, Utc};
 pub use ddcommon::tag::Tag;
 pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
+use lz4_flex::frame::FrameEncoder;
+use mime;
+use serde_json::json;
+use std::io::Write;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
@@ -40,6 +44,8 @@ pub struct ProfileExporter {
     exporter: Exporter,
     endpoint: Endpoint,
     family: Cow<'static, str>,
+    profiling_library_name: Cow<'static, str>,
+    profiling_library_version: Cow<'static, str>,
     tags: Option<Vec<Tag>>,
 }
 
@@ -106,15 +112,24 @@ impl Request {
 }
 
 impl ProfileExporter {
-    pub fn new<IntoCow: Into<Cow<'static, str>>>(
-        family: IntoCow,
+    pub fn new<F, N, V>(
+        profiling_library_name: N,
+        profiling_library_version: V,
+        family: F,
         tags: Option<Vec<Tag>>,
         endpoint: Endpoint,
-    ) -> anyhow::Result<ProfileExporter> {
+    ) -> anyhow::Result<ProfileExporter>
+    where
+        F: Into<Cow<'static, str>>,
+        N: Into<Cow<'static, str>>,
+        V: Into<Cow<'static, str>>,
+    {
         Ok(Self {
             exporter: Exporter::new()?,
             endpoint,
             family: family.into(),
+            profiling_library_name: profiling_library_name.into(),
+            profiling_library_version: profiling_library_version.into(),
             tags,
         })
     }
@@ -130,30 +145,58 @@ impl ProfileExporter {
     ) -> anyhow::Result<Request> {
         let mut form = multipart::Form::default();
 
-        form.add_text("version", "3");
-        form.add_text("start", start.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string());
-        form.add_text("end", end.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string());
-        form.add_text("family", self.family.as_ref());
-
-        for tags in self.tags.as_ref().iter().chain(additional_tags.iter()) {
-            for tag in tags.iter() {
-                form.add_text("tags[]", tag.to_string());
-            }
+        // combine tags and additional_tags
+        let mut tags_profiler = String::new();
+        let other_tags = additional_tags.into_iter();
+        for tag in self.tags.iter().chain(other_tags).flatten() {
+            tags_profiler.push_str(tag.as_ref());
+            tags_profiler.push(',');
         }
+        tags_profiler.pop(); // clean up the trailing comma
+
+        let attachments: Vec<String> = files.iter().map(|file| file.name.to_owned()).collect();
+
+        let event = json!({
+            "attachments": attachments,
+            "tags_profiler": tags_profiler,
+            "start": start.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
+            "end": end.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
+            "family": self.family.as_ref(),
+            "version": "4",
+        })
+        .to_string();
+
+        form.add_reader_file_with_mime(
+            // Intake does not look for filename=event.json, it looks for name=event.
+            "event",
+            // this one shouldn't be compressed
+            Cursor::new(event),
+            "event.json",
+            mime::APPLICATION_JSON,
+        );
 
         for file in files {
-            form.add_reader_file(
-                format!("data[{}]", file.name),
-                Cursor::new(file.bytes.to_owned()),
-                file.name,
-            )
+            let mut encoder = FrameEncoder::new(Vec::new());
+            encoder.write_all(file.bytes)?;
+            let encoded = encoder.finish()?;
+            /* The Datadog RFC examples strip off the file extension, but the exact behavior isn't
+             * specified. This does the simple thing of using the filename without modification for
+             * the form name because intake does not care about these name of the form field for
+             * these attachments.
+             */
+            form.add_reader_file(file.name, Cursor::new(encoded), file.name)
         }
 
         let builder = self
             .endpoint
             .into_request_builder(concat!("DDProf/", env!("CARGO_PKG_VERSION")))?
             .method(http::Method::POST)
-            .header("Connection", "close");
+            .header("Connection", "close")
+            .header("DD-EVP-ORIGIN", self.profiling_library_name.as_ref())
+            .header(
+                "DD-EVP-ORIGIN-VERSION",
+                self.profiling_library_version.as_ref(),
+            );
 
         Ok(
             Request::from(form.set_body_convert::<hyper::Body, multipart::Body>(builder)?)

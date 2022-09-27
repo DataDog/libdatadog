@@ -55,10 +55,18 @@ mod tests {
 
     #[test]
     fn multipart_agent() {
+        let profiling_library_name = "dd-trace-foo";
+        let profiling_library_version = "1.2.3";
         let base_url = "http://localhost:8126".parse().expect("url to parse");
         let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let exporter = ProfileExporter::new("php", Some(default_tags()), endpoint)
-            .expect("exporter to construct");
+        let exporter = ProfileExporter::new(
+            profiling_library_name,
+            profiling_library_version,
+            "php",
+            Some(default_tags()),
+            endpoint,
+        )
+        .expect("exporter to construct");
 
         let request = multipart(&exporter);
 
@@ -69,27 +77,50 @@ mod tests {
 
         let actual_headers = request.headers();
         assert!(!actual_headers.contains_key("DD-API-KEY"));
+        assert_eq!(
+            actual_headers.get("DD-EVP-ORIGIN").unwrap(),
+            profiling_library_name
+        );
+        assert_eq!(
+            actual_headers.get("DD-EVP-ORIGIN-VERSION").unwrap(),
+            profiling_library_version
+        );
     }
 
     #[test]
     fn multipart_agentless() {
+        let profiling_library_name = "dd-trace-foo";
+        let profiling_library_version = "1.2.3";
         let api_key = "1234567890123456789012";
         let endpoint = config::agentless("datadoghq.com", api_key).expect("endpoint to construct");
-        let exporter = ProfileExporter::new("php", Some(default_tags()), endpoint)
-            .expect("exporter to construct");
+        let exporter = ProfileExporter::new(
+            profiling_library_name,
+            profiling_library_version,
+            "php",
+            Some(default_tags()),
+            endpoint,
+        )
+        .expect("exporter to construct");
 
         let request = multipart(&exporter);
 
         assert_eq!(
             request.uri().to_string(),
-            "https://intake.profile.datadoghq.com/v1/input"
+            "https://intake.profile.datadoghq.com/api/v2/profile"
         );
 
         let actual_headers = request.headers();
 
+        assert_eq!(actual_headers.get("DD-API-KEY").unwrap(), api_key);
+
         assert_eq!(
-            actual_headers.get("DD-API-KEY").expect("api key to exist"),
-            api_key
+            actual_headers.get("DD-EVP-ORIGIN").unwrap(),
+            profiling_library_name
+        );
+
+        assert_eq!(
+            actual_headers.get("DD-EVP-ORIGIN-VERSION").unwrap(),
+            profiling_library_version
         );
     }
 }

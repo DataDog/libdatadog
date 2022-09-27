@@ -116,15 +116,25 @@ unsafe fn try_to_endpoint(endpoint: Endpoint) -> anyhow::Result<exporter::Endpoi
 #[must_use]
 #[export_name = "ddog_ProfileExporter_new"]
 pub extern "C" fn profile_exporter_new(
+    profiling_library_name: CharSlice,
+    profiling_library_version: CharSlice,
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: Endpoint,
 ) -> NewProfileExporterResult {
     match || -> anyhow::Result<ProfileExporter> {
+        let library_name = unsafe { profiling_library_name.to_utf8_lossy() }.into_owned();
+        let library_version = unsafe { profiling_library_version.to_utf8_lossy() }.into_owned();
         let family = unsafe { family.to_utf8_lossy() }.into_owned();
         let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
         let tags = tags.map(|tags| tags.iter().map(Tag::clone).collect());
-        ProfileExporter::new(family, tags, converted_endpoint)
+        ProfileExporter::new(
+            library_name,
+            library_version,
+            family,
+            tags,
+            converted_endpoint,
+        )
     }() {
         Ok(exporter) => NewProfileExporterResult::Ok(Box::into_raw(Box::new(exporter))),
         Err(err) => NewProfileExporterResult::Err(err.into()),
@@ -316,6 +326,14 @@ mod test {
     use crate::exporter::*;
     use ddcommon_ffi::Slice;
 
+    fn profiling_library_name() -> CharSlice<'static> {
+        CharSlice::from("dd-trace-foo")
+    }
+
+    fn profiling_library_version() -> CharSlice<'static> {
+        CharSlice::from("1.2.3")
+    }
+
     fn family() -> CharSlice<'static> {
         CharSlice::from("native")
     }
@@ -334,14 +352,20 @@ mod test {
         let host = Tag::new("host", "localhost").expect("static tags to be valid");
         tags.push(host);
 
-        let result = profile_exporter_new(family(), Some(&tags), endpoint_agent(endpoint()));
+        let result = profile_exporter_new(
+            profiling_library_name(),
+            profiling_library_version(),
+            family(),
+            Some(&tags),
+            endpoint_agent(endpoint()),
+        );
 
         match result {
             NewProfileExporterResult::Ok(exporter) => unsafe {
                 profile_exporter_delete(Some(Box::from_raw(exporter)))
             },
             NewProfileExporterResult::Err(message) => {
-                std::mem::drop(message);
+                drop(message);
                 panic!("Should not occur!")
             }
         }
@@ -349,7 +373,13 @@ mod test {
 
     #[test]
     fn test_build() {
-        let exporter_result = profile_exporter_new(family(), None, endpoint_agent(endpoint()));
+        let exporter_result = profile_exporter_new(
+            profiling_library_name(),
+            profiling_library_version(),
+            family(),
+            None,
+            endpoint_agent(endpoint()),
+        );
 
         let exporter = match exporter_result {
             NewProfileExporterResult::Ok(exporter) => unsafe {
