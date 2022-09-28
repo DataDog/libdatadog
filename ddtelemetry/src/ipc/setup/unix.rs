@@ -96,11 +96,21 @@ impl SharedDirLiaison {
     }
 }
 
+impl Default for SharedDirLiaison {
+    fn default() -> Self {
+        Self::new_tmp_dir()
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod linux {
     use std::{
+        ffi::{CString, OsStr},
         io,
-        os::unix::net::{UnixListener, UnixStream},
+        os::unix::{
+            net::{UnixListener, UnixStream},
+            prelude::OsStrExt,
+        },
         path::PathBuf,
     };
 
@@ -114,6 +124,7 @@ mod linux {
     pub struct AbstractUnixSocketLiaison {
         path: PathBuf,
     }
+    pub type DefaultLiason = AbstractUnixSocketLiaison;
 
     impl Liaison for AbstractUnixSocketLiaison {
         fn connect_to_server(&self) -> io::Result<UnixStream> {
@@ -144,6 +155,18 @@ mod linux {
         }
     }
 
+    impl Default for AbstractUnixSocketLiaison {
+        fn default() -> Self {
+            Self::ipc_shared()
+        }
+    }
+
+    pub fn set_process_title<T: AsRef<OsStr>>(title: T) {
+        if let Ok(title) = CString::new(title.as_ref().to_owned().as_bytes()) {
+            unsafe { libc::prctl(libc::PR_SET_NAME, title.as_ptr(), 0, 0, 0) };
+        }
+    }
+
     #[test]
     fn test_abstract_socket_can_connect() {
         let l = AbstractUnixSocketLiaison::ipc_in_process();
@@ -153,6 +176,14 @@ mod linux {
 
 #[cfg(target_os = "linux")]
 pub use linux::*;
+
+#[cfg(target_os = "darwin")]
+mod darwin {
+    pub type DefaultLiason = SharedDirLiaison;
+}
+
+#[cfg(target_os = "darwin")]
+pub use darwin::*;
 
 #[cfg(test)]
 mod tests {

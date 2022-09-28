@@ -254,6 +254,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ddtelemetry-ffi"
+version = "0.8.0"
+dependencies = [
+ "ddcommon-ffi",
+ "ddtelemetry",
+ "libc",
+ "paste",
+]
+
+[[package]]
 name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -269,15 +279,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "ddtelemetry-ffi"
-version = "0.8.0"
-dependencies = [
- "ddcommon-ffi",
- "ddtelemetry",
- "paste",
 ]
 
 [[package]]

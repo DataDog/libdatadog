@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 /// PlatformHandle contains a valid reference counted FileDescriptor and associated Type information
 /// allowing safe transfer and sharing of file handles across processes, and threads
 #[derive(Serialize, Deserialize, Debug)]
+#[repr(C)]
 pub struct PlatformHandle<T> {
     fd: RawFd, // Just an fd number to be used as reference e.g. when serializing, not for accessing actual fd
     #[serde(skip)]
