@@ -1,14 +1,15 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+pub mod config;
+mod errors;
+
 use std::borrow::Cow;
 use std::future;
 use std::io::Cursor;
 
 use bytes::Bytes;
-pub use chrono::{DateTime, Utc};
-pub use ddcommon::tag::Tag;
-pub use hyper::Uri;
+use ddcommon::{azure_app_services, connector, HttpClient, HttpResponse};
 use hyper_multipart_rfc7578::client::multipart;
 use lz4_flex::frame::FrameEncoder;
 use mime;
@@ -17,11 +18,9 @@ use std::io::Write;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
-use ddcommon::{azure_app_services, connector, HttpClient, HttpResponse};
-
-pub mod config;
-mod errors;
-pub use ddcommon::Endpoint;
+pub use chrono::{DateTime, Utc};
+pub use ddcommon::{connector::initialize_before_fork, tag::Tag, Endpoint};
+pub use hyper::Uri;
 
 #[cfg(unix)]
 pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};

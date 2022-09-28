@@ -93,6 +93,20 @@ fn load_root_certs() -> anyhow::Result<rustls::RootCertStore> {
     Ok(roots)
 }
 
+/// On Apple platforms in particular, some things need to be initialized
+/// before a fork, and ideally before threads are created.
+/// Users may run into errors like the following if they do not:
+/// > objc[25938]: +[__NSCFConstantString initialize] may have been in
+/// > progress in another thread when fork() was called. We cannot safely
+/// > call it or ignore it in the fork() child process. Crashing instead. Set
+/// > a breakpoint on objc_initializeAfterForkError to debug.
+/// At the moment, this is only needed on Apple platforms, but if anything
+/// of this sort comes up n the future for other platforms, add it here.
+pub fn initialize_before_fork() -> anyhow::Result<()> {
+    let _ = load_root_certs()?;
+    Ok(())
+}
+
 impl hyper::service::Service<hyper::Uri> for Connector {
     type Response = ConnStream;
     type Error = ConnStreamError;
