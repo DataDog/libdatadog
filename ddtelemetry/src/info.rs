@@ -3,7 +3,7 @@
 
 pub mod os {
     // TODO: this function will call API's (fargate, k8s, etc) in the future to get to real host API
-    pub async fn real_hostname() -> anyhow::Result<String> {
+    pub fn real_hostname() -> anyhow::Result<String> {
         Ok(sys_info::hostname()?)
     }
 

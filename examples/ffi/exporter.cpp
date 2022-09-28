@@ -90,8 +90,13 @@ int main(int argc, char *argv[]) {
 
   ddog_PushTagResult_drop(tag_result);
 
-  ddog_NewProfileExporterResult exporter_new_result =
-      ddog_ProfileExporter_new(DDOG_CHARSLICE_C("native"), &tags, endpoint);
+  ddog_NewProfileExporterResult exporter_new_result = ddog_ProfileExporter_new(
+      DDOG_CHARSLICE_C("exporter-example"),
+      DDOG_CHARSLICE_C("1.2.3"),
+      DDOG_CHARSLICE_C("native"),
+      &tags,
+      endpoint
+  );
   ddog_Vec_tag_drop(tags);
 
   if (exporter_new_result.tag == DDOG_NEW_PROFILE_EXPORTER_RESULT_ERR) {
@@ -109,8 +114,14 @@ int main(int argc, char *argv[]) {
 
   ddog_Slice_file files = {.ptr = files_, .len = sizeof files_ / sizeof *files_};
 
-  ddog_Request *request = ddog_ProfileExporter_build(exporter, encoded_profile->start,
-                                                     encoded_profile->end, files, nullptr, 30000);
+  ddog_Request *request = ddog_ProfileExporter_build(
+    exporter,
+    encoded_profile->start,
+    encoded_profile->end,
+    files,
+    nullptr,
+    30000
+  );
 
   ddog_CancellationToken *cancel = ddog_CancellationToken_new();
   ddog_CancellationToken *cancel_for_background_thread = ddog_CancellationToken_clone(cancel);

@@ -148,12 +148,15 @@ echo "Building tools"
 cargo build --package tools --bins
 
 echo "Generating $destdir/include/libdatadog headers..."
-cbindgen --crate ddcommon-ffi \
+rustup run nightly -- cbindgen --crate ddcommon-ffi \
     --config ddcommon-ffi/cbindgen.toml \
     --output "$destdir/include/datadog/common.h"
-cbindgen --crate "${datadog_profiling_ffi}" \
+rustup run nightly -- cbindgen --crate "${datadog_profiling_ffi}" \
     --config profiling-ffi/cbindgen.toml \
     --output "$destdir/include/datadog/profiling.h"
-./target/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h"
+rustup run nightly -- cbindgen --crate ddtelemetry-ffi \
+    --config ddtelemetry-ffi/cbindgen.toml \
+    --output "$destdir/include/datadog/telemetry.h"
+./target/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/telemetry.h" "$destdir/include/datadog/profiling.h"
 
 echo "Done."
