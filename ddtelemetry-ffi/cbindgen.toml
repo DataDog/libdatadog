@@ -27,6 +27,6 @@ rename_variants = "ScreamingSnakeCase"
 must_use = "DDOG_CHECK_RETURN"
 
 [parse]
-expand = ["ddtelemetry-ffi"]
+# expand = ["ddtelemetry-ffi"]
 parse_deps = true
 include = ["ddcommon", "ddtelemetry", "ddcommon-ffi"]
