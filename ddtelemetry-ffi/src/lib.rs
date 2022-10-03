@@ -2,11 +2,16 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use ddcommon_ffi as ffi;
+use ddtelemetry::metrics;
 use ddtelemetry::worker::{TelemetryWorkerBuilder, TelemetryWorkerHandle};
 use ffi::slice::AsBytes;
 
 macro_rules! c_setters {
-    ($object_name:ident, $object_ty:ty, $input_type:ty, $convert_fn:expr, SETTERS { $($path:ident $(. $path_rest:ident)*),+ $(,)? }) => {
+    (
+        $object_name:ident, $object_ty:ty, $input_type:ty, $convert_fn:expr,
+        SETTERS {
+            $($path:ident $(. $path_rest:ident)*),+ $(,)?
+        }) => {
         paste::paste! {
             $(
                 #[no_mangle]
@@ -15,9 +20,8 @@ macro_rules! c_setters {
                 pub unsafe extern "C" fn [<ddog_ $object_name _with_ $path $(_ $path_rest)* >](
                     $object_name: &mut $object_ty,
                     param: $input_type,
-                ) -> MaybeError {
-                    $object_name . $path $(.  $path_rest)* = Some(try_c!($convert_fn (param)));
-                    MaybeError::None
+                ) {
+                    $object_name . $path $(.  $path_rest)* = Some($convert_fn (param));
                 }
             )+
 
@@ -39,16 +43,15 @@ macro_rules! c_setters {
                 $object_name: &mut $object_ty,
                 property: [<$object_ty Property >],
                 param: $input_type,
-            ) -> MaybeError {
+            ) {
                 use [<$object_ty Property >] ::*;
                 match property {
                     $(
                         [< $path:camel $($path_rest:camel)* >] => {
-                            $object_name . $path $(.  $path_rest)* = Some(try_c!($convert_fn (param)));
+                            $object_name . $path $(.  $path_rest)* = Some($convert_fn (param));
                         }
                     )+
                 }
-                MaybeError::None
             }
 
             #[no_mangle]
@@ -70,11 +73,10 @@ macro_rules! c_setters {
                 match property {
                     $(
                         stringify!($path $(. $path_rest)*) => {
-                            $object_name . $path $(.  $path_rest)* = Some(try_c!($convert_fn (param)));
+                            $object_name . $path $(.  $path_rest)* = Some($convert_fn (param));
                         }
                     )+
-                    // TODO this is an error
-                    _ => return MaybeError::None,
+                    _ => return MaybeError::Some(ffi::Vec::from("Unexpected property path".to_owned().into_bytes())),
                 }
                 MaybeError::None
             }
@@ -103,7 +105,7 @@ pub unsafe extern "C" fn ddog_builder_instantiate(
     language_name: ffi::CharSlice,
     language_version: ffi::CharSlice,
     tracer_version: ffi::CharSlice,
-) -> MaybeError {
+) {
     let new = Box::new(TelemetryWorkerBuilder::new_fetch_host(
         service_name.to_utf8_lossy().into_owned(),
         language_name.to_utf8_lossy().into_owned(),
@@ -113,7 +115,6 @@ pub unsafe extern "C" fn ddog_builder_instantiate(
     // Leaking is the last thing we do before returning
     // Otherwise we would need to manually drop it in case of error
     *builder = Box::into_raw(new);
-    MaybeError::None
 }
 
 #[no_mangle]
@@ -126,7 +127,7 @@ pub unsafe extern "C" fn ddog_builder_instantiate_with_hostname(
     language_name: ffi::CharSlice,
     language_version: ffi::CharSlice,
     tracer_version: ffi::CharSlice,
-) -> MaybeError {
+) {
     let new = Box::new(TelemetryWorkerBuilder::new(
         hostname.to_utf8_lossy().into_owned(),
         service_name.to_utf8_lossy().into_owned(),
@@ -138,13 +139,12 @@ pub unsafe extern "C" fn ddog_builder_instantiate_with_hostname(
     // Leaking is the last thing we do before returning
     // Otherwise we would need to manually drop it in case of error
     *builder = Box::into_raw(new);
-    MaybeError::None
 }
 
 c_setters!(
     builder,
     TelemetryWorkerBuilder,
-    ffi::CharSlice, (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) }),
+    ffi::CharSlice, (|s: ffi::CharSlice| s.to_utf8_lossy().into_owned()),
     SETTERS {
         application.service_version,
         application.env,
@@ -161,26 +161,6 @@ c_setters!(
         runtime_id
     }
 );
-
-#[allow(clippy::missing_safety_doc)]
-#[no_mangle]
-pub unsafe extern "C" fn ddog_builder_with_native_deps(
-    builder: &mut TelemetryWorkerBuilder,
-    include_native_deps: bool,
-) -> MaybeError {
-    builder.native_deps = include_native_deps;
-    MaybeError::None
-}
-
-#[allow(clippy::missing_safety_doc)]
-#[no_mangle]
-pub unsafe extern "C" fn ddog_builder_with_rust_shared_lib_deps(
-    builder: &mut TelemetryWorkerBuilder,
-    include_rust_shared_lib_deps: bool,
-) -> MaybeError {
-    builder.rust_shared_lib_deps = include_rust_shared_lib_deps;
-    MaybeError::None
-}
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
@@ -292,6 +272,33 @@ pub extern "C" fn ddog_handle_drop(handle: Box<TelemetryWorkerHandle>) {
     drop(handle);
 }
 
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_handle_register_metric_context(
+    handle: &TelemetryWorkerHandle,
+    name: ffi::CharSlice,
+    tags: ffi::Vec<ddcommon::tag::Tag>,
+    metric_type: metrics::MetricType,
+    common: bool,
+    namespace: metrics::MetricNamespace,
+) -> metrics::ContextKey {
+    let name = name.to_utf8_lossy().into_owned();
+    let tags = tags.into();
+    handle.register_metric_context(name, tags, metric_type, common, namespace)
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_handle_add_point(
+    handle: &TelemetryWorkerHandle,
+    context: &metrics::ContextKey,
+    value: f64,
+    extra_tags: ffi::Vec<ddcommon::tag::Tag>,
+) -> MaybeError {
+    try_c!(handle.add_point(value, context, extra_tags.into()));
+    MaybeError::None
+}
+
 #[cfg(test)]
 mod test_c_setters {
     use super::*;
@@ -301,15 +308,12 @@ mod test_c_setters {
         let mut builder = std::ptr::null_mut();
 
         unsafe {
-            assert_eq!(
-                ddog_builder_instantiate(
-                    &mut builder,
-                    ffi::CharSlice::from("service_name"),
-                    ffi::CharSlice::from("language_name"),
-                    ffi::CharSlice::from("language_version"),
-                    ffi::CharSlice::from("tracer_version"),
-                ),
-                MaybeError::None
+            ddog_builder_instantiate(
+                &mut builder,
+                ffi::CharSlice::from("service_name"),
+                ffi::CharSlice::from("language_name"),
+                ffi::CharSlice::from("language_version"),
+                ffi::CharSlice::from("tracer_version"),
             );
             assert!(!builder.is_null());
             let mut builder = Box::from_raw(builder);
@@ -350,7 +354,7 @@ mod test_c_setters {
                 ffi::CharSlice::from("abc")
             )
             .to_std()
-            .is_none(),);
+            .is_some(),);
         }
     }
 
@@ -359,46 +363,34 @@ mod test_c_setters {
         let mut builder = std::ptr::null_mut();
 
         unsafe {
-            assert_eq!(
-                ddog_builder_instantiate(
-                    &mut builder,
-                    ffi::CharSlice::from("service_name"),
-                    ffi::CharSlice::from("language_name"),
-                    ffi::CharSlice::from("language_version"),
-                    ffi::CharSlice::from("tracer_version"),
-                ),
-                MaybeError::None,
+            ddog_builder_instantiate(
+                &mut builder,
+                ffi::CharSlice::from("service_name"),
+                ffi::CharSlice::from("language_name"),
+                ffi::CharSlice::from("language_version"),
+                ffi::CharSlice::from("tracer_version"),
             );
             assert!(!builder.is_null());
             let mut builder = Box::from_raw(builder);
 
-            assert_eq!(
-                ddog_builder_with_property(
-                    &mut builder,
-                    TelemetryWorkerBuilderProperty::RuntimeId,
-                    ffi::CharSlice::from("abcd")
-                ),
-                MaybeError::None,
+            ddog_builder_with_property(
+                &mut builder,
+                TelemetryWorkerBuilderProperty::RuntimeId,
+                ffi::CharSlice::from("abcd"),
             );
             assert_eq!(builder.runtime_id.as_deref(), Some("abcd"));
 
-            assert_eq!(
-                ddog_builder_with_property(
-                    &mut builder,
-                    TelemetryWorkerBuilderProperty::ApplicationRuntimeName,
-                    ffi::CharSlice::from("rust")
-                ),
-                MaybeError::None,
+            ddog_builder_with_property(
+                &mut builder,
+                TelemetryWorkerBuilderProperty::ApplicationRuntimeName,
+                ffi::CharSlice::from("rust"),
             );
             assert_eq!(builder.application.runtime_name.as_deref(), Some("rust"));
 
-            assert_eq!(
-                ddog_builder_with_property(
-                    &mut builder,
-                    TelemetryWorkerBuilderProperty::HostKernelVersion,
-                    ffi::CharSlice::from("ダタドグ")
-                ),
-                MaybeError::None,
+            ddog_builder_with_property(
+                &mut builder,
+                TelemetryWorkerBuilderProperty::HostKernelVersion,
+                ffi::CharSlice::from("ダタドグ"),
             );
             assert_eq!(builder.host.kernel_version.as_deref(), Some("ダタドグ"));
         }

@@ -185,13 +185,19 @@ impl TelemetryWorker {
                         return;
                     }
                     self.data.metric_buckets.flush_agregates();
-                    let requests = IntoIterator::into_iter([
-                        self.build_app_stop(),
-                        self.build_integrations_change(),
-                        self.build_dependencies_loaded(),
-                    ])
-                    .chain(self.build_metrics_series())
-                    .map(|r| self.send_request(r));
+                    let requests = IntoIterator::into_iter([self.build_app_stop()])
+                        .chain(if self.data.unflushed_integrations.is_empty() {
+                            None
+                        } else {
+                            Some(self.build_integrations_change())
+                        })
+                        .chain(if self.data.unflushed_dependencies.is_empty() {
+                            None
+                        } else {
+                            Some(self.build_dependencies_loaded())
+                        })
+                        .chain(self.build_metrics_series())
+                        .map(|r| self.send_request(r));
                     future::join_all(requests).await;
 
                     return;
@@ -393,6 +399,7 @@ impl TelemetryWorker {
             }
         })()
         .await;
+        telemetry_worker_log!(self, DEBUG, "Sent request: Result {:?}", res);
         self.handle_result(&res);
     }
 }
@@ -526,8 +533,6 @@ pub struct TelemetryWorkerBuilder {
     pub application: Application,
     pub runtime_id: Option<String>,
     pub library_config: Vec<(String, String)>,
-    pub native_deps: bool,
-    pub rust_shared_lib_deps: bool,
 }
 
 impl TelemetryWorkerBuilder {
@@ -548,8 +553,6 @@ impl TelemetryWorkerBuilder {
             },
             runtime_id: None,
             library_config: Vec::new(),
-            native_deps: true,
-            rust_shared_lib_deps: false,
         }
     }
 
@@ -574,8 +577,6 @@ impl TelemetryWorkerBuilder {
             },
             runtime_id: None,
             library_config: Vec::new(),
-            native_deps: true,
-            rust_shared_lib_deps: false,
         }
     }
 

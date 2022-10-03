@@ -17,6 +17,7 @@ pub struct Serie {
 
 #[derive(Serialize, Debug, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
+#[repr(C)]
 pub enum MetricNamespace {
     Trace,
     Profiling,
@@ -25,7 +26,7 @@ pub enum MetricNamespace {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
-
+#[repr(C)]
 pub enum MetricType {
     #[serde(rename = "gauge")]
     Gauge,
