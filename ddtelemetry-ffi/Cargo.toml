@@ -3,7 +3,7 @@
 
 [package]
 name = "ddtelemetry-ffi"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 
 [lib]
@@ -12,6 +12,6 @@ edition = "2021"
 crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
-ddtelemetry = { path = "../ddtelemetry", version = "0.8.0" }
-ddcommon-ffi = { path = "../ddcommon-ffi", version = "0.8.0" }
+ddtelemetry = { path = "../ddtelemetry", version = "0.9.0" }
+ddcommon-ffi = { path = "../ddcommon-ffi", version = "0.9.0" }
 paste = "1"
