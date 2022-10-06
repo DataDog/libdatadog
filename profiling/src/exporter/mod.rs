@@ -113,6 +113,16 @@ impl Request {
 }
 
 impl ProfileExporter {
+    /// Creates a new exporter to be used to report profiling data.
+    /// # Arguments
+    /// * `profiling_library_name` - Profiling library name, usually dd-trace-something, e.g. "dd-trace-rb". See
+    ///   https://datadoghq.atlassian.net/wiki/spaces/PROF/pages/1538884229/Client#Header-values (Datadog internal link)
+    ///   for a list of common values.
+    /// * `profliling_library_version` - Version used when publishing the profiling library to a package manager
+    /// * `family` - Profile family, e.g. "ruby"
+    /// * `tags` - Tags to include with every profile reported by this exporter. It's also possible to include
+    ///   profile-specific tags, see `additional_tags` on `build`.
+    /// * `endpoint` - Configuration for reporting data
     pub fn new<F, N, V>(
         profiling_library_name: N,
         profiling_library_version: V,
