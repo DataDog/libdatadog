@@ -113,6 +113,25 @@ unsafe fn try_to_endpoint(endpoint: Endpoint) -> anyhow::Result<exporter::Endpoi
     }
 }
 
+#[repr(C)]
+pub enum ProfileExporterInitializeBeforeForkResult {
+    Ok,
+    Err(ddcommon_ffi::Vec<u8>),
+}
+
+/// On Apple platforms in particular, some things need to be initialized
+/// before a fork, and ideally before threads are created. This function
+/// initializes these things for the exporter. This only needs to be called
+/// once.
+#[no_mangle]
+pub extern "C" fn ddog_ProfileExporter_initialize_before_fork(
+) -> ProfileExporterInitializeBeforeForkResult {
+    match exporter::initialize_before_fork() {
+        Ok(_) => ProfileExporterInitializeBeforeForkResult::Ok,
+        Err(err) => ProfileExporterInitializeBeforeForkResult::Err(err.into()),
+    }
+}
+
 #[must_use]
 #[export_name = "ddog_ProfileExporter_new"]
 pub extern "C" fn profile_exporter_new(
