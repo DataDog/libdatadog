@@ -15,18 +15,21 @@ jobs:
         run: rustup update nightly && rustup default nightly && rustup component add rustfmt
       - run: cargo fmt --all -- --check
   clippy:
-    name: "clippy #${{ matrix.version }}"
+    name: "clippy #${{ matrix.rust_version }}"
     strategy:
+      fail-fast: false
       matrix:
-        version: [nightly, "1.60"]
+        rust_version: ["nightly", "1.60.0", "stable"]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
       - name: Cache
         uses: ./.github/actions/cache
+        with:
+          rust_version: ${{ matrix.rust_version }}
       - name: Install ${{ matrix.version }} toolchain and clippy
-        run: rustup install ${{ matrix.version }} && rustup default ${{ matrix.version }} && rustup component add clippy
+        run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }} && rustup component add clippy
       - run: cargo clippy --all-targets --all-features -- -D warnings
   licensecheck:
     runs-on: ubuntu-latest
@@ -58,7 +61,18 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v2
       - run: stat LICENSE-3rdparty.yml
-      - run: cargo install cargo-bundle-licenses
+      - name: Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/db/
+            ~/.cargo/bin/
+            ~/.cargo/.crates.toml
+          # cache key contains current version of cargo-bundle-licenses
+          # when upstream version is updated we can bump the cache key version, to cache the latest version of the tool
+          key: "v1-0.5.0"
+      - run: cargo install cargo-bundle-licenses 
       - name: "Generate new LICENSE-3rdparty.yml and check against the previous" 
         env: 
           CARGO_HOME: "/tmp/dd-cargo"
