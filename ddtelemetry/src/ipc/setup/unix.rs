@@ -105,11 +105,9 @@ impl Default for SharedDirLiaison {
 #[cfg(target_os = "linux")]
 mod linux {
     use std::{
-        ffi::{CString, OsStr},
         io,
         os::unix::{
             net::{UnixListener, UnixStream},
-            prelude::OsStrExt,
         },
         path::PathBuf,
     };
@@ -169,12 +167,7 @@ mod linux {
 pub use linux::*;
 
 #[cfg(target_os = "macos")]
-mod macos {
-    pub type DefaultLiason = SharedDirLiaison;
-}
-
-#[cfg(target_os = "macos")]
-pub use macos::*;
+pub type DefaultLiason = SharedDirLiaison;
 
 #[cfg(test)]
 mod tests {
