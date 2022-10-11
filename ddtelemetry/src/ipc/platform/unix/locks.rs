@@ -18,6 +18,13 @@ pub enum FLockState {
     Locked,
 }
 #[must_use]
+/// FLock can acquire exclusive lock between processes
+///
+/// A lock with a specific path is held per process.
+/// Calling lock 2nd time in the same process after it has been successfully acquired
+/// will not prevent 2nd lock from being acquired.
+///
+/// Lock is automatically released when process exits
 pub struct FLock {
     fd: RawFd,
     state: FLockState,
@@ -39,7 +46,7 @@ impl FLock {
         Ok(FLock {
             fd,
             path: path.as_ref().to_path_buf(),
-            state: FLockState::Locked,
+            state: FLockState::Open,
         })
     }
 
@@ -61,7 +68,7 @@ impl FLock {
 
     /// Locks file at path for writing using fcntl
     /// once Self is dropped, the lock is released
-    pub fn rw_lock<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+    pub fn try_rw_lock<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let mut this = Self::open(&path)?;
         let lock = libc::flock {
             l_type: libc::F_WRLCK as i16,
@@ -76,10 +83,7 @@ impl FLock {
                 this.state = FLockState::Locked;
                 Ok(this)
             }
-            Err(err) => {
-                this.close();
-                Err(err.into())
-            }
+            Err(err) => Err(err.into()),
         }
     }
 }
@@ -113,7 +117,7 @@ mod tests {
             fork_fn,
             tests::{prevent_concurrent_tests, set_default_child_panic_handler},
         },
-        ipc::platform::ForkableUnixHandlePair,
+        ipc::platform::sockets::ForkableUnixHandlePair,
     };
 
     use super::FLock;
@@ -129,7 +133,7 @@ mod tests {
         let pid = unsafe {
             fork_fn((&pair, &lock_path), |(pair, lock_path)| {
                 set_default_child_panic_handler();
-                let _l = FLock::rw_lock(lock_path).unwrap();
+                let _l = FLock::try_rw_lock(lock_path).unwrap();
                 let mut c = pair.remote();
 
                 c.write_all(&[0]).unwrap(); // signal readiness
@@ -149,18 +153,20 @@ mod tests {
         assert!(c.read(&mut buf).unwrap() > 0);
 
         // must fail, as file is locked by another process
-        assert!(lock_path.exists());
-        let err = FLock::rw_lock(&lock_path).err().unwrap();
+        let err = FLock::try_rw_lock(&lock_path).err().unwrap();
         assert_eq!(io::ErrorKind::WouldBlock, err.kind());
 
         c.write_all(&[0]).unwrap(); // signal child to shut down
 
         assert_child_exit!(pid);
-        assert!(!lock_path.exists());
+        assert!(lock_path.exists()); // child exited abbruptly and lock file was left in place
+
         // must succeed as no other process is holding the lock
-        let lock = FLock::rw_lock(&lock_path).unwrap();
-        assert!(lock_path.exists());
-        drop(lock);
+        {
+            let _lock = FLock::try_rw_lock(&lock_path).unwrap();
+            assert!(lock_path.exists());
+        }
+        // lock file is removed when locked FLock is dropped
         assert!(!lock_path.exists());
     }
 }

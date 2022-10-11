@@ -163,11 +163,16 @@ mod tests {
     use std::{fs::File, io::Write, thread};
 
     use super::PlatformHandle;
+    macro_rules! assert_file_is_open_for_writing {
+        ($file:expr) => {{
+            writeln!($file, "test").unwrap();
+        }};
+    }
 
     #[test]
     fn test_platform_handles_fd_handling() {
         let mut file = tempfile::tempfile().unwrap();
-        writeln!(file, "test").unwrap();
+        assert_file_is_open_for_writing!(file);
 
         let shared = PlatformHandle::from(file);
 
@@ -181,13 +186,13 @@ mod tests {
         let owned = shared.into_owned_handle().unwrap();
         let mut file: File = owned.into();
 
-        writeln!(file, "test").unwrap();
+        assert_file_is_open_for_writing!(file);
     }
 
     #[test]
     fn test_platform_handle_fd_borrowing() {
         let mut file = tempfile::tempfile().unwrap();
-        writeln!(file, "test").unwrap();
+        assert_file_is_open_for_writing!(file);
 
         let shared = PlatformHandle::from(file);
         let mut joins = vec![];
@@ -195,7 +200,7 @@ mod tests {
             let shared = shared.clone();
             let th = thread::spawn(move || {
                 let mut file = &*shared.as_filelike_view().unwrap();
-                writeln!(file, "test").unwrap();
+                assert_file_is_open_for_writing!(file);
                 1
             });
             joins.push(th);
@@ -204,6 +209,6 @@ mod tests {
         assert_eq!(100, cnt);
 
         let mut file = &*shared.as_filelike_view().unwrap();
-        writeln!(file, "test").unwrap();
+        assert_file_is_open_for_writing!(file);
     }
 }

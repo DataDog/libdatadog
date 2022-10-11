@@ -265,7 +265,7 @@ impl Profile {
 
     fn add_mapping(&mut self, mapping: &api::Mapping) -> Result<PProfId, FullError> {
         // todo: do full checks as part of intern/dedup
-        if self.strings.len() >= CONTAINER_MAX as usize || self.mappings.len() >= CONTAINER_MAX {
+        if self.strings.len() >= CONTAINER_MAX || self.mappings.len() >= CONTAINER_MAX {
             return Err(FullError);
         }
 
@@ -534,7 +534,7 @@ impl From<&Profile> for pprof::Profile {
                 .map(|(index, location)| pprof::Location {
                     id: (index + 1) as u64,
                     mapping_id: location.mapping_id,
-                    address: location.address as u64,
+                    address: location.address,
                     line: location.line.clone(),
                     is_folded: location.is_folded,
                 })

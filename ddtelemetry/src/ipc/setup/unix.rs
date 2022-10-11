@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::ipc::platform::{FLock, IsListening};
+use crate::ipc::platform::{self, locks::FLock};
 
 /// Implementations of this interface must provide behavior repeatable across processes with the same version
 /// of library.
@@ -51,7 +51,7 @@ impl Liaison for SharedDirLiaison {
         let dir = self.socket_path.parent().unwrap_or_else(|| Path::new("/"));
         ensure_dir_exists(dir)?;
 
-        let _g = match FLock::rw_lock(&self.lock_path) {
+        let _g = match FLock::try_rw_lock(&self.lock_path) {
             Ok(lock) => lock,
             // failing to acquire lock
             // means that another process is creating the socket
@@ -63,7 +63,7 @@ impl Liaison for SharedDirLiaison {
 
         if self.socket_path.exists() {
             // if socket is already listening, then creating listener is not available
-            if UnixListener::is_listening(&self.socket_path)? {
+            if platform::sockets::is_listening(&self.socket_path)? {
                 println!("already_listening");
                 // return Err(io::Error::new(io::ErrorKind::Other, "already listening"));
                 return Ok(None);
@@ -114,10 +114,7 @@ mod linux {
         path::PathBuf,
     };
 
-    use crate::{
-        fork::getpid,
-        ipc::platform::{UnixListenerBindAbstract, UnixStreamConnectAbstract},
-    };
+    use crate::{fork::getpid, ipc::platform};
 
     use super::Liaison;
 
@@ -128,11 +125,11 @@ mod linux {
 
     impl Liaison for AbstractUnixSocketLiaison {
         fn connect_to_server(&self) -> io::Result<UnixStream> {
-            UnixStream::connect_abstract(&self.path)
+            platform::sockets::connect_abstract(&self.path)
         }
 
         fn attempt_listen(&self) -> io::Result<Option<UnixListener>> {
-            match UnixListener::bind_abstract(&self.path) {
+            match platform::sockets::bind_abstract(&self.path) {
                 Ok(l) => Ok(Some(l)),
                 Err(ref e) if e.kind() == io::ErrorKind::AddrInUse => Ok(None),
                 Err(err) => Err(err),

@@ -4,8 +4,5 @@
 mod platform_handle;
 pub use platform_handle::*;
 
-mod locks;
-pub use locks::*;
-
-mod sockets;
-pub use sockets::*;
+pub mod locks;
+pub mod sockets;
