@@ -158,12 +158,6 @@ mod linux {
         }
     }
 
-    pub fn set_process_title<T: AsRef<OsStr>>(title: T) {
-        if let Ok(title) = CString::new(title.as_ref().to_owned().as_bytes()) {
-            unsafe { libc::prctl(libc::PR_SET_NAME, title.as_ptr(), 0, 0, 0) };
-        }
-    }
-
     #[test]
     fn test_abstract_socket_can_connect() {
         let l = AbstractUnixSocketLiaison::ipc_in_process();
@@ -174,13 +168,13 @@ mod linux {
 #[cfg(target_os = "linux")]
 pub use linux::*;
 
-#[cfg(target_os = "darwin")]
-mod darwin {
+#[cfg(target_os = "macos")]
+mod macos {
     pub type DefaultLiason = SharedDirLiaison;
 }
 
-#[cfg(target_os = "darwin")]
-pub use darwin::*;
+#[cfg(target_os = "macos")]
+pub use macos::*;
 
 #[cfg(test)]
 mod tests {

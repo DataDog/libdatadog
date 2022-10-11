@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     fork::{fork_fn, getpid},
-    ipc::setup::{self, set_process_title, Liaison},
+    ipc::setup::{self, Liaison},
 };
 
 async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
@@ -100,7 +100,6 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
         let pid = fork_fn(listener, |listener| {
             fork_fn(listener, |listener| {
                 println!("starting sidecar, pid: {}", getpid());
-                set_process_title("libdatadog-sidecar");
                 if let Err(err) = enter_listener_loop(listener) {
                     println!("Error: {}", err)
                 }
