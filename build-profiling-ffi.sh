@@ -154,9 +154,6 @@ cbindgen --crate ddcommon-ffi \
 cbindgen --crate "${datadog_profiling_ffi}" \
     --config profiling-ffi/cbindgen.toml \
     --output "$destdir/include/datadog/profiling.h"
-cbindgen --crate ddtelemetry-ffi \
-    --config ddtelemetry-ffi/cbindgen.toml \
-    --output "$destdir/include/datadog/telemetry.h"
-./target/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/telemetry.h" "$destdir/include/datadog/profiling.h"
+./target/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h"
 
 echo "Done."
