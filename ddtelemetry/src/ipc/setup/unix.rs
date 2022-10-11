@@ -106,9 +106,7 @@ impl Default for SharedDirLiaison {
 mod linux {
     use std::{
         io,
-        os::unix::{
-            net::{UnixListener, UnixStream},
-        },
+        os::unix::net::{UnixListener, UnixStream},
         path::PathBuf,
     };
 
