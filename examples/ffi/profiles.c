@@ -3,12 +3,15 @@
 // developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present
 // Datadog, Inc.
 
+#include <assert.h>
 #include <datadog/common.h>
 #include <datadog/profiling.h>
 #include <stdint.h>
+#include <time.h>
 
-/* Creates a profile with one sample type "wall-time" with period of "wall-time"
- * with unit 60 "nanoseconds". Adds one sample with a string label "language".
+/* Creates a profile with one sample type "wall-time" with period of
+ * "wall-time" with unit 60 "nanoseconds". Adds one sample with a string label
+ * "language".
  */
 int main(void) {
   const struct ddog_ValueType wall_time = {
@@ -39,10 +42,19 @@ int main(void) {
       .key = DDOG_CHARSLICE_C("language"),
       .str = DDOG_CHARSLICE_C("php"),
   };
+
+  struct timespec now;
+  int result = timespec_get(&now, TIME_UTC);
+  assert(result == TIME_UTC);
+
+  int64_t tick =
+      ((int64_t)now.tv_sec) * INT64_C(1000000000) + (int64_t)now.tv_nsec;
+
   struct ddog_Sample sample = {
       .locations = {&root_location, 1},
       .values = {&value, 1},
       .labels = {&label, 1},
+      .tick = tick,
   };
   ddog_Profile_add(profile, sample);
   ddog_Profile_free(profile);

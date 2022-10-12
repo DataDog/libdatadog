@@ -6,7 +6,7 @@ use datadog_profiling::profile as profiles;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
 use std::convert::{TryFrom, TryInto};
 use std::str::Utf8Error;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -146,6 +146,9 @@ pub struct Sample<'a> {
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
     pub labels: Slice<'a, Label<'a>>,
+
+    /// Nanoseconds since the UNIX epoch.
+    pub tick: i64,
 }
 
 impl<'a> TryFrom<&'a Mapping<'a>> for profiles::api::Mapping<'a> {
@@ -258,33 +261,6 @@ impl<'a> TryFrom<&'a Label<'a>> for profiles::api::Label<'a> {
     }
 }
 
-impl<'a> TryFrom<Sample<'a>> for profiles::api::Sample<'a> {
-    type Error = Utf8Error;
-
-    fn try_from(sample: Sample<'a>) -> Result<Self, Self::Error> {
-        let mut locations: Vec<profiles::api::Location> =
-            Vec::with_capacity(sample.locations.len());
-        unsafe {
-            for location in sample.locations.as_slice().iter() {
-                locations.push(location.try_into()?)
-            }
-
-            let values: Vec<i64> = sample.values.into_slice().to_vec();
-
-            let mut labels: Vec<profiles::api::Label> = Vec::with_capacity(sample.labels.len());
-            for label in sample.labels.as_slice().iter() {
-                labels.push(label.try_into()?);
-            }
-
-            Ok(Self {
-                locations,
-                values,
-                labels,
-            })
-        }
-    }
-}
-
 /// Create a new profile with the given sample types. Must call
 /// `ddog_Profile_free` when you are done with the profile.
 ///
@@ -331,12 +307,45 @@ pub extern "C" fn ddog_Profile_add(
     profile: &mut datadog_profiling::profile::Profile,
     sample: Sample,
 ) -> u64 {
-    match sample.try_into().map(|s| profile.add(s)) {
-        Ok(r) => match r {
+    let sample = (|| -> anyhow::Result<profiles::api::Sample> {
+        let mut locations: Vec<profiles::api::Location> =
+            Vec::with_capacity(sample.locations.len());
+        unsafe {
+            for location in sample.locations.as_slice().iter() {
+                locations.push(location.try_into()?)
+            }
+
+            let values: Vec<i64> = sample.values.into_slice().to_vec();
+
+            let mut labels: Vec<profiles::api::Label> = Vec::with_capacity(sample.labels.len());
+            for label in sample.labels.as_slice().iter() {
+                labels.push(label.try_into()?);
+            }
+
+            let start_ns: i64 = profile
+                .start_time()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+                .try_into()
+                .unwrap();
+            let tick = start_ns + sample.tick;
+
+            Ok(profiles::api::Sample {
+                locations,
+                values,
+                labels,
+                tick,
+            })
+        }
+    })();
+
+    match sample {
+        Ok(sample) => match profile.add(sample) {
             Ok(id) => id.into(),
-            Err(_) => 0,
+            _ => 0,
         },
-        Err(_) => 0,
+        _ => 0,
     }
 }
 
@@ -507,6 +516,7 @@ mod test {
                 locations: Slice::from(&locations),
                 values: Slice::from(&values),
                 labels: Slice::from(&labels),
+                tick: 0,
             };
 
             let aggregator = &mut *profile;
@@ -572,12 +582,14 @@ mod test {
             locations: Slice::from(main_locations.as_slice()),
             values: Slice::from(values.as_slice()),
             labels: Slice::from(labels.as_slice()),
+            tick: 0,
         };
 
         let test_sample = Sample {
             locations: Slice::from(test_locations.as_slice()),
             values: Slice::from(values.as_slice()),
             labels: Slice::from(labels.as_slice()),
+            tick: 0,
         };
 
         let aggregator = &mut *profile;

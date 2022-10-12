@@ -1,12 +1,13 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-#[derive(Copy, Clone)]
+#[derive(Clone, Copy)]
 pub struct ValueType<'a> {
     pub r#type: &'a str,
     pub unit: &'a str,
 }
 
+#[derive(Clone, Copy)]
 pub struct Period<'a> {
     pub r#type: ValueType<'a>,
     pub value: i64,
@@ -97,10 +98,10 @@ pub struct Label<'a> {
     /// Should only be present when num is present.
     /// Specifies the units of num.
     /// Use arbitrary string (for example, "requests") as a custom count unit.
-    /// If no unit is specified, consumer may apply heuristic to deduce the unit.
-    /// Consumers may also  interpret units like "bytes" and "kilobytes" as memory
-    /// units and units like "seconds" and "nanoseconds" as time units,
-    /// and apply appropriate unit conversions to these.
+    /// If no unit is specified, consumer may apply heuristic to deduce the
+    /// unit. Consumers may also interpret units like "bytes" and "kilobytes"
+    /// as memory units and units like "seconds" and "nanoseconds" as time
+    /// units, and apply appropriate unit conversions to these.
     pub num_unit: Option<&'a str>,
 }
 
@@ -108,15 +109,19 @@ pub struct Sample<'a> {
     /// The leaf is at locations[0].
     pub locations: Vec<Location<'a>>,
 
-    /// The type and unit of each value is defined by the corresponding
-    /// entry in Profile.sample_type. All samples must have the same
-    /// number of values, the same as the length of Profile.sample_type.
-    /// When aggregating multiple samples into a single sample, the
-    /// result has a list of values that is the element-wise sum of the
-    /// lists of the originals.
-    pub values: Vec<i64>,
+    /// The type and unit of each value is defined by the corresponding entry
+    /// in Profile.sample_type. All samples must have the same number of
+    /// values, the same as the length of Profile.sample_type. When
+    /// aggregating multiple samples into a single sample, the result has a
+    /// list of values that is the element-wise sum of the lists of the
+    /// originals.
+    pub values: Vec<i64>, // [0, 0, 40, 1]
 
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
     pub labels: Vec<Label<'a>>,
+
+    /// Nanoseconds since the beginning of the profile, which may be negative
+    /// due to async collection of samples.
+    pub tick: i64,
 }

@@ -8,6 +8,7 @@ extern "C" {
 #include <cstring>
 #include <memory>
 #include <thread>
+#include <time.h>
 
 static ddog_Slice_c_char to_slice_c_char(const char *s) { return {.ptr = s, .len = strlen(s)}; }
 
@@ -17,6 +18,20 @@ struct Deleter {
 
 template <typename T> void print_error(const char *s, const T &err) {
   printf("%s (%.*s)\n", s, static_cast<int>(err.len), err.ptr);
+}
+
+ddog_Timespec _now() {
+  timespec now;
+  int result = timespec_get(&now, TIME_UTC);
+  if (result != TIME_UTC) {
+    printf("Failed to get time.");
+    exit(EXIT_FAILURE);
+  }
+  ddog_Timespec tick {
+      .seconds = now.tv_sec,
+      .nanoseconds = static_cast<uint32_t>(now.tv_nsec),
+  };
+  return tick;
 }
 
 int main(int argc, char *argv[]) {
@@ -30,6 +45,8 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  ddog_Timespec start = _now();
+
   const auto service = argv[1];
 
   const ddog_ValueType wall_time = {
@@ -39,7 +56,7 @@ int main(int argc, char *argv[]) {
 
   const ddog_Slice_value_type sample_types = {&wall_time, 1};
   const ddog_Period period = {wall_time, 60};
-  std::unique_ptr<ddog_Profile, Deleter> profile{ddog_Profile_new(sample_types, &period, nullptr)};
+  std::unique_ptr<ddog_Profile, Deleter> profile{ddog_Profile_new(sample_types, &period, &start)};
 
   ddog_Line root_line = {
       .function =
@@ -61,10 +78,13 @@ int main(int argc, char *argv[]) {
       .key = DDOG_CHARSLICE_C("language"),
       .str = DDOG_CHARSLICE_C("php"),
   };
+
+  auto tick = _now();
   ddog_Sample sample = {
       .locations = {&root_location, 1},
       .values = {&value, 1},
       .labels = {&label, 1},
+      .tick = tick.seconds * INT64_C(1000000000) + tick.nanoseconds,
   };
   ddog_Profile_add(profile.get(), sample);
 

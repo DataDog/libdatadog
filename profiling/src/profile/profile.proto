@@ -66,13 +66,13 @@ message Profile {
   // regexp will be dropped from the samples, along with their successors.
   int64 drop_frames = 7;   // Index into string table.
   // frames with Function.function_name fully matching the following
-  // regexp will be kept, even if it matches drop_functions.
+  // regexp will be kept, even if it matches drop_frames.
   int64 keep_frames = 8;  // Index into string table.
 
   // The following fields are informational, do not affect
   // interpretation of results.
 
-  // Time of collection (UTC) represented as nanoseconds past the epoch.
+  // Time the collection started (UTC) represented as nanoseconds past the epoch.
   int64 time_nanos = 9;
   // Duration of the profile, if a duration makes sense.
   int64 duration_nanos = 10;
@@ -86,6 +86,11 @@ message Profile {
   // Index into the string table of the type of the preferred sample
   // value. If unset, clients should default to the last sample value.
   int64 default_sample_type = 14;
+  // Index into the string table that defines the resolution of
+  // Breakdown.ticks, e.g. "nanoseconds" or "microseconds".
+  int64 tick_unit = 15;
+  // Labels referenced by Breakdown.
+  repeated LabelSet label_set = 16;
 }
 
 // ValueType describes the semantics and measurement units of a value.
@@ -106,12 +111,42 @@ message Sample {
   // entry in Profile.sample_type. All samples must have the same
   // number of values, the same as the length of Profile.sample_type.
   // When aggregating multiple samples into a single sample, the
-  // result has a list of values that is the elemntwise sum of the
+  // result has a list of values that is the element-wise sum of the
   // lists of the originals.
   repeated int64 value = 2;
   // label includes additional context for this sample. It can include
   // things like a thread id, allocation size, etc
   repeated Label label = 3;
+  // Breakdown can hold the individual timestamps and values for a sample that
+  // has aggregated values. The type and unit of each breakdown is defined by
+  // the corresponding entry in Profile.sample_type. It's acceptable to have
+  // less, but not more, breakdown entries than Profile.sample_type entries.
+  repeated Breakdown breakdown = 4;
+}
+
+// Breakdown stores data about the individual events that have been aggregated
+// into a Sample. There can be one breakdown for each Profile.sample_type.
+//
+// TODO: Figure out if this can also be used for the exemplar UC from alexey:
+// https://github.com/google/pprof/pull/725#issuecomment-1264841904
+message Breakdown {
+  // A list of timestamps at which the values of the associated sample were
+  // collected. The time is given in Profile.tick_unit resolution relative to
+  // Profile.time_nanos and values are delta encoded. So for three events
+  // captured at 100, 110 and 150 ticks after the profile start, this list should
+  // hold the values [100, 10, 40].
+  //
+  // TODO: Is delta encoding going to safe enough space to justify the
+  // complexity?
+  repeated int64 ticks = 1;
+  // A list that is either empty or holding exactly the same number of elements
+  // as Breakdown.ticks, associating each point in time with a recorded value.
+  // For cumulative sample types the sum of these values should add up to the
+  // corresponding Sample.value.
+  repeated int64 value = 2;
+  // A list that is either empty or holding exactly the same number of elements
+  // as Breakdown.ticks, associating each point in time with a LabelSet.
+  repeated uint64 label_set_id = 3;
 }
 
 message Label {
@@ -129,6 +164,17 @@ message Label {
   // units and units like "seconds" and "nanoseconds" as time units,
   // and apply appropriate unit conversions to these.
   int64 num_unit = 4;  // Index into string table
+}
+
+// A group of labels that can be referenced multiple times in order to reduce
+// overhead. Example use cases for reusable label sets:
+//
+// - Tracing IDs (e.g. trace_id=123, span_id=345)
+// - Thread/Process IDs (e.g. process_id=123, thread_id=456)
+message LabelSet {
+  // Unique nonzero id for the LabelSet.
+  uint64 id = 1;
+  repeated Label label = 2;
 }
 
 message Mapping {

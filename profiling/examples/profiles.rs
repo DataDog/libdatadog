@@ -57,6 +57,7 @@ fn main() {
         ],
         values: vec![1, 10000],
         labels: vec![],
+        tick: 0,
     };
 
     // Not setting .start_time intentionally to use the current time.

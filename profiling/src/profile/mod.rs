@@ -4,6 +4,7 @@
 pub mod api;
 pub mod pprof;
 
+use anyhow::anyhow;
 use core::fmt;
 use std::borrow::{Borrow, Cow};
 use std::convert::TryInto;
@@ -12,7 +13,7 @@ use std::ops::AddAssign;
 use std::time::{Duration, SystemTime};
 
 use indexmap::{IndexMap, IndexSet};
-use pprof::{Function, Label, Line, Location, ValueType};
+use pprof::{Breakdown, Function, Label, Line, Location, ValueType};
 use prost::{EncodeError, Message};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
@@ -43,7 +44,7 @@ impl From<PProfId> for i64 {
     }
 }
 
-#[derive(Eq, PartialEq, Hash)]
+#[derive(Default, Eq, PartialEq, Hash)]
 struct Mapping {
     /// Address at which the binary (or DLL) is loaded into memory.
     pub memory_start: u64,
@@ -76,7 +77,9 @@ struct Sample {
 
 pub struct Profile {
     sample_types: Vec<ValueType>,
-    samples: IndexMap<Sample, Vec<i64>>,
+
+    /// The value of the map is (aggregated_values, breakdown).
+    samples: IndexMap<Sample, (Vec<i64>, Vec<Breakdown>)>,
     mappings: IndexSet<Mapping>,
     locations: IndexSet<Location>,
     functions: IndexSet<Function>,
@@ -249,6 +252,10 @@ impl Profile {
         profile
     }
 
+    pub fn start_time(&self) -> SystemTime {
+        self.start_time
+    }
+
     /// Interns the `str` as a string, returning the id in the string table.
     fn intern(&mut self, str: &str) -> i64 {
         // strings are special because the empty string is actually allowed at
@@ -272,17 +279,23 @@ impl Profile {
         let filename = self.intern(mapping.filename);
         let build_id = self.intern(mapping.build_id);
 
-        let index = self.mappings.dedup(Mapping {
+        let new_mapping = Mapping {
             memory_start: mapping.memory_start,
             memory_limit: mapping.memory_limit,
             file_offset: mapping.file_offset,
             filename,
             build_id,
-        });
+        };
 
         /* PProf reserves mapping 0 for "no mapping", and it won't let you put
          * one in there with all "zero" data either, so we shift the ids.
          */
+        if new_mapping == Mapping::default() {
+            return Ok(PProfId(0));
+        }
+
+        let index = self.mappings.dedup(new_mapping);
+
         Ok(PProfId(index + 1))
     }
 
@@ -305,12 +318,15 @@ impl Profile {
         PProfId(index + 1)
     }
 
-    pub fn add(&mut self, sample: api::Sample) -> Result<PProfId, FullError> {
+    pub fn add(&mut self, sample: api::Sample) -> anyhow::Result<PProfId> {
         if sample.values.len() != self.sample_types.len() {
-            return Ok(PProfId(0));
+            return Err(anyhow!(
+                "The sample types len ({}) did not match the profile's ({})",
+                sample.values.len(),
+                self.sample_types.len()
+            ));
         }
 
-        let values = sample.values.clone();
         let labels = sample
             .labels
             .iter()
@@ -360,17 +376,50 @@ impl Profile {
 
         let s = Sample { locations, labels };
 
+        // For now, avoid breakdown labels as the backend doesn't understand them.
+        let breakdowns: Vec<(i64, i64, u64)> = sample
+            .values
+            .iter()
+            .map(|value| (if *value == 0 { 0 } else { sample.tick }, *value, 0_u64))
+            .collect();
+
         let id = match self.samples.get_index_of(&s) {
             None => {
-                self.samples.insert(s, values);
+                self.samples.insert(
+                    s,
+                    (
+                        sample.values,
+                        breakdowns
+                            .into_iter()
+                            .map(|breakdown| Breakdown {
+                                ticks: vec![breakdown.0],
+                                values: vec![breakdown.1],
+                                label_set_ids: vec![breakdown.2],
+                            })
+                            .collect(),
+                    ),
+                );
                 PProfId(self.samples.len())
             }
             Some(index) => {
-                let (_, existing_values) =
+                let (_, (existing_values, existing_breakdowns)) =
                     self.samples.get_index_mut(index).expect("index to exist");
-                for (a, b) in existing_values.iter_mut().zip(values) {
+
+                for (a, b) in existing_values.iter_mut().zip(sample.values) {
                     a.add_assign(b)
                 }
+
+                for (breakdown, (tick, value, labels_set_id)) in
+                    existing_breakdowns.iter_mut().zip(breakdowns)
+                {
+                    // Don't store zero value breakdowns (waste of space)
+                    if value != 0 {
+                        breakdown.ticks.push(tick);
+                        breakdown.values.push(value);
+                        breakdown.label_set_ids.push(labels_set_id);
+                    }
+                }
+
                 PProfId(index + 1)
             }
         };
@@ -481,10 +530,11 @@ impl From<&Profile> for pprof::Profile {
         let mut samples: Vec<pprof::Sample> = profile
             .samples
             .iter()
-            .map(|(sample, values)| pprof::Sample {
+            .map(|(sample, (values, breakdowns))| pprof::Sample {
                 location_ids: sample.locations.iter().map(Into::into).collect(),
-                values: values.to_vec(),
+                values: values.clone(),
                 labels: sample.labels.clone(),
+                breakdowns: breakdowns.clone(),
             })
             .collect();
 
@@ -567,6 +617,7 @@ impl From<&Profile> for pprof::Profile {
 mod api_test {
     use crate::profile::{api, pprof, PProfId, Profile, ValueType};
     use std::borrow::Cow;
+    use std::time::SystemTime;
 
     #[test]
     fn interning() {
@@ -642,6 +693,7 @@ mod api_test {
                 locations,
                 values: vec![1, 10000],
                 labels: vec![],
+                tick: 0,
             })
             .expect("add to succeed");
 
@@ -700,12 +752,14 @@ mod api_test {
             locations: main_locations,
             values: values.clone(),
             labels: labels.clone(),
+            tick: 0,
         };
 
         let test_sample = api::Sample {
             locations: test_locations,
             values,
             labels,
+            tick: 0,
         };
 
         let mut profile = Profile::builder().sample_types(sample_types).build();
@@ -869,12 +923,14 @@ mod api_test {
             locations: vec![],
             values: vec![1, 10000],
             labels: vec![id_label, other_label],
+            tick: 0,
         };
 
         let sample2 = api::Sample {
             locations: vec![],
             values: vec![1, 10000],
             labels: vec![id2_label, other_label],
+            tick: 0,
         };
 
         profile.add(sample1).expect("add to success");
@@ -947,5 +1003,128 @@ mod api_test {
 
         // The trace endpoint label shouldn't be added to second sample because the span id doesn't match
         assert_eq!(s2.labels.len(), 2);
+    }
+
+    fn offset(string_table: &[String], id: i64) -> String {
+        let offset: usize = id.try_into().unwrap();
+        string_table.get(offset).unwrap().clone()
+    }
+
+    #[test]
+    fn test_breakdown() {
+        let start_time = SystemTime::now();
+        let vt_wall_time = api::ValueType {
+            r#type: "wall-time",
+            unit: "nanoseconds",
+        };
+        let vt_cpu_time = api::ValueType {
+            r#type: "wall-time",
+            unit: "nanoseconds",
+        };
+
+        let period = api::Period {
+            r#type: vt_wall_time,
+            value: 10_000_000,
+        };
+
+        let sample_types = vec![vt_wall_time, vt_cpu_time];
+
+        let mut profile: Profile = Profile::builder()
+            .sample_types(sample_types.clone())
+            .period(Some(period))
+            .start_time(Some(start_time))
+            .build();
+
+        let process_label = api::Label {
+            key: "process_id",
+            str: Some("37415"),
+            ..Default::default()
+        };
+
+        let wall_time = 10_000_000;
+        let cpu_time = 73;
+
+        let n_breakdowns: i64 = 3;
+        for i in 1..=n_breakdowns {
+            // This is made up but pretty similar to a real PHP profile.
+            let locations = vec![
+                api::Location {
+                    mapping: api::Mapping {
+                        filename: "ext/standard",
+                        ..Default::default()
+                    },
+                    lines: vec![api::Line {
+                        function: api::Function {
+                            name: "sleep",
+                            ..Default::default()
+                        },
+                        line: 0,
+                    }],
+                    ..Default::default()
+                },
+                api::Location {
+                    mapping: api::Mapping::default(),
+                    lines: vec![api::Line {
+                        function: api::Function {
+                            name: "<?php",
+                            filename: "/srv/example.org/index.php",
+                            ..Default::default()
+                        },
+                        line: 3,
+                    }],
+                    ..Default::default()
+                },
+            ];
+
+            let tick = i * wall_time;
+            let sample = api::Sample {
+                locations,
+                values: vec![wall_time, cpu_time],
+                labels: vec![process_label],
+                tick,
+            };
+            let sample_id = profile.add(sample).unwrap();
+            assert_eq!(PProfId(1), sample_id);
+        }
+
+        // Convert it into a pprof::profile and check properties.
+        let pprof: pprof::Profile = (&profile).into();
+        let string_table = &pprof.string_table;
+
+        // Check samples. There should be only one.
+        assert_eq!(pprof.samples.len(), 1);
+        let sample = pprof.samples.first().unwrap();
+
+        // Check sample labels (not breakdown labels). There should be only one.
+        assert_eq!(1, sample.labels.len());
+        let label = sample.labels.first().unwrap();
+        assert_eq!(offset(string_table, label.key), process_label.key);
+        assert_eq!(offset(string_table, label.str), process_label.str.unwrap());
+        assert_eq!(label.num, 0);
+        assert_eq!(label.num_unit, 0);
+
+        // Check sample values (not breakdown values). There are two sample types, wall and cpu.
+        assert_eq!(sample.values.len(), sample_types.len());
+        assert_eq!(sample.values[0], wall_time * n_breakdowns);
+        assert_eq!(sample.values[1], cpu_time * n_breakdowns);
+
+        // Check breakdowns. There were two sample types (wall and cpu).
+        assert_eq!(sample.breakdowns.len(), sample_types.len());
+
+        // Check ticks breakdown. Should be [10ms, 20ms, 30ms] for all sample types.
+        let expected_values = vec![wall_time, wall_time * 2, wall_time * 3];
+        for breakdown in &sample.breakdowns {
+            assert_eq!(breakdown.ticks, expected_values);
+            // Also check label sets while we are here; should all be zero.
+            assert_eq!(breakdown.label_set_ids, vec![0, 0, 0]);
+        }
+
+        // Check wall-time value breakdown.
+        let expected_values = vec![wall_time, wall_time, wall_time];
+        assert_eq!(sample.breakdowns[0].values, expected_values);
+
+        // Check cpu-time value breakdown.
+        let expected_values = vec![cpu_time, cpu_time, cpu_time];
+        assert_eq!(sample.breakdowns[1].values, expected_values);
     }
 }
