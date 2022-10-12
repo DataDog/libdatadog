@@ -26,14 +26,11 @@ static struct ddog_Timespec systemtime_now(void) {
   int base = timespec_get(&ts, TIME_UTC);
   assert(base == TIME_UTC);
 
-  return (struct ddog_Timespec) {
-      .seconds = (int64_t)ts.tv_sec,
-      .nanoseconds = (uint32_t)ts.tv_nsec,
-  };
+  return {static_cast<int64_t>(ts.tv_sec), static_cast<uint32_t>(ts.tv_nsec)};
 }
 
 static int64_t timespec_to_i64(struct ddog_Timespec ts) {
-  return ts.seconds * INT64_C(1000000000) + (int64_t)ts.nanoseconds;
+  return ts.seconds * INT64_C(1000000000) + static_cast<int64_t>(ts.nanoseconds);
 }
 
 int main(int argc, char *argv[]) {
