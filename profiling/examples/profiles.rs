@@ -3,61 +3,65 @@
 
 use datadog_profiling::profile::{api, Profile};
 use std::io::Write;
-use std::process::exit;
 
-// Keep this in-sync with profiles.c
-fn main() {
-    let walltime = api::ValueType {
+/* The profile built doesn't match the same format as the PHP profiler, but
+ * it is similar and should make sense.
+ * Keep this in-sync with profiles.c
+ */
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let wall_time = api::ValueType {
         r#type: "wall-time",
         unit: "nanoseconds",
     };
-    let sample_types = vec![
-        api::ValueType {
-            r#type: "samples",
-            unit: "count",
-        },
-        walltime,
-    ];
+    let cpu_time = api::ValueType {
+        r#type: "cpu-time",
+        unit: "nanoseconds",
+    };
+    let sample_types = vec![wall_time, cpu_time];
 
     let period = api::Period {
-        r#type: walltime,
-        value: 10000,
+        r#type: wall_time,
+        value: 60_000_000_000,
     };
 
-    let mapping = api::Mapping {
-        filename: "/usr/local/bin/php",
+    let ext_standard = api::Mapping {
+        filename: "[ext/standard]",
         ..Default::default()
     };
     let sample = api::Sample {
         locations: vec![
             api::Location {
-                mapping,
+                mapping: ext_standard,
                 lines: vec![api::Line {
                     function: api::Function {
-                        name: "phpinfo",
-                        filename: "/srv/public/index.php",
-                        ..Default::default()
-                    },
-                    line: 3,
-                }],
-                ..Default::default()
-            },
-            api::Location {
-                mapping,
-                lines: vec![api::Line {
-                    function: api::Function {
-                        name: "{main}",
-                        filename: "/srv/public/index.php",
+                        name: "sleep",
                         ..Default::default()
                     },
                     line: 0,
                 }],
                 ..Default::default()
             },
+            api::Location {
+                mapping: ext_standard,
+                lines: vec![api::Line {
+                    function: api::Function {
+                        name: "<?php",
+                        filename: "/srv/example.org/index.php",
+                        ..Default::default()
+                    },
+                    line: 3,
+                }],
+                ..Default::default()
+            },
         ],
-        values: vec![1, 10000],
-        labels: vec![],
-        tick: 0,
+        values: vec![10_000, 73],
+        labels: vec![api::Label {
+            key: "process_id",
+            str: Some("12345"),
+            num: 0,
+            num_unit: None,
+        }],
+        tick: 10_003,
     };
 
     // Not setting .start_time intentionally to use the current time.
@@ -66,22 +70,13 @@ fn main() {
         .period(Some(period))
         .build();
 
-    match profile.add(sample) {
-        Ok(id) => {
-            let index: u64 = id.into();
-            assert_eq!(index, 1)
-        }
-        Err(_) => exit(1),
-    }
+    let sample_id1 = profile.add(sample.clone())?;
+    let sample_id2 = profile.add(sample)?;
 
-    match profile.serialize(None, None) {
-        Ok(encoded_profile) => {
-            let buffer = &encoded_profile.buffer;
-            assert!(buffer.len() > 100);
-            std::io::stdout()
-                .write_all(buffer.as_slice())
-                .expect("write to succeed");
-        }
-        Err(_) => exit(1),
-    }
+    assert_eq!(sample_id1, sample_id2, "Sample ids should match");
+
+    let encoded_pprofile = profile.serialize(None, None)?;
+    let buffer = &encoded_pprofile.buffer;
+    std::io::stdout().write_all(buffer.as_slice())?;
+    Ok(())
 }

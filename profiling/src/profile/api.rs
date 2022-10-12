@@ -51,6 +51,7 @@ pub struct Function<'a> {
     pub start_line: i64,
 }
 
+#[derive(Clone)]
 pub struct Line<'a> {
     /// The corresponding profile.Function for this line.
     pub function: Function<'a>,
@@ -59,7 +60,7 @@ pub struct Line<'a> {
     pub line: i64,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Location<'a> {
     pub mapping: Mapping<'a>,
 
@@ -87,7 +88,7 @@ pub struct Location<'a> {
     pub is_folded: bool,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Clone, Copy, Default)]
 pub struct Label<'a> {
     pub key: &'a str,
 
@@ -105,6 +106,7 @@ pub struct Label<'a> {
     pub num_unit: Option<&'a str>,
 }
 
+#[derive(Clone)]
 pub struct Sample<'a> {
     /// The leaf is at locations[0].
     pub locations: Vec<Location<'a>>,
