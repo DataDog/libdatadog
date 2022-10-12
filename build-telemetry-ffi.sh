@@ -122,7 +122,7 @@ if command -v objcopy > /dev/null && [[ "$target" != "x86_64-pc-windows-msvc" ]]
 fi
 
 echo "Checking that native-static-libs are as expected for this platform..."
-cd profiling-ffi
+cd ddtelemetry-ffi```
 actual_native_static_libs="$(cargo rustc --release --target "${target}" -- --print=native-static-libs 2>&1 | awk -F ':' '/note: native-static-libs:/ { print $3 }')"
 echo "Actual native-static-libs:${actual_native_static_libs}"
 echo "Expected native-static-libs:${expected_native_static_libs}"
