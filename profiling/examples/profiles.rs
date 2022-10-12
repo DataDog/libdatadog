@@ -4,7 +4,6 @@
 use datadog_profiling::profile::{api, Profile};
 use std::io::Write;
 use std::time::SystemTime;
-use tokio::time::Instant;
 
 /* The profile built doesn't match the same format as the PHP profiler, but
  * it is similar and should make sense.
@@ -12,7 +11,6 @@ use tokio::time::Instant;
  */
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start_time = SystemTime::now();
-    let started_at = Instant::now();
 
     let wall_time = api::ValueType {
         r#type: "wall-time",
@@ -66,11 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             num: 0,
             num_unit: None,
         }],
-        tick: started_at
-            .elapsed()
-            .as_nanos()
-            .try_into()
-            .unwrap_or(i64::MAX),
+        timestamp: SystemTime::now(),
     };
 
     let mut profile: Profile = Profile::builder()
@@ -81,11 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let sample_id1 = profile.add(sample.clone())?;
 
-    sample.tick = started_at
-        .elapsed()
-        .as_nanos()
-        .try_into()
-        .unwrap_or(i64::MAX);
+    sample.timestamp = SystemTime::now();
     let sample_id2 = profile.add(sample)?;
 
     assert_eq!(sample_id1, sample_id2, "Sample ids should match");

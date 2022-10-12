@@ -1,6 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use std::time::SystemTime;
+
 #[derive(Clone, Copy)]
 pub struct ValueType<'a> {
     pub r#type: &'a str,
@@ -123,7 +125,6 @@ pub struct Sample<'a> {
     /// things like a thread id, allocation size, etc
     pub labels: Vec<Label<'a>>,
 
-    /// Nanoseconds since the beginning of the profile, which may be negative
-    /// due to async collection of samples.
-    pub tick: i64,
+    /// The timestamp of when the sample was taken.
+    pub timestamp: SystemTime,
 }

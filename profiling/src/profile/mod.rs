@@ -318,6 +318,14 @@ impl Profile {
         PProfId(index + 1)
     }
 
+    /// Determines the +/- offset of `tick` from `base` in nanoseconds.
+    fn delta(base: SystemTime, tick: SystemTime) -> i64 {
+        match tick.duration_since(base) {
+            Ok(duration) => duration.as_nanos().try_into().unwrap_or(i64::MAX),
+            Err(err) => -err.duration().as_nanos().try_into().unwrap_or(i64::MAX),
+        }
+    }
+
     pub fn add(&mut self, sample: api::Sample) -> anyhow::Result<PProfId> {
         if sample.values.len() != self.sample_types.len() {
             return Err(anyhow!(
@@ -376,11 +384,12 @@ impl Profile {
 
         let s = Sample { locations, labels };
 
+        let tick = Self::delta(self.start_time, sample.timestamp);
         // For now, avoid breakdown labels as the backend doesn't understand them.
         let breakdowns: Vec<(i64, i64, u64)> = sample
             .values
             .iter()
-            .map(|value| (if *value == 0 { 0 } else { sample.tick }, *value, 0_u64))
+            .map(|value| (if *value == 0 { 0 } else { tick }, *value, 0_u64))
             .collect();
 
         let id = match self.samples.get_index_of(&s) {
@@ -617,7 +626,8 @@ impl From<&Profile> for pprof::Profile {
 mod api_test {
     use crate::profile::{api, pprof, PProfId, Profile, ValueType};
     use std::borrow::Cow;
-    use std::time::SystemTime;
+    use std::ops::Add;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     #[test]
     fn interning() {
@@ -693,7 +703,7 @@ mod api_test {
                 locations,
                 values: vec![1, 10000],
                 labels: vec![],
-                tick: 0,
+                timestamp: SystemTime::now(),
             })
             .expect("add to succeed");
 
@@ -701,6 +711,8 @@ mod api_test {
     }
 
     fn provide_distinct_locations() -> Profile {
+        let start_time = SystemTime::now();
+
         let sample_types = vec![api::ValueType {
             r#type: "samples",
             unit: "count",
@@ -752,17 +764,20 @@ mod api_test {
             locations: main_locations,
             values: values.clone(),
             labels: labels.clone(),
-            tick: 0,
+            timestamp: SystemTime::now(),
         };
 
         let test_sample = api::Sample {
             locations: test_locations,
             values,
             labels,
-            tick: 0,
+            timestamp: SystemTime::now(),
         };
 
-        let mut profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile = Profile::builder()
+            .start_time(Some(start_time))
+            .sample_types(sample_types)
+            .build();
 
         let sample_id1 = profile.add(main_sample).expect("profile to not be full");
         assert_eq!(sample_id1, PProfId(1));
@@ -923,14 +938,14 @@ mod api_test {
             locations: vec![],
             values: vec![1, 10000],
             labels: vec![id_label, other_label],
-            tick: 0,
+            timestamp: SystemTime::now(),
         };
 
         let sample2 = api::Sample {
             locations: vec![],
             values: vec![1, 10000],
             labels: vec![id2_label, other_label],
-            tick: 0,
+            timestamp: SystemTime::now(),
         };
 
         profile.add(sample1).expect("add to success");
@@ -1012,7 +1027,7 @@ mod api_test {
 
     #[test]
     fn test_breakdown() {
-        let start_time = SystemTime::now();
+        let start_time = UNIX_EPOCH;
         let vt_wall_time = api::ValueType {
             r#type: "wall-time",
             unit: "nanoseconds",
@@ -1081,7 +1096,7 @@ mod api_test {
                 locations,
                 values: vec![wall_time, cpu_time],
                 labels: vec![process_label],
-                tick,
+                timestamp: start_time.add(Duration::from_nanos(tick as u64)),
             };
             let sample_id = profile.add(sample).unwrap();
             assert_eq!(PProfId(1), sample_id);

@@ -5,6 +5,7 @@ use crate::Timespec;
 use datadog_profiling::profile as profiles;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
 use std::convert::{TryFrom, TryInto};
+use std::ops::{Add, Sub};
 use std::str::Utf8Error;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -322,21 +323,17 @@ pub extern "C" fn ddog_Profile_add(
                 labels.push(label.try_into()?);
             }
 
-            // Convert the profile start time into an i64
-            let start_ns = match profile.start_time().duration_since(UNIX_EPOCH) {
-                Ok(duration) => duration.as_nanos().try_into().unwrap_or(i64::MAX),
-                Err(err) => -err.duration().as_nanos().try_into().unwrap_or(i64::MAX),
+            let timestamp = if sample.unix_timestamp_ns < 0 {
+                UNIX_EPOCH.sub(Duration::from_nanos((-sample.unix_timestamp_ns) as u64))
+            } else {
+                UNIX_EPOCH.add(Duration::from_nanos(sample.unix_timestamp_ns as u64))
             };
-
-            // Now it's simple i64 math to get the tick:
-            //   tick + start_ns = sample.unix_time_ns
-            let tick = sample.unix_timestamp_ns - start_ns;
 
             Ok(profiles::api::Sample {
                 locations,
                 values,
                 labels,
-                tick,
+                timestamp,
             })
         }
     })();
