@@ -62,29 +62,11 @@ case "$target" in
         ;;
 esac
 
-echo "Recognized platform '${target}'. Adding libs: ${native_static_libs}"
-sed < profiling-ffi/datadog_profiling.pc.in "s/@Datadog_VERSION@/${version}/g" \
-    > "$destdir/lib/pkgconfig/datadog_telemetry.pc"
-
-sed < profiling-ffi/datadog_profiling_with_rpath.pc.in "s/@Datadog_VERSION@/${version}/g" \
-    > "$destdir/lib/pkgconfig/datadog_telemetry_with_rpath.pc"
-
-sed < profiling-ffi/datadog_profiling-static.pc.in "s/@Datadog_VERSION@/${version}/g" \
-    | sed "s/@Datadog_LIBRARIES@/${native_static_libs}/g" \
-    > "$destdir/lib/pkgconfig/datadog_telemetry-static.pc"
-
-# strip leading white space as per CMake policy CMP0004.
-ffi_libraries="$(echo "${native_static_libs}" | sed -e 's/^[[:space:]]*//')"
-
-sed < cmake/DatadogConfig.cmake.in \
-    > "$destdir/cmake/DatadogConfig.cmake" \
-    "s/@Datadog_LIBRARIES@/${ffi_libraries}/g"
-
 cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
 export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
-datadog_telemetry_ffi="datadog-telemetry-ffi"
+datadog_telemetry_ffi="ddtelemetry-ffi"
 echo "Building the ${datadog_telemetry_ffi} crate (may take some time)..."
 cargo build --package="${datadog_telemetry_ffi}" --release --target "${target}"
 
