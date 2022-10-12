@@ -148,7 +148,7 @@ pub struct Sample<'a> {
     pub labels: Slice<'a, Label<'a>>,
 
     /// Nanoseconds since the UNIX epoch.
-    pub tick: i64,
+    pub unix_timestamp_ns: i64,
 }
 
 impl<'a> TryFrom<&'a Mapping<'a>> for profiles::api::Mapping<'a> {
@@ -322,14 +322,15 @@ pub extern "C" fn ddog_Profile_add(
                 labels.push(label.try_into()?);
             }
 
-            let start_ns: i64 = profile
-                .start_time()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-                .try_into()
-                .unwrap();
-            let tick = start_ns + sample.tick;
+            // Convert the profile start time into an i64
+            let start_ns = match profile.start_time().duration_since(UNIX_EPOCH) {
+                Ok(duration) => duration.as_nanos().try_into().unwrap_or(i64::MAX),
+                Err(err) => -err.duration().as_nanos().try_into().unwrap_or(i64::MAX),
+            };
+
+            // Now it's simple i64 math to get the tick:
+            //   tick + start_ns = sample.unix_time_ns
+            let tick = sample.unix_timestamp_ns - start_ns;
 
             Ok(profiles::api::Sample {
                 locations,
@@ -516,7 +517,7 @@ mod test {
                 locations: Slice::from(&locations),
                 values: Slice::from(&values),
                 labels: Slice::from(&labels),
-                tick: 0,
+                unix_timestamp_ns: 0,
             };
 
             let aggregator = &mut *profile;
@@ -582,14 +583,14 @@ mod test {
             locations: Slice::from(main_locations.as_slice()),
             values: Slice::from(values.as_slice()),
             labels: Slice::from(labels.as_slice()),
-            tick: 0,
+            unix_timestamp_ns: 0,
         };
 
         let test_sample = Sample {
             locations: Slice::from(test_locations.as_slice()),
             values: Slice::from(values.as_slice()),
             labels: Slice::from(labels.as_slice()),
-            tick: 0,
+            unix_timestamp_ns: 0,
         };
 
         let aggregator = &mut *profile;

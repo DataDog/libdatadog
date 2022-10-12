@@ -2,6 +2,7 @@ extern "C" {
 #include <datadog/common.h>
 #include <datadog/profiling.h>
 }
+#include <cassert>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -20,18 +21,19 @@ template <typename T> void print_error(const char *s, const T &err) {
   printf("%s (%.*s)\n", s, static_cast<int>(err.len), err.ptr);
 }
 
-ddog_Timespec _now() {
-  timespec now;
-  int result = timespec_get(&now, TIME_UTC);
-  if (result != TIME_UTC) {
-    printf("Failed to get time.");
-    exit(EXIT_FAILURE);
-  }
-  ddog_Timespec tick {
-      .seconds = now.tv_sec,
-      .nanoseconds = static_cast<uint32_t>(now.tv_nsec),
+static struct ddog_Timespec systemtime_now(void) {
+  struct timespec ts;
+  int base = timespec_get(&ts, TIME_UTC);
+  assert(base == TIME_UTC);
+
+  return (struct ddog_Timespec) {
+      .seconds = (int64_t)ts.tv_sec,
+      .nanoseconds = (uint32_t)ts.tv_nsec,
   };
-  return tick;
+}
+
+static int64_t timespec_to_i64(struct ddog_Timespec ts) {
+  return ts.seconds * INT64_C(1000000000) + (int64_t)ts.nanoseconds;
 }
 
 int main(int argc, char *argv[]) {
@@ -45,7 +47,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  ddog_Timespec start = _now();
+  auto start = systemtime_now();
 
   const auto service = argv[1];
 
@@ -79,12 +81,11 @@ int main(int argc, char *argv[]) {
       .str = DDOG_CHARSLICE_C("php"),
   };
 
-  auto tick = _now();
   ddog_Sample sample = {
       .locations = {&root_location, 1},
       .values = {&value, 1},
       .labels = {&label, 1},
-      .tick = tick.seconds * INT64_C(1000000000) + tick.nanoseconds,
+      .unix_timestamp_ns = timespec_to_i64(systemtime_now()),
   };
   ddog_Profile_add(profile.get(), sample);
 

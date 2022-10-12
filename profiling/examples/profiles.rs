@@ -3,12 +3,17 @@
 
 use datadog_profiling::profile::{api, Profile};
 use std::io::Write;
+use std::time::SystemTime;
+use tokio::time::Instant;
 
 /* The profile built doesn't match the same format as the PHP profiler, but
  * it is similar and should make sense.
  * Keep this in-sync with profiles.c
  */
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let start_time = SystemTime::now();
+    let started_at = Instant::now();
+
     let wall_time = api::ValueType {
         r#type: "wall-time",
         unit: "nanoseconds",
@@ -28,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         filename: "[ext/standard]",
         ..Default::default()
     };
-    let sample = api::Sample {
+    let mut sample = api::Sample {
         locations: vec![
             api::Location {
                 mapping: ext_standard,
@@ -61,22 +66,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             num: 0,
             num_unit: None,
         }],
-        tick: 10_003,
+        tick: started_at
+            .elapsed()
+            .as_nanos()
+            .try_into()
+            .unwrap_or(i64::MAX),
     };
 
-    // Not setting .start_time intentionally to use the current time.
     let mut profile: Profile = Profile::builder()
         .sample_types(sample_types)
         .period(Some(period))
+        .start_time(Some(start_time))
         .build();
 
     let sample_id1 = profile.add(sample.clone())?;
+
+    sample.tick = started_at
+        .elapsed()
+        .as_nanos()
+        .try_into()
+        .unwrap_or(i64::MAX);
     let sample_id2 = profile.add(sample)?;
 
     assert_eq!(sample_id1, sample_id2, "Sample ids should match");
 
-    let encoded_pprofile = profile.serialize(None, None)?;
-    let buffer = &encoded_pprofile.buffer;
+    let end_time = SystemTime::now();
+    let encoded_profile = profile.serialize(Some(end_time), None)?;
+    let buffer = &encoded_profile.buffer;
     std::io::stdout().write_all(buffer.as_slice())?;
     Ok(())
 }
