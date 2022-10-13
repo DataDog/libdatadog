@@ -37,7 +37,9 @@ Following environments are supported:
       `1:name=systemd:/ecs/8cd79a803caf4d2aa945152e934a5c00/8cd79a803caf4d2aa945152e934a5c00-1053176469`
 */
 
-const CGROUP_PATH: &str = "/proc/self/cgroup";
+const DEFAULT_CGROUP_PATH: &str = "/proc/self/cgroup";
+
+static mut CGROUP_PATH: Option<String> = None;
 
 const UUID_SOURCE: &str =
     r"[0-9a-f]{8}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{12}";
@@ -85,10 +87,16 @@ fn extract_container_id(filepath: &Path) -> Result<String, Box<dyn std::error::E
     Err(ContainerIdNotFoundError.into())
 }
 
+pub unsafe fn set_cgroup_file(file: String) {
+    // Safety: Must not be called in multi-threaded contexts
+    CGROUP_PATH = Some(file)
+}
+
 pub fn get_container_id() -> Option<&'static str> {
     // cache container id in a static to avoid recomputing it at each call
     lazy_static! {
-        static ref CONTAINER_ID: Option<String> = extract_container_id(Path::new(CGROUP_PATH)).ok();
+        // Safety: we assume set_cgroup_file is not called when it shouldn't
+        static ref CONTAINER_ID: Option<String> = unsafe { extract_container_id(Path::new(CGROUP_PATH.as_ref().map(String::as_str).unwrap_or(&DEFAULT_CGROUP_PATH))).ok() };
     }
     CONTAINER_ID.as_deref()
 }
