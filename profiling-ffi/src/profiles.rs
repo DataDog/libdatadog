@@ -148,7 +148,7 @@ pub struct Sample<'a> {
     /// things like a thread id, allocation size, etc
     pub labels: Slice<'a, Label<'a>>,
 
-    /// Nanoseconds since the UNIX epoch.
+    /// The timestamp of the sample in nanoseconds since the UNIX epoch.
     pub unix_timestamp_ns: i64,
 }
 
