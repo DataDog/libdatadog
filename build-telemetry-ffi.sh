@@ -10,7 +10,7 @@ destdir="$1"
 
 mkdir -v -p "$destdir/include/datadog" "$destdir/lib/pkgconfig" "$destdir/cmake"
 
-version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < profiling-ffi/Cargo.toml)
+version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < ddtelemetry-ffi/Cargo.toml)
 target="$(rustc -vV | awk '/^host:/ { print $2 }')"
 shared_library_suffix=".so"
 static_library_suffix=".a"
@@ -35,7 +35,7 @@ case "$target" in
         remove_rpath=1
         ;;
 
-    "x86_64-apple-darwin")
+    "x86_64-apple-darwin"|"aarch64-apple-darwin")
         expected_native_static_libs=" -framework Security -framework CoreFoundation -liconv -lSystem -lresolv -lc -lm -liconv"
         native_static_libs="${expected_native_static_libs}"
         shared_library_suffix=".dylib"
@@ -62,29 +62,11 @@ case "$target" in
         ;;
 esac
 
-echo "Recognized platform '${target}'. Adding libs: ${native_static_libs}"
-sed < profiling-ffi/datadog_profiling.pc.in "s/@Datadog_VERSION@/${version}/g" \
-    > "$destdir/lib/pkgconfig/datadog_telemetry.pc"
-
-sed < profiling-ffi/datadog_profiling_with_rpath.pc.in "s/@Datadog_VERSION@/${version}/g" \
-    > "$destdir/lib/pkgconfig/datadog_telemetry_with_rpath.pc"
-
-sed < profiling-ffi/datadog_profiling-static.pc.in "s/@Datadog_VERSION@/${version}/g" \
-    | sed "s/@Datadog_LIBRARIES@/${native_static_libs}/g" \
-    > "$destdir/lib/pkgconfig/datadog_telemetry-static.pc"
-
-# strip leading white space as per CMake policy CMP0004.
-ffi_libraries="$(echo "${native_static_libs}" | sed -e 's/^[[:space:]]*//')"
-
-sed < cmake/DatadogConfig.cmake.in \
-    > "$destdir/cmake/DatadogConfig.cmake" \
-    "s/@Datadog_LIBRARIES@/${ffi_libraries}/g"
-
 cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
 export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
-datadog_telemetry_ffi="datadog-telemetry-ffi"
+datadog_telemetry_ffi="ddtelemetry-ffi"
 echo "Building the ${datadog_telemetry_ffi} crate (may take some time)..."
 cargo build --package="${datadog_telemetry_ffi}" --release --target "${target}"
 
@@ -122,7 +104,7 @@ if command -v objcopy > /dev/null && [[ "$target" != "x86_64-pc-windows-msvc" ]]
 fi
 
 echo "Checking that native-static-libs are as expected for this platform..."
-cd profiling-ffi
+cd ddtelemetry-ffi```
 actual_native_static_libs="$(cargo rustc --release --target "${target}" -- --print=native-static-libs 2>&1 | awk -F ':' '/note: native-static-libs:/ { print $3 }')"
 echo "Actual native-static-libs:${actual_native_static_libs}"
 echo "Expected native-static-libs:${expected_native_static_libs}"
