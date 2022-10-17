@@ -133,9 +133,11 @@ echo "Generating $destdir/include/libdatadog headers..."
 rustup run nightly -- cbindgen --crate ddcommon-ffi \
     --config ddcommon-ffi/cbindgen.toml \
     --output "$destdir/include/datadog/common.h"
-rustup run nightly -- cbindgen --crate "${datadog_telemetry_ffi}"  \
-    --config ddtelemetry-ffi/cbindgen.toml \
-    --output "$destdir/include/datadog/telemetry.h"
-./target/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/telemetry.h"
+cargo +nightly run --example ddtelemetry-ffi-header > "$destdir/include/datadog/telemetry.h"
+cbindgen --crate "${datadog_profiling_ffi}" \
+    --config profiling-ffi/cbindgen.toml \
+    --output "$destdir/include/datadog/profiling.h"
+
+./target/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/telemetry.h" "$destdir/include/datadog/profiling.h"
 
 echo "Done."
