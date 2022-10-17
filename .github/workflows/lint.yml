@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Cache
         uses: ./.github/actions/cache
       - name: Install latest nightly toolchain and rustfmt
@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Cache
         uses: ./.github/actions/cache
         with:
@@ -36,7 +36,7 @@ jobs:
     name: "Presence of licence headers"
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Install licensecheck
         run: sudo apt-get install -y licensecheck
       - name: Check licenses
@@ -59,7 +59,7 @@ jobs:
     name: "Valid LICENSE-3rdparty.yml"
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - run: stat LICENSE-3rdparty.yml
       - name: Cache
         uses: actions/cache@v3

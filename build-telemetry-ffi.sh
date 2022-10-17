@@ -10,7 +10,7 @@ destdir="$1"
 
 mkdir -v -p "$destdir/include/datadog" "$destdir/lib/pkgconfig" "$destdir/cmake"
 
-version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < profiling-ffi/Cargo.toml)
+version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < ddtelemetry-ffi/Cargo.toml)
 target="$(rustc -vV | awk '/^host:/ { print $2 }')"
 shared_library_suffix=".so"
 static_library_suffix=".a"
@@ -62,38 +62,20 @@ case "$target" in
         ;;
 esac
 
-echo "Recognized platform '${target}'. Adding libs: ${native_static_libs}"
-sed < profiling-ffi/datadog_profiling.pc.in "s/@Datadog_VERSION@/${version}/g" \
-    > "$destdir/lib/pkgconfig/datadog_profiling.pc"
-
-sed < profiling-ffi/datadog_profiling_with_rpath.pc.in "s/@Datadog_VERSION@/${version}/g" \
-    > "$destdir/lib/pkgconfig/datadog_profiling_with_rpath.pc"
-
-sed < profiling-ffi/datadog_profiling-static.pc.in "s/@Datadog_VERSION@/${version}/g" \
-    | sed "s/@Datadog_LIBRARIES@/${native_static_libs}/g" \
-    > "$destdir/lib/pkgconfig/datadog_profiling-static.pc"
-
-# strip leading white space as per CMake policy CMP0004.
-ffi_libraries="$(echo "${native_static_libs}" | sed -e 's/^[[:space:]]*//')"
-
-sed < cmake/DatadogConfig.cmake.in \
-    > "$destdir/cmake/DatadogConfig.cmake" \
-    "s/@Datadog_LIBRARIES@/${ffi_libraries}/g"
-
 cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
 export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
-datadog_profiling_ffi="datadog-profiling-ffi"
-echo "Building the ${datadog_profiling_ffi} crate (may take some time)..."
-cargo build --package="${datadog_profiling_ffi}" --release --target "${target}"
+datadog_telemetry_ffi="ddtelemetry-ffi"
+echo "Building the ${datadog_telemetry_ffi} crate (may take some time)..."
+cargo build --package="${datadog_telemetry_ffi}" --release --target "${target}"
 
 # Remove _ffi suffix when copying
-shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"
-shared_library_rename="${library_prefix}datadog_profiling${shared_library_suffix}"
+shared_library_name="${library_prefix}datadog_telemetry_ffi${shared_library_suffix}"
+shared_library_rename="${library_prefix}datadog_telemetry${shared_library_suffix}"
 
-static_library_name="${library_prefix}datadog_profiling_ffi${static_library_suffix}"
-static_library_rename="${library_prefix}datadog_profiling${static_library_suffix}"
+static_library_name="${library_prefix}datadog_telemetry_ffi${static_library_suffix}"
+static_library_rename="${library_prefix}datadog_telemetry${static_library_suffix}"
 
 cp -v "target/${target}/release/${shared_library_name}" "$destdir/lib/${shared_library_rename}"
 cp -v "target/${target}/release/${static_library_name}" "$destdir/lib/${static_library_rename}"
@@ -122,7 +104,7 @@ if command -v objcopy > /dev/null && [[ "$target" != "x86_64-pc-windows-msvc" ]]
 fi
 
 echo "Checking that native-static-libs are as expected for this platform..."
-cd profiling-ffi
+cd ddtelemetry-ffi```
 actual_native_static_libs="$(cargo rustc --release --target "${target}" -- --print=native-static-libs 2>&1 | awk -F ':' '/note: native-static-libs:/ { print $3 }')"
 echo "Actual native-static-libs:${actual_native_static_libs}"
 echo "Expected native-static-libs:${expected_native_static_libs}"
@@ -148,12 +130,12 @@ echo "Building tools"
 cargo build --package tools --bins
 
 echo "Generating $destdir/include/libdatadog headers..."
-cbindgen --crate ddcommon-ffi \
+rustup run nightly -- cbindgen --crate ddcommon-ffi \
     --config ddcommon-ffi/cbindgen.toml \
     --output "$destdir/include/datadog/common.h"
-cbindgen --crate "${datadog_profiling_ffi}" \
-    --config profiling-ffi/cbindgen.toml \
-    --output "$destdir/include/datadog/profiling.h"
-./target/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h"
+rustup run nightly -- cbindgen --crate "${datadog_telemetry_ffi}"  \
+    --config ddtelemetry-ffi/cbindgen.toml \
+    --output "$destdir/include/datadog/telemetry.h"
+./target/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/telemetry.h"
 
 echo "Done."
