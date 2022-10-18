@@ -1,6 +1,6 @@
 target "alpine-base" {
   dockerfile = "tools/docker/Dockerfile.build"
-  tags = ["ghcr.io/datadog/libdatadog:alpine-base"]
+  tags = ["ghcr.io/datadog/libdatadog-build:alpine-base"]
   target = "alpine_builder"
 }
 
@@ -10,5 +10,28 @@ target "alpine-build" {
     BUILDER_IMAGE = "alpine_builder"
   }
   target = "ffi_build_output"
-  output = ["build/alpine_x64"]
+  platforms = ["linux/amd64"]
+  output = ["build/x86_64-alpine-linux-musl"]
+}
+
+target "debian-build" {
+  dockerfile = "tools/docker/Dockerfile.build"
+  args = {
+    BUILDER_IMAGE = "debian_builder"
+  }
+  target = "ffi_build_output"
+  platforms = ["linux/amd64"]
+  output = ["build/x86_64-unknown-linux-gnu"]
+}
+
+target "alpine-build-aarch64" {
+  inherits = ["alpine-build"]
+  platforms = ["linux/arm64"]
+  output = ["build/aarch64-alpine-linux-musl"]
+}
+
+target "debian-build-aarch64" {
+  inherits = ["debian-build"]
+  platforms = ["linux/arm64"]
+  output = ["build/aarch64-unknown-linux-gnu"]
 }

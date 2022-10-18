@@ -3,10 +3,6 @@ on: [push]
 env: 
   CARGO_TERM_COLOR: always
 
-concurrency: 
-  group: ${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
-
 jobs:
   rustfmt:
     runs-on: ubuntu-latest
