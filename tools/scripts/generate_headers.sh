@@ -9,22 +9,19 @@ set -eu
 destdir="$1"
 mkdir -v -p "$destdir/include/datadog"
 
-echo "Building tools"
-cargo build --package tools --bins
-
 echo "Generating $destdir/include/libdatadog headers..."
 cbindgen --crate ddcommon-ffi \
     --config ddcommon-ffi/cbindgen.toml \
     --output "$destdir/include/datadog/common.h"
 
 if cargo +nightly &> /dev/null; then 
-    cargo +nightly run --example ddtelemetry-ffi-header > "$destdir/include/datadog/telemetry.h"
+    cargo +nightly run --bin ddtelemetry-ffi-header > "$destdir/include/datadog/telemetry.h"
 else
-    cargo run --example ddtelemetry-ffi-header > "$destdir/include/datadog/telemetry.h"
+    cargo run --bin ddtelemetry-ffi-header > "$destdir/include/datadog/telemetry.h"
 fi
 
 cbindgen --crate "datadog-profiling-ffi" \
     --config profiling-ffi/cbindgen.toml \
     --output "$destdir/include/datadog/profiling.h"
 
-./target/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/telemetry.h" "$destdir/include/datadog/profiling.h"
+cargo run --bin dedup_headers -- "$destdir/include/datadog/common.h" "$destdir/include/datadog/telemetry.h" "$destdir/include/datadog/profiling.h"

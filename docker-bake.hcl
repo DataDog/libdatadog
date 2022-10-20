@@ -36,12 +36,6 @@ target "debian-build-aarch64" {
   output = ["build/aarch64-unknown-linux-gnu"]
 }
 
-target "nightly-builder" {
-  dockerfile = "tools/docker/Dockerfile.build"
-  args = {
-    BUILDER_IMAGE = "debian_builder"
-  }
-  tags = ["ghcr.io/datadog/libdatadog-build:debian-nightly-builder"]
-  target = "nightly_builder"
-  output = []
+group "build" {
+  targets = ["alpine-build", "debian-build"]
 }
