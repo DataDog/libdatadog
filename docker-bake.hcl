@@ -35,3 +35,13 @@ target "debian-build-aarch64" {
   platforms = ["linux/arm64"]
   output = ["build/aarch64-unknown-linux-gnu"]
 }
+
+target "nightly-builder" {
+  dockerfile = "tools/docker/Dockerfile.build"
+  args = {
+    BUILDER_IMAGE = "debian_builder"
+  }
+  tags = ["ghcr.io/datadog/libdatadog-build:debian-nightly-builder"]
+  target = "nightly_builder"
+  output = []
+}

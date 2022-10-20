@@ -144,17 +144,6 @@ if [ -n "$unexpected_native_libs" ]; then
 fi
 cd -
 
-echo "Building tools"
-cargo build --package tools --bins
-
-echo "Generating $destdir/include/libdatadog headers..."
-cbindgen --crate ddcommon-ffi \
-    --config ddcommon-ffi/cbindgen.toml \
-    --output "$destdir/include/datadog/common.h"
-cargo run --example ddtelemetry-ffi-header > "$destdir/include/datadog/telemetry.h"
-cbindgen --crate "${datadog_profiling_ffi}" \
-    --config profiling-ffi/cbindgen.toml \
-    --output "$destdir/include/datadog/profiling.h"
-./target/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/telemetry.h" "$destdir/include/datadog/profiling.h"
+./tools/scripts/generate_headers.sh $destdir
 
 echo "Done."

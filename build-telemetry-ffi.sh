@@ -71,11 +71,11 @@ echo "Building the ${datadog_telemetry_ffi} crate (may take some time)..."
 cargo build --package="${datadog_telemetry_ffi}" --release --target "${target}"
 
 # Remove _ffi suffix when copying
-shared_library_name="${library_prefix}datadog_telemetry_ffi${shared_library_suffix}"
-shared_library_rename="${library_prefix}datadog_telemetry${shared_library_suffix}"
+shared_library_name="${library_prefix}ddtelemetry_ffi${shared_library_suffix}"
+shared_library_rename="${library_prefix}ddtelemetry${shared_library_suffix}"
 
-static_library_name="${library_prefix}datadog_telemetry_ffi${static_library_suffix}"
-static_library_rename="${library_prefix}datadog_telemetry${static_library_suffix}"
+static_library_name="${library_prefix}ddtelemetry_ffi${static_library_suffix}"
+static_library_rename="${library_prefix}ddtelemetry${static_library_suffix}"
 
 cp -v "target/${target}/release/${shared_library_name}" "$destdir/lib/${shared_library_rename}"
 cp -v "target/${target}/release/${static_library_name}" "$destdir/lib/${static_library_rename}"
@@ -104,7 +104,7 @@ if command -v objcopy > /dev/null && [[ "$target" != "x86_64-pc-windows-msvc" ]]
 fi
 
 echo "Checking that native-static-libs are as expected for this platform..."
-cd ddtelemetry-ffi```
+cd ddtelemetry-ffi
 actual_native_static_libs="$(cargo rustc --release --target "${target}" -- --print=native-static-libs 2>&1 | awk -F ':' '/note: native-static-libs:/ { print $3 }')"
 echo "Actual native-static-libs:${actual_native_static_libs}"
 echo "Expected native-static-libs:${expected_native_static_libs}"
@@ -126,18 +126,6 @@ if [ -n "$unexpected_native_libs" ]; then
 fi
 cd -
 
-echo "Building tools"
-cargo build --package tools --bins
-
-echo "Generating $destdir/include/libdatadog headers..."
-rustup run nightly -- cbindgen --crate ddcommon-ffi \
-    --config ddcommon-ffi/cbindgen.toml \
-    --output "$destdir/include/datadog/common.h"
-cargo +nightly run --example ddtelemetry-ffi-header > "$destdir/include/datadog/telemetry.h"
-cbindgen --crate "${datadog_profiling_ffi}" \
-    --config profiling-ffi/cbindgen.toml \
-    --output "$destdir/include/datadog/profiling.h"
-
-./target/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/telemetry.h" "$destdir/include/datadog/profiling.h"
+./tools/scripts/generate_headers.sh $destdir
 
 echo "Done."
