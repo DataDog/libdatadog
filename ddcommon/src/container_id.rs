@@ -8,6 +8,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
+use std::path::PathBuf;
 
 /* Extract container id from /proc/self/group
 
@@ -37,7 +38,10 @@ Following environments are supported:
       `1:name=systemd:/ecs/8cd79a803caf4d2aa945152e934a5c00/8cd79a803caf4d2aa945152e934a5c00-1053176469`
 */
 
-const CGROUP_PATH: &str = "/proc/self/cgroup";
+const DEFAULT_CGROUP_PATH: &str = "/proc/self/cgroup";
+
+/// stores overridable cgroup path - used in end-to-end testing to "stub" cgroup values
+static mut TESTING_CGROUP_PATH: Option<String> = None;
 
 const UUID_SOURCE: &str =
     r"[0-9a-f]{8}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{12}";
@@ -85,10 +89,27 @@ fn extract_container_id(filepath: &Path) -> Result<String, Box<dyn std::error::E
     Err(ContainerIdNotFoundError.into())
 }
 
+/// # Safety
+/// Must not be called in multi-threaded contexts
+pub unsafe fn set_cgroup_file(file: String) {
+    TESTING_CGROUP_PATH = Some(file)
+}
+
+fn get_cgroup_path() -> PathBuf {
+    // Safety: we assume set_cgroup_file is not called when it shouldn't
+    if let Some(path) = unsafe { TESTING_CGROUP_PATH.as_ref() } {
+        Path::new(path.as_str()).into()
+    } else {
+        Path::new(DEFAULT_CGROUP_PATH).into()
+    }
+}
+
 pub fn get_container_id() -> Option<&'static str> {
     // cache container id in a static to avoid recomputing it at each call
+
     lazy_static! {
-        static ref CONTAINER_ID: Option<String> = extract_container_id(Path::new(CGROUP_PATH)).ok();
+        static ref CONTAINER_ID: Option<String> =
+            extract_container_id(get_cgroup_path().as_path()).ok();
     }
     CONTAINER_ID.as_deref()
 }

@@ -331,7 +331,7 @@ impl Profile {
         let mut locations: Vec<PProfId> = Vec::with_capacity(sample.locations.len());
         for location in sample.locations.iter() {
             let mapping_id = self.add_mapping(&location.mapping)?;
-            let line: Vec<Line> = location
+            let lines: Vec<Line> = location
                 .lines
                 .iter()
                 .map(|line| {
@@ -347,7 +347,7 @@ impl Profile {
                 id: 0,
                 mapping_id: u64::from(mapping_id),
                 address: location.address,
-                line,
+                lines,
                 is_folded: location.is_folded,
             });
 
@@ -482,9 +482,9 @@ impl From<&Profile> for pprof::Profile {
             .samples
             .iter()
             .map(|(sample, values)| pprof::Sample {
-                location_id: sample.locations.iter().map(Into::into).collect(),
-                value: values.to_vec(),
-                label: sample.labels.clone(),
+                location_ids: sample.locations.iter().map(Into::into).collect(),
+                values: values.to_vec(),
+                labels: sample.labels.clone(),
             })
             .collect();
 
@@ -492,7 +492,7 @@ impl From<&Profile> for pprof::Profile {
             for sample in samples.iter_mut() {
                 let mut endpoint: Option<&i64> = None;
 
-                for label in &sample.label {
+                for label in &sample.labels {
                     if label.key == profile.endpoints.local_root_span_id_label {
                         endpoint = profile.endpoints.mappings.get(&label.str);
                         break;
@@ -500,7 +500,7 @@ impl From<&Profile> for pprof::Profile {
                 }
 
                 if let Some(endpoint_value) = endpoint {
-                    sample.label.push(pprof::Label {
+                    sample.labels.push(pprof::Label {
                         key: profile.endpoints.endpoint_label,
                         str: *endpoint_value,
                         num: 0,
@@ -511,9 +511,9 @@ impl From<&Profile> for pprof::Profile {
         }
 
         pprof::Profile {
-            sample_type: profile.sample_types.clone(),
-            sample: samples,
-            mapping: profile
+            sample_types: profile.sample_types.clone(),
+            samples,
+            mappings: profile
                 .mappings
                 .iter()
                 .enumerate()
@@ -527,7 +527,7 @@ impl From<&Profile> for pprof::Profile {
                     ..Default::default() // todo: support detailed Mapping info
                 })
                 .collect(),
-            location: profile
+            locations: profile
                 .locations
                 .iter()
                 .enumerate()
@@ -535,11 +535,11 @@ impl From<&Profile> for pprof::Profile {
                     id: (index + 1) as u64,
                     mapping_id: location.mapping_id,
                     address: location.address,
-                    line: location.line.clone(),
+                    lines: location.lines.clone(),
                     is_folded: location.is_folded,
                 })
                 .collect(),
-            function: profile
+            functions: profile
                 .functions
                 .iter()
                 .enumerate()
@@ -724,26 +724,26 @@ mod api_test {
         let locations = provide_distinct_locations();
         let profile = pprof::Profile::from(&locations);
 
-        assert_eq!(profile.sample.len(), 2);
-        assert_eq!(profile.mapping.len(), 1);
-        assert_eq!(profile.location.len(), 2);
-        assert_eq!(profile.function.len(), 2);
+        assert_eq!(profile.samples.len(), 2);
+        assert_eq!(profile.mappings.len(), 1);
+        assert_eq!(profile.locations.len(), 2);
+        assert_eq!(profile.functions.len(), 2);
 
-        for (index, mapping) in profile.mapping.iter().enumerate() {
+        for (index, mapping) in profile.mappings.iter().enumerate() {
             assert_eq!((index + 1) as u64, mapping.id);
         }
 
-        for (index, location) in profile.location.iter().enumerate() {
+        for (index, location) in profile.locations.iter().enumerate() {
             assert_eq!((index + 1) as u64, location.id);
         }
 
-        for (index, function) in profile.function.iter().enumerate() {
+        for (index, function) in profile.functions.iter().enumerate() {
             assert_eq!((index + 1) as u64, function.id);
         }
 
-        let sample = profile.sample.get(0).expect("index 0 to exist");
-        assert_eq!(sample.label.len(), 1);
-        let label = sample.label.get(0).expect("index 0 to exist");
+        let sample = profile.samples.get(0).expect("index 0 to exist");
+        assert_eq!(sample.labels.len(), 1);
+        let label = sample.labels.get(0).expect("index 0 to exist");
         let key = profile
             .string_table
             .get(label.key as usize)
@@ -885,14 +885,14 @@ mod api_test {
 
         let serialized_profile: pprof::Profile = (&profile).into();
 
-        assert_eq!(serialized_profile.sample.len(), 2);
+        assert_eq!(serialized_profile.samples.len(), 2);
 
-        let s1 = serialized_profile.sample.get(0).expect("sample");
+        let s1 = serialized_profile.samples.get(0).expect("sample");
 
         // The trace endpoint label should be added to the first sample
-        assert_eq!(s1.label.len(), 3);
+        assert_eq!(s1.labels.len(), 3);
 
-        let l1 = s1.label.get(0).expect("label");
+        let l1 = s1.labels.get(0).expect("label");
 
         assert_eq!(
             serialized_profile
@@ -909,7 +909,7 @@ mod api_test {
             "10"
         );
 
-        let l2 = s1.label.get(1).expect("label");
+        let l2 = s1.labels.get(1).expect("label");
 
         assert_eq!(
             serialized_profile
@@ -926,7 +926,7 @@ mod api_test {
             "test"
         );
 
-        let l3 = s1.label.get(2).expect("label");
+        let l3 = s1.labels.get(2).expect("label");
 
         assert_eq!(
             serialized_profile
@@ -943,9 +943,9 @@ mod api_test {
             "my endpoint"
         );
 
-        let s2 = serialized_profile.sample.get(1).expect("sample");
+        let s2 = serialized_profile.samples.get(1).expect("sample");
 
         // The trace endpoint label shouldn't be added to second sample because the span id doesn't match
-        assert_eq!(s2.label.len(), 2);
+        assert_eq!(s2.labels.len(), 2);
     }
 }

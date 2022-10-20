@@ -102,3 +102,32 @@ jobs:
           cd examples/ffi/build
           cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling
           cmake --build .
+
+  ffi_bake:
+    strategy:
+      matrix:
+        target: [alpine-build] # debian-build-aarch64 is oom killed at the moment
+    name: "FFI ${{ matrix.target }} via docker bake"
+
+    concurrency: 
+      group: ci-${{ github.ref }}-${{ matrix.target }}
+      cancel-in-progress: true
+
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v3
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+        with:
+          config: .github/buildkitd.toml
+      -
+        name: Build and Generate FFI
+        uses: docker/bake-action@v2
+        with:
+          targets: ${{ matrix.target }}
+          set: |
+            *.cache-from=type=gha,scope=${{ matrix.target }}
+            *.cache-to=type=gha,mode=max,scope=${{ matrix.target }}
