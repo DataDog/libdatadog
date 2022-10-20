@@ -85,6 +85,9 @@ macro_rules! c_setters {
 
 type MaybeError = ffi::Option<ffi::Vec<u8>>;
 
+#[no_mangle]
+pub extern "C" fn ddog_MaybeError_drop(_: MaybeError) {}
+
 macro_rules! try_c {
     ($failable:expr) => {
         match $failable {
