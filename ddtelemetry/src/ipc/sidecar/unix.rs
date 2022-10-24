@@ -11,12 +11,16 @@ use std::{
     },
     time::Duration,
 };
+use std::ffi::CStr;
+use libc::{c_char, dup, O_APPEND, O_CREAT, O_RDONLY, O_WRONLY, strerror};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     select,
 };
 
 use nix::{sys::wait::waitpid, unistd::Pid};
+use nix::errno::errno;
+use nix::unistd::setsid;
 use tokio::net::UnixListener;
 use tokio_util::sync::CancellationToken;
 
@@ -95,10 +99,34 @@ fn enter_listener_loop(listener: StdUnixListener) -> anyhow::Result<()> {
     runtime.block_on(main_loop(listener)).map_err(|e| e.into())
 }
 
+fn static_cstr(str: &'static [u8]) -> *const c_char {
+    str.as_ptr() as *const c_char
+}
+
 fn daemonize(listener: StdUnixListener) -> io::Result<()> {
     unsafe {
         let pid = fork_fn(listener, |listener| {
             fork_fn(listener, |listener| {
+                if let Err(err) = setsid() {
+                    println!("Setsid() Error: {}", err)
+                }
+
+                // stdin
+                libc::close(0);
+                libc::open(static_cstr(b"/dev/null\0"), O_RDONLY);
+
+                // stdout
+                libc::close(1);
+                // TODO: make sidecar logfile configurable
+                let stdout = libc::open(static_cstr(b"/tmp/sidecar.log\0"), O_CREAT | O_WRONLY | O_APPEND, 0o777);
+                if stdout < 0 {
+                    panic!("Could not open /tmp/sidecar.log: {}", CStr::from_ptr(strerror(errno())).to_str().unwrap());
+                }
+
+                // stderr
+                libc::close(2);
+                dup(stdout);
+
                 println!("starting sidecar, pid: {}", getpid());
                 if let Err(err) = enter_listener_loop(listener) {
                     println!("Error: {}", err)
