@@ -22,7 +22,6 @@ pub struct PlatformHandle<T> {
     fd: RawFd, // Just an fd number to be used as reference e.g. when serializing, not for accessing actual fd
     #[serde(skip)]
     inner: Option<Arc<OwnedFd>>,
-
     phantom: PhantomData<T>,
 }
 
@@ -58,10 +57,7 @@ impl<T> PlatformHandle<T> {
     }
 }
 
-impl<T> PlatformHandle<T>
-where
-    T: From<OwnedFd>,
-{
+impl<T> PlatformHandle<T> {
     pub fn into_instance(self) -> Result<T, io::Error>
     where
         T: From<OwnedFd>,

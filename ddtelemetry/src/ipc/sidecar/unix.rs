@@ -95,25 +95,23 @@ fn enter_listener_loop(listener: StdUnixListener) -> anyhow::Result<()> {
     runtime.block_on(main_loop(listener)).map_err(|e| e.into())
 }
 
-unsafe fn daemonize(listener: StdUnixListener) -> io::Result<()> {
-    let pid = fork_fn(listener, |listener| {
-        //TODO: consider using clone3 when available
-        fork_fn(listener, |listener| {
-            println!("starting sidecar, pid: {}", getpid());
-            if let Err(err) = enter_listener_loop(listener) {
-                println!("Error: {}", err)
-            }
-        })
-        .ok();
-    })?;
-    waitpid(Pid::from_raw(pid), None)?;
-
+fn daemonize(listener: StdUnixListener) -> io::Result<()> {
+    unsafe {
+        let pid = fork_fn(listener, |listener| {
+            fork_fn(listener, |listener| {
+                println!("starting sidecar, pid: {}", getpid());
+                if let Err(err) = enter_listener_loop(listener) {
+                    println!("Error: {}", err)
+                }
+            })
+            .ok();
+        })?;
+        waitpid(Pid::from_raw(pid), None)?;
+    };
     Ok(())
 }
 
-/// # Safety
-/// Caller must ensure the process is safe to fork at the time when this method is called
-pub unsafe fn start_or_connect_to_sidecar() -> io::Result<UnixStream> {
+pub fn start_or_connect_to_sidecar() -> io::Result<UnixStream> {
     let liaison = setup::DefaultLiason::default();
     if let Some(listener) = liaison.attempt_listen()? {
         daemonize(listener)?;
