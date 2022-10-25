@@ -1,6 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use libc::{c_char, dup, strerror, O_APPEND, O_CREAT, O_RDONLY, O_WRONLY};
+use std::ffi::CStr;
 use std::os::unix::net::UnixListener as StdUnixListener;
 use std::{
     io::{self},
@@ -11,16 +13,14 @@ use std::{
     },
     time::Duration,
 };
-use std::ffi::CStr;
-use libc::{c_char, dup, O_APPEND, O_CREAT, O_RDONLY, O_WRONLY, strerror};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     select,
 };
 
-use nix::{sys::wait::waitpid, unistd::Pid};
 use nix::errno::errno;
 use nix::unistd::setsid;
+use nix::{sys::wait::waitpid, unistd::Pid};
 use tokio::net::UnixListener;
 use tokio_util::sync::CancellationToken;
 
@@ -103,43 +103,50 @@ fn static_cstr(str: &'static [u8]) -> *const c_char {
     str.as_ptr() as *const c_char
 }
 
-fn daemonize(listener: StdUnixListener) -> io::Result<()> {
-    unsafe {
-        let pid = fork_fn(listener, |listener| {
-            fork_fn(listener, |listener| {
-                if let Err(err) = setsid() {
-                    println!("Setsid() Error: {}", err)
-                }
+unsafe fn daemonize(listener: StdUnixListener) -> io::Result<()> {
+    let pid = fork_fn(listener, |listener| {
+        fork_fn(listener, |listener| {
+            if let Err(err) = setsid() {
+                println!("Setsid() Error: {}", err)
+            }
 
-                // stdin
-                libc::close(0);
-                libc::open(static_cstr(b"/dev/null\0"), O_RDONLY);
+            // stdin
+            libc::close(0);
+            libc::open(static_cstr(b"/dev/null\0"), O_RDONLY);
 
-                // stdout
-                libc::close(1);
-                // TODO: make sidecar logfile configurable
-                let stdout = libc::open(static_cstr(b"/tmp/sidecar.log\0"), O_CREAT | O_WRONLY | O_APPEND, 0o777);
-                if stdout < 0 {
-                    panic!("Could not open /tmp/sidecar.log: {}", CStr::from_ptr(strerror(errno())).to_str().unwrap());
-                }
+            // stdout
+            libc::close(1);
+            // TODO: make sidecar logfile configurable
+            let stdout = libc::open(
+                static_cstr(b"/tmp/sidecar.log\0"),
+                O_CREAT | O_WRONLY | O_APPEND,
+                0o777,
+            );
+            if stdout < 0 {
+                panic!(
+                    "Could not open /tmp/sidecar.log: {}",
+                    CStr::from_ptr(strerror(errno())).to_str().unwrap()
+                );
+            }
 
-                // stderr
-                libc::close(2);
-                dup(stdout);
+            // stderr
+            libc::close(2);
+            dup(stdout);
 
-                println!("starting sidecar, pid: {}", getpid());
-                if let Err(err) = enter_listener_loop(listener) {
-                    println!("Error: {}", err)
-                }
-            })
-            .ok();
-        })?;
-        waitpid(Pid::from_raw(pid), None)?;
-    };
+            println!("starting sidecar, pid: {}", getpid());
+            if let Err(err) = enter_listener_loop(listener) {
+                println!("Error: {}", err)
+            }
+        })
+        .ok();
+    })?;
+    waitpid(Pid::from_raw(pid), None)?;
     Ok(())
 }
 
-pub fn start_or_connect_to_sidecar() -> io::Result<UnixStream> {
+/// # Safety
+/// Caller must ensure the process is safe to fork at the time when this method is called
+pub unsafe fn start_or_connect_to_sidecar() -> io::Result<UnixStream> {
     let liaison = setup::DefaultLiason::default();
     if let Some(listener) = liaison.attempt_listen()? {
         daemonize(listener)?;

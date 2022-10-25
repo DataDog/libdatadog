@@ -15,6 +15,12 @@ pub struct NativeUnixStream {
     handle: PlatformHandle<UnixStream>
 }
 
+/// This creates Rust PlatformHandle<File> from supplied C std FILE object.
+/// This method takes the ownership of the underlying filedescriptor.
+///
+/// # Safety
+/// Caller must ensure the file descriptor associated with FILE pointer is open, and valid
+/// Caller must not close the FILE associated filedescriptor after calling this fuction
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_ph_file_from(file: *mut libc::FILE) -> NativeFile {
@@ -40,8 +46,10 @@ pub extern "C" fn ddog_ph_unix_stream_drop(ph: Box<NativeUnixStream>) {
     drop(ph)
 }
 
+/// # Safety
+/// Caller must ensure the process is safe to fork, at the time when this method is called
 #[no_mangle]
-pub extern "C" fn ddog_sidecar_connect(
+pub unsafe extern "C" fn ddog_sidecar_connect(
     connection: &mut *mut NativeUnixStream,
 ) -> MaybeError {
     let stream = Box::new(NativeUnixStream { handle: try_c!(sidecar::start_or_connect_to_sidecar()).into() });
@@ -78,12 +86,16 @@ mod test_c_sidecar {
     }
 
     #[test]
+    #[ignore] // run all tests that can fork in a separate run, to avoid any race conditions with default rust test harness
     fn test_ddog_sidecar_connection() {
         let mut connection = std::ptr::null_mut();
-        assert_eq!(ddog_sidecar_connect(&mut connection), MaybeError::None);
+        assert_eq!(
+            unsafe { ddog_sidecar_connect(&mut connection) },
+            MaybeError::None
+        );
         let connection = unsafe { Box::from_raw(connection) };
         {
-            let mut c = &*connection.handle.as_socketlike_view().unwrap();
+            let mut c = &*connection.as_socketlike_view().unwrap();
             writeln!(c, "test").unwrap();
             let mut buf = [0; 4];
             c.read_exact(&mut buf).unwrap();
