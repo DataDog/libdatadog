@@ -5,6 +5,9 @@ use ddcommon_ffi as ffi;
 use ddtelemetry::worker::{TelemetryWorkerBuilder, TelemetryWorkerHandle};
 use ffi::slice::AsBytes;
 
+#[cfg(unix)]
+pub mod unix;
+
 macro_rules! c_setters {
     ($object_name:ident, $object_ty:ty, $input_type:ty, $convert_fn:expr, SETTERS { $($path:ident $(. $path_rest:ident)*),+ $(,)? }) => {
         paste::paste! {
@@ -88,11 +91,12 @@ type MaybeError = ffi::Option<ffi::Vec<u8>>;
 #[no_mangle]
 pub extern "C" fn ddog_MaybeError_drop(_: MaybeError) {}
 
+#[macro_export]
 macro_rules! try_c {
     ($failable:expr) => {
         match $failable {
             Ok(o) => o,
-            Err(e) => return MaybeError::Some(ffi::Vec::from(e.to_string().into_bytes())),
+            Err(e) => return MaybeError::Some(ddcommon_ffi::Vec::from(e.to_string().into_bytes())),
         }
     };
 }

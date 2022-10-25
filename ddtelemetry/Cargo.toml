@@ -6,27 +6,41 @@ version = "0.9.1"
 
 [dependencies]
 anyhow = {version = "1.0"}
+bytes = {version = "1.1"}
 ddcommon = {path = "../ddcommon"}
 futures = {version = "0.3"}
 http = "0.2"
 hyper = {version = "0.14", features = ["client"], default-features = false}
 lazy_static = {version = "1.4"}
+pin-project = "1"
 regex = {version = "1"}
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
 sys-info = {version = "0.9.0"}
-tokio = {version = "1.17", features = ["sync"]}
-tokio-util = {version = "0.7.1"}
+tokio = {version = "1.17", features = ["sync", "io-util"]}
+tokio-util = {version = "0.6.9", features = ["codec"]}
 tracing = {version = "0.1", default-features = false, features = ["std"], optional = true}
+tracing-subscriber = {version="0.3", default-features = false, features = ["std", "fmt"], optional = true}
 uuid = {version = "0.8.2", features = ["v4"]}
+io-lifetimes = { version = "0.7" }
 
 [features]
 default = []
 
 [[example]]
 name = "tm-worker-test"
-required-features = ["tracing"]
+required-features = ["tracing", "tracing-subscriber"]
 
 [dev-dependencies]
-tokio = {version = "1.17", features = ["macros", "rt-multi-thread"]}
-tracing-subscriber = {version = "0.3.11"}
+libc = {version = "0.2"}
+tempfile = {version = "3.3"}
+lazy_static = {version="1.4"}
+tokio = {version = "1.17", features = ["macros", "rt-multi-thread", "rt", "tracing", "fs", "io-util"]}
+
+[target.'cfg(not(windows))'.dependencies]
+libc = {version = "0.2"}
+nix = {version = "0.24", features = ["fs", "socket", "process"]}
+
+[target.'cfg(not(windows))'.dev-dependencies]
+nix = {version = "0.24"}
+rlimit = {version = "0.8"}
