@@ -1,11 +1,11 @@
 target "alpine-base" {
-  dockerfile = "tools/docker/Dockerfile.build"
+  dockerfile = "tools/docker/build.Dockerfile"
   tags = ["ghcr.io/datadog/libdatadog-build:alpine-base"]
   target = "alpine_builder"
 }
 
 target "alpine-build" {
-  dockerfile = "tools/docker/Dockerfile.build"
+  dockerfile = "tools/docker/build.Dockerfile"
   args = {
     BUILDER_IMAGE = "alpine_builder"
   }
@@ -15,7 +15,7 @@ target "alpine-build" {
 }
 
 target "debian-build" {
-  dockerfile = "tools/docker/Dockerfile.build"
+  dockerfile = "tools/docker/build.Dockerfile"
   args = {
     BUILDER_IMAGE = "debian_builder"
   }
