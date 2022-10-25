@@ -7,7 +7,7 @@
 .idea
 .vs
 .vscode
-build*
+build*/
 cmake-build-debug
 deliverables
 target
@@ -20,4 +20,3 @@ tmp
 .env
 Cargo.lock # this is ignored so you don't update by accident, but is committed.
 docker-sync.yml
-
