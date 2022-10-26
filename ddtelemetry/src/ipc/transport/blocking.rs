@@ -236,14 +236,14 @@ where
         self.transport.do_send(req)
     }
 
-    pub fn send(&mut self, item: OutgoingItem) -> io::Result<Response<IncomingItem>> {
+    pub fn send(&mut self, item: OutgoingItem) -> io::Result<IncomingItem> {
         let (request_id, req) = self.new_client_message(item, None);
         self.transport.do_send(req)?;
 
         for resp in self {
             let resp = resp?;
             if resp.request_id == request_id {
-                return Ok(resp);
+                return resp.message.map_err(|e| io::Error::new(e.kind, e.detail));
             }
         }
         Err(io::Error::new(

@@ -4,9 +4,9 @@
 use std::borrow::Cow;
 use std::fmt::{Debug, Display, Formatter};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Eq, PartialEq, Hash, Serialize)]
+#[derive(Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Tag {
     value: String,

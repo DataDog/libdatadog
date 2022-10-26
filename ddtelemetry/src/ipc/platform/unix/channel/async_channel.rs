@@ -21,6 +21,15 @@ pub struct AsyncChannel {
     pub metadata: Arc<Mutex<ChannelMetadata>>,
 }
 
+impl From<UnixStream> for AsyncChannel {
+    fn from(stream: UnixStream) -> Self {
+        AsyncChannel {
+            inner: stream,
+            metadata: Arc::new(Mutex::new(ChannelMetadata::default())),
+        }
+    }
+}
+
 impl TryFrom<Channel> for AsyncChannel {
     type Error = io::Error;
 

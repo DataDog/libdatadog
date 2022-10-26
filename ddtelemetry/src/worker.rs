@@ -21,10 +21,16 @@ use std::{
 
 use anyhow::Result;
 use ddcommon::HttpClient;
-use futures::future;
+use futures::future::{self};
 use http::Request;
 
-use tokio::{runtime, sync::mpsc, time::Instant};
+use serde::{Deserialize, Serialize};
+use tokio::{
+    runtime::{self, Handle},
+    sync::mpsc,
+    task::JoinHandle,
+    time::Instant,
+};
 use tokio_util::sync::CancellationToken;
 
 fn time_now() -> f64 {
@@ -54,12 +60,12 @@ macro_rules! telemetry_worker_log {
     };
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum TelemetryActions {
     AddPoint((f64, ContextKey, Vec<Tag>)),
     FlushMetricAggregate,
     SendMetrics,
-
+    AddConfig((String, String)),
     AddDependecy(Dependency),
     SendDependencies,
 
@@ -79,7 +85,7 @@ pub enum TelemetryActions {
 /// The identifier is a single 64 bit integer to save space an memory
 /// and to be able to generic on the way different languages handle
 ///
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LogIdentifier {
     // Collisions? Never heard of them
     indentifier: u64,
@@ -140,10 +146,12 @@ impl TelemetryWorker {
             telemetry_worker_log!(self, DEBUG, "Handling action {:?}", action);
             match action {
                 Start => {
-                    let req = self.build_app_started();
-                    self.send_request(req).await;
-                    self.deadlines.schedule_next_heartbeat();
-                    self.data.started = true;
+                    if !self.data.started {
+                        let req = self.build_app_started();
+                        self.send_request(req).await;
+                        self.deadlines.schedule_next_heartbeat();
+                        self.data.started = true;
+                    }
                 }
                 AddDependecy(dep) => {
                     self.data.unflushed_dependencies.push(dep);
@@ -215,6 +223,7 @@ impl TelemetryWorker {
                     };
                     self.deadlines.send_metrics_done();
                 }
+                AddConfig(cfg) => self.data.library_config.push(cfg),
             }
         }
     }
@@ -441,6 +450,18 @@ impl TelemetryWorkerHandle {
             .register_metric_context(name, tags, metric_type, common, namespace)
     }
 
+    pub async fn send_msg(&self, msg: TelemetryActions) -> Result<()> {
+        Ok(self.sender.send(msg).await?)
+    }
+
+    pub async fn send_msg_timeout(
+        &self,
+        msg: TelemetryActions,
+        timeout: time::Duration,
+    ) -> Result<()> {
+        Ok(self.sender.send_timeout(msg, timeout).await?)
+    }
+
     pub fn send_start(&self) -> Result<()> {
         Ok(self.sender.try_send(TelemetryActions::Start)?)
     }
@@ -583,20 +604,19 @@ impl TelemetryWorkerBuilder {
         Vec::new() // Dummy dependencies
     }
 
-    pub fn run(self) -> Result<TelemetryWorkerHandle> {
+    fn build_worker(
+        self,
+        config: Config,
+        tokio_runtime: Handle,
+    ) -> Result<(TelemetryWorkerHandle, TelemetryWorker)> {
         let (tx, mailbox) = mpsc::channel(5000);
         let shutdown = Arc::new(InnerTelemetryShutdown {
             is_shutdown: Mutex::new(false),
             condvar: Condvar::new(),
         });
 
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-
         let contexts = MetricContexts::default();
         let token = CancellationToken::new();
-        let config = config::FromEnv::config();
         let unflushed_dependencies = self.gather_deps();
         let client = config.http_client();
         let worker = TelemetryWorker {
@@ -622,21 +642,45 @@ impl TelemetryWorkerBuilder {
             cancellation_token: token.clone(),
         };
 
-        let notify_shutdown = shutdown.clone();
+        Ok((
+            TelemetryWorkerHandle {
+                sender: tx,
+                shutdown,
+                cancellation_token: token,
+                runtime: tokio_runtime,
+                contexts,
+            },
+            worker,
+        ))
+    }
 
-        let runtime_handle = runtime.handle().clone();
+    pub async fn spawn(self) -> Result<(TelemetryWorkerHandle, JoinHandle<()>)> {
+        let tokio_runtime = tokio::runtime::Handle::current();
+        let config = config::FromEnv::config();
+
+        let (worker_handle, worker) = self.build_worker(config, tokio_runtime.clone())?;
+
+        let join_handle = tokio_runtime.spawn(worker.run());
+
+        Ok((worker_handle, join_handle))
+    }
+
+    pub fn run(self) -> Result<TelemetryWorkerHandle> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+
+        let config = config::FromEnv::config();
+
+        let (handle, worker) = self.build_worker(config, runtime.handle().clone())?;
+
+        let notify_shutdown = handle.shutdown.clone();
         std::thread::spawn(move || {
             runtime.block_on(worker.run());
             notify_shutdown.shutdown_finished();
         });
 
-        Ok(TelemetryWorkerHandle {
-            sender: tx,
-            shutdown,
-            cancellation_token: token,
-            runtime: runtime_handle,
-            contexts,
-        })
+        Ok(handle)
     }
 }
 
