@@ -73,11 +73,11 @@ mod tests {
     ) {
         let current_meta = get_open_file_descriptors(pid).unwrap();
 
-        // let missing_from_reference = current_fds.into()
         assert_eq!(reference_meta, &current_meta);
     }
 
     #[test]
+    #[ignore] // tests checks global FD state - so it needs to run in non-parallel mode
     fn test_channel_metadata_only_provides_valid_owned() {
         let reference = get_open_file_descriptors(None).unwrap();
         let mut meta = ChannelMetadata::default();

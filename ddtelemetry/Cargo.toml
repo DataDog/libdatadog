@@ -12,15 +12,13 @@ futures = {version = "0.3"}
 http = "0.2"
 hyper = {version = "0.14", features = ["client"], default-features = false}
 lazy_static = {version = "1.4"}
-libc = {version = "0.2"}
-nix = {version = "0.24", features = ["fs", "socket"]}
+
 pin-project = "1"
 regex = {version = "1"}
 rmp-serde = {version = "0.15"}
-sendfd = {version = "0.4", features = ["tokio"]}
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
-tarpc = {version="0.30.0", features = ["serde-transport", "serde-transport-bincode"]}
+tarpc = {version="0.30.0", features = ["serde-transport"]}
 sys-info = {version = "0.9.0"}
 tokio = {version = "1.17", features = ["sync", "io-util"]}
 tokio-util = {version = "0.6.9", features = ["codec"]}
@@ -48,7 +46,9 @@ tracing-subscriber = {version = "0.3.11"}
 
 [target.'cfg(not(windows))'.dependencies]
 libc = {version = "0.2"}
+nix = {version = "0.24", features = ["fs", "socket"]}
+sendfd = {version = "0.4", features = ["tokio"]}
+
 
 [target.'cfg(not(windows))'.dev-dependencies]
-nix = {version = "0.24"}
 rlimit = {version = "0.8"}
