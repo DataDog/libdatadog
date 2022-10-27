@@ -45,7 +45,7 @@ mod tests {
         file.rewind().unwrap();
         PlatformHandle::from(file).to_untyped()
     }
-
+    #[cfg(not(target_os = "macos"))]
     fn get_open_file_descriptors(
         pid: Option<libc::pid_t>,
     ) -> Result<BTreeMap<RawFd, String>, io::Error> {
@@ -65,6 +65,14 @@ mod tests {
             .collect();
 
         Ok(fds)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn get_open_file_descriptors(
+        _: Option<libc::pid_t>,
+    ) -> Result<BTreeMap<RawFd, String>, io::Error> {
+        //TODO implement this check for macos
+        Ok(BTreeMap::default())
     }
 
     fn assert_file_descriptors_unchanged(
