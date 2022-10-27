@@ -21,12 +21,11 @@ pub mod data;
 #[cfg(not(windows))]
 pub mod fork;
 pub mod info;
+// For now the IPC interface only works on unix systems
+#[cfg(not(windows))]
 pub mod ipc;
 pub mod metrics;
 pub mod worker;
-
-#[macro_use]
-extern crate pin_project;
 
 const DEFAULT_API_VERSION: data::ApiVersion = data::ApiVersion::V1;
 
