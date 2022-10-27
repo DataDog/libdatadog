@@ -60,6 +60,31 @@ mod transport_impls {
         }
     }
 
+    impl<T> TransferHandles for Option<T>
+    where
+        T: TransferHandles,
+    {
+        fn move_handles<Transport: HandlesTransport>(
+            &self,
+            transport: Transport,
+        ) -> Result<(), Transport::Error> {
+            match self {
+                Some(s) => s.move_handles(transport),
+                None => Ok(()),
+            }
+        }
+
+        fn receive_handles<Transport: HandlesTransport>(
+            &mut self,
+            transport: Transport,
+        ) -> Result<(), Transport::Error> {
+            match self {
+                Some(s) => s.receive_handles(transport),
+                None => todo!(),
+            }
+        }
+    }
+
     use tarpc::{ClientMessage, Request, Response};
 
     impl<T: TransferHandles> TransferHandles for Response<T> {

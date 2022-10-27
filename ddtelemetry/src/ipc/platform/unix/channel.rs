@@ -32,14 +32,19 @@ impl Clone for Channel {
 }
 
 impl Channel {
-    pub fn set_read_timeout(&mut self, timeout: Option<Duration>) -> Result<(), io::Error> {
+    pub fn set_read_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
         let sock = self.inner.as_socketlike_view()?;
         sock.set_read_timeout(timeout)
     }
 
-    pub fn set_write_timeout(&mut self, timeout: Option<Duration>) -> Result<(), io::Error> {
+    pub fn set_write_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
         let sock = self.inner.as_socketlike_view()?;
         sock.set_write_timeout(timeout)
+    }
+
+    pub fn set_nonblocking(&mut self, nonblocking: bool) -> io::Result<()> {
+        let sock = self.inner.as_socketlike_view()?;
+        sock.set_nonblocking(nonblocking)
     }
 }
 

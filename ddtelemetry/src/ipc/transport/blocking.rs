@@ -1,9 +1,10 @@
 use std::{
     io::{self, Read, Write},
     mem::MaybeUninit,
+    os::unix::net::UnixStream,
     pin::Pin,
     sync::{atomic::AtomicU64, Arc},
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use bytes::{BufMut, BytesMut};
@@ -40,6 +41,19 @@ impl<IncomingItem, OutgoingItem> From<Channel> for BlockingTransport<IncomingIte
             pid,
             requests_id: Arc::from(AtomicU64::new(0)),
             transport: c.into(),
+        }
+    }
+}
+
+impl<IncomingItem, OutgoingItem> From<UnixStream>
+    for BlockingTransport<IncomingItem, OutgoingItem>
+{
+    fn from(s: UnixStream) -> Self {
+        let pid = unsafe { libc::getpid() };
+        BlockingTransport {
+            pid,
+            requests_id: Arc::from(AtomicU64::new(0)),
+            transport: Channel::from(s).into(),
         }
     }
 }
@@ -231,7 +245,19 @@ where
         )
     }
 
-    pub fn send_ignore_response(&mut self, item: OutgoingItem) -> Result<(), io::Error> {
+    pub fn set_nonblocking(&mut self, nonblocking: bool) -> io::Result<()> {
+        self.transport.channel.set_nonblocking(nonblocking)
+    }
+
+    pub fn set_read_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
+        self.transport.channel.set_read_timeout(timeout)
+    }
+
+    pub fn set_write_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
+        self.transport.channel.set_write_timeout(timeout)
+    }
+
+    pub fn send_ignore_response(&mut self, item: OutgoingItem) -> io::Result<()> {
         let (_, req) = self.new_client_message(item, None);
         self.transport.do_send(req)
     }
