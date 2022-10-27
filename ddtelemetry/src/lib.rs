@@ -2,6 +2,8 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 #![allow(clippy::mutex_atomic)]
 #![allow(clippy::nonminimal_bool)]
+#[macro_use]
+extern crate pin_project;
 
 use std::{
     sync::atomic::{AtomicU64, Ordering},

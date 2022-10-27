@@ -8,7 +8,6 @@ use std::{
 };
 use tokio::{net::UnixStream, runtime};
 
-
 fn criterion_benchmark(c: &mut Criterion) {
     let (sock_a, sock_b) = StdUnixStream::pair().unwrap();
 
@@ -29,7 +28,11 @@ fn criterion_benchmark(c: &mut Criterion) {
     transport.set_nonblocking(false).unwrap();
 
     c.bench_function("write only interface", |b| {
-        b.iter(|| transport.send_ignore_response(ExampleInterfaceRequest::Ping {}).unwrap())
+        b.iter(|| {
+            transport
+                .send_ignore_response(ExampleInterfaceRequest::Ping {})
+                .unwrap()
+        })
     });
 
     c.bench_function("two way interface", |b| {
@@ -40,7 +43,6 @@ fn criterion_benchmark(c: &mut Criterion) {
         ExampleInterfaceResponse::ReqCnt(cnt) => cnt,
         _ => panic!("shouldn't happen"),
     };
-
 
     println!("Total requests handled: {}", requests_received);
 
