@@ -1,37 +1,110 @@
-target "alpine-base" {
-  dockerfile = "tools/docker/Dockerfile.build"
-  tags = ["ghcr.io/datadog/libdatadog-build:alpine-base"]
-  target = "alpine_builder"
+// Checks
+
+target "_check_base" {
+  dockerfile = "tools/docker/checks.Dockerfile"
+  output = ["type=cacheonly"]
 }
 
-target "alpine-build" {
-  dockerfile = "tools/docker/Dockerfile.build"
+target "check_license_headers" {
+  inherits = ["_check_base", "_use_debian_stable"]
+  target = "check_license_headers"
+}
+
+target "check_license_3rdparty_file" {
+  inherits = ["_check_base", "_use_debian_stable"]
+  target = "check_license_3rdparty_file"
+}
+
+target "check_rust_fmt" {
+  inherits = ["_check_base", "_use_debian_nightly"]
+  target = "check_rust_fmt"
+}
+
+target "check_clippy_stable" {
+  inherits = ["_check_base", "_use_debian_stable"]
+  target = "check_clippy"
+}
+
+target "check_clippy_nightly" {
+  inherits = ["_check_base", "_use_debian_nightly"]
+  target = "check_clippy"
+}
+
+target "check_clippy_1_60" {
+  inherits = ["_check_base", "_use_debian_1_60"]
+  target = "check_clippy"
+}
+
+group "check_clippy" {
+  targets = ["check_clippy_stable", "check_clippy_nightly", "check_clippy_1_60", ]
+}
+
+group "checks" {
+  targets = ["check_license_headers", "check_license_3rdparty_file", "check_rust_fmt", "check_clippy"]
+}
+
+// generate files
+
+target "update_license_file" {
+  inherits = ["_check_base", "_use_debian_stable"]
+  target = "export_license_3rdparty_file"
+  output = ["./"]
+}
+
+// builders
+
+target "alpine_builder_latest" {
+  dockerfile = "tools/docker/alpine.Dockerfile"
+  target = "builder"
+  platforms = ["linux/amd64", "linux/arm64"]
+}
+
+target "debian_builder_stable" {
+  dockerfile = "tools/docker/debian.Dockerfile"
+  target = "builder"
   args = {
-    BUILDER_IMAGE = "alpine_builder"
+    RUST_BASE_IMAGE = "rust:1-slim-bullseye"
   }
-  target = "ffi_build_output"
-  platforms = ["linux/amd64"]
-  output = ["build/x86_64-alpine-linux-musl"]
+  platforms = ["linux/amd64", "linux/arm64"]
 }
 
-target "debian-build" {
-  dockerfile = "tools/docker/Dockerfile.build"
+target "debian_builder_nightly" {
+  inherits = ["debian_builder_stable"]
   args = {
-    BUILDER_IMAGE = "debian_builder"
+    RUST_BASE_IMAGE = "rustlang/rust:nightly-bullseye-slim"
   }
-  target = "ffi_build_output"
-  platforms = ["linux/amd64"]
-  output = ["build/x86_64-unknown-linux-gnu"]
+  platforms = ["linux/amd64", "linux/arm64"]
 }
 
-target "alpine-build-aarch64" {
-  inherits = ["alpine-build"]
-  platforms = ["linux/arm64"]
-  output = ["build/aarch64-alpine-linux-musl"]
+target "debian_builder_1_60" {
+  inherits = ["debian_builder_stable"]
+  args = {
+    RUST_BASE_IMAGE = "rust:1.60-slim-bullseye"
+  }
+  platforms = ["local"]
 }
 
-target "debian-build-aarch64" {
-  inherits = ["debian-build"]
-  platforms = ["linux/arm64"]
-  output = ["build/aarch64-unknown-linux-gnu"]
+group "all_builders" {
+  targets = ["alpine_builder_latest", "debian_builder_stable", "debian_builder_nightly", "debian_builder_1_60"]
+}
+
+target "_use_debian_nightly" {
+  contexts = {
+    // base = "target:debian_builder_nightly"
+    base = "docker-image://ghcr.io/datadog/libdatadog-ci:debian_builder_nightly"
+  }
+}
+
+target "_use_debian_stable" {
+  contexts = {
+    // base = "target:debian_builder_stable"
+    base = "docker-image://ghcr.io/datadog/libdatadog-ci:debian_builder_stable"
+  }
+}
+
+target "_use_debian_1_60" {
+  contexts = {
+    // base = "target:debian_builder_1_60"
+    base = "docker-image://ghcr.io/datadog/libdatadog-ci:debian_builder_1_60"
+  }
 }

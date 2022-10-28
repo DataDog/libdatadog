@@ -3,88 +3,52 @@ on: [push]
 env: 
   CARGO_TERM_COLOR: always
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+  
 jobs:
-  rustfmt:
+  setup-matrix:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
     steps:
-      - name: Checkout sources
+      -
+        name: Checkout
         uses: actions/checkout@v3
-      - name: Cache
-        uses: ./.github/actions/cache
-      - name: Install latest nightly toolchain and rustfmt
-        run: rustup update nightly && rustup default nightly && rustup component add rustfmt
-      - run: cargo fmt --all -- --check
-  clippy:
-    name: "clippy #${{ matrix.rust_version }}"
+      -
+        name: Create matrix from bake file
+        id: targets
+        run: |
+          echo 'matrix<<EOF' >> $GITHUB_OUTPUT
+          docker buildx bake checks --print | jq -r '.target | keys' >> $GITHUB_OUTPUT
+          echo 'EOF' >> $GITHUB_OUTPUT
+      -
+        name: Show matrix
+        run: |
+          echo '${{ steps.targets.outputs.matrix }}'
+  do:
+    runs-on: ubuntu-latest
+    needs:
+      - setup-matrix
     strategy:
       fail-fast: false
       matrix:
-        rust_version: ["nightly", "1.60.0", "stable"]
-    runs-on: ubuntu-latest
+        check_target: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
     steps:
-      - name: Checkout sources
+      -
+        name: Checkout
         uses: actions/checkout@v3
-      - name: Cache
-        uses: ./.github/actions/cache
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
         with:
-          rust_version: ${{ matrix.rust_version }}
-      - name: Install ${{ matrix.version }} toolchain and clippy
-        run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }} && rustup component add clippy
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-  licensecheck:
-    runs-on: ubuntu-latest
-    name: "Presence of licence headers"
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v3
-      - name: Install licensecheck
-        run: sudo apt-get install -y licensecheck
-      - name: Check licenses
-        run: '! find . -name "*.rs" -o -name "*.c" -o -name "*.sh" | xargs licensecheck -c ".*" | grep -v "Apache License 2.0"'
-
-  # todo: fix upstream warnings; from the readme:
-  # The most common cause of missing licenses seems to be workspaces that
-  # don't include forward their license files. Go to the repo for the
-  # workspace and copy the relevant files from there.
-  # A package license may receive a confidence warning stating that
-  # cargo-bundle-licenses is "unsure" or "semi" confident. This means that
-  # when the found license was compared to a template license it was found to
-  # have diverged in more than a few words. You should verify that the licence
-  #  text is in fact correct in these cases.
-  #
-  # If this job fails, you need to regenerate the license, e.g.
-  # CARGO_HOME=/tmp/dd-cargo cargo bundle-licenses --format yaml --output LICENSE-3rdparty.yml
-  license-3rdparty:
-    runs-on: ubuntu-latest
-    name: "Valid LICENSE-3rdparty.yml"
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v3
-      - run: stat LICENSE-3rdparty.yml
-      - name: Cache
-        uses: actions/cache@v3
+          version: latest
+      -
+        name: Execute ${{ matrix.check_target }}
+        uses: docker/bake-action@v2
         with:
-          path: |
-            ~/.cargo/registry/
-            ~/.cargo/git/db/
-            ~/.cargo/bin/
-            ~/.cargo/.crates.toml
-          # cache key contains current version of cargo-bundle-licenses
-          # when upstream version is updated we can bump the cache key version, to cache the latest version of the tool
-          key: "v1-0.5.0"
-      - run: cargo install cargo-bundle-licenses 
-      - name: "Generate new LICENSE-3rdparty.yml and check against the previous" 
-        env: 
-          CARGO_HOME: "/tmp/dd-cargo"
-        run: > 
-          cargo bundle-licenses \
-            --format yaml \
-            --output /tmp/CI.yaml \
-            --previous LICENSE-3rdparty.yml \
-            --check-previous 
-      - name: export the generated license file on failure
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@v1
-        with:
-          name: LICENSE-3rdparty.yml
-          path: /tmp/CI.yaml
+          targets: ${{ matrix.check_target }}
+          set: |
+            *.cache-from=type=gha,scope=lint-${{ matrix.target }}
+            *.cache-to=type=gha,mode=max,scope=lint-${{ matrix.target }}
