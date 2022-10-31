@@ -1,7 +1,6 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-
 use std::os::unix::net::UnixListener as StdUnixListener;
 use std::time::{self, Instant};
 use std::{
@@ -14,6 +13,7 @@ use std::{
 };
 use tokio::select;
 
+use nix::unistd::setsid;
 use nix::{sys::wait::waitpid, unistd::Pid};
 use tokio::net::UnixListener;
 use tokio_util::sync::CancellationToken;
@@ -118,6 +118,10 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
     unsafe {
         let pid = fork_fn(listener, |listener| {
             fork_fn(listener, |listener| {
+                if let Err(err) = setsid() {
+                    println!("Setsid() Error: {}", err)
+                }
+
                 reopen_stdio();
                 let now = Instant::now();
                 println!(
