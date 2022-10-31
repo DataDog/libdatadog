@@ -33,7 +33,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("write only interface", |b| {
         b.iter(|| {
             transport
-                .send_ignore_response(ExampleInterfaceRequest::Ping {})
+                .send_ignore_response(ExampleInterfaceRequest::Notify {})
                 .unwrap()
         })
     });

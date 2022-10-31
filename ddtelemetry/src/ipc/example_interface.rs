@@ -20,6 +20,7 @@ use super::{
 
 #[tarpc::service]
 pub trait ExampleInterface {
+    async fn notify() -> ();
     async fn ping() -> ();
     async fn time_now() -> Duration;
     async fn req_cnt() -> u32;
@@ -47,9 +48,16 @@ impl ExampleServer {
 }
 
 impl ExampleInterface for ExampleServer {
-    type PingFut = Pending<()>;
+    type PingFut = Ready<()>;
 
     fn ping(self, _: Context) -> Self::PingFut {
+        self.req_cnt.fetch_add(1, Ordering::AcqRel);
+        ready(())
+    }
+
+    type NotifyFut = Pending<()>;
+
+    fn notify(self, _: Context) -> Self::NotifyFut {
         self.req_cnt.fetch_add(1, Ordering::AcqRel);
         pending() // returning pending future, ensures the RPC system will not try to return a response to the client
     }

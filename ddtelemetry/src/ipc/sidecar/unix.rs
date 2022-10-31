@@ -4,21 +4,20 @@
 use std::os::unix::net::UnixListener as StdUnixListener;
 use std::{
     io::{self},
-    os::unix::net::UnixStream,
     sync::{
         atomic::{AtomicI32, Ordering},
         Arc,
     },
     time::Duration,
 };
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    select,
-};
+use tokio::select;
 
 use nix::{sys::wait::waitpid, unistd::Pid};
 use tokio::net::UnixListener;
 use tokio_util::sync::CancellationToken;
+
+use crate::ipc::example_interface::{ExampleServer, ExampleTransport};
+use crate::ipc::platform::Channel as IpcChannel;
 
 use crate::{
     fork::{fork_fn, getpid},
@@ -49,8 +48,10 @@ async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
         }
     });
 
+    let server = ExampleServer::default();
+
     loop {
-        let (mut socket, _) = select! {
+        let (socket, _) = select! {
             res = listener.accept() => {
                 res?
             },
@@ -63,19 +64,9 @@ async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
         counter.fetch_add(1, Ordering::AcqRel);
 
         let cloned_counter = Arc::clone(&counter);
+        let server = server.clone();
         tokio::spawn(async move {
-            let mut buf = vec![0; 1024];
-
-            loop {
-                let n = socket.read(&mut buf).await.unwrap_or(0);
-
-                if n == 0 {
-                    break;
-                }
-                println!("writing stuff back");
-
-                socket.write_all(&buf[0..n]).await.ok();
-            }
+            server.accept_connection(socket).await;
             cloned_counter.fetch_add(-1, Ordering::AcqRel);
             println!("connection closed");
         });
@@ -101,7 +92,7 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
             fork_fn(listener, |listener| {
                 println!("starting sidecar, pid: {}", getpid());
                 if let Err(err) = enter_listener_loop(listener) {
-                    println!("Error: {}", err)
+                    println!("Error: {err}")
                 }
             })
             .ok();
@@ -111,11 +102,11 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
     Ok(())
 }
 
-pub fn start_or_connect_to_sidecar() -> io::Result<UnixStream> {
+pub fn start_or_connect_to_sidecar() -> io::Result<ExampleTransport> {
     let liaison = setup::DefaultLiason::default();
     if let Some(listener) = liaison.attempt_listen()? {
         daemonize(listener)?;
     };
 
-    liaison.connect_to_server()
+    Ok(IpcChannel::from(liaison.connect_to_server()?).into())
 }
