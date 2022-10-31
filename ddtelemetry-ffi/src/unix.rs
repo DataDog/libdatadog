@@ -7,10 +7,12 @@ use ddtelemetry::ipc::{example_interface::ExampleTransport, platform::PlatformHa
 
 use crate::{try_c, MaybeError};
 
+#[repr(C)]
 pub struct NativeFile {
     handle: Box<PlatformHandle<File>>
 }
 
+#[repr(C)]
 pub struct NativeUnixStream {
     handle: PlatformHandle<UnixStream>
 }
