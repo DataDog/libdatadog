@@ -1,6 +1,5 @@
 name: docker-build
-on: [push]
-#TODO rebuild nightly periodically, or when variable's change
+on: workflow_dispatch
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

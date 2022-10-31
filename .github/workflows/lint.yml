@@ -27,7 +27,8 @@ jobs:
         name: Show matrix
         run: |
           echo '${{ steps.targets.outputs.matrix }}'
-  do:
+  run_target:
+    name: ${{ matrix.check_target }}
     runs-on: ubuntu-latest
     needs:
       - setup-matrix
