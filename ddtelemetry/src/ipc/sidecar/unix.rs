@@ -16,7 +16,8 @@ use nix::{sys::wait::waitpid, unistd::Pid};
 use tokio::net::UnixListener;
 use tokio_util::sync::CancellationToken;
 
-use crate::ipc::example_interface::{ExampleServer, ExampleTransport};
+use crate::ipc::interface::blocking::TelemetryTransport;
+use crate::ipc::interface::TelemetryServer;
 use crate::ipc::platform::Channel as IpcChannel;
 
 use crate::{
@@ -48,7 +49,7 @@ async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
         }
     });
 
-    let server = ExampleServer::default();
+    let server = TelemetryServer::default();
 
     loop {
         let (socket, _) = select! {
@@ -102,7 +103,7 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
     Ok(())
 }
 
-pub fn start_or_connect_to_sidecar() -> io::Result<ExampleTransport> {
+pub fn start_or_connect_to_sidecar() -> io::Result<TelemetryTransport> {
     let liaison = setup::DefaultLiason::default();
     if let Some(listener) = liaison.attempt_listen()? {
         daemonize(listener)?;
