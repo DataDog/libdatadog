@@ -123,9 +123,9 @@ pub unsafe extern "C" fn ddog_builder_instantiate(
     MaybeError::None
 }
 
-#[no_mangle]
 /// # Safety
 /// * builder should be a non null pointer to a null pointer to a builder
+#[no_mangle]
 pub unsafe extern "C" fn ddog_builder_instantiate_with_hostname(
     builder: &mut *mut TelemetryWorkerBuilder,
     hostname: ffi::CharSlice,

@@ -1,9 +1,22 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use std::{fs::File, mem, os::unix::{net::UnixStream, prelude::FromRawFd}};
+use ddcommon_ffi as ffi;
+use std::{
+    fs::File,
+    os::unix::{net::UnixStream, prelude::FromRawFd},
+};
 
-use ddtelemetry::ipc::{example_interface::ExampleTransport, platform::PlatformHandle, sidecar};
+use ddtelemetry::{
+    data::{Dependency, DependencyType, Integration},
+    ipc::{
+        interface::blocking::{self, TelemetryTransport},
+        platform::PlatformHandle,
+        sidecar,
+    },
+    worker::TelemetryActions,
+};
+use ffi::slice::AsBytes;
 
 use crate::{try_c, MaybeError};
 
@@ -49,17 +62,21 @@ pub extern "C" fn ddog_ph_unix_stream_drop(ph: Box<NativeUnixStream>) {
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_example_transport_drop(transport: Box<ExampleTransport>) {
-    drop(transport)
+pub extern "C" fn ddog_sidecar_transport_drop(t: Box<TelemetryTransport>) {
+    drop(t)
 }
 
 #[no_mangle]
+pub extern "C" fn ddog_sidecar_transport_clone(
+    transport: &TelemetryTransport,
+) -> Box<TelemetryTransport> {
+    Box::new(transport.clone())
+}
+
 /// # Safety
 /// Caller must ensure the process is safe to fork, at the time when this method is called
 #[no_mangle]
-pub unsafe extern "C" fn ddog_sidecar_connect(
-    connection: &mut *mut ExampleTransport,
-) -> MaybeError {
+pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut TelemetryTransport) -> MaybeError {
     let stream = Box::new(try_c!(sidecar::start_or_connect_to_sidecar()));
     *connection = Box::into_raw(stream);
 
@@ -67,15 +84,118 @@ pub unsafe extern "C" fn ddog_sidecar_connect(
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<ExampleTransport>) -> MaybeError {
-    let rv = try_c!(
-        transport.send(ddtelemetry::ipc::example_interface::ExampleInterfaceRequest::Ping {})
-    );
+pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<TelemetryTransport>) -> MaybeError {
+    try_c!(blocking::ping(transport));
 
-    match rv {
-        ddtelemetry::ipc::example_interface::ExampleInterfaceResponse::Ping(_) => {}
-        _ => return MaybeError::Some("wrong response".as_bytes().to_vec().into()),
-    }
+    MaybeError::None
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_sidecar_telemetry_register_application(
+    transport: &mut Box<TelemetryTransport>,
+    runtime_id: ffi::CharSlice,
+    session_id: ffi::CharSlice,
+    service_name: ffi::CharSlice,
+    language_name: ffi::CharSlice,
+    language_version: ffi::CharSlice,
+    tracer_version: ffi::CharSlice,
+) -> MaybeError {
+    try_c!(blocking::register_application(
+        transport,
+        runtime_id.to_utf8_lossy().into_owned(),
+        session_id.to_utf8_lossy().into_owned(),
+        service_name.to_utf8_lossy().into_owned(),
+        language_name.to_utf8_lossy().into_owned(),
+        language_version.to_utf8_lossy().into_owned(),
+        tracer_version.to_utf8_lossy().into_owned()
+    ));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_sidecar_telemetry_add_config(
+    transport: &mut Box<TelemetryTransport>,
+    runtime_id: ffi::CharSlice,
+    session_id: ffi::CharSlice,
+    service_name: ffi::CharSlice,
+    config_key: ffi::CharSlice,
+    config_value: ffi::CharSlice,
+) -> MaybeError {
+    let config_entry = TelemetryActions::AddConfig((
+        config_key.to_utf8_lossy().into_owned(),
+        config_value.to_utf8_lossy().into_owned(),
+    ));
+    try_c!(blocking::send_telemetry_actions(
+        transport,
+        runtime_id.to_utf8_lossy().into_owned(),
+        session_id.to_utf8_lossy().into_owned(),
+        service_name.to_utf8_lossy().into_owned(),
+        vec![config_entry],
+    ));
+    MaybeError::None
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_sidecar_telemetry_add_dependency(
+    transport: &mut Box<TelemetryTransport>,
+    runtime_id: ffi::CharSlice,
+    session_id: ffi::CharSlice,
+    service_name: ffi::CharSlice,
+    dependency_name: ffi::CharSlice,
+    dependency_version: ffi::CharSlice,
+) -> MaybeError {
+    let version = dependency_version
+        .is_empty()
+        .then(|| dependency_version.to_utf8_lossy().into_owned());
+
+    let dependency = TelemetryActions::AddDependecy(Dependency {
+        name: dependency_name.to_utf8_lossy().into_owned(),
+        version,
+        hash: None,
+        type_: DependencyType::PlatformStandard,
+    });
+
+    try_c!(blocking::send_telemetry_actions(
+        transport,
+        runtime_id.to_utf8_lossy().into_owned(),
+        session_id.to_utf8_lossy().into_owned(),
+        service_name.to_utf8_lossy().into_owned(),
+        vec![dependency],
+    ));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_sidecar_telemetry_add_integration(
+    transport: &mut Box<TelemetryTransport>,
+    runtime_id: ffi::CharSlice,
+    session_id: ffi::CharSlice,
+    service_name: ffi::CharSlice,
+    integration_name: ffi::CharSlice,
+    integration_version: ffi::CharSlice,
+) -> MaybeError {
+    let version = integration_version
+        .is_empty()
+        .then(|| integration_version.to_utf8_lossy().into_owned());
+
+    let integration = TelemetryActions::AddIntegration(Integration {
+        name: integration_name.to_utf8_lossy().into_owned(),
+        version,
+        compatible: None,
+        enabled: None,
+        auto_enabled: None,
+    });
+
+    try_c!(blocking::send_telemetry_actions(
+        transport,
+        runtime_id.to_utf8_lossy().into_owned(),
+        session_id.to_utf8_lossy().into_owned(),
+        service_name.to_utf8_lossy().into_owned(),
+        vec![integration],
+    ));
+
     MaybeError::None
 }
 
@@ -107,12 +227,34 @@ mod test_c_sidecar {
     #[ignore] // run all tests that can fork in a separate run, to avoid any race conditions with default rust test harness
     fn test_ddog_sidecar_connection() {
         let mut transport = std::ptr::null_mut();
-        assert_eq!(
-            unsafe { ddog_sidecar_connect(&mut transport) },
-            MaybeError::None
-        );
+        assert_eq!(ddog_sidecar_connect(&mut transport), MaybeError::None);
         let mut transport = unsafe { Box::from_raw(transport) };
-        ddog_sidecar_ping(&mut transport);
-        ddog_example_transport_drop(transport);
+        assert_eq!(ddog_sidecar_ping(&mut transport), MaybeError::None);
+
+        ddog_sidecar_transport_drop(transport);
+    }
+
+    #[test]
+    #[ignore] // run all tests that can fork in a separate run, to avoid any race conditions with default rust test harness
+    fn test_ddog_sidecar_register_app() {
+        let mut transport = std::ptr::null_mut();
+        assert_eq!(ddog_sidecar_connect(&mut transport), MaybeError::None);
+        let mut transport = unsafe { Box::from_raw(transport) };
+        unsafe {
+            assert_eq!(
+                ddog_sidecar_telemetry_register_application(
+                    &mut transport,
+                    "runtime_id".into(),
+                    "session_id".into(),
+                    "service_name".into(),
+                    "language_name".into(),
+                    "language_version".into(),
+                    "tracer_version".into()
+                ),
+                MaybeError::None
+            );
+        };
+
+        ddog_sidecar_transport_drop(transport);
     }
 }
