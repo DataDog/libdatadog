@@ -11,7 +11,7 @@ mkdir -p /output/cargo/
 cp Cargo.lock /output/cargo/
 find . -name "Cargo.toml" | xargs -n 1 sh -c 'export OUT=/output/cargo/$1; mkdir -p $(dirname $OUT); cp $1 $OUT; echo $OUT' copy_cargo
 find . -name "Cargo.toml" | sed -e s#Cargo.toml#src/lib.rs#g | xargs -n 1 sh -c 'export OUT=/output/cargo/$1; mkdir -p $(dirname $OUT); touch $OUT; echo $OUT' create_lib_stubs
-find . -wholename "*/src/bin/*.rs" -o -wholename "*/examples/*.rs" | xargs -n 1 sh -c 'export OUT=/output/cargo/$1; mkdir -p $(dirname $OUT); touch $OUT; echo $OUT' create_required_stubs
+find . -wholename "*/benches/*.rs" -o -wholename "*/src/bin/*.rs" -o -wholename "*/examples/*.rs" | xargs -n 1 sh -c 'export OUT=/output/cargo/$1; mkdir -p $(dirname $OUT); touch $OUT; echo $OUT' create_required_stubs
 
 ## group rust source files
 mkdir -p /output/rs_src
