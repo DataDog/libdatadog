@@ -54,6 +54,7 @@ target "update_license_file" {
 target "cargo_registry_cache" {
   dockerfile = "tools/docker/cargo.Dockerfile"
   output = ["type=image"]
+  platforms = ["linux/amd64", "linux/arm64"]
 }
 
 // builders
