@@ -1,5 +1,8 @@
-// Checks
+group "default" {
+  targets = ["build_ffi"]
+}
 
+// Checks
 target "_check_base" {
   dockerfile = "tools/docker/checks.Dockerfile"
   output = ["type=cacheonly"]
@@ -41,13 +44,6 @@ group "check_clippy" {
 
 group "checks" {
   targets = ["check_license_headers", "check_license_3rdparty_file", "check_rust_fmt", "check_clippy"]
-}
-
-// generate files
-target "update_license_file" {
-  inherits = ["_check_base", "_use_debian_stable"]
-  target = "export_license_3rdparty_file"
-  output = ["./"]
 }
 
 // cache
@@ -123,4 +119,24 @@ target "_use_debian_1_60" {
 // CI
 group "build_ci_images" {
   targets = ["all_builders", "cargo_registry_cache"]
+}
+
+// artifact builds
+target "build_license_file" {
+  inherits = ["_check_base", "_use_debian_stable"]
+  target = "export_license_3rdparty_file"
+  output = ["build/"]
+}
+
+target "build_ffi" {
+  inherits = ["_build_base", "_use_debian_stable"]
+  target = "build_ffi"
+  output = ["build/"]
+  contexts = {
+    base = "target:debian_builder_stable"
+  }
+}
+
+target "_build_base" {
+  dockerfile = "tools/docker/build.Dockerfile"
 }

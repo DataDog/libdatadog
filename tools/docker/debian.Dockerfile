@@ -29,5 +29,5 @@ FROM ${RUST_BASE_IMAGE} as builder
     RUN set -xe; \
         cargo install cargo-bundle-licenses --version ${BUNDLE_LICENSES_VERSION}; \
         cargo install cbindgen --version ${CBINGEN_VERSION}; \
+        mv /root/.cargo/bin/cbindgen /usr/local/bin/cbindgen; \
         rm -rf /root/.cargo/git; 
-
