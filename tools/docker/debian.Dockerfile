@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.4
 ARG RUST_BASE_IMAGE=rust:1-slim-bullseye
 ARG CARGO_BUILD_INCREMENTAL="true"
 ARG CARGO_NET_RETRY="2"

@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.4
 FROM ghcr.io/datadog/libdatadog-ci:debian_builder_stable as base
 
 FROM base as improve_caching

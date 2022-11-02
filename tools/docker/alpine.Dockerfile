@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.4
 ARG ALPINE_BASE_IMAGE="alpine:3.16"
 ARG CARGO_BUILD_INCREMENTAL="true"
 ARG CARGO_NET_RETRY="2"

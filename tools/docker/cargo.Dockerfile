@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.4
+
 ARG RUST_BASE_IMAGE=rust:1-slim-bullseye
 # Build only used to generate cargo registry cache
 # as ARM builds use extreme amounts of memory under qemu (10GB +) emulation
