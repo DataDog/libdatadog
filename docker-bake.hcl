@@ -132,11 +132,15 @@ target "build_ffi" {
   inherits = ["_build_base", "_use_debian_stable"]
   target = "build_ffi"
   output = ["build/"]
-  contexts = {
-    base = "target:debian_builder_stable"
-  }
 }
 
 target "_build_base" {
   dockerfile = "tools/docker/build.Dockerfile"
+}
+
+// Release 
+target "release_build" {
+  inherits = ["build_ffi"]
+  platforms = ["local"]
+  output = ["type=image"]
 }

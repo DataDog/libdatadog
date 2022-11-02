@@ -1,0 +1,30 @@
+name: release
+on: [push]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+  
+jobs:
+  run_release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v3
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+        with:
+          config: .github/buildkitd-default-runner.toml
+          version: latest
+      -
+        name: Execute Release
+        uses: docker/bake-action@v2
+        with:
+          targets: release_build
+          set: |
+            *.cache-from=type=registry,ref=ghcr.io/datadog/libdatadog-ci-cache:release
+            *.cache-to=type=registry,ref=ghcr.io/datadog/libdatadog-ci-cache:release
+            *.output=type=image,name=ghcr.io/datadog/libdatadog:v0.0.1
