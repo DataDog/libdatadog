@@ -41,13 +41,22 @@ FROM base as aws_cli
 
     RUN aws --version   # Just to make sure its installed alright
 
+# // TODO: export registry cache as published docker image, and reference it here
+FROM scratch AS cargo_registry_cache
+
 FROM base as cbindgen
     ENV PATH="/root/.cargo/bin:$PATH"
     ARG CARGO_BUILD_INCREMENTAL
     ARG CARGO_NET_RETRY
     ARG CBINGEN_VERSION
     ENV CARGO_NET_RETRY="${CARGO_NET_RETRY}"
-    RUN cargo install cbindgen --version ${CBINGEN_VERSION} && rm -rf /root/.cargo/registry /root/.cargo/git
+    ARG TARGETPLATFORM
+    ARG BUILDPLATFORM
+    COPY --from=cargo_registry_cache / /root/.cargo/registry/
+    RUN set -xe; \
+            cargo install cbindgen --version ${CBINGEN_VERSION}; \
+            rm -rf /root/.cargo/registry /root/.cargo/git
 
 FROM aws_cli as builder
+    COPY --from=cargo_registry_cache / /root/.cargo/registry/
     COPY --from=cbindgen /root/.cargo/bin/cbindgen /usr/local/bin/cbindgen
