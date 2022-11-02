@@ -44,28 +44,38 @@ group "checks" {
 }
 
 // generate files
-
 target "update_license_file" {
   inherits = ["_check_base", "_use_debian_stable"]
   target = "export_license_3rdparty_file"
   output = ["./"]
 }
 
-// builders
+// cache
+target "cargo_registry_cache" {
+  dockerfile = "tools/docker/cargo.Dockerfile"
+  output = ["type=image"]
+}
 
-target "alpine_builder_latest" {
+// builders
+target "alpine_builder_stable" {
   dockerfile = "tools/docker/alpine.Dockerfile"
   target = "builder"
   platforms = ["linux/amd64", "linux/arm64"]
+  contexts = {
+    cargo_registry_cache = "target:cargo_registry_cache"
+  }
 }
 
 target "debian_builder_stable" {
   dockerfile = "tools/docker/debian.Dockerfile"
   target = "builder"
+  platforms = ["linux/amd64", "linux/arm64"]
   args = {
     RUST_BASE_IMAGE = "rust:1-slim-bullseye"
   }
-  platforms = ["linux/amd64", "linux/arm64"]
+  contexts = {
+    cargo_registry_cache = "target:cargo_registry_cache"
+  }
 }
 
 target "debian_builder_nightly" {
@@ -85,7 +95,7 @@ target "debian_builder_1_60" {
 }
 
 group "all_builders" {
-  targets = ["alpine_builder_latest", "debian_builder_stable", "debian_builder_nightly", "debian_builder_1_60"]
+  targets = ["alpine_builder_stable", "debian_builder_stable", "debian_builder_nightly", "debian_builder_1_60"]
 }
 
 target "_use_debian_nightly" {
@@ -107,4 +117,9 @@ target "_use_debian_1_60" {
     // base = "target:debian_builder_1_60"
     base = "docker-image://ghcr.io/datadog/libdatadog-ci:debian_builder_1_60"
   }
+}
+
+// CI
+group "build_ci_images" {
+  targets = ["all_builders", "cargo_registry_cache"]
 }

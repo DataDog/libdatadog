@@ -19,7 +19,7 @@ jobs:
         id: targets
         run: |
           echo 'matrix<<EOF' >> $GITHUB_OUTPUT
-          docker buildx bake all_builders --print | jq -r '.target | keys' >> $GITHUB_OUTPUT
+          docker buildx bake build_ci_images --print | jq -r '.target | keys' >> $GITHUB_OUTPUT
           echo 'EOF' >> $GITHUB_OUTPUT
       -
         name: Show matrix
@@ -44,6 +44,7 @@ jobs:
         name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
         with:
+          config: .github/buildkitd-image-builder.toml
           version: latest
       -
         name: Login to GitHub Container Registry
@@ -59,6 +60,6 @@ jobs:
           targets: ${{ matrix.image_target }}
           push: true 
           set: |
-            *.cache-from=type=registry,ref=ghcr.io/datadog/libdatadog-ci:${{ matrix.image_target }}-cache
-            *.cache-to=type=registry,ref=ghcr.io/datadog/libdatadog-ci:${{ matrix.image_target }}-cache
-            *.output=type=image,name=ghcr.io/datadog/libdatadog-ci:${{ matrix.image_target }}
+            *.cache-from=type=registry,ref=ghcr.io/pawelchcki/libdatadog-ci:${{ matrix.image_target }}-cache
+            *.cache-to=type=registry,ref=ghcr.io/pawelchcki/libdatadog-ci:${{ matrix.image_target }}-cache
+            *.output=type=image,name=ghcr.io/pawelchcki/libdatadog-ci:${{ matrix.image_target }}
