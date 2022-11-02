@@ -1,5 +1,5 @@
 name: docker-build
-on: workflow_dispatch
+on: [push]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
