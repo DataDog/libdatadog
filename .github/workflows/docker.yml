@@ -59,6 +59,6 @@ jobs:
           targets: ${{ matrix.image_target }}
           push: true 
           set: |
-            *.cache-from=type=registry,ref=ghcr.io/datadog/libdatadog-ci:${{ matrix.image_target }}-cache
+            *.cache-from=type=registry,ref=ghcr.io/pawelchcki/libdatadog-ci:${{ matrix.image_target }}-cache
             *.cache-to=type=registry,ref=ghcr.io/datadog/libdatadog-ci:${{ matrix.image_target }}-cache
             *.output=type=image,name=ghcr.io/datadog/libdatadog-ci:${{ matrix.image_target }}
