@@ -42,7 +42,7 @@ FROM base as aws_cli
     RUN aws --version   # Just to make sure its installed alright
 
 # // TODO: export registry cache as published docker image, and reference it here
-FROM scratch AS cargo_registry_cache
+FROM ghcr.io/datadog/libdatadog-ci:cargo_registry_cache AS cargo_registry_cache
 
 FROM base as cbindgen
     ENV PATH="/root/.cargo/bin:$PATH"

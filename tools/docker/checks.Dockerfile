@@ -1,4 +1,4 @@
-FROM ghcr.io/datadog/libdatadog-ci-base:debian-stable as base
+FROM ghcr.io/datadog/libdatadog-ci:debian_builder_stable as base
 
 FROM base as improve_caching
     RUN --mount=target=/build bash tools/docker/src_caching.sh

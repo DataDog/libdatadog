@@ -4,8 +4,7 @@ ARG CARGO_NET_RETRY="2"
 ARG BUNDLE_LICENSES_VERSION=1.0.1
 ARG CBINGEN_VERSION="0.24.3"
 
-# // TODO: export registry cache as published docker image, and reference it here
-FROM scratch AS cargo_registry_cache
+FROM ghcr.io/datadog/libdatadog-ci:cargo_registry_cache AS cargo_registry_cache
 
 FROM ${RUST_BASE_IMAGE} as builder
     RUN mkdir /build

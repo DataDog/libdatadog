@@ -24,7 +24,6 @@ jobs:
         uses: docker/bake-action@v2
         with:
           targets: release_build
+          push: true 
           set: |
-            *.cache-from=type=registry,ref=ghcr.io/datadog/libdatadog-ci-cache:release
-            *.cache-to=type=registry,ref=ghcr.io/datadog/libdatadog-ci-cache:release
-            *.output=type=image,name=ghcr.io/datadog/libdatadog:v0.0.1
+            *.output=type=image,name=ghcr.io/datadog/libdatadog-release:v0.0.1
