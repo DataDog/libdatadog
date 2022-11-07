@@ -1,6 +1,4 @@
 target/
 build/
 .github/
-Dockerfile.build
 .git/
-docker-bake.hcl
