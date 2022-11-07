@@ -19,6 +19,7 @@ generate_lints_pipeline:
   
 lints:
   stage: lint
+  needs: [generate_lints_pipeline]
   trigger:
     include:
       - artifact: build/gitlab_pipelines.yml
