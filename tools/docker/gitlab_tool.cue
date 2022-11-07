@@ -22,20 +22,19 @@ GitlabPipelines: {
     stages: ["check"]
 
     variables: {
-    KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: "libdatadog"
+        KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: "libdatadog"
     }
 
     for check in #targets {       
         (check): {
-        tags: [ "runner:docker", "platform:amd64" ]
-        stage: "check"
-        when: "always"
-        //   tags: [ "arch:amd64"]
-        image: "${DOCKER_IMAGE}"
-        
-        script: """
-            docker buildx bake \(check) --progress=plain
-        """
+            tags: [ "runner:docker", "platform:amd64" ]
+            stage: "check"
+            when: "always"
+            image: "${DOCKER_IMAGE}"
+            
+            script: """
+                docker buildx bake \(check) --progress=plain
+            """
         }    
     }
 }
