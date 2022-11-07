@@ -1,16 +1,25 @@
-variables:
-  # These are gitlab variables so that it's easier to do a manual deploy
-  # If these are set witih value and description, then it gives you UI elements
-  DOWNSTREAM_BRANCH:
-    value: "main"
-    description: "downstream jobs are triggered on this branch"
+include:
+  remote: https://gitlab-templates.ddbuild.io/libdatadog/include/variables.yml
 
-trigger_internal_build:
-  variables:
-    LIBDATADOG_COMMIT_BRANCH: $CI_COMMIT_BRANCH
-    LIBDATADOG_COMMIT_SHA: $CI_COMMIT_SHA
-    LIBDATADOG_SHORT_COMMIT_SHA: ${CI_COMMIT_SHORT_SHA}
+variables:
+  KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: libdatadog
+stages:
+  - lint
+
+generate_lints_pipeline:
+  tags: [ "runner:docker", "platform:amd64" ]
+  stage: lint
+  when: always
+  image: "${DOCKER_IMAGE}"
+  artifacts:
+    paths:
+      - build/gitlab_pipelines.yml
+  script: |
+    docker buildx bake checks --print | tee targets.json; docker buildx bake gitlab_pipelines --progress=plain
+  
+lints:
+  stage: lint
   trigger:
-    project: DataDog/libddprof-build
-    strategy: depend
-    branch: $DOWNSTREAM_BRANCH
+    include:
+      - artifact: build/gitlab_pipelines.yml
+        job: generate_lints_pipeline

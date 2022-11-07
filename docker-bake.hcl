@@ -117,6 +117,12 @@ target "_use_debian_1_60" {
 }
 
 // CI
+target "gitlab_pipelines" {
+  dockerfile = "tools/docker/auto_pipelines.Dockerfile"
+  target = "gitlab_pipelines"
+  output = ["build/"]
+}
+
 group "build_ci_images" {
   targets = ["all_builders", "cargo_registry_cache"]
 }
