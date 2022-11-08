@@ -187,15 +187,12 @@ impl ProfileExporter {
                     ("aas.site.type", aas_metadata.get_site_type()),
                     ("aas.subscription.id", aas_metadata.get_subscription_id()),
                 ];
-                aas_tags
-                    .into_iter()
-                    .for_each(|(name, value)| match Tag::new(name, value) {
-                        Ok(tag) => {
-                            tags_profiler.push_str(tag.as_ref());
-                            tags_profiler.push(',');
-                        }
-                        _ => (),
-                    });
+                aas_tags.into_iter().for_each(|(name, value)| {
+                    if let Ok(tag) = Tag::new(name, value) {
+                        tags_profiler.push_str(tag.as_ref());
+                        tags_profiler.push(',');
+                    }
+                });
             }
             None => (),
         }
