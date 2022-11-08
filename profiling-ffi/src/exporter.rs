@@ -25,8 +25,8 @@ pub enum NewProfileExporterResult {
     Err(ddcommon_ffi::Vec<u8>),
 }
 
-#[export_name = "ddog_NewProfileExporterResult_drop"]
-pub unsafe extern "C" fn new_profile_exporter_result_drop(result: NewProfileExporterResult) {
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Exporter_NewResult_drop(result: NewProfileExporterResult) {
     match result {
         NewProfileExporterResult::Ok(ptr) => {
             let exporter = Box::from_raw(ptr);
@@ -123,9 +123,9 @@ unsafe fn try_to_endpoint(endpoint: Endpoint) -> anyhow::Result<exporter::Endpoi
 /// * `tags` - Tags to include with every profile reported by this exporter. It's also possible to include
 ///   profile-specific tags, see `additional_tags` on `profile_exporter_build`.
 /// * `endpoint` - Configuration for reporting data
+#[no_mangle]
 #[must_use]
-#[export_name = "ddog_ProfileExporter_new"]
-pub extern "C" fn profile_exporter_new(
+pub extern "C" fn ddog_prof_Exporter_new(
     profiling_library_name: CharSlice,
     profiling_library_version: CharSlice,
     family: CharSlice,
@@ -151,8 +151,8 @@ pub extern "C" fn profile_exporter_new(
     }
 }
 
-#[export_name = "ddog_ProfileExporter_delete"]
-pub extern "C" fn profile_exporter_delete(exporter: Option<Box<ProfileExporter>>) {
+#[no_mangle]
+pub extern "C" fn ddog_prof_Exporter_drop(exporter: Option<Box<ProfileExporter>>) {
     std::mem::drop(exporter)
 }
 
@@ -173,8 +173,9 @@ unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> 
 /// # Safety
 /// The `exporter` and the files inside of the `files` slice need to have been
 /// created by this module.
-#[export_name = "ddog_ProfileExporter_build"]
-pub unsafe extern "C" fn profile_exporter_build(
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     exporter: Option<NonNull<ProfileExporter>>,
     start: Timespec,
     end: Timespec,
@@ -211,9 +212,9 @@ pub unsafe extern "C" fn profile_exporter_build(
 ///
 /// # Safety
 /// All non-null arguments MUST have been created by created by apis in this module.
+#[no_mangle]
 #[must_use]
-#[export_name = "ddog_ProfileExporter_send"]
-pub unsafe extern "C" fn profile_exporter_send(
+pub unsafe extern "C" fn ddog_prof_Exporter_send(
     exporter: Option<NonNull<ProfileExporter>>,
     request: Option<Box<Request>>,
     cancel: Option<NonNull<CancellationToken>>,
@@ -247,7 +248,7 @@ pub unsafe extern "C" fn profile_exporter_send(
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_Request_drop(_request: Option<Box<Request>>) {}
+pub extern "C" fn ddog_prof_Exporter_Request_drop(_request: Option<Box<Request>>) {}
 
 fn unwrap_cancellation_token<'a>(
     cancel: Option<NonNull<CancellationToken>>,
@@ -281,7 +282,7 @@ pub extern "C" fn ddog_CancellationToken_new() -> *mut CancellationToken {
 /// cancel_t2 = ddog_CancellationToken_clone(cancel_t1);
 ///
 /// // On thread t1:
-///     ddog_ProfileExporter_send(..., cancel_t1);
+///     ddog_prof_Exporter_send(..., cancel_t1);
 ///     ddog_CancellationToken_drop(cancel_t1);
 ///
 /// // On thread t2:
@@ -326,8 +327,8 @@ pub extern "C" fn ddog_CancellationToken_drop(_cancel: Option<Box<CancellationTo
     // _cancel implicitly dropped because we've turned it into a Box
 }
 
-#[export_name = "ddog_SendResult_drop"]
-pub unsafe extern "C" fn send_result_drop(result: SendResult) {
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Exporter_SendResult_drop(result: SendResult) {
     std::mem::drop(result)
 }
 
@@ -362,7 +363,7 @@ mod test {
         let host = Tag::new("host", "localhost").expect("static tags to be valid");
         tags.push(host);
 
-        let result = profile_exporter_new(
+        let result = ddog_prof_Exporter_new(
             profiling_library_name(),
             profiling_library_version(),
             family(),
@@ -372,7 +373,7 @@ mod test {
 
         match result {
             NewProfileExporterResult::Ok(exporter) => unsafe {
-                profile_exporter_delete(Some(Box::from_raw(exporter)))
+                ddog_prof_Exporter_drop(Some(Box::from_raw(exporter)))
             },
             NewProfileExporterResult::Err(message) => {
                 drop(message);
@@ -383,7 +384,7 @@ mod test {
 
     #[test]
     fn test_build() {
-        let exporter_result = profile_exporter_new(
+        let exporter_result = ddog_prof_Exporter_new(
             profiling_library_name(),
             profiling_library_version(),
             family(),
@@ -417,7 +418,7 @@ mod test {
         let timeout_milliseconds = 90;
 
         let maybe_request = unsafe {
-            profile_exporter_build(
+            ddog_prof_Exporter_Request_build(
                 exporter,
                 start,
                 finish,
