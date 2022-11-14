@@ -6,7 +6,7 @@ use std::{
     os::unix::{net::UnixStream, prelude::FromRawFd},
 };
 
-use ddtelemetry::ipc::{platform::PlatformHandle, sidecar};
+use ddtelemetry::ipc::{example_interface::ExampleTransport, platform::PlatformHandle, sidecar};
 
 use crate::{try_c, MaybeError};
 
@@ -41,25 +41,40 @@ pub extern "C" fn ddog_ph_unix_stream_drop(ph: Box<PlatformHandle<UnixStream>>) 
 }
 
 #[no_mangle]
+pub extern "C" fn ddog_example_transport_drop(transport: Box<ExampleTransport>) {
+    drop(transport)
+}
+
+#[no_mangle]
 /// # Safety
 /// Caller must ensure the process is safe to fork, at the time when this method is called
 pub unsafe extern "C" fn ddog_sidecar_connect(
-    connection: &mut *mut PlatformHandle<UnixStream>,
+    connection: &mut *mut ExampleTransport,
 ) -> MaybeError {
-    let stream = Box::new(try_c!(sidecar::start_or_connect_to_sidecar()).into());
+    let stream = Box::new(try_c!(sidecar::start_or_connect_to_sidecar()));
     *connection = Box::into_raw(stream);
 
     MaybeError::None
 }
 
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<ExampleTransport>) -> MaybeError {
+    let rv = try_c!(
+        transport.send(ddtelemetry::ipc::example_interface::ExampleInterfaceRequest::Ping {})
+    );
+
+    match rv {
+        ddtelemetry::ipc::example_interface::ExampleInterfaceResponse::Ping(_) => {}
+        _ => return MaybeError::Some("wrong response".as_bytes().to_vec().into()),
+    }
+    MaybeError::None
+}
+
 #[cfg(test)]
 mod test_c_sidecar {
+
     use super::*;
-    use std::{
-        ffi::CString,
-        io::{Read, Write},
-        os::unix::prelude::AsRawFd,
-    };
+    use std::{ffi::CString, io::Write, os::unix::prelude::AsRawFd};
 
     #[test]
     fn test_ddog_ph_file_handling() {
@@ -82,19 +97,13 @@ mod test_c_sidecar {
     #[test]
     #[ignore] // run all tests that can fork in a separate run, to avoid any race conditions with default rust test harness
     fn test_ddog_sidecar_connection() {
-        let mut connection = std::ptr::null_mut();
+        let mut transport = std::ptr::null_mut();
         assert_eq!(
-            unsafe { ddog_sidecar_connect(&mut connection) },
+            unsafe { ddog_sidecar_connect(&mut transport) },
             MaybeError::None
         );
-        let connection = unsafe { Box::from_raw(connection) };
-        {
-            let mut c = &*connection.as_socketlike_view().unwrap();
-            writeln!(c, "test").unwrap();
-            let mut buf = [0; 4];
-            c.read_exact(&mut buf).unwrap();
-            assert_eq!(&buf, b"test");
-        }
-        ddog_ph_unix_stream_drop(connection);
+        let mut transport = unsafe { Box::from_raw(transport) };
+        ddog_sidecar_ping(&mut transport);
+        ddog_example_transport_drop(transport);
     }
 }

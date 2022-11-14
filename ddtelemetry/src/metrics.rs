@@ -8,6 +8,7 @@ use std::{
 };
 
 use ddcommon::tag::Tag;
+use serde::{Deserialize, Serialize};
 
 use crate::data;
 
@@ -54,7 +55,7 @@ impl MetricBucket {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ContextKey(usize);
 
 #[derive(Debug, PartialEq, Eq, Hash)]

@@ -14,6 +14,8 @@ use io_lifetimes::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::ipc::handles::TransferHandles;
+
 /// PlatformHandle contains a valid reference counted FileDescriptor and associated Type information
 /// allowing safe transfer and sharing of file handles across processes, and threads
 #[derive(Serialize, Deserialize, Debug)]
@@ -22,7 +24,6 @@ pub struct PlatformHandle<T> {
     fd: RawFd, // Just an fd number to be used as reference e.g. when serializing, not for accessing actual fd
     #[serde(skip)]
     inner: Option<Arc<OwnedFd>>,
-
     phantom: PhantomData<T>,
 }
 
@@ -58,10 +59,7 @@ impl<T> PlatformHandle<T> {
     }
 }
 
-impl<T> PlatformHandle<T>
-where
-    T: From<OwnedFd>,
-{
+impl<T> PlatformHandle<T> {
     pub fn into_instance(self) -> Result<T, io::Error>
     where
         T: From<OwnedFd>,
@@ -155,6 +153,24 @@ impl<T> AsRawFd for PlatformHandle<T> {
             Some(f) => f.as_raw_fd(),
             None => self.fd,
         }
+    }
+}
+
+impl<T> TransferHandles for PlatformHandle<T> {
+    fn move_handles<Transport: crate::ipc::handles::HandlesTransport>(
+        &self,
+        transport: Transport,
+    ) -> Result<(), Transport::Error> {
+        transport.move_handle(self.clone())
+    }
+
+    fn receive_handles<Transport: crate::ipc::handles::HandlesTransport>(
+        &mut self,
+        transport: Transport,
+    ) -> Result<(), Transport::Error> {
+        let received_handle = transport.provide_handle(self)?;
+        self.inner = received_handle.inner;
+        Ok(())
     }
 }
 

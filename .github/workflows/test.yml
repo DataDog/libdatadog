@@ -31,8 +31,8 @@ jobs:
         run: cargo build --workspace --verbose
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test --workspace --verbose"
         run: cargo test --workspace --verbose
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo test --workspace --verbose -- --ignored"
-        run: cargo test --workspace --verbose -- --ignored
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo test --workspace --verbose -- --ignored --test-threads=1"
+        run: cargo test --workspace --verbose -- --ignored --test-threads=1
 
   ffi:
     name: "FFI #${{ matrix.platform }} ${{ matrix.rust_version }}"
