@@ -3,6 +3,7 @@
 
 use crate::Timespec;
 use datadog_profiling::profile as profiles;
+use ddcommon::profiled_endpoints::ProfiledEndpointStats;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
 use std::convert::{TryFrom, TryInto};
 use std::str::Utf8Error;
@@ -376,6 +377,7 @@ pub struct EncodedProfile {
     start: Timespec,
     end: Timespec,
     buffer: ddcommon_ffi::Vec<u8>,
+    endpoints_stats: ddcommon_ffi::Vec<ProfiledEndpointStats>,
 }
 
 impl From<datadog_profiling::profile::EncodedProfile> for EncodedProfile {
@@ -383,7 +385,14 @@ impl From<datadog_profiling::profile::EncodedProfile> for EncodedProfile {
         let start = value.start.into();
         let end = value.end.into();
         let buffer = value.buffer.into();
-        Self { start, end, buffer }
+        let endpoints_stats = value.endpoints_stats.into();
+
+        Self {
+            start,
+            end,
+            buffer,
+            endpoints_stats,
+        }
     }
 }
 

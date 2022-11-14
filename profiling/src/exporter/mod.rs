@@ -17,7 +17,10 @@ use std::io::Write;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
-use ddcommon::{azure_app_services, connector, HttpClient, HttpResponse};
+use ddcommon::{
+    azure_app_services, connector, profiled_endpoints::ProfiledEndpointsStats, HttpClient,
+    HttpResponse,
+};
 
 pub mod config;
 mod errors;
@@ -152,6 +155,7 @@ impl ProfileExporter {
         end: DateTime<Utc>,
         files: &[File],
         additional_tags: Option<&Vec<Tag>>,
+        endpoints_count: Option<&ProfiledEndpointsStats>,
         timeout: std::time::Duration,
     ) -> anyhow::Result<Request> {
         let mut form = multipart::Form::default();
@@ -208,6 +212,7 @@ impl ProfileExporter {
             "end": end.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
             "family": self.family.as_ref(),
             "version": "4",
+            "endpoints_count" : endpoints_count,
         })
         .to_string();
 

@@ -18,6 +18,7 @@ futures-util = {version = "0.3.0", default-features = false}
 hex = "0.4"
 hyper = {version = "0.14", features = ["http1", "client", "tcp", "stream"], default-features = false}
 hyper-rustls = {version = "0.23", default-features = false, features = ["native-tokio", "http1", "tls12"]}
+indexmap = "1.8"
 lazy_static = "1.4"
 log = {version = "0.4"}
 pin-project = "1"

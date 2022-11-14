@@ -8,6 +8,7 @@ use hyper::header::HeaderValue;
 pub mod azure_app_services;
 pub mod connector;
 pub mod container_id;
+pub mod profiled_endpoints;
 pub mod tag;
 
 pub mod header {

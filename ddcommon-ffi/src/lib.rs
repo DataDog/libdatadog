@@ -2,6 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 pub mod option;
+pub mod profiled_endpoints;
 pub mod slice;
 pub mod tags;
 pub mod vec;
