@@ -4,7 +4,6 @@ use std::{
 };
 
 use anyhow::Result;
-use futures::Future;
 use futures::{
     future::{self, BoxFuture, Pending, Ready, Shared},
     FutureExt,

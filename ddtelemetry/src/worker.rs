@@ -450,6 +450,10 @@ impl TelemetryWorkerHandle {
             .register_metric_context(name, tags, metric_type, common, namespace)
     }
 
+    pub fn try_send_msg(&self, msg: TelemetryActions) -> Result<()> {
+        Ok(self.sender.try_send(msg)?)
+    }
+
     pub async fn send_msg(&self, msg: TelemetryActions) -> Result<()> {
         Ok(self.sender.send(msg).await?)
     }
