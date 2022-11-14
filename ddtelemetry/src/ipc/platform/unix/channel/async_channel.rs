@@ -106,6 +106,12 @@ impl AsyncRead for AsyncChannel {
         let project = self.project();
         let mut fds = [0; MAX_FDS];
 
+        // Safety: this implementation is based on Tokio async read implementation,
+        // it is performing an UB operation by using uninitiallized memory - although in practice its somewhat defined
+        // there are still some unknowns WRT to future behaviors
+        // TODO: make sure this optimization is really needed - once BenchPlatform is connected to libdatadog
+        // benchmark unfilled_mut vs initialize_unfilled - and if the difference is negligible - then lets switch to
+        // implementation that doesn't use UB.
         unsafe {
             let b = &mut *(buf.unfilled_mut() as *mut [std::mem::MaybeUninit<u8>] as *mut [u8]);
             match project.inner.recv_with_fd(b, &mut fds) {

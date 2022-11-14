@@ -88,7 +88,13 @@ where
                         let dst = buf.chunk_mut();
                         let dst = &mut *(dst as *mut _ as *mut [MaybeUninit<u8>]);
                         let mut buf_window = tokio::io::ReadBuf::uninit(dst);
+                        // this implementation is based on Tokio async read implementation,
+                        // it is performing an UB operation by using uninitiallized memory - although in practice its somewhat defined
+                        // there are still some unknowns WRT to future behaviors
 
+                        // TODO: make sure this optimization is really needed - once BenchPlatform is connected to libdatadog
+                        // benchmark unfilled_mut vs initialize_unfilled - and if the difference is negligible - then lets switch to
+                        // implementation that doesn't use UB.
                         let b = &mut *(buf_window.unfilled_mut()
                             as *mut [std::mem::MaybeUninit<u8>]
                             as *mut [u8]);
