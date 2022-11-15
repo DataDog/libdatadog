@@ -12,31 +12,6 @@ pub struct ProfiledEndpointsStats {
     count: IndexMap<String, i64>,
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct ProfiledEndpointStats {
-    pub name: String,
-    pub count: i64,
-}
-
-impl From<ProfiledEndpointsStats> for Vec<ProfiledEndpointStats> {
-    fn from(s: ProfiledEndpointsStats) -> Self {
-        s.count
-            .into_iter()
-            .map(|(k, v)| ProfiledEndpointStats { name: k, count: v })
-            .collect::<Vec<ProfiledEndpointStats>>()
-    }
-}
-
-impl From<Vec<ProfiledEndpointStats>> for ProfiledEndpointsStats {
-    fn from(stats: Vec<ProfiledEndpointStats>) -> Self {
-        let mut map: IndexMap<String, i64> = IndexMap::new();
-        for ep in stats {
-            map.insert(ep.name, ep.count);
-        }
-        ProfiledEndpointsStats { count: map }
-    }
-}
-
 impl Serialize for ProfiledEndpointsStats {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -47,6 +22,12 @@ impl Serialize for ProfiledEndpointsStats {
             map.serialize_entry(k, v)?;
         }
         map.end()
+    }
+}
+
+impl From<IndexMap<String, i64>> for ProfiledEndpointsStats {
+    fn from(count: IndexMap<String, i64>) -> Self {
+        ProfiledEndpointsStats { count }
     }
 }
 

@@ -304,6 +304,7 @@ dependencies = [
  "mime_guess",
  "percent-encoding",
  "prost",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-util 0.7.4",

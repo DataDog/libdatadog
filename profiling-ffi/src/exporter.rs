@@ -6,7 +6,7 @@
 
 use crate::Timespec;
 use datadog_profiling::exporter;
-use ddcommon::profiled_endpoints::ProfiledEndpointStats;
+use datadog_profiling::profile::profiled_endpoints;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use exporter::ProfileExporter;
@@ -182,7 +182,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     end: Timespec,
     files: Slice<File>,
     additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoints_stats: Option<&ddcommon_ffi::Vec<ProfiledEndpointStats>>,
+    endpoints_stats: Option<Box<profiled_endpoints::ProfiledEndpointsStats>>,
     timeout_ms: u64,
 ) -> Option<Box<Request>> {
     match exporter {
@@ -191,14 +191,13 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
             let timeout = std::time::Duration::from_millis(timeout_ms);
             let converted_files = into_vec_files(files);
             let tags = additional_tags.map(|tags| tags.iter().map(Tag::clone).collect());
-            let endpoints_stats = endpoints_stats.map(|stats| stats.into());
 
             match exporter.as_ref().build(
                 start.into(),
                 end.into(),
                 converted_files.as_slice(),
                 tags.as_ref(),
-                endpoints_stats.as_ref(),
+                endpoints_stats,
                 timeout,
             ) {
                 Ok(request) => Some(Box::new(Request(request))),

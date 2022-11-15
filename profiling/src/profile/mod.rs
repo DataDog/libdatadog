@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod pprof;
+pub mod profiled_endpoints;
 
 use core::fmt;
 use std::borrow::{Borrow, Cow};
@@ -11,9 +12,9 @@ use std::hash::Hash;
 use std::ops::AddAssign;
 use std::time::{Duration, SystemTime};
 
-use ddcommon::profiled_endpoints::{ProfiledEndpointStats, ProfiledEndpointsStats};
 use indexmap::{IndexMap, IndexSet};
 use pprof::{Function, Label, Line, Location, ValueType};
+use profiled_endpoints::ProfiledEndpointsStats;
 use prost::{EncodeError, Message};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
@@ -210,7 +211,7 @@ pub struct EncodedProfile {
     pub start: SystemTime,
     pub end: SystemTime,
     pub buffer: Vec<u8>,
-    pub endpoints_stats: Vec<ProfiledEndpointStats>,
+    pub endpoints_stats: Box<ProfiledEndpointsStats>,
 }
 
 impl Endpoints {
@@ -474,7 +475,7 @@ impl Profile {
             start,
             end,
             buffer,
-            endpoints_stats: self.endpoints.stats.clone().into(),
+            endpoints_stats: Box::new(self.endpoints.stats.clone()),
         })
     }
 
@@ -578,9 +579,11 @@ impl From<&Profile> for pprof::Profile {
 #[cfg(test)]
 mod api_test {
 
-    use ddcommon::profiled_endpoints::ProfiledEndpointStats;
+    use indexmap::IndexMap;
 
-    use crate::profile::{api, pprof, PProfId, Profile, ValueType};
+    use crate::profile::{
+        api, pprof, profiled_endpoints::ProfiledEndpointsStats, PProfId, Profile, ValueType,
+    };
     use std::borrow::Cow;
 
     #[test]
@@ -987,7 +990,7 @@ mod api_test {
             .serialize(None, None)
             .expect("Unable to encode/serialize the profile");
 
-        let endpoints_stats: Vec<ProfiledEndpointStats> = encoded_profile.endpoints_stats;
+        let endpoints_stats = &*encoded_profile.endpoints_stats;
         assert!(endpoints_stats.is_empty());
     }
 
@@ -1027,21 +1030,14 @@ mod api_test {
             .serialize(None, None)
             .expect("Unable to encode/serialize the profile");
 
-        let mut endpoints_stats: Vec<ProfiledEndpointStats> = encoded_profile.endpoints_stats;
-        endpoints_stats.sort();
+        let endpoints_stats = &*encoded_profile.endpoints_stats;
 
-        let mut expected_endpoints_count = vec![
-            ProfiledEndpointStats {
-                name: one_endpoint.to_string(),
-                count: 2,
-            },
-            ProfiledEndpointStats {
-                name: second_endpoint.to_string(),
-                count: 1,
-            },
-        ];
-        expected_endpoints_count.sort();
+        let mut count: IndexMap<String, i64> = IndexMap::new();
+        count.insert(one_endpoint.to_string(), 2);
+        count.insert(second_endpoint.to_string(), 1);
 
-        assert_eq!(endpoints_stats, expected_endpoints_count);
+        let expected_endpoints_stats = ProfiledEndpointsStats::from(count);
+
+        assert_eq!(endpoints_stats, &expected_endpoints_stats);
     }
 }
