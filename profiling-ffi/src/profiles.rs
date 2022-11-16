@@ -372,6 +372,26 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_endpoint<'a>(
     profile.add_endpoint(local_root_span_id, endpoint);
 }
 
+/// Count the number of times an endpoint has been seen.
+///
+/// # Arguments
+/// * `profile` - a reference to the profile that will contain the samples.
+/// * `endpoint` - the value of the endpoint label to add for matching samples.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module.
+/// This call is _NOT_ thread-safe.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_Profile_add_endpoint_count(
+    profile: &mut datadog_profiling::profile::Profile,
+    endpoint: CharSlice,
+) {
+    let endpoint = endpoint.to_utf8_lossy();
+
+    profile.add_endpoint_count(endpoint);
+}
+
 #[repr(C)]
 pub struct EncodedProfile {
     start: Timespec,

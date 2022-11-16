@@ -436,8 +436,10 @@ impl Profile {
         self.endpoints
             .mappings
             .insert(interned_span_id, interned_endpoint);
+    }
 
-        self.endpoints.stats.add_endpoint(endpoint.to_string())
+    pub fn add_endpoint_count(&mut self, endpoint: Cow<str>) {
+        self.endpoints.stats.add_endpoint(endpoint.to_string());
     }
 
     /// Serialize the aggregated profile, adding the end time and duration.
@@ -1009,22 +1011,12 @@ mod api_test {
 
         let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
 
-        let first_local_root_span_id = "1";
         let one_endpoint = "my endpoint";
-
-        profile.add_endpoint(Cow::from(first_local_root_span_id), Cow::from(one_endpoint));
+        profile.add_endpoint_count(Cow::from(one_endpoint));
+        profile.add_endpoint_count(Cow::from(one_endpoint));
 
         let second_endpoint = "other endpoint";
-        profile.add_endpoint(
-            Cow::from(first_local_root_span_id),
-            Cow::from(second_endpoint),
-        );
-
-        let second_local_root_span_id = "2";
-        profile.add_endpoint(
-            Cow::from(second_local_root_span_id),
-            Cow::from(one_endpoint),
-        );
+        profile.add_endpoint_count(Cow::from(second_endpoint));
 
         let encoded_profile = profile
             .serialize(None, None)

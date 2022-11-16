@@ -154,7 +154,7 @@ impl ProfileExporter {
         end: DateTime<Utc>,
         files: &[File],
         additional_tags: Option<&Vec<Tag>>,
-        endpoints_count: Option<Box<ProfiledEndpointsStats>>,
+        endpoints_count: Option<&ProfiledEndpointsStats>,
         timeout: std::time::Duration,
     ) -> anyhow::Result<Request> {
         let mut form = multipart::Form::default();

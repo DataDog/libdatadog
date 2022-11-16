@@ -182,7 +182,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     end: Timespec,
     files: Slice<File>,
     additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoints_stats: Option<Box<profiled_endpoints::ProfiledEndpointsStats>>,
+    endpoints_stats: Option<&profiled_endpoints::ProfiledEndpointsStats>,
     timeout_ms: u64,
 ) -> Option<Box<Request>> {
     match exporter {
