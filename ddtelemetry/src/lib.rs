@@ -28,6 +28,7 @@ pub mod info;
 pub mod ipc;
 pub mod metrics;
 pub mod worker;
+pub mod mock_target;
 
 const DEFAULT_API_VERSION: data::ApiVersion = data::ApiVersion::V1;
 

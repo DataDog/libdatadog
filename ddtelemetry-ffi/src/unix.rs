@@ -83,7 +83,7 @@ pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<TelemetryTransport>) -> 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_sidecar_instance_id_build(
+pub unsafe extern "C" fn ddog_sidecar_instanceId_build(
     session_id: ffi::CharSlice,
     runtime_id: ffi::CharSlice,
 ) -> Box<InstanceId> {
@@ -94,17 +94,17 @@ pub unsafe extern "C" fn ddog_sidecar_instance_id_build(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_sidecar_instance_id_drop(instance_id: Box<InstanceId>) {
+pub unsafe extern "C" fn ddog_sidecar_instanceId_drop(instance_id: Box<InstanceId>) {
     drop(instance_id)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_sidecar_queue_id_generate() -> QueueId {
+pub unsafe extern "C" fn ddog_sidecar_queueId_generate() -> QueueId {
     QueueId::new_unique()
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_sidecar_runtime_meta_build(
+pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_build(
     language_name: ffi::CharSlice,
     language_version: ffi::CharSlice,
     tracer_version: ffi::CharSlice,
@@ -119,12 +119,12 @@ pub unsafe extern "C" fn ddog_sidecar_runtime_meta_build(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_sidecar_runtime_meta_drop(meta: Box<RuntimeMeta>) {
+pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_drop(meta: Box<RuntimeMeta>) {
     drop(meta)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueue_config(
+pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     transport: &mut Box<TelemetryTransport>,
     instance_id: Box<InstanceId>,
     queue_id: &QueueId,
@@ -145,7 +145,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueue_config(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_sidecar_telemetry_add_dependency(
+pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
     transport: &mut Box<TelemetryTransport>,
     instance_id: &InstanceId,
     queue_id: &QueueId,
@@ -174,7 +174,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_add_dependency(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_sidecar_telemetry_add_integration(
+pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
     transport: &mut Box<TelemetryTransport>,
     instance_id: &InstanceId,
     queue_id: &QueueId,
@@ -204,7 +204,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_add_integration(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_sidecar_telemetry_flush_service_data(
+pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
     transport: &mut Box<TelemetryTransport>,
     instance_id: &InstanceId,
     queue_id: &QueueId,
@@ -220,6 +220,11 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_flush_service_data(
     ));
 
     MaybeError::None
+}
+
+
+pub unsafe extern "C" fn ddog_sidecar_mock_start() -> MaybeError {
+
 }
 
 #[cfg(test)]
@@ -264,17 +269,17 @@ mod test_c_sidecar {
         assert_eq!(ddog_sidecar_connect(&mut transport), MaybeError::None);
         let mut transport = unsafe { Box::from_raw(transport) };
         unsafe {
-            let meta = ddog_sidecar_runtime_meta_build(
+            let meta = ddog_sidecar_runtimeMeta_build(
                 "language_name".into(),
                 "language_version".into(),
                 "tracer_version".into(),
             );
 
             let instance_id =
-                ddog_sidecar_instance_id_build("session_id".into(), "runtime_id".into());
-            let queue_id = ddog_sidecar_queue_id_generate();
+                ddog_sidecar_instanceId_build("session_id".into(), "runtime_id".into());
+            let queue_id = ddog_sidecar_queueId_generate();
 
-            ddog_sidecar_telemetry_add_dependency(
+            ddog_sidecar_telemetry_addDependency(
                 &mut transport,
                 &instance_id,
                 &queue_id,
@@ -283,7 +288,7 @@ mod test_c_sidecar {
             );
 
             assert_eq!(
-                ddog_sidecar_telemetry_flush_service_data(
+                ddog_sidecar_telemetry_flushServiceData(
                     &mut transport,
                     &instance_id,
                     &queue_id,
@@ -292,6 +297,9 @@ mod test_c_sidecar {
                 ),
                 MaybeError::None
             );
+
+            ddog_sidecar_instanceId_drop(instance_id);
+            ddog_sidecar_runtimeMeta_drop(meta);
         };
 
         ddog_sidecar_transport_drop(transport);

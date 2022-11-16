@@ -10,7 +10,7 @@ bytes = {version = "1.1"}
 ddcommon = {path = "../ddcommon"}
 futures = {version = "0.3"}
 http = "0.2"
-hyper = {version = "0.14", features = ["client"], default-features = false}
+hyper = {version = "0.14", features = ["client", "server"], default-features = false}
 lazy_static = {version = "1.4"}
 
 pin-project = "1"
