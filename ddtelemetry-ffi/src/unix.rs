@@ -147,7 +147,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueue_config(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_add_dependency(
     transport: &mut Box<TelemetryTransport>,
-    instance_id: &Box<InstanceId>,
+    instance_id: &InstanceId,
     queue_id: &QueueId,
     dependency_name: ffi::CharSlice,
     dependency_version: ffi::CharSlice,
@@ -176,7 +176,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_add_dependency(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_add_integration(
     transport: &mut Box<TelemetryTransport>,
-    instance_id: &Box<InstanceId>,
+    instance_id: &InstanceId,
     queue_id: &QueueId,
     integration_name: ffi::CharSlice,
     integration_version: ffi::CharSlice,
@@ -206,16 +206,16 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_add_integration(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_flush_service_data(
     transport: &mut Box<TelemetryTransport>,
-    instance_id: &Box<InstanceId>,
+    instance_id: &InstanceId,
     queue_id: &QueueId,
-    runtime_meta: &Box<RuntimeMeta>,
+    runtime_meta: &RuntimeMeta,
     service_name: ffi::CharSlice,
 ) -> MaybeError {
     try_c!(blocking::register_service_and_flush_queued_actions(
         transport,
-        &instance_id,
-        &queue_id,
-        &runtime_meta,
+        instance_id,
+        queue_id,
+        runtime_meta,
         &service_name.to_utf8_lossy().into(),
     ));
 

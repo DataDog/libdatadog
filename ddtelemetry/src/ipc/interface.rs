@@ -1,6 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
-    fs::Metadata,
+    collections::HashMap,
     sync::{Arc, Mutex},
 };
 
@@ -230,7 +229,7 @@ impl TelemetryServer {
     ) -> Option<AppInstance> {
         let rt_info = self.get_runtime(instance_id);
 
-        if let Some(app) = rt_info.get_app(&service_name) {
+        if let Some(app) = rt_info.get_app(service_name) {
             return Some(app);
         }
 
@@ -331,7 +330,7 @@ impl TelemetryInterface for TelemetryServer {
                     .lock()
                     .unwrap()
                     .get_mut(&queue_id)
-                    .map(|data| (*data).actions.drain(0..).collect::<Vec<_>>())
+                    .map(|data| data.actions.drain(0..).collect::<Vec<_>>())
                     .unwrap_or_default();
 
                 // TODO log error
@@ -383,7 +382,7 @@ pub mod blocking {
         transport.send_ignore_response(TelemetryInterfaceRequest::EqueueActions {
             instance_id: instance_id.clone(),
             queue_id: queue_id.clone(),
-            actions: actions,
+            actions,
         })
     }
 
