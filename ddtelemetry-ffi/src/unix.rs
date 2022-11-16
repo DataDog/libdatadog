@@ -10,7 +10,10 @@ use std::{
 use ddtelemetry::{
     data::{Dependency, DependencyType, Integration},
     ipc::{
-        interface::blocking::{self, TelemetryTransport},
+        interface::{
+            blocking::{self, TelemetryTransport},
+            InstanceId, QueueId, RuntimeMeta,
+        },
         platform::PlatformHandle,
         sidecar,
     },
@@ -80,34 +83,51 @@ pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<TelemetryTransport>) -> 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_sidecar_telemetry_register_application(
-    transport: &mut Box<TelemetryTransport>,
-    runtime_id: ffi::CharSlice,
+pub unsafe extern "C" fn ddog_sidecar_instance_id_build(
     session_id: ffi::CharSlice,
-    service_name: ffi::CharSlice,
-    language_name: ffi::CharSlice,
-    language_version: ffi::CharSlice,
-    tracer_version: ffi::CharSlice,
-) -> MaybeError {
-    try_c!(blocking::register_application(
-        transport,
-        runtime_id.to_utf8_lossy().into_owned(),
-        session_id.to_utf8_lossy().into_owned(),
-        service_name.to_utf8_lossy().into_owned(),
-        language_name.to_utf8_lossy().into_owned(),
-        language_version.to_utf8_lossy().into_owned(),
-        tracer_version.to_utf8_lossy().into_owned()
-    ));
-
-    MaybeError::None
+    runtime_id: ffi::CharSlice,
+) -> Box<InstanceId> {
+    Box::from(InstanceId::new(
+        session_id.to_utf8_lossy(),
+        runtime_id.to_utf8_lossy(),
+    ))
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_sidecar_telemetry_add_config(
+pub unsafe extern "C" fn ddog_sidecar_instance_id_drop(instance_id: Box<InstanceId>) {
+    drop(instance_id)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_sidecar_queue_id_generate() -> QueueId {
+    QueueId::new_unique()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_sidecar_runtime_meta_build(
+    language_name: ffi::CharSlice,
+    language_version: ffi::CharSlice,
+    tracer_version: ffi::CharSlice,
+) -> Box<RuntimeMeta> {
+    let inner = RuntimeMeta::new(
+        language_name.to_utf8_lossy(),
+        language_version.to_utf8_lossy(),
+        tracer_version.to_utf8_lossy(),
+    );
+
+    Box::from(inner)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_sidecar_runtime_meta_drop(meta: Box<RuntimeMeta>) {
+    drop(meta)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueue_config(
     transport: &mut Box<TelemetryTransport>,
-    runtime_id: ffi::CharSlice,
-    session_id: ffi::CharSlice,
-    service_name: ffi::CharSlice,
+    instance_id: Box<InstanceId>,
+    queue_id: &QueueId,
     config_key: ffi::CharSlice,
     config_value: ffi::CharSlice,
 ) -> MaybeError {
@@ -115,11 +135,10 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_add_config(
         config_key.to_utf8_lossy().into_owned(),
         config_value.to_utf8_lossy().into_owned(),
     ));
-    try_c!(blocking::send_telemetry_actions(
+    try_c!(blocking::enqueue_actions(
         transport,
-        runtime_id.to_utf8_lossy().into_owned(),
-        session_id.to_utf8_lossy().into_owned(),
-        service_name.to_utf8_lossy().into_owned(),
+        &instance_id,
+        queue_id,
         vec![config_entry],
     ));
     MaybeError::None
@@ -128,9 +147,8 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_add_config(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_add_dependency(
     transport: &mut Box<TelemetryTransport>,
-    runtime_id: ffi::CharSlice,
-    session_id: ffi::CharSlice,
-    service_name: ffi::CharSlice,
+    instance_id: &Box<InstanceId>,
+    queue_id: &QueueId,
     dependency_name: ffi::CharSlice,
     dependency_version: ffi::CharSlice,
 ) -> MaybeError {
@@ -145,11 +163,10 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_add_dependency(
         type_: DependencyType::PlatformStandard,
     });
 
-    try_c!(blocking::send_telemetry_actions(
+    try_c!(blocking::enqueue_actions(
         transport,
-        runtime_id.to_utf8_lossy().into_owned(),
-        session_id.to_utf8_lossy().into_owned(),
-        service_name.to_utf8_lossy().into_owned(),
+        instance_id,
+        queue_id,
         vec![dependency],
     ));
 
@@ -159,9 +176,8 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_add_dependency(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_add_integration(
     transport: &mut Box<TelemetryTransport>,
-    runtime_id: ffi::CharSlice,
-    session_id: ffi::CharSlice,
-    service_name: ffi::CharSlice,
+    instance_id: &Box<InstanceId>,
+    queue_id: &QueueId,
     integration_name: ffi::CharSlice,
     integration_version: ffi::CharSlice,
 ) -> MaybeError {
@@ -177,12 +193,30 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_add_integration(
         auto_enabled: None,
     });
 
-    try_c!(blocking::send_telemetry_actions(
+    try_c!(blocking::enqueue_actions(
         transport,
-        runtime_id.to_utf8_lossy().into_owned(),
-        session_id.to_utf8_lossy().into_owned(),
-        service_name.to_utf8_lossy().into_owned(),
+        instance_id,
+        queue_id,
         vec![integration],
+    ));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_sidecar_telemetry_flush_service_data(
+    transport: &mut Box<TelemetryTransport>,
+    instance_id: &Box<InstanceId>,
+    queue_id: &QueueId,
+    runtime_meta: &Box<RuntimeMeta>,
+    service_name: ffi::CharSlice,
+) -> MaybeError {
+    try_c!(blocking::register_service_and_flush_queued_actions(
+        transport,
+        &instance_id,
+        &queue_id,
+        &runtime_meta,
+        &service_name.to_utf8_lossy().into(),
     ));
 
     MaybeError::None
@@ -230,15 +264,31 @@ mod test_c_sidecar {
         assert_eq!(ddog_sidecar_connect(&mut transport), MaybeError::None);
         let mut transport = unsafe { Box::from_raw(transport) };
         unsafe {
+            let meta = ddog_sidecar_runtime_meta_build(
+                "language_name".into(),
+                "language_version".into(),
+                "tracer_version".into(),
+            );
+
+            let instance_id =
+                ddog_sidecar_instance_id_build("session_id".into(), "runtime_id".into());
+            let queue_id = ddog_sidecar_queue_id_generate();
+
+            ddog_sidecar_telemetry_add_dependency(
+                &mut transport,
+                &instance_id,
+                &queue_id,
+                "dependency_name".into(),
+                "dependency_version".into(),
+            );
+
             assert_eq!(
-                ddog_sidecar_telemetry_register_application(
+                ddog_sidecar_telemetry_flush_service_data(
                     &mut transport,
-                    "runtime_id".into(),
-                    "session_id".into(),
-                    "service_name".into(),
-                    "language_name".into(),
-                    "language_version".into(),
-                    "tracer_version".into()
+                    &instance_id,
+                    &queue_id,
+                    &meta,
+                    "service_name".into()
                 ),
                 MaybeError::None
             );

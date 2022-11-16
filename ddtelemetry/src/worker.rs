@@ -458,6 +458,14 @@ impl TelemetryWorkerHandle {
         Ok(self.sender.send(msg).await?)
     }
 
+    pub async fn send_msgs<T>(&self, msgs: T)  -> Result<()> where T: IntoIterator<Item = TelemetryActions>{
+        for msg in msgs {
+            self.sender.send(msg).await?;
+        }
+
+        Ok(())
+    }
+
     pub async fn send_msg_timeout(
         &self,
         msg: TelemetryActions,
