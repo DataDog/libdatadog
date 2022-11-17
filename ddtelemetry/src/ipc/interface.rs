@@ -8,6 +8,7 @@ use futures::{
     future::{self, BoxFuture, Pending, Ready, Shared},
     FutureExt,
 };
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tarpc::{context::Context, server::Channel};
 use tokio::net::UnixStream;
@@ -81,7 +82,7 @@ pub struct QueueId {
 impl QueueId {
     pub fn new_unique() -> Self {
         Self {
-            inner: rand::random(),
+            inner: rand::thread_rng().gen_range(1u64 .. u64::MAX),
         }
     }
 }
