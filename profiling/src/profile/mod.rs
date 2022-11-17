@@ -438,8 +438,10 @@ impl Profile {
             .insert(interned_span_id, interned_endpoint);
     }
 
-    pub fn add_endpoint_count(&mut self, endpoint: Cow<str>) {
-        self.endpoints.stats.add_endpoint(endpoint.to_string());
+    pub fn add_endpoint_count(&mut self, endpoint: Cow<str>, value: i64) {
+        self.endpoints
+            .stats
+            .add_endpoint_count(endpoint.to_string(), value);
     }
 
     /// Serialize the aggregated profile, adding the end time and duration.
@@ -581,12 +583,10 @@ impl From<&Profile> for pprof::Profile {
 #[cfg(test)]
 mod api_test {
 
-    use indexmap::IndexMap;
-
     use crate::profile::{
         api, pprof, profiled_endpoints::ProfiledEndpointsStats, PProfId, Profile, ValueType,
     };
-    use std::borrow::Cow;
+    use std::{borrow::Cow, collections::HashMap};
 
     #[test]
     fn interning() {
@@ -1012,11 +1012,11 @@ mod api_test {
         let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
 
         let one_endpoint = "my endpoint";
-        profile.add_endpoint_count(Cow::from(one_endpoint));
-        profile.add_endpoint_count(Cow::from(one_endpoint));
+        profile.add_endpoint_count(Cow::from(one_endpoint), 1);
+        profile.add_endpoint_count(Cow::from(one_endpoint), 1);
 
         let second_endpoint = "other endpoint";
-        profile.add_endpoint_count(Cow::from(second_endpoint));
+        profile.add_endpoint_count(Cow::from(second_endpoint), 1);
 
         let encoded_profile = profile
             .serialize(None, None)
@@ -1024,7 +1024,7 @@ mod api_test {
 
         let endpoints_stats = &*encoded_profile.endpoints_stats;
 
-        let mut count: IndexMap<String, i64> = IndexMap::new();
+        let mut count: HashMap<String, i64> = HashMap::new();
         count.insert(one_endpoint.to_string(), 2);
         count.insert(second_endpoint.to_string(), 1);
 

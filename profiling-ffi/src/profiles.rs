@@ -376,20 +376,20 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_endpoint<'a>(
 ///
 /// # Arguments
 /// * `profile` - a reference to the profile that will contain the samples.
-/// * `endpoint` - the value of the endpoint label to add for matching samples.
+/// * `endpoint` - the endpoint label for which the count will be incremented
 ///
 /// # Safety
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module.
 /// This call is _NOT_ thread-safe.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_Profile_add_endpoint_count(
+pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
     profile: &mut datadog_profiling::profile::Profile,
     endpoint: CharSlice,
+    value: i64,
 ) {
     let endpoint = endpoint.to_utf8_lossy();
-
-    profile.add_endpoint_count(endpoint);
+    profile.add_endpoint_count(endpoint, value);
 }
 
 #[repr(C)]

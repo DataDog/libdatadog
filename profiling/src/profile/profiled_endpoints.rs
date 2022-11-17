@@ -1,15 +1,14 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use std::ops::AddAssign;
+use std::collections::HashMap;
 
-use indexmap::IndexMap;
 use serde::ser::SerializeMap;
 use serde::Serialize;
 
 #[derive(Default, PartialEq, Eq, Debug, Clone)]
 pub struct ProfiledEndpointsStats {
-    count: IndexMap<String, i64>,
+    count: HashMap<String, i64>,
 }
 
 impl Serialize for ProfiledEndpointsStats {
@@ -25,26 +24,15 @@ impl Serialize for ProfiledEndpointsStats {
     }
 }
 
-impl From<IndexMap<String, i64>> for ProfiledEndpointsStats {
-    fn from(count: IndexMap<String, i64>) -> Self {
+impl From<HashMap<String, i64>> for ProfiledEndpointsStats {
+    fn from(count: HashMap<String, i64>) -> Self {
         ProfiledEndpointsStats { count }
     }
 }
 
 impl ProfiledEndpointsStats {
-    pub fn add_endpoint(&mut self, endpoint_name: String) {
-        match self.count.get_index_of(&endpoint_name) {
-            None => {
-                self.count.insert(endpoint_name.to_string(), 1);
-            }
-            Some(index) => {
-                let (_, current) = self
-                    .count
-                    .get_index_mut(index)
-                    .expect("index does not exist");
-                current.add_assign(1);
-            }
-        }
+    pub fn add_endpoint_count(&mut self, endpoint_name: String, value: i64) {
+        *self.count.entry(endpoint_name).or_insert(0) += value;
     }
 
     pub fn is_empty(&self) -> bool {
