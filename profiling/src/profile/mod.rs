@@ -8,14 +8,16 @@ pub mod profiled_endpoints;
 use core::fmt;
 use std::borrow::{Borrow, Cow};
 use std::convert::TryInto;
-use std::hash::Hash;
+use std::hash::{BuildHasherDefault, Hash};
 use std::ops::AddAssign;
 use std::time::{Duration, SystemTime};
 
-use indexmap::{IndexMap, IndexSet};
 use pprof::{Function, Label, Line, Location, ValueType};
 use profiled_endpoints::ProfiledEndpointsStats;
 use prost::{EncodeError, Message};
+
+pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<rustc_hash::FxHasher>>;
+pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::FxHasher>>;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
@@ -78,18 +80,18 @@ struct Sample {
 
 pub struct Profile {
     sample_types: Vec<ValueType>,
-    samples: IndexMap<Sample, Vec<i64>>,
-    mappings: IndexSet<Mapping>,
-    locations: IndexSet<Location>,
-    functions: IndexSet<Function>,
-    strings: IndexSet<String>,
+    samples: FxIndexMap<Sample, Vec<i64>>,
+    mappings: FxIndexSet<Mapping>,
+    locations: FxIndexSet<Location>,
+    functions: FxIndexSet<Function>,
+    strings: FxIndexSet<String>,
     start_time: SystemTime,
     period: Option<(i64, ValueType)>,
     endpoints: Endpoints,
 }
 
 pub struct Endpoints {
-    mappings: IndexMap<i64, i64>,
+    mappings: FxIndexMap<i64, i64>,
     local_root_span_id_label: i64,
     endpoint_label: i64,
     stats: ProfiledEndpointsStats,
@@ -166,7 +168,7 @@ trait DedupExt<T: Eq + Hash> {
         Q: Eq + Hash + ?Sized;
 }
 
-impl<T: Sized + Hash + Eq> DedupExt<T> for IndexSet<T> {
+impl<T: Sized + Hash + Eq> DedupExt<T> for FxIndexSet<T> {
     fn dedup(&mut self, item: T) -> usize {
         let (id, _) = self.insert_full(item);
         id
