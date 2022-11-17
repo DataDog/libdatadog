@@ -8,7 +8,8 @@ use futures::{
     future::{self, BoxFuture, Pending, Ready, Shared},
     FutureExt,
 };
-use tarpc::server::Channel;
+use serde::{Deserialize, Serialize};
+use tarpc::{context::Context, server::Channel};
 use tokio::net::UnixStream;
 
 use crate::worker::{TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle};
@@ -17,44 +18,93 @@ use super::{platform::AsyncChannel, transport::Transport};
 
 #[tarpc::service]
 pub trait TelemetryInterface {
-    async fn register_application(
-        session_id: String,
-        runtime_id: String,
-        service_name: String,
-        language_name: String,
-        language_version: String,
-        tracer_version: String,
-    ) -> ();
-    async fn send_telemetry_actions(
-        session_id: String,
-        runtime_id: String,
-        service_name: String,
+    async fn equeue_actions(
+        instance_id: InstanceId,
+        queue_id: QueueId,
         actions: Vec<TelemetryActions>,
-    ) -> ();
-    async fn shutdown_runtime(session_id: String, runtime_id: String) -> ();
-    async fn shutdown_session(session_id: String) -> ();
-    async fn ping() -> ();
+    );
+    async fn register_service_and_flush_queued_actions(
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        meta: RuntimeMeta,
+        service_name: String,
+    );
+    async fn shutdown_runtime(instance_id: InstanceId);
+    async fn shutdown_session(session_id: String);
+    async fn ping();
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+pub struct RuntimeMeta {
+    language_name: String,
+    language_version: String,
+    tracer_version: String,
+}
+
+impl RuntimeMeta {
+    pub fn new<T>(language_name: T, language_version: T, tracer_version: T) -> Self
+    where
+        T: Into<String>,
+    {
+        Self {
+            language_name: language_name.into(),
+            language_version: language_version.into(),
+            tracer_version: tracer_version.into(),
+        }
+    }
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+pub struct InstanceId {
+    session_id: String,
+    runtime_id: String,
+}
+
+impl InstanceId {
+    pub fn new<T>(session_id: T, runtime_id: T) -> Self
+    where
+        T: Into<String>,
+    {
+        InstanceId {
+            session_id: session_id.into(),
+            runtime_id: runtime_id.into(),
+        }
+    }
+}
+
+#[derive(Default, Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[repr(transparent)]
+pub struct QueueId {
+    inner: u64,
+}
+
+impl QueueId {
+    pub fn new_unique() -> Self {
+        Self {
+            inner: rand::random(),
+        }
+    }
 }
 
 #[derive(Default, Clone)]
 struct SessionInfo {
-    runtimes: Arc<Mutex<HashMap<String, Runtime>>>,
+    runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
 }
 
 impl SessionInfo {
-    fn get_runtime(&self, runtime_id: &String) -> Runtime {
+    fn get_runtime(&self, runtime_id: &String) -> RuntimeInfo {
         let mut runtimes = self.runtimes.lock().unwrap();
         match runtimes.get(runtime_id) {
             Some(runtime) => runtime.clone(),
             None => {
-                let runtime = Runtime::default();
+                let runtime = RuntimeInfo::default();
                 runtimes.insert(runtime_id.clone(), runtime.clone());
                 runtime
             }
         }
     }
     async fn shutdown(&self) {
-        let runtimes: Vec<Runtime> = self
+        let runtimes: Vec<RuntimeInfo> = self
             .runtimes
             .lock()
             .unwrap()
@@ -81,11 +131,12 @@ impl SessionInfo {
 }
 
 #[derive(Clone, Default)]
-struct Runtime {
+struct RuntimeInfo {
     apps: Arc<Mutex<HashMap<String, AppInstance>>>,
+    enqueued_actions: Arc<Mutex<HashMap<QueueId, EnqueuedData>>>,
 }
 
-impl Runtime {
+impl RuntimeInfo {
     fn get_app(&self, service_name: &String) -> Option<AppInstance> {
         let apps = self.apps.lock().unwrap();
         apps.get(service_name).map(Clone::clone)
@@ -123,6 +174,10 @@ struct AppInstance {
     telemetry_worker_shutdown: Shared<BoxFuture<'static, Option<()>>>,
 }
 
+struct EnqueuedData {
+    actions: Vec<TelemetryActions>,
+}
+
 #[derive(Default, Clone)]
 pub struct TelemetryServer {
     sessions: Arc<Mutex<HashMap<String, SessionInfo>>>,
@@ -151,6 +206,12 @@ impl TelemetryServer {
             }
         }
     }
+
+    fn get_runtime(&self, instance_id: &InstanceId) -> RuntimeInfo {
+        let session = self.get_session(&instance_id.session_id);
+        session.get_runtime(&instance_id.runtime_id)
+    }
+
     async fn shutdown_session(&self, session_id: &String) {
         let session = match self.sessions.lock().unwrap().remove(session_id) {
             Some(session) => session,
@@ -159,108 +220,125 @@ impl TelemetryServer {
 
         session.shutdown().await
     }
+
+    async fn get_app(
+        &self,
+        instance_id: &InstanceId,
+        runtime_meta: &RuntimeMeta,
+        service_name: &String,
+    ) -> Option<AppInstance> {
+        let rt_info = self.get_runtime(instance_id);
+
+        if let Some(app) = rt_info.get_app(service_name) {
+            return Some(app);
+        }
+
+        let mut builder = TelemetryWorkerBuilder::new_fetch_host(
+            service_name.clone(),
+            runtime_meta.language_name.clone(),
+            runtime_meta.language_version.clone(),
+            runtime_meta.tracer_version.clone(),
+        );
+        builder.runtime_id = Some(instance_id.runtime_id.clone());
+
+        // TODO: log errors
+        if let Ok((handle, worker_join)) = builder.spawn().await {
+            let instance = AppInstance {
+                telemetry: handle,
+                telemetry_worker_shutdown: worker_join.map(Result::ok).boxed().shared(),
+            };
+            rt_info
+                .apps
+                .lock()
+                .unwrap()
+                .insert(service_name.clone(), instance.clone());
+            Some(instance)
+        } else {
+            None
+        }
+    }
+}
+
+type NoResponse = Pending<()>;
+
+fn no_response() -> NoResponse {
+    future::pending()
 }
 
 impl TelemetryInterface for TelemetryServer {
-    /// Returning Pending future, makes the RPC send no response back
-    type RegisterApplicationFut = Pending<()>;
-
-    fn register_application(
-        self,
-        _: tarpc::context::Context,
-        runtime_id: String,
-        session_id: String,
-        service_name: String,
-        language_name: String,
-        language_version: String,
-        tracer_version: String,
-    ) -> Self::RegisterApplicationFut {
-        tokio::spawn(async move {
-            let info = self.get_session(&session_id).get_runtime(&runtime_id);
-
-            if info.get_app(&service_name).is_some() {
-                return;
-            }
-
-            let mut builder = TelemetryWorkerBuilder::new_fetch_host(
-                service_name.clone(),
-                language_name,
-                language_version,
-                tracer_version,
-            );
-            builder.runtime_id = Some(runtime_id.clone());
-
-            // TODO: log errors
-            if let Ok((handle, worker_join)) = builder.spawn().await {
-                info.apps.lock().unwrap().insert(
-                    service_name,
-                    AppInstance {
-                        telemetry: handle,
-                        telemetry_worker_shutdown: worker_join.map(Result::ok).boxed().shared(),
-                    },
-                );
-            };
-        });
-
-        future::pending()
-    }
-
     type PingFut = Ready<()>;
 
-    fn ping(self, _: tarpc::context::Context) -> Self::PingFut {
+    fn ping(self, _: Context) -> Self::PingFut {
         future::ready(())
     }
 
-    type ShutdownRuntimeFut = Pending<()>;
-    fn shutdown_runtime(
-        self,
-        _: tarpc::context::Context,
-        session_id: String,
-        runtime_id: String,
-    ) -> Self::ShutdownRuntimeFut {
-        let session = self.get_session(&session_id);
-        tokio::spawn(async move { session.shutdown_runtime(&runtime_id).await });
+    type ShutdownRuntimeFut = NoResponse;
+    fn shutdown_runtime(self, _: Context, instance_id: InstanceId) -> Self::ShutdownRuntimeFut {
+        let session = self.get_session(&instance_id.session_id);
+        tokio::spawn(async move { session.shutdown_runtime(&instance_id.runtime_id).await });
 
         future::pending()
     }
 
-    type ShutdownSessionFut = Pending<()>;
+    type ShutdownSessionFut = NoResponse;
 
-    fn shutdown_session(
-        self,
-        _: tarpc::context::Context,
-        session_id: String,
-    ) -> Self::ShutdownSessionFut {
+    fn shutdown_session(self, _: Context, session_id: String) -> Self::ShutdownSessionFut {
         tokio::spawn(async move { TelemetryServer::shutdown_session(&self, &session_id).await });
         future::pending()
     }
 
-    type SendTelemetryActionsFut = Pending<()>;
+    type EqueueActionsFut = NoResponse;
 
-    fn send_telemetry_actions(
+    fn equeue_actions(
         self,
-        _: tarpc::context::Context,
-        session_id: String,
-        runtime_id: String,
-        service_name: String,
-        actions: Vec<TelemetryActions>,
-    ) -> Self::SendTelemetryActionsFut {
-        let app = match self
-            .get_session(&session_id)
-            .get_runtime(&runtime_id)
-            .get_app(&service_name)
-        {
-            Some(app) => app,
-            None => return future::pending(),
+        _context: Context,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        mut actions: Vec<TelemetryActions>,
+    ) -> Self::EqueueActionsFut {
+        let rt_info = self.get_runtime(&instance_id);
+        let mut queue = rt_info.enqueued_actions.lock().unwrap();
+        match queue.get_mut(&queue_id) {
+            Some(data) => data.actions.append(&mut actions),
+            None => {
+                let data = EnqueuedData { actions };
+                queue.insert(queue_id, data);
+            }
         };
 
+        no_response()
+    }
+
+    type RegisterServiceAndFlushQueuedActionsFut = NoResponse;
+
+    fn register_service_and_flush_queued_actions(
+        self,
+        _: Context,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        runtime_meta: RuntimeMeta,
+        service_name: String,
+    ) -> Self::RegisterServiceAndFlushQueuedActionsFut {
         tokio::spawn(async move {
-            for action in actions {
-                app.telemetry.send_msg(action).await.ok();
+            if let Some(app) = self
+                .get_app(&instance_id, &runtime_meta, &service_name)
+                .await
+            {
+                let actions = self
+                    .get_runtime(&instance_id)
+                    .enqueued_actions
+                    .lock()
+                    .unwrap()
+                    .get_mut(&queue_id)
+                    .map(|data| data.actions.drain(0..).collect::<Vec<_>>())
+                    .unwrap_or_default();
+
+                // TODO log error
+                app.telemetry.send_msgs(actions).await.ok();
             }
         });
 
-        future::pending()
+        no_response()
     }
 }
 
@@ -272,38 +350,19 @@ pub mod blocking {
 
     use crate::{ipc::transport::blocking::BlockingTransport, worker::TelemetryActions};
 
-    use super::{TelemetryInterfaceRequest, TelemetryInterfaceResponse};
+    use super::{
+        InstanceId, QueueId, RuntimeMeta, TelemetryInterfaceRequest, TelemetryInterfaceResponse,
+    };
 
     pub type TelemetryTransport =
         BlockingTransport<TelemetryInterfaceResponse, TelemetryInterfaceRequest>;
 
-    pub fn register_application(
-        transport: &mut TelemetryTransport,
-        runtime_id: String,
-        session_id: String,
-        service_name: String,
-        language_name: String,
-        language_version: String,
-        tracer_version: String,
-    ) -> io::Result<()> {
-        transport.send_ignore_response(TelemetryInterfaceRequest::RegisterApplication {
-            runtime_id,
-            session_id,
-            service_name,
-            language_name,
-            language_version,
-            tracer_version,
-        })
-    }
-
     pub fn shutdown_runtime(
         transport: &mut TelemetryTransport,
-        runtime_id: String,
-        session_id: String,
+        instance_id: &InstanceId,
     ) -> io::Result<()> {
         transport.send_ignore_response(TelemetryInterfaceRequest::ShutdownRuntime {
-            session_id,
-            runtime_id,
+            instance_id: instance_id.clone(),
         })
     }
 
@@ -314,19 +373,34 @@ pub mod blocking {
         transport.send_ignore_response(TelemetryInterfaceRequest::ShutdownSession { session_id })
     }
 
-    pub fn send_telemetry_actions(
+    pub fn enqueue_actions(
         transport: &mut TelemetryTransport,
-        runtime_id: String,
-        session_id: String,
-        service_name: String,
+        instance_id: &InstanceId,
+        queue_id: &QueueId,
         actions: Vec<TelemetryActions>,
     ) -> io::Result<()> {
-        transport.send_ignore_response(TelemetryInterfaceRequest::SendTelemetryActions {
-            session_id,
-            runtime_id,
-            service_name,
+        transport.send_ignore_response(TelemetryInterfaceRequest::EqueueActions {
+            instance_id: instance_id.clone(),
+            queue_id: queue_id.clone(),
             actions,
         })
+    }
+
+    pub fn register_service_and_flush_queued_actions(
+        transport: &mut TelemetryTransport,
+        instance_id: &InstanceId,
+        queue_id: &QueueId,
+        runtime_metadata: &RuntimeMeta,
+        service_name: &String,
+    ) -> io::Result<()> {
+        transport.send_ignore_response(
+            TelemetryInterfaceRequest::RegisterServiceAndFlushQueuedActions {
+                instance_id: instance_id.clone(),
+                queue_id: queue_id.clone(),
+                meta: runtime_metadata.clone(),
+                service_name: service_name.clone(),
+            },
+        )
     }
 
     pub fn ping(transport: &mut TelemetryTransport) -> io::Result<Duration> {

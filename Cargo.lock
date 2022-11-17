@@ -372,6 +372,7 @@ dependencies = [
  "nix",
  "pin-project",
  "pretty_assertions",
+ "rand",
  "regex",
  "rlimit",
  "rmp-serde",
@@ -397,6 +398,7 @@ dependencies = [
  "ddtelemetry",
  "libc",
  "paste",
+ "rand",
 ]
 
 [[package]]

@@ -23,6 +23,7 @@ sys-info = {version = "0.9.0"}
 tokio = {version = "1.17", features = ["sync", "io-util"]}
 tokio-util = {version = "0.6.9", features = ["codec"]}
 tokio-serde = {version = "0.8", features = ["messagepack"]}
+rand = "0.8.3"
 
 tracing = {version = "0.1", default-features = false, features = ["std"], optional = true}
 tracing-subscriber = {version="0.3", default-features = false, features = ["std", "fmt"], optional = true}
