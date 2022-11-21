@@ -10,8 +10,8 @@ use std::mem::ManuallyDrop;
 
 /// Holds the raw parts of a Rust Vec; it should only be created from Rust,
 /// never from C.
-/// The names ptr and len were chosen to minimize conversion from a previous
-/// Buffer type which this has replaced to become more general.
+// The names ptr and len were chosen to minimize conversion from a previous
+// Buffer type which this has replaced to become more general.
 #[repr(C)]
 #[derive(Debug)]
 pub struct Vec<T: Sized> {
