@@ -1,18 +1,26 @@
 use std::{
     collections::HashMap,
+    pin::Pin,
     sync::{Arc, Mutex},
 };
 
 use anyhow::Result;
+use ddcommon::Endpoint;
 use futures::{
     future::{self, BoxFuture, Pending, Ready, Shared},
     FutureExt,
 };
 use serde::{Deserialize, Serialize};
-use tarpc::{context::Context, server::Channel};
+use tarpc::{
+    context::{self, Context},
+    server::Channel,
+};
 use tokio::net::UnixStream;
 
-use crate::worker::{TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle};
+use crate::{
+    config::{Config, FromEnv, ProvideConfig},
+    worker::{TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle},
+};
 
 use super::{platform::AsyncChannel, transport::Transport};
 
@@ -29,6 +37,7 @@ pub trait TelemetryInterface {
         meta: RuntimeMeta,
         service_name: String,
     );
+    async fn set_session_agent_url(session_id: String, agent_url: String);
     async fn shutdown_runtime(instance_id: InstanceId);
     async fn shutdown_session(session_id: String);
     async fn ping();
@@ -89,6 +98,7 @@ impl QueueId {
 #[derive(Default, Clone)]
 struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
+    session_config: Arc<Mutex<Option<Config>>>,
 }
 
 impl SessionInfo {
@@ -103,6 +113,7 @@ impl SessionInfo {
             }
         }
     }
+
     async fn shutdown(&self) {
         let runtimes: Vec<RuntimeInfo> = self
             .runtimes
@@ -118,6 +129,23 @@ impl SessionInfo {
             .collect();
 
         future::join_all(runtimes_shutting_down).await;
+    }
+
+    async fn shutdown_running_instances(&self) {
+        let runtimes: Vec<RuntimeInfo> = self
+            .runtimes
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, instance)| instance.clone())
+            .collect();
+
+        let instances_shutting_down: Vec<_> = runtimes
+            .into_iter()
+            .map(|rt| tokio::spawn(async move { rt.shutdown().await }))
+            .collect();
+
+        future::join_all(instances_shutting_down).await;
     }
 
     async fn shutdown_runtime(self, runtime_id: &String) {
@@ -150,7 +178,6 @@ impl RuntimeInfo {
             .drain()
             .map(|(_, instance)| instance)
             .collect();
-
         let instances_shutting_down: Vec<_> = instances
             .into_iter()
             .map(|instance| {
@@ -241,8 +268,17 @@ impl TelemetryServer {
         );
         builder.runtime_id = Some(instance_id.runtime_id.clone());
 
+        let session_info = self.get_session(&instance_id.session_id);
+        let config = session_info
+            .session_config
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| FromEnv::config());
+
         // TODO: log errors
-        if let Ok((handle, worker_join)) = builder.spawn().await {
+        if let Ok((handle, worker_join)) = builder.spawn_with_config(config.clone()).await {
+
             let instance = AppInstance {
                 telemetry: handle,
                 telemetry_worker_shutdown: worker_join.map(Result::ok).boxed().shared(),
@@ -277,14 +313,14 @@ impl TelemetryInterface for TelemetryServer {
         let session = self.get_session(&instance_id.session_id);
         tokio::spawn(async move { session.shutdown_runtime(&instance_id.runtime_id).await });
 
-        future::pending()
+        no_response()
     }
 
     type ShutdownSessionFut = NoResponse;
 
     fn shutdown_session(self, _: Context, session_id: String) -> Self::ShutdownSessionFut {
         tokio::spawn(async move { TelemetryServer::shutdown_session(&self, &session_id).await });
-        future::pending()
+        no_response()
     }
 
     type EqueueActionsFut = NoResponse;
@@ -339,6 +375,27 @@ impl TelemetryInterface for TelemetryServer {
         });
 
         no_response()
+    }
+
+    type SetSessionAgentUrlFut = Pin<Box<dyn Send + futures::Future<Output = ()>>>;
+
+    fn set_session_agent_url(
+        self,
+        _: Context,
+        session_id: String,
+        agent_url: String,
+    ) -> Self::SetSessionAgentUrlFut {
+        let session = self.get_session(&session_id);
+        {
+            let mut cfg = session.session_config.lock().unwrap();
+            let mut new_cfg = cfg.clone().unwrap_or_else(|| FromEnv::config());
+            if !agent_url.is_empty(){
+                new_cfg.endpoint = FromEnv::build_endpoint(agent_url.as_str(), None);
+            }
+
+            *cfg = Some(new_cfg);
+        }
+        Box::pin(async move { session.shutdown_running_instances().await })
     }
 }
 
@@ -401,6 +458,20 @@ pub mod blocking {
                 service_name: service_name.clone(),
             },
         )
+    }
+
+    pub fn set_session_agent_url(
+        transport: &mut TelemetryTransport,
+        session_id: String,
+        agent_url: String,
+    ) -> io::Result<()>{ 
+        let res = transport.send(TelemetryInterfaceRequest::SetSessionAgentUrl { session_id, agent_url })?;
+        match res {
+            TelemetryInterfaceResponse::SetSessionAgentUrl(_) => Ok(()),
+            _ => {
+                Err(io::Error::new(io::ErrorKind::Other, "wrong response type when setting session agent url"))
+            }
+        }
     }
 
     pub fn ping(transport: &mut TelemetryTransport) -> io::Result<Duration> {

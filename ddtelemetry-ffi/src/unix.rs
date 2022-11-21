@@ -17,7 +17,7 @@ use ddtelemetry::{
         platform::PlatformHandle,
         sidecar,
     },
-    worker::TelemetryActions,
+    worker::TelemetryActions, mock_telemetry_target::{self, MockServer},
 };
 use ffi::slice::AsBytes;
 
@@ -222,9 +222,20 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
     MaybeError::None
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn ddog_sidecar_mock_start(result: &mut *mut MockServer) -> MaybeError {
+    let server = try_c!(mock_telemetry_target::MockServer::start_random_local_port());
 
-pub unsafe extern "C" fn ddog_sidecar_mock_start() -> MaybeError {
+    *result = Box::into_raw(Box::new(server));
+    MaybeError::None
+}
 
+#[no_mangle]
+pub unsafe extern "C" fn ddog_sidecar_session_config_setAgentUrl(transport: &mut Box<TelemetryTransport>, session_id: ffi::CharSlice,
+    agent_url: ffi::CharSlice) -> MaybeError {
+    try_c!(blocking::set_session_agent_url(transport, session_id.to_utf8_lossy().into(), agent_url.to_utf8_lossy().into()));
+
+    MaybeError::None
 }
 
 #[cfg(test)]
@@ -269,6 +280,8 @@ mod test_c_sidecar {
         assert_eq!(ddog_sidecar_connect(&mut transport), MaybeError::None);
         let mut transport = unsafe { Box::from_raw(transport) };
         unsafe {
+            ddog_sidecar_session_config_setAgentUrl(&mut transport, "session_id".into(), "http://localhost:8082/".into());
+
             let meta = ddog_sidecar_runtimeMeta_build(
                 "language_name".into(),
                 "language_version".into(),
@@ -297,6 +310,8 @@ mod test_c_sidecar {
                 ),
                 MaybeError::None
             );
+            // reset session config - and cause shutdown of all existing instances
+            ddog_sidecar_session_config_setAgentUrl(&mut transport, "session_id".into(), "".into());
 
             ddog_sidecar_instanceId_drop(instance_id);
             ddog_sidecar_runtimeMeta_drop(meta);
