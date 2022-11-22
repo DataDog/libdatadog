@@ -405,7 +405,7 @@ impl From<datadog_profiling::profile::EncodedProfile> for EncodedProfile {
         let start = value.start.into();
         let end = value.end.into();
         let buffer = value.buffer.into();
-        let endpoints_stats = value.endpoints_stats;
+        let endpoints_stats = Box::new(value.endpoints_stats);
 
         Self {
             start,

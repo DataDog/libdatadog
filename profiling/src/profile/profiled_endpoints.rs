@@ -3,25 +3,12 @@
 
 use std::collections::HashMap;
 
-use serde::ser::SerializeMap;
 use serde::Serialize;
 
-#[derive(Default, PartialEq, Eq, Debug, Clone)]
+#[derive(Default, PartialEq, Eq, Debug, Clone, Serialize)]
+#[serde(transparent)]
 pub struct ProfiledEndpointsStats {
     count: HashMap<String, i64>,
-}
-
-impl Serialize for ProfiledEndpointsStats {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut map = serializer.serialize_map(Some(self.count.len()))?;
-        for (k, v) in &self.count {
-            map.serialize_entry(k, v)?;
-        }
-        map.end()
-    }
 }
 
 impl From<HashMap<String, i64>> for ProfiledEndpointsStats {

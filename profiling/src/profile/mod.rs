@@ -211,7 +211,7 @@ pub struct EncodedProfile {
     pub start: SystemTime,
     pub end: SystemTime,
     pub buffer: Vec<u8>,
-    pub endpoints_stats: Box<ProfiledEndpointsStats>,
+    pub endpoints_stats: ProfiledEndpointsStats,
 }
 
 impl Endpoints {
@@ -441,7 +441,7 @@ impl Profile {
     pub fn add_endpoint_count(&mut self, endpoint: Cow<str>, value: i64) {
         self.endpoints
             .stats
-            .add_endpoint_count(endpoint.to_string(), value);
+            .add_endpoint_count(endpoint.into_owned(), value);
     }
 
     /// Serialize the aggregated profile, adding the end time and duration.
@@ -479,7 +479,7 @@ impl Profile {
             start,
             end,
             buffer,
-            endpoints_stats: Box::new(self.endpoints.stats.clone()),
+            endpoints_stats: self.endpoints.stats.clone(),
         })
     }
 
@@ -992,7 +992,7 @@ mod api_test {
             .serialize(None, None)
             .expect("Unable to encode/serialize the profile");
 
-        let endpoints_stats = &*encoded_profile.endpoints_stats;
+        let endpoints_stats = encoded_profile.endpoints_stats;
         assert!(endpoints_stats.is_empty());
     }
 
@@ -1022,7 +1022,7 @@ mod api_test {
             .serialize(None, None)
             .expect("Unable to encode/serialize the profile");
 
-        let endpoints_stats = &*encoded_profile.endpoints_stats;
+        let endpoints_stats = encoded_profile.endpoints_stats;
 
         let mut count: HashMap<String, i64> = HashMap::new();
         count.insert(one_endpoint.to_string(), 2);
@@ -1030,6 +1030,6 @@ mod api_test {
 
         let expected_endpoints_stats = ProfiledEndpointsStats::from(count);
 
-        assert_eq!(endpoints_stats, &expected_endpoints_stats);
+        assert_eq!(endpoints_stats, expected_endpoints_stats);
     }
 }
