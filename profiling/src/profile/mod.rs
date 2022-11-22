@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod pprof;
+pub mod profiled_endpoints;
 
 use core::fmt;
 use std::borrow::{Borrow, Cow};
@@ -13,6 +14,7 @@ use std::time::{Duration, SystemTime};
 
 use indexmap::{IndexMap, IndexSet};
 use pprof::{Function, Label, Line, Location, ValueType};
+use profiled_endpoints::ProfiledEndpointsStats;
 use prost::{EncodeError, Message};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
@@ -90,6 +92,7 @@ pub struct Endpoints {
     mappings: IndexMap<i64, i64>,
     local_root_span_id_label: i64,
     endpoint_label: i64,
+    stats: ProfiledEndpointsStats,
 }
 
 pub struct ProfileBuilder<'a> {
@@ -208,6 +211,7 @@ pub struct EncodedProfile {
     pub start: SystemTime,
     pub end: SystemTime,
     pub buffer: Vec<u8>,
+    pub endpoints_stats: ProfiledEndpointsStats,
 }
 
 impl Endpoints {
@@ -216,6 +220,7 @@ impl Endpoints {
             mappings: Default::default(),
             local_root_span_id_label: Default::default(),
             endpoint_label: Default::default(),
+            stats: Default::default(),
         }
     }
 }
@@ -433,6 +438,12 @@ impl Profile {
             .insert(interned_span_id, interned_endpoint);
     }
 
+    pub fn add_endpoint_count(&mut self, endpoint: Cow<str>, value: i64) {
+        self.endpoints
+            .stats
+            .add_endpoint_count(endpoint.into_owned(), value);
+    }
+
     /// Serialize the aggregated profile, adding the end time and duration.
     /// # Arguments
     /// * `end_time` - Optional end time of the profile. Passing None will use the current time.
@@ -463,7 +474,13 @@ impl Profile {
 
         let mut buffer: Vec<u8> = Vec::new();
         profile.encode(&mut buffer)?;
-        Ok(EncodedProfile { start, end, buffer })
+
+        Ok(EncodedProfile {
+            start,
+            end,
+            buffer,
+            endpoints_stats: self.endpoints.stats.clone(),
+        })
     }
 
     pub fn get_string(&self, id: i64) -> Option<&String> {
@@ -565,8 +582,11 @@ impl From<&Profile> for pprof::Profile {
 
 #[cfg(test)]
 mod api_test {
-    use crate::profile::{api, pprof, PProfId, Profile, ValueType};
-    use std::borrow::Cow;
+
+    use crate::profile::{
+        api, pprof, profiled_endpoints::ProfiledEndpointsStats, PProfId, Profile, ValueType,
+    };
+    use std::{borrow::Cow, collections::HashMap};
 
     #[test]
     fn interning() {
@@ -774,6 +794,8 @@ mod api_test {
         assert!(!profile.samples.is_empty());
         assert!(!profile.sample_types.is_empty());
         assert!(profile.period.is_none());
+        assert!(profile.endpoints.mappings.is_empty());
+        assert!(profile.endpoints.stats.is_empty());
 
         let prev = profile.reset(None).expect("reset to succeed");
 
@@ -782,6 +804,8 @@ mod api_test {
         assert!(profile.locations.is_empty());
         assert!(profile.mappings.is_empty());
         assert!(profile.samples.is_empty());
+        assert!(profile.endpoints.mappings.is_empty());
+        assert!(profile.endpoints.stats.is_empty());
 
         assert_eq!(profile.period, prev.period);
         assert_eq!(profile.sample_types, prev.sample_types);
@@ -947,5 +971,65 @@ mod api_test {
 
         // The trace endpoint label shouldn't be added to second sample because the span id doesn't match
         assert_eq!(s2.labels.len(), 2);
+    }
+
+    #[test]
+    fn endpoints_count_empty_test() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let encoded_profile = profile
+            .serialize(None, None)
+            .expect("Unable to encode/serialize the profile");
+
+        let endpoints_stats = encoded_profile.endpoints_stats;
+        assert!(endpoints_stats.is_empty());
+    }
+
+    #[test]
+    fn endpoints_count_test() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let one_endpoint = "my endpoint";
+        profile.add_endpoint_count(Cow::from(one_endpoint), 1);
+        profile.add_endpoint_count(Cow::from(one_endpoint), 1);
+
+        let second_endpoint = "other endpoint";
+        profile.add_endpoint_count(Cow::from(second_endpoint), 1);
+
+        let encoded_profile = profile
+            .serialize(None, None)
+            .expect("Unable to encode/serialize the profile");
+
+        let endpoints_stats = encoded_profile.endpoints_stats;
+
+        let mut count: HashMap<String, i64> = HashMap::new();
+        count.insert(one_endpoint.to_string(), 2);
+        count.insert(second_endpoint.to_string(), 1);
+
+        let expected_endpoints_stats = ProfiledEndpointsStats::from(count);
+
+        assert_eq!(endpoints_stats, expected_endpoints_stats);
     }
 }

@@ -120,6 +120,7 @@ int main(int argc, char *argv[]) {
     encoded_profile->end,
     files,
     nullptr,
+    nullptr,
     30000
   );
 

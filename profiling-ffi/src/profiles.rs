@@ -4,6 +4,7 @@
 use crate::Timespec;
 use datadog_profiling::profile as profiles;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
+use profiles::profiled_endpoints;
 use std::convert::{TryFrom, TryInto};
 use std::str::Utf8Error;
 use std::time::{Duration, SystemTime};
@@ -371,11 +372,32 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_endpoint<'a>(
     profile.add_endpoint(local_root_span_id, endpoint);
 }
 
+/// Count the number of times an endpoint has been seen.
+///
+/// # Arguments
+/// * `profile` - a reference to the profile that will contain the samples.
+/// * `endpoint` - the endpoint label for which the count will be incremented
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module.
+/// This call is _NOT_ thread-safe.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
+    profile: &mut datadog_profiling::profile::Profile,
+    endpoint: CharSlice,
+    value: i64,
+) {
+    let endpoint = endpoint.to_utf8_lossy();
+    profile.add_endpoint_count(endpoint, value);
+}
+
 #[repr(C)]
 pub struct EncodedProfile {
     start: Timespec,
     end: Timespec,
     buffer: ddcommon_ffi::Vec<u8>,
+    endpoints_stats: Box<profiled_endpoints::ProfiledEndpointsStats>,
 }
 
 impl From<datadog_profiling::profile::EncodedProfile> for EncodedProfile {
@@ -383,7 +405,14 @@ impl From<datadog_profiling::profile::EncodedProfile> for EncodedProfile {
         let start = value.start.into();
         let end = value.end.into();
         let buffer = value.buffer.into();
-        Self { start, end, buffer }
+        let endpoints_stats = Box::new(value.endpoints_stats);
+
+        Self {
+            start,
+            end,
+            buffer,
+            endpoints_stats,
+        }
     }
 }
 
