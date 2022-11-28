@@ -452,6 +452,13 @@ impl Profile {
     ///                conditions this may fail as system clocks can be adjusted. The programmer
     ///                may also accidentally pass an earlier time. The duration will be set to zero
     ///                these cases.
+    ///
+    /// Note: The Ruby profiler currently relies on this function being safe to be interrupted by a
+    /// fork (other than potentially leaking memory), see
+    /// https://datadoghq.atlassian.net/wiki/spaces/PROF/pages/2730394016/Discussion+of+safety+of+a+fork+interrupting+profile+serialization
+    /// for the discussion. Kindly drop a note in #profiling-ruby or
+    /// https://github.com/DataDog/dd-trace-rb if you need to change this function in a way that would
+    /// break that assumption.
     pub fn serialize(
         &self,
         end_time: Option<SystemTime>,
