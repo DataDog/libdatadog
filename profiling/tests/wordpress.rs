@@ -1,7 +1,6 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use datadog_profiling::profile::api::Sample;
 use datadog_profiling::profile::*;
 use prost::Message;
 use std::io::Cursor;
@@ -187,7 +186,7 @@ fn wordpress() {
     // Phew, 2 samples is hopefully enough :fingerscrossed:
 }
 
-fn compare_sample(a: Sample, b: &Sample) {
+fn compare_sample(a: api::Sample, b: &api::Sample) {
     // Comparing the entire sample works, but is bad UX when there's a failure.
     // Do it one thing at a time instead so it's a smaller diff.
     assert_eq!(a.labels, b.labels);
