@@ -2,8 +2,10 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use datadog_profiling::profile::*;
+use lz4_flex::frame::FrameDecoder;
 use prost::Message;
-use std::io::Cursor;
+use std::fs::File;
+use std::io::{copy, Cursor};
 use std::time::Duration;
 
 // PHP uses a restricted set of things; this helper function cuts down on a lot of typing.
@@ -26,8 +28,14 @@ fn php_location<'a>(name: &'a str, filename: &'a str, line: i64) -> api::Locatio
 
 #[test]
 fn wordpress() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/wordpress.pprof");
-    let bytes = std::fs::read(path).unwrap();
+    let compressed_size = 101824_u64;
+    let uncompressed_size = 200692_u64;
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/wordpress.pprof.lz4");
+    let mut decoder = FrameDecoder::new(File::open(path).unwrap());
+    let mut bytes = Vec::with_capacity(compressed_size as usize);
+    let bytes_copied = copy(&mut decoder, &mut bytes).unwrap();
+    assert_eq!(uncompressed_size, bytes_copied);
+
     let pprof = pprof::Profile::decode(&mut Cursor::new(&bytes)).unwrap();
     let api = api::Profile::try_from(&pprof).unwrap();
 
