@@ -140,7 +140,7 @@ fn string_table_fetch(pprof: &pprof::Profile, id: i64) -> anyhow::Result<&String
     pprof
         .string_table
         .get(id as u64 as usize)
-        .ok_or(anyhow::anyhow!("String {id} was not found."))
+        .ok_or_else(|| anyhow::anyhow!("String {id} was not found."))
 }
 
 fn mapping_fetch(pprof: &pprof::Profile, id: u64) -> anyhow::Result<Mapping> {
@@ -206,7 +206,10 @@ fn location_fetch(pprof: &pprof::Profile, id: u64) -> anyhow::Result<Location> {
     }
 }
 
-fn locations_fetch<'a>(pprof: &'a pprof::Profile, ids: &'a [u64]) -> anyhow::Result<Vec<Location>> {
+fn locations_fetch<'a>(
+    pprof: &'a pprof::Profile,
+    ids: &'a [u64],
+) -> anyhow::Result<Vec<Location<'a>>> {
     let mut locations = Vec::with_capacity(ids.len());
     for id in ids {
         let location = location_fetch(pprof, *id)?;
@@ -222,7 +225,7 @@ impl<'a> TryFrom<&'a pprof::Profile> for Profile<'a> {
         assert!(pprof.duration_nanos >= 0);
         let duration = Duration::from_nanos(pprof.duration_nanos as u64);
         let start_time = if pprof.time_nanos.is_negative() {
-            UNIX_EPOCH.sub(Duration::from_nanos(pprof.time_nanos.abs() as u64))
+            UNIX_EPOCH.sub(Duration::from_nanos(pprof.time_nanos.unsigned_abs()))
         } else {
             UNIX_EPOCH.add(Duration::from_nanos(pprof.time_nanos as u64))
         };
