@@ -1,18 +1,23 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-#[derive(Copy, Clone)]
+use crate::profile::pprof;
+use std::ops::{Add, Sub};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ValueType<'a> {
     pub r#type: &'a str,
     pub unit: &'a str,
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct Period<'a> {
     pub r#type: ValueType<'a>,
     pub value: i64,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct Mapping<'a> {
     /// Address at which the binary (or DLL) is loaded into memory.
     pub memory_start: u64,
@@ -34,7 +39,7 @@ pub struct Mapping<'a> {
     pub build_id: &'a str,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct Function<'a> {
     /// Name of the function, in human-readable form if available.
     pub name: &'a str,
@@ -50,6 +55,7 @@ pub struct Function<'a> {
     pub start_line: i64,
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct Line<'a> {
     /// The corresponding profile.Function for this line.
     pub function: Function<'a>,
@@ -58,7 +64,7 @@ pub struct Line<'a> {
     pub line: i64,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default, Eq, PartialEq)]
 pub struct Location<'a> {
     pub mapping: Mapping<'a>,
 
@@ -86,7 +92,7 @@ pub struct Location<'a> {
     pub is_folded: bool,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct Label<'a> {
     pub key: &'a str,
 
@@ -104,6 +110,7 @@ pub struct Label<'a> {
     pub num_unit: Option<&'a str>,
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct Sample<'a> {
     /// The leaf is at locations[0].
     pub locations: Vec<Location<'a>>,
@@ -119,4 +126,164 @@ pub struct Sample<'a> {
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
     pub labels: Vec<Label<'a>>,
+}
+
+pub struct Profile<'a> {
+    pub duration: Duration,
+    pub period: Option<(i64, ValueType<'a>)>,
+    pub sample_types: Vec<ValueType<'a>>,
+    pub samples: Vec<Sample<'a>>,
+    pub start_time: SystemTime,
+}
+
+fn string_table_fetch(pprof: &pprof::Profile, id: i64) -> anyhow::Result<&String> {
+    pprof
+        .string_table
+        .get(id as u64 as usize)
+        .ok_or_else(|| anyhow::anyhow!("String {id} was not found."))
+}
+
+fn mapping_fetch(pprof: &pprof::Profile, id: u64) -> anyhow::Result<Mapping> {
+    if id == 0 {
+        return Ok(Mapping::default());
+    }
+
+    match pprof.mappings.iter().find(|item| item.id == id) {
+        Some(mapping) => Ok(Mapping {
+            memory_start: mapping.memory_start,
+            memory_limit: mapping.memory_limit,
+            file_offset: mapping.file_offset,
+            filename: string_table_fetch(pprof, mapping.filename)?,
+            build_id: string_table_fetch(pprof, mapping.build_id)?,
+        }),
+        None => anyhow::bail!("Mapping {id} was not found."),
+    }
+}
+
+fn function_fetch(pprof: &pprof::Profile, id: u64) -> anyhow::Result<Function> {
+    if id == 0 {
+        return Ok(Function::default());
+    }
+
+    match pprof.functions.iter().find(|item| item.id == id) {
+        Some(function) => Ok(Function {
+            name: string_table_fetch(pprof, function.name)?,
+            system_name: string_table_fetch(pprof, function.system_name)?,
+            filename: string_table_fetch(pprof, function.filename)?,
+            start_line: function.start_line,
+        }),
+        None => anyhow::bail!("Function {id} was not found."),
+    }
+}
+
+fn lines_fetch<'a>(
+    pprof: &'a pprof::Profile,
+    lines: &'a [pprof::Line],
+) -> anyhow::Result<Vec<Line<'a>>> {
+    let mut output = Vec::with_capacity(lines.len());
+    for line in lines {
+        output.push(Line {
+            function: function_fetch(pprof, line.function_id)?,
+            line: line.line,
+        });
+    }
+    Ok(output)
+}
+
+fn location_fetch(pprof: &pprof::Profile, id: u64) -> anyhow::Result<Location> {
+    if id == 0 {
+        return Ok(Location::default());
+    }
+
+    match pprof.locations.iter().find(|item| item.id == id) {
+        Some(location) => Ok(Location {
+            mapping: mapping_fetch(pprof, location.mapping_id)?,
+            address: location.address,
+            lines: lines_fetch(pprof, &location.lines)?,
+            is_folded: location.is_folded,
+        }),
+        None => anyhow::bail!("Location {id} was not found."),
+    }
+}
+
+fn locations_fetch<'a>(
+    pprof: &'a pprof::Profile,
+    ids: &'a [u64],
+) -> anyhow::Result<Vec<Location<'a>>> {
+    let mut locations = Vec::with_capacity(ids.len());
+    for id in ids {
+        let location = location_fetch(pprof, *id)?;
+        locations.push(location);
+    }
+    Ok(locations)
+}
+
+impl<'a> TryFrom<&'a pprof::Profile> for Profile<'a> {
+    type Error = anyhow::Error;
+
+    fn try_from(pprof: &'a pprof::Profile) -> Result<Self, Self::Error> {
+        assert!(pprof.duration_nanos >= 0);
+        let duration = Duration::from_nanos(pprof.duration_nanos as u64);
+        let start_time = if pprof.time_nanos.is_negative() {
+            UNIX_EPOCH.sub(Duration::from_nanos(pprof.time_nanos.unsigned_abs()))
+        } else {
+            UNIX_EPOCH.add(Duration::from_nanos(pprof.time_nanos as u64))
+        };
+
+        let period = match pprof.period_type {
+            Some(t) => {
+                let r#type = ValueType {
+                    r#type: string_table_fetch(pprof, t.r#type)?,
+                    unit: string_table_fetch(pprof, t.unit)?,
+                };
+                Some((pprof.period, r#type))
+            }
+            None => None,
+        };
+
+        let mut sample_types = Vec::with_capacity(pprof.samples.len());
+        for t in pprof.sample_types.iter() {
+            sample_types.push(ValueType {
+                r#type: string_table_fetch(pprof, t.r#type)?,
+                unit: string_table_fetch(pprof, t.unit)?,
+            });
+        }
+
+        let mut samples = Vec::with_capacity(pprof.samples.len());
+        for sample in pprof.samples.iter() {
+            let locations = locations_fetch(pprof, &sample.location_ids)?;
+
+            let mut labels = Vec::with_capacity(sample.labels.len());
+            for label in sample.labels.iter() {
+                labels.push(Label {
+                    key: string_table_fetch(pprof, label.key)?,
+                    str: if label.str == 0 {
+                        None
+                    } else {
+                        Some(string_table_fetch(pprof, label.str)?)
+                    },
+                    num: label.num,
+                    num_unit: if label.num_unit == 0 {
+                        None
+                    } else {
+                        Some(string_table_fetch(pprof, label.num_unit)?)
+                    },
+                })
+            }
+            let sample = Sample {
+                locations,
+                values: sample.values.clone(),
+                labels,
+            };
+            samples.push(sample);
+        }
+
+        Ok(Profile {
+            duration,
+            period,
+            sample_types,
+            samples,
+            start_time,
+        })
+    }
 }
