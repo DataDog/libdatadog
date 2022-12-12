@@ -52,7 +52,7 @@ mod tests {
             .map(|p| format!("{}", p))
             .unwrap_or_else(|| "self".into());
 
-        let fds_path = Path::new("/proc").join(proc).join("fd");
+        let fds_path = std::path::Path::new("/proc").join(proc).join("fd");
         let fds = std::fs::read_dir(fds_path)?
             .filter_map(|r| r.ok())
             .filter_map(|r| {
