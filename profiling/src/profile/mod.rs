@@ -976,7 +976,7 @@ mod api_test {
     }
 
     #[test]
-    fn endpoints_count_empty_test() {
+    fn endpoint_counts_empty_test() {
         let sample_types = vec![
             api::ValueType {
                 r#type: "samples",
@@ -999,7 +999,7 @@ mod api_test {
     }
 
     #[test]
-    fn endpoints_count_test() {
+    fn endpoint_counts_test() {
         let sample_types = vec![
             api::ValueType {
                 r#type: "samples",
