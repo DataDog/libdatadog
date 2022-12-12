@@ -91,7 +91,7 @@ pub struct Profile {
 }
 
 pub struct Endpoints {
-    mappings: FxIndexMap<i64, i64>,
+    mappings: FxIndexMap<u64, i64>,
     local_root_span_id_label: i64,
     endpoint_label: i64,
     stats: ProfiledEndpointsStats,
@@ -426,18 +426,19 @@ impl Profile {
         Some(profile)
     }
 
-    pub fn add_endpoint(&mut self, local_root_span_id: Cow<str>, endpoint: Cow<str>) {
+    /// Add the endpoint data to the endpoint mappings. The `endpoint` will be
+    /// interned, as will the strings "local root span id" and "trace endpoint".
+    pub fn add_endpoint(&mut self, local_root_span_id: u64, endpoint: Cow<str>) {
         if self.endpoints.mappings.is_empty() {
             self.endpoints.local_root_span_id_label = self.intern("local root span id");
             self.endpoints.endpoint_label = self.intern("trace endpoint");
         }
 
-        let interned_span_id = self.intern(local_root_span_id.as_ref());
         let interned_endpoint = self.intern(endpoint.as_ref());
 
         self.endpoints
             .mappings
-            .insert(interned_span_id, interned_endpoint);
+            .insert(local_root_span_id, interned_endpoint);
     }
 
     pub fn add_endpoint_count(&mut self, endpoint: Cow<str>, value: i64) {
@@ -488,6 +489,35 @@ impl Profile {
     pub fn get_string(&self, id: i64) -> Option<&String> {
         self.strings.get_index(id as usize)
     }
+
+    fn get_endpoint_for_label(&self, label: &Label) -> anyhow::Result<&i64> {
+        let local_root_span_id: u64 = if label.str == 0 {
+            /* Safety: the value is a u64, but pprof only has signed values,
+             * so we transmute it; the backend does the same.
+             */
+            unsafe { std::intrinsics::transmute(label.num) }
+        } else {
+            /* Sad path: have to fetch the string from the table and convert
+             * it back into a u64. Clients should change to use numbers!
+             */
+            let string = match self.strings.get_index(label.str as usize) {
+                None => anyhow::bail!(
+                    "failed to retrieve index {} from the string table when looking for endpoint data",
+                    label.str
+                ),
+                Some(string) => string,
+            };
+            string.as_str().parse()?
+        };
+
+        match self.endpoints.mappings.get(&local_root_span_id) {
+            None => Err(anyhow::anyhow!(
+                "failed to retrieve endpoint information for local root span id {}",
+                local_root_span_id
+            )),
+            Some(endpoint_string_id) => Ok(endpoint_string_id),
+        }
+    }
 }
 
 impl From<&Profile> for pprof::Profile {
@@ -509,14 +539,14 @@ impl From<&Profile> for pprof::Profile {
 
         if !profile.endpoints.mappings.is_empty() {
             for sample in samples.iter_mut() {
-                let mut endpoint: Option<&i64> = None;
-
-                for label in &sample.labels {
+                let endpoint = sample.labels.iter().find_map(|label| {
+                    // todo: log errors in get_endpoint_for_label (should not happen)
                     if label.key == profile.endpoints.local_root_span_id_label {
-                        endpoint = profile.endpoints.mappings.get(&label.str);
-                        break;
+                        profile.get_endpoint_for_label(label).ok()
+                    } else {
+                        None
                     }
-                }
+                });
 
                 if let Some(endpoint_value) = endpoint {
                     sample.labels.push(pprof::Label {
@@ -907,7 +937,7 @@ mod api_test {
 
         profile.add(sample2).expect("add to success");
 
-        profile.add_endpoint(Cow::from("10"), Cow::from("my endpoint"));
+        profile.add_endpoint(10, Cow::from("my endpoint"));
 
         let serialized_profile: pprof::Profile = (&profile).into();
 

@@ -23,7 +23,6 @@ mod tests {
         fs::File,
         io::{self, Read, Seek, Write},
         os::unix::prelude::{AsRawFd, RawFd},
-        path::Path,
     };
 
     use crate::ipc::platform::{metadata::ChannelMetadata, unix::message::MAX_FDS};
