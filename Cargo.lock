@@ -283,7 +283,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -313,7 +313,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-ffi"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -327,7 +327,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "futures",
@@ -351,7 +351,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-ffi"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "ddcommon",
@@ -359,7 +359,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -393,7 +393,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry-ffi"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "ddcommon-ffi",
  "ddtelemetry",
