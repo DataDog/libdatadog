@@ -32,7 +32,7 @@ fn multipart(exporter: &ProfileExporter) -> Request {
     let timeout = std::time::Duration::from_secs(10);
 
     let request = exporter
-        .build(start, end, files, None, None, timeout)
+        .build(start, end, files, None, None, None, timeout)
         .expect("request to be built");
 
     let actual_timeout = request.timeout().expect("timeout to exist");
@@ -59,6 +59,7 @@ mod tests {
         let profiling_library_version = "1.2.3";
         let base_url = "http://localhost:8126".parse().expect("url to parse");
         let endpoint = config::agent(base_url).expect("endpoint to construct");
+
         let exporter = ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,

@@ -105,6 +105,15 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  ddog_Vec_Metric metrics = ddog_Vec_Metric_new();
+  ddog_Vec_Metric_PushResult metric_result =
+      ddog_Vec_Metric_push(&metrics, DDOG_CHARSLICE_C("my_metric"), 42.0f);
+  if (metric_result.tag == DDOG_VEC_METRIC_PUSH_RESULT_ERR) {
+    print_error("Failed to push metric: ", metric_result.err);
+    ddog_Vec_Metric_PushResult_drop(metric_result);
+    return 1;
+  }
+
   auto exporter = exporter_new_result.ok;
 
   ddog_prof_Exporter_File files_[] = {{
@@ -121,8 +130,11 @@ int main(int argc, char *argv[]) {
     files,
     nullptr,
     nullptr,
+    &metrics,
     30000
   );
+  
+  ddog_Vec_Metric_drop(metrics);
 
   ddog_CancellationToken *cancel = ddog_CancellationToken_new();
   ddog_CancellationToken *cancel_for_background_thread = ddog_CancellationToken_clone(cancel);

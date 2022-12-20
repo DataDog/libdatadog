@@ -17,7 +17,7 @@ use std::io::Write;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
-use ddcommon::{azure_app_services, connector, HttpClient, HttpResponse};
+use ddcommon::{azure_app_services, connector, metric::Metric, HttpClient, HttpResponse};
 
 pub mod config;
 mod errors;
@@ -146,8 +146,8 @@ impl ProfileExporter {
             tags,
         })
     }
-
     /// Build a Request object representing the profile information provided.
+    #[allow(clippy::too_many_arguments)]
     pub fn build(
         &self,
         start: DateTime<Utc>,
@@ -155,6 +155,7 @@ impl ProfileExporter {
         files: &[File],
         additional_tags: Option<&Vec<Tag>>,
         endpoint_counts: Option<&ProfiledEndpointsStats>,
+        metrics: Option<&Vec<Metric>>,
         timeout: std::time::Duration,
     ) -> anyhow::Result<Request> {
         let mut form = multipart::Form::default();
@@ -202,7 +203,31 @@ impl ProfileExporter {
 
         tags_profiler.pop(); // clean up the trailing comma
 
-        let attachments: Vec<String> = files.iter().map(|file| file.name.to_owned()).collect();
+        let mut other_files: Vec<File> = Vec::new();
+
+        let metrics_file_content = match metrics {
+            None => None,
+            Some(metrics) => {
+                if metrics.is_empty() {
+                    None
+                } else {
+                    Some(json!(metrics).to_string())
+                }
+            }
+        };
+
+        if let Some(buffer) = metrics_file_content.as_ref() {
+            other_files.push(File {
+                name: "metrics.json",
+                bytes: buffer.as_bytes(),
+            })
+        };
+
+        let attachments: Vec<String> = files
+            .iter()
+            .chain(other_files.iter())
+            .map(|file| file.name.to_owned())
+            .collect();
 
         let event = json!({
             "attachments": attachments,
@@ -224,7 +249,7 @@ impl ProfileExporter {
             mime::APPLICATION_JSON,
         );
 
-        for file in files {
+        for file in files.iter().chain(other_files.iter()) {
             let mut encoder = FrameEncoder::new(Vec::new());
             encoder.write_all(file.bytes)?;
             let encoded = encoder.finish()?;

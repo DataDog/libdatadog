@@ -29,6 +29,8 @@ renaming_overrides_prefixing = true
 "Tag" = "ddog_Tag"
 "Timespec" = "ddog_Timespec"
 "Vec_Tag" = "ddog_Vec_Tag"
+"Metric" = "ddog_Metric"
+"Vec_Metric" = "ddog_Vec_Metric"
 
 "File" = "ddog_prof_Exporter_File"
 "NewProfileExporterResult" = "ddog_prof_Exporter_NewResult"
