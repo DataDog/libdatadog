@@ -1064,4 +1064,82 @@ mod api_test {
 
         assert_eq!(endpoints_stats, expected_endpoints_stats);
     }
+
+    #[test]
+    fn root_span_id_label_as_str_or_i64() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let id_label = api::Label {
+            key: "local root span id",
+            str: None,
+            num: 10,
+            num_unit: None,
+        };
+
+        let id2_label = api::Label {
+            key: "local root span id",
+            str: Some("11"),
+            num: 0,
+            num_unit: None,
+        };
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000],
+            labels: vec![id_label],
+        };
+
+        let sample2 = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000],
+            labels: vec![id2_label],
+        };
+
+        profile.add(sample1).expect("add to success");
+
+        profile.add(sample2).expect("add to success");
+
+        profile.add_endpoint(10, Cow::from("my endpoint"));
+
+        profile.add_endpoint(11, Cow::from("my endpoint"));
+
+        let serialized_profile: pprof::Profile = (&profile).into();
+
+        assert_eq!(serialized_profile.samples.len(), 2);
+
+        // check for endpoint label in first sample
+        let s1 = serialized_profile.samples.get(0).expect("sample");
+
+        assert_eq!(s1.labels.len(), 2);
+
+        let l1 = s1.labels.get(0).expect("label");
+
+        assert_eq!(l1.num, id_label.num);
+
+        // check for endpoint label in second sample
+        let s2 = serialized_profile.samples.get(1).expect("sample");
+
+        assert_eq!(s2.labels.len(), 2);
+
+        let l2 = s2.labels.get(0).expect("label");
+
+        assert_eq!(
+            serialized_profile
+                .string_table
+                .get(l2.str as usize)
+                .unwrap(),
+            "11"
+        );
+    }
 }
