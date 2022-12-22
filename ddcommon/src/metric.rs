@@ -8,7 +8,7 @@ use std::{borrow::Cow, fmt::Formatter};
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Metric {
     name: String,
-    value: f32,
+    value: f64,
 }
 
 impl Debug for Metric {
@@ -21,7 +21,7 @@ impl Debug for Metric {
 }
 
 impl Metric {
-    pub fn new(name: String, value: f32) -> Result<Self, Cow<'static, str>> {
+    pub fn new(name: String, value: f64) -> Result<Self, &'static str> {
         if name.is_empty() {
             Err("empty metric name is not valid".into())
         } else {

@@ -34,7 +34,7 @@ pub extern "C" fn ddog_Vec_Metric_PushResult_drop(_: PushMetricResult) {}
 pub unsafe extern "C" fn ddog_Vec_Metric_push(
     vec: &mut crate::Vec<Metric>,
     key: CharSlice,
-    value: f32,
+    value: f64,
 ) -> PushMetricResult {
     let name = key.to_utf8_lossy().into_owned();
     match Metric::new(name, value) {
