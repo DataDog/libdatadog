@@ -3,7 +3,7 @@
 
 use core::fmt::Debug;
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, fmt::Formatter};
+use std::fmt::Formatter;
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Metric {
@@ -23,7 +23,7 @@ impl Debug for Metric {
 impl Metric {
     pub fn new(name: String, value: f64) -> Result<Self, &'static str> {
         if name.is_empty() {
-            Err("empty metric name is not valid".into())
+            Err("empty metric name is not valid")
         } else {
             Ok(Metric { name, value })
         }

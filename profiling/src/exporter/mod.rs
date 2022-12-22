@@ -203,31 +203,7 @@ impl ProfileExporter {
 
         tags_profiler.pop(); // clean up the trailing comma
 
-        let mut other_files: Vec<File> = Vec::new();
-
-        let metrics_file_content = match metrics {
-            None => None,
-            Some(metrics) => {
-                if metrics.is_empty() {
-                    None
-                } else {
-                    Some(json!(metrics).to_string())
-                }
-            }
-        };
-
-        if let Some(buffer) = metrics_file_content.as_ref() {
-            other_files.push(File {
-                name: "metrics.json",
-                bytes: buffer.as_bytes(),
-            })
-        };
-
-        let attachments: Vec<String> = files
-            .iter()
-            .chain(other_files.iter())
-            .map(|file| file.name.to_owned())
-            .collect();
+        let attachments: Vec<String> = files.iter().map(|file| file.name.to_owned()).collect();
 
         let event = json!({
             "attachments": attachments,
@@ -249,7 +225,19 @@ impl ProfileExporter {
             mime::APPLICATION_JSON,
         );
 
-        for file in files.iter().chain(other_files.iter()) {
+        if let Some(metrics) = metrics {
+            if !metrics.is_empty() {
+                let metrics_str = json!(metrics).to_string();
+                form.add_reader_file_with_mime(
+                    "metrics.json",
+                    Cursor::new(metrics_str),
+                    "metrics.json",
+                    mime::APPLICATION_JSON,
+                );
+            }
+        };
+
+        for file in files {
             let mut encoder = FrameEncoder::new(Vec::new());
             encoder.write_all(file.bytes)?;
             let encoded = encoder.finish()?;
