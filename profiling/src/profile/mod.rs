@@ -1066,7 +1066,7 @@ mod api_test {
     }
 
     #[test]
-    fn root_span_id_label_as_str_or_i64() {
+    fn local_root_span_id_label_as_str_or_i64() {
         let sample_types = vec![
             api::ValueType {
                 r#type: "samples",
@@ -1107,39 +1107,58 @@ mod api_test {
         };
 
         profile.add(sample1).expect("add to success");
-
         profile.add(sample2).expect("add to success");
 
-        profile.add_endpoint(10, Cow::from("my endpoint"));
-
-        profile.add_endpoint(11, Cow::from("my endpoint"));
+        profile.add_endpoint(10, Cow::from("endpoint 10"));
+        profile.add_endpoint(11, Cow::from("endpoint 11"));
 
         let serialized_profile: pprof::Profile = (&profile).into();
-
         assert_eq!(serialized_profile.samples.len(), 2);
 
-        // check for endpoint label in first sample
-        let s1 = serialized_profile.samples.get(0).expect("sample");
-
-        assert_eq!(s1.labels.len(), 2);
-
-        let l1 = s1.labels.get(0).expect("label");
-
-        assert_eq!(l1.num, id_label.num);
-
-        // check for endpoint label in second sample
-        let s2 = serialized_profile.samples.get(1).expect("sample");
-
-        assert_eq!(s2.labels.len(), 2);
-
-        let l2 = s2.labels.get(0).expect("label");
-
-        assert_eq!(
+        // Find common label strings in the string table.
+        let locate_string = |string: &str| -> i64 {
+            // The table is supposed to be unique, so we shouldn't have to worry about duplicates.
             serialized_profile
                 .string_table
-                .get(l2.str as usize)
-                .unwrap(),
-            "11"
-        );
+                .iter()
+                .enumerate()
+                .find_map(|(offset, str)| {
+                    if str == string {
+                        Some(offset as i64)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap()
+        };
+
+        let local_root_span_id = locate_string("local root span id");
+        let trace_endpoint = locate_string("trace endpoint");
+
+        // Set up the expected labels per sample
+        let expected_labels = [
+            [
+                pprof::Label {
+                    key: local_root_span_id,
+                    str: 0,
+                    num: 10,
+                    num_unit: 0,
+                },
+                pprof::Label::str(trace_endpoint, locate_string("endpoint 10")),
+            ],
+            [
+                pprof::Label::str(local_root_span_id, locate_string("11")),
+                pprof::Label::str(trace_endpoint, locate_string("endpoint 11")),
+            ],
+        ];
+
+        // Finally, match the labels.
+        for (sample, labels) in serialized_profile
+            .samples
+            .iter()
+            .zip(expected_labels.iter())
+        {
+            assert_eq!(sample.labels, labels);
+        }
     }
 }
