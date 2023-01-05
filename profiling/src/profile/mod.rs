@@ -523,10 +523,11 @@ impl Profile {
          */
         let local_root_span_id: u64 = unsafe { std::intrinsics::transmute(label.num) };
 
-        Ok(match self.endpoints.mappings.get(&local_root_span_id) {
-            None => None,
-            Some(endpoint_string_id) => Some(*endpoint_string_id),
-        })
+        Ok(self
+            .endpoints
+            .mappings
+            .get(&local_root_span_id)
+            .map(i64::clone))
     }
 }
 
