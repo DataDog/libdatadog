@@ -234,8 +234,12 @@ impl Default for Endpoints {
 }
 
 impl Profile {
-    /// Creates a profile with `start_time`. Initializes the string table to
-    /// include the empty string. All other fields are default.
+    /// Creates a profile with `start_time`.
+    /// Initializes the string table to hold:
+    ///  - "" (the empty string)
+    ///  - "local root span id"
+    ///  - "trace endpoint"
+    /// All other fields are default.
     pub fn new(start_time: SystemTime) -> Self {
         /* Do not use Profile's default() impl here or it will cause a stack
          * overflow, since that default impl calls this method.
@@ -253,7 +257,14 @@ impl Profile {
         };
 
         profile.intern("");
+        profile.endpoints.local_root_span_id_label = profile.intern("local root span id");
+        profile.endpoints.endpoint_label = profile.intern("trace endpoint");
         profile
+    }
+
+    #[cfg(test)]
+    fn interned_strings_count(&self) -> usize {
+        self.strings.len()
     }
 
     /// Interns the `str` as a string, returning the id in the string table.
@@ -439,14 +450,9 @@ impl Profile {
         Some(profile)
     }
 
-    /// Add the endpoint data to the endpoint mappings. The `endpoint` will be
-    /// interned, as will the strings "local root span id" and "trace endpoint".
+    /// Add the endpoint data to the endpoint mappings.
+    /// The `endpoint` string will be interned.
     pub fn add_endpoint(&mut self, local_root_span_id: u64, endpoint: Cow<str>) {
-        if self.endpoints.mappings.is_empty() {
-            self.endpoints.local_root_span_id_label = self.intern("local root span id");
-            self.endpoints.endpoint_label = self.intern("trace endpoint");
-        }
-
         let interned_endpoint = self.intern(endpoint.as_ref());
 
         self.endpoints
@@ -640,17 +646,14 @@ mod api_test {
         }];
         let mut profiles = Profile::builder().sample_types(sample_types).build();
 
-        /* There have been 3 strings: "", "samples", and "count". Since the interning index starts at
-         * zero, this means the next string will be 3.
-         */
-        const EXPECTED_ID: i64 = 3;
+        let expected_id: i64 = profiles.interned_strings_count().try_into().unwrap();
 
         let string = "a";
         let id1 = profiles.intern(string);
         let id2 = profiles.intern(string);
 
         assert_eq!(id1, id2);
-        assert_eq!(id1, EXPECTED_ID);
+        assert_eq!(id1, expected_id);
     }
 
     #[test]
