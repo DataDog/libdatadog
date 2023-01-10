@@ -1121,10 +1121,14 @@ mod api_test {
             num_unit: None,
         };
 
+        let large_span_id = u64::MAX;
+        // Safety: a u64 can fit into an i64, and we're testing that it's not mis-handled.
+        let large_num: i64 = unsafe { std::intrinsics::transmute(large_span_id) };
+
         let id2_label = api::Label {
             key: "local root span id",
             str: None,
-            num: 11,
+            num: large_num,
             num_unit: None,
         };
 
@@ -1144,7 +1148,7 @@ mod api_test {
         profile.add(sample2).expect("add to success");
 
         profile.add_endpoint(10, Cow::from("endpoint 10"));
-        profile.add_endpoint(11, Cow::from("endpoint 11"));
+        profile.add_endpoint(large_span_id, Cow::from("large endpoint"));
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
         assert_eq!(serialized_profile.samples.len(), 2);
@@ -1184,10 +1188,10 @@ mod api_test {
                 pprof::Label {
                     key: local_root_span_id,
                     str: 0,
-                    num: 11,
+                    num: large_num,
                     num_unit: 0,
                 },
-                pprof::Label::str(trace_endpoint, locate_string("endpoint 11")),
+                pprof::Label::str(trace_endpoint, locate_string("large endpoint")),
             ],
         ];
 
