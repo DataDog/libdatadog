@@ -59,7 +59,7 @@ impl<T> From<alloc::vec::Vec<T>> for Vec<T> {
 impl From<anyhow::Error> for Vec<u8> {
     fn from(err: anyhow::Error) -> Self {
         let mut vec = vec![];
-        write!(vec, "{}", err).expect("write to vec to always succeed");
+        write!(vec, "{err}").expect("write to vec to always succeed");
         Self::from(vec)
     }
 }

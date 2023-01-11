@@ -353,7 +353,7 @@ pub extern "C" fn ddog_prof_Profile_add(
 ///
 /// # Arguments
 /// * `profile` - a reference to the profile that will contain the samples.
-/// * `local_root_span_id` - the value of the local root span id label to look for.
+/// * `local_root_span_id`
 /// * `endpoint` - the value of the endpoint label to add for matching samples.
 ///
 /// # Safety
@@ -361,14 +361,12 @@ pub extern "C" fn ddog_prof_Profile_add(
 /// module.
 /// This call is _NOT_ thread-safe.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Profile_set_endpoint<'a>(
+pub unsafe extern "C" fn ddog_prof_Profile_set_endpoint(
     profile: &mut datadog_profiling::profile::Profile,
-    local_root_span_id: CharSlice<'a>,
-    endpoint: CharSlice<'a>,
+    local_root_span_id: u64,
+    endpoint: CharSlice,
 ) {
-    let local_root_span_id = local_root_span_id.to_utf8_lossy();
     let endpoint = endpoint.to_utf8_lossy();
-
     profile.add_endpoint(local_root_span_id, endpoint);
 }
 
@@ -451,9 +449,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
         Some(x) if *x < 0 => None,
         Some(x) => Some(Duration::from_nanos((*x) as u64)),
     };
-    match || -> anyhow::Result<datadog_profiling::profile::EncodedProfile> {
-        Ok(profile.serialize(end_time, duration)?)
-    }() {
+    match profile.serialize(end_time, duration) {
         Ok(ok) => SerializeResult::Ok(ok.into()),
         Err(err) => SerializeResult::Err(err.into()),
     }

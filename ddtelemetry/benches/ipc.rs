@@ -47,7 +47,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         _ => panic!("shouldn't happen"),
     };
 
-    println!("Total requests handled: {}", requests_received);
+    println!("Total requests handled: {requests_received}");
 
     drop(transport);
     worker.join().unwrap();
