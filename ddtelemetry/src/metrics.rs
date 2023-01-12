@@ -8,6 +8,7 @@ use std::{
 };
 
 use ddcommon::tag::Tag;
+use serde::{Deserialize, Serialize};
 
 use crate::data;
 
@@ -54,7 +55,7 @@ impl MetricBucket {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ContextKey(usize);
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -211,14 +212,14 @@ mod test {
             for (i, &a) in assertions.iter().enumerate() {
                 if a(e) {
                     if used[i] {
-                        panic!("Assertion {} has been used multiple times", i);
+                        panic!("Assertion {i} has been used multiple times");
                     }
                     found = true;
                     break;
                 }
             }
             if !found {
-                panic!("No assertion found for elem {:?}", e)
+                panic!("No assertion found for elem {e:?}")
             }
         }
     }

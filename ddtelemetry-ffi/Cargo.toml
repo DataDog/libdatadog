@@ -3,14 +3,14 @@
 
 [package]
 name = "ddtelemetry-ffi"
-version = "0.9.1"
+version = "2.0.0"
 edition = "2021"
 
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]
 
 [dependencies]
-ddtelemetry = { path = "../ddtelemetry", version = "0.9.0" }
-ddcommon-ffi = { path = "../ddcommon-ffi", version = "0.9.0" }
+ddtelemetry = { path = "../ddtelemetry" }
+ddcommon-ffi = { path = "../ddcommon-ffi" }
 paste = "1"
 libc = "0.2"

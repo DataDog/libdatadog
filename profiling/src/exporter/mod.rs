@@ -29,6 +29,8 @@ pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
 #[cfg(windows)]
 pub use connector::named_pipe::{named_pipe_path_from_uri, named_pipe_path_to_uri};
 
+use crate::profile::profiled_endpoints::ProfiledEndpointsStats;
+
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
 
 pub struct Exporter {
@@ -152,6 +154,7 @@ impl ProfileExporter {
         end: DateTime<Utc>,
         files: &[File],
         additional_tags: Option<&Vec<Tag>>,
+        endpoint_counts: Option<&ProfiledEndpointsStats>,
         timeout: std::time::Duration,
     ) -> anyhow::Result<Request> {
         let mut form = multipart::Form::default();
@@ -163,28 +166,6 @@ impl ProfileExporter {
             tags_profiler.push_str(tag.as_ref());
             tags_profiler.push(',');
         }
-        tags_profiler.pop(); // clean up the trailing comma
-
-        let attachments: Vec<String> = files.iter().map(|file| file.name.to_owned()).collect();
-
-        let event = json!({
-            "attachments": attachments,
-            "tags_profiler": tags_profiler,
-            "start": start.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
-            "end": end.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
-            "family": self.family.as_ref(),
-            "version": "4",
-        })
-        .to_string();
-
-        form.add_reader_file_with_mime(
-            // Intake does not look for filename=event.json, it looks for name=event.
-            "event",
-            // this one shouldn't be compressed
-            Cursor::new(event),
-            "event.json",
-            mime::APPLICATION_JSON,
-        );
 
         match azure_app_services::get_metadata() {
             Some(aas_metadata) => {
@@ -209,12 +190,39 @@ impl ProfileExporter {
                     ("aas.site.type", aas_metadata.get_site_type()),
                     ("aas.subscription.id", aas_metadata.get_subscription_id()),
                 ];
-                aas_tags
-                    .into_iter()
-                    .for_each(|(name, value)| form.add_text(name, value));
+                aas_tags.into_iter().for_each(|(name, value)| {
+                    if let Ok(tag) = Tag::new(name, value) {
+                        tags_profiler.push_str(tag.as_ref());
+                        tags_profiler.push(',');
+                    }
+                });
             }
             None => (),
         }
+
+        tags_profiler.pop(); // clean up the trailing comma
+
+        let attachments: Vec<String> = files.iter().map(|file| file.name.to_owned()).collect();
+
+        let event = json!({
+            "attachments": attachments,
+            "tags_profiler": tags_profiler,
+            "start": start.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
+            "end": end.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
+            "family": self.family.as_ref(),
+            "version": "4",
+            "endpoint_counts" : endpoint_counts,
+        })
+        .to_string();
+
+        form.add_reader_file_with_mime(
+            // Intake does not look for filename=event.json, it looks for name=event.
+            "event",
+            // this one shouldn't be compressed
+            Cursor::new(event),
+            "event.json",
+            mime::APPLICATION_JSON,
+        );
 
         for file in files {
             let mut encoder = FrameEncoder::new(Vec::new());

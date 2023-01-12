@@ -4,9 +4,9 @@
 use std::borrow::Cow;
 use std::fmt::{Debug, Display, Formatter};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Eq, PartialEq, Hash, Serialize)]
+#[derive(Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Tag {
     value: String,
@@ -55,10 +55,10 @@ impl Tag {
 
         let mut chars = chunk.chars();
         if chars.next() == Some(':') {
-            return Err(format!("tag '{}' begins with a colon", chunk).into());
+            return Err(format!("tag '{chunk}' begins with a colon").into());
         }
         if chars.last() == Some(':') {
-            return Err(format!("tag '{}' ends with a colon", chunk).into());
+            return Err(format!("tag '{chunk}' ends with a colon").into());
         }
 
         Ok(Tag {
@@ -74,7 +74,7 @@ impl Tag {
         let key = key.as_ref();
         let value = value.as_ref();
 
-        Tag::from_value(format!("{}:{}", key, value))
+        Tag::from_value(format!("{key}:{value}"))
     }
 }
 

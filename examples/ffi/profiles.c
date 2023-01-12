@@ -11,40 +11,40 @@
  * with unit 60 "nanoseconds". Adds one sample with a string label "language".
  */
 int main(void) {
-  const struct ddog_ValueType wall_time = {
+  const ddog_prof_ValueType wall_time = {
       .type_ = DDOG_CHARSLICE_C("wall-time"),
       .unit = DDOG_CHARSLICE_C("nanoseconds"),
   };
-  const struct ddog_Slice_value_type sample_types = {&wall_time, 1};
-  const struct ddog_Period period = {wall_time, 60};
+  const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
+  const ddog_prof_Period period = {wall_time, 60};
 
-  ddog_Profile *profile = ddog_Profile_new(sample_types, &period, NULL);
+  ddog_prof_Profile *profile = ddog_prof_Profile_new(sample_types, &period, NULL);
 
-  struct ddog_Line root_line = {
+  ddog_prof_Line root_line = {
       .function =
-          (struct ddog_Function){
+          (struct ddog_prof_Function) {
               .name = DDOG_CHARSLICE_C("{main}"),
               .filename = DDOG_CHARSLICE_C("/srv/example/index.php"),
           },
       .line = 0,
   };
 
-  struct ddog_Location root_location = {
+  ddog_prof_Location root_location = {
       // yes, a zero-initialized mapping is valid
-      .mapping = (struct ddog_Mapping){0},
-      .lines = (struct ddog_Slice_line){&root_line, 1},
+      .mapping = (ddog_prof_Mapping) {0},
+      .lines = (ddog_prof_Slice_Line) {&root_line, 1},
   };
   int64_t value = 10;
-  const struct ddog_Label label = {
+  const ddog_prof_Label label = {
       .key = DDOG_CHARSLICE_C("language"),
       .str = DDOG_CHARSLICE_C("php"),
   };
-  struct ddog_Sample sample = {
+  const ddog_prof_Sample sample = {
       .locations = {&root_location, 1},
       .values = {&value, 1},
       .labels = {&label, 1},
   };
-  ddog_Profile_add(profile, sample);
-  ddog_Profile_free(profile);
+  ddog_prof_Profile_add(profile, sample);
+  ddog_prof_Profile_drop(profile);
   return 0;
 }
