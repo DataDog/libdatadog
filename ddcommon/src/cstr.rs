@@ -3,21 +3,21 @@
 
 #[doc(hidden)]
 pub const fn validate_cstr_contents(bytes: &[u8]) {
-    if bytes[bytes.len() - 1usize] != b'\0' {
+    // `str_len` is the length excluding the null terminator.
+    let str_len = bytes.len() - 1usize;
+    if bytes[str_len] != b'\0' {
         panic!("cstr must be null terminated");
     }
 
+    // Search for a null byte, safe due to above guard.
     let mut i = 0;
-    let check_len = if bytes[bytes.len() - 1] == b'\0' {
-        bytes.len() - 1usize
-    } else {
-        bytes.len()
-    };
-    while i < check_len {
-        if bytes[i] == b'\0' {
-            panic!("cstr string cannot contain null character outside of last element");
-        }
+    while bytes[i] != b'\0' {
         i += 1;
+    }
+
+    // The only null byte should have been the last byte of the slice.
+    if i != str_len {
+        panic!("cstr string cannot contain null character outside of last element");
     }
 }
 
