@@ -120,6 +120,11 @@ task push_to_rubygems: [
 ] do
   system("gem signout") # make sure there are no existing credentials in use
 
+  puts "Please input 'libdatadog ruby release key' from 'Profiling - Falcon' Datadog 1Password:"
+  input = $stdin.gets.strip
+
+  ENV["GEM_HOST_API_KEY"] = input
+
   system("gem push pkg/libdatadog-#{Libdatadog::VERSION}.gem")
   system("gem push pkg/libdatadog-#{Libdatadog::VERSION}-x86_64-linux.gem")
   system("gem push pkg/libdatadog-#{Libdatadog::VERSION}-aarch64-linux.gem")
