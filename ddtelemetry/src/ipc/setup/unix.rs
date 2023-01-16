@@ -139,7 +139,7 @@ mod linux {
             Self { path }
         }
 
-        pub fn ipc_in_process() -> Self {
+        pub fn ipc_per_process() -> Self {
             let path = PathBuf::from(format!(
                 concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".{}.sock"),
                 getpid()
@@ -150,13 +150,13 @@ mod linux {
 
     impl Default for AbstractUnixSocketLiaison {
         fn default() -> Self {
-            Self::ipc_shared()
+            Self::ipc_per_process()
         }
     }
 
     #[test]
     fn test_abstract_socket_can_connect() {
-        let l = AbstractUnixSocketLiaison::ipc_in_process();
+        let l = AbstractUnixSocketLiaison::ipc_per_process();
         super::tests::basic_liaison_connection_test(&l).unwrap();
     }
 }

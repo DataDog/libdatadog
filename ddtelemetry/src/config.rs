@@ -4,7 +4,7 @@
 use ddcommon::{connector, Endpoint, HttpClient, HttpRequestBuilder};
 use http::Uri;
 use lazy_static::lazy_static;
-use serde::{Deserialize, Serialize};
+
 use std::{
     borrow::{Borrow, Cow},
     env,

@@ -1,15 +1,15 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::pin::Pin;
+
 use std::thread;
 
-use bytes::Buf;
+
 use futures::future::{BoxFuture, Shared};
-use futures::{future, Future, FutureExt};
+use futures::{FutureExt};
 use http::Uri;
-use hyper::server::conn::{AddrIncoming, AddrStream};
-use hyper::service::{make_service_fn, service_fn, Service};
-use hyper::{header, Body, Method, Request, Response, Server, StatusCode};
+
+use hyper::service::{make_service_fn, service_fn};
+use hyper::{Body, Request, Response, Server};
 use tarpc::tokio_util::sync::CancellationToken;
 
 pub struct MockServer {

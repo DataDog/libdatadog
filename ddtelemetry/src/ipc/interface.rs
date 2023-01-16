@@ -5,14 +5,14 @@ use std::{
 };
 
 use anyhow::Result;
-use ddcommon::Endpoint;
+
 use futures::{
     future::{self, BoxFuture, Pending, Ready, Shared},
     FutureExt,
 };
 use serde::{Deserialize, Serialize};
 use tarpc::{
-    context::{self, Context},
+    context::{Context},
     server::Channel,
 };
 use tokio::net::UnixStream;
@@ -274,11 +274,10 @@ impl TelemetryServer {
             .lock()
             .unwrap()
             .clone()
-            .unwrap_or_else(|| FromEnv::config());
+            .unwrap_or_else(FromEnv::config);
 
         // TODO: log errors
         if let Ok((handle, worker_join)) = builder.spawn_with_config(config.clone()).await {
-
             let instance = AppInstance {
                 telemetry: handle,
                 telemetry_worker_shutdown: worker_join.map(Result::ok).boxed().shared(),
@@ -388,7 +387,7 @@ impl TelemetryInterface for TelemetryServer {
         let session = self.get_session(&session_id);
         {
             let mut cfg = session.session_config.lock().unwrap();
-            let mut new_cfg = cfg.clone().unwrap_or_else(|| FromEnv::config());
+            let mut new_cfg = cfg.clone().unwrap_or_else(FromEnv::config);
             if !agent_url.is_empty(){
                 new_cfg.endpoint = FromEnv::build_endpoint(agent_url.as_str(), None);
             }

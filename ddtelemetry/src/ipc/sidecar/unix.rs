@@ -92,6 +92,9 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
         let pid = fork_fn(listener, |listener| {
             fork_fn(listener, |listener| {
                 println!("starting sidecar, pid: {}", getpid());
+                enable_tracing();
+                
+
                 if let Err(err) = enter_listener_loop(listener) {
                     println!("Error: {err}")
                 }
@@ -110,4 +113,9 @@ pub fn start_or_connect_to_sidecar() -> io::Result<TelemetryTransport> {
     };
 
     Ok(IpcChannel::from(liaison.connect_to_server()?).into())
+}
+
+
+fn enable_tracing() {
+    tracing_subscriber::fmt::init();
 }
