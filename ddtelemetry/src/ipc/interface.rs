@@ -278,6 +278,8 @@ impl TelemetryServer {
 
         // TODO: log errors
         if let Ok((handle, worker_join)) = builder.spawn_with_config(config.clone()).await {
+            eprintln!("spawning worker {:?}", config);
+
             let instance = AppInstance {
                 telemetry: handle,
                 telemetry_worker_shutdown: worker_join.map(Result::ok).boxed().shared(),
@@ -287,6 +289,8 @@ impl TelemetryServer {
                 .lock()
                 .unwrap()
                 .insert(service_name.clone(), instance.clone());
+                
+            instance.telemetry.send_msg(TelemetryActions::Start).await.ok();
             Some(instance)
         } else {
             None

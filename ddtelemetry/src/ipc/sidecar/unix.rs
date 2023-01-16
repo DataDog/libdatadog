@@ -92,6 +92,7 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
         let pid = fork_fn(listener, |listener| {
             fork_fn(listener, |listener| {
                 println!("starting sidecar, pid: {}", getpid());
+                // TODO: add solution to redirect stderr/stdout + and enable/disable tracing
                 enable_tracing();
                 
 

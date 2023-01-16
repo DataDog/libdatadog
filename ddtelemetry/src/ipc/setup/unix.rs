@@ -138,7 +138,7 @@ mod linux {
             let path = PathBuf::from(concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".sock"));
             Self { path }
         }
-
+        //TODO: 
         pub fn ipc_per_process() -> Self {
             let path = PathBuf::from(format!(
                 concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".{}.sock"),
@@ -150,6 +150,7 @@ mod linux {
 
     impl Default for AbstractUnixSocketLiaison {
         fn default() -> Self {
+            // TODO: make this configurable so rust tests can use per_process option, while normal operation uses ipc_shared()
             Self::ipc_per_process()
         }
     }

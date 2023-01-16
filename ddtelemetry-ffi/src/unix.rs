@@ -300,6 +300,9 @@ mod test_c_sidecar {
                 "dependency_version".into(),
             );
 
+            // ddog_sidecar_telemetry_addIntegration(&mut transport, instance_id, &queue_id, integration_name, integration_version)
+            // TODO add ability to add configuration
+
             assert_eq!(
                 ddog_sidecar_telemetry_flushServiceData(
                     &mut transport,
@@ -313,6 +316,9 @@ mod test_c_sidecar {
             // reset session config - and cause shutdown of all existing instances
             ddog_sidecar_session_config_setAgentUrl(&mut transport, "session_id".into(), "".into());
 
+            //TODO: Shutdown the service
+            // enough case: have C api that shutsdown telemetry worker
+            // ideal case : when connection socket is closed by the client the telemetry worker shuts down automatically 
             ddog_sidecar_instanceId_drop(instance_id);
             ddog_sidecar_runtimeMeta_drop(meta);
         };

@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use tarpc::{context, trace, Response};
 
 use tokio_serde::{formats::MessagePack, Deserializer, Serializer};
+
+use tokio_serde::{formats::Json};
 use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 
 use crate::ipc::{
@@ -66,7 +68,7 @@ pub struct FramedBlocking<IncomingItem, OutgoingItem> {
     codec: LengthDelimitedCodec,
     read_buffer: BytesMut,
     channel: Channel,
-    serde_codec: Pin<Box<MessagePack<Message<IncomingItem>, Message<OutgoingItem>>>>,
+    serde_codec: Pin<Box<Json<Message<IncomingItem>, Message<OutgoingItem>>>>,
 }
 
 impl<IncomingItem, OutgoingItem> FramedBlocking<IncomingItem, OutgoingItem>
@@ -240,7 +242,8 @@ where
         if let Some(deadline) = deadline {
             context.deadline = deadline;
         }
-
+        // TODO: should request_id be random ? 
+        
         let request_id = self
             .requests_id
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
