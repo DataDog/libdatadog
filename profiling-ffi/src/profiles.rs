@@ -330,6 +330,11 @@ pub unsafe extern "C" fn ddog_prof_Profile_drop(
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module. All pointers inside the `sample` need to be valid for the duration
 /// of this call.
+//// Returns the internal id of the sample (> 0) if successful, and 0 on error.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module.
 /// This call is _NOT_ thread-safe.
 pub extern "C" fn ddog_prof_Profile_add(
     profile: &mut datadog_profiling::profile::Profile,
