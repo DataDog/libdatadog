@@ -76,6 +76,9 @@ struct Sample {
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
     pub labels: Vec<Label>,
+
+    /// Offset into `labels` for the label with key == "local root span id".
+    local_root_span_id_label_offset: Option<usize>,
 }
 
 pub struct Profile {
@@ -332,32 +335,7 @@ impl Profile {
         );
 
         let values = sample.values.clone();
-        let mut labels = Vec::with_capacity(sample.labels.len());
-        for label in sample.labels.iter() {
-            let key = self.intern(label.key);
-            let str = label.str.map(|s| self.intern(s)).unwrap_or(0);
-            let num_unit = label.num_unit.map(|s| self.intern(s)).unwrap_or(0);
-
-            if key == self.endpoints.local_root_span_id_label {
-                // Panic: if the label.str isn't 0, then str must have been provided.
-                anyhow::ensure!(
-                    str == 0,
-                    "the label \"local root span id\" must be sent as a number, not string {}",
-                    label.str.unwrap()
-                );
-                anyhow::ensure!(
-                    label.num != 0,
-                    "the label \"local root span id\" must not be 0"
-                )
-            }
-
-            labels.push(Label {
-                key,
-                str,
-                num: label.num,
-                num_unit,
-            });
-        }
+        let (labels, local_root_span_id_label_offset) = self.extract_sample_labels(&sample)?;
 
         let mut locations: Vec<PProfId> = Vec::with_capacity(sample.locations.len());
         for location in sample.locations.iter() {
@@ -389,7 +367,11 @@ impl Profile {
             locations.push(PProfId(index + 1))
         }
 
-        let s = Sample { locations, labels };
+        let s = Sample {
+            locations,
+            labels,
+            local_root_span_id_label_offset,
+        };
 
         let id = match self.samples.get_index_of(&s) {
             None => {
@@ -407,6 +389,49 @@ impl Profile {
         };
 
         Ok(id)
+    }
+
+    /// Validates labels and converts them to the internal representation.
+    /// Also tracks the index of the label with key "local root span id".
+    fn extract_sample_labels(
+        &mut self,
+        sample: &api::Sample,
+    ) -> anyhow::Result<(Vec<Label>, Option<usize>)> {
+        let mut labels: Vec<Label> = Vec::with_capacity(sample.labels.len());
+        let mut local_root_span_id_label_offset: Option<usize> = None;
+        for label in sample.labels.iter() {
+            let key = self.intern(label.key);
+            let str = label.str.map(|s| self.intern(s)).unwrap_or(0);
+            let num_unit = label.num_unit.map(|s| self.intern(s)).unwrap_or(0);
+
+            if key == self.endpoints.local_root_span_id_label {
+                // Panic: if the label.str isn't 0, then str must have been provided.
+                anyhow::ensure!(
+                    str == 0,
+                    "the label \"local root span id\" must be sent as a number, not string {}",
+                    label.str.unwrap()
+                );
+                anyhow::ensure!(
+                    label.num != 0,
+                    "the label \"local root span id\" must not be 0"
+                );
+                anyhow::ensure!(
+                    local_root_span_id_label_offset.is_none(),
+                    "only one label per sample can have the key \"local root span id\", found two: {}, {}",
+                    labels[local_root_span_id_label_offset.unwrap()].num, label.num
+                );
+                local_root_span_id_label_offset = Some(labels.len());
+            }
+
+            // If you refactor this push, ensure the local_root_span_id_label_offset is correct.
+            labels.push(Label {
+                key,
+                str,
+                num: label.num,
+                num_unit,
+            });
+        }
+        Ok((labels, local_root_span_id_label_offset))
     }
 
     fn extract_api_sample_types(&self) -> Option<Vec<api::ValueType>> {
@@ -1097,6 +1122,39 @@ mod api_test {
         let expected_endpoints_stats = ProfiledEndpointsStats::from(count);
 
         assert_eq!(endpoints_stats, expected_endpoints_stats);
+    }
+
+    #[test]
+    fn local_root_span_id_label_cannot_occur_more_than_once() {
+        let sample_types = vec![api::ValueType {
+            r#type: "wall-time",
+            unit: "nanoseconds",
+        }];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let labels = vec![
+            api::Label {
+                key: "local root span id",
+                str: None,
+                num: 5738080760940355267_i64,
+                num_unit: None,
+            },
+            api::Label {
+                key: "local root span id",
+                str: None,
+                num: 8182855815056056749_i64,
+                num_unit: None,
+            },
+        ];
+
+        let sample = api::Sample {
+            locations: vec![],
+            values: vec![10000],
+            labels,
+        };
+
+        profile.add(sample).unwrap_err();
     }
 
     #[test]
