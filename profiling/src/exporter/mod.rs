@@ -5,13 +5,14 @@ use std::borrow::Cow;
 use std::future;
 use std::io::Cursor;
 
-use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
 pub use ddcommon::tag::Tag;
 pub use hyper::Uri;
+pub use mime;
+
+use bytes::Bytes;
 use hyper_multipart_rfc7578::client::multipart;
 use lz4_flex::frame::FrameEncoder;
-use mime;
 use serde_json::json;
 use std::io::Write;
 use tokio::runtime::Runtime;
@@ -52,8 +53,10 @@ pub struct ProfileExporter {
     tags: Option<Vec<Tag>>,
 }
 
+/// Represents a file. The mime for encoded profiles is [mime::APPLICATION_OCTET_STREAM].
 pub struct File<'a> {
     pub name: &'a str,
+    pub mime: mime::Mime,
     pub bytes: &'a [u8],
 }
 
@@ -233,7 +236,12 @@ impl ProfileExporter {
              * the form name because intake does not care about these name of the form field for
              * these attachments.
              */
-            form.add_reader_file(file.name, Cursor::new(encoded), file.name)
+            form.add_reader_file_with_mime(
+                file.name,
+                Cursor::new(encoded),
+                file.name,
+                file.mime.clone(),
+            )
         }
 
         let builder = self

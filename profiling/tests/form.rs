@@ -22,6 +22,7 @@ fn multipart(exporter: &ProfileExporter) -> Request {
 
     let files: &[File] = &[File {
         name: "profile.pprof",
+        mime: mime::APPLICATION_OCTET_STREAM,
         bytes: buffer.as_slice(),
     }];
 

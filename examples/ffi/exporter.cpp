@@ -109,6 +109,7 @@ int main(int argc, char *argv[]) {
 
   ddog_prof_Exporter_File files_[] = {{
       .name = DDOG_CHARSLICE_C("auto.pprof"),
+      .mime = DDOG_CHARSLICE_C("application/octet-stream"),
       .file = ddog_Vec_U8_as_slice(&encoded_profile->buffer),
   }};
 

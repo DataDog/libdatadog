@@ -9,6 +9,7 @@ use datadog_profiling::exporter;
 use datadog_profiling::profile::profiled_endpoints;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
+use exporter::mime;
 use exporter::ProfileExporter;
 use std::borrow::Cow;
 use std::ptr::NonNull;
@@ -45,9 +46,13 @@ pub enum Endpoint<'a> {
     Agentless(CharSlice<'a>, CharSlice<'a>),
 }
 
+/// Represents a file. The `name` and `mime` must be valid UTF-8. The mime
+/// contents should be recognized by [mime::Mime::from_str]. Send encoded
+/// profiles as "application/octet-stream".
 #[repr(C)]
 pub struct File<'a> {
     name: CharSlice<'a>,
+    mime: CharSlice<'a>,
     file: ByteSlice<'a>,
 }
 
@@ -157,14 +162,16 @@ pub extern "C" fn ddog_prof_Exporter_drop(exporter: Option<Box<ProfileExporter>>
     std::mem::drop(exporter)
 }
 
-unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> {
+unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> anyhow::Result<Vec<exporter::File<'a>>> {
     slice
         .into_slice()
         .iter()
         .map(|file| {
-            let name = file.name.try_to_utf8().unwrap_or("{invalid utf-8}");
+            let name = file.name.try_to_utf8()?;
+            let mime_str = file.mime.try_to_utf8()?;
+            let mime = mime::Mime::from_str(mime_str)?;
             let bytes = file.file.as_slice();
-            exporter::File { name, bytes }
+            Ok(exporter::File { name, mime, bytes })
         })
         .collect()
 }
@@ -189,7 +196,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
         None => None,
         Some(exporter) => {
             let timeout = std::time::Duration::from_millis(timeout_ms);
-            let converted_files = into_vec_files(files);
+            let converted_files = into_vec_files(files).ok()?;
             let tags = additional_tags.map(|tags| tags.iter().map(Tag::clone).collect());
 
             match exporter.as_ref().build(
@@ -408,6 +415,7 @@ mod test {
 
         let files: &[File] = &[File {
             name: CharSlice::from("foo.pprof"),
+            mime: CharSlice::from("application/octet-stream"),
             file: ByteSlice::from(b"dummy contents" as &[u8]),
         }];
 
