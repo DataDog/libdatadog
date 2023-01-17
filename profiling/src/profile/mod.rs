@@ -535,13 +535,14 @@ impl Profile {
     }
 
     /// Fetches the endpoint information for the label. There may be errors,
-    /// but there may also be no endpoint information for a given endpoint, or
-    /// it may not be an local root span id label. Hence, the return type of
-    /// Result<Option<_>, _>.
+    /// but there may also be no endpoint information for a given endpoint.
+    /// Hence, the return type of Result<Option<_>, _>.
     fn get_endpoint_for_label(&self, label: &Label) -> anyhow::Result<Option<i64>> {
-        if label.key != self.endpoints.local_root_span_id_label {
-            return Ok(None);
-        }
+        anyhow::ensure!(
+            label.key == self.endpoints.local_root_span_id_label,
+            "bug: get_endpoint_for_label should only be called on labels with the key \"local root span id\", called on label with key \"{}\"",
+            &self.strings[label.key as usize]
+        );
 
         anyhow::ensure!(
             label.str == 0,
@@ -571,29 +572,17 @@ impl TryFrom<&Profile> for pprof::Profile {
             None => (0, None),
         };
 
-        let mut samples: Vec<pprof::Sample> = profile
+        let samples: anyhow::Result<Vec<pprof::Sample>> = profile
             .samples
             .iter()
-            .map(|(sample, values)| pprof::Sample {
-                location_ids: sample.locations.iter().map(Into::into).collect(),
-                values: values.to_vec(),
-                labels: sample.labels.clone(),
-            })
-            .collect();
-
-        if !profile.endpoints.mappings.is_empty() {
-            for sample in samples.iter_mut() {
-                // There _should_ only be one local root span id label, but it's not enforced.
-                let lrsi_labels: Vec<_> = sample
-                    .labels
-                    .iter()
-                    .filter(|label| label.key == profile.endpoints.local_root_span_id_label)
-                    .map(Clone::clone) // Need to clone to break borrows
-                    .collect();
-
-                for label in lrsi_labels {
-                    if let Some(endpoint_value_id) = profile.get_endpoint_for_label(&label)? {
-                        sample.labels.push(pprof::Label {
+            .map(|(sample, values)| {
+                // Clone the labels, but enrich them with endpoint profiling.
+                let mut labels = sample.labels.clone();
+                if let Some(offset) = sample.local_root_span_id_label_offset {
+                    // Safety: this offset was created internally and isn't be mutated.
+                    let lsri_label = unsafe { sample.labels.get_unchecked(offset) };
+                    if let Some(endpoint_value_id) = profile.get_endpoint_for_label(lsri_label)? {
+                        labels.push(Label {
                             key: profile.endpoints.endpoint_label,
                             str: endpoint_value_id,
                             num: 0,
@@ -601,12 +590,18 @@ impl TryFrom<&Profile> for pprof::Profile {
                         });
                     }
                 }
-            }
-        }
+
+                Ok(pprof::Sample {
+                    location_ids: sample.locations.iter().map(Into::into).collect(),
+                    values: values.to_vec(),
+                    labels,
+                })
+            })
+            .collect();
 
         Ok(pprof::Profile {
             sample_types: profile.sample_types.clone(),
-            samples,
+            samples: samples?,
             mappings: profile
                 .mappings
                 .iter()
