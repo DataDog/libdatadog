@@ -572,6 +572,9 @@ impl TryFrom<&Profile> for pprof::Profile {
             None => (0, None),
         };
 
+        /* Rust pattern: inverting Vec<Result<T,E>> into Result<Vec<T>, E> error with .collect:
+         * https://doc.rust-lang.org/rust-by-example/error/iter_result.html#fail-the-entire-operation-with-collect
+         */
         let samples: anyhow::Result<Vec<pprof::Sample>> = profile
             .samples
             .iter()
