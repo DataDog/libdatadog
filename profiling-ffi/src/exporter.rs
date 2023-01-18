@@ -53,6 +53,7 @@ pub struct File<'a> {
 
 /// This type only exists to workaround a bug in cbindgen; may be removed in the
 /// future.
+#[derive(Debug)]
 pub struct Request(exporter::Request);
 
 // This type exists only to force cbindgen to expose an CancellationToken as an opaque type.
@@ -454,13 +455,41 @@ mod test {
                 timeout_milliseconds,
             )
         };
-        let build_result = Result::from(build_result);
 
-        assert!(build_result.is_ok());
+        let build_result = Result::from(build_result);
+        build_result.unwrap();
 
         // TODO: Currently, we're only testing that a request was built (building did not fail), but
         //     we have no coverage for the request actually being correct.
         //     It'd be nice to actually perform the request, capture its contents, and assert that
         //     they are as expected.
+    }
+
+    #[test]
+    fn test_build_failure() {
+        let start = Timespec {
+            seconds: 12,
+            nanoseconds: 34,
+        };
+        let finish = Timespec {
+            seconds: 56,
+            nanoseconds: 78,
+        };
+        let timeout_milliseconds = 90;
+
+        let build_result = unsafe {
+            ddog_prof_Exporter_Request_build(
+                None, // No exporter, will fail
+                start,
+                finish,
+                Slice::default(),
+                None,
+                None,
+                timeout_milliseconds,
+            )
+        };
+
+        let build_result = Result::from(build_result);
+        build_result.unwrap_err();
     }
 }

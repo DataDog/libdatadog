@@ -517,6 +517,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_reset(
 mod test {
     use crate::profiles::*;
     use ddcommon_ffi::Slice;
+    use std::borrow::BorrowMut;
 
     #[test]
     fn ctor_and_dtor() {
@@ -524,6 +525,28 @@ mod test {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
             let profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
             ddog_prof_Profile_drop(profile);
+        }
+    }
+
+    #[test]
+    fn add_failure() {
+        unsafe {
+            let sample_type: *const ValueType = &ValueType::new("samples", "count");
+            let mut profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
+
+            // wrong number of values (doesn't match sample types)
+            let values: &[i64] = &[];
+
+            let sample = Sample {
+                locations: Slice::default(),
+                values: Slice::from(values),
+                labels: Slice::default(),
+            };
+
+            let aggregator = profile.borrow_mut();
+
+            let result = Result::from(ddog_prof_Profile_add(aggregator, sample));
+            result.unwrap_err();
         }
     }
 
