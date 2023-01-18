@@ -325,12 +325,36 @@ pub unsafe extern "C" fn ddog_prof_Profile_drop(
 ) {
 }
 
+#[repr(C)]
+pub enum ProfileAddResult {
+    Ok(u64),
+    Err(ddcommon_ffi::Vec<u8>),
+}
+
+#[cfg(test)]
+impl From<ProfileAddResult> for Result<u64, String> {
+    fn from(result: ProfileAddResult) -> Self {
+        match result {
+            ProfileAddResult::Ok(ok) => Ok(ok),
+            ProfileAddResult::Err(err) => {
+                // Safety: not generally safe but this is for test code.
+                Err(unsafe { String::from_utf8_unchecked(err.into()) })
+            }
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_prof_ProfileAddResult_drop(_result: ProfileAddResult) {}
+
 #[no_mangle]
 /// # Safety
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module. All pointers inside the `sample` need to be valid for the duration
 /// of this call.
-//// Returns the internal id of the sample (> 0) if successful, and 0 on error.
+///
+/// If successful, it returns the internal id of the sample (> 0) in the Ok
+/// variant. On error, it holds an error message in the error variant.
 ///
 /// # Safety
 /// The `profile` ptr must point to a valid Profile object created by this
@@ -339,13 +363,13 @@ pub unsafe extern "C" fn ddog_prof_Profile_drop(
 pub extern "C" fn ddog_prof_Profile_add(
     profile: &mut datadog_profiling::profile::Profile,
     sample: Sample,
-) -> u64 {
+) -> ProfileAddResult {
     match sample.try_into().map(|s| profile.add(s)) {
         Ok(r) => match r {
-            Ok(id) => id.into(),
-            Err(_) => 0,
+            Ok(id) => ProfileAddResult::Ok(id.into()),
+            Err(err) => ProfileAddResult::Err(err.into()),
         },
-        Err(_) => 0,
+        Err(err) => ProfileAddResult::Err(anyhow::Error::from(err).into()),
     }
 }
 
@@ -544,10 +568,10 @@ mod test {
 
             let aggregator = &mut *profile;
 
-            let sample_id1 = ddog_prof_Profile_add(aggregator, sample);
+            let sample_id1 = Result::from(ddog_prof_Profile_add(aggregator, sample)).unwrap();
             assert_eq!(sample_id1, 1);
 
-            let sample_id2 = ddog_prof_Profile_add(aggregator, sample);
+            let sample_id2 = Result::from(ddog_prof_Profile_add(aggregator, sample)).unwrap();
             assert_eq!(sample_id1, sample_id2);
 
             ddog_prof_Profile_drop(profile);
@@ -615,10 +639,11 @@ mod test {
 
         let aggregator = &mut *profile;
 
-        let sample_id1 = ddog_prof_Profile_add(aggregator, main_sample);
+        let sample_id1 = Result::from(ddog_prof_Profile_add(aggregator, main_sample)).unwrap();
+
         assert_eq!(sample_id1, 1);
 
-        let sample_id2 = ddog_prof_Profile_add(aggregator, test_sample);
+        let sample_id2 = Result::from(ddog_prof_Profile_add(aggregator, test_sample)).unwrap();
         assert_eq!(sample_id2, 2);
 
         *profile

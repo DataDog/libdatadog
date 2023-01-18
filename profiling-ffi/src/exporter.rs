@@ -169,6 +169,28 @@ unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> 
         .collect()
 }
 
+#[repr(C)]
+pub enum ExporterRequestBuildResult {
+    Ok(Box<Request>),
+    Err(ddcommon_ffi::Vec<u8>),
+}
+
+#[cfg(test)]
+impl From<ExporterRequestBuildResult> for Result<Box<Request>, String> {
+    fn from(result: ExporterRequestBuildResult) -> Self {
+        match result {
+            ExporterRequestBuildResult::Ok(ok) => Ok(ok),
+            ExporterRequestBuildResult::Err(err) => {
+                // Safety: not generally safe but this is for test code.
+                Err(unsafe { String::from_utf8_unchecked(err.into()) })
+            }
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_prof_ExporterRequestBuildResult_drop(_result: ExporterRequestBuildResult) {}
+
 /// Builds a Request object based on the profile data supplied.
 ///
 /// # Safety
@@ -184,9 +206,9 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoints_stats: Option<&profiled_endpoints::ProfiledEndpointsStats>,
     timeout_ms: u64,
-) -> Option<Box<Request>> {
+) -> ExporterRequestBuildResult {
     match exporter {
-        None => None,
+        None => ExporterRequestBuildResult::Err(anyhow::anyhow!("no exporter was provided").into()),
         Some(exporter) => {
             let timeout = std::time::Duration::from_millis(timeout_ms);
             let converted_files = into_vec_files(files);
@@ -200,8 +222,8 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
                 endpoints_stats,
                 timeout,
             ) {
-                Ok(request) => Some(Box::new(Request(request))),
-                Err(_) => None,
+                Ok(request) => ExporterRequestBuildResult::Ok(Box::new(Request(request))),
+                Err(err) => ExporterRequestBuildResult::Err(err.into()),
             }
         }
     }
@@ -421,7 +443,7 @@ mod test {
         };
         let timeout_milliseconds = 90;
 
-        let maybe_request = unsafe {
+        let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
                 exporter,
                 start,
@@ -432,8 +454,9 @@ mod test {
                 timeout_milliseconds,
             )
         };
+        let build_result = Result::from(build_result);
 
-        assert!(maybe_request.is_some());
+        assert!(build_result.is_ok());
 
         // TODO: Currently, we're only testing that a request was built (building did not fail), but
         //     we have no coverage for the request actually being correct.
