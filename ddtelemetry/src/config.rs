@@ -4,6 +4,7 @@
 use ddcommon::{connector, Endpoint, HttpClient, HttpRequestBuilder};
 use http::Uri;
 use lazy_static::lazy_static;
+
 use std::{
     borrow::{Borrow, Cow},
     env,
@@ -28,11 +29,10 @@ const DD_AGENT_HOST: &str = "DD_AGENT_HOST";
 const DD_AGENT_PORT: &str = "DD_AGENT_PORT";
 const DD_SITE: &str = "DD_SITE";
 
+#[derive(Clone, Debug)]
 pub struct Config {
-    #[allow(dead_code)]
-    agent_url: String,
-    endpoint: Option<Endpoint>,
-    telemetry_debug_logging_enabled: bool,
+    pub endpoint: Option<Endpoint>,
+    pub telemetry_debug_logging_enabled: bool,
 }
 
 pub trait ProvideConfig {
@@ -72,9 +72,11 @@ impl FromEnv {
         }
     }
 
-    fn build_endpoint(agent_url: &str) -> Option<Endpoint> {
-        let api_key = env::var(DD_API_KEY).ok().filter(|p| !p.is_empty());
+    fn get_api_key() -> Option<String> {
+        env::var(DD_API_KEY).ok().filter(|p| !p.is_empty())
+    }
 
+    pub fn build_endpoint(agent_url: &str, api_key: Option<String>) -> Option<Endpoint> {
         let telemetry_url = if api_key.is_some() {
             let telemetry_intake_base_url = Self::get_intake_base_url();
             format!("{}{}", telemetry_intake_base_url, DIRECT_TELEMETRY_URL_PATH)
@@ -93,7 +95,8 @@ impl FromEnv {
 impl ProvideConfig for FromEnv {
     fn config() -> Config {
         let agent_url = Self::get_agent_base_url();
-        let endpoint = Self::build_endpoint(&agent_url);
+        let api_key = Self::get_api_key();
+        let endpoint = Self::build_endpoint(&agent_url, api_key);
         let debug_enabled = env::var(_DD_SHARED_LIB_DEBUG)
             .ok()
             .and_then(|x| {
@@ -106,7 +109,6 @@ impl ProvideConfig for FromEnv {
             .unwrap_or(false);
 
         Config {
-            agent_url,
             telemetry_debug_logging_enabled: debug_enabled,
             endpoint,
         }

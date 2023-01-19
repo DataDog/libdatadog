@@ -119,11 +119,6 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
     unsafe {
         let pid = fork_fn(listener, |listener| {
             fork_fn(listener, |listener| {
-                if let Err(err) = setsid() {
-                    println!("Setsid() Error: {}", err)
-                }
-
-                reopen_stdio();
                 let now = Instant::now();
                 println!(
                     "[{}] starting sidecar, pid: {}",
@@ -133,6 +128,10 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
                         .as_millis(),
                     getpid()
                 );
+                // TODO: add solution to redirect stderr/stdout + and enable/disable tracing
+                enable_tracing();
+                
+
                 if let Err(err) = enter_listener_loop(listener) {
                     println!("Error: {err}")
                 }
@@ -152,4 +151,9 @@ pub fn start_or_connect_to_sidecar() -> io::Result<TelemetryTransport> {
     };
 
     Ok(IpcChannel::from(liaison.connect_to_server()?).into())
+}
+
+
+fn enable_tracing() {
+    tracing_subscriber::fmt::init();
 }

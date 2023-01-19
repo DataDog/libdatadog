@@ -1578,6 +1578,7 @@ dependencies = [
  "pin-project",
  "rmp-serde",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
