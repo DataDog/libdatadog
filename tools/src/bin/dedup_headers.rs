@@ -28,12 +28,10 @@ fn read(f: &mut BufReader<&File>) -> String {
     String::from_utf8(s).unwrap()
 }
 
-fn write_parts(writer: &mut BufWriter<&File>, parts: &[&str]) -> io::Result<()> {
+fn write_parts(writer: &mut BufWriter<&File>, buf: &String) -> io::Result<()> {
     writer.get_ref().set_len(0)?;
     writer.seek(io::SeekFrom::Start(0))?;
-    for part in parts {
-        writer.write_all(part.as_bytes())?;
-    }
+    writer.write_all(buf.as_bytes())?;
     Ok(())
 }
 
@@ -60,7 +58,10 @@ fn main() {
         let child_defs = collect_definitions(&child_header_content);
         let new_content_parts = content_without_defs(&child_header_content, &child_defs);
 
-        write_parts(&mut BufWriter::new(&child_header), &new_content_parts).unwrap();
+        let child_buf = new_content_parts.join("");
+        if child_header_content != child_buf {
+            write_parts(&mut BufWriter::new(&child_header), &child_buf).unwrap();
+        }
 
         child_defs
             .into_iter()
@@ -91,5 +92,8 @@ fn main() {
         base_new_parts.push(child_def);
     }
     base_new_parts.push(&base_header_content[base_defs.last().unwrap().end()..]);
-    write_parts(&mut BufWriter::new(&base_header), &base_new_parts).unwrap();
+    let base_buf = base_new_parts.join("");
+    if base_header_content != base_buf {
+        write_parts(&mut BufWriter::new(&base_header), &base_buf).unwrap();
+    }
 }

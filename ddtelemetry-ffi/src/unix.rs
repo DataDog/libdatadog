@@ -23,6 +23,16 @@ use ffi::slice::AsBytes;
 
 use crate::{try_c, MaybeError};
 
+#[repr(C)]
+pub struct NativeFile {
+    handle: Box<PlatformHandle<File>>
+}
+
+#[repr(C)]
+pub struct NativeUnixStream {
+    handle: PlatformHandle<UnixStream>
+}
+
 /// This creates Rust PlatformHandle<File> from supplied C std FILE object.
 /// This method takes the ownership of the underlying filedescriptor.
 ///
@@ -30,26 +40,27 @@ use crate::{try_c, MaybeError};
 /// Caller must ensure the file descriptor associated with FILE pointer is open, and valid
 /// Caller must not close the FILE associated filedescriptor after calling this fuction
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ph_file_from(file: *mut libc::FILE) -> Box<PlatformHandle<File>> {
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_ph_file_from(file: *mut libc::FILE) -> NativeFile {
     let handle = PlatformHandle::from_raw_fd(libc::fileno(file));
 
-    Box::from(handle)
+    NativeFile { handle: Box::from( handle) }
 }
 
 #[no_mangle]
 pub extern "C" fn ddog_ph_file_clone(
-    platform_handle: &PlatformHandle<File>,
-) -> Box<PlatformHandle<File>> {
-    Box::new(platform_handle.clone())
+    platform_handle: &NativeFile,
+) -> Box<NativeFile> {
+    Box::new(NativeFile { handle: platform_handle.handle.clone() })
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_ph_file_drop(ph: Box<PlatformHandle<File>>) {
+pub extern "C" fn ddog_ph_file_drop(ph: NativeFile) {
     drop(ph)
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_ph_unix_stream_drop(ph: Box<PlatformHandle<UnixStream>>) {
+pub extern "C" fn ddog_ph_unix_stream_drop(ph: Box<NativeUnixStream>) {
     drop(ph)
 }
 
@@ -251,9 +262,9 @@ mod test_c_sidecar {
 
         let file = unsafe { libc::fopen(fname.as_ptr(), mode.as_ptr()) };
         let file = unsafe { ddog_ph_file_from(file) };
-        let fd = file.as_raw_fd();
+        let fd = file.handle.as_raw_fd();
         {
-            let mut file = &*file.as_filelike_view().unwrap();
+            let mut file = &*file.handle.as_filelike_view().unwrap();
             writeln!(file, "test").unwrap();
         }
         ddog_ph_file_drop(file);
