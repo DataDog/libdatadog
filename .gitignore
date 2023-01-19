@@ -8,6 +8,7 @@
 .vs
 .vscode
 build*
+!builder.rs
 cmake-build-debug
 deliverables
 target
