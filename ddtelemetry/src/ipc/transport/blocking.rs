@@ -14,9 +14,9 @@ use bytes::{BufMut, BytesMut};
 use serde::{Deserialize, Serialize};
 use tarpc::{context, trace, Response};
 
-use tokio_serde::{formats::MessagePack, Deserializer, Serializer};
+use tokio_serde::{Deserializer, Serializer};
 
-use tokio_serde::{formats::Json};
+use tokio_serde::formats::Json;
 use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 
 use crate::ipc::{
@@ -242,8 +242,8 @@ where
         if let Some(deadline) = deadline {
             context.deadline = deadline;
         }
-        // TODO: should request_id be random ? 
-        
+        // TODO: should request_id be random ?
+
         let request_id = self
             .requests_id
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);

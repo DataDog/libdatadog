@@ -8,6 +8,7 @@ use lazy_static::lazy_static;
 use std::{
     borrow::{Borrow, Cow},
     env,
+    path::PathBuf,
     str::FromStr,
     time::Duration,
 };
@@ -32,6 +33,7 @@ const DD_SITE: &str = "DD_SITE";
 #[derive(Clone, Debug)]
 pub struct Config {
     pub endpoint: Option<Endpoint>,
+    pub mock_client_file: Option<PathBuf>,
     pub telemetry_debug_logging_enabled: bool,
 }
 
@@ -110,6 +112,7 @@ impl ProvideConfig for FromEnv {
 
         Config {
             telemetry_debug_logging_enabled: debug_enabled,
+            mock_client_file: None,
             endpoint,
         }
     }

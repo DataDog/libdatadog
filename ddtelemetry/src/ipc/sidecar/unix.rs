@@ -13,7 +13,7 @@ use std::{
 };
 use tokio::select;
 
-use nix::unistd::setsid;
+
 use nix::{sys::wait::waitpid, unistd::Pid};
 use tokio::net::UnixListener;
 use tokio_util::sync::CancellationToken;
@@ -130,12 +130,15 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
                 );
                 // TODO: add solution to redirect stderr/stdout + and enable/disable tracing
                 enable_tracing();
-                
 
                 if let Err(err) = enter_listener_loop(listener) {
                     println!("Error: {err}")
                 }
-                println!("shutting down sidecar, pid: {}, total runtime: {:.3}s", getpid(), now.elapsed().as_secs_f64())
+                println!(
+                    "shutting down sidecar, pid: {}, total runtime: {:.3}s",
+                    getpid(),
+                    now.elapsed().as_secs_f64()
+                )
             })
             .ok();
         })?;
@@ -152,7 +155,6 @@ pub fn start_or_connect_to_sidecar() -> io::Result<TelemetryTransport> {
 
     Ok(IpcChannel::from(liaison.connect_to_server()?).into())
 }
-
 
 fn enable_tracing() {
     tracing_subscriber::fmt::init();

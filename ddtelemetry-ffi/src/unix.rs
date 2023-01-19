@@ -17,7 +17,8 @@ use ddtelemetry::{
         platform::PlatformHandle,
         sidecar,
     },
-    worker::TelemetryActions, mock_telemetry_target::{self, MockServer},
+    mock_telemetry_target::{self, MockServer},
+    worker::TelemetryActions,
 };
 use ffi::slice::AsBytes;
 
@@ -25,12 +26,12 @@ use crate::{try_c, MaybeError};
 
 #[repr(C)]
 pub struct NativeFile {
-    handle: Box<PlatformHandle<File>>
+    handle: Box<PlatformHandle<File>>,
 }
 
 #[repr(C)]
 pub struct NativeUnixStream {
-    handle: PlatformHandle<UnixStream>
+    handle: PlatformHandle<UnixStream>,
 }
 
 /// This creates Rust PlatformHandle<File> from supplied C std FILE object.
@@ -44,14 +45,16 @@ pub struct NativeUnixStream {
 pub unsafe extern "C" fn ddog_ph_file_from(file: *mut libc::FILE) -> NativeFile {
     let handle = PlatformHandle::from_raw_fd(libc::fileno(file));
 
-    NativeFile { handle: Box::from( handle) }
+    NativeFile {
+        handle: Box::from(handle),
+    }
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_ph_file_clone(
-    platform_handle: &NativeFile,
-) -> Box<NativeFile> {
-    Box::new(NativeFile { handle: platform_handle.handle.clone() })
+pub extern "C" fn ddog_ph_file_clone(platform_handle: &NativeFile) -> Box<NativeFile> {
+    Box::new(NativeFile {
+        handle: platform_handle.handle.clone(),
+    })
 }
 
 #[no_mangle]
@@ -227,7 +230,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
         instance_id,
         queue_id,
         runtime_meta,
-        &service_name.to_utf8_lossy().into(),
+        service_name.to_utf8_lossy(),
     ));
 
     MaybeError::None
@@ -242,9 +245,16 @@ pub unsafe extern "C" fn ddog_sidecar_mock_start(result: &mut *mut MockServer) -
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_sidecar_session_config_setAgentUrl(transport: &mut Box<TelemetryTransport>, session_id: ffi::CharSlice,
-    agent_url: ffi::CharSlice) -> MaybeError {
-    try_c!(blocking::set_session_agent_url(transport, session_id.to_utf8_lossy().into(), agent_url.to_utf8_lossy().into()));
+pub unsafe extern "C" fn ddog_sidecar_session_config_setAgentUrl(
+    transport: &mut Box<TelemetryTransport>,
+    session_id: ffi::CharSlice,
+    agent_url: ffi::CharSlice,
+) -> MaybeError {
+    try_c!(blocking::set_session_agent_url(
+        transport,
+        session_id.to_utf8_lossy().into(),
+        agent_url.to_utf8_lossy().into()
+    ));
 
     MaybeError::None
 }
@@ -291,7 +301,11 @@ mod test_c_sidecar {
         assert_eq!(ddog_sidecar_connect(&mut transport), MaybeError::None);
         let mut transport = unsafe { Box::from_raw(transport) };
         unsafe {
-            ddog_sidecar_session_config_setAgentUrl(&mut transport, "session_id".into(), "http://localhost:8082/".into());
+            ddog_sidecar_session_config_setAgentUrl(
+                &mut transport,
+                "session_id".into(),
+                "http://localhost:8082/".into(),
+            );
 
             let meta = ddog_sidecar_runtimeMeta_build(
                 "language_name".into(),
@@ -329,7 +343,7 @@ mod test_c_sidecar {
 
             //TODO: Shutdown the service
             // enough case: have C api that shutsdown telemetry worker
-            // ideal case : when connection socket is closed by the client the telemetry worker shuts down automatically 
+            // ideal case : when connection socket is closed by the client the telemetry worker shuts down automatically
             ddog_sidecar_instanceId_drop(instance_id);
             ddog_sidecar_runtimeMeta_drop(meta);
         };

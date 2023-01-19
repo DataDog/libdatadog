@@ -12,10 +12,7 @@ use futures::{
 };
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use tarpc::{
-    context::{Context},
-    server::Channel,
-};
+use tarpc::{context::Context, server::Channel};
 use tokio::net::UnixStream;
 
 use crate::{
@@ -91,7 +88,7 @@ pub struct QueueId {
 impl QueueId {
     pub fn new_unique() -> Self {
         Self {
-            inner: rand::thread_rng().gen_range(1u64 .. u64::MAX),
+            inner: rand::thread_rng().gen_range(1u64..u64::MAX),
         }
     }
 }
@@ -279,7 +276,7 @@ impl TelemetryServer {
 
         // TODO: log errors
         if let Ok((handle, worker_join)) = builder.spawn_with_config(config.clone()).await {
-            eprintln!("spawning worker {:?}", config);
+            eprintln!("spawning worker {config:?}");
 
             let instance = AppInstance {
                 telemetry: handle,
@@ -290,8 +287,12 @@ impl TelemetryServer {
                 .lock()
                 .unwrap()
                 .insert(service_name.clone(), instance.clone());
-                
-            instance.telemetry.send_msg(TelemetryActions::Start).await.ok();
+
+            instance
+                .telemetry
+                .send_msg(TelemetryActions::Start)
+                .await
+                .ok();
             Some(instance)
         } else {
             None
@@ -393,7 +394,7 @@ impl TelemetryInterface for TelemetryServer {
         {
             let mut cfg = session.session_config.lock().unwrap();
             let mut new_cfg = cfg.clone().unwrap_or_else(FromEnv::config);
-            if !agent_url.is_empty(){
+            if !agent_url.is_empty() {
                 new_cfg.endpoint = FromEnv::build_endpoint(agent_url.as_str(), None);
             }
 
@@ -405,6 +406,7 @@ impl TelemetryInterface for TelemetryServer {
 
 pub mod blocking {
     use std::{
+        borrow::Cow,
         io,
         time::{Duration, Instant},
     };
@@ -452,14 +454,14 @@ pub mod blocking {
         instance_id: &InstanceId,
         queue_id: &QueueId,
         runtime_metadata: &RuntimeMeta,
-        service_name: &String,
+        service_name: Cow<str>,
     ) -> io::Result<()> {
         transport.send_ignore_response(
             TelemetryInterfaceRequest::RegisterServiceAndFlushQueuedActions {
                 instance_id: instance_id.clone(),
                 queue_id: queue_id.clone(),
                 meta: runtime_metadata.clone(),
-                service_name: service_name.clone(),
+                service_name: service_name.into_owned(),
             },
         )
     }
@@ -468,13 +470,17 @@ pub mod blocking {
         transport: &mut TelemetryTransport,
         session_id: String,
         agent_url: String,
-    ) -> io::Result<()>{ 
-        let res = transport.send(TelemetryInterfaceRequest::SetSessionAgentUrl { session_id, agent_url })?;
+    ) -> io::Result<()> {
+        let res = transport.send(TelemetryInterfaceRequest::SetSessionAgentUrl {
+            session_id,
+            agent_url,
+        })?;
         match res {
             TelemetryInterfaceResponse::SetSessionAgentUrl(_) => Ok(()),
-            _ => {
-                Err(io::Error::new(io::ErrorKind::Other, "wrong response type when setting session agent url"))
-            }
+            _ => Err(io::Error::new(
+                io::ErrorKind::Other,
+                "wrong response type when setting session agent url",
+            )),
         }
     }
 

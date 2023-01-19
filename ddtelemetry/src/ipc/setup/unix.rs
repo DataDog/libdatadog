@@ -138,7 +138,7 @@ mod linux {
             let path = PathBuf::from(concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".sock"));
             Self { path }
         }
-        //TODO: 
+        //TODO:
         pub fn ipc_per_process() -> Self {
             let path = PathBuf::from(format!(
                 concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".{}.sock"),
