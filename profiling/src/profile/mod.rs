@@ -3,17 +3,21 @@
 
 pub mod api;
 pub mod pprof;
+pub mod profiled_endpoints;
 
 use core::fmt;
 use std::borrow::{Borrow, Cow};
 use std::convert::TryInto;
-use std::hash::Hash;
+use std::hash::{BuildHasherDefault, Hash};
 use std::ops::AddAssign;
 use std::time::{Duration, SystemTime};
 
-use indexmap::{IndexMap, IndexSet};
 use pprof::{Function, Label, Line, Location, ValueType};
+use profiled_endpoints::ProfiledEndpointsStats;
 use prost::{EncodeError, Message};
+
+pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<rustc_hash::FxHasher>>;
+pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::FxHasher>>;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
@@ -72,24 +76,28 @@ struct Sample {
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
     pub labels: Vec<Label>,
+
+    /// Offset into `labels` for the label with key == "local root span id".
+    local_root_span_id_label_offset: Option<usize>,
 }
 
 pub struct Profile {
     sample_types: Vec<ValueType>,
-    samples: IndexMap<Sample, Vec<i64>>,
-    mappings: IndexSet<Mapping>,
-    locations: IndexSet<Location>,
-    functions: IndexSet<Function>,
-    strings: IndexSet<String>,
+    samples: FxIndexMap<Sample, Vec<i64>>,
+    mappings: FxIndexSet<Mapping>,
+    locations: FxIndexSet<Location>,
+    functions: FxIndexSet<Function>,
+    strings: FxIndexSet<String>,
     start_time: SystemTime,
     period: Option<(i64, ValueType)>,
     endpoints: Endpoints,
 }
 
 pub struct Endpoints {
-    mappings: IndexMap<i64, i64>,
+    mappings: FxIndexMap<u64, i64>,
     local_root_span_id_label: i64,
     endpoint_label: i64,
+    stats: ProfiledEndpointsStats,
 }
 
 pub struct ProfileBuilder<'a> {
@@ -163,7 +171,7 @@ trait DedupExt<T: Eq + Hash> {
         Q: Eq + Hash + ?Sized;
 }
 
-impl<T: Sized + Hash + Eq> DedupExt<T> for IndexSet<T> {
+impl<T: Sized + Hash + Eq> DedupExt<T> for FxIndexSet<T> {
     fn dedup(&mut self, item: T) -> usize {
         let (id, _) = self.insert_full(item);
         id
@@ -208,6 +216,7 @@ pub struct EncodedProfile {
     pub start: SystemTime,
     pub end: SystemTime,
     pub buffer: Vec<u8>,
+    pub endpoints_stats: ProfiledEndpointsStats,
 }
 
 impl Endpoints {
@@ -216,6 +225,7 @@ impl Endpoints {
             mappings: Default::default(),
             local_root_span_id_label: Default::default(),
             endpoint_label: Default::default(),
+            stats: Default::default(),
         }
     }
 }
@@ -227,8 +237,12 @@ impl Default for Endpoints {
 }
 
 impl Profile {
-    /// Creates a profile with `start_time`. Initializes the string table to
-    /// include the empty string. All other fields are default.
+    /// Creates a profile with `start_time`.
+    /// Initializes the string table to hold:
+    ///  - "" (the empty string)
+    ///  - "local root span id"
+    ///  - "trace endpoint"
+    /// All other fields are default.
     pub fn new(start_time: SystemTime) -> Self {
         /* Do not use Profile's default() impl here or it will cause a stack
          * overflow, since that default impl calls this method.
@@ -246,7 +260,14 @@ impl Profile {
         };
 
         profile.intern("");
+        profile.endpoints.local_root_span_id_label = profile.intern("local root span id");
+        profile.endpoints.endpoint_label = profile.intern("trace endpoint");
         profile
+    }
+
+    #[cfg(test)]
+    fn interned_strings_count(&self) -> usize {
+        self.strings.len()
     }
 
     /// Interns the `str` as a string, returning the id in the string table.
@@ -305,28 +326,16 @@ impl Profile {
         PProfId(index + 1)
     }
 
-    pub fn add(&mut self, sample: api::Sample) -> Result<PProfId, FullError> {
-        if sample.values.len() != self.sample_types.len() {
-            return Ok(PProfId(0));
-        }
+    pub fn add(&mut self, sample: api::Sample) -> anyhow::Result<PProfId> {
+        anyhow::ensure!(
+            sample.values.len() == self.sample_types.len(),
+            "expected {} sample types, but sample had {} sample types",
+            sample.values.len(),
+            self.sample_types.len(),
+        );
 
         let values = sample.values.clone();
-        let labels = sample
-            .labels
-            .iter()
-            .map(|label| {
-                let key = self.intern(label.key);
-                let str = label.str.map(|s| self.intern(s)).unwrap_or(0);
-                let num_unit = label.num_unit.map(|s| self.intern(s)).unwrap_or(0);
-
-                Label {
-                    key,
-                    str,
-                    num: label.num,
-                    num_unit,
-                }
-            })
-            .collect();
+        let (labels, local_root_span_id_label_offset) = self.extract_sample_labels(&sample)?;
 
         let mut locations: Vec<PProfId> = Vec::with_capacity(sample.locations.len());
         for location in sample.locations.iter() {
@@ -358,7 +367,11 @@ impl Profile {
             locations.push(PProfId(index + 1))
         }
 
-        let s = Sample { locations, labels };
+        let s = Sample {
+            locations,
+            labels,
+            local_root_span_id_label_offset,
+        };
 
         let id = match self.samples.get_index_of(&s) {
             None => {
@@ -376,6 +389,49 @@ impl Profile {
         };
 
         Ok(id)
+    }
+
+    /// Validates labels and converts them to the internal representation.
+    /// Also tracks the index of the label with key "local root span id".
+    fn extract_sample_labels(
+        &mut self,
+        sample: &api::Sample,
+    ) -> anyhow::Result<(Vec<Label>, Option<usize>)> {
+        let mut labels: Vec<Label> = Vec::with_capacity(sample.labels.len());
+        let mut local_root_span_id_label_offset: Option<usize> = None;
+        for label in sample.labels.iter() {
+            let key = self.intern(label.key);
+            let str = label.str.map(|s| self.intern(s)).unwrap_or(0);
+            let num_unit = label.num_unit.map(|s| self.intern(s)).unwrap_or(0);
+
+            if key == self.endpoints.local_root_span_id_label {
+                // Panic: if the label.str isn't 0, then str must have been provided.
+                anyhow::ensure!(
+                    str == 0,
+                    "the label \"local root span id\" must be sent as a number, not string {}",
+                    label.str.unwrap()
+                );
+                anyhow::ensure!(
+                    label.num != 0,
+                    "the label \"local root span id\" must not be 0"
+                );
+                anyhow::ensure!(
+                    local_root_span_id_label_offset.is_none(),
+                    "only one label per sample can have the key \"local root span id\", found two: {}, {}",
+                    labels[local_root_span_id_label_offset.unwrap()].num, label.num
+                );
+                local_root_span_id_label_offset = Some(labels.len());
+            }
+
+            // If you refactor this push, ensure the local_root_span_id_label_offset is correct.
+            labels.push(Label {
+                key,
+                str,
+                num: label.num,
+                num_unit,
+            });
+        }
+        Ok((labels, local_root_span_id_label_offset))
     }
 
     fn extract_api_sample_types(&self) -> Option<Vec<api::ValueType>> {
@@ -419,18 +475,20 @@ impl Profile {
         Some(profile)
     }
 
-    pub fn add_endpoint(&mut self, local_root_span_id: Cow<str>, endpoint: Cow<str>) {
-        if self.endpoints.mappings.is_empty() {
-            self.endpoints.local_root_span_id_label = self.intern("local root span id");
-            self.endpoints.endpoint_label = self.intern("trace endpoint");
-        }
-
-        let interned_span_id = self.intern(local_root_span_id.as_ref());
+    /// Add the endpoint data to the endpoint mappings.
+    /// The `endpoint` string will be interned.
+    pub fn add_endpoint(&mut self, local_root_span_id: u64, endpoint: Cow<str>) {
         let interned_endpoint = self.intern(endpoint.as_ref());
 
         self.endpoints
             .mappings
-            .insert(interned_span_id, interned_endpoint);
+            .insert(local_root_span_id, interned_endpoint);
+    }
+
+    pub fn add_endpoint_count(&mut self, endpoint: Cow<str>, value: i64) {
+        self.endpoints
+            .stats
+            .add_endpoint_count(endpoint.into_owned(), value);
     }
 
     /// Serialize the aggregated profile, adding the end time and duration.
@@ -445,10 +503,10 @@ impl Profile {
         &self,
         end_time: Option<SystemTime>,
         duration: Option<Duration>,
-    ) -> Result<EncodedProfile, EncodeError> {
+    ) -> anyhow::Result<EncodedProfile> {
         let end = end_time.unwrap_or_else(SystemTime::now);
         let start = self.start_time;
-        let mut profile: pprof::Profile = self.into();
+        let mut profile: pprof::Profile = self.try_into()?;
 
         profile.duration_nanos = duration
             .unwrap_or_else(|| {
@@ -463,56 +521,90 @@ impl Profile {
 
         let mut buffer: Vec<u8> = Vec::new();
         profile.encode(&mut buffer)?;
-        Ok(EncodedProfile { start, end, buffer })
+
+        Ok(EncodedProfile {
+            start,
+            end,
+            buffer,
+            endpoints_stats: self.endpoints.stats.clone(),
+        })
     }
 
     pub fn get_string(&self, id: i64) -> Option<&String> {
         self.strings.get_index(id as usize)
     }
+
+    /// Fetches the endpoint information for the label. There may be errors,
+    /// but there may also be no endpoint information for a given endpoint.
+    /// Hence, the return type of Result<Option<_>, _>.
+    fn get_endpoint_for_label(&self, label: &Label) -> anyhow::Result<Option<i64>> {
+        anyhow::ensure!(
+            label.key == self.endpoints.local_root_span_id_label,
+            "bug: get_endpoint_for_label should only be called on labels with the key \"local root span id\", called on label with key \"{}\"",
+            &self.strings[label.key as usize]
+        );
+
+        anyhow::ensure!(
+            label.str == 0,
+            "the local root span id label value must be sent as a number, not a string, given string id {}",
+            label.str
+        );
+
+        /* Safety: the value is a u64, but pprof only has signed values, so we
+         * transmute it; the backend does the same.
+         */
+        let local_root_span_id: u64 = unsafe { std::intrinsics::transmute(label.num) };
+
+        Ok(self
+            .endpoints
+            .mappings
+            .get(&local_root_span_id)
+            .map(i64::clone))
+    }
 }
 
-impl From<&Profile> for pprof::Profile {
-    fn from(profile: &Profile) -> Self {
+impl TryFrom<&Profile> for pprof::Profile {
+    type Error = anyhow::Error;
+
+    fn try_from(profile: &Profile) -> anyhow::Result<pprof::Profile> {
         let (period, period_type) = match profile.period {
             Some(tuple) => (tuple.0, Some(tuple.1)),
             None => (0, None),
         };
 
-        let mut samples: Vec<pprof::Sample> = profile
+        /* Rust pattern: inverting Vec<Result<T,E>> into Result<Vec<T>, E> error with .collect:
+         * https://doc.rust-lang.org/rust-by-example/error/iter_result.html#fail-the-entire-operation-with-collect
+         */
+        let samples: anyhow::Result<Vec<pprof::Sample>> = profile
             .samples
             .iter()
-            .map(|(sample, values)| pprof::Sample {
-                location_ids: sample.locations.iter().map(Into::into).collect(),
-                values: values.to_vec(),
-                labels: sample.labels.clone(),
-            })
-            .collect();
-
-        if !profile.endpoints.mappings.is_empty() {
-            for sample in samples.iter_mut() {
-                let mut endpoint: Option<&i64> = None;
-
-                for label in &sample.labels {
-                    if label.key == profile.endpoints.local_root_span_id_label {
-                        endpoint = profile.endpoints.mappings.get(&label.str);
-                        break;
+            .map(|(sample, values)| {
+                // Clone the labels, but enrich them with endpoint profiling.
+                let mut labels = sample.labels.clone();
+                if let Some(offset) = sample.local_root_span_id_label_offset {
+                    // Safety: this offset was created internally and isn't be mutated.
+                    let lrsi_label = unsafe { sample.labels.get_unchecked(offset) };
+                    if let Some(endpoint_value_id) = profile.get_endpoint_for_label(lrsi_label)? {
+                        labels.push(Label {
+                            key: profile.endpoints.endpoint_label,
+                            str: endpoint_value_id,
+                            num: 0,
+                            num_unit: 0,
+                        });
                     }
                 }
 
-                if let Some(endpoint_value) = endpoint {
-                    sample.labels.push(pprof::Label {
-                        key: profile.endpoints.endpoint_label,
-                        str: *endpoint_value,
-                        num: 0,
-                        num_unit: 0,
-                    });
-                }
-            }
-        }
+                Ok(pprof::Sample {
+                    location_ids: sample.locations.iter().map(Into::into).collect(),
+                    values: values.to_vec(),
+                    labels,
+                })
+            })
+            .collect();
 
-        pprof::Profile {
+        Ok(pprof::Profile {
             sample_types: profile.sample_types.clone(),
-            samples,
+            samples: samples?,
             mappings: profile
                 .mappings
                 .iter()
@@ -559,14 +651,15 @@ impl From<&Profile> for pprof::Profile {
             period,
             period_type,
             ..Default::default()
-        }
+        })
     }
 }
 
 #[cfg(test)]
 mod api_test {
-    use crate::profile::{api, pprof, PProfId, Profile, ValueType};
-    use std::borrow::Cow;
+
+    use super::*;
+    use std::{borrow::Cow, collections::HashMap};
 
     #[test]
     fn interning() {
@@ -576,17 +669,14 @@ mod api_test {
         }];
         let mut profiles = Profile::builder().sample_types(sample_types).build();
 
-        /* There have been 3 strings: "", "samples", and "count". Since the interning index starts at
-         * zero, this means the next string will be 3.
-         */
-        const EXPECTED_ID: i64 = 3;
+        let expected_id: i64 = profiles.interned_strings_count().try_into().unwrap();
 
         let string = "a";
         let id1 = profiles.intern(string);
         let id2 = profiles.intern(string);
 
         assert_eq!(id1, id2);
-        assert_eq!(id1, EXPECTED_ID);
+        assert_eq!(id1, expected_id);
     }
 
     #[test]
@@ -722,7 +812,7 @@ mod api_test {
     #[test]
     fn impl_from_profile_for_pprof_profile() {
         let locations = provide_distinct_locations();
-        let profile = pprof::Profile::from(&locations);
+        let profile = pprof::Profile::try_from(&locations).unwrap();
 
         assert_eq!(profile.samples.len(), 2);
         assert_eq!(profile.mappings.len(), 1);
@@ -774,6 +864,8 @@ mod api_test {
         assert!(!profile.samples.is_empty());
         assert!(!profile.sample_types.is_empty());
         assert!(profile.period.is_none());
+        assert!(profile.endpoints.mappings.is_empty());
+        assert!(profile.endpoints.stats.is_empty());
 
         let prev = profile.reset(None).expect("reset to succeed");
 
@@ -782,6 +874,8 @@ mod api_test {
         assert!(profile.locations.is_empty());
         assert!(profile.mappings.is_empty());
         assert!(profile.samples.is_empty());
+        assert!(profile.endpoints.mappings.is_empty());
+        assert!(profile.endpoints.stats.is_empty());
 
         assert_eq!(profile.period, prev.period);
         assert_eq!(profile.sample_types, prev.sample_types);
@@ -830,6 +924,31 @@ mod api_test {
     }
 
     #[test]
+    fn adding_local_root_span_id_with_string_value_fails() {
+        let sample_types = vec![api::ValueType {
+            r#type: "wall-time",
+            unit: "nanoseconds",
+        }];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let id_label = api::Label {
+            key: "local root span id",
+            str: Some("10"), // bad value, should use .num instead for local root span id
+            num: 0,
+            num_unit: None,
+        };
+
+        let sample = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000],
+            labels: vec![id_label],
+        };
+
+        assert!(profile.add(sample).is_err());
+    }
+
+    #[test]
     fn lazy_endpoints() {
         let sample_types = vec![
             api::ValueType {
@@ -846,15 +965,15 @@ mod api_test {
 
         let id_label = api::Label {
             key: "local root span id",
-            str: Some("10"),
-            num: 0,
+            str: None,
+            num: 10,
             num_unit: None,
         };
 
         let id2_label = api::Label {
             key: "local root span id",
-            str: Some("11"),
-            num: 0,
+            str: None,
+            num: 11,
             num_unit: None,
         };
 
@@ -881,9 +1000,9 @@ mod api_test {
 
         profile.add(sample2).expect("add to success");
 
-        profile.add_endpoint(Cow::from("10"), Cow::from("my endpoint"));
+        profile.add_endpoint(10, Cow::from("my endpoint"));
 
-        let serialized_profile: pprof::Profile = (&profile).into();
+        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 2);
 
@@ -901,13 +1020,7 @@ mod api_test {
                 .unwrap(),
             "local root span id"
         );
-        assert_eq!(
-            serialized_profile
-                .string_table
-                .get(l1.str as usize)
-                .unwrap(),
-            "10"
-        );
+        assert_eq!(l1.num, 10);
 
         let l2 = s1.labels.get(1).expect("label");
 
@@ -947,5 +1060,204 @@ mod api_test {
 
         // The trace endpoint label shouldn't be added to second sample because the span id doesn't match
         assert_eq!(s2.labels.len(), 2);
+    }
+
+    #[test]
+    fn endpoint_counts_empty_test() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let encoded_profile = profile
+            .serialize(None, None)
+            .expect("Unable to encode/serialize the profile");
+
+        let endpoints_stats = encoded_profile.endpoints_stats;
+        assert!(endpoints_stats.is_empty());
+    }
+
+    #[test]
+    fn endpoint_counts_test() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let one_endpoint = "my endpoint";
+        profile.add_endpoint_count(Cow::from(one_endpoint), 1);
+        profile.add_endpoint_count(Cow::from(one_endpoint), 1);
+
+        let second_endpoint = "other endpoint";
+        profile.add_endpoint_count(Cow::from(second_endpoint), 1);
+
+        let encoded_profile = profile
+            .serialize(None, None)
+            .expect("Unable to encode/serialize the profile");
+
+        let endpoints_stats = encoded_profile.endpoints_stats;
+
+        let mut count: HashMap<String, i64> = HashMap::new();
+        count.insert(one_endpoint.to_string(), 2);
+        count.insert(second_endpoint.to_string(), 1);
+
+        let expected_endpoints_stats = ProfiledEndpointsStats::from(count);
+
+        assert_eq!(endpoints_stats, expected_endpoints_stats);
+    }
+
+    #[test]
+    fn local_root_span_id_label_cannot_occur_more_than_once() {
+        let sample_types = vec![api::ValueType {
+            r#type: "wall-time",
+            unit: "nanoseconds",
+        }];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let labels = vec![
+            api::Label {
+                key: "local root span id",
+                str: None,
+                num: 5738080760940355267_i64,
+                num_unit: None,
+            },
+            api::Label {
+                key: "local root span id",
+                str: None,
+                num: 8182855815056056749_i64,
+                num_unit: None,
+            },
+        ];
+
+        let sample = api::Sample {
+            locations: vec![],
+            values: vec![10000],
+            labels,
+        };
+
+        profile.add(sample).unwrap_err();
+    }
+
+    #[test]
+    fn local_root_span_id_label_as_i64() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let id_label = api::Label {
+            key: "local root span id",
+            str: None,
+            num: 10,
+            num_unit: None,
+        };
+
+        let large_span_id = u64::MAX;
+        // Safety: a u64 can fit into an i64, and we're testing that it's not mis-handled.
+        let large_num: i64 = unsafe { std::intrinsics::transmute(large_span_id) };
+
+        let id2_label = api::Label {
+            key: "local root span id",
+            str: None,
+            num: large_num,
+            num_unit: None,
+        };
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000],
+            labels: vec![id_label],
+        };
+
+        let sample2 = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000],
+            labels: vec![id2_label],
+        };
+
+        profile.add(sample1).expect("add to success");
+        profile.add(sample2).expect("add to success");
+
+        profile.add_endpoint(10, Cow::from("endpoint 10"));
+        profile.add_endpoint(large_span_id, Cow::from("large endpoint"));
+
+        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        assert_eq!(serialized_profile.samples.len(), 2);
+
+        // Find common label strings in the string table.
+        let locate_string = |string: &str| -> i64 {
+            // The table is supposed to be unique, so we shouldn't have to worry about duplicates.
+            serialized_profile
+                .string_table
+                .iter()
+                .enumerate()
+                .find_map(|(offset, str)| {
+                    if str == string {
+                        Some(offset as i64)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap()
+        };
+
+        let local_root_span_id = locate_string("local root span id");
+        let trace_endpoint = locate_string("trace endpoint");
+
+        // Set up the expected labels per sample
+        let expected_labels = [
+            [
+                pprof::Label {
+                    key: local_root_span_id,
+                    str: 0,
+                    num: 10,
+                    num_unit: 0,
+                },
+                pprof::Label::str(trace_endpoint, locate_string("endpoint 10")),
+            ],
+            [
+                pprof::Label {
+                    key: local_root_span_id,
+                    str: 0,
+                    num: large_num,
+                    num_unit: 0,
+                },
+                pprof::Label::str(trace_endpoint, locate_string("large endpoint")),
+            ],
+        ];
+
+        // Finally, match the labels.
+        for (sample, labels) in serialized_profile
+            .samples
+            .iter()
+            .zip(expected_labels.iter())
+        {
+            assert_eq!(sample.labels, labels);
+        }
     }
 }

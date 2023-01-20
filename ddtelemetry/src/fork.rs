@@ -142,7 +142,7 @@ pub mod tests {
         sock_a.read_to_string(&mut out).unwrap();
 
         assert_child_exit!(pid);
-        assert_eq!(format!("child-{}", pid), out);
+        assert_eq!(format!("child-{pid}"), out);
     }
 
     #[test]

@@ -50,7 +50,7 @@ impl FromEnv {
         let agent_host =
             env::var(DD_AGENT_HOST).unwrap_or_else(|_| String::from(DEFAULT_AGENT_HOST));
 
-        format!("http://{}:{}", agent_host, agent_port)
+        format!("http://{agent_host}:{agent_port}")
     }
 
     fn get_intake_base_url() -> String {
@@ -63,9 +63,9 @@ impl FromEnv {
 
         if let Ok(dd_site) = env::var(DD_SITE) {
             if dd_site.is_empty() {
-                format!("{}.{}", PROD_INTAKE_FORMAT_PREFIX, DEFAULT_DD_SITE)
+                format!("{PROD_INTAKE_FORMAT_PREFIX}.{DEFAULT_DD_SITE}")
             } else {
-                format!("{}.{}", PROD_INTAKE_FORMAT_PREFIX, dd_site)
+                format!("{PROD_INTAKE_FORMAT_PREFIX}.{dd_site}")
             }
         } else {
             String::from(STAGING_INTAKE)
@@ -79,9 +79,9 @@ impl FromEnv {
     pub fn build_endpoint(agent_url: &str, api_key: Option<String>) -> Option<Endpoint> {
         let telemetry_url = if api_key.is_some() {
             let telemetry_intake_base_url = Self::get_intake_base_url();
-            format!("{}{}", telemetry_intake_base_url, DIRECT_TELEMETRY_URL_PATH)
+            format!("{telemetry_intake_base_url}{DIRECT_TELEMETRY_URL_PATH}")
         } else {
-            format!("{}{}", &agent_url, AGENT_TELEMETRY_URL_PATH)
+            format!("{}{AGENT_TELEMETRY_URL_PATH}", &agent_url)
         };
 
         let telemetry_uri = Uri::from_str(&telemetry_url).ok()?;

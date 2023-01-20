@@ -23,7 +23,7 @@ pub fn agent(base_url: Uri) -> anyhow::Result<Endpoint> {
         Some(pq) => {
             let path = pq.path();
             let path = path.strip_suffix('/').unwrap_or(path);
-            Some(format!("{}/profiling/v1/input", path).parse()?)
+            Some(format!("{path}/profiling/v1/input").parse()?)
         }
     };
     parts.path_and_query = p_q;

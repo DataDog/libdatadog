@@ -212,14 +212,14 @@ mod test {
             for (i, &a) in assertions.iter().enumerate() {
                 if a(e) {
                     if used[i] {
-                        panic!("Assertion {} has been used multiple times", i);
+                        panic!("Assertion {i} has been used multiple times");
                     }
                     found = true;
                     break;
                 }
             }
             if !found {
-                panic!("No assertion found for elem {:?}", e)
+                panic!("No assertion found for elem {e:?}")
             }
         }
     }
