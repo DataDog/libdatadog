@@ -5,7 +5,6 @@ use std::borrow::Cow;
 
 use hyper::header::HeaderValue;
 
-
 pub mod azure_app_services;
 pub mod connector;
 pub mod container_id;
@@ -20,7 +19,7 @@ pub type HttpClient = hyper::Client<connector::Connector, hyper::Body>;
 pub type HttpResponse = hyper::Response<hyper::Body>;
 pub type HttpRequestBuilder = hyper::http::request::Builder;
 
-#[derive(Default,Clone, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct Endpoint {
     pub url: hyper::Uri,
     pub api_key: Option<Cow<'static, str>>,

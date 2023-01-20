@@ -3,9 +3,8 @@ use std::net::SocketAddr;
 
 use std::thread;
 
-
 use futures::future::{BoxFuture, Shared};
-use futures::{FutureExt};
+use futures::FutureExt;
 use http::Uri;
 
 use hyper::service::{make_service_fn, service_fn};
@@ -37,7 +36,7 @@ impl MockServer {
         let addr = "127.0.0.1:0".parse().unwrap();
         let server = Server::bind(&addr).serve(make_service_fn(|_| async move {
             Ok::<_, Infallible>(service_fn(move |r: Request<Body>| async move {
-                println!("{:?}", r);
+                println!("{r:?}");
                 Ok::<_, Infallible>(Response::new(Body::from("Hello!")))
             }))
         }));
@@ -57,7 +56,7 @@ impl MockServer {
         Ok(Self {
             local_addr,
             cancellation_token,
-            shutdown_future: shutdown_future.map(Result::ok).boxed().shared()
+            shutdown_future: shutdown_future.map(Result::ok).boxed().shared(),
         })
     }
 

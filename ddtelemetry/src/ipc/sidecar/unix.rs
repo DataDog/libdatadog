@@ -13,7 +13,6 @@ use std::{
 };
 use tokio::select;
 
-use nix::unistd::setsid;
 use nix::{sys::wait::waitpid, unistd::Pid};
 use tokio::net::UnixListener;
 use tokio_util::sync::CancellationToken;
@@ -26,32 +25,6 @@ use crate::{
     fork::{fork_fn, getpid},
     ipc::setup::{self, Liaison},
 };
-
-fn static_cstr(str: &'static [u8]) -> *const std::ffi::c_char {
-    str.as_ptr() as *const std::ffi::c_char
-}
-
-unsafe fn reopen_stdio() {
-    // stdin
-    libc::close(0);
-    libc::open(static_cstr(b"/dev/null\0"), libc::O_RDONLY);
-
-    // stdout
-    libc::close(1);
-    // TODO: make sidecar logfile configurable
-    let stdout = libc::open(
-        static_cstr(b"/tmp/sidecar.log\0"),
-        libc::O_CREAT | libc::O_WRONLY | libc::O_APPEND,
-        0o777,
-    );
-    if stdout < 0 {
-        panic!("Could not open /tmp/sidecar.log: {}", nix::errno::errno());
-    }
-
-    // stderr
-    libc::close(2);
-    libc::dup(stdout);
-}
 
 async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
     let counter = Arc::new(AtomicI32::new(0));
@@ -130,12 +103,15 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
                 );
                 // TODO: add solution to redirect stderr/stdout + and enable/disable tracing
                 enable_tracing();
-                
 
                 if let Err(err) = enter_listener_loop(listener) {
                     println!("Error: {err}")
                 }
-                println!("shutting down sidecar, pid: {}, total runtime: {:.3}s", getpid(), now.elapsed().as_secs_f64())
+                println!(
+                    "shutting down sidecar, pid: {}, total runtime: {:.3}s",
+                    getpid(),
+                    now.elapsed().as_secs_f64()
+                )
             })
             .ok();
         })?;
@@ -152,7 +128,6 @@ pub fn start_or_connect_to_sidecar() -> io::Result<TelemetryTransport> {
 
     Ok(IpcChannel::from(liaison.connect_to_server()?).into())
 }
-
 
 fn enable_tracing() {
     tracing_subscriber::fmt::init();
