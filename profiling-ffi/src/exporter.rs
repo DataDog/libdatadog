@@ -6,10 +6,10 @@
 
 use crate::Timespec;
 use datadog_profiling::exporter;
+use datadog_profiling::exporter::{ProfileExporter, Request};
 use datadog_profiling::profile::profiled_endpoints;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use exporter::ProfileExporter;
 use std::borrow::Cow;
 use std::ptr::NonNull;
 use std::str::FromStr;
@@ -33,9 +33,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_NewResult_drop(result: NewResult) {
             let exporter = Box::from_raw(ptr);
             drop(exporter)
         }
-        NewResult::Err(message) => {
-            drop(message)
-        }
+        NewResult::Err(message) => drop(message),
     }
 }
 
@@ -50,11 +48,6 @@ pub struct File<'a> {
     name: CharSlice<'a>,
     file: ByteSlice<'a>,
 }
-
-/// This type only exists to workaround a bug in cbindgen; may be removed in the
-/// future.
-#[derive(Debug)]
-pub struct Request(exporter::Request);
 
 // This type exists only to force cbindgen to expose an CancellationToken as an opaque type.
 pub struct CancellationToken(tokio_util::sync::CancellationToken);
@@ -172,7 +165,8 @@ unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> 
 
 #[repr(C)]
 pub enum RequestBuildResult {
-    Ok(Box<Request>),
+    // This is a Box::into_raw pointer.
+    Ok(*mut Request),
     Err(ddcommon_ffi::Vec<u8>),
 }
 
@@ -180,7 +174,8 @@ pub enum RequestBuildResult {
 impl From<RequestBuildResult> for Result<Box<Request>, String> {
     fn from(result: RequestBuildResult) -> Self {
         match result {
-            RequestBuildResult::Ok(ok) => Ok(ok),
+            // Safety: Request is opaque, can only be built from Rust.
+            RequestBuildResult::Ok(ok) => Ok(unsafe { Box::from_raw(ok) }),
             RequestBuildResult::Err(err) => {
                 // Safety: not generally safe but this is for test code.
                 Err(unsafe { String::from_utf8_unchecked(err.into()) })
@@ -189,6 +184,9 @@ impl From<RequestBuildResult> for Result<Box<Request>, String> {
     }
 }
 
+/// Drops the result. Since `ddog_prof_Exporter_send` will take ownership of
+/// the Request object, do not call this method if you call
+/// `ddog_prof_Exporter_send` on the `ok` value!
 #[no_mangle]
 pub extern "C" fn ddog_prof_Exporter_Request_BuildResult_drop(_result: RequestBuildResult) {}
 
@@ -223,7 +221,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
                 endpoints_stats,
                 timeout,
             ) {
-                Ok(request) => RequestBuildResult::Ok(Box::new(Request(request))),
+                Ok(request) => RequestBuildResult::Ok(Box::into_raw(Box::new(request))),
                 Err(err) => RequestBuildResult::Err(err.into()),
             }
         }
@@ -234,7 +232,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
 ///
 /// # Arguments
 /// * `exporter` - borrows the exporter for sending the request
-/// * `request` - takes ownership of the request
+/// * `request` - takes ownership of the request. Be careful not to drop it twice!
 /// * `cancel` - borrows the cancel, if any
 ///
 /// # Safety
@@ -243,9 +241,17 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Exporter_send(
     exporter: Option<NonNull<ProfileExporter>>,
-    request: Option<Box<Request>>,
+    request: *mut Request,
     cancel: Option<NonNull<CancellationToken>>,
 ) -> SendResult {
+    // Re-box the request first, to avoid leaks on other errors.
+    let request = if request.is_null() {
+        let buf: &[u8] = b"Failed to export: request was null";
+        return SendResult::Err(ddcommon_ffi::Vec::from(Vec::from(buf)));
+    } else {
+        Box::from_raw(request)
+    };
+
     let exp_ptr = match exporter {
         None => {
             let buf: &[u8] = b"Failed to export: exporter was null";
@@ -254,18 +260,10 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send(
         Some(e) => e,
     };
 
-    let request_ptr = match request {
-        None => {
-            let buf: &[u8] = b"Failed to export: request was null";
-            return SendResult::Err(ddcommon_ffi::Vec::from(Vec::from(buf)));
-        }
-        Some(req) => req,
-    };
-
     let cancel_option = unwrap_cancellation_token(cancel);
 
     match || -> anyhow::Result<HttpStatus> {
-        let response = exp_ptr.as_ref().send((*request_ptr).0, cancel_option)?;
+        let response = exp_ptr.as_ref().send(*request, cancel_option)?;
 
         Ok(HttpStatus(response.status().as_u16()))
     }() {
@@ -273,9 +271,6 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send(
         Err(err) => SendResult::Err(err.into()),
     }
 }
-
-#[no_mangle]
-pub extern "C" fn ddog_prof_Exporter_Request_drop(_request: Option<Box<Request>>) {}
 
 fn unwrap_cancellation_token<'a>(
     cancel: Option<NonNull<CancellationToken>>,
@@ -420,9 +415,7 @@ mod test {
         );
 
         let exporter = match exporter_result {
-            NewResult::Ok(exporter) => unsafe {
-                Some(NonNull::new_unchecked(exporter))
-            },
+            NewResult::Ok(exporter) => unsafe { Some(NonNull::new_unchecked(exporter)) },
             NewResult::Err(message) => {
                 std::mem::drop(message);
                 panic!("Should not occur!")
