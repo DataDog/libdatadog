@@ -21,19 +21,19 @@ pub enum SendResult {
 }
 
 #[repr(C)]
-pub enum NewResult {
+pub enum ExporterNewResult {
     Ok(*mut ProfileExporter),
     Err(ddcommon_ffi::Vec<u8>),
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Exporter_NewResult_drop(result: NewResult) {
+pub unsafe extern "C" fn ddog_prof_Exporter_NewResult_drop(result: ExporterNewResult) {
     match result {
-        NewResult::Ok(ptr) => {
+        ExporterNewResult::Ok(ptr) => {
             let exporter = Box::from_raw(ptr);
             drop(exporter)
         }
-        NewResult::Err(message) => drop(message),
+        ExporterNewResult::Err(message) => drop(message),
     }
 }
 
@@ -126,7 +126,7 @@ pub extern "C" fn ddog_prof_Exporter_new(
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: Endpoint,
-) -> NewResult {
+) -> ExporterNewResult {
     match || -> anyhow::Result<ProfileExporter> {
         let library_name = unsafe { profiling_library_name.to_utf8_lossy() }.into_owned();
         let library_version = unsafe { profiling_library_version.to_utf8_lossy() }.into_owned();
@@ -141,8 +141,8 @@ pub extern "C" fn ddog_prof_Exporter_new(
             converted_endpoint,
         )
     }() {
-        Ok(exporter) => NewResult::Ok(Box::into_raw(Box::new(exporter))),
-        Err(err) => NewResult::Err(err.into()),
+        Ok(exporter) => ExporterNewResult::Ok(Box::into_raw(Box::new(exporter))),
+        Err(err) => ExporterNewResult::Err(err.into()),
     }
 }
 
@@ -394,10 +394,10 @@ mod test {
         );
 
         match result {
-            NewResult::Ok(exporter) => unsafe {
+            ExporterNewResult::Ok(exporter) => unsafe {
                 ddog_prof_Exporter_drop(Some(Box::from_raw(exporter)))
             },
-            NewResult::Err(message) => {
+            ExporterNewResult::Err(message) => {
                 drop(message);
                 panic!("Should not occur!")
             }
@@ -415,8 +415,8 @@ mod test {
         );
 
         let exporter = match exporter_result {
-            NewResult::Ok(exporter) => unsafe { Some(NonNull::new_unchecked(exporter)) },
-            NewResult::Err(message) => {
+            ExporterNewResult::Ok(exporter) => unsafe { Some(NonNull::new_unchecked(exporter)) },
+            ExporterNewResult::Err(message) => {
                 std::mem::drop(message);
                 panic!("Should not occur!")
             }
