@@ -21,20 +21,20 @@ pub enum SendResult {
 }
 
 #[repr(C)]
-pub enum NewProfileExporterResult {
+pub enum NewResult {
     Ok(*mut ProfileExporter),
     Err(ddcommon_ffi::Vec<u8>),
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Exporter_NewResult_drop(result: NewProfileExporterResult) {
+pub unsafe extern "C" fn ddog_prof_Exporter_NewResult_drop(result: NewResult) {
     match result {
-        NewProfileExporterResult::Ok(ptr) => {
+        NewResult::Ok(ptr) => {
             let exporter = Box::from_raw(ptr);
-            std::mem::drop(exporter);
+            drop(exporter)
         }
-        NewProfileExporterResult::Err(message) => {
-            std::mem::drop(message);
+        NewResult::Err(message) => {
+            drop(message)
         }
     }
 }
@@ -133,7 +133,7 @@ pub extern "C" fn ddog_prof_Exporter_new(
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: Endpoint,
-) -> NewProfileExporterResult {
+) -> NewResult {
     match || -> anyhow::Result<ProfileExporter> {
         let library_name = unsafe { profiling_library_name.to_utf8_lossy() }.into_owned();
         let library_version = unsafe { profiling_library_version.to_utf8_lossy() }.into_owned();
@@ -148,8 +148,8 @@ pub extern "C" fn ddog_prof_Exporter_new(
             converted_endpoint,
         )
     }() {
-        Ok(exporter) => NewProfileExporterResult::Ok(Box::into_raw(Box::new(exporter))),
-        Err(err) => NewProfileExporterResult::Err(err.into()),
+        Ok(exporter) => NewResult::Ok(Box::into_raw(Box::new(exporter))),
+        Err(err) => NewResult::Err(err.into()),
     }
 }
 
@@ -171,17 +171,17 @@ unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> 
 }
 
 #[repr(C)]
-pub enum ExporterRequestBuildResult {
+pub enum RequestBuildResult {
     Ok(Box<Request>),
     Err(ddcommon_ffi::Vec<u8>),
 }
 
 #[cfg(test)]
-impl From<ExporterRequestBuildResult> for Result<Box<Request>, String> {
-    fn from(result: ExporterRequestBuildResult) -> Self {
+impl From<RequestBuildResult> for Result<Box<Request>, String> {
+    fn from(result: RequestBuildResult) -> Self {
         match result {
-            ExporterRequestBuildResult::Ok(ok) => Ok(ok),
-            ExporterRequestBuildResult::Err(err) => {
+            RequestBuildResult::Ok(ok) => Ok(ok),
+            RequestBuildResult::Err(err) => {
                 // Safety: not generally safe but this is for test code.
                 Err(unsafe { String::from_utf8_unchecked(err.into()) })
             }
@@ -190,7 +190,7 @@ impl From<ExporterRequestBuildResult> for Result<Box<Request>, String> {
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_prof_ExporterRequestBuildResult_drop(_result: ExporterRequestBuildResult) {}
+pub extern "C" fn ddog_prof_Exporter_Request_BuildResult_drop(_result: RequestBuildResult) {}
 
 /// Builds a Request object based on the profile data supplied.
 ///
@@ -207,9 +207,9 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoints_stats: Option<&profiled_endpoints::ProfiledEndpointsStats>,
     timeout_ms: u64,
-) -> ExporterRequestBuildResult {
+) -> RequestBuildResult {
     match exporter {
-        None => ExporterRequestBuildResult::Err(anyhow::anyhow!("no exporter was provided").into()),
+        None => RequestBuildResult::Err(anyhow::anyhow!("no exporter was provided").into()),
         Some(exporter) => {
             let timeout = std::time::Duration::from_millis(timeout_ms);
             let converted_files = into_vec_files(files);
@@ -223,8 +223,8 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
                 endpoints_stats,
                 timeout,
             ) {
-                Ok(request) => ExporterRequestBuildResult::Ok(Box::new(Request(request))),
-                Err(err) => ExporterRequestBuildResult::Err(err.into()),
+                Ok(request) => RequestBuildResult::Ok(Box::new(Request(request))),
+                Err(err) => RequestBuildResult::Err(err.into()),
             }
         }
     }
@@ -399,10 +399,10 @@ mod test {
         );
 
         match result {
-            NewProfileExporterResult::Ok(exporter) => unsafe {
+            NewResult::Ok(exporter) => unsafe {
                 ddog_prof_Exporter_drop(Some(Box::from_raw(exporter)))
             },
-            NewProfileExporterResult::Err(message) => {
+            NewResult::Err(message) => {
                 drop(message);
                 panic!("Should not occur!")
             }
@@ -420,10 +420,10 @@ mod test {
         );
 
         let exporter = match exporter_result {
-            NewProfileExporterResult::Ok(exporter) => unsafe {
+            NewResult::Ok(exporter) => unsafe {
                 Some(NonNull::new_unchecked(exporter))
             },
-            NewProfileExporterResult::Err(message) => {
+            NewResult::Err(message) => {
                 std::mem::drop(message);
                 panic!("Should not occur!")
             }

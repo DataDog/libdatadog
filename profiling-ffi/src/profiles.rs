@@ -345,7 +345,7 @@ impl From<ProfileAddResult> for Result<u64, String> {
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_prof_ProfileAddResult_drop(_result: ProfileAddResult) {}
+pub extern "C" fn ddog_prof_Profile_AddResult_drop(_result: ProfileAddResult) {}
 
 #[no_mangle]
 /// # Safety
