@@ -400,6 +400,7 @@ dependencies = [
  "libc",
  "paste",
  "rand",
+ "tempfile",
 ]
 
 [[package]]

@@ -486,9 +486,10 @@ mod test_c_ffi {
 
             let mut builder = Box::from_raw(builder);
 
+            let f = tempfile::NamedTempFile::new().unwrap();
             ddog_builder_with_path_config_mock_client_file(
                 &mut builder,
-                ffi::CharSlice::from("/tmp/libdatadog.ddtelemetry-ffi.lib.rs.test_worker_run"),
+                ffi::CharSlice::from(f.path().as_os_str().to_str().unwrap()),
             );
             ddog_builder_with_bool_config_telemetry_debug_logging_enabled(&mut builder, true);
 
