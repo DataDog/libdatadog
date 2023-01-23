@@ -2,8 +2,6 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use ddcommon_ffi as ffi;
-use ddtelemetry::worker::TelemetryWorkerHandle;
-use ffi::slice::AsBytes;
 
 pub mod builder;
 pub mod sidecar;
