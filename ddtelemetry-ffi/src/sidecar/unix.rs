@@ -97,6 +97,7 @@ pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<TelemetryTransport>) -> 
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_instanceId_build(
     session_id: ffi::CharSlice,
     runtime_id: ffi::CharSlice,
@@ -108,16 +109,19 @@ pub unsafe extern "C" fn ddog_sidecar_instanceId_build(
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_instanceId_drop(instance_id: Box<InstanceId>) {
     drop(instance_id)
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_queueId_generate() -> QueueId {
     QueueId::new_unique()
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_build(
     language_name: ffi::CharSlice,
     language_version: ffi::CharSlice,
@@ -133,11 +137,13 @@ pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_build(
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_drop(meta: Box<RuntimeMeta>) {
     drop(meta)
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     transport: &mut Box<TelemetryTransport>,
     instance_id: Box<InstanceId>,
@@ -159,6 +165,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
     transport: &mut Box<TelemetryTransport>,
     instance_id: &InstanceId,
@@ -188,6 +195,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
     transport: &mut Box<TelemetryTransport>,
     instance_id: &InstanceId,
@@ -218,6 +226,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
     transport: &mut Box<TelemetryTransport>,
     instance_id: &InstanceId,
@@ -237,6 +246,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_mock_start(result: &mut *mut MockServer) -> MaybeError {
     let server = try_c!(mock_telemetry_target::MockServer::start_random_local_port());
 
@@ -245,6 +255,7 @@ pub unsafe extern "C" fn ddog_sidecar_mock_start(result: &mut *mut MockServer) -
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_session_config_setAgentUrl(
     transport: &mut Box<TelemetryTransport>,
     session_id: ffi::CharSlice,
