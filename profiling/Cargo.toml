@@ -11,7 +11,9 @@ license = "Apache-2.0"
 crate-type = ["lib"]
 
 [dependencies]
+ahash = { version = "0.8.2"}
 anyhow = "1.0"
+bumpalo = { version = "3.12.0", features = ["collections"] }
 bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
 ddcommon = {path = "../ddcommon"}
