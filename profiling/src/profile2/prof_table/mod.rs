@@ -1,7 +1,6 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-mod id;
 mod storable;
 
 use ahash::RandomState;
@@ -9,7 +8,6 @@ use bumpalo::Bump;
 use std::collections::HashSet;
 use std::ops::Index;
 
-pub use id::*;
 pub use storable::*;
 
 pub struct ProfTable<'arena, T: Storable> {
@@ -34,7 +32,11 @@ impl<'arena, T: Storable> ProfTable<'arena, T> {
     pub unsafe fn new(arena: &'arena Bump) -> Self {
         let empty_item = &*arena.alloc(T::default());
 
+        // Initialize the Vec with 1 element. Use [Vec::reserve] instead of
+        // [Vec::with_capacity] because the latter is exact, whereas the
+        // former is free to reserve more (which we want).
         let mut vec = Vec::new();
+        vec.reserve(1);
         vec.push(empty_item);
 
         let mut set = HashSet::with_hasher(Default::default());
@@ -48,7 +50,8 @@ impl<'arena, T: Storable> ProfTable<'arena, T> {
             None => {
                 // Clone the value and update the id.
                 let mut cloned = value.clone();
-                let id: Id = self.vec.len().into();
+                #[cfg(target_pointer_width = "64")]
+                let id = self.vec.len() as u64;
                 cloned.set_id(id);
 
                 // Move it into the arena and insert its reference to the vec and set.
@@ -67,9 +70,9 @@ impl<'arena, T: Storable> ProfTable<'arena, T> {
     }
 
     #[allow(unused)]
-    pub fn get(&self, id: Id) -> &'arena T {
-        let index: Id = id.into();
-        let offset: usize = index.into();
+    pub fn get(&self, id: u64) -> &'arena T {
+        #[cfg(target_pointer_width = "64")]
+        let offset = id as usize;
         let r = self.vec[offset];
         assert_eq!(r.get_id(), id);
         r

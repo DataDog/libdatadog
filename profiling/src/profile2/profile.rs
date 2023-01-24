@@ -3,7 +3,6 @@
 
 use super::pprof::ValueType;
 use super::symbol_table::Diff;
-use super::u63::u63;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct UnifiedServiceTags {
@@ -14,9 +13,9 @@ pub struct UnifiedServiceTags {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Sample {
-    locations: Vec<u63>,
+    locations: Vec<u64>,
     values: Vec<i64>,
-    labels: Vec<u63>,
+    labels: Vec<i64>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -52,11 +51,10 @@ pub struct Record {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Function, Line, Location, SymbolTable, Transaction};
+    use super::super::{Function, Line, Location, SymbolTable};
     use super::*;
 
     use bumpalo::Bump;
-    use std::ops::Range;
     use std::sync::mpsc::channel;
 
     #[test]
@@ -91,14 +89,14 @@ mod tests {
         let str_main = transaction.add_string("main");
         let str_main_c = transaction.add_string("main.c");
         let function_main = transaction.add_function(Function {
-            name: str_main.into(),
-            filename: str_main_c.into(),
+            name: str_main,
+            filename: str_main_c,
             ..Function::default()
         });
 
         let location = transaction.add_location(Location {
             lines: vec![Line {
-                function_id: function_main.into(),
+                function_id: function_main,
                 line: 4,
             }],
             ..Location::default()
@@ -116,8 +114,8 @@ mod tests {
         };
 
         let sample_types = vec![ValueType {
-            r#type: wall_samples.into(),
-            unit: count.into(),
+            r#type: wall_samples,
+            unit: count,
         }];
         let profile = Profile::new(unified_service_tags, sample_types, 0, None);
 
@@ -129,7 +127,7 @@ mod tests {
 
         sender
             .send(Record {
-                profile: profile,
+                profile,
                 symbol_diff,
                 samples,
             })

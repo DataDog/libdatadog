@@ -3,7 +3,6 @@
 use super::pprof::*;
 use super::prof_table::*;
 use super::string_table::StringTable;
-use super::u63::u63;
 use bumpalo::Bump;
 use std::hash::Hash;
 use std::ops::Range;
@@ -48,7 +47,7 @@ impl<'s> SymbolTable<'s> {
         Self::fetch_range(&self.functions, range)
     }
 
-    pub fn strings(&self, range: Range<usize>) -> anyhow::Result<Vec<(u63, String)>> {
+    pub fn strings(&self, range: Range<usize>) -> anyhow::Result<Vec<(i64, String)>> {
         let set = &self.strings;
 
         anyhow::ensure!(
@@ -60,12 +59,16 @@ impl<'s> SymbolTable<'s> {
 
         // Iterate on one range, slice by the other.
         let range2 = range.clone();
-        let result: anyhow::Result<Vec<_>> = range
+        let result: Vec<_> = range
             .into_iter()
             .zip(set[range2].iter())
-            .map(|(offset, str)| Ok((u63::try_from(offset)?, str.to_string())))
+            .map(|(offset, str_ref)| {
+                #[cfg(target_pointer_width = "64")]
+                let id = offset as isize as i64;
+                (id, str_ref.to_string())
+            })
             .collect();
-        result
+        Ok(result)
     }
 
     pub fn fetch_diff(&self, diff: DiffRange) -> anyhow::Result<Diff> {
@@ -87,7 +90,7 @@ impl<'s> SymbolTable<'s> {
         for (id, string) in &diff.strings {
             let id = *id;
             let new_id = transaction.add_string(string);
-            if id != u63::default() {
+            if id != 0 {
                 anyhow::ensure!(
                     id == new_id,
                     "interning string \"{string}\" resulted in {new_id}, expected {id}"
@@ -96,7 +99,7 @@ impl<'s> SymbolTable<'s> {
         }
         for function in &diff.functions {
             let id = function.id;
-            let new_id: u64 = transaction.add_function(*function).into();
+            let new_id = transaction.add_function(*function);
             if id != 0 {
                 anyhow::ensure!(
                     new_id == id,
@@ -106,7 +109,7 @@ impl<'s> SymbolTable<'s> {
         }
         for mapping in &diff.mappings {
             let id = mapping.id;
-            let new_id: u64 = transaction.add_mapping(*mapping).into();
+            let new_id = transaction.add_mapping(*mapping);
             if id != 0 {
                 anyhow::ensure!(
                     new_id == id,
@@ -116,7 +119,7 @@ impl<'s> SymbolTable<'s> {
         }
         for location in &diff.locations {
             let id = location.id;
-            let new_id: u64 = transaction.add_location(location.clone()).into();
+            let new_id = transaction.add_location(location.clone());
             if id != 0 {
                 anyhow::ensure!(
                     new_id == id,
@@ -134,7 +137,7 @@ pub struct Diff {
     locations: Vec<Location>,
     mappings: Vec<Mapping>,
     functions: Vec<Function>,
-    strings: Vec<(u63, String)>,
+    strings: Vec<(i64, String)>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -167,16 +170,18 @@ impl<'a, 's: 'a> Transaction<'a, 's> {
         range.end = offset + 1;
     }
 
-    fn add<T: Storable>(table: &mut ProfTable<T>, diff: &mut Range<usize>, value: &T) -> u63 {
+    fn add<T: Storable>(table: &mut ProfTable<T>, diff: &mut Range<usize>, value: &T) -> u64 {
         let (value, inserted) = table.insert_full(value);
-        let id = u64::from(value.get_id()).into();
+        let id = value.get_id();
         if inserted {
-            Self::push_range(diff, usize::from(id));
+            #[cfg(target_pointer_width = "64")]
+            let offset = id as usize;
+            Self::push_range(diff, offset);
         }
         id
     }
 
-    pub fn add_mapping(&mut self, mapping: Mapping) -> u63 {
+    pub fn add_mapping(&mut self, mapping: Mapping) -> u64 {
         Self::add(
             &mut self.symbol_table.mappings,
             &mut self.diff.mappings,
@@ -184,7 +189,7 @@ impl<'a, 's: 'a> Transaction<'a, 's> {
         )
     }
 
-    pub fn add_location(&mut self, location: Location) -> u63 {
+    pub fn add_location(&mut self, location: Location) -> u64 {
         Self::add(
             &mut self.symbol_table.locations,
             &mut self.diff.locations,
@@ -192,7 +197,7 @@ impl<'a, 's: 'a> Transaction<'a, 's> {
         )
     }
 
-    pub fn add_function(&mut self, function: Function) -> u63 {
+    pub fn add_function(&mut self, function: Function) -> u64 {
         Self::add(
             &mut self.symbol_table.functions,
             &mut self.diff.functions,
@@ -200,7 +205,7 @@ impl<'a, 's: 'a> Transaction<'a, 's> {
         )
     }
 
-    pub fn add_string(&mut self, str: impl AsRef<str>) -> u63 {
+    pub fn add_string(&mut self, str: impl AsRef<str>) -> i64 {
         let str = str.as_ref();
 
         let (offset, inserted) = self.symbol_table.strings.insert_full(str);
@@ -209,7 +214,9 @@ impl<'a, 's: 'a> Transaction<'a, 's> {
             Self::push_range(&mut self.diff.strings, offset);
         }
 
-        offset.try_into().unwrap()
+        #[cfg(target_pointer_width = "64")]
+        let id = offset as isize as i64;
+        id
     }
 
     pub fn save(mut self) -> DiffRange {
@@ -282,10 +289,7 @@ mod tests {
                 filename: 2,
                 ..Function::default()
             }],
-            strings: vec![
-                (u63::new(1), String::from("main")),
-                (u63::new(2), String::from("main.c")),
-            ],
+            strings: vec![(1, String::from("main")), (2, String::from("main.c"))],
         };
 
         let expect = test1.clone();
@@ -332,10 +336,7 @@ mod tests {
                 filename: 4,
                 ..Function::default()
             }],
-            strings: vec![
-                (u63::new(3), String::from("test")),
-                (u63::new(4), String::from("test.c")),
-            ],
+            strings: vec![(3, String::from("test")), (4, String::from("test.c"))],
         };
 
         let expect = test2.clone();
