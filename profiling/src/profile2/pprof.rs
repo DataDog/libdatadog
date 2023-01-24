@@ -2,7 +2,6 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use derivative::Derivative;
-use prost::EncodeError;
 
 #[derive(Eq, Hash, PartialEq, ::prost::Message)]
 pub struct Profile {
@@ -34,13 +33,6 @@ pub struct Profile {
     pub comment: Vec<i64>,
     #[prost(int64, tag = "14")]
     pub default_sample_type: i64,
-}
-
-impl Profile {
-    pub fn write_to_vec(&self, buffer: &mut Vec<u8>) -> Result<(), EncodeError> {
-        use prost::Message;
-        self.encode(buffer)
-    }
 }
 
 #[derive(Eq, Hash, PartialEq, ::prost::Message)]
@@ -85,12 +77,25 @@ pub struct Label {
 }
 
 impl Label {
+    // If it's unused, it just means the client didn't have any string labels.
+    #[allow(unused)]
     pub fn str(key: i64, str: i64) -> Self {
         Self {
             key,
             str,
             num: 0,
             num_unit: 0,
+        }
+    }
+
+    // If it's unused, it just means the client didn't have any numeric labels.
+    #[allow(unused)]
+    pub fn num(key: i64, num: i64, num_unit: i64) -> Self {
+        Self {
+            key,
+            str: 0,
+            num,
+            num_unit,
         }
     }
 }

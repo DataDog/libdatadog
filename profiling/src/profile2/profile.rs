@@ -84,7 +84,8 @@ mod tests {
         let mut transaction = symbols.begin_transaction();
         let wall_samples = transaction.add_string("wall-samples");
         let count = transaction.add_string("count");
-        let nanoseconds = transaction.add_string("nanoseconds");
+        let wall_time = transaction.add_string("wall-time");
+        let milliseconds = transaction.add_string("milliseconds");
 
         let str_main = transaction.add_string("main");
         let str_main_c = transaction.add_string("main.c");
@@ -117,7 +118,15 @@ mod tests {
             r#type: wall_samples,
             unit: count,
         }];
-        let profile = Profile::new(unified_service_tags, sample_types, 0, None);
+
+        let period = Some((
+            10,
+            ValueType {
+                r#type: wall_time,
+                unit: milliseconds,
+            },
+        ));
+        let profile = Profile::new(unified_service_tags, sample_types, 0, period);
 
         let samples = vec![Sample {
             locations: vec![location],
