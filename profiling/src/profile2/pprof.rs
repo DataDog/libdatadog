@@ -77,8 +77,6 @@ pub struct Label {
 }
 
 impl Label {
-    // If it's unused, it just means the client didn't have any string labels.
-    #[allow(unused)]
     pub fn str(key: i64, str: i64) -> Self {
         Self {
             key,
@@ -88,8 +86,6 @@ impl Label {
         }
     }
 
-    // If it's unused, it just means the client didn't have any numeric labels.
-    #[allow(unused)]
     pub fn num(key: i64, num: i64, num_unit: i64) -> Self {
         Self {
             key,

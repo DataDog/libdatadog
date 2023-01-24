@@ -8,7 +8,7 @@ mod string_table;
 mod symbol_table;
 mod u63;
 
-pub use pprof::{Function, Line, Location, Mapping, ValueType};
+pub use pprof::{Function, Label, Line, Location, Mapping, ValueType};
 pub use prof_table::*;
 pub use profile::*;
 pub use string_table::*;
