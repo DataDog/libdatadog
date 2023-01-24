@@ -1,7 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 use super::pprof::*;
-use super::prof_table::{ProfTable, Storable};
+use super::prof_table::*;
 use super::string_table::StringTable;
 use super::u63::u63;
 use bumpalo::Bump;
@@ -169,9 +169,9 @@ impl<'a, 's: 'a> Transaction<'a, 's> {
 
     fn add<T: Storable>(table: &mut ProfTable<T>, diff: &mut Range<usize>, value: &T) -> u63 {
         let (value, inserted) = table.insert_full(value);
-        let id = value.get_id().into();
+        let id = u64::from(value.get_id()).into();
         if inserted {
-            Self::push_range(diff, id.into());
+            Self::push_range(diff, usize::from(id));
         }
         id
     }

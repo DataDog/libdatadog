@@ -1,5 +1,5 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use ahash::RandomState;
 use bumpalo::collections::String;
@@ -40,7 +40,9 @@ impl<'s> StringTable<'s> {
         self.strings.len()
     }
 
-    pub fn is_empty(&self) -> bool { self.strings.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.strings.is_empty()
+    }
 
     /// # Safety
     /// The arena must be treated as if the string table owns it!

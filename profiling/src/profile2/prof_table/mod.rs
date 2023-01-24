@@ -1,55 +1,17 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-use super::pprof::{Function, Location, Mapping};
-use super::u63::u63;
+mod id;
+mod storable;
+
 use ahash::RandomState;
 use bumpalo::Bump;
 use std::collections::HashSet;
-use std::fmt::Debug;
-use std::hash::Hash;
 use std::ops::Index;
 
-pub trait Storable: Clone + Debug + Default + Eq + Hash + PartialEq {
-    type Id: From<u63> + Copy + Into<u63> + Debug + Eq;
-    fn set_id(&mut self, id: u63);
-    fn get_id(&self) -> Self::Id;
-}
+pub use id::*;
+pub use storable::*;
 
-impl Storable for Function {
-    type Id = u64;
-    fn set_id(&mut self, id: u63) {
-        self.id = id.into()
-    }
-
-    fn get_id(&self) -> Self::Id {
-        self.id
-    }
-}
-
-impl Storable for Location {
-    type Id = u64;
-    fn set_id(&mut self, id: u63) {
-        self.id = id.into()
-    }
-
-    fn get_id(&self) -> Self::Id {
-        self.id
-    }
-}
-
-impl Storable for Mapping {
-    type Id = u64;
-    fn set_id(&mut self, id: u63) {
-        self.id = id.into()
-    }
-
-    fn get_id(&self) -> Self::Id {
-        self.id
-    }
-}
-
-/// todo: fix docs
 pub struct ProfTable<'arena, T: Storable> {
     arena: &'arena Bump,
     vec: Vec<&'arena T>,
@@ -63,7 +25,9 @@ impl<'arena, T: Storable> ProfTable<'arena, T> {
         self.vec.len()
     }
 
-    pub fn is_empty(&self) -> bool { self.vec.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.vec.is_empty()
+    }
 
     /// # Safety
     /// The arena must not be reset while the ProfTable exists!
@@ -84,7 +48,7 @@ impl<'arena, T: Storable> ProfTable<'arena, T> {
             None => {
                 // Clone the value and update the id.
                 let mut cloned = value.clone();
-                let id: u63 = self.vec.len().into();
+                let id: Id = self.vec.len().into();
                 cloned.set_id(id);
 
                 // Move it into the arena and insert its reference to the vec and set.
@@ -103,8 +67,8 @@ impl<'arena, T: Storable> ProfTable<'arena, T> {
     }
 
     #[allow(unused)]
-    pub fn get(&self, id: T::Id) -> &'arena T {
-        let index: u63 = id.into();
+    pub fn get(&self, id: Id) -> &'arena T {
+        let index: Id = id.into();
         let offset: usize = index.into();
         let r = self.vec[offset];
         assert_eq!(r.get_id(), id);
