@@ -1,22 +1,25 @@
+#![deny(clippy::all)]
+
 use curl::easy::{Easy, List};
 use prost::Message;
 use std::collections::HashMap;
-use std::ffi::c_char;
-use std::ffi::CStr;
-use std::io::Cursor;
-use std::io::Read;
-use std::str;
-
-pub mod pb {
-    include!("./pb.rs");
-}
-
 use std::env;
 use std::time::SystemTime;
-
 use serde::{Deserialize, Serialize};
-// use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT, CONTENT_TYPE};
-// use reqwest::blocking::Body;
+use std::str;
+use std::io::Cursor;
+use std::io::Read;
+
+// use std::ffi::c_char;
+// use std::ffi::CStr;
+// use napi::{CallContext, Error, JsNumber, JsObject, JsUnknown, Result, Status};
+
+pub mod pb {
+    include!("pb.rs");
+}
+
+#[macro_use]
+extern crate napi_derive;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[repr(C)]
@@ -31,31 +34,6 @@ pub struct Span {
     duration: i64,
     error: i32,
 }
-
-// fn main() -> std::io::Result<()> {
-//     match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-//         Ok(n) => {
-//             println!("[trace_sender] first line of main {:?}", n.as_millis())
-//         }
-//         Err(_) => panic!("SystemTime error"),
-//     }
-
-//     let args: Vec<String> = env::args().collect();
-//     if args.len() != 2 {
-//         println!("[trace_sender] usage: ./trace_sender trace_to_send");
-//         panic!()
-//     } else {
-//         let trace_to_send = &args[1];
-//         if String::from(trace_to_send).eq(&String::from("ping")) {
-//             println!("[trace_sender] pong!");
-//         } else {
-//             println!("[trace_sender] spans received = {}", trace_to_send);
-//             let spans: Vec<Span> = serde_json::from_str(trace_to_send).unwrap();
-//             // send_trace(spans)?;
-//         }
-//         Ok(())
-//     }
-// }
 
 fn construct_headers() -> std::io::Result<List> {
     let api_key;
@@ -86,8 +64,17 @@ fn send(data: Vec<u8>) -> std::io::Result<Vec<u8>> {
 
         transfer.read_function(|buf| Ok(data_cursor.read(buf).unwrap_or(0)))?;
 
+        println!("PERFORMING SEND NOW");
+
         transfer.write_function(|result_data| {
             dst.extend_from_slice(result_data);
+            match str::from_utf8(result_data) {
+                Ok(v) => {
+                    println!("sent-----------------");
+                    println!("successfully sent:::::: {:?}", v);
+                },
+                Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
+            };
             Ok(result_data.len())
         })?;
 
@@ -96,23 +83,10 @@ fn send(data: Vec<u8>) -> std::io::Result<Vec<u8>> {
     return Ok(dst);
 }
 
-// fn construct_headers() -> HeaderMap {
-//     let api_key;
-//     match env::var("DD_API_KEY") {
-//         Ok(key) => api_key = key,
-//         Err(_) => panic!("oopsy, no DD_API_KEY was provided"),
-//     }
-//     let mut headers = HeaderMap::new();
-//     headers.insert(USER_AGENT, HeaderValue::from_static("ffi-test"));
-//     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/x-protobuf"));
-//     headers.insert("DD-API-KEY", HeaderValue::from_str(&api_key).unwrap());
-//     headers.insert("X-Datadog-Reported-Languages", HeaderValue::from_static("nodejs"));
-//     //headers.insert("Content-Encoding", HeaderValue::from_static("gzip"));
-//     headers
-// }
-
 #[no_mangle]
-pub extern "C" fn send_trace(trace_str: *const c_char, before_time: i64) {
+#[napi]
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn send_trace(trace_str: String, before_time: i64) {
     let duration_since_epoch = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap();
@@ -127,14 +101,7 @@ pub extern "C" fn send_trace(trace_str: *const c_char, before_time: i64) {
 
     println!("SENDING TRACE FROM RUST");
 
-    let c_str = unsafe {
-        assert!(!trace_str.is_null());
-        CStr::from_ptr(trace_str)
-    };
-
-    println!("{:?}", c_str);
-
-    let r_str = c_str.to_str().unwrap();
+    let r_str = trace_str.as_str();
 
     let spans: Vec<Span> = serde_json::from_str(r_str).expect("Couldn't unwrap JSON");
 
@@ -151,8 +118,9 @@ pub extern "C" fn send_trace(trace_str: *const c_char, before_time: i64) {
 
     let mut meta_map = HashMap::new();
     meta_map.insert("poc".to_string(), "true".to_string());
+    meta_map.insert("napi_rs".to_string(), "true".to_string());
     meta_map.insert("_dd.origin".to_string(), "ffi-service".to_string());
-
+    
     let mut metrics_map = HashMap::new();
     metrics_map.insert("_dd.agent_psr".to_string(), 1 as f64);
     metrics_map.insert("_sample_rate".to_string(), 1 as f64);
@@ -266,21 +234,12 @@ pub extern "C" fn send_trace(trace_str: *const c_char, before_time: i64) {
             panic!("Error sending trace: {:?}", e);
         }
     }
-    // let client = reqwest::blocking::Client::new();
-
-    // match client.post("https://trace.agent.datadoghq.com/api/v0.2/traces")
-    //     .headers(construct_headers())
-    //     .body(Body::from(encoded))
-    //     .send() {
-    //         Ok(res) => println!("{:?}", res.text()),
-    //         Err(e) => println!("{:?}", e)
-    //     }
 
     match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(n) => {
-            println!("after send {:?}", n.as_millis())
-        }
-        Err(_) => panic!("SystemTime error"),
+      Ok(n) => {
+          println!("before send {:?}", n.as_millis())
+      }
+      Err(_) => panic!("SystemTime error"),
     }
 }
 
@@ -290,3 +249,4 @@ pub fn serialize_agent_payload(payload: &pb::AgentPayload) -> Vec<u8> {
     payload.encode(&mut buf).unwrap();
     buf
 }
+

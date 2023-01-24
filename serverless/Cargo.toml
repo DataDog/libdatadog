@@ -1,10 +1,12 @@
 [package]
 name = "serverless"
-version = "0.1.0"
-authors = ["Maxime DAVID <maxime.david@datadoghq.com>", "Ivan Topolcic <ivan.topolcic@datadoghq.com>", "David Lee <david.lee@datadoghq.com>"]
+version = "0.0.0"
+authors = ["Maxime DAVID <maxime.david@datadoghq.com>"]
 edition = "2021"
 
 [dependencies]
+napi = { version = "2.10.6", default-features = false, features = ["napi4"] }
+napi-derive = "2.9.4"
 curl = "0.4.44"
 serde_json = "1.0.87"
 serde = { version = "1.0.145", features = ["derive"] }
@@ -12,16 +14,17 @@ prost = "0.6"
 
 [build-dependencies]
 prost-build = { version = "0.6" }
+napi-build = "2.0.1"
 
 [profile.release]
-opt-level = 'z'
+opt-level = 'z'  # Optimize for size.
 lto = true
 codegen-units = 1
 panic = 'abort'
 strip = true
 
 [profile.dev]
-opt-level = 'z'
+opt-level = 'z'  # Optimize for size.
 lto = true
 codegen-units = 1
 panic = 'abort'
@@ -29,5 +32,5 @@ strip = true
 debug-assertions = false
 
 [lib]
-name = "ddtracer"
+name = "serverless"
 crate-type = ["cdylib"]
