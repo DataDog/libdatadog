@@ -4,8 +4,6 @@
 pub mod api;
 pub mod pprof;
 pub mod profiled_endpoints;
-mod symbol_table;
-mod u63;
 
 use core::fmt;
 use std::borrow::{Borrow, Cow};
