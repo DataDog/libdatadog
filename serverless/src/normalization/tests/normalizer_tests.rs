@@ -341,4 +341,13 @@ mod normalize_tests {
         assert!(normalizer::normalize(&mut test_span).is_ok());
         assert_eq!("development", test_span.meta.get("env").unwrap());
     }
+
+    #[test]
+    pub fn test_is_valid_status_code() {
+        assert!(normalizer::is_valid_status_code("100".to_string()));
+        assert!(normalizer::is_valid_status_code("599".to_string()));
+        assert!(!normalizer::is_valid_status_code("99".to_string()));
+        assert!(!normalizer::is_valid_status_code("600".to_string()));
+        assert!(!normalizer::is_valid_status_code("Invalid status code".to_string()));
+    }
 }
