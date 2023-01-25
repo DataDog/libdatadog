@@ -62,7 +62,7 @@ impl From<Box<&dyn std::error::Error>> for Error {
 }
 
 /// # Safety
-/// Only pass null or a valid reference to an Error.
+/// Only pass null or a valid reference to a `ddog_Error`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
     if let Some(err) = error {
@@ -76,7 +76,7 @@ pub unsafe extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
 /// Returns a CharSlice of the error's message that is valid until the error
 /// is dropped.
 /// # Safety
-/// Only pass null or a valid reference to an Error.
+/// Only pass null or a valid reference to a `ddog_Error`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_Error_message(error: Option<&Error>) -> CharSlice {
     match error {
