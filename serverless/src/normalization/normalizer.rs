@@ -3,15 +3,15 @@ use crate::errors;
 use crate::normalize_utils;
 use crate::pb;
 
-const MAX_TYPE_LEN: i64 = 100;
+pub const MAX_TYPE_LEN: i64 = 100;
 const TAG_ORIGIN: &str = "_dd.origin";
 const TAG_SAMPLING_PRIORITY: &str = "_sampling_priority_v1";
 
 // an arbitrary cutoff to spot weird-looking values
 // nanoseconds since epoch on Jan 1, 2000
-const YEAR_2000_NANOSEC_TS: i64 = 946684800000000000;
+pub const YEAR_2000_NANOSEC_TS: i64 = 946684800000000000;
 
-fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
+pub fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
     if s.trace_id == 0 {
         return Err(errors::NormalizerError::new("TraceID is zero (reason:trace_id_zero)"));
     }
