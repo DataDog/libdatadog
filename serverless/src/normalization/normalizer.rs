@@ -1,10 +1,7 @@
 use std::time::{SystemTime};
 use crate::errors;
 use crate::normalize_utils;
-
-pub mod pb {
-    include!("../../src/pb.rs");
-}
+use crate::pb;
 
 const MAX_TYPE_LEN: i64 = 100;
 const TAG_ORIGIN: &str = "_dd.origin";
@@ -35,7 +32,7 @@ fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
     // TODO: check for a feature flag to determine the component tag to become the span name
     // https://github.com/DataDog/datadog-agent/blob/dc88d14851354cada1d15265220a39dce8840dcc/pkg/trace/agent/normalizer.go#L64
 
-    let (normalized_name, err) = normalize::normalize_name(s.name.clone());
+    let (normalized_name, err) = normalize_utils::normalize_name(s.name.clone());
     match err {
         Some(errors::NormalizeErrors::ErrorEmpty) => println!("Fixing malformed trace. Name is empty (reason:span_name_empty)"),
         Some(errors::NormalizeErrors::ErrorTooLong) => println!("Fixing malformed trace. Name is too long (reason:span_name_truncate)"),
