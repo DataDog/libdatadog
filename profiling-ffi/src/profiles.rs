@@ -325,27 +325,52 @@ pub unsafe extern "C" fn ddog_prof_Profile_drop(
 ) {
 }
 
+#[repr(C)]
+pub enum ProfileAddResult {
+    Ok(u64),
+    Err(ddcommon_ffi::Vec<u8>),
+}
+
+#[cfg(test)]
+impl From<ProfileAddResult> for Result<u64, String> {
+    fn from(result: ProfileAddResult) -> Self {
+        match result {
+            ProfileAddResult::Ok(ok) => Ok(ok),
+            ProfileAddResult::Err(err) => {
+                // Safety: not generally safe but this is for test code.
+                Err(unsafe { String::from_utf8_unchecked(err.into()) })
+            }
+        }
+    }
+}
+
 #[no_mangle]
+pub extern "C" fn ddog_prof_Profile_AddResult_drop(_result: ProfileAddResult) {}
+
 /// # Safety
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module. All pointers inside the `sample` need to be valid for the duration
 /// of this call.
-//// Returns the internal id of the sample (> 0) if successful, and 0 on error.
+///
+/// If successful, it returns the internal id of the sample (> 0) in the Ok
+/// variant. On error, it holds an error message in the error variant.
 ///
 /// # Safety
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module.
 /// This call is _NOT_ thread-safe.
+#[must_use]
+#[no_mangle]
 pub extern "C" fn ddog_prof_Profile_add(
     profile: &mut datadog_profiling::profile::Profile,
     sample: Sample,
-) -> u64 {
+) -> ProfileAddResult {
     match sample.try_into().map(|s| profile.add(s)) {
         Ok(r) => match r {
-            Ok(id) => id.into(),
-            Err(_) => 0,
+            Ok(id) => ProfileAddResult::Ok(id.into()),
+            Err(err) => ProfileAddResult::Err(err.into()),
         },
-        Err(_) => 0,
+        Err(err) => ProfileAddResult::Err(anyhow::Error::from(err).into()),
     }
 }
 
@@ -442,6 +467,7 @@ pub enum SerializeResult {
 /// The `profile` must point to a valid profile object.
 /// The `end_time` must be null or otherwise point to a valid TimeSpec object.
 /// The `duration_nanos` must be null or otherwise point to a valid i64.
+#[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     profile: &datadog_profiling::profile::Profile,
@@ -493,6 +519,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_reset(
 mod test {
     use crate::profiles::*;
     use ddcommon_ffi::Slice;
+    use std::borrow::BorrowMut;
 
     #[test]
     fn ctor_and_dtor() {
@@ -500,6 +527,28 @@ mod test {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
             let profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
             ddog_prof_Profile_drop(profile);
+        }
+    }
+
+    #[test]
+    fn add_failure() {
+        unsafe {
+            let sample_type: *const ValueType = &ValueType::new("samples", "count");
+            let mut profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
+
+            // wrong number of values (doesn't match sample types)
+            let values: &[i64] = &[];
+
+            let sample = Sample {
+                locations: Slice::default(),
+                values: Slice::from(values),
+                labels: Slice::default(),
+            };
+
+            let aggregator = profile.borrow_mut();
+
+            let result = Result::from(ddog_prof_Profile_add(aggregator, sample));
+            result.unwrap_err();
         }
     }
 
@@ -544,10 +593,10 @@ mod test {
 
             let aggregator = &mut *profile;
 
-            let sample_id1 = ddog_prof_Profile_add(aggregator, sample);
+            let sample_id1 = Result::from(ddog_prof_Profile_add(aggregator, sample)).unwrap();
             assert_eq!(sample_id1, 1);
 
-            let sample_id2 = ddog_prof_Profile_add(aggregator, sample);
+            let sample_id2 = Result::from(ddog_prof_Profile_add(aggregator, sample)).unwrap();
             assert_eq!(sample_id1, sample_id2);
 
             ddog_prof_Profile_drop(profile);
@@ -615,10 +664,11 @@ mod test {
 
         let aggregator = &mut *profile;
 
-        let sample_id1 = ddog_prof_Profile_add(aggregator, main_sample);
+        let sample_id1 = Result::from(ddog_prof_Profile_add(aggregator, main_sample)).unwrap();
+
         assert_eq!(sample_id1, 1);
 
-        let sample_id2 = ddog_prof_Profile_add(aggregator, test_sample);
+        let sample_id2 = Result::from(ddog_prof_Profile_add(aggregator, test_sample)).unwrap();
         assert_eq!(sample_id2, 2);
 
         *profile

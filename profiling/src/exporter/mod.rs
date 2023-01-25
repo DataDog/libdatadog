@@ -57,6 +57,7 @@ pub struct File<'a> {
     pub bytes: &'a [u8],
 }
 
+#[derive(Debug)]
 pub struct Request {
     timeout: Option<std::time::Duration>,
     req: hyper::Request<hyper::Body>,

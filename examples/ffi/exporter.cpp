@@ -66,11 +66,17 @@ int main(int argc, char *argv[]) {
       .values = {&value, 1},
       .labels = {&label, 1},
   };
-  ddog_prof_Profile_add(profile.get(), sample);
+  auto add_result = ddog_prof_Profile_add(profile.get(), sample);
+  if (add_result.tag != DDOG_PROF_PROFILE_ADD_RESULT_OK) {
+    print_error("Failed to add sample to profile: ", add_result.err);
+    ddog_prof_Profile_AddResult_drop(add_result);
+    return 1;
+  }
 
   ddog_prof_Profile_SerializeResult serialize_result = ddog_prof_Profile_serialize(profile.get(), nullptr, nullptr);
   if (serialize_result.tag == DDOG_PROF_PROFILE_SERIALIZE_RESULT_ERR) {
     print_error("Failed to serialize profile: ", serialize_result.err);
+    ddog_prof_Profile_SerializeResult_drop(serialize_result);
     return 1;
   }
 
@@ -114,7 +120,7 @@ int main(int argc, char *argv[]) {
 
   ddog_prof_Exporter_Slice_File files = {.ptr = files_, .len = sizeof files_ / sizeof *files_};
 
-  ddog_prof_Exporter_Request *request = ddog_prof_Exporter_Request_build(
+  ddog_prof_Exporter_Request_BuildResult build_result = ddog_prof_Exporter_Request_build(
     exporter,
     encoded_profile->start,
     encoded_profile->end,
@@ -123,6 +129,14 @@ int main(int argc, char *argv[]) {
     nullptr,
     30000
   );
+
+  if (build_result.tag == DDOG_PROF_EXPORTER_REQUEST_BUILD_RESULT_ERR) {
+    print_error("Failed to build request: ", build_result.err);
+    ddog_prof_Exporter_Request_BuildResult_drop(build_result);
+    return 1;
+  }
+
+  ddog_prof_Exporter_Request *request = build_result.ok;
 
   ddog_CancellationToken *cancel = ddog_CancellationToken_new();
   ddog_CancellationToken *cancel_for_background_thread = ddog_CancellationToken_clone(cancel);
