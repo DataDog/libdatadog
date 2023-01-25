@@ -18,6 +18,22 @@ pub mod pb {
     include!("pb.rs");
 }
 
+mod normalize_tests {
+    include!("./tests/normalize_tests.rs");
+}
+
+pub mod normalizer {
+    include!("./normalizer.rs");
+}
+
+pub mod normalize_utils {
+    include!("./normalize_utils.rs");
+}
+
+pub mod errors {
+    include!("./errors.rs");
+}
+
 #[macro_use]
 extern crate napi_derive;
 
