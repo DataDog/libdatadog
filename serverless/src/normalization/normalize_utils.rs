@@ -32,19 +32,38 @@ pub fn truncate_utf8(s: String, limit: i64) -> String {
 // NormalizeService normalizes a span service and returns an error describing the reason
 // (if any) why the name was modified.
 pub fn normalize_service(svc: String, lang: String) -> (String, Option<errors::NormalizeErrors>) {
-    // if svc == "" {
-    //     return (fallback_service(lang), errors::NormalizeErrors::ErrorEmpty);
-    // }
-    if svc.len() > MAX_SERVICE_LEN as usize {
-        return (truncate_utf8(svc, MAX_SERVICE_LEN), errors::NormalizeErrors::ErrorTooLong.into());
+    if svc == "" {
+        return (fallback_service(lang), Some(errors::NormalizeErrors::ErrorEmpty));
     }
-    // TODO: implement tag normalization
-    // let s: String = normalize_tag(svc);
-    // if s == "" {
-    //     return (fallbackService(lang), errors::NormalizeErrors::ErrorInvalid)
-    // }
-    // return (s, err)
-    return (svc, None);
+
+    let mut truncated_service = svc.clone();
+    let mut err: Option<errors::NormalizeErrors> = None;
+
+    if svc.len() > MAX_SERVICE_LEN as usize {
+        truncated_service = truncate_utf8(svc, MAX_SERVICE_LEN);
+        err = errors::NormalizeErrors::ErrorTooLong.into();
+    }
+
+    let normalized_service = normalize_tag(truncated_service);
+    if normalized_service == "" {
+        return (fallback_service(lang), Some(errors::NormalizeErrors::ErrorInvalid));
+    }
+    return (normalized_service, err);
+}
+
+// fallbackService returns the fallback service name for a service
+// belonging to language lang.
+pub fn fallback_service(lang: String) -> String {
+    if lang == "" {
+		return DEFAULT_SERVICE_NAME.to_string();
+	}
+    let mut service_name = String::new();
+    service_name.push_str("unnamed-");
+    service_name.push_str(&lang);
+    service_name.push_str("-service");
+    // TODO: the original golang implementation uses a map to cache previously created
+    // service names. Implement that here.
+    return service_name;
 }
 
 // normalize_name normalizes a span name and returns an error describing the reason
@@ -69,18 +88,70 @@ pub fn normalize_name(name: String) -> (String, Option<errors::NormalizeErrors>)
 }
 
 // NormalizeTag applies some normalization to ensure the tags match the backend requirements.
-pub fn normalize_tag(v: String) -> String {
+// TODO: The implementation differs from the original go implementation. Verify this satisfies all
+//       backend tag format requirements and no edge cases are missed.
+pub fn normalize_tag(tag: String) -> String {
     // Fast path: Check if the tag is valid and only contains ASCII characters,
 	// if yes return it as-is right away. For most use-cases this reduces CPU usage.
-	if is_normalized_ascii_tag(v.clone()) {
-		return v;
+	if is_normalized_ascii_tag(tag.clone()) {
+		return tag;
 	}
 
-    if v.len() == 0 {
+    if tag.len() == 0 {
         return "".to_string();
     }
 
-    return "".to_string();
+    // given a dummy value
+    let mut last_char: char = 'a';
+
+    let mut result = String::with_capacity(tag.len());
+
+    let char_vec: Vec<char> = tag.chars().collect();
+
+    for i in 0..char_vec.len() {
+        if result.len() == MAX_TAG_LEN as usize {
+            break;
+        }
+        if char_vec[i].is_lowercase() {
+            result.push(char_vec[i]);
+            last_char = char_vec[i];
+            continue;
+        }
+        if char_vec[i].is_uppercase() {
+            let mut iter = char_vec[i].to_lowercase();
+            if iter.len() == 1 {
+                let c: char = iter.next().unwrap();
+                result.push(c);
+                last_char = c;
+            }
+            continue;
+        }
+        if char_vec[i].is_alphabetic() {
+            result.push(char_vec[i]);
+            last_char = char_vec[i];
+            continue;
+        }
+        if char_vec[i] == ':' {
+            result.push(char_vec[i]);
+            last_char = char_vec[i];
+            continue;
+        }
+        if result.len() > 0 && (char_vec[i].is_ascii_digit() || char_vec[i] == '.' || char_vec[i] == '/' || char_vec[i] == '-') {
+            result.push(char_vec[i]);
+            last_char = char_vec[i];
+            continue;
+        }
+        if result.len() > 0 && last_char != '_' {
+            result.push('_');
+            last_char = '_';
+        }
+    }
+
+    if last_char == '_' {
+        result.remove(result.len() - 1);
+    }
+
+    return result.to_string();
 }
 
 pub fn is_normalized_ascii_tag(tag: String) -> bool {
@@ -120,7 +191,6 @@ pub fn is_valid_ascii_tag_char(c: char) -> bool {
 }
 
 pub fn normalize_metric_names(name: String) -> (String, bool) {
-    println!("3: {}", name);
     if name == "" || name.len() > MAX_NAME_LEN as usize {
         return (name, false);
     }
@@ -137,7 +207,7 @@ pub fn normalize_metric_names(name: String) -> (String, bool) {
     let mut i = 0;
 
     // skip non-alphabetic characters
-    while i < name.len() && !isAlpha(char_vec[0]) {
+    while i < name.len() && !is_alpha(char_vec[0]) {
         i+=1;
     }
 
@@ -147,7 +217,7 @@ pub fn normalize_metric_names(name: String) -> (String, bool) {
     }
 
     while i < name.len() {
-        if isAlphaNum(char_vec[i]) {
+        if is_alpha_num(char_vec[i]) {
             result.push(char_vec[i]);
             last_char = char_vec[i];
         } else if char_vec[i] == '.' {
@@ -176,10 +246,10 @@ pub fn normalize_metric_names(name: String) -> (String, bool) {
     return (result, true);
 }
 
-pub fn isAlpha(c: char) -> bool {
+pub fn is_alpha(c: char) -> bool {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
-pub fn isAlphaNum(c: char) -> bool {
-    return isAlpha(c) || (c >= '0' && c <= '9');
+pub fn is_alpha_num(c: char) -> bool {
+    return is_alpha(c) || (c >= '0' && c <= '9');
 }

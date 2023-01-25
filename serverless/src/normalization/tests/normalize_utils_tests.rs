@@ -4,7 +4,6 @@ mod normalize_tests {
     use crate::errors;
     use crate::normalize_utils;
 
-    #[ignore]
     #[test]
     fn test_normalize_tag() {
         let test_tuples = [
@@ -24,7 +23,7 @@ mod normalize_tests {
             (":::test", ":::test"),
             ("contiguous_____underscores", "contiguous_underscores"),
             ("foo_", "foo"),
-            // ("\u017Fodd_\u017Fcase\u017F", "\u017Fodd_\u017Fcase\u017F"), // edge-case
+            ("\u{017F}odd_\u{017F}case\u{017F}", "\u{017F}odd_\u{017F}case\u{017F}"), // edge-case
             ("", ""),
             (" ", ""),
             ("ok", "ok"),
@@ -40,29 +39,18 @@ mod normalize_tests {
             ("tag:1/2.3", "tag:1/2.3"),
             ("---fun:k####y_ta@#g/1_@@#", "fun:k_y_ta_g/1"),
             ("AlsO:œ#@ö))œk", "also:œ_ö_œk"),
+            // these two tests from normalize_test.go are ommitted as rust requires characters to be in range [\x00-\x7f]
             // ("test\x99\x8faaa", "test_aaa"),
             // ("test\x99\x8f", "test"),
-            // (strings.Repeat("a", 888), strings.Repeat("a", 200)),
-            // (
-            // 	in: func() string {
-            // 		b := bytes.NewBufferString("a")
-            // 		for i := 0; i < 799; i++ {
-            // 			_, err := b.WriteRune('🐶')
-            // 			assert.NoError(t, err)
-            // 		}
-            // 		_, err := b.WriteRune('b')
-            // 		assert.NoError(t, err)
-            // 		return b.String()
-            // 	}(),
-            // 	out: "a", // 'b' should have been truncated
-            // ),
-            // ("a" + string(unicode.ReplacementChar), "a"),
-            // ("a" + string(unicode.ReplacementChar) + string(unicode.ReplacementChar), "a"),
-            // ("a" + string(unicode.ReplacementChar) + string(unicode.ReplacementChar) + "b", "a_b"),
+            (&("a".repeat(888)), &("a".repeat(200))),
+            (&("a".to_string() + &("🐶".repeat(799))), "a"),
+            (&("a".to_string() + &char::REPLACEMENT_CHARACTER.to_string()), "a"),
+            (&("a".to_string() + &char::REPLACEMENT_CHARACTER.to_string() + &char::REPLACEMENT_CHARACTER.to_string()), "a"),
+            (&("a".to_string() + &char::REPLACEMENT_CHARACTER.to_string() + &char::REPLACEMENT_CHARACTER.to_string() + "b"), "a_b"),
             (
                 "A00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 000000000000",
                 "a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000_0"
-            ),
+            )
         ];
 
         for tuple in test_tuples.iter() {
@@ -115,7 +103,6 @@ mod normalize_tests {
         }
     }
 
-    #[ignore]
     #[test]
     fn test_normalize_service() {
         let test_tuples: [(&str, &str, Option<errors::NormalizeErrors>); 4] = [
