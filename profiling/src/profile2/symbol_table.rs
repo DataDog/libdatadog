@@ -9,22 +9,22 @@ use std::ops::Range;
 
 type SymbolSet<'arena, T> = ProfTable<'arena, T>;
 
-pub struct SymbolTable<'arena> {
-    mappings: ProfTable<'arena, Mapping>,
-    locations: SymbolSet<'arena, Location>,
-    functions: SymbolSet<'arena, Function>,
-    strings: StringTable<'arena>,
+pub struct SymbolTable<'strings, 'symbols> {
+    mappings: ProfTable<'symbols, Mapping>,
+    locations: SymbolSet<'symbols, Location>,
+    functions: SymbolSet<'symbols, Function>,
+    strings: StringTable<'strings>,
 }
 
-impl<'s> SymbolTable<'s> {
+impl<'strings, 'symbols> SymbolTable<'strings, 'symbols> {
     /// # Safety
     /// Do not reset the arena until the symbol table is gone.
-    pub unsafe fn new(arena: &'s Bump) -> Self {
+    pub unsafe fn new(strings: &'strings Bump, arena: &'symbols Bump) -> Self {
         Self {
             mappings: ProfTable::new(arena),
             locations: ProfTable::new(arena),
             functions: ProfTable::new(arena),
-            strings: StringTable::new(arena),
+            strings: StringTable::new(strings),
         }
     }
 
@@ -148,13 +148,21 @@ pub struct DiffRange {
     pub strings: Range<usize>,
 }
 
-pub struct Transaction<'symbol_table, 'arena: 'symbol_table> {
-    symbol_table: &'symbol_table mut SymbolTable<'arena>,
+pub struct Transaction<'strings, 'symbols, 'symbol_table>
+where
+    'strings: 'symbol_table,
+    'symbols: 'symbol_table,
+{
+    symbol_table: &'symbol_table mut SymbolTable<'strings, 'symbols>,
     diff: DiffRange,
 }
 
-impl<'a, 's: 'a> Transaction<'a, 's> {
-    pub fn new(symbol_table: &'a mut SymbolTable<'s>) -> Self {
+impl<'strings, 'symbols, 'symbol_table> Transaction<'strings, 'symbols, 'symbol_table>
+where
+    'strings: 'symbol_table,
+    'symbols: 'symbol_table,
+{
+    pub fn new(symbol_table: &'symbol_table mut SymbolTable<'strings, 'symbols>) -> Self {
         Self {
             symbol_table,
             diff: DiffRange::default(),
@@ -226,7 +234,9 @@ impl<'a, 's: 'a> Transaction<'a, 's> {
     }
 }
 
-impl<'a, 's: 'a> Drop for Transaction<'a, 's> {
+impl<'strings: 'symbol_table, 'symbols: 'symbol_table, 'symbol_table> Drop
+    for Transaction<'strings, 'symbols, 'symbol_table>
+{
     fn drop(&mut self) {
         if !self.diff.mappings.is_empty() {
             todo!("implement drop for mappings")
@@ -240,8 +250,12 @@ impl<'a, 's: 'a> Drop for Transaction<'a, 's> {
     }
 }
 
-impl<'s> SymbolTable<'s> {
-    pub fn begin_transaction<'a>(&'a mut self) -> Transaction<'a, 's> {
+impl<'strings, 'symbols> SymbolTable<'strings, 'symbols> {
+    pub fn begin_transaction<'a>(&'a mut self) -> Transaction<'strings, 'symbols, 'a>
+    where
+        'strings: 'a,
+        'symbols: 'a,
+    {
         Transaction::new(self)
     }
 }
@@ -258,9 +272,10 @@ mod tests {
 
     #[test]
     fn test_empty_cases() {
-        let arena = Bump::new();
+        let symbol_arena = Bump::new();
+        let string_arena = Bump::new();
         // Safety: the arena is not touched outside of the symbol table.
-        let mut symbol_table = unsafe { SymbolTable::new(&arena) };
+        let mut symbol_table = unsafe { SymbolTable::new(&string_arena, &symbol_arena) };
 
         let input = Diff {
             locations: vec![Default::default()],
@@ -276,9 +291,10 @@ mod tests {
 
     #[test]
     fn test_symbol_table_happy_path() {
-        let arena = Bump::new();
+        let symbol_arena = Bump::new();
+        let string_arena = Bump::new();
         // Safety: the arena is not touched outside of the symbol table.
-        let mut symbol_table = unsafe { SymbolTable::new(&arena) };
+        let mut symbol_table = unsafe { SymbolTable::new(&string_arena, &symbol_arena) };
 
         let test1 = Diff {
             locations: vec![],

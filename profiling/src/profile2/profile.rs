@@ -59,16 +59,18 @@ mod tests {
 
     #[test]
     pub fn send() {
-        let arena = Bump::new();
-        // Safety: I pinky promise not to reset arena while symbols are alive.
-        let mut symbols = unsafe { SymbolTable::new(&arena) };
+        let symbol_arena = Bump::new();
+        let string_arena = Bump::new();
+        // Safety: the arena is not touched outside of the symbol table.
+        let mut symbols = unsafe { SymbolTable::new(&string_arena, &symbol_arena) };
 
         let (sender, receiver) = channel::<Record>();
 
         let join_handle = std::thread::spawn(move || {
-            let arena = Bump::new();
-            // Safety: I pinky promise not to reset arena while symbols are alive.
-            let mut symbols = unsafe { SymbolTable::new(&arena) };
+            let symbol_arena = Bump::new();
+            let string_arena = Bump::new();
+            // Safety: the arena is not touched outside of the symbol table.
+            let mut symbols = unsafe { SymbolTable::new(&string_arena, &symbol_arena) };
 
             let record = receiver.recv().unwrap();
 
