@@ -2,13 +2,13 @@
 
 use curl::easy::{Easy, List};
 use prost::Message;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
-use std::time::SystemTime;
-use serde::{Deserialize, Serialize};
-use std::str;
 use std::io::Cursor;
 use std::io::Read;
+use std::str;
+use std::time::SystemTime;
 
 // use std::ffi::c_char;
 // use std::ffi::CStr;
@@ -91,7 +91,7 @@ fn send(data: Vec<u8>) -> std::io::Result<Vec<u8>> {
                 Ok(v) => {
                     println!("sent-----------------");
                     println!("successfully sent:::::: {:?}", v);
-                },
+                }
                 Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
             };
             Ok(result_data.len())
@@ -139,7 +139,6 @@ pub extern "C" fn send_trace(trace_str: String, before_time: i64) {
     meta_map.insert("poc".to_string(), "true".to_string());
     meta_map.insert("napi_rs".to_string(), "true".to_string());
     meta_map.insert("_dd.origin".to_string(), "ffi-service".to_string());
-    
     let mut metrics_map = HashMap::new();
     metrics_map.insert("_dd.agent_psr".to_string(), 1_f64);
     metrics_map.insert("_sample_rate".to_string(), 1_f64);
@@ -254,10 +253,10 @@ pub extern "C" fn send_trace(trace_str: String, before_time: i64) {
     }
 
     match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-      Ok(n) => {
-          println!("before send {:?}", n.as_millis())
-      }
-      Err(_) => panic!("SystemTime error"),
+        Ok(n) => {
+            println!("before send {:?}", n.as_millis())
+        }
+        Err(_) => panic!("SystemTime error"),
     }
 }
 
@@ -267,4 +266,3 @@ pub fn serialize_agent_payload(payload: &pb::AgentPayload) -> Vec<u8> {
     payload.encode(&mut buf).unwrap();
     buf
 }
-
