@@ -56,9 +56,8 @@ pub struct Span {
 }
 
 fn construct_headers() -> std::io::Result<List> {
-    let api_key;
-    match env::var("DD_API_KEY") {
-        Ok(key) => api_key = key,
+    let api_key = match env::var("DD_API_KEY") {
+        Ok(key) => key,
         Err(_) => panic!("oopsy, no DD_API_KEY was provided"),
     };
     let mut list = List::new();
@@ -100,7 +99,7 @@ fn send(data: Vec<u8>) -> std::io::Result<Vec<u8>> {
 
         transfer.perform()?;
     }
-    return Ok(dst);
+    Ok(dst)
 }
 
 #[no_mangle]
@@ -142,10 +141,10 @@ pub extern "C" fn send_trace(trace_str: String, before_time: i64) {
     meta_map.insert("_dd.origin".to_string(), "ffi-service".to_string());
     
     let mut metrics_map = HashMap::new();
-    metrics_map.insert("_dd.agent_psr".to_string(), 1 as f64);
-    metrics_map.insert("_sample_rate".to_string(), 1 as f64);
-    metrics_map.insert("_sampling_priority_v1".to_string(), 1 as f64);
-    metrics_map.insert("_top_level".to_string(), 1 as f64);
+    metrics_map.insert("_dd.agent_psr".to_string(), 1_f64);
+    metrics_map.insert("_sample_rate".to_string(), 1_f64);
+    metrics_map.insert("_sampling_priority_v1".to_string(), 1_f64);
+    metrics_map.insert("_top_level".to_string(), 1_f64);
 
     for single_span in spans.iter() {
         let span = pb::Span {
@@ -182,7 +181,7 @@ pub extern "C" fn send_trace(trace_str: String, before_time: i64) {
         service: "ffi-service".to_string(),
         name: "gcp.cloud-function".to_string(),
         resource: "gcp.cloud-function".to_string(),
-        trace_id: trace_id,
+        trace_id,
         span_id: span_id + 1,
         parent_id: 0,
         start: min_start_date,
@@ -212,14 +211,13 @@ pub extern "C" fn send_trace(trace_str: String, before_time: i64) {
         dropped_trace: false,
     };
 
-    let mut chunks = Vec::<pb::TraceChunk>::new();
-    chunks.push(trace_chunk);
+    let chunks = vec![trace_chunk];
 
     let single_payload = pb::TracerPayload {
         app_version: "ffi-1.0.0".to_string(),
         language_name: "ffi-nodejs".to_string(),
         container_id: "ffi-containerid".to_string(),
-        chunks: chunks,
+        chunks,
         env: "ffi-env".to_string(),
         hostname: "ffi-hostname".to_string(),
         language_version: "ffi-nodejs-version".to_string(),
@@ -236,7 +234,7 @@ pub extern "C" fn send_trace(trace_str: String, before_time: i64) {
         error_tps: 60.0,
         target_tps: 60.0,
         tags: tags.clone(),
-        tracer_payloads: tracer_payloads,
+        tracer_payloads,
     };
 
     match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
