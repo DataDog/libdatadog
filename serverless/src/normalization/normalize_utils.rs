@@ -26,13 +26,13 @@ pub fn truncate_utf8(s: String, limit: i64) -> String {
         }
         prev_index = i;
     }
-    return s;
+    s
 }
 
 // NormalizeService normalizes a span service and returns an error describing the reason
 // (if any) why the name was modified.
 pub fn normalize_service(svc: String, lang: String) -> (String, Option<errors::NormalizeErrors>) {
-    if svc == "" {
+    if svc.is_empty() {
         return (fallback_service(lang), Some(errors::NormalizeErrors::ErrorEmpty));
     }
 
@@ -45,16 +45,16 @@ pub fn normalize_service(svc: String, lang: String) -> (String, Option<errors::N
     }
 
     let normalized_service = normalize_tag(truncated_service);
-    if normalized_service == "" {
+    if normalized_service.is_empty() {
         return (fallback_service(lang), Some(errors::NormalizeErrors::ErrorInvalid));
     }
-    return (normalized_service, err);
+    (normalized_service, err)
 }
 
 // fallbackService returns the fallback service name for a service
 // belonging to language lang.
 pub fn fallback_service(lang: String) -> String {
-    if lang == "" {
+    if lang.is_empty() {
 		return DEFAULT_SERVICE_NAME.to_string();
 	}
     let mut service_name = String::new();
@@ -63,7 +63,7 @@ pub fn fallback_service(lang: String) -> String {
     service_name.push_str("-service");
     // TODO: the original golang implementation uses a map to cache previously created
     // service names. Implement that here.
-    return service_name;
+    service_name
 }
 
 // normalize_name normalizes a span name and returns an error describing the reason
@@ -76,15 +76,15 @@ pub fn normalize_name(name: String) -> (String, Option<errors::NormalizeErrors>)
     let mut err: Option<errors::NormalizeErrors> = None;
 
     if name.len() > MAX_NAME_LEN as usize {
-        truncated_name = truncate_utf8(name.clone(), MAX_NAME_LEN);
+        truncated_name = truncate_utf8(name, MAX_NAME_LEN);
         err = errors::NormalizeErrors::ErrorTooLong.into();
     }
 
-    let (normalized_name, ok) = normalize_metric_names(truncated_name.clone());
+    let (normalized_name, ok) = normalize_metric_names(truncated_name);
     if !ok {
         return (DEFAULT_SPAN_NAME.to_string(), errors::NormalizeErrors::ErrorInvalid.into())
     }
-    return (normalized_name, err);
+    (normalized_name, err)
 }
 
 // NormalizeTag applies some normalization to ensure the tags match the backend requirements.
@@ -97,7 +97,7 @@ pub fn normalize_tag(tag: String) -> String {
 		return tag;
 	}
 
-    if tag.len() == 0 {
+    if tag.is_empty() {
         return "".to_string();
     }
 
@@ -108,17 +108,17 @@ pub fn normalize_tag(tag: String) -> String {
 
     let char_vec: Vec<char> = tag.chars().collect();
 
-    for i in 0..char_vec.len() {
+    for cur_char in char_vec {
         if result.len() == MAX_TAG_LEN as usize {
             break;
         }
-        if char_vec[i].is_lowercase() {
-            result.push(char_vec[i]);
-            last_char = char_vec[i];
+        if cur_char.is_lowercase() {
+            result.push(cur_char);
+            last_char = cur_char;
             continue;
         }
-        if char_vec[i].is_uppercase() {
-            let mut iter = char_vec[i].to_lowercase();
+        if cur_char.is_uppercase() {
+            let mut iter = cur_char.to_lowercase();
             if iter.len() == 1 {
                 let c: char = iter.next().unwrap();
                 result.push(c);
@@ -126,22 +126,22 @@ pub fn normalize_tag(tag: String) -> String {
             }
             continue;
         }
-        if char_vec[i].is_alphabetic() {
-            result.push(char_vec[i]);
-            last_char = char_vec[i];
+        if cur_char.is_alphabetic() {
+            result.push(cur_char);
+            last_char = cur_char;
             continue;
         }
-        if char_vec[i] == ':' {
-            result.push(char_vec[i]);
-            last_char = char_vec[i];
+        if cur_char == ':' {
+            result.push(cur_char);
+            last_char = cur_char;
             continue;
         }
-        if result.len() > 0 && (char_vec[i].is_ascii_digit() || char_vec[i] == '.' || char_vec[i] == '/' || char_vec[i] == '-') {
-            result.push(char_vec[i]);
-            last_char = char_vec[i];
+        if !result.is_empty() && (cur_char.is_ascii_digit() || cur_char == '.' || cur_char == '/' || cur_char == '-') {
+            result.push(cur_char);
+            last_char = cur_char;
             continue;
         }
-        if result.len() > 0 && last_char != '_' {
+        if !result.is_empty() && last_char != '_' {
             result.push('_');
             last_char = '_';
         }
@@ -151,17 +151,17 @@ pub fn normalize_tag(tag: String) -> String {
         result.remove(result.len() - 1);
     }
 
-    return result.to_string();
+    result.to_string()
 }
 
 pub fn is_normalized_ascii_tag(tag: String) -> bool {
-    if tag.len() == 0 {
+    if tag.is_empty() {
         return true;
     }
     if tag.len() > MAX_TAG_LEN as usize {
         return false;
     }
-    if !is_valid_ascii_start_char(tag.chars().nth(0).unwrap()) {
+    if !is_valid_ascii_start_char(tag.chars().next().unwrap()) {
         return false;
     }
     for mut i in 0..tag.len() {
@@ -179,19 +179,19 @@ pub fn is_normalized_ascii_tag(tag: String) -> bool {
             return false;
         }
     }
-    return true;
+    true
 }
 
 pub fn is_valid_ascii_start_char(c: char) -> bool {
-    return ('a' <= c && c <= 'z') || c == ':';
+    ('a'..='z').contains(&c) || c == ':'
 }
 
 pub fn is_valid_ascii_tag_char(c: char) -> bool {
-    return is_valid_ascii_start_char(c) || ('0' <= c && c <= '9') || c == '.' || c == '/' || c == '-';
+    is_valid_ascii_start_char(c) || ('0'..='9').contains(&c) || c == '.' || c == '/' || c == '-'
 }
 
 pub fn normalize_metric_names(name: String) -> (String, bool) {
-    if name == "" || name.len() > MAX_NAME_LEN as usize {
+    if name.is_empty() || name.len() > MAX_NAME_LEN as usize {
         return (name, false);
     }
 
@@ -243,13 +243,13 @@ pub fn normalize_metric_names(name: String) -> (String, bool) {
     if last_char == '_' {
         result.remove(result.len() - 1);
     }
-    return (result, true);
+    (result, true)
 }
 
 pub fn is_alpha(c: char) -> bool {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    ('a'..='z').contains(&c) || ('A'..='Z').contains(&c)
 }
 
 pub fn is_alpha_num(c: char) -> bool {
-    return is_alpha(c) || (c >= '0' && c <= '9');
+    is_alpha(c) || ('0'..='9').contains(&c)
 }

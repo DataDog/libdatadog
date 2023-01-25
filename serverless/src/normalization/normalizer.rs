@@ -4,8 +4,6 @@ use crate::normalize_utils;
 use crate::pb;
 
 pub const MAX_TYPE_LEN: i64 = 100;
-const TAG_ORIGIN: &str = "_dd.origin";
-const TAG_SAMPLING_PRIORITY: &str = "_sampling_priority_v1";
 
 // an arbitrary cutoff to spot weird-looking values
 // nanoseconds since epoch on Jan 1, 2000
@@ -41,7 +39,7 @@ pub fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
     }
     s.name = normalized_name;
 
-    if s.resource == "" {
+    if s.resource.is_empty() {
         println!("Fixing malformed trace. Resource is empty (reason:resource_empty)");
         s.resource = s.name.clone();
     }
@@ -93,16 +91,16 @@ pub fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
         }
     }
 
-    return Ok(());
+    Ok(())
 }
 
 pub fn is_valid_status_code(sc: String) -> bool {
     match sc.parse::<i64>() {
         Ok(code) => {
-            return 100 <= code && code < 600;
+            (100..600).contains(&code)
         },
         Err(..) => {
-            return false;
+            false
         }
     }
 }
