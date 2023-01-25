@@ -11,7 +11,7 @@ mod normalize_tests {
     pub fn new_test_span() -> pb::Span {
         let mut rng = rand::thread_rng();
 
-        return pb::Span {
+        pb::Span {
             duration: 10000000,
             error: 0,
             resource: "GET /some/raclette".to_string(),
@@ -62,7 +62,7 @@ mod normalize_tests {
     #[test]
     pub fn test_normalize_long_service() {
         let mut test_span = new_test_span();
-        test_span.service = "CAMEMBERT".repeat(100).to_string();
+        test_span.service = "CAMEMBERT".repeat(100);
         assert!(normalizer::normalize(&mut test_span).is_ok());
         assert!(test_span.service.len() == normalize_utils::MAX_SERVICE_LEN as usize);
     }
@@ -86,7 +86,7 @@ mod normalize_tests {
     #[test]
     pub fn test_normalize_long_name() {
         let mut test_span = new_test_span();
-        test_span.name = "CAMEMBERT".repeat(100).to_string();
+        test_span.name = "CAMEMBERT".repeat(100);
         assert!(normalizer::normalize(&mut test_span).is_ok());
         assert!(test_span.name.len() == normalize_utils::MAX_NAME_LEN as usize);
     }
@@ -133,7 +133,7 @@ mod normalize_tests {
     #[test]
     pub fn test_normalize_trace_id_passes() {
         let mut test_span = new_test_span();
-        let before_trace_id = test_span.trace_id.clone();
+        let before_trace_id = test_span.trace_id;
         assert!(normalizer::normalize(&mut test_span).is_ok());
         assert_eq!(before_trace_id, test_span.trace_id);
     }
@@ -148,7 +148,7 @@ mod normalize_tests {
     #[test]
     pub fn test_normalize_component_to_name() {
         let mut test_span = new_test_span();
-        let before_trace_id = test_span.trace_id.clone();
+        let before_trace_id = test_span.trace_id;
         assert!(normalizer::normalize(&mut test_span).is_ok());
         assert_eq!(before_trace_id, test_span.trace_id);
     }
@@ -159,7 +159,7 @@ mod normalize_tests {
     #[test]
     pub fn test_normalize_span_id_passes() {
         let mut test_span = new_test_span();
-        let before_span_id = test_span.span_id.clone();
+        let before_span_id = test_span.span_id;
         assert!(normalizer::normalize(&mut test_span).is_ok());
         assert_eq!(before_span_id, test_span.span_id);
     }
@@ -180,7 +180,7 @@ mod normalize_tests {
     }
 
     fn get_current_time() -> i64 {
-        return SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_nanos() as i64;
+        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_nanos() as i64
     }
 
     #[test]
@@ -211,7 +211,7 @@ mod normalize_tests {
     #[test]
     pub fn test_normalize_duration_passes() {
         let mut test_span = new_test_span();
-        let before_duration = test_span.duration.clone();
+        let before_duration = test_span.duration;
 
         assert!(normalizer::normalize(&mut test_span).is_ok());
         assert_eq!(before_duration, test_span.duration);
@@ -247,7 +247,7 @@ mod normalize_tests {
     #[test]
     pub fn test_normalize_error_passes() {
         let mut test_span = new_test_span();
-        let before_error = test_span.error.clone();
+        let before_error = test_span.error;
 
         assert!(normalizer::normalize(&mut test_span).is_ok());
         assert_eq!(before_error, test_span.error);
@@ -274,7 +274,7 @@ mod normalize_tests {
     #[test]
     pub fn test_normalize_parent_id_passes() {
         let mut test_span = new_test_span();
-        let before_parent_id = test_span.parent_id.clone();
+        let before_parent_id = test_span.parent_id;
 
         assert!(normalizer::normalize(&mut test_span).is_ok());
         assert_eq!(before_parent_id, test_span.parent_id);
