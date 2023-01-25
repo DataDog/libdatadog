@@ -190,7 +190,13 @@ impl From<RequestBuildResult> for Result<Box<Request>, String> {
 #[no_mangle]
 pub extern "C" fn ddog_prof_Exporter_Request_BuildResult_drop(_result: RequestBuildResult) {}
 
-/// Builds a Request object based on the profile data supplied.
+/// If successful, builds a `ddog_prof_Exporter_Request` object based on the profile data supplied.
+/// If unsuccessful, it returns an error message.
+///
+/// The main use of the `ddog_prof_Exporter_Request` object is to be used in
+/// `ddog_prof_Exporter_send`, which will take ownership of the object. Do not pass it to
+/// `ddog_prof_Exporter_Request_drop` in such cases, nor call
+/// `ddog_prof_Exporter_Request_BuildResult_drop` on the result!
 ///
 /// # Safety
 /// The `exporter` and the files inside of the `files` slice need to have been
@@ -231,9 +237,11 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
 /// Sends the request, returning the HttpStatus.
 ///
 /// # Arguments
-/// * `exporter` - borrows the exporter for sending the request
-/// * `request` - takes ownership of the request. Be careful not to drop it twice!
-/// * `cancel` - borrows the cancel, if any
+/// * `exporter` - Borrows the exporter for sending the request.
+/// * `request` - Takes ownership of the request. Do not call `ddog_prof_Request_drop` nor
+///               `ddog_prof_Exporter_SendResult_drop` on `request` after calling
+///               `ddog_prof_Exporter_send` on it.
+/// * `cancel` - Borrows the cancel, if any.
 ///
 /// # Safety
 /// All non-null arguments MUST have been created by created by apis in this module.

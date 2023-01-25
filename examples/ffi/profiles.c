@@ -6,6 +6,7 @@
 #include <datadog/common.h>
 #include <datadog/profiling.h>
 #include <stdint.h>
+#include <stdio.h>
 
 /* Creates a profile with one sample type "wall-time" with period of "wall-time"
  * with unit 60 "nanoseconds". Adds one sample with a string label "language".
@@ -44,7 +45,14 @@ int main(void) {
       .values = {&value, 1},
       .labels = {&label, 1},
   };
-  ddog_prof_Profile_add(profile, sample);
+
+  ddog_prof_Profile_AddResult add_result = ddog_prof_Profile_add(profile, sample);
+  if (add_result.tag != DDOG_PROF_PROFILE_ADD_RESULT_OK) {
+    fprintf(stderr, "%*s", (int)add_result.err.len, add_result.err.ptr);
+    ddog_prof_Profile_AddResult_drop(add_result);
+  }
+
+
   ddog_prof_Profile_drop(profile);
   return 0;
 }

@@ -66,11 +66,17 @@ int main(int argc, char *argv[]) {
       .values = {&value, 1},
       .labels = {&label, 1},
   };
-  ddog_prof_Profile_add(profile.get(), sample);
+  auto add_result = ddog_prof_Profile_add(profile.get(), sample);
+  if (add_result.tag != DDOG_PROF_PROFILE_ADD_RESULT_OK) {
+    print_error("Failed to add sample to profile: ", add_result.err);
+    ddog_prof_Profile_AddResult_drop(add_result);
+    return 1;
+  }
 
   ddog_prof_Profile_SerializeResult serialize_result = ddog_prof_Profile_serialize(profile.get(), nullptr, nullptr);
   if (serialize_result.tag == DDOG_PROF_PROFILE_SERIALIZE_RESULT_ERR) {
     print_error("Failed to serialize profile: ", serialize_result.err);
+    ddog_prof_Profile_SerializeResult_drop(serialize_result);
     return 1;
   }
 

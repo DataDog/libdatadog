@@ -347,7 +347,6 @@ impl From<ProfileAddResult> for Result<u64, String> {
 #[no_mangle]
 pub extern "C" fn ddog_prof_Profile_AddResult_drop(_result: ProfileAddResult) {}
 
-#[no_mangle]
 /// # Safety
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module. All pointers inside the `sample` need to be valid for the duration
@@ -360,6 +359,8 @@ pub extern "C" fn ddog_prof_Profile_AddResult_drop(_result: ProfileAddResult) {}
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module.
 /// This call is _NOT_ thread-safe.
+#[must_use]
+#[no_mangle]
 pub extern "C" fn ddog_prof_Profile_add(
     profile: &mut datadog_profiling::profile::Profile,
     sample: Sample,
@@ -466,6 +467,7 @@ pub enum SerializeResult {
 /// The `profile` must point to a valid profile object.
 /// The `end_time` must be null or otherwise point to a valid TimeSpec object.
 /// The `duration_nanos` must be null or otherwise point to a valid i64.
+#[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     profile: &datadog_profiling::profile::Profile,
