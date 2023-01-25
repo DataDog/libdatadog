@@ -4,10 +4,29 @@
 use crate::Timespec;
 use datadog_profiling::profile as profiles;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
+use ddcommon_ffi::Error;
 use profiles::profiled_endpoints;
 use std::convert::{TryFrom, TryInto};
 use std::str::Utf8Error;
 use std::time::{Duration, SystemTime};
+
+#[repr(C)]
+pub enum ProfileAddResult {
+    Ok(u64),
+    Err(Error),
+}
+
+#[repr(C)]
+pub enum SerializeResult {
+    Ok(EncodedProfile),
+    Err(Error),
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_prof_Profile_AddResult_drop(_result: ProfileAddResult) {}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_SerializeResult_drop(_result: SerializeResult) {}
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -325,27 +344,15 @@ pub unsafe extern "C" fn ddog_prof_Profile_drop(
 ) {
 }
 
-#[repr(C)]
-pub enum ProfileAddResult {
-    Ok(u64),
-    Err(ddcommon_ffi::Vec<u8>),
-}
-
 #[cfg(test)]
 impl From<ProfileAddResult> for Result<u64, String> {
     fn from(result: ProfileAddResult) -> Self {
         match result {
             ProfileAddResult::Ok(ok) => Ok(ok),
-            ProfileAddResult::Err(err) => {
-                // Safety: not generally safe but this is for test code.
-                Err(unsafe { String::from_utf8_unchecked(err.into()) })
-            }
+            ProfileAddResult::Err(err) => Err(err.into()),
         }
     }
 }
-
-#[no_mangle]
-pub extern "C" fn ddog_prof_Profile_AddResult_drop(_result: ProfileAddResult) {}
 
 /// # Safety
 /// The `profile` ptr must point to a valid Profile object created by this
@@ -444,12 +451,6 @@ impl From<datadog_profiling::profile::EncodedProfile> for EncodedProfile {
     }
 }
 
-#[repr(C)]
-pub enum SerializeResult {
-    Ok(EncodedProfile),
-    Err(ddcommon_ffi::Vec<u8>),
-}
-
 /// Serialize the aggregated profile. Don't forget to clean up the result by
 /// calling ddog_prof_Profile_SerializeResult_drop.
 ///
@@ -485,9 +486,6 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
         Err(err) => SerializeResult::Err(err.into()),
     }
 }
-
-#[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Profile_SerializeResult_drop(_result: SerializeResult) {}
 
 #[must_use]
 #[no_mangle]

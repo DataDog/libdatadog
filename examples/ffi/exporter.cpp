@@ -15,8 +15,9 @@ struct Deleter {
   void operator()(ddog_prof_Profile *object) { ddog_prof_Profile_drop(object); }
 };
 
-template <typename T> void print_error(const char *s, const T &err) {
-  printf("%s (%.*s)\n", s, static_cast<int>(err.len), err.ptr);
+void print_error(const char *s, const ddog_Error &err) {
+  auto charslice = ddog_Error_message(&err);
+  printf("%s (%.*s)\n", s, static_cast<int>(charslice.len), charslice.ptr);
 }
 
 int main(int argc, char *argv[]) {

@@ -10,20 +10,28 @@ use datadog_profiling::exporter::{ProfileExporter, Request};
 use datadog_profiling::profile::profiled_endpoints;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
+use ddcommon_ffi::Error;
 use std::borrow::Cow;
 use std::ptr::NonNull;
 use std::str::FromStr;
 
 #[repr(C)]
-pub enum SendResult {
-    HttpResponse(HttpStatus),
-    Err(ddcommon_ffi::Vec<u8>),
+pub enum ExporterNewResult {
+    Ok(*mut ProfileExporter),
+    Err(Error),
 }
 
 #[repr(C)]
-pub enum ExporterNewResult {
-    Ok(*mut ProfileExporter),
-    Err(ddcommon_ffi::Vec<u8>),
+pub enum RequestBuildResult {
+    // This is a Box::into_raw pointer.
+    Ok(*mut Request),
+    Err(Error),
+}
+
+#[repr(C)]
+pub enum SendResult {
+    HttpResponse(HttpStatus),
+    Err(Error),
 }
 
 #[no_mangle]
@@ -163,23 +171,13 @@ unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> 
         .collect()
 }
 
-#[repr(C)]
-pub enum RequestBuildResult {
-    // This is a Box::into_raw pointer.
-    Ok(*mut Request),
-    Err(ddcommon_ffi::Vec<u8>),
-}
-
 #[cfg(test)]
 impl From<RequestBuildResult> for Result<Box<Request>, String> {
     fn from(result: RequestBuildResult) -> Self {
         match result {
             // Safety: Request is opaque, can only be built from Rust.
             RequestBuildResult::Ok(ok) => Ok(unsafe { Box::from_raw(ok) }),
-            RequestBuildResult::Err(err) => {
-                // Safety: not generally safe but this is for test code.
-                Err(unsafe { String::from_utf8_unchecked(err.into()) })
-            }
+            RequestBuildResult::Err(err) => Err(String::from(err)),
         }
     }
 }
@@ -254,16 +252,14 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send(
 ) -> SendResult {
     // Re-box the request first, to avoid leaks on other errors.
     let request = if request.is_null() {
-        let buf: &[u8] = b"Failed to export: request was null";
-        return SendResult::Err(ddcommon_ffi::Vec::from(Vec::from(buf)));
+        return SendResult::Err(Error::from("failed to export: request was null"));
     } else {
         Box::from_raw(request)
     };
 
     let exp_ptr = match exporter {
         None => {
-            let buf: &[u8] = b"Failed to export: exporter was null";
-            return SendResult::Err(ddcommon_ffi::Vec::from(Vec::from(buf)));
+            return SendResult::Err(Error::from("failed to export: exporter was null"));
         }
         Some(e) => e,
     };

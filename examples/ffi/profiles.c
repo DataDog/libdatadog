@@ -48,7 +48,8 @@ int main(void) {
 
   ddog_prof_Profile_AddResult add_result = ddog_prof_Profile_add(profile, sample);
   if (add_result.tag != DDOG_PROF_PROFILE_ADD_RESULT_OK) {
-    fprintf(stderr, "%*s", (int)add_result.err.len, add_result.err.ptr);
+    ddog_CharSlice message = ddog_Error_message(&add_result.err);
+    fprintf(stderr, "%*s", (int)message.len, message.ptr);
     ddog_prof_Profile_AddResult_drop(add_result);
   }
 
