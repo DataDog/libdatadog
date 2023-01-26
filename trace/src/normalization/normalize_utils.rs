@@ -1,3 +1,8 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0. This product includes software
+// developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
+// Datadog, Inc.
+
 use crate::errors;
 
 // DEFAULT_SPAN_NAME is the default name we assign a span if it's missing and we have no reasonable fallback
@@ -32,21 +37,21 @@ pub fn truncate_utf8(s: String, limit: i64) -> String {
 // NormalizeService normalizes a span service and returns an error describing the reason
 // (if any) why the name was modified.
 // TODO: Implement this in a future PR
-pub fn normalize_service(svc: String, lang: String) -> (String, Option<errors::NormalizeErrors>) {
+// pub fn normalize_service(svc: String, lang: String) -> (String, Option<errors::NormalizeErrors>) {
     // if svc == "" {
     //     return (fallback_service(lang), errors::NormalizeErrors::ErrorEmpty);
     // }
-    if svc.len() > MAX_SERVICE_LEN as usize {
-        return (truncate_utf8(svc, MAX_SERVICE_LEN), errors::NormalizeErrors::ErrorTooLong.into());
-    }
+    // if svc.len() > MAX_SERVICE_LEN as usize {
+    //     return (truncate_utf8(svc, MAX_SERVICE_LEN), errors::NormalizeErrors::ErrorTooLong.into());
+    // }
     // TODO: implement tag normalization
     // let s: String = normalize_tag(svc);
     // if s == "" {
     //     return (fallbackService(lang), errors::NormalizeErrors::ErrorInvalid)
     // }
     // return (s, err)
-    (svc, None)
-}
+    // (svc, None)
+// }
 
 // normalize_name normalizes a span name and returns an error describing the reason
 // (if any) why the name was modified.
@@ -71,55 +76,55 @@ pub fn normalize_name(name: String) -> (String, Option<errors::NormalizeErrors>)
 
 // NormalizeTag applies some normalization to ensure the tags match the backend requirements.
 // TODO: Implement this in a future PR
-pub fn normalize_tag(v: String) -> String {
+// pub fn normalize_tag(v: String) -> String {
     // Fast path: Check if the tag is valid and only contains ASCII characters,
 	// if yes return it as-is right away. For most use-cases this reduces CPU usage.
-	if is_normalized_ascii_tag(v.clone()) {
-		return v;
-	}
+// 	if is_normalized_ascii_tag(v.clone()) {
+// 		return v;
+// 	}
 
-    if v.is_empty() {
-        return "".to_string();
-    }
+//     if v.is_empty() {
+//         return "".to_string();
+//     }
 
-    "".to_string()
-}
+//     "".to_string()
+// }
 
-pub fn is_normalized_ascii_tag(tag: String) -> bool {
-    if tag.is_empty() {
-        return true;
-    }
-    if tag.len() > MAX_TAG_LEN as usize {
-        return false;
-    }
-    if !is_valid_ascii_start_char(tag.chars().next().unwrap()) {
-        return false;
-    }
-    for mut i in 0..tag.len() {
-        let b: char = tag.chars().nth(i).unwrap();
-        if is_valid_ascii_tag_char(b) {
-            continue;
-        }
-        if b == '_' {
-            // an underscore is only okay if followed by a valid non-underscore character
-			i+=1;
-			if i == tag.len() || !is_valid_ascii_tag_char(tag.chars().nth(i).unwrap()) {
-				return false;
-			}
-        } else {
-            return false;
-        }
-    }
-    true
-}
+// pub fn is_normalized_ascii_tag(tag: String) -> bool {
+//     if tag.is_empty() {
+//         return true;
+//     }
+//     if tag.len() > MAX_TAG_LEN as usize {
+//         return false;
+//     }
+//     if !is_valid_ascii_start_char(tag.chars().next().unwrap()) {
+//         return false;
+//     }
+//     for mut i in 0..tag.len() {
+//         let b: char = tag.chars().nth(i).unwrap();
+//         if is_valid_ascii_tag_char(b) {
+//             continue;
+//         }
+//         if b == '_' {
+//             // an underscore is only okay if followed by a valid non-underscore character
+// 			i+=1;
+// 			if i == tag.len() || !is_valid_ascii_tag_char(tag.chars().nth(i).unwrap()) {
+// 				return false;
+// 			}
+//         } else {
+//             return false;
+//         }
+//     }
+//     true
+// }
 
-pub fn is_valid_ascii_start_char(c: char) -> bool {
-    ('a'..='z').contains(&c) || c == ':'
-}
+// pub fn is_valid_ascii_start_char(c: char) -> bool {
+//     ('a'..='z').contains(&c) || c == ':'
+// }
 
-pub fn is_valid_ascii_tag_char(c: char) -> bool {
-    is_valid_ascii_start_char(c) || ('0'..='9').contains(&c) || c == '.' || c == '/' || c == '-'
-}
+// pub fn is_valid_ascii_tag_char(c: char) -> bool {
+//     is_valid_ascii_start_char(c) || ('0'..='9').contains(&c) || c == '.' || c == '/' || c == '-'
+// }
 
 pub fn normalize_metric_names(name: String) -> (String, bool) {
     println!("3: {}", name);

@@ -1,3 +1,8 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0. This product includes software
+// developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
+// Datadog, Inc.
+
 use std::time::{SystemTime};
 use crate::errors;
 use crate::normalize_utils;
@@ -18,14 +23,14 @@ fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
     }
     
     // TODO: The second parameter of normalize::normalize_service should be language
-    let (svc, err) = normalize_utils::normalize_service(s.service.clone(), "".to_string());
-    match err {
-        Some(errors::NormalizeErrors::ErrorEmpty) => println!("Fixing malformed trace. Service is empty (reason:service_empty)"),
-        Some(errors::NormalizeErrors::ErrorTooLong) => println!("Fixing malformed trace. Service is too long (reason:service_truncate)"),
-        Some(errors::NormalizeErrors::ErrorInvalid) => println!("Fixing malformed trace. Service is invalid (reason:service_invalid)"),
-        None => ()
-    }
-    s.service = svc;
+    // let (svc, err) = normalize_utils::normalize_service(s.service.clone(), "".to_string());
+    // match err {
+    //     Some(errors::NormalizeErrors::ErrorEmpty) => println!("Fixing malformed trace. Service is empty (reason:service_empty)"),
+    //     Some(errors::NormalizeErrors::ErrorTooLong) => println!("Fixing malformed trace. Service is too long (reason:service_truncate)"),
+    //     Some(errors::NormalizeErrors::ErrorInvalid) => println!("Fixing malformed trace. Service is invalid (reason:service_invalid)"),
+    //     None => ()
+    // }
+    // s.service = svc;
 
     // TODO: check for a feature flag to determine the component tag to become the span name
     // https://github.com/DataDog/datadog-agent/blob/dc88d14851354cada1d15265220a39dce8840dcc/pkg/trace/agent/normalizer.go#L64
@@ -79,10 +84,11 @@ fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
         s.r#type = normalize_utils::truncate_utf8(s.r#type.clone(), MAX_TYPE_LEN);
     }
 
-    if s.meta.contains_key("env") {
-        let env_tag: String = s.meta.get("env").unwrap().to_string();
-        s.meta.insert("env".to_string(), normalize_utils::normalize_tag(env_tag));
-    }
+    // TODO: Implement tag normalization
+    // if s.meta.contains_key("env") {
+    //     let env_tag: String = s.meta.get("env").unwrap().to_string();
+    //     s.meta.insert("env".to_string(), normalize_utils::normalize_tag(env_tag));
+    // }
     if s.meta.contains_key("http.status_code") {
         let status_code: String = s.meta.get("http.status_code").unwrap().to_string();
         if !is_valid_status_code(status_code.clone()) {
