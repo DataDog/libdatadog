@@ -51,8 +51,7 @@ const TASK_SOURCE: &str = r"[0-9a-f]{32}-\d+";
 lazy_static! {
     static ref LINE_REGEX: Regex = Regex::new(r"^\d+:[^:]*:(.+)$").unwrap();
     static ref CONTAINER_REGEX: Regex = Regex::new(&format!(
-        r"({}|{}|{})(?:.scope)? *$",
-        UUID_SOURCE, CONTAINER_SOURCE, TASK_SOURCE
+        r"({UUID_SOURCE}|{CONTAINER_SOURCE}|{TASK_SOURCE})(?:.scope)? *$"
     ))
     .unwrap();
 }
@@ -209,8 +208,7 @@ mod tests {
             assert_eq!(
                 extract_container_id(&test_root_dir.join(filename)).ok(),
                 expected_result.map(String::from),
-                "testing file {}",
-                filename
+                "testing file {filename}"
             );
         }
     }
