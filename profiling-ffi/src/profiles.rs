@@ -22,12 +22,6 @@ pub enum SerializeResult {
     Err(Error),
 }
 
-#[no_mangle]
-pub extern "C" fn ddog_prof_Profile_AddResult_drop(_result: ProfileAddResult) {}
-
-#[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Profile_SerializeResult_drop(_result: SerializeResult) {}
-
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ValueType<'a> {

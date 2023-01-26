@@ -50,7 +50,7 @@ int main(void) {
   if (add_result.tag != DDOG_PROF_PROFILE_ADD_RESULT_OK) {
     ddog_CharSlice message = ddog_Error_message(&add_result.err);
     fprintf(stderr, "%*s", (int)message.len, message.ptr);
-    ddog_prof_Profile_AddResult_drop(add_result);
+    ddog_Error_drop(&add_result.err);
   }
 
 

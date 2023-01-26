@@ -70,14 +70,14 @@ int main(int argc, char *argv[]) {
   auto add_result = ddog_prof_Profile_add(profile.get(), sample);
   if (add_result.tag != DDOG_PROF_PROFILE_ADD_RESULT_OK) {
     print_error("Failed to add sample to profile: ", add_result.err);
-    ddog_prof_Profile_AddResult_drop(add_result);
+    ddog_Error_drop(&add_result.err);
     return 1;
   }
 
   ddog_prof_Profile_SerializeResult serialize_result = ddog_prof_Profile_serialize(profile.get(), nullptr, nullptr);
   if (serialize_result.tag == DDOG_PROF_PROFILE_SERIALIZE_RESULT_ERR) {
     print_error("Failed to serialize profile: ", serialize_result.err);
-    ddog_prof_Profile_SerializeResult_drop(serialize_result);
+    ddog_Error_drop(&serialize_result.err);
     return 1;
   }
 
@@ -91,11 +91,9 @@ int main(int argc, char *argv[]) {
       ddog_Vec_Tag_push(&tags, DDOG_CHARSLICE_C("service"), to_slice_c_char(service));
   if (tag_result.tag == DDOG_VEC_TAG_PUSH_RESULT_ERR) {
     print_error("Failed to push tag: ", tag_result.err);
-    ddog_Vec_Tag_PushResult_drop(tag_result);
+    ddog_Error_drop(&tag_result.err);
     return 1;
   }
-
-  ddog_Vec_Tag_PushResult_drop(tag_result);
 
   ddog_prof_Exporter_NewResult exporter_new_result = ddog_prof_Exporter_new(
       DDOG_CHARSLICE_C("exporter-example"),
@@ -108,7 +106,7 @@ int main(int argc, char *argv[]) {
 
   if (exporter_new_result.tag == DDOG_PROF_EXPORTER_NEW_RESULT_ERR) {
     print_error("Failed to create exporter: ", exporter_new_result.err);
-    ddog_prof_Exporter_NewResult_drop(exporter_new_result);
+    ddog_Error_drop(&exporter_new_result.err);
     return 1;
   }
 
@@ -133,7 +131,7 @@ int main(int argc, char *argv[]) {
 
   if (build_result.tag == DDOG_PROF_EXPORTER_REQUEST_BUILD_RESULT_ERR) {
     print_error("Failed to build request: ", build_result.err);
-    ddog_prof_Exporter_Request_BuildResult_drop(build_result);
+    ddog_Error_drop(&build_result.err);
     return 1;
   }
 
@@ -165,12 +163,12 @@ int main(int argc, char *argv[]) {
   if (send_result.tag == DDOG_PROF_EXPORTER_SEND_RESULT_ERR) {
     print_error("Failed to send profile: ", send_result.err);
     exit_code = 1;
+    ddog_Error_drop(&send_result.err);
   } else {
     printf("Response code: %d\n", send_result.http_response.code);
   }
 
-  ddog_prof_Exporter_NewResult_drop(exporter_new_result);
-  ddog_prof_Exporter_SendResult_drop(send_result);
+  ddog_prof_Exporter_drop(exporter);
   ddog_CancellationToken_drop(cancel);
   return exit_code;
 }

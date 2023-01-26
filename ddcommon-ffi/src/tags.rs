@@ -20,9 +20,6 @@ pub enum PushTagResult {
     Err(Error),
 }
 
-#[no_mangle]
-pub extern "C" fn ddog_Vec_Tag_PushResult_drop(_: PushTagResult) {}
-
 /// Creates a new Tag from the provided `key` and `value` by doing a utf8
 /// lossy conversion, and pushes into the `vec`. The strings `key` and `value`
 /// are cloned to avoid FFI lifetime issues.

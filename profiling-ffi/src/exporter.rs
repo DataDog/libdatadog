@@ -34,17 +34,6 @@ pub enum SendResult {
     Err(Error),
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Exporter_NewResult_drop(result: ExporterNewResult) {
-    match result {
-        ExporterNewResult::Ok(ptr) => {
-            let exporter = Box::from_raw(ptr);
-            drop(exporter)
-        }
-        ExporterNewResult::Err(message) => drop(message),
-    }
-}
-
 #[repr(C)]
 pub enum Endpoint<'a> {
     Agent(CharSlice<'a>),
@@ -182,19 +171,12 @@ impl From<RequestBuildResult> for Result<Box<Request>, String> {
     }
 }
 
-/// Drops the result. Since `ddog_prof_Exporter_send` will take ownership of
-/// the Request object, do not call this method if you call
-/// `ddog_prof_Exporter_send` on the `ok` value!
-#[no_mangle]
-pub extern "C" fn ddog_prof_Exporter_Request_BuildResult_drop(_result: RequestBuildResult) {}
-
 /// If successful, builds a `ddog_prof_Exporter_Request` object based on the profile data supplied.
 /// If unsuccessful, it returns an error message.
 ///
 /// The main use of the `ddog_prof_Exporter_Request` object is to be used in
 /// `ddog_prof_Exporter_send`, which will take ownership of the object. Do not pass it to
-/// `ddog_prof_Exporter_Request_drop` in such cases, nor call
-/// `ddog_prof_Exporter_Request_BuildResult_drop` on the result!
+/// `ddog_prof_Exporter_Request_drop` after that!
 ///
 /// # Safety
 /// The `exporter` and the files inside of the `files` slice need to have been
@@ -236,9 +218,8 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
 ///
 /// # Arguments
 /// * `exporter` - Borrows the exporter for sending the request.
-/// * `request` - Takes ownership of the request. Do not call `ddog_prof_Request_drop` nor
-///               `ddog_prof_Exporter_SendResult_drop` on `request` after calling
-///               `ddog_prof_Exporter_send` on it.
+/// * `request` - Takes ownership of the request. Do not call `ddog_prof_Request_drop` on
+///               `request` after calling `ddog_prof_Exporter_send` on it.
 /// * `cancel` - Borrows the cancel, if any.
 ///
 /// # Safety
@@ -351,11 +332,6 @@ pub extern "C" fn ddog_CancellationToken_cancel(
 #[no_mangle]
 pub extern "C" fn ddog_CancellationToken_drop(_cancel: Option<Box<CancellationToken>>) {
     // _cancel implicitly dropped because we've turned it into a Box
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Exporter_SendResult_drop(result: SendResult) {
-    std::mem::drop(result)
 }
 
 #[cfg(test)]
