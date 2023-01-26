@@ -14,6 +14,7 @@ const MAX_TYPE_LEN: i64 = 100;
 // nanoseconds since epoch on Jan 1, 2000
 const YEAR_2000_NANOSEC_TS: i64 = 946684800000000000;
 
+#[allow(dead_code)]
 fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
     if s.trace_id == 0 {
         return Err(errors::NormalizerError::new("TraceID is zero (reason:trace_id_zero)"));
