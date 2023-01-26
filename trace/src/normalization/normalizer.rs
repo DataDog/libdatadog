@@ -23,7 +23,7 @@ fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
         return Err(errors::NormalizerError::new("SpanID is zero (reason:span_id_zero)"));
     }
     
-    // TODO: The second parameter of normalize::normalize_service should be language
+    // TODO: Implement service name normalizer in future PR
     // let (svc, err) = normalize_utils::normalize_service(s.service.clone(), "".to_string());
     // match err {
     //     Some(errors::NormalizeErrors::ErrorEmpty) => println!("Fixing malformed trace. Service is empty (reason:service_empty)"),
@@ -85,11 +85,12 @@ fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
         s.r#type = normalize_utils::truncate_utf8(s.r#type.clone(), MAX_TYPE_LEN);
     }
 
-    // TODO: Implement tag normalization
+    // TODO: Implement tag normalization in future PR
     // if s.meta.contains_key("env") {
     //     let env_tag: String = s.meta.get("env").unwrap().to_string();
     //     s.meta.insert("env".to_string(), normalize_utils::normalize_tag(env_tag));
     // }
+
     if s.meta.contains_key("http.status_code") {
         let status_code: String = s.meta.get("http.status_code").unwrap().to_string();
         if !is_valid_status_code(status_code.clone()) {

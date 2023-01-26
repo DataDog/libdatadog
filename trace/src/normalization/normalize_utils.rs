@@ -74,8 +74,8 @@ pub fn normalize_name(name: String) -> (String, Option<errors::NormalizeErrors>)
     (normalized_name, err)
 }
 
-// NormalizeTag applies some normalization to ensure the tags match the backend requirements.
 // TODO: Implement this in a future PR
+// NormalizeTag applies some normalization to ensure the tags match the backend requirements.
 // pub fn normalize_tag(v: String) -> String {
     // Fast path: Check if the tag is valid and only contains ASCII characters,
 	// if yes return it as-is right away. For most use-cases this reduces CPU usage.
