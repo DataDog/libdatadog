@@ -429,9 +429,16 @@ pub struct EncodedProfile {
     endpoints_stats: Box<profiled_endpoints::ProfiledEndpointsStats>,
 }
 
+/// Only pass a reference to a valid `ddog_prof_EncodedProfile`, or null. A
+/// valid reference also means that it hasn't already been dropped (do not
+/// call this twice on the same object);
 #[no_mangle]
-pub extern "C" fn ddog_prof_EncodedProfile_drop(profile: EncodedProfile) {
-    drop(profile)
+pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(profile: Option<&mut EncodedProfile>) {
+    if let Some(profile) = profile {
+        let ptr = profile as *mut _;
+        // Programmer's responsibility to protect this from being double-free.
+        std::ptr::drop_in_place(ptr)
+    }
 }
 
 impl From<datadog_profiling::profile::EncodedProfile> for EncodedProfile {
@@ -452,7 +459,8 @@ impl From<datadog_profiling::profile::EncodedProfile> for EncodedProfile {
 
 /// Serialize the aggregated profile.
 ///
-/// Don't forget to clean up the ok or error variant once you are done with it!
+/// Don't forget to clean up the ok with `ddog_prof_EncodedProfile_drop` or
+/// the error variant with `ddog_Error_drop` when you are done with them.
 ///
 /// # Arguments
 /// * `profile` - a reference to the profile being serialized.
