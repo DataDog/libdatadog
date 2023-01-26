@@ -10,10 +10,6 @@ use std::io::Read;
 use std::str;
 use std::time::SystemTime;
 
-// use std::ffi::c_char;
-// use std::ffi::CStr;
-// use napi::{CallContext, Error, JsNumber, JsObject, JsUnknown, Result, Status};
-
 pub mod pb {
     include!("pb.rs");
 }
@@ -146,7 +142,7 @@ pub extern "C" fn send_trace(trace_str: String, before_time: i64) {
     metrics_map.insert("_top_level".to_string(), 1_f64);
 
     for single_span in spans.iter() {
-        let span = pb::Span {
+        let mut span = pb::Span {
             service: single_span.service.clone(),
             name: single_span.name.clone(),
             resource: single_span.resource.clone(),
@@ -172,6 +168,9 @@ pub extern "C" fn send_trace(trace_str: String, before_time: i64) {
         }
 
         trace_id = single_span.trace_id;
+
+        normalizer::normalize(&mut span).expect("failed to normalize span");
+
         span_to_send.push(span);
     }
 
