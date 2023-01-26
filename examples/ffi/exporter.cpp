@@ -128,6 +128,7 @@ int main(int argc, char *argv[]) {
     nullptr,
     30000
   );
+  ddog_prof_EncodedProfile_drop(encoded_profile);
 
   if (build_result.tag == DDOG_PROF_EXPORTER_REQUEST_BUILD_RESULT_ERR) {
     print_error("Failed to build request: ", build_result.err);

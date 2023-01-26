@@ -429,6 +429,11 @@ pub struct EncodedProfile {
     endpoints_stats: Box<profiled_endpoints::ProfiledEndpointsStats>,
 }
 
+#[no_mangle]
+pub extern "C" fn ddog_prof_EncodedProfile_drop(profile: EncodedProfile) {
+    drop(profile)
+}
+
 impl From<datadog_profiling::profile::EncodedProfile> for EncodedProfile {
     fn from(value: datadog_profiling::profile::EncodedProfile) -> Self {
         let start = value.start.into();
@@ -445,8 +450,9 @@ impl From<datadog_profiling::profile::EncodedProfile> for EncodedProfile {
     }
 }
 
-/// Serialize the aggregated profile. Don't forget to clean up the result by
-/// calling ddog_prof_Profile_SerializeResult_drop.
+/// Serialize the aggregated profile.
+///
+/// Don't forget to clean up the ok or error variant once you are done with it!
 ///
 /// # Arguments
 /// * `profile` - a reference to the profile being serialized.
