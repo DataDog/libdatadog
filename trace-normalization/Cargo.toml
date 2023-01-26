@@ -1,5 +1,5 @@
 [package]
-name = "trace"
+name = "datadog-trace-normalization"
 version = "0.0.0"
 authors = ["David Lee <david.lee@datadoghq.com>"]
 edition = "2021"

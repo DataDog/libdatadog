@@ -11,22 +11,22 @@ pub const DEFAULT_SPAN_NAME: &str = "unnamed_operation";
 pub const DEFAULT_SERVICE_NAME: &str = "unnamed-service";
 
 // MAX_NAME_LEN the maximum length a name can have
-pub const MAX_NAME_LEN: i64 = 100;
+pub const MAX_NAME_LEN: usize = 100;
 // MAX_SERVICE_LEN the maximum length a service can have
-pub const MAX_SERVICE_LEN: i64 = 100;
+pub const MAX_SERVICE_LEN: usize = 100;
 
-pub const MAX_TAG_LEN: i64 = 200;
+pub const MAX_TAG_LEN: usize = 200;
 
 // TruncateUTF8 truncates the given string to make sure it uses less than limit bytes.
 // If the last character is an utf8 character that would be splitten, it removes it
 // entirely to make sure the resulting string is not broken.
-pub fn truncate_utf8(s: String, limit: i64) -> String {
-    if s.len() <= limit as usize {
+pub fn truncate_utf8(s: String, limit: usize) -> String {
+    if s.len() <= limit {
         return s
     }
     let mut prev_index = 0;
     for i in 0..s.len() {
-        if i > limit as usize {
+        if i > limit {
             return s[0..prev_index].to_string();
         }
         prev_index = i;
@@ -41,7 +41,7 @@ pub fn truncate_utf8(s: String, limit: i64) -> String {
     // if svc == "" {
     //     return (fallback_service(lang), errors::NormalizeErrors::ErrorEmpty);
     // }
-    // if svc.len() > MAX_SERVICE_LEN as usize {
+    // if svc.len() > MAX_SERVICE_LEN {
     //     return (truncate_utf8(svc, MAX_SERVICE_LEN), errors::NormalizeErrors::ErrorTooLong.into());
     // }
     // TODO: implement tag normalization
@@ -62,7 +62,7 @@ pub fn normalize_name(name: String) -> (String, Option<errors::NormalizeErrors>)
     let mut truncated_name = name.clone();
     let mut err: Option<errors::NormalizeErrors> = None;
 
-    if name.len() > MAX_NAME_LEN as usize {
+    if name.len() > MAX_NAME_LEN {
         truncated_name = truncate_utf8(name, MAX_NAME_LEN);
         err = errors::NormalizeErrors::ErrorTooLong.into();
     }
@@ -94,7 +94,7 @@ pub fn normalize_name(name: String) -> (String, Option<errors::NormalizeErrors>)
 //     if tag.is_empty() {
 //         return true;
 //     }
-//     if tag.len() > MAX_TAG_LEN as usize {
+//     if tag.len() > MAX_TAG_LEN {
 //         return false;
 //     }
 //     if !is_valid_ascii_start_char(tag.chars().next().unwrap()) {
@@ -127,8 +127,7 @@ pub fn normalize_name(name: String) -> (String, Option<errors::NormalizeErrors>)
 // }
 
 pub fn normalize_metric_names(name: String) -> (String, bool) {
-    println!("3: {}", name);
-    if name.is_empty() || name.len() > MAX_NAME_LEN as usize {
+    if name.is_empty() || name.len() > MAX_NAME_LEN {
         return (name, false);
     }
 
