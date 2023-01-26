@@ -10,7 +10,6 @@ members = [
     "ddtelemetry",
     "ddtelemetry-ffi",
     "tools",
-    "trace",
 ]
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"
