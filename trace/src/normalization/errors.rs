@@ -31,7 +31,7 @@ impl Error for NormalizerError {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum NormalizeErrors {
-    // ErrorEmtpy specifies that the passed input was empty.
+    // ErrorEmpty specifies that the passed input was empty.
     ErrorEmpty,
     // ErrorTooLong signifies that the input was too long.
     ErrorTooLong,
