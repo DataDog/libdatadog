@@ -230,7 +230,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(request: *mut Request) 
 /// # Arguments
 /// * `exporter` - Borrows the exporter for sending the request.
 /// * `request` - Takes ownership of the request. Do not call
-///               `ddog_prof_Exporter_Request` on `request` after calling
+///               `ddog_prof_Exporter_Request_drop` on `request` after calling
 ///               `ddog_prof_Exporter_send` on it.
 /// * `cancel` - Borrows the cancel, if any.
 ///
