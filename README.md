@@ -14,7 +14,7 @@ Otherwise, this is possibly not the droid you were looking for.
 
 ### Contributing
 
-See <CONTRIBUTING.md>.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ### Building
 
