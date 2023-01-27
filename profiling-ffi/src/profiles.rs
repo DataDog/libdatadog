@@ -4,10 +4,23 @@
 use crate::Timespec;
 use datadog_profiling::profile as profiles;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
+use ddcommon_ffi::Error;
 use profiles::profiled_endpoints;
 use std::convert::{TryFrom, TryInto};
 use std::str::Utf8Error;
 use std::time::{Duration, SystemTime};
+
+#[repr(C)]
+pub enum ProfileAddResult {
+    Ok(u64),
+    Err(Error),
+}
+
+#[repr(C)]
+pub enum SerializeResult {
+    Ok(EncodedProfile),
+    Err(Error),
+}
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -325,27 +338,15 @@ pub unsafe extern "C" fn ddog_prof_Profile_drop(
 ) {
 }
 
-#[repr(C)]
-pub enum ProfileAddResult {
-    Ok(u64),
-    Err(ddcommon_ffi::Vec<u8>),
-}
-
 #[cfg(test)]
 impl From<ProfileAddResult> for Result<u64, String> {
     fn from(result: ProfileAddResult) -> Self {
         match result {
             ProfileAddResult::Ok(ok) => Ok(ok),
-            ProfileAddResult::Err(err) => {
-                // Safety: not generally safe but this is for test code.
-                Err(unsafe { String::from_utf8_unchecked(err.into()) })
-            }
+            ProfileAddResult::Err(err) => Err(err.into()),
         }
     }
 }
-
-#[no_mangle]
-pub extern "C" fn ddog_prof_Profile_AddResult_drop(_result: ProfileAddResult) {}
 
 /// # Safety
 /// The `profile` ptr must point to a valid Profile object created by this
@@ -428,6 +429,18 @@ pub struct EncodedProfile {
     endpoints_stats: Box<profiled_endpoints::ProfiledEndpointsStats>,
 }
 
+/// Only pass a reference to a valid `ddog_prof_EncodedProfile`, or null. A
+/// valid reference also means that it hasn't already been dropped (do not
+/// call this twice on the same object);
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(profile: Option<&mut EncodedProfile>) {
+    if let Some(profile) = profile {
+        let ptr = profile as *mut _;
+        // Programmer's responsibility to protect this from being double-free.
+        std::ptr::drop_in_place(ptr)
+    }
+}
+
 impl From<datadog_profiling::profile::EncodedProfile> for EncodedProfile {
     fn from(value: datadog_profiling::profile::EncodedProfile) -> Self {
         let start = value.start.into();
@@ -444,14 +457,10 @@ impl From<datadog_profiling::profile::EncodedProfile> for EncodedProfile {
     }
 }
 
-#[repr(C)]
-pub enum SerializeResult {
-    Ok(EncodedProfile),
-    Err(ddcommon_ffi::Vec<u8>),
-}
-
-/// Serialize the aggregated profile. Don't forget to clean up the result by
-/// calling ddog_prof_Profile_SerializeResult_drop.
+/// Serialize the aggregated profile.
+///
+/// Don't forget to clean up the ok with `ddog_prof_EncodedProfile_drop` or
+/// the error variant with `ddog_Error_drop` when you are done with them.
 ///
 /// # Arguments
 /// * `profile` - a reference to the profile being serialized.
@@ -485,9 +494,6 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
         Err(err) => SerializeResult::Err(err.into()),
     }
 }
-
-#[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Profile_SerializeResult_drop(_result: SerializeResult) {}
 
 #[must_use]
 #[no_mangle]
