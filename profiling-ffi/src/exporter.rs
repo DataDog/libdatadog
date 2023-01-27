@@ -171,16 +171,16 @@ impl From<RequestBuildResult> for Result<Box<Request>, String> {
     }
 }
 
-/// If successful, builds a `ddog_prof_Exporter_Request` object based on the profile data supplied.
-/// If unsuccessful, it returns an error message.
+/// If successful, builds a `ddog_prof_Exporter_Request` object based on the
+/// profile data supplied. If unsuccessful, it returns an error message.
 ///
 /// The main use of the `ddog_prof_Exporter_Request` object is to be used in
-/// `ddog_prof_Exporter_send`, which will take ownership of the object. Do not pass it to
-/// `ddog_prof_Exporter_Request_drop` after that!
+/// `ddog_prof_Exporter_send`, which will take ownership of the object. Do not
+/// pass it to `ddog_prof_Exporter_Request_drop` after that!
 ///
 /// # Safety
-/// The `exporter` and the files inside of the `files` slice need to have been
-/// created by this module.
+/// The `exporter`, `additional_stats`, and `endpoint_stats` args should be
+/// valid objects created by this module, except NULL is allowed.
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
@@ -214,12 +214,24 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     }
 }
 
+/// # Safety
+/// The `request` must be valid, or null. Notably, it is invalid if it's been
+/// sent to `ddog_prof_Exporter_send` or `ddog_prof_Exporter_Request_drop`
+/// already.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(request: *mut Request) {
+    if !request.is_null() {
+        drop(Box::from_raw(request));
+    }
+}
+
 /// Sends the request, returning the HttpStatus.
 ///
 /// # Arguments
 /// * `exporter` - Borrows the exporter for sending the request.
-/// * `request` - Takes ownership of the request. Do not call `ddog_prof_Request_drop` on
-///               `request` after calling `ddog_prof_Exporter_send` on it.
+/// * `request` - Takes ownership of the request. Do not call
+///               `ddog_prof_Exporter_Request` on `request` after calling
+///               `ddog_prof_Exporter_send` on it.
 /// * `cancel` - Borrows the cancel, if any.
 ///
 /// # Safety
