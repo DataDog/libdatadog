@@ -203,8 +203,7 @@ fn compare_sample(a: api::Sample, b: &api::Sample) {
     for (offset, (a, b)) in a.locations.iter().zip(b.locations.iter()).enumerate() {
         assert_eq!(
             a, b,
-            "Sample location offsets {} differ:\n{:#?}\n{:#?}",
-            offset, a, b
+            "Sample location offsets {offset} differ:\n{a:#?}\n{b:#?}"
         );
     }
 }
