@@ -174,10 +174,6 @@ impl From<RequestBuildResult> for Result<Box<Request>, String> {
 /// If successful, builds a `ddog_prof_Exporter_Request` object based on the
 /// profile data supplied. If unsuccessful, it returns an error message.
 ///
-/// The main use of the `ddog_prof_Exporter_Request` object is to be used in
-/// `ddog_prof_Exporter_send`, which will take ownership of the object. Do not
-/// pass it to `ddog_prof_Exporter_Request_drop` after that!
-///
 /// # Safety
 /// The `exporter`, `additional_stats`, and `endpoint_stats` args should be
 /// valid objects created by this module, except NULL is allowed.
@@ -215,9 +211,8 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
 }
 
 /// # Safety
-/// The `request` must be valid, or null. Notably, it is invalid if it's been
-/// sent to `ddog_prof_Exporter_send` or `ddog_prof_Exporter_Request_drop`
-/// already.
+/// The `request` must be valid, or null. After this call, the `request` will
+/// be invalid.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(request: *mut Request) {
     if !request.is_null() {
@@ -229,9 +224,9 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(request: *mut Request) 
 ///
 /// # Arguments
 /// * `exporter` - Borrows the exporter for sending the request.
-/// * `request` - Takes ownership of the request. Do not call
-///               `ddog_prof_Exporter_Request_drop` on `request` after calling
-///               `ddog_prof_Exporter_send` on it.
+/// * `request` - Takes ownership of the request, replacing it with a null
+///               pointer. This is why it takes a double-pointer, rather than
+///               a single one.
 /// * `cancel` - Borrows the cancel, if any.
 ///
 /// # Safety
@@ -239,45 +234,42 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(request: *mut Request) 
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Exporter_send(
-    exporter: Option<NonNull<ProfileExporter>>,
-    request: *mut Request,
+    exporter: Option<&mut ProfileExporter>,
+    request: Option<&mut Option<NonNull<Request>>>,
     cancel: Option<NonNull<CancellationToken>>,
 ) -> SendResult {
-    // Re-box the request first, to avoid leaks on other errors.
-    let request = if request.is_null() {
-        return SendResult::Err(Error::from("failed to export: request was null"));
-    } else {
-        Box::from_raw(request)
-    };
-
-    let exp_ptr = match exporter {
-        None => {
-            return SendResult::Err(Error::from("failed to export: exporter was null"));
-        }
-        Some(e) => e,
-    };
-
-    let cancel_option = unwrap_cancellation_token(cancel);
-
-    match || -> anyhow::Result<HttpStatus> {
-        let response = exp_ptr.as_ref().send(*request, cancel_option)?;
-
-        Ok(HttpStatus(response.status().as_u16()))
-    }() {
+    match ddog_prof_exporter_send_impl(exporter, request, cancel) {
         Ok(code) => SendResult::HttpResponse(code),
         Err(err) => SendResult::Err(err.into()),
     }
 }
 
-fn unwrap_cancellation_token<'a>(
+unsafe fn ddog_prof_exporter_send_impl(
+    exporter: Option<&mut ProfileExporter>,
+    request: Option<&mut Option<NonNull<Request>>>,
     cancel: Option<NonNull<CancellationToken>>,
-) -> Option<&'a tokio_util::sync::CancellationToken> {
-    cancel.map(|c| {
-        let wrapped_reference: &CancellationToken = unsafe { c.as_ref() };
-        let unwrapped_reference: &tokio_util::sync::CancellationToken = &(wrapped_reference.0);
+) -> anyhow::Result<HttpStatus> {
+    // Re-box the request first, to avoid leaks on other errors.
+    let request_ptr_ptr = match request {
+        Some(r) => r,
+        None => anyhow::bail!("failed to export: request was null"),
+    };
+    let mut request_ptr = None; // leave a nullptr for the caller
+    std::mem::swap(request_ptr_ptr, &mut request_ptr);
+    let request = match request_ptr {
+        Some(mut r) => Box::from_raw(r.as_mut() as *mut _),
+        None => anyhow::bail!("failed to export: request was null"),
+    };
 
-        unwrapped_reference
-    })
+    let exporter = match exporter {
+        Some(exporter) => exporter,
+        None => anyhow::bail!("failed to export: exporter was null"),
+    };
+
+    let cancel = cancel.map(|ptr| &ptr.as_ref().0);
+    let response = exporter.send(*request, cancel)?;
+
+    Ok(HttpStatus(response.status().as_u16()))
 }
 
 /// Can be passed as an argument to send and then be used to asynchronously cancel it from a different thread.
@@ -315,8 +307,11 @@ pub extern "C" fn ddog_CancellationToken_new() -> *mut CancellationToken {
 pub extern "C" fn ddog_CancellationToken_clone(
     cancel: Option<NonNull<CancellationToken>>,
 ) -> *mut CancellationToken {
-    match unwrap_cancellation_token(cancel) {
-        Some(reference) => Box::into_raw(Box::new(CancellationToken(reference.clone()))),
+    match cancel {
+        Some(ptr) => {
+            let new_token = unsafe { &ptr.as_ref().0 }.clone();
+            Box::into_raw(Box::new(CancellationToken(new_token)))
+        }
         None => std::ptr::null_mut(),
     }
 }
@@ -328,17 +323,17 @@ pub extern "C" fn ddog_CancellationToken_clone(
 pub extern "C" fn ddog_CancellationToken_cancel(
     cancel: Option<NonNull<CancellationToken>>,
 ) -> bool {
-    let cancel_reference = match unwrap_cancellation_token(cancel) {
-        Some(reference) => reference,
-        None => return false,
-    };
-
-    if cancel_reference.is_cancelled() {
-        return false;
+    match cancel {
+        Some(ptr) => {
+            let token = unsafe { &ptr.as_ref().0 };
+            let will_cancel = !token.is_cancelled();
+            if will_cancel {
+                token.cancel();
+            }
+            will_cancel
+        }
+        None => false,
     }
-    cancel_reference.cancel();
-
-    true
 }
 
 #[no_mangle]
