@@ -30,7 +30,7 @@ fn read(f: &mut BufReader<&File>) -> String {
 
 fn write_parts(writer: &mut BufWriter<&File>, parts: &[&str]) -> io::Result<()> {
     writer.get_ref().set_len(0)?;
-    writer.seek(io::SeekFrom::Start(0))?;
+    writer.rewind()?;
     for part in parts {
         writer.write_all(part.as_bytes())?;
     }

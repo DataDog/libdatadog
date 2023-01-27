@@ -4,6 +4,11 @@
 # under the Apache License Version 2.0. This product includes software developed
 # at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+# Location to place all artifacts
+if [ -z $CARGO_TARGET_DIR ] ; then
+    export CARGO_TARGET_DIR=$PWD/target
+fi
+
 set -eu
 
 destdir="$1"
@@ -38,6 +43,7 @@ case "$target" in
     "x86_64-apple-darwin"|"aarch64-apple-darwin")
         expected_native_static_libs=" -framework Security -framework CoreFoundation -liconv -lSystem -lresolv -lc -lm -liconv"
         native_static_libs="${expected_native_static_libs}"
+
         shared_library_suffix=".dylib"
         # fix usage of library in macos via rpath
         fix_macos_rpath=1
@@ -95,8 +101,8 @@ shared_library_rename="${library_prefix}datadog_profiling${shared_library_suffix
 static_library_name="${library_prefix}datadog_profiling_ffi${static_library_suffix}"
 static_library_rename="${library_prefix}datadog_profiling${static_library_suffix}"
 
-cp -v "target/${target}/release/${shared_library_name}" "$destdir/lib/${shared_library_rename}"
-cp -v "target/${target}/release/${static_library_name}" "$destdir/lib/${static_library_rename}"
+cp -v "$CARGO_TARGET_DIR/${target}/release/${shared_library_name}" "$destdir/lib/${shared_library_rename}"
+cp -v "$CARGO_TARGET_DIR/${target}/release/${static_library_name}" "$destdir/lib/${static_library_rename}"
 
 shared_library_name="${shared_library_rename}"
 static_library_name="${static_library_rename}"
@@ -154,6 +160,6 @@ cbindgen --crate ddcommon-ffi \
 cbindgen --crate "${datadog_profiling_ffi}" \
     --config profiling-ffi/cbindgen.toml \
     --output "$destdir/include/datadog/profiling.h"
-./target/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h"
+"$CARGO_TARGET_DIR"/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h"
 
 echo "Done."
