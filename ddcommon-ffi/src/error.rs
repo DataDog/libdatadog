@@ -51,7 +51,9 @@ impl From<&str> for Error {
 
 impl From<anyhow::Error> for Error {
     fn from(value: anyhow::Error) -> Self {
-        Self::from(value.to_string())
+        // {:#} is the "alternate" format, see:
+        // https://docs.rs/anyhow/latest/anyhow/struct.Error.html#display-representations
+        Self::from(format!("{value:#}"))
     }
 }
 

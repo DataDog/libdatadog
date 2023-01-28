@@ -49,6 +49,7 @@ pub struct File<'a> {
 // This type exists only to force cbindgen to expose an CancellationToken as an opaque type.
 pub struct CancellationToken(tokio_util::sync::CancellationToken);
 
+#[derive(Debug)]
 #[repr(C)]
 /// cbindgen:field-names=[code]
 pub struct HttpStatus(u16);
@@ -166,7 +167,7 @@ impl From<RequestBuildResult> for Result<Box<Request>, String> {
         match result {
             // Safety: Request is opaque, can only be built from Rust.
             RequestBuildResult::Ok(ok) => Ok(unsafe { Box::from_raw(ok) }),
-            RequestBuildResult::Err(err) => Err(String::from(err)),
+            RequestBuildResult::Err(err) => Err(err.to_string()),
         }
     }
 }
@@ -240,7 +241,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send(
 ) -> SendResult {
     match ddog_prof_exporter_send_impl(exporter, request, cancel) {
         Ok(code) => SendResult::HttpResponse(code),
-        Err(err) => SendResult::Err(err.into()),
+        Err(err) => SendResult::Err(Error::from(err.context("failed ddog_prof_Exporter_send"))),
     }
 }
 
@@ -252,18 +253,18 @@ unsafe fn ddog_prof_exporter_send_impl(
     // Re-box the request first, to avoid leaks on other errors.
     let request_ptr_ptr = match request {
         Some(r) => r,
-        None => anyhow::bail!("failed to export: request was null"),
+        None => anyhow::bail!("request was null"),
     };
     let mut request_ptr = None; // leave a nullptr for the caller
     std::mem::swap(request_ptr_ptr, &mut request_ptr);
     let request = match request_ptr {
         Some(mut r) => Box::from_raw(r.as_mut() as *mut _),
-        None => anyhow::bail!("failed to export: request was null"),
+        None => anyhow::bail!("request was null"),
     };
 
     let exporter = match exporter {
         Some(exporter) => exporter,
-        None => anyhow::bail!("failed to export: exporter was null"),
+        None => anyhow::bail!("exporter was null"),
     };
 
     let cancel = cancel.map(|ptr| &ptr.as_ref().0);
@@ -343,7 +344,7 @@ pub extern "C" fn ddog_CancellationToken_drop(_cancel: Option<Box<CancellationTo
 
 #[cfg(test)]
 mod test {
-    use crate::exporter::*;
+    use super::*;
     use ddcommon_ffi::Slice;
 
     fn profiling_library_name() -> CharSlice<'static> {
@@ -471,5 +472,23 @@ mod test {
 
         let build_result = Result::from(build_result);
         build_result.unwrap_err();
+    }
+
+    #[test]
+    fn send_fails_with_null() {
+        unsafe {
+            match ddog_prof_Exporter_send(None, None, None) {
+                SendResult::HttpResponse(http_status) => {
+                    panic!("Expected test to fail, got {http_status:?}")
+                }
+                SendResult::Err(error) => {
+                    let actual_error = error.to_string();
+                    assert_eq!(
+                        "failed ddog_prof_Exporter_send: request was null",
+                        actual_error
+                    );
+                }
+            }
+        }
     }
 }
