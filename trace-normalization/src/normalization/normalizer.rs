@@ -85,12 +85,8 @@ fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
 }
 
 pub fn is_valid_status_code(sc: String) -> bool {
-    match sc.parse::<i64>() {
-        Ok(code) => {
-            (100..600).contains(&code)
-        },
-        Err(..) => {
-            false
-        }
+    if let Ok(code) = sc.parse::<i64>() {
+        return (100..600).contains(&code);
     }
+    false
 }
