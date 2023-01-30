@@ -105,8 +105,7 @@ impl AzureMetadata {
         match (subscription_id, site_name, resource_group) {
             (Some(id_sub), Some(sitename), Some(res_grp)) => Some(
                 format!(
-                    "/subscriptions/{}/resourcegroups/{}/providers/microsoft.web/sites/{}",
-                    id_sub, res_grp, sitename
+                    "/subscriptions/{id_sub}/resourcegroups/{res_grp}/providers/microsoft.web/sites/{sitename}"
                 )
                 .to_lowercase(),
             ),
