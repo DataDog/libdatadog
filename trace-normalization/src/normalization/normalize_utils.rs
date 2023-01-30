@@ -5,11 +5,6 @@
 
 use crate::errors;
 
-// DEFAULT_SPAN_NAME is the default name we assign a span if it's missing and we have no reasonable fallback
-pub const DEFAULT_SPAN_NAME: &str = "unnamed_operation";
-// DEFAULT_SERVICE_NAME is the default name we assign a service if it's missing and we have no reasonable fallback
-pub const DEFAULT_SERVICE_NAME: &str = "unnamed-service";
-
 // MAX_NAME_LEN the maximum length a name can have
 pub const MAX_NAME_LEN: usize = 100;
 // MAX_SERVICE_LEN the maximum length a service can have
@@ -55,23 +50,19 @@ pub fn truncate_utf8(s: String, limit: usize) -> String {
 
 // normalize_name normalizes a span name and returns an error describing the reason
 // (if any) why the name was modified.
-pub fn normalize_name(name: String) -> (String, Option<errors::NormalizeErrors>) {
+// pub fn normalize_name(name: String) -> (String, Option<errors::NormalizeErrors>) {
+pub fn normalize_name(name: String) -> Result<String, errors::NormalizeErrors> {
     if name.is_empty() {
-        return (DEFAULT_SPAN_NAME.to_string(), errors::NormalizeErrors::ErrorEmpty.into());
+        return Err(errors::NormalizeErrors::ErrorEmpty);
     }
     let mut truncated_name = name.clone();
-    let mut err: Option<errors::NormalizeErrors> = None;
 
     if name.len() > MAX_NAME_LEN {
         truncated_name = truncate_utf8(name, MAX_NAME_LEN);
-        err = errors::NormalizeErrors::ErrorTooLong.into();
     }
 
-    let (normalized_name, ok) = normalize_metric_names(truncated_name);
-    if !ok {
-        return (DEFAULT_SPAN_NAME.to_string(), errors::NormalizeErrors::ErrorInvalid.into())
-    }
-    (normalized_name, err)
+    let normalized_name = normalize_metric_names(truncated_name)?;
+    Ok(normalized_name)
 }
 
 // TODO: Implement this in a future PR
@@ -126,9 +117,9 @@ pub fn normalize_name(name: String) -> (String, Option<errors::NormalizeErrors>)
 //     is_valid_ascii_start_char(c) || ('0'..='9').contains(&c) || c == '.' || c == '/' || c == '-'
 // }
 
-pub fn normalize_metric_names(name: String) -> (String, bool) {
-    if name.is_empty() || name.len() > MAX_NAME_LEN {
-        return (name, false);
+pub fn normalize_metric_names(name: String) -> Result<String, errors::NormalizeErrors> {
+    if name.is_empty() {
+        return Err(errors::NormalizeErrors::ErrorEmpty);
     }
 
     // rust efficient ways to build strings, see here:
@@ -149,7 +140,7 @@ pub fn normalize_metric_names(name: String) -> (String, bool) {
 
     // if there were no alphabetic characters it wasn't valid
     if i == name.len() {
-        return ("".to_string(), false);
+        return Err(errors::NormalizeErrors::ErrorInvalid);
     }
 
     while i < name.len() {
@@ -179,7 +170,7 @@ pub fn normalize_metric_names(name: String) -> (String, bool) {
     if last_char == '_' {
         result.remove(result.len() - 1);
     }
-    (result, true)
+    Ok(result)
 }
 
 pub fn is_alpha(c: char) -> bool {

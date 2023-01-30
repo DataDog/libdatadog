@@ -14,8 +14,11 @@ const MAX_TYPE_LEN: usize = 100;
 // nanoseconds since epoch on Jan 1, 2000
 const YEAR_2000_NANOSEC_TS: i64 = 946684800000000000;
 
+// DEFAULT_SPAN_NAME is the default name we assign a span if it's missing and we have no reasonable fallback
+pub const DEFAULT_SPAN_NAME: &str = "unnamed_operation";
+
 #[allow(dead_code)]
-fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
+pub fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
     if s.trace_id == 0 {
         return Err(errors::NormalizerError::new("TraceID is zero (reason:trace_id_zero)"));
     }
@@ -30,7 +33,12 @@ fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
     // TODO: check for a feature flag to determine the component tag to become the span name
     // https://github.com/DataDog/datadog-agent/blob/dc88d14851354cada1d15265220a39dce8840dcc/pkg/trace/agent/normalizer.go#L64
 
-    let (normalized_name, _) = normalize_utils::normalize_name(s.name.clone());
+    let normalized_name = match normalize_utils::normalize_name(s.name.clone()) {
+        Ok(name) => name,
+        Err(_) => {
+            DEFAULT_SPAN_NAME.to_string()
+        }
+    };
 
     s.name = normalized_name;
 
@@ -64,7 +72,7 @@ fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
         }
     }
 
-    if s.r#type.len() > MAX_TYPE_LEN as usize {
+    if s.r#type.len() > MAX_TYPE_LEN {
         s.r#type = normalize_utils::truncate_utf8(s.r#type.clone(), MAX_TYPE_LEN);
     }
 
@@ -76,7 +84,7 @@ fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
 
     if s.meta.contains_key("http.status_code") {
         let status_code: String = s.meta.get("http.status_code").unwrap().to_string();
-        if !is_valid_status_code(status_code.clone()) {
+        if !is_valid_status_code(status_code) {
             s.meta.remove("http.status_code");
         }
     }

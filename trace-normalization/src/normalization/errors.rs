@@ -33,8 +33,6 @@ impl Error for NormalizerError {
 pub enum NormalizeErrors {
     // ErrorEmpty specifies that the passed input was empty.
     ErrorEmpty,
-    // ErrorTooLong signifies that the input was too long.
-    ErrorTooLong,
     // ErrorInvalid signifies that the input was invalid.
     ErrorInvalid
 }
@@ -43,7 +41,6 @@ impl fmt::Display for NormalizeErrors {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::ErrorEmpty => "empty",
-            Self::ErrorTooLong => "too long",
             Self::ErrorInvalid => "invalid",
         })
     }

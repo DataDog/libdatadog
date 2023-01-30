@@ -11,10 +11,10 @@ mod normalize_tests {
 
     #[test]
     fn test_normalize_name() {
-        let test_tuples: [(&str, &str, Option<errors::NormalizeErrors>); 4] = [
+        let test_tuples: [(&str, &str, Option<errors::NormalizeErrors>); 5] = [
             (
                 "",
-                normalize_utils::DEFAULT_SPAN_NAME,
+                "",
                 Some(errors::NormalizeErrors::ErrorEmpty),
             ),
             (
@@ -25,29 +25,33 @@ mod normalize_tests {
             (
                 "Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.",
                 "Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.",
-                Some(errors::NormalizeErrors::ErrorTooLong),
+                None,
             ),
             (
                 "bad-name",
                 "bad_name",
                 None,
             ),
+            (
+                "&",
+                "",
+                Some(errors::NormalizeErrors::ErrorInvalid),
+            )
         ];
 
         for tuple in test_tuples.iter() {
             let input = tuple.0;
             let expected = tuple.1;
             let expected_err = tuple.2.clone();
-            let result = normalize_utils::normalize_name(input.to_string());
 
-            assert_eq!(result.0, expected.to_string());
-
-            match result.1 {
-                Some(res) => {
-                    assert!(expected_err.is_some());
-                    assert_eq!(res, expected_err.unwrap())
+            match normalize_utils::normalize_name(input.to_string()) {
+                Ok(val) => {
+                    assert_eq!(expected_err, None);
+                    assert_eq!(val, expected);
                 },
-                None => assert!(expected_err.is_none())
+                Err(err) => {
+                    assert_eq!(err, expected_err.unwrap());
+                }
             }
         }
     }
