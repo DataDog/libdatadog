@@ -4,6 +4,7 @@
 use crate::slice::CharSlice;
 use crate::vec::Vec;
 use std::fmt::{Display, Formatter};
+use std::ptr::drop_in_place;
 
 /// Please treat this as opaque; do not reach into it, and especially don't
 /// write into it!
@@ -37,9 +38,11 @@ impl From<String> for Error {
 }
 
 impl From<Error> for String {
-    fn from(value: Error) -> String {
+    fn from(mut value: Error) -> String {
+        let mut vec = Vec::default();
+        std::mem::swap(&mut vec, &mut value.message);
         // Safety: .message is a String (just FFI safe).
-        unsafe { String::from_utf8_unchecked(value.message.into()) }
+        unsafe { String::from_utf8_unchecked(vec.into()) }
     }
 }
 
@@ -63,15 +66,21 @@ impl From<Box<&dyn std::error::Error>> for Error {
     }
 }
 
+impl Drop for Error {
+    fn drop(&mut self) {
+        // Leave an empty Vec, as it can help with use-after-free and double-free from C.
+        let mut vec = Vec::default();
+        std::mem::swap(&mut vec, &mut self.message);
+        drop(vec);
+    }
+}
+
 /// # Safety
 /// Only pass null or a valid reference to a `ddog_Error`.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
-    if let Some(err) = error {
-        // Leave an empty String in place to help with double-free issues.
-        let mut tmp = Error::from(String::new());
-        std::mem::swap(&mut tmp, err);
-        drop(tmp)
+pub unsafe extern "C" fn ddog_Error_drop(error: *mut Error) {
+    if !error.is_null() {
+        drop_in_place(error)
     }
 }
 
