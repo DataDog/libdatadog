@@ -56,8 +56,7 @@ pub fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
     }
 
     // Start & Duration as nanoseconds timestamps
-	// if s.Start is very little, less than year 2000 probably a unit issue so discard
-	// (or it is "le bug de l'an 2000")
+    // if s.Start is very little, less than year 2000 probably a unit issue so discard
     if s.duration < 0 {
         s.duration = 0;
     }
