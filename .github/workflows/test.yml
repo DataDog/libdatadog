@@ -10,7 +10,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
     strategy:
       matrix:
-        platform: [windows-latest, ubuntu-latest, macos-latest]
+        platform: [windows-latest, ubuntu-latest, macos-12]
         rust_version: [""]
         include:
           - platform: "ubuntu-latest"
@@ -26,7 +26,7 @@ jobs:
         if: ${{ matrix.rust_version != '' }}
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
       - id: rust-version
-        run: "echo ::set-output name=version::$(rustc --version)"
+        run: echo "version=$(rustc --version)" >> $GITHUB_OUTPUT
       - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --verbose"
         run: cargo build --workspace --verbose
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test --workspace --verbose"
@@ -39,7 +39,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
     strategy:
       matrix:
-        platform: [windows-latest, ubuntu-latest, macos-latest]
+        platform: [windows-latest, ubuntu-latest, macos-12]
         rust_version: [""]
         include:
           - platform: "ubuntu-latest"
@@ -72,7 +72,7 @@ jobs:
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
 
       - id: rust-version
-        run: "echo ::set-output name=version::$(rustc --version)"
+        run: echo "version=$(rustc --version)" >> $GITHUB_OUTPUT
 
       - name: "Generate profiling FFI"
         shell: bash
@@ -87,7 +87,7 @@ jobs:
            ./build-profiling-ffi.sh ${OUTPUT_FOLDER}/telemetry
 
       - name: 'Publish libdatadog'
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         if: '${{ always() }}'
         with:
           if-no-files-found: error
