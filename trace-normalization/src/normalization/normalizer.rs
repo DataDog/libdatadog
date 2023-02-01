@@ -4,7 +4,6 @@
 // Datadog, Inc.
 
 use std::time::{SystemTime};
-use crate::errors;
 use crate::normalize_utils;
 use crate::pb;
 
@@ -18,13 +17,9 @@ const YEAR_2000_NANOSEC_TS: i64 = 946684800000000000;
 pub const DEFAULT_SPAN_NAME: &str = "unnamed_operation";
 
 #[allow(dead_code)]
-pub fn normalize(s: &mut pb::Span) -> Result<(), errors::NormalizerError> {
-    if s.trace_id == 0 {
-        return Err(errors::NormalizerError::new("TraceID is zero (reason:trace_id_zero)"));
-    }
-    if s.span_id == 0 {
-        return Err(errors::NormalizerError::new("SpanID is zero (reason:span_id_zero)"));
-    }
+pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
+    anyhow::ensure!(s.trace_id != 0, "TraceID is zero (reason:trace_id_zero)");
+    anyhow::ensure!(s.span_id != 0, "SpanID is zero (reason:span_id_zero)");
     
     // TODO: Implement service name normalizer in future PR
     // let (svc, _) = normalize_utils::normalize_service(s.service.clone(), "".to_string());

@@ -3,8 +3,6 @@
 // developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
 // Datadog, Inc.
 
-use crate::errors;
-
 // MAX_NAME_LEN the maximum length a name can have
 pub const MAX_NAME_LEN: usize = 100;
 // MAX_SERVICE_LEN the maximum length a service can have
@@ -51,10 +49,9 @@ pub fn truncate_utf8(s: String, limit: usize) -> String {
 // normalize_name normalizes a span name and returns an error describing the reason
 // (if any) why the name was modified.
 // pub fn normalize_name(name: String) -> (String, Option<errors::NormalizeErrors>) {
-pub fn normalize_name(name: String) -> Result<String, errors::NormalizeErrors> {
-    if name.is_empty() {
-        return Err(errors::NormalizeErrors::ErrorEmpty);
-    }
+pub fn normalize_name(name: String) -> anyhow::Result<String> {
+    anyhow::ensure!(!name.is_empty(), "Normalizer Error: Empty");
+
     let mut truncated_name = name.clone();
 
     if name.len() > MAX_NAME_LEN {
@@ -117,10 +114,8 @@ pub fn normalize_name(name: String) -> Result<String, errors::NormalizeErrors> {
 //     is_valid_ascii_start_char(c) || ('0'..='9').contains(&c) || c == '.' || c == '/' || c == '-'
 // }
 
-pub fn normalize_metric_names(name: String) -> Result<String, errors::NormalizeErrors> {
-    if name.is_empty() {
-        return Err(errors::NormalizeErrors::ErrorEmpty);
-    }
+pub fn normalize_metric_names(name: String) -> anyhow::Result<String> {
+    anyhow::ensure!(!name.is_empty(), "Normalizer Error: Empty");
 
     // rust efficient ways to build strings, see here:
     // https://github.com/hoodie/concatenation_benchmarks-rs
@@ -139,9 +134,7 @@ pub fn normalize_metric_names(name: String) -> Result<String, errors::NormalizeE
     }
 
     // if there were no alphabetic characters it wasn't valid
-    if i == name.len() {
-        return Err(errors::NormalizeErrors::ErrorInvalid);
-    }
+    anyhow::ensure!(i != name.len(), "Normalizer Error: Invalid");
 
     while i < name.len() {
         if is_alpha_num(char_vec[i]) {

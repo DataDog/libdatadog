@@ -24,7 +24,3 @@ pub mod normalizer {
 pub mod normalize_utils {
     include!("./normalization/normalize_utils.rs");
 }
-
-pub mod errors {
-    include!("./normalization/errors.rs");
-}

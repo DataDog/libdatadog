@@ -6,51 +6,50 @@
 #[cfg(test)]
 mod normalize_tests {
 
-    use crate::errors;
     use crate::normalize_utils;
 
     #[test]
     fn test_normalize_name() {
-        let test_tuples: [(&str, &str, Option<errors::NormalizeErrors>); 5] = [
+        let test_tuples: [(&str, &str, &str); 5] = [
             (
                 "",
                 "",
-                Some(errors::NormalizeErrors::ErrorEmpty),
+                "Normalizer Error: Empty"
             ),
             (
                 "good",
                 "good",
-                None,
+                "",
             ),
             (
                 "Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.",
                 "Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.",
-                None,
+                "",
             ),
             (
                 "bad-name",
                 "bad_name",
-                None,
+                "",
             ),
             (
                 "&",
                 "",
-                Some(errors::NormalizeErrors::ErrorInvalid),
+                "Normalizer Error: Invalid"
             )
         ];
 
         for tuple in test_tuples.iter() {
             let input = tuple.0;
             let expected = tuple.1;
-            let expected_err = tuple.2.clone();
+            let expected_err = tuple.2;
 
             match normalize_utils::normalize_name(input.to_string()) {
                 Ok(val) => {
-                    assert_eq!(expected_err, None);
+                    assert_eq!(expected_err, "");
                     assert_eq!(val, expected);
                 },
                 Err(err) => {
-                    assert_eq!(err, expected_err.unwrap());
+                    assert_eq!(format!("{}", err), expected_err);
                 }
             }
         }
