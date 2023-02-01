@@ -4,10 +4,11 @@
 use crate::slice::CharSlice;
 use crate::vec::Vec;
 use std::fmt::{Display, Formatter};
-use std::ptr::drop_in_place;
 
 /// Please treat this as opaque; do not reach into it, and especially don't
-/// write into it!
+/// write into it! The most relevant APIs are:
+/// * `ddog_Error_message`, to get the message as a slice.
+/// * `ddog_Error_drop`.
 #[derive(Debug)]
 #[repr(C)]
 pub struct Error {
@@ -78,9 +79,13 @@ impl Drop for Error {
 /// # Safety
 /// Only pass null or a valid reference to a `ddog_Error`.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_Error_drop(error: *mut Error) {
-    if !error.is_null() {
-        drop_in_place(error)
+pub extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
+    if let Some(error) = error {
+        // Safety: many other _drop functions need to re-box first, but Error
+        // is repr(C) and not boxed, so it can be dropped in place. Of course,
+        // C users must respect the Error requirements (treat as opaque, don't
+        // reach in).
+        unsafe { std::ptr::drop_in_place(error as *mut _) }
     }
 }
 
