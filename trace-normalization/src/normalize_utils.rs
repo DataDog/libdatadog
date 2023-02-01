@@ -11,7 +11,7 @@ pub const MAX_SERVICE_LEN: usize = 100;
 pub const MAX_TAG_LEN: usize = 200;
 
 // TruncateUTF8 truncates the given string to make sure it uses less than limit bytes.
-// If the last character is an utf8 character that would be splitten, it removes it
+// If the last character is a utf8 character that would be split, it removes it
 // entirely to make sure the resulting string is not broken.
 pub fn truncate_utf8(s: String, limit: usize) -> String {
     if s.len() <= limit {

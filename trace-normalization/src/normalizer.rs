@@ -59,7 +59,12 @@ pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
         s.duration = 0;
     }
     if s.start < YEAR_2000_NANOSEC_TS {
-        let now: i64 = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_nanos() as i64;
+        let now = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|t|t.as_nanos() as i64) {
+            Ok(time) => time,
+            Err(err) => {
+                anyhow::bail!(format!("Normalizer Error: {}", err))
+            }
+        };
         s.start = now - s.duration;
         if s.start < 0 {
             s.start = now;
@@ -76,12 +81,11 @@ pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
     //     s.meta.insert("env".to_string(), normalize_utils::normalize_tag(env_tag));
     // }
 
-    if s.meta.contains_key("http.status_code") {
-        let status_code: String = s.meta.get("http.status_code").unwrap().to_string();
-        if !is_valid_status_code(status_code) {
+    if let Some(code) =  s.meta.get("http.status_code") {
+        if !is_valid_status_code(code.to_string()) {
             s.meta.remove("http.status_code");
         }
-    }
+    };
 
     Ok(())
 }
