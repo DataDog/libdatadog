@@ -115,6 +115,8 @@ unsafe fn try_to_endpoint(endpoint: Endpoint) -> anyhow::Result<exporter::Endpoi
 /// * `tags` - Tags to include with every profile reported by this exporter. It's also possible to include
 ///   profile-specific tags, see `additional_tags` on `profile_exporter_build`.
 /// * `endpoint` - Configuration for reporting data
+/// # Safety
+/// All pointers must refer to valid objects of the correct types.
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Exporter_new(
