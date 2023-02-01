@@ -15,7 +15,7 @@ pub const MAX_TAG_LEN: usize = 200;
 // entirely to make sure the resulting string is not broken.
 pub fn truncate_utf8(s: String, limit: usize) -> String {
     if s.len() <= limit {
-        return s
+        return s;
     }
     let mut prev_index = 0;
     for i in 0..s.len() {
@@ -31,19 +31,19 @@ pub fn truncate_utf8(s: String, limit: usize) -> String {
 // (if any) why the name was modified.
 // TODO: Implement this in a future PR
 // pub fn normalize_service(svc: String, lang: String) -> (String, Option<errors::NormalizeErrors>) {
-    // if svc == "" {
-    //     return (fallback_service(lang), errors::NormalizeErrors::ErrorEmpty);
-    // }
-    // if svc.len() > MAX_SERVICE_LEN {
-    //     return (truncate_utf8(svc, MAX_SERVICE_LEN), errors::NormalizeErrors::ErrorTooLong.into());
-    // }
-    // TODO: implement tag normalization
-    // let s: String = normalize_tag(svc);
-    // if s == "" {
-    //     return (fallbackService(lang), errors::NormalizeErrors::ErrorInvalid)
-    // }
-    // return (s, err)
-    // (svc, None)
+// if svc == "" {
+//     return (fallback_service(lang), errors::NormalizeErrors::ErrorEmpty);
+// }
+// if svc.len() > MAX_SERVICE_LEN {
+//     return (truncate_utf8(svc, MAX_SERVICE_LEN), errors::NormalizeErrors::ErrorTooLong.into());
+// }
+// TODO: implement tag normalization
+// let s: String = normalize_tag(svc);
+// if s == "" {
+//     return (fallbackService(lang), errors::NormalizeErrors::ErrorInvalid)
+// }
+// return (s, err)
+// (svc, None)
 // }
 
 // normalize_name normalizes a span name and returns an error describing the reason
@@ -65,8 +65,8 @@ pub fn normalize_name(name: String) -> anyhow::Result<String> {
 // TODO: Implement this in a future PR
 // NormalizeTag applies some normalization to ensure the tags match the backend requirements.
 // pub fn normalize_tag(v: String) -> String {
-    // Fast path: Check if the tag is valid and only contains ASCII characters,
-	// if yes return it as-is right away. For most use-cases this reduces CPU usage.
+// Fast path: Check if the tag is valid and only contains ASCII characters,
+// if yes return it as-is right away. For most use-cases this reduces CPU usage.
 // 	if is_normalized_ascii_tag(v.clone()) {
 // 		return v;
 // 	}
@@ -130,7 +130,7 @@ pub fn normalize_metric_names(name: String) -> anyhow::Result<String> {
 
     // skip non-alphabetic characters
     while i < name.len() && !is_alpha(char_vec[0]) {
-        i+=1;
+        i += 1;
     }
 
     // if there were no alphabetic characters it wasn't valid
@@ -144,7 +144,7 @@ pub fn normalize_metric_names(name: String) -> anyhow::Result<String> {
             // we skipped all non-alpha chars up front so we have seen at least one
             if last_char == '_' {
                 // overwrite underscores that happen before periods
-                result.replace_range((result.len()-1)..(result.len()), ".");
+                result.replace_range((result.len() - 1)..(result.len()), ".");
                 last_char = '.'
             } else {
                 result.push('.');
@@ -157,7 +157,7 @@ pub fn normalize_metric_names(name: String) -> anyhow::Result<String> {
                 last_char = '_';
             }
         }
-        i+=1;
+        i += 1;
     }
 
     if last_char == '_' {
@@ -218,7 +218,7 @@ mod tests {
                 Ok(val) => {
                     assert_eq!(expected_err, "");
                     assert_eq!(val, expected);
-                },
+                }
                 Err(err) => {
                     assert_eq!(format!("{}", err), expected_err);
                 }

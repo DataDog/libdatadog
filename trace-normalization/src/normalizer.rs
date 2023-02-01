@@ -3,9 +3,9 @@
 // developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
 // Datadog, Inc.
 
-use std::time::{SystemTime};
 use crate::normalize_utils;
 use crate::pb;
+use std::time::SystemTime;
 
 const MAX_TYPE_LEN: usize = 100;
 
@@ -20,7 +20,7 @@ pub const DEFAULT_SPAN_NAME: &str = "unnamed_operation";
 pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
     anyhow::ensure!(s.trace_id != 0, "TraceID is zero (reason:trace_id_zero)");
     anyhow::ensure!(s.span_id != 0, "SpanID is zero (reason:span_id_zero)");
-    
+
     // TODO: Implement service name normalizer in future PR
     // let (svc, _) = normalize_utils::normalize_service(s.service.clone(), "".to_string());
     // s.service = svc;
@@ -30,9 +30,7 @@ pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
 
     let normalized_name = match normalize_utils::normalize_name(s.name.clone()) {
         Ok(name) => name,
-        Err(_) => {
-            DEFAULT_SPAN_NAME.to_string()
-        }
+        Err(_) => DEFAULT_SPAN_NAME.to_string(),
     };
 
     s.name = normalized_name;
@@ -55,11 +53,14 @@ pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
     if s.duration < 0 {
         s.duration = 0;
     }
-    if s.duration > std::i64::MAX-s.start {
+    if s.duration > std::i64::MAX - s.start {
         s.duration = 0;
     }
     if s.start < YEAR_2000_NANOSEC_TS {
-        let now = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|t|t.as_nanos() as i64) {
+        let now = match SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|t| t.as_nanos() as i64)
+        {
             Ok(time) => time,
             Err(err) => {
                 anyhow::bail!(format!("Normalizer Error: {}", err))
@@ -81,7 +82,7 @@ pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
     //     s.meta.insert("env".to_string(), normalize_utils::normalize_tag(env_tag));
     // }
 
-    if let Some(code) =  s.meta.get("http.status_code") {
+    if let Some(code) = s.meta.get("http.status_code") {
         if !is_valid_status_code(code.to_string()) {
             s.meta.remove("http.status_code");
         }
@@ -100,11 +101,11 @@ pub fn is_valid_status_code(sc: String) -> bool {
 #[cfg(test)]
 mod tests {
 
-    use std::collections::HashMap;
-    use rand::Rng;
-    use crate::pb;
-    use crate::normalizer;
     use crate::normalize_utils;
+    use crate::normalizer;
+    use crate::pb;
+    use rand::Rng;
+    use std::collections::HashMap;
 
     pub fn new_test_span() -> pb::Span {
         let mut rng = rand::thread_rng();
@@ -120,14 +121,12 @@ mod tests {
             trace_id: 424242,
             meta: HashMap::from([
                 ("user".to_string(), "leo".to_string()),
-                ("pool".to_string(), "fondue".to_string())
+                ("pool".to_string(), "fondue".to_string()),
             ]),
-            metrics: HashMap::from([
-                ("cheese_weight".to_string(), 100000.0)
-            ]),
+            metrics: HashMap::from([("cheese_weight".to_string(), 100000.0)]),
             parent_id: 1111,
             r#type: "http".to_string(),
-            meta_struct: HashMap::new()
+            meta_struct: HashMap::new(),
         }
     }
 
@@ -166,8 +165,14 @@ mod tests {
     #[test]
     pub fn test_normalize_name_for_metrics() {
         let expected_names = HashMap::from([
-            ("pylons.controller".to_string(), "pylons.controller".to_string()),
-            ("trace-api.request".to_string(), "trace_api.request".to_string())
+            (
+                "pylons.controller".to_string(),
+                "pylons.controller".to_string(),
+            ),
+            (
+                "trace-api.request".to_string(),
+                "trace_api.request".to_string(),
+            ),
         ]);
 
         let mut test_span = new_test_span();
