@@ -117,32 +117,49 @@ unsafe fn try_to_endpoint(endpoint: Endpoint) -> anyhow::Result<exporter::Endpoi
 /// * `endpoint` - Configuration for reporting data
 #[no_mangle]
 #[must_use]
-pub extern "C" fn ddog_prof_Exporter_new(
+pub unsafe extern "C" fn ddog_prof_Exporter_new(
     profiling_library_name: CharSlice,
     profiling_library_version: CharSlice,
     family: CharSlice,
-    tags: *const ddcommon_ffi::Vec<Tag>,
+    tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: Endpoint,
 ) -> ExporterNewResult {
-    match || -> anyhow::Result<ProfileExporter> {
-        let library_name = unsafe { profiling_library_name.to_utf8_lossy() }.into_owned();
-        let library_version = unsafe { profiling_library_version.to_utf8_lossy() }.into_owned();
-        let family = unsafe { family.to_utf8_lossy() }.into_owned();
-        let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
-        let tags = unsafe { tags.as_ref() }.map(|tags| tags.iter().map(Tag::clone).collect());
-        ProfileExporter::new(
-            library_name,
-            library_version,
-            family,
-            tags,
-            converted_endpoint,
-        )
-    }() {
-        Ok(exporter) => ExporterNewResult::Ok(unsafe {
-            NonNull::new_unchecked(Box::into_raw(Box::new(exporter)))
-        }),
+    // Use a helper function so we can use the ? operator.
+    match ddog_prof_exporter_new_impl(
+        profiling_library_name,
+        profiling_library_version,
+        family,
+        tags,
+        endpoint,
+    ) {
+        Ok(exporter) => {
+            // Safety: Box::into_raw will always be non-null.
+            let ptr = NonNull::new_unchecked(Box::into_raw(Box::new(exporter)));
+            ExporterNewResult::Ok(ptr)
+        }
         Err(err) => ExporterNewResult::Err(err.into()),
     }
+}
+
+fn ddog_prof_exporter_new_impl(
+    profiling_library_name: CharSlice,
+    profiling_library_version: CharSlice,
+    family: CharSlice,
+    tags: Option<&ddcommon_ffi::Vec<Tag>>,
+    endpoint: Endpoint,
+) -> anyhow::Result<ProfileExporter> {
+    let library_name = unsafe { profiling_library_name.to_utf8_lossy() }.into_owned();
+    let library_version = unsafe { profiling_library_version.to_utf8_lossy() }.into_owned();
+    let family = unsafe { family.to_utf8_lossy() }.into_owned();
+    let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
+    let tags = tags.map(|tags| tags.iter().map(Tag::clone).collect());
+    ProfileExporter::new(
+        library_name,
+        library_version,
+        family,
+        tags,
+        converted_endpoint,
+    )
 }
 
 #[no_mangle]
@@ -390,13 +407,15 @@ mod test {
         let host = Tag::new("host", "localhost").expect("static tags to be valid");
         tags.push(host);
 
-        let result = ddog_prof_Exporter_new(
-            profiling_library_name(),
-            profiling_library_version(),
-            family(),
-            &tags,
-            endpoint_agent(endpoint()),
-        );
+        let result = unsafe {
+            ddog_prof_Exporter_new(
+                profiling_library_name(),
+                profiling_library_version(),
+                family(),
+                Some(&tags),
+                endpoint_agent(endpoint()),
+            )
+        };
 
         match result {
             ExporterNewResult::Ok(mut exporter) => unsafe {
@@ -411,13 +430,15 @@ mod test {
 
     #[test]
     fn test_build() {
-        let exporter_result = ddog_prof_Exporter_new(
-            profiling_library_name(),
-            profiling_library_version(),
-            family(),
-            std::ptr::null(),
-            endpoint_agent(endpoint()),
-        );
+        let exporter_result = unsafe {
+            ddog_prof_Exporter_new(
+                profiling_library_name(),
+                profiling_library_version(),
+                family(),
+                None,
+                endpoint_agent(endpoint()),
+            )
+        };
 
         let mut exporter = match exporter_result {
             ExporterNewResult::Ok(e) => e,
