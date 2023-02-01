@@ -231,7 +231,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(request: *mut *mut Requ
 
 /// Replace the inner `*mut Request` with a nullptr to reduce chance of
 /// double-free in caller.
-unsafe fn swap_request_with_null(request: *mut *mut Request) -> Option<&mut Request> {
+unsafe fn swap_request_with_null<'a>(request: *mut *mut Request) -> Option<&'a mut Request> {
     if let Some(ref_ptr) = request.as_mut() {
         let ptr: *mut Request = {
             let mut tmp = std::ptr::null_mut();
