@@ -178,50 +178,25 @@ pub fn is_alpha_num(c: char) -> bool {
 mod tests {
 
     use crate::normalize_utils;
+    use duplicate::duplicate_item;
 
+    #[duplicate_item(
+        test_name                       input                       expected                    expected_err;
+        [test_normalize_empty_string]   [""]                        [""]                        ["Normalizer Error: Empty"];
+        [test_normalize_valid_string]   ["good"]                    ["good"]                    [""];
+        [test_normalize_long_string]    ["Too-Long-.".repeat(20)]   ["Too_Long.".repeat(10)]    [""];
+        [test_normalize_dash_string]    ["bad-name"]                ["bad_name"]                [""];
+        [test_normalize_invalid_string] ["&"]                       [""]                        ["Normalizer Error: Invalid"];
+    )]
     #[test]
-    fn test_normalize_name() {
-        let test_tuples: [(&str, &str, &str); 5] = [
-            (
-                "",
-                "",
-                "Normalizer Error: Empty"
-            ),
-            (
-                "good",
-                "good",
-                "",
-            ),
-            (
-                "Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.",
-                "Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.",
-                "",
-            ),
-            (
-                "bad-name",
-                "bad_name",
-                "",
-            ),
-            (
-                "&",
-                "",
-                "Normalizer Error: Invalid"
-            )
-        ];
-
-        for tuple in test_tuples.iter() {
-            let input = tuple.0;
-            let expected = tuple.1;
-            let expected_err = tuple.2;
-
-            match normalize_utils::normalize_name(input.to_string()) {
-                Ok(val) => {
-                    assert_eq!(expected_err, "");
-                    assert_eq!(val, expected);
-                }
-                Err(err) => {
-                    assert_eq!(format!("{}", err), expected_err);
-                }
+    fn test_name() {
+        match normalize_utils::normalize_name(input.to_string()) {
+            Ok(val) => {
+                assert_eq!(expected_err, "");
+                assert_eq!(val, expected);
+            }
+            Err(err) => {
+                assert_eq!(format!("{}", err), expected_err);
             }
         }
     }
