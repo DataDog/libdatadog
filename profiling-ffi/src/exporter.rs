@@ -219,12 +219,29 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
 }
 
 /// # Safety
-/// The `request` must be valid, or null. After this call, the `request` will
-/// be invalid.
+/// Each pointer of `request` may be null, but if non-null the inner-most
+/// pointer must point to a valid `ddog_prof_Exporter_Request` object made by
+/// the Rust Global allocator.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(request: *mut Request) {
-    if !request.is_null() {
-        drop_in_place(request)
+pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(request: *mut *mut Request) {
+    if let Some(request) = swap_request_with_null(request) {
+        drop_in_place(request as *mut _)
+    }
+}
+
+/// Replace the inner `*mut Request` with a nullptr to reduce chance of
+/// double-free in caller.
+unsafe fn swap_request_with_null(request: *mut *mut Request) -> Option<&mut Request> {
+    if let Some(ref_ptr) = request.as_mut() {
+        let ptr: *mut Request = {
+            let mut tmp = std::ptr::null_mut();
+            std::mem::swap(ref_ptr, &mut tmp);
+            tmp
+        };
+
+        ptr.as_mut()
+    } else {
+        None
     }
 }
 
@@ -258,13 +275,7 @@ unsafe fn ddog_prof_exporter_send_impl(
     cancel: *mut CancellationToken,
 ) -> anyhow::Result<HttpStatus> {
     // Re-box the request first, to avoid leaks on other errors.
-    let request_ptr = match request.as_mut() {
-        Some(r) => r,
-        None => anyhow::bail!("request was null"),
-    };
-    let mut tmp = std::ptr::null_mut(); // leave a nullptr for the caller
-    std::mem::swap(&mut tmp, request_ptr);
-    let request = match tmp.as_mut() {
+    let request = match swap_request_with_null(request) {
         Some(r) => Box::from_raw(r as *mut _),
         None => anyhow::bail!("request was null"),
     };

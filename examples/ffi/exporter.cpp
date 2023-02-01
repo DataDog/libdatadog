@@ -169,7 +169,7 @@ int main(int argc, char *argv[]) {
     printf("Response code: %d\n", send_result.http_response.code);
   }
 
-  ddog_prof_Exporter_Request_drop(request);
+  ddog_prof_Exporter_Request_drop(&request);
 
   ddog_prof_Exporter_drop(exporter);
   ddog_CancellationToken_drop(cancel);
