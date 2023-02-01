@@ -223,23 +223,17 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
 /// pointer must point to a valid `ddog_prof_Exporter_Request` object made by
 /// the Rust Global allocator.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(request: *mut *mut Request) {
-    if let Some(request) = swap_request_with_null(request) {
-        drop_in_place(request as *mut _)
-    }
+pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(request: *mut Option<&mut Request>) {
+    drop(rebox_request(request))
 }
 
 /// Replace the inner `*mut Request` with a nullptr to reduce chance of
 /// double-free in caller.
-unsafe fn swap_request_with_null<'a>(request: *mut *mut Request) -> Option<&'a mut Request> {
+unsafe fn rebox_request(request: *mut Option<&mut Request>) -> Option<Box<Request>> {
     if let Some(ref_ptr) = request.as_mut() {
-        let ptr: *mut Request = {
-            let mut tmp = std::ptr::null_mut();
-            std::mem::swap(ref_ptr, &mut tmp);
-            tmp
-        };
-
-        ptr.as_mut()
+        let mut tmp = None;
+        std::mem::swap(ref_ptr, &mut tmp);
+        tmp.map(|ptr| Box::from_raw(ptr as *mut _))
     } else {
         None
     }
@@ -260,7 +254,7 @@ unsafe fn swap_request_with_null<'a>(request: *mut *mut Request) -> Option<&'a m
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Exporter_send(
     exporter: *mut ProfileExporter,
-    request: *mut *mut Request,
+    request: *mut Option<&mut Request>,
     cancel: *mut CancellationToken,
 ) -> SendResult {
     match ddog_prof_exporter_send_impl(exporter, request, cancel) {
@@ -271,12 +265,12 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send(
 
 unsafe fn ddog_prof_exporter_send_impl(
     exporter: *mut ProfileExporter,
-    request: *mut *mut Request,
+    request: *mut Option<&mut Request>,
     cancel: *mut CancellationToken,
 ) -> anyhow::Result<HttpStatus> {
     // Re-box the request first, to avoid leaks on other errors.
-    let request = match swap_request_with_null(request) {
-        Some(r) => Box::from_raw(r as *mut _),
+    let request = match rebox_request(request) {
+        Some(boxed) => boxed,
         None => anyhow::bail!("request was null"),
     };
 
