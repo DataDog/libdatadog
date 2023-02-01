@@ -79,13 +79,13 @@ impl Drop for Error {
 /// # Safety
 /// Only pass null or a valid reference to a `ddog_Error`.
 #[no_mangle]
-pub extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
-    if let Some(error) = error {
+pub unsafe extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
+    if let Some(err) = error {
         // Safety: many other _drop functions need to re-box first, but Error
         // is repr(C) and not boxed, so it can be dropped in place. Of course,
         // C users must respect the Error requirements (treat as opaque, don't
         // reach in).
-        unsafe { std::ptr::drop_in_place(error as *mut _) }
+        std::ptr::drop_in_place(err as *mut _)
     }
 }
 
