@@ -3,11 +3,12 @@
 
 use crate::Timespec;
 use datadog_profiling::profile as profiles;
+use datadog_profiling::profile::Profile;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
 use ddcommon_ffi::Error;
 use profiles::profiled_endpoints;
 use std::convert::{TryFrom, TryInto};
-use std::ptr::{drop_in_place, NonNull};
+use std::ptr::NonNull;
 use std::str::Utf8Error;
 use std::time::{Duration, SystemTime};
 
@@ -334,9 +335,11 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
 /// # Safety
 /// The `profile` must point to an object created by another FFI routine in this
 /// module, such as `ddog_Profile_with_sample_types`.
-pub unsafe extern "C" fn ddog_prof_Profile_drop(profile: *mut datadog_profiling::profile::Profile) {
-    if !profile.is_null() {
-        drop_in_place(profile)
+pub unsafe extern "C" fn ddog_prof_Profile_drop(
+    profile: Option<&mut datadog_profiling::profile::Profile>,
+) {
+    if let Some(reference) = profile {
+        drop(Box::from_raw(reference as *mut _))
     }
 }
 
@@ -365,22 +368,29 @@ impl From<ProfileAddResult> for Result<u64, String> {
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_Profile_add(
-    profile: *mut datadog_profiling::profile::Profile,
+    profile: Option<&mut datadog_profiling::profile::Profile>,
     sample: Sample,
 ) -> ProfileAddResult {
-    if profile.is_null() {
-        return ProfileAddResult::Err(Error::from(
-            "ddog_prof_Profile_add failed: profile pointer was null",
-        ));
+    match ddog_prof_profile_add_impl(profile, sample) {
+        Ok(id) => ProfileAddResult::Ok(id),
+        Err(err) => ProfileAddResult::Err(Error::from(err.context("failed ddog_prof_Profile_add"))),
     }
+}
 
-    let profile = profile.as_mut().unwrap();
+unsafe fn ddog_prof_profile_add_impl(
+    profile: Option<&mut Profile>,
+    sample: Sample,
+) -> anyhow::Result<u64> {
+    let profile = match profile {
+        Some(p) => p,
+        None => anyhow::bail!("profile pointer was null"),
+    };
     match sample.try_into().map(|s| profile.add(s)) {
         Ok(r) => match r {
-            Ok(id) => ProfileAddResult::Ok(id.into()),
-            Err(err) => ProfileAddResult::Err(err.into()),
+            Ok(id) => Ok(u64::from(id)),
+            Err(err) => Err(err),
         },
-        Err(err) => ProfileAddResult::Err(anyhow::Error::from(err).into()),
+        Err(err) => Err(anyhow::Error::from(err)),
     }
 }
 
@@ -442,9 +452,9 @@ pub struct EncodedProfile {
 /// valid reference also means that it hasn't already been dropped (do not
 /// call this twice on the same object);
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(profile: *mut EncodedProfile) {
-    if !profile.is_null() {
-        drop_in_place(profile)
+pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(profile: Option<&mut EncodedProfile>) {
+    if let Some(reference) = profile {
+        drop(Box::from_raw(reference as *mut _))
     }
 }
 
@@ -537,8 +547,8 @@ mod test {
     fn ctor_and_dtor() {
         unsafe {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
-            let profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
-            ddog_prof_Profile_drop(profile.as_ptr());
+            let mut profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
+            ddog_prof_Profile_drop(Some(profile.as_mut()));
         }
     }
 
@@ -546,7 +556,7 @@ mod test {
     fn add_failure() {
         unsafe {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
-            let profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
+            let mut profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
 
             // wrong number of values (doesn't match sample types)
             let values: &[i64] = &[];
@@ -557,7 +567,7 @@ mod test {
                 labels: Slice::default(),
             };
 
-            let result = Result::from(ddog_prof_Profile_add(profile.as_ptr(), sample));
+            let result = Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), sample));
             result.unwrap_err();
         }
     }
@@ -601,19 +611,21 @@ mod test {
                 labels: Slice::from(&labels),
             };
 
-            let sample_id1 = Result::from(ddog_prof_Profile_add(profile.as_mut(), sample)).unwrap();
+            let sample_id1 =
+                Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), sample)).unwrap();
             assert_eq!(sample_id1, 1);
 
-            let sample_id2 = Result::from(ddog_prof_Profile_add(profile.as_mut(), sample)).unwrap();
+            let sample_id2 =
+                Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), sample)).unwrap();
             assert_eq!(sample_id1, sample_id2);
 
-            ddog_prof_Profile_drop(profile.as_ptr());
+            ddog_prof_Profile_drop(Some(profile.as_mut()));
         }
     }
 
     unsafe fn provide_distinct_locations_ffi() -> NonNull<datadog_profiling::profile::Profile> {
         let sample_type: *const ValueType = &ValueType::new("samples", "count");
-        let profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
+        let mut profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
 
         let main_lines = vec![Line {
             function: Function {
@@ -671,12 +683,12 @@ mod test {
         };
 
         let sample_id1 =
-            Result::from(ddog_prof_Profile_add(profile.as_ptr(), main_sample)).unwrap();
+            Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), main_sample)).unwrap();
 
         assert_eq!(sample_id1, 1);
 
         let sample_id2 =
-            Result::from(ddog_prof_Profile_add(profile.as_ptr(), test_sample)).unwrap();
+            Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), test_sample)).unwrap();
         assert_eq!(sample_id2, 2);
 
         profile
@@ -685,7 +697,7 @@ mod test {
     #[test]
     fn distinct_locations_ffi() {
         unsafe {
-            ddog_prof_Profile_drop(provide_distinct_locations_ffi().as_ptr());
+            ddog_prof_Profile_drop(Some(provide_distinct_locations_ffi().as_mut()));
         }
     }
 }
