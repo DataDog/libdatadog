@@ -127,7 +127,7 @@ pub fn normalize_metric_names(name: String) -> anyhow::Result<String> {
     let char_vec: Vec<char> = name.chars().collect();
 
     // skip non-alphabetic characters
-    let mut i = match name.chars().position(|x| is_alpha(x)) {
+    let mut i = match name.chars().position(is_alpha) {
         Some(val) => val,
         None => {
             // if there were no alphabetic characters it wasn't valid
