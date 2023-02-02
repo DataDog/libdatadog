@@ -319,7 +319,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
     period: Option<&Period>,
     start_time: Option<&Timespec>,
 ) -> NonNull<Profile> {
-    let types: Vec<datadog_profiling::profile::api::ValueType> =
+    let types: Vec<profiles::api::ValueType> =
         sample_types.into_slice().iter().map(Into::into).collect();
 
     let builder = Profile::builder()
