@@ -80,9 +80,10 @@ pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
     }
 
     if s.meta.contains_key("env") {
-        let env_tag: &str = s.meta.get("env").unwrap();
-        if let Ok(normalized_tag) = normalize_utils::normalize_tag(env_tag) {
-            s.meta.insert("env".to_string(), normalized_tag);
+        if let Some(env_tag) = s.meta.get("env") {
+            if let Ok(normalized_tag) = normalize_utils::normalize_tag(env_tag) {
+                s.meta.insert("env".to_string(), normalized_tag);
+            }
         }
     };
 
