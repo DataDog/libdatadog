@@ -164,9 +164,14 @@ fn ddog_prof_exporter_new_impl(
     )
 }
 
+/// # Safety
+/// The `exporter` may be null, but if non-null the pointer must point to a
+/// valid `ddog_prof_Exporter_Request` object made by the Rust Global
+/// allocator that has not already been dropped.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_Exporter_drop(exporter: Option<&mut ProfileExporter>) {
     if let Some(reference) = exporter {
+        // Safety: ProfileExporter's are opaque and therefore Boxed.
         drop(Box::from_raw(reference as *mut _))
     }
 }
@@ -367,11 +372,13 @@ pub extern "C" fn ddog_CancellationToken_cancel(cancel: Option<&CancellationToke
     }
 }
 
-/// Drop the `token` if it's not null. Non-null values must be created by the
-/// Rust global allocator.
+/// # Safety
+/// The `token` can be null, but non-null values must be created by the Rust
+/// Global allocator and must have not been dropped already.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_CancellationToken_drop(token: Option<&mut CancellationToken>) {
     if let Some(reference) = token {
+        // Safety: the token is not repr(C), so it is boxed.
         drop(Box::from_raw(reference as *mut _))
     }
 }
