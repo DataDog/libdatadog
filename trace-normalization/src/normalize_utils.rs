@@ -196,7 +196,7 @@ mod tests {
                 assert_eq!(val, expected);
             }
             Err(err) => {
-                assert_eq!(format!("{}", err), expected_err);
+                assert_eq!(format!("{err}"), expected_err);
             }
         }
     }

@@ -63,7 +63,7 @@ pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
         {
             Ok(time) => time,
             Err(err) => {
-                anyhow::bail!(format!("Normalizer Error: {}", err))
+                anyhow::bail!(format!("Normalizer Error: {err}"))
             }
         };
         s.start = now - s.duration;
