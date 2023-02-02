@@ -22,7 +22,9 @@ pub fn truncate_utf8(s: String, limit: usize) -> String {
         if i > limit {
             return s[0..prev_index].to_string();
         }
-        prev_index = i;
+        if s.is_char_boundary(i) {
+            prev_index = i;
+        }
     }
     s
 }
