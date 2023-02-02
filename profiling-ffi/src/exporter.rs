@@ -154,7 +154,7 @@ fn ddog_prof_exporter_new_impl(
     let library_version = unsafe { profiling_library_version.to_utf8_lossy() }.into_owned();
     let family = unsafe { family.to_utf8_lossy() }.into_owned();
     let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
-    let tags = tags.map(|tags| tags.iter().map(Tag::clone).collect());
+    let tags = tags.map(|tags| tags.iter().cloned().collect());
     ProfileExporter::new(
         library_name,
         library_version,
@@ -216,9 +216,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
         Some(exporter) => {
             let timeout = std::time::Duration::from_millis(timeout_ms);
             let converted_files = into_vec_files(files);
-            let tags = additional_tags
-                .as_ref()
-                .map(|tags| tags.iter().map(Tag::clone).collect());
+            let tags = additional_tags.map(|tags| tags.iter().cloned().collect());
 
             match exporter.build(
                 start.into(),

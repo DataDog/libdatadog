@@ -448,13 +448,17 @@ pub struct EncodedProfile {
     endpoints_stats: Box<profiled_endpoints::ProfiledEndpointsStats>,
 }
 
+/// # Safety
 /// Only pass a reference to a valid `ddog_prof_EncodedProfile`, or null. A
 /// valid reference also means that it hasn't already been dropped (do not
-/// call this twice on the same object);
+/// call this twice on the same object).
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(profile: Option<&mut EncodedProfile>) {
     if let Some(reference) = profile {
-        drop(Box::from_raw(reference as *mut _))
+        // Safety: EncodedProfile's are repr(C), and not box allocated. If the
+        // user has followed the safety requirements of this function, then
+        // this is safe.
+        std::ptr::drop_in_place(reference as *mut _)
     }
 }
 
