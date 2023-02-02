@@ -171,16 +171,16 @@ mod tests {
 
     #[duplicate_item(
         test_name                       input                               expected                    expected_err;
-        [test_normalize_empty_string]   [&""]                                [""]                        ["Normalizer Error: Empty span name."];
-        [test_normalize_valid_string]   [&"good"]                            ["good"]                    [""];
-        [test_normalize_long_string]    [&"Too-Long-.".repeat(20).as_str()]  ["Too_Long.".repeat(10)]    [""];
-        [test_normalize_dash_string]    [&"bad-name"]                        ["bad_name"]                [""];
-        [test_normalize_invalid_string] [&"&***"]                            [""]                        ["Normalizer Error: Name contains no alphabetic chars."];
-        [test_normalize_invalid_prefix] [&"&&&&&&&_test-name-"]              ["test_name"]               [""];
+        [test_normalize_empty_string]   [""]                                [""]                        ["Normalizer Error: Empty span name."];
+        [test_normalize_valid_string]   ["good"]                            ["good"]                    [""];
+        [test_normalize_long_string]    ["Too-Long-.".repeat(20).as_str()]  ["Too_Long.".repeat(10)]    [""];
+        [test_normalize_dash_string]    ["bad-name"]                        ["bad_name"]                [""];
+        [test_normalize_invalid_string] ["&***"]                            [""]                        ["Normalizer Error: Name contains no alphabetic chars."];
+        [test_normalize_invalid_prefix] ["&&&&&&&_test-name-"]              ["test_name"]               [""];
     )]
     #[test]
     fn test_name() {
-        match normalize_utils::normalize_name(input.to_string()) {
+        match normalize_utils::normalize_name(input) {
             Ok(val) => {
                 assert_eq!(expected_err, "");
                 assert_eq!(val, expected);
