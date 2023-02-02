@@ -36,8 +36,8 @@ pub(crate) fn truncate_utf8(s: &str, limit: usize) -> &str {
 // belonging to language lang.
 pub(crate) fn fallback_service(lang: String) -> String {
     if lang.is_empty() {
-		return DEFAULT_SERVICE_NAME.to_string();
-	}
+        return DEFAULT_SERVICE_NAME.to_string();
+    }
     let mut service_name = String::new();
     service_name.push_str("unnamed-");
     service_name.push_str(&lang);
@@ -52,7 +52,7 @@ pub(crate) fn fallback_service(lang: String) -> String {
 pub(crate) fn normalize_service(svc: &str) -> anyhow::Result<String> {
     anyhow::ensure!(!svc.is_empty(), "Normalizer Error: Empty service name.");
 
-    let truncated_service = if svc.len() > MAX_SERVICE_LEN as usize {
+    let truncated_service = if svc.len() > MAX_SERVICE_LEN {
         truncate_utf8(svc, MAX_SERVICE_LEN)
     } else {
         svc
@@ -64,10 +64,10 @@ pub(crate) fn normalize_service(svc: &str) -> anyhow::Result<String> {
 // NormalizeTag applies some normalization to ensure the tags match the backend requirements.
 pub(crate) fn normalize_tag(tag: &str) -> anyhow::Result<String> {
     // Fast path: Check if the tag is valid and only contains ASCII characters,
-	// if yes return it as-is right away. For most use-cases this reduces CPU usage.
-	if is_normalized_ascii_tag(tag) {
-		return Ok(tag.to_string());
-	}
+    // if yes return it as-is right away. For most use-cases this reduces CPU usage.
+    if is_normalized_ascii_tag(tag) {
+        return Ok(tag.to_string());
+    }
 
     anyhow::ensure!(!tag.is_empty(), "Normalizer Error: Empty tag name.");
 
@@ -79,7 +79,7 @@ pub(crate) fn normalize_tag(tag: &str) -> anyhow::Result<String> {
     let char_vec: Vec<char> = tag.chars().collect();
 
     for cur_char in char_vec {
-        if result.len() == MAX_TAG_LEN as usize {
+        if result.len() == MAX_TAG_LEN {
             break;
         }
         if cur_char.is_lowercase() {
@@ -106,7 +106,9 @@ pub(crate) fn normalize_tag(tag: &str) -> anyhow::Result<String> {
             last_char = cur_char;
             continue;
         }
-        if !result.is_empty() && (cur_char.is_ascii_digit() || cur_char == '.' || cur_char == '/' || cur_char == '-') {
+        if !result.is_empty()
+            && (cur_char.is_ascii_digit() || cur_char == '.' || cur_char == '/' || cur_char == '-')
+        {
             result.push(cur_char);
             last_char = cur_char;
             continue;
@@ -128,7 +130,7 @@ pub(crate) fn is_normalized_ascii_tag(tag: &str) -> bool {
     if tag.is_empty() {
         return true;
     }
-    if tag.len() > MAX_TAG_LEN as usize {
+    if tag.len() > MAX_TAG_LEN {
         return false;
     }
     if !is_valid_ascii_start_char(tag.chars().next().unwrap()) {
@@ -141,10 +143,10 @@ pub(crate) fn is_normalized_ascii_tag(tag: &str) -> bool {
         }
         if b == '_' {
             // an underscore is only okay if followed by a valid non-underscore character
-			i+=1;
-			if i == tag.len() || !is_valid_ascii_tag_char(tag.chars().nth(i).unwrap()) {
-				return false;
-			}
+            i += 1;
+            if i == tag.len() || !is_valid_ascii_tag_char(tag.chars().nth(i).unwrap()) {
+                return false;
+            }
         } else {
             return false;
         }
@@ -269,7 +271,7 @@ mod tests {
             Ok(val) => {
                 assert_eq!(expected_err, "");
                 assert_eq!(val, expected)
-            },
+            }
             Err(err) => {
                 assert_eq!(format!("{err}"), expected_err);
             }

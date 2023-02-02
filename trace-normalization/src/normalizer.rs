@@ -23,7 +23,7 @@ pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
 
     let normalized_service = match normalize_utils::normalize_service(&s.service) {
         Ok(service) => service,
-        Err(_) => normalize_utils::fallback_service("".to_string())
+        Err(_) => normalize_utils::fallback_service("".to_string()),
     };
 
     s.service = normalized_service;
@@ -81,11 +81,8 @@ pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
 
     if s.meta.contains_key("env") {
         let env_tag: &str = s.meta.get("env").unwrap();
-        match normalize_utils::normalize_tag(env_tag) {
-            Ok(normalized_tag) => {
-                s.meta.insert("env".to_string(), normalized_tag);
-            },
-            Err(_) => {}
+        if let Ok(normalized_tag) = normalize_utils::normalize_tag(env_tag) {
+            s.meta.insert("env".to_string(), normalized_tag);
         }
     };
 
@@ -230,7 +227,7 @@ mod tests {
         assert_eq!(before_trace_id, test_span.trace_id);
     }
 
-    // TODO: Add a unit test for testing Component2Name, one that is 
+    // TODO: Add a unit test for testing Component2Name, one that is
     //       implemented within the normalize function.
 
     #[test]
@@ -257,7 +254,10 @@ mod tests {
     }
 
     fn get_current_time() -> i64 {
-        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_nanos() as i64
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as i64
     }
 
     #[test]
@@ -275,11 +275,11 @@ mod tests {
     #[test]
     pub fn test_normalize_start_too_small_with_large_duration() {
         let mut test_span = new_test_span();
-        
+
         test_span.start = 42;
         test_span.duration = get_current_time() * 2;
         let min_start = get_current_time();
-        
+
         assert!(normalizer::normalize(&mut test_span).is_ok());
         assert!(test_span.start >= min_start); // start should have been reset to current time
         assert!(test_span.start <= get_current_time()); //start should have been reset to current time
@@ -372,7 +372,7 @@ mod tests {
         test_span.r#type = "sql".repeat(1000);
 
         assert!(normalizer::normalize(&mut test_span).is_ok());
-        assert_eq!(test_span.r#type.len(), normalizer::MAX_TYPE_LEN as usize);
+        assert_eq!(test_span.r#type.len(), normalizer::MAX_TYPE_LEN);
     }
 
     #[test]
@@ -387,7 +387,9 @@ mod tests {
     #[test]
     pub fn test_normalize_env() {
         let mut test_span = new_test_span();
-        test_span.meta.insert("env".to_string(), "DEVELOPMENT".to_string());
+        test_span
+            .meta
+            .insert("env".to_string(), "DEVELOPMENT".to_string());
 
         assert!(normalizer::normalize(&mut test_span).is_ok());
         assert_eq!("development", test_span.meta.get("env").unwrap());
@@ -407,13 +409,14 @@ mod tests {
         assert_eq!(test_span.parent_id, 0);
         assert_eq!(test_span.trace_id, before_trace_id);
         assert_eq!(test_span.span_id, before_span_id);
-
     }
 
     #[test]
     pub fn test_normalize_trace_empty() {
         let mut test_span = new_test_span();
-        test_span.meta.insert("env".to_string(), "DEVELOPMENT".to_string());
+        test_span
+            .meta
+            .insert("env".to_string(), "DEVELOPMENT".to_string());
 
         assert!(normalizer::normalize(&mut test_span).is_ok());
         assert_eq!("development", test_span.meta.get("env").unwrap());
