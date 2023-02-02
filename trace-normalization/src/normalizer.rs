@@ -14,7 +14,7 @@ const MAX_TYPE_LEN: usize = 100;
 const YEAR_2000_NANOSEC_TS: i64 = 946684800000000000;
 
 // DEFAULT_SPAN_NAME is the default name we assign a span if it's missing and we have no reasonable fallback
-pub const DEFAULT_SPAN_NAME: &str = "unnamed_operation";
+const DEFAULT_SPAN_NAME: &str = "unnamed_operation";
 
 #[allow(dead_code)]
 pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
@@ -28,7 +28,7 @@ pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
     // TODO: check for a feature flag to determine the component tag to become the span name
     // https://github.com/DataDog/datadog-agent/blob/dc88d14851354cada1d15265220a39dce8840dcc/pkg/trace/agent/normalizer.go#L64
 
-    let normalized_name = match normalize_utils::normalize_name(s.name.clone()) {
+    let normalized_name = match normalize_utils::normalize_name(&s.name) {
         Ok(name) => name,
         Err(_) => DEFAULT_SPAN_NAME.to_string(),
     };
@@ -73,7 +73,7 @@ pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
     }
 
     if s.r#type.len() > MAX_TYPE_LEN {
-        s.r#type = normalize_utils::truncate_utf8(s.r#type.clone(), MAX_TYPE_LEN);
+        s.r#type = normalize_utils::truncate_utf8(&s.r#type, MAX_TYPE_LEN).to_string();
     }
 
     // TODO: Implement tag normalization in future PR
@@ -91,7 +91,7 @@ pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn is_valid_status_code(sc: String) -> bool {
+pub(crate) fn is_valid_status_code(sc: String) -> bool {
     if let Ok(code) = sc.parse::<i64>() {
         return (100..600).contains(&code);
     }

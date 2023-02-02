@@ -4,23 +4,19 @@
 // Datadog, Inc.
 
 // MAX_NAME_LEN the maximum length a name can have
-pub const MAX_NAME_LEN: usize = 100;
-// MAX_SERVICE_LEN the maximum length a service can have
-pub const MAX_SERVICE_LEN: usize = 100;
-
-pub const MAX_TAG_LEN: usize = 200;
+pub(crate) const MAX_NAME_LEN: usize = 100;
 
 // TruncateUTF8 truncates the given string to make sure it uses less than limit bytes.
 // If the last character is a utf8 character that would be split, it removes it
 // entirely to make sure the resulting string is not broken.
-pub fn truncate_utf8(s: String, limit: usize) -> String {
+pub(crate) fn truncate_utf8(s: &str, limit: usize) -> &str {
     if s.len() <= limit {
         return s;
     }
     let mut prev_index = 0;
     for i in 0..s.len() {
         if i > limit {
-            return s[0..prev_index].to_string();
+            return &s[0..prev_index];
         }
         if s.is_char_boundary(i) {
             prev_index = i;
@@ -48,17 +44,16 @@ pub fn truncate_utf8(s: String, limit: usize) -> String {
 // }
 
 // normalize_name normalizes a span name or an error describing why normalization failed.
-pub fn normalize_name(name: String) -> anyhow::Result<String> {
+pub(crate) fn normalize_name(name: &str) -> anyhow::Result<String> {
     anyhow::ensure!(!name.is_empty(), "Normalizer Error: Empty span name.");
 
-    let mut truncated_name = name.clone();
+    let truncated_name = if name.len() > MAX_NAME_LEN {
+        truncate_utf8(name, MAX_NAME_LEN)
+    } else {
+        name
+    };
 
-    if name.len() > MAX_NAME_LEN {
-        truncated_name = truncate_utf8(name, MAX_NAME_LEN);
-    }
-
-    let normalized_name = normalize_metric_names(truncated_name)?;
-    Ok(normalized_name)
+    normalize_metric_names(truncated_name)
 }
 
 // TODO: Implement this in a future PR
@@ -113,7 +108,7 @@ pub fn normalize_name(name: String) -> anyhow::Result<String> {
 //     is_valid_ascii_start_char(c) || ('0'..='9').contains(&c) || c == '.' || c == '/' || c == '-'
 // }
 
-pub fn normalize_metric_names(name: String) -> anyhow::Result<String> {
+pub(crate) fn normalize_metric_names(name: &str) -> anyhow::Result<String> {
     let mut result = String::with_capacity(name.len());
 
     // given a dummy value
@@ -160,11 +155,11 @@ pub fn normalize_metric_names(name: String) -> anyhow::Result<String> {
     Ok(result)
 }
 
-pub fn is_alpha(c: char) -> bool {
+pub(crate) fn is_alpha(c: char) -> bool {
     ('a'..='z').contains(&c) || ('A'..='Z').contains(&c)
 }
 
-pub fn is_alpha_num(c: char) -> bool {
+pub(crate) fn is_alpha_num(c: char) -> bool {
     is_alpha(c) || ('0'..='9').contains(&c)
 }
 
@@ -176,12 +171,12 @@ mod tests {
 
     #[duplicate_item(
         test_name                       input                               expected                    expected_err;
-        [test_normalize_empty_string]   [""]                                [""]                        ["Normalizer Error: Empty span name."];
-        [test_normalize_valid_string]   ["good"]                            ["good"]                    [""];
-        [test_normalize_long_string]    ["Too-Long-.".repeat(20).as_str()]  ["Too_Long.".repeat(10)]    [""];
-        [test_normalize_dash_string]    ["bad-name"]                        ["bad_name"]                [""];
-        [test_normalize_invalid_string] ["&***"]                            [""]                        ["Normalizer Error: Name contains no alphabetic chars."];
-        [test_normalize_invalid_prefix] ["&&&&&&&_test-name-"]              ["test_name"]               [""];
+        [test_normalize_empty_string]   [&""]                                [""]                        ["Normalizer Error: Empty span name."];
+        [test_normalize_valid_string]   [&"good"]                            ["good"]                    [""];
+        [test_normalize_long_string]    [&"Too-Long-.".repeat(20).as_str()]  ["Too_Long.".repeat(10)]    [""];
+        [test_normalize_dash_string]    [&"bad-name"]                        ["bad_name"]                [""];
+        [test_normalize_invalid_string] [&"&***"]                            [""]                        ["Normalizer Error: Name contains no alphabetic chars."];
+        [test_normalize_invalid_prefix] [&"&&&&&&&_test-name-"]              ["test_name"]               [""];
     )]
     #[test]
     fn test_name() {
