@@ -6,37 +6,32 @@
 
 use crate::Timespec;
 use datadog_profiling::exporter;
+use datadog_profiling::exporter::{ProfileExporter, Request};
 use datadog_profiling::profile::profiled_endpoints;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use exporter::ProfileExporter;
+use ddcommon_ffi::Error;
 use std::borrow::Cow;
 use std::ptr::NonNull;
 use std::str::FromStr;
 
 #[repr(C)]
-pub enum SendResult {
-    HttpResponse(HttpStatus),
-    Err(ddcommon_ffi::Vec<u8>),
+pub enum ExporterNewResult {
+    Ok(*mut ProfileExporter),
+    Err(Error),
 }
 
 #[repr(C)]
-pub enum NewProfileExporterResult {
-    Ok(*mut ProfileExporter),
-    Err(ddcommon_ffi::Vec<u8>),
+pub enum RequestBuildResult {
+    // This is a Box::into_raw pointer.
+    Ok(*mut Request),
+    Err(Error),
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Exporter_NewResult_drop(result: NewProfileExporterResult) {
-    match result {
-        NewProfileExporterResult::Ok(ptr) => {
-            let exporter = Box::from_raw(ptr);
-            std::mem::drop(exporter);
-        }
-        NewProfileExporterResult::Err(message) => {
-            std::mem::drop(message);
-        }
-    }
+#[repr(C)]
+pub enum SendResult {
+    HttpResponse(HttpStatus),
+    Err(Error),
 }
 
 #[repr(C)]
@@ -50,10 +45,6 @@ pub struct File<'a> {
     name: CharSlice<'a>,
     file: ByteSlice<'a>,
 }
-
-/// This type only exists to workaround a bug in cbindgen; may be removed in the
-/// future.
-pub struct Request(exporter::Request);
 
 // This type exists only to force cbindgen to expose an CancellationToken as an opaque type.
 pub struct CancellationToken(tokio_util::sync::CancellationToken);
@@ -132,7 +123,7 @@ pub extern "C" fn ddog_prof_Exporter_new(
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: Endpoint,
-) -> NewProfileExporterResult {
+) -> ExporterNewResult {
     match || -> anyhow::Result<ProfileExporter> {
         let library_name = unsafe { profiling_library_name.to_utf8_lossy() }.into_owned();
         let library_version = unsafe { profiling_library_version.to_utf8_lossy() }.into_owned();
@@ -147,8 +138,8 @@ pub extern "C" fn ddog_prof_Exporter_new(
             converted_endpoint,
         )
     }() {
-        Ok(exporter) => NewProfileExporterResult::Ok(Box::into_raw(Box::new(exporter))),
-        Err(err) => NewProfileExporterResult::Err(err.into()),
+        Ok(exporter) => ExporterNewResult::Ok(Box::into_raw(Box::new(exporter))),
+        Err(err) => ExporterNewResult::Err(err.into()),
     }
 }
 
@@ -169,11 +160,27 @@ unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> 
         .collect()
 }
 
-/// Builds a Request object based on the profile data supplied.
+#[cfg(test)]
+impl From<RequestBuildResult> for Result<Box<Request>, String> {
+    fn from(result: RequestBuildResult) -> Self {
+        match result {
+            // Safety: Request is opaque, can only be built from Rust.
+            RequestBuildResult::Ok(ok) => Ok(unsafe { Box::from_raw(ok) }),
+            RequestBuildResult::Err(err) => Err(String::from(err)),
+        }
+    }
+}
+
+/// If successful, builds a `ddog_prof_Exporter_Request` object based on the
+/// profile data supplied. If unsuccessful, it returns an error message.
+///
+/// The main use of the `ddog_prof_Exporter_Request` object is to be used in
+/// `ddog_prof_Exporter_send`, which will take ownership of the object. Do not
+/// pass it to `ddog_prof_Exporter_Request_drop` after that!
 ///
 /// # Safety
-/// The `exporter` and the files inside of the `files` slice need to have been
-/// created by this module.
+/// The `exporter`, `additional_stats`, and `endpoint_stats` args should be
+/// valid objects created by this module, except NULL is allowed.
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
@@ -184,9 +191,9 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoints_stats: Option<&profiled_endpoints::ProfiledEndpointsStats>,
     timeout_ms: u64,
-) -> Option<Box<Request>> {
+) -> RequestBuildResult {
     match exporter {
-        None => None,
+        None => RequestBuildResult::Err(anyhow::anyhow!("no exporter was provided").into()),
         Some(exporter) => {
             let timeout = std::time::Duration::from_millis(timeout_ms);
             let converted_files = into_vec_files(files);
@@ -200,19 +207,32 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
                 endpoints_stats,
                 timeout,
             ) {
-                Ok(request) => Some(Box::new(Request(request))),
-                Err(_) => None,
+                Ok(request) => RequestBuildResult::Ok(Box::into_raw(Box::new(request))),
+                Err(err) => RequestBuildResult::Err(err.into()),
             }
         }
+    }
+}
+
+/// # Safety
+/// The `request` must be valid, or null. Notably, it is invalid if it's been
+/// sent to `ddog_prof_Exporter_send` or `ddog_prof_Exporter_Request_drop`
+/// already.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(request: *mut Request) {
+    if !request.is_null() {
+        drop(Box::from_raw(request));
     }
 }
 
 /// Sends the request, returning the HttpStatus.
 ///
 /// # Arguments
-/// * `exporter` - borrows the exporter for sending the request
-/// * `request` - takes ownership of the request
-/// * `cancel` - borrows the cancel, if any
+/// * `exporter` - Borrows the exporter for sending the request.
+/// * `request` - Takes ownership of the request. Do not call
+///               `ddog_prof_Exporter_Request_drop` on `request` after calling
+///               `ddog_prof_Exporter_send` on it.
+/// * `cancel` - Borrows the cancel, if any.
 ///
 /// # Safety
 /// All non-null arguments MUST have been created by created by apis in this module.
@@ -220,29 +240,27 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Exporter_send(
     exporter: Option<NonNull<ProfileExporter>>,
-    request: Option<Box<Request>>,
+    request: *mut Request,
     cancel: Option<NonNull<CancellationToken>>,
 ) -> SendResult {
-    let exp_ptr = match exporter {
-        None => {
-            let buf: &[u8] = b"Failed to export: exporter was null";
-            return SendResult::Err(ddcommon_ffi::Vec::from(Vec::from(buf)));
-        }
-        Some(e) => e,
+    // Re-box the request first, to avoid leaks on other errors.
+    let request = if request.is_null() {
+        return SendResult::Err(Error::from("failed to export: request was null"));
+    } else {
+        Box::from_raw(request)
     };
 
-    let request_ptr = match request {
+    let exp_ptr = match exporter {
         None => {
-            let buf: &[u8] = b"Failed to export: request was null";
-            return SendResult::Err(ddcommon_ffi::Vec::from(Vec::from(buf)));
+            return SendResult::Err(Error::from("failed to export: exporter was null"));
         }
-        Some(req) => req,
+        Some(e) => e,
     };
 
     let cancel_option = unwrap_cancellation_token(cancel);
 
     match || -> anyhow::Result<HttpStatus> {
-        let response = exp_ptr.as_ref().send((*request_ptr).0, cancel_option)?;
+        let response = exp_ptr.as_ref().send(*request, cancel_option)?;
 
         Ok(HttpStatus(response.status().as_u16()))
     }() {
@@ -250,9 +268,6 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send(
         Err(err) => SendResult::Err(err.into()),
     }
 }
-
-#[no_mangle]
-pub extern "C" fn ddog_prof_Exporter_Request_drop(_request: Option<Box<Request>>) {}
 
 fn unwrap_cancellation_token<'a>(
     cancel: Option<NonNull<CancellationToken>>,
@@ -331,11 +346,6 @@ pub extern "C" fn ddog_CancellationToken_drop(_cancel: Option<Box<CancellationTo
     // _cancel implicitly dropped because we've turned it into a Box
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Exporter_SendResult_drop(result: SendResult) {
-    std::mem::drop(result)
-}
-
 #[cfg(test)]
 mod test {
     use crate::exporter::*;
@@ -376,10 +386,10 @@ mod test {
         );
 
         match result {
-            NewProfileExporterResult::Ok(exporter) => unsafe {
+            ExporterNewResult::Ok(exporter) => unsafe {
                 ddog_prof_Exporter_drop(Some(Box::from_raw(exporter)))
             },
-            NewProfileExporterResult::Err(message) => {
+            ExporterNewResult::Err(message) => {
                 drop(message);
                 panic!("Should not occur!")
             }
@@ -397,10 +407,8 @@ mod test {
         );
 
         let exporter = match exporter_result {
-            NewProfileExporterResult::Ok(exporter) => unsafe {
-                Some(NonNull::new_unchecked(exporter))
-            },
-            NewProfileExporterResult::Err(message) => {
+            ExporterNewResult::Ok(exporter) => unsafe { Some(NonNull::new_unchecked(exporter)) },
+            ExporterNewResult::Err(message) => {
                 std::mem::drop(message);
                 panic!("Should not occur!")
             }
@@ -421,7 +429,7 @@ mod test {
         };
         let timeout_milliseconds = 90;
 
-        let maybe_request = unsafe {
+        let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
                 exporter,
                 start,
@@ -433,11 +441,40 @@ mod test {
             )
         };
 
-        assert!(maybe_request.is_some());
+        let build_result = Result::from(build_result);
+        build_result.unwrap();
 
         // TODO: Currently, we're only testing that a request was built (building did not fail), but
         //     we have no coverage for the request actually being correct.
         //     It'd be nice to actually perform the request, capture its contents, and assert that
         //     they are as expected.
+    }
+
+    #[test]
+    fn test_build_failure() {
+        let start = Timespec {
+            seconds: 12,
+            nanoseconds: 34,
+        };
+        let finish = Timespec {
+            seconds: 56,
+            nanoseconds: 78,
+        };
+        let timeout_milliseconds = 90;
+
+        let build_result = unsafe {
+            ddog_prof_Exporter_Request_build(
+                None, // No exporter, will fail
+                start,
+                finish,
+                Slice::default(),
+                None,
+                None,
+                timeout_milliseconds,
+            )
+        };
+
+        let build_result = Result::from(build_result);
+        build_result.unwrap_err();
     }
 }
