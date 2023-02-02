@@ -28,7 +28,7 @@ pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
 
     s.service = normalized_service;
 
-    // TODO: check for a feature flag to determine the component tag to become the span name
+    // TODO: component2name: check for a feature flag to determine the component tag to become the span name
     // https://github.com/DataDog/datadog-agent/blob/dc88d14851354cada1d15265220a39dce8840dcc/pkg/trace/agent/normalizer.go#L64
 
     let normalized_name = match normalize_utils::normalize_name(&s.name) {
@@ -107,6 +107,7 @@ pub(crate) fn is_valid_status_code(sc: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+
     use crate::normalize_utils;
     use crate::normalizer;
     use crate::pb;
