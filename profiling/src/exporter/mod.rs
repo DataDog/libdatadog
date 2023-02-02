@@ -57,6 +57,7 @@ pub struct File<'a> {
     pub bytes: &'a [u8],
 }
 
+#[derive(Debug)]
 pub struct Request {
     timeout: Option<std::time::Duration>,
     req: hyper::Request<hyper::Body>,
@@ -154,7 +155,7 @@ impl ProfileExporter {
         end: DateTime<Utc>,
         files: &[File],
         additional_tags: Option<&Vec<Tag>>,
-        endpoints_count: Option<&ProfiledEndpointsStats>,
+        endpoint_counts: Option<&ProfiledEndpointsStats>,
         timeout: std::time::Duration,
     ) -> anyhow::Result<Request> {
         let mut form = multipart::Form::default();
@@ -211,7 +212,7 @@ impl ProfileExporter {
             "end": end.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
             "family": self.family.as_ref(),
             "version": "4",
-            "endpoints_count" : endpoints_count,
+            "endpoint_counts" : endpoint_counts,
         })
         .to_string();
 

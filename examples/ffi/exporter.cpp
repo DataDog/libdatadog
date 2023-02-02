@@ -15,8 +15,9 @@ struct Deleter {
   void operator()(ddog_prof_Profile *object) { ddog_prof_Profile_drop(object); }
 };
 
-template <typename T> void print_error(const char *s, const T &err) {
-  printf("%s (%.*s)\n", s, static_cast<int>(err.len), err.ptr);
+void print_error(const char *s, const ddog_Error &err) {
+  auto charslice = ddog_Error_message(&err);
+  printf("%s (%.*s)\n", s, static_cast<int>(charslice.len), charslice.ptr);
 }
 
 int main(int argc, char *argv[]) {
@@ -66,11 +67,17 @@ int main(int argc, char *argv[]) {
       .values = {&value, 1},
       .labels = {&label, 1},
   };
-  ddog_prof_Profile_add(profile.get(), sample);
+  auto add_result = ddog_prof_Profile_add(profile.get(), sample);
+  if (add_result.tag != DDOG_PROF_PROFILE_ADD_RESULT_OK) {
+    print_error("Failed to add sample to profile: ", add_result.err);
+    ddog_Error_drop(&add_result.err);
+    return 1;
+  }
 
   ddog_prof_Profile_SerializeResult serialize_result = ddog_prof_Profile_serialize(profile.get(), nullptr, nullptr);
   if (serialize_result.tag == DDOG_PROF_PROFILE_SERIALIZE_RESULT_ERR) {
     print_error("Failed to serialize profile: ", serialize_result.err);
+    ddog_Error_drop(&serialize_result.err);
     return 1;
   }
 
@@ -84,11 +91,9 @@ int main(int argc, char *argv[]) {
       ddog_Vec_Tag_push(&tags, DDOG_CHARSLICE_C("service"), to_slice_c_char(service));
   if (tag_result.tag == DDOG_VEC_TAG_PUSH_RESULT_ERR) {
     print_error("Failed to push tag: ", tag_result.err);
-    ddog_Vec_Tag_PushResult_drop(tag_result);
+    ddog_Error_drop(&tag_result.err);
     return 1;
   }
-
-  ddog_Vec_Tag_PushResult_drop(tag_result);
 
   ddog_prof_Exporter_NewResult exporter_new_result = ddog_prof_Exporter_new(
       DDOG_CHARSLICE_C("exporter-example"),
@@ -101,7 +106,7 @@ int main(int argc, char *argv[]) {
 
   if (exporter_new_result.tag == DDOG_PROF_EXPORTER_NEW_RESULT_ERR) {
     print_error("Failed to create exporter: ", exporter_new_result.err);
-    ddog_prof_Exporter_NewResult_drop(exporter_new_result);
+    ddog_Error_drop(&exporter_new_result.err);
     return 1;
   }
 
@@ -114,7 +119,7 @@ int main(int argc, char *argv[]) {
 
   ddog_prof_Exporter_Slice_File files = {.ptr = files_, .len = sizeof files_ / sizeof *files_};
 
-  ddog_prof_Exporter_Request *request = ddog_prof_Exporter_Request_build(
+  ddog_prof_Exporter_Request_BuildResult build_result = ddog_prof_Exporter_Request_build(
     exporter,
     encoded_profile->start,
     encoded_profile->end,
@@ -123,6 +128,15 @@ int main(int argc, char *argv[]) {
     nullptr,
     30000
   );
+  ddog_prof_EncodedProfile_drop(encoded_profile);
+
+  if (build_result.tag == DDOG_PROF_EXPORTER_REQUEST_BUILD_RESULT_ERR) {
+    print_error("Failed to build request: ", build_result.err);
+    ddog_Error_drop(&build_result.err);
+    return 1;
+  }
+
+  auto &request = build_result.ok;
 
   ddog_CancellationToken *cancel = ddog_CancellationToken_new();
   ddog_CancellationToken *cancel_for_background_thread = ddog_CancellationToken_clone(cancel);
@@ -146,16 +160,18 @@ int main(int argc, char *argv[]) {
   trigger_cancel_if_request_takes_too_long_thread.detach();
 
   int exit_code = 0;
-  ddog_prof_Exporter_SendResult send_result = ddog_prof_Exporter_send(exporter, request, cancel);
+  ddog_prof_Exporter_SendResult send_result = ddog_prof_Exporter_send(exporter, &request, cancel);
   if (send_result.tag == DDOG_PROF_EXPORTER_SEND_RESULT_ERR) {
     print_error("Failed to send profile: ", send_result.err);
     exit_code = 1;
+    ddog_Error_drop(&send_result.err);
   } else {
     printf("Response code: %d\n", send_result.http_response.code);
   }
 
-  ddog_prof_Exporter_NewResult_drop(exporter_new_result);
-  ddog_prof_Exporter_SendResult_drop(send_result);
+  ddog_prof_Exporter_Request_drop(&request);
+
+  ddog_prof_Exporter_drop(exporter);
   ddog_CancellationToken_drop(cancel);
   return exit_code;
 }

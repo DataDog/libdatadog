@@ -3,7 +3,7 @@
 
 [package]
 name = "datadog-profiling-ffi"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2021"
 license = "Apache-2.0"
 
@@ -14,7 +14,7 @@ crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
 anyhow = "1.0"
-chrono = "0.4"
+chrono = {version = "0.4", default-features = false}
 datadog-profiling = { path = "../profiling"}
 hyper = {version = "0.14", default-features = false}
 ddcommon = { path = "../ddcommon"}
