@@ -216,7 +216,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     endpoints_stats: Option<&profiled_endpoints::ProfiledEndpointsStats>,
     timeout_ms: u64,
 ) -> RequestBuildResult {
-    match exporter.as_ref() {
+    match exporter {
         None => RequestBuildResult::Err(anyhow::anyhow!("exporter was null").into()),
         Some(exporter) => {
             let timeout = std::time::Duration::from_millis(timeout_ms);
