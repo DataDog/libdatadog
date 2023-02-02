@@ -77,6 +77,7 @@ COPY "ddtelemetry/Cargo.toml" "ddtelemetry/"
 COPY "ddtelemetry-ffi/Cargo.toml" "ddtelemetry-ffi/"
 COPY "profiling/Cargo.toml" "profiling/"
 COPY "profiling-ffi/Cargo.toml" "profiling-ffi/"
+COPY "trace-normalization/Cargo.toml" "trace-normalization/"
 COPY "tools/Cargo.toml" "tools/" 
 RUN find -name "Cargo.toml" | sed -e s#Cargo.toml#src/lib.rs#g | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
 RUN echo ddtelemetry/benches/ipc.rs tools/src/bin/dedup_headers.rs ddtelemetry/examples/tm-worker-test.rs | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
