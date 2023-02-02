@@ -690,13 +690,6 @@ impl TelemetryWorkerBuilder {
     ) -> Result<(TelemetryWorkerHandle, JoinHandle<()>)> {
         let tokio_runtime = tokio::runtime::Handle::current();
 
-        // TODO remove
-        std::fs::write(
-            "/tmp/ehlo",
-            format!("Starting wosrker with cfg: {config:?}"),
-        )
-        .ok();
-
         let (worker_handle, worker) = self.build_worker(config, tokio_runtime.clone())?;
 
         let join_handle = tokio_runtime.spawn(worker.run());

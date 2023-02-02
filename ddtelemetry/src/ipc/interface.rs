@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use anyhow::Result;
@@ -10,6 +10,7 @@ use futures::{
     future::{self, BoxFuture, Pending, Ready, Shared},
     FutureExt,
 };
+use http::Uri;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tarpc::{context::Context, server::Channel};
@@ -153,6 +154,25 @@ impl SessionInfo {
         };
 
         runtime.shutdown().await
+    }
+
+    fn get_config(&self) -> MutexGuard<Option<Config>> {
+        let mut cfg = self.session_config.lock().unwrap();
+
+        if let None = &*cfg {
+            *cfg = Some(FromEnv::config())
+        }
+
+        cfg
+    }
+
+    fn modify_config<F>(&self, mut f: F)
+    where
+        F: FnMut(&mut Config) -> (),
+    {
+        if let Some(cfg) = &mut *self.get_config() {
+            f(cfg)
+        }
     }
 }
 
@@ -391,15 +411,10 @@ impl TelemetryInterface for TelemetryServer {
         agent_url: String,
     ) -> Self::SetSessionAgentUrlFut {
         let session = self.get_session(&session_id);
-        {
-            let mut cfg = session.session_config.lock().unwrap();
-            let mut new_cfg = cfg.clone().unwrap_or_else(FromEnv::config);
-            if !agent_url.is_empty() {
-                new_cfg.endpoint = FromEnv::build_endpoint(agent_url.as_str(), None);
-            }
+        session.modify_config(|cfg| {
+            cfg.set_url(&agent_url).ok();
+        });
 
-            *cfg = Some(new_cfg);
-        }
         Box::pin(async move { session.shutdown_running_instances().await })
     }
 }
