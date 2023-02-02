@@ -255,6 +255,10 @@ mod test_c_sidecar {
     use super::*;
     use std::{ffi::CString, io::Write, os::unix::prelude::AsRawFd};
 
+    fn set_sidecar_per_process() {
+        std::env::set_var("_DD_DEBUG_IPC_MODE", "instance_per_process")
+    }
+
     #[test]
     fn test_ddog_ph_file_handling() {
         let fname = CString::new(std::env::temp_dir().join("test_file").to_str().unwrap()).unwrap();
@@ -273,9 +277,12 @@ mod test_c_sidecar {
         writeln!(file, "test").unwrap_err(); // file is closed, so write returns an error
     }
 
+
     #[test]
     #[ignore] // run all tests that can fork in a separate run, to avoid any race conditions with default rust test harness
     fn test_ddog_sidecar_connection() {
+        set_sidecar_per_process();
+        
         let mut transport = std::ptr::null_mut();
         assert_eq!(ddog_sidecar_connect(&mut transport), MaybeError::None);
         let mut transport = unsafe { Box::from_raw(transport) };
@@ -287,6 +294,8 @@ mod test_c_sidecar {
     #[test]
     #[ignore] // run all tests that can fork in a separate run, to avoid any race conditions with default rust test harness
     fn test_ddog_sidecar_register_app() {
+        set_sidecar_per_process();
+
         let mut transport = std::ptr::null_mut();
         assert_eq!(ddog_sidecar_connect(&mut transport), MaybeError::None);
         let mut transport = unsafe { Box::from_raw(transport) };

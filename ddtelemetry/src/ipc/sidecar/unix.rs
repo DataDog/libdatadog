@@ -130,12 +130,15 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
                 );
                 // TODO: add solution to redirect stderr/stdout + and enable/disable tracing
                 enable_tracing();
-                
 
                 if let Err(err) = enter_listener_loop(listener) {
                     println!("Error: {err}")
                 }
-                println!("shutting down sidecar, pid: {}, total runtime: {:.3}s", getpid(), now.elapsed().as_secs_f64())
+                println!(
+                    "shutting down sidecar, pid: {}, total runtime: {:.3}s",
+                    getpid(),
+                    now.elapsed().as_secs_f64()
+                )
             })
             .ok();
         })?;
@@ -145,14 +148,23 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
 }
 
 pub fn start_or_connect_to_sidecar() -> io::Result<TelemetryTransport> {
-    let liaison = setup::DefaultLiason::default();
+    let mode = std::env::var("_DD_DEBUG_IPC_MODE")
+        .ok()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    let liaison = match mode.as_str() {
+        "shared" => setup::DefaultLiason::ipc_shared(),
+        "instance_per_process" => setup::DefaultLiason::ipc_per_process(),
+        _ => setup::DefaultLiason::ipc_shared(),
+    };
+
     if let Some(listener) = liaison.attempt_listen()? {
         daemonize(listener)?;
     };
 
     Ok(IpcChannel::from(liaison.connect_to_server()?).into())
 }
-
 
 fn enable_tracing() {
     tracing_subscriber::fmt::init();
