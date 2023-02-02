@@ -181,12 +181,12 @@ mod tests {
     use duplicate::duplicate_item;
 
     #[duplicate_item(
-        test_name                       input                       expected                    expected_err;
-        [test_normalize_empty_string]   [""]                        [""]                        ["Normalizer Error: Empty"];
-        [test_normalize_valid_string]   ["good"]                    ["good"]                    [""];
-        [test_normalize_long_string]    ["Too-Long-.".repeat(20)]   ["Too_Long.".repeat(10)]    [""];
-        [test_normalize_dash_string]    ["bad-name"]                ["bad_name"]                [""];
-        [test_normalize_invalid_string] ["&"]                       [""]                        ["Normalizer Error: Invalid"];
+        test_name                       input                               expected                    expected_err;
+        [test_normalize_empty_string]   [""]                                [""]                        ["Normalizer Error: Empty"];
+        [test_normalize_valid_string]   ["good"]                            ["good"]                    [""];
+        [test_normalize_long_string]    ["Too-Long-.".repeat(20).as_str()]  ["Too_Long.".repeat(10)]    [""];
+        [test_normalize_dash_string]    ["bad-name"]                        ["bad_name"]                [""];
+        [test_normalize_invalid_string] ["&"]                               [""]                        ["Normalizer Error: Invalid"];
     )]
     #[test]
     fn test_name() {
