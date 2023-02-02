@@ -52,7 +52,7 @@ pub fn truncate_utf8(s: String, limit: usize) -> String {
 // (if any) why the name was modified.
 // pub fn normalize_name(name: String) -> (String, Option<errors::NormalizeErrors>) {
 pub fn normalize_name(name: String) -> anyhow::Result<String> {
-    anyhow::ensure!(!name.is_empty(), "Normalizer Error: Empty");
+    anyhow::ensure!(!name.is_empty(), "Normalizer Error: Empty span name.");
 
     let mut truncated_name = name.clone();
 
@@ -117,8 +117,6 @@ pub fn normalize_name(name: String) -> anyhow::Result<String> {
 // }
 
 pub fn normalize_metric_names(name: String) -> anyhow::Result<String> {
-    anyhow::ensure!(!name.is_empty(), "Normalizer Error: Empty");
-
     // rust efficient ways to build strings, see here:
     // https://github.com/hoodie/concatenation_benchmarks-rs
     let mut result = String::with_capacity(name.len());
@@ -128,15 +126,14 @@ pub fn normalize_metric_names(name: String) -> anyhow::Result<String> {
 
     let char_vec: Vec<char> = name.chars().collect();
 
-    let mut i = 0;
-
     // skip non-alphabetic characters
-    while i < name.len() && !is_alpha(char_vec[0]) {
-        i += 1;
-    }
-
-    // if there were no alphabetic characters it wasn't valid
-    anyhow::ensure!(i != name.len(), "Normalizer Error: Invalid");
+    let mut i = match name.chars().position(|x| is_alpha(x)) {
+        Some(val) => val,
+        None => {
+            // if there were no alphabetic characters it wasn't valid
+            anyhow::bail!("Normalizer Error: Name contains no alphabetic chars.")
+        }
+    };
 
     while i < name.len() {
         if is_alpha_num(char_vec[i]) {
@@ -184,11 +181,12 @@ mod tests {
 
     #[duplicate_item(
         test_name                       input                               expected                    expected_err;
-        [test_normalize_empty_string]   [""]                                [""]                        ["Normalizer Error: Empty"];
+        [test_normalize_empty_string]   [""]                                [""]                        ["Normalizer Error: Empty span name."];
         [test_normalize_valid_string]   ["good"]                            ["good"]                    [""];
         [test_normalize_long_string]    ["Too-Long-.".repeat(20).as_str()]  ["Too_Long.".repeat(10)]    [""];
         [test_normalize_dash_string]    ["bad-name"]                        ["bad_name"]                [""];
-        [test_normalize_invalid_string] ["&"]                               [""]                        ["Normalizer Error: Invalid"];
+        [test_normalize_invalid_string] ["&***"]                            [""]                        ["Normalizer Error: Name contains no alphabetic chars."];
+        [test_normalize_invalid_prefix] ["&&&&&&&_test-name-"]              ["test_name"]               [""];
     )]
     #[test]
     fn test_name() {
