@@ -319,8 +319,6 @@ pub extern "C" fn ddog_CancellationToken_new() -> NonNull<CancellationToken> {
     unsafe { NonNull::new_unchecked(ptr) }
 }
 
-#[no_mangle]
-#[must_use]
 /// A cloned CancellationToken is connected to the CancellationToken it was created from.
 /// Either the cloned or the original token can be used to cancel or provided as arguments to send.
 /// The useful part is that they have independent lifetimes and can be dropped separately.
@@ -342,12 +340,17 @@ pub extern "C" fn ddog_CancellationToken_new() -> NonNull<CancellationToken> {
 /// Without clone, both t1 and t2 would need to synchronize to make sure neither was using the cancel
 /// before it could be dropped. With clone, there is no need for such synchronization, both threads
 /// have their own cancel and should drop that cancel after they are done with it.
-pub extern "C" fn ddog_CancellationToken_clone(
-    cancel: Option<NonNull<CancellationToken>>,
+///
+/// # Safety
+/// If the `token` is non-null, it must point to a valid object.
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_CancellationToken_clone(
+    token: Option<&CancellationToken>,
 ) -> *mut CancellationToken {
-    match cancel {
+    match token {
         Some(ptr) => {
-            let new_token = unsafe { &ptr.as_ref().0 }.clone();
+            let new_token = ptr.0.clone();
             Box::into_raw(Box::new(CancellationToken(new_token)))
         }
         None => std::ptr::null_mut(),
