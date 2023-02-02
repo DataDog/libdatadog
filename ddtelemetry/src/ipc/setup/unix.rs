@@ -15,9 +15,11 @@ use crate::ipc::platform::{self, locks::FLock};
 /// Implementations of this interface must provide behavior repeatable across processes with the same version
 /// of library.
 /// Allowing all instances of the same version of the library to establish a shared connection
-pub trait Liaison {
+pub trait Liaison: Sized {
     fn connect_to_server(&self) -> io::Result<UnixStream>;
     fn attempt_listen(&self) -> io::Result<Option<UnixListener>>;
+    fn ipc_shared() -> Self;
+    fn ipc_per_process() -> Self;
 }
 
 fn ensure_dir_world_writable<P: AsRef<Path>>(path: P) -> io::Result<()> {
@@ -65,12 +67,20 @@ impl Liaison for SharedDirLiaison {
             // if socket is already listening, then creating listener is not available
             if platform::sockets::is_listening(&self.socket_path)? {
                 println!("already_listening");
-                // return Err(io::Error::new(io::ErrorKind::Other, "already listening"));
                 return Ok(None);
             }
             fs::remove_file(&self.socket_path)?;
         }
         Ok(Some(UnixListener::bind(&self.socket_path)?))
+    }
+
+    fn ipc_shared() -> Self {
+        Self::new_tmp_dir()
+    }
+
+    fn ipc_per_process() -> Self {
+        //TODO: implement per pid handling
+        Self::new_tmp_dir() 
     }
 }
 
@@ -98,7 +108,7 @@ impl SharedDirLiaison {
 
 impl Default for SharedDirLiaison {
     fn default() -> Self {
-        Self::new_tmp_dir()
+        Self::ipc_per_process()
     }
 }
 
@@ -131,15 +141,13 @@ mod linux {
                 Err(err) => Err(err),
             }
         }
-    }
 
-    impl AbstractUnixSocketLiaison {
-        pub fn ipc_shared() -> Self {
+        fn ipc_shared() -> AbstractUnixSocketLiaison {
             let path = PathBuf::from(concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".sock"));
             Self { path }
         }
-        //TODO:
-        pub fn ipc_per_process() -> Self {
+
+        fn ipc_per_process() -> AbstractUnixSocketLiaison {
             let path = PathBuf::from(format!(
                 concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".{}.sock"),
                 getpid()
@@ -150,7 +158,6 @@ mod linux {
 
     impl Default for AbstractUnixSocketLiaison {
         fn default() -> Self {
-            // TODO: make this configurable so rust tests can use per_process option, while normal operation uses ipc_shared()
             Self::ipc_per_process()
         }
     }
