@@ -136,7 +136,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  ddog_prof_Exporter_Request *request = build_result.ok;
+  auto &request = build_result.ok;
 
   ddog_CancellationToken *cancel = ddog_CancellationToken_new();
   ddog_CancellationToken *cancel_for_background_thread = ddog_CancellationToken_clone(cancel);
@@ -160,7 +160,7 @@ int main(int argc, char *argv[]) {
   trigger_cancel_if_request_takes_too_long_thread.detach();
 
   int exit_code = 0;
-  ddog_prof_Exporter_SendResult send_result = ddog_prof_Exporter_send(exporter, request, cancel);
+  ddog_prof_Exporter_SendResult send_result = ddog_prof_Exporter_send(exporter, &request, cancel);
   if (send_result.tag == DDOG_PROF_EXPORTER_SEND_RESULT_ERR) {
     print_error("Failed to send profile: ", send_result.err);
     exit_code = 1;
@@ -169,7 +169,7 @@ int main(int argc, char *argv[]) {
     printf("Response code: %d\n", send_result.http_response.code);
   }
 
-  // no ddog_prof_Exporter_Request_drop(request) since it was sent to Exporter_send
+  ddog_prof_Exporter_Request_drop(&request);
 
   ddog_prof_Exporter_drop(exporter);
   ddog_CancellationToken_drop(cancel);
