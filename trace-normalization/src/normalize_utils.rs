@@ -29,8 +29,7 @@ pub fn truncate_utf8(s: String, limit: usize) -> String {
     s
 }
 
-// NormalizeService normalizes a span service and returns an error describing the reason
-// (if any) why the name was modified.
+// NormalizeService returns a span service or an error describing why normalization failed.
 // TODO: Implement this in a future PR
 // pub fn normalize_service(svc: String, lang: String) -> (String, Option<errors::NormalizeErrors>) {
 // if svc == "" {
@@ -48,9 +47,7 @@ pub fn truncate_utf8(s: String, limit: usize) -> String {
 // (svc, None)
 // }
 
-// normalize_name normalizes a span name and returns an error describing the reason
-// (if any) why the name was modified.
-// pub fn normalize_name(name: String) -> (String, Option<errors::NormalizeErrors>) {
+// normalize_name normalizes a span name or an error describing why normalization failed.
 pub fn normalize_name(name: String) -> anyhow::Result<String> {
     anyhow::ensure!(!name.is_empty(), "Normalizer Error: Empty span name.");
 
@@ -117,8 +114,6 @@ pub fn normalize_name(name: String) -> anyhow::Result<String> {
 // }
 
 pub fn normalize_metric_names(name: String) -> anyhow::Result<String> {
-    // rust efficient ways to build strings, see here:
-    // https://github.com/hoodie/concatenation_benchmarks-rs
     let mut result = String::with_capacity(name.len());
 
     // given a dummy value
