@@ -3,8 +3,15 @@
 // developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
 // Datadog, Inc.
 
+// DEFAULT_SERVICE_NAME is the default name we assign a service if it's missing and we have no reasonable fallback
+pub(crate) const DEFAULT_SERVICE_NAME: &str = "unnamed-service";
+
 // MAX_NAME_LEN the maximum length a name can have
 pub(crate) const MAX_NAME_LEN: usize = 100;
+// MAX_SERVICE_LEN the maximum length a service can have
+pub(crate) const MAX_SERVICE_LEN: usize = 100;
+// MAX_SERVICE_LEN the maximum length a tag can have
+pub(crate) const MAX_TAG_LEN: usize = 200;
 
 // TruncateUTF8 truncates the given string to make sure it uses less than limit bytes.
 // If the last character is a utf8 character that would be split, it removes it
@@ -25,23 +32,133 @@ pub(crate) fn truncate_utf8(s: &str, limit: usize) -> &str {
     s
 }
 
-// NormalizeService returns a span service or an error describing why normalization failed.
-// TODO: Implement this in a future PR
-// pub fn normalize_service(svc: String, lang: String) -> (String, Option<errors::NormalizeErrors>) {
-// if svc == "" {
-//     return (fallback_service(lang), errors::NormalizeErrors::ErrorEmpty);
-// }
-// if svc.len() > MAX_SERVICE_LEN {
-//     return (truncate_utf8(svc, MAX_SERVICE_LEN), errors::NormalizeErrors::ErrorTooLong.into());
-// }
-// TODO: implement tag normalization
-// let s: String = normalize_tag(svc);
-// if s == "" {
-//     return (fallbackService(lang), errors::NormalizeErrors::ErrorInvalid)
-// }
-// return (s, err)
-// (svc, None)
-// }
+// fallbackService returns the fallback service name for a service
+// belonging to language lang.
+pub(crate) fn fallback_service(lang: String) -> String {
+    if lang.is_empty() {
+		return DEFAULT_SERVICE_NAME.to_string();
+	}
+    let mut service_name = String::new();
+    service_name.push_str("unnamed-");
+    service_name.push_str(&lang);
+    service_name.push_str("-service");
+    // TODO: the original golang implementation uses a map to cache previously created
+    // service names. Implement that here.
+    service_name
+}
+
+// NormalizeService normalizes a span service and returns an error describing the reason
+// (if any) why the name was modified.
+pub(crate) fn normalize_service(svc: &str) -> anyhow::Result<String> {
+    anyhow::ensure!(!svc.is_empty(), "Normalizer Error: Empty service name.");
+
+    let truncated_service = if svc.len() > MAX_SERVICE_LEN as usize {
+        truncate_utf8(svc, MAX_SERVICE_LEN)
+    } else {
+        svc
+    };
+
+    normalize_tag(truncated_service)
+}
+
+// NormalizeTag applies some normalization to ensure the tags match the backend requirements.
+pub(crate) fn normalize_tag(tag: &str) -> anyhow::Result<String> {
+    // Fast path: Check if the tag is valid and only contains ASCII characters,
+	// if yes return it as-is right away. For most use-cases this reduces CPU usage.
+	if is_normalized_ascii_tag(tag) {
+		return Ok(tag.to_string());
+	}
+
+    anyhow::ensure!(!tag.is_empty(), "Normalizer Error: Empty tag name.");
+
+    // given a dummy value
+    let mut last_char: char = 'a';
+
+    let mut result = String::with_capacity(tag.len());
+
+    let char_vec: Vec<char> = tag.chars().collect();
+
+    for cur_char in char_vec {
+        if result.len() == MAX_TAG_LEN as usize {
+            break;
+        }
+        if cur_char.is_lowercase() {
+            result.push(cur_char);
+            last_char = cur_char;
+            continue;
+        }
+        if cur_char.is_uppercase() {
+            let mut iter = cur_char.to_lowercase();
+            if iter.len() == 1 {
+                let c: char = iter.next().unwrap();
+                result.push(c);
+                last_char = c;
+            }
+            continue;
+        }
+        if cur_char.is_alphabetic() {
+            result.push(cur_char);
+            last_char = cur_char;
+            continue;
+        }
+        if cur_char == ':' {
+            result.push(cur_char);
+            last_char = cur_char;
+            continue;
+        }
+        if !result.is_empty() && (cur_char.is_ascii_digit() || cur_char == '.' || cur_char == '/' || cur_char == '-') {
+            result.push(cur_char);
+            last_char = cur_char;
+            continue;
+        }
+        if !result.is_empty() && last_char != '_' {
+            result.push('_');
+            last_char = '_';
+        }
+    }
+
+    if last_char == '_' {
+        result.remove(result.len() - 1);
+    }
+
+    Ok(result.to_string())
+}
+
+pub(crate) fn is_normalized_ascii_tag(tag: &str) -> bool {
+    if tag.is_empty() {
+        return true;
+    }
+    if tag.len() > MAX_TAG_LEN as usize {
+        return false;
+    }
+    if !is_valid_ascii_start_char(tag.chars().next().unwrap()) {
+        return false;
+    }
+    for mut i in 0..tag.len() {
+        let b: char = tag.chars().nth(i).unwrap();
+        if is_valid_ascii_tag_char(b) {
+            continue;
+        }
+        if b == '_' {
+            // an underscore is only okay if followed by a valid non-underscore character
+			i+=1;
+			if i == tag.len() || !is_valid_ascii_tag_char(tag.chars().nth(i).unwrap()) {
+				return false;
+			}
+        } else {
+            return false;
+        }
+    }
+    true
+}
+
+pub(crate) fn is_valid_ascii_start_char(c: char) -> bool {
+    ('a'..='z').contains(&c) || c == ':'
+}
+
+pub(crate) fn is_valid_ascii_tag_char(c: char) -> bool {
+    is_valid_ascii_start_char(c) || ('0'..='9').contains(&c) || c == '.' || c == '/' || c == '-'
+}
 
 // normalize_name normalizes a span name or an error describing why normalization failed.
 pub(crate) fn normalize_name(name: &str) -> anyhow::Result<String> {
@@ -55,58 +172,6 @@ pub(crate) fn normalize_name(name: &str) -> anyhow::Result<String> {
 
     normalize_metric_names(truncated_name)
 }
-
-// TODO: Implement this in a future PR
-// NormalizeTag applies some normalization to ensure the tags match the backend requirements.
-// pub fn normalize_tag(v: String) -> String {
-// Fast path: Check if the tag is valid and only contains ASCII characters,
-// if yes return it as-is right away. For most use-cases this reduces CPU usage.
-// 	if is_normalized_ascii_tag(v.clone()) {
-// 		return v;
-// 	}
-
-//     if v.is_empty() {
-//         return "".to_string();
-//     }
-
-//     "".to_string()
-// }
-
-// pub fn is_normalized_ascii_tag(tag: String) -> bool {
-//     if tag.is_empty() {
-//         return true;
-//     }
-//     if tag.len() > MAX_TAG_LEN {
-//         return false;
-//     }
-//     if !is_valid_ascii_start_char(tag.chars().next().unwrap()) {
-//         return false;
-//     }
-//     for mut i in 0..tag.len() {
-//         let b: char = tag.chars().nth(i).unwrap();
-//         if is_valid_ascii_tag_char(b) {
-//             continue;
-//         }
-//         if b == '_' {
-//             // an underscore is only okay if followed by a valid non-underscore character
-// 			i+=1;
-// 			if i == tag.len() || !is_valid_ascii_tag_char(tag.chars().nth(i).unwrap()) {
-// 				return false;
-// 			}
-//         } else {
-//             return false;
-//         }
-//     }
-//     true
-// }
-
-// pub fn is_valid_ascii_start_char(c: char) -> bool {
-//     ('a'..='z').contains(&c) || c == ':'
-// }
-
-// pub fn is_valid_ascii_tag_char(c: char) -> bool {
-//     is_valid_ascii_start_char(c) || ('0'..='9').contains(&c) || c == '.' || c == '/' || c == '-'
-// }
 
 pub(crate) fn normalize_metric_names(name: &str) -> anyhow::Result<String> {
     let mut result = String::with_capacity(name.len());
@@ -185,6 +250,26 @@ mod tests {
                 assert_eq!(expected_err, "");
                 assert_eq!(val, expected);
             }
+            Err(err) => {
+                assert_eq!(format!("{err}"), expected_err);
+            }
+        }
+    }
+
+    #[duplicate_item(
+        test_name                       input                               expected                    expected_err;
+        [test_normalize_empty_service]   [""]                                [normalize_utils::DEFAULT_SERVICE_NAME]      ["Normalizer Error: Empty service name."];
+        [test_normalize_valid_service]   ["good"]                            ["good"]                    [""];
+        [test_normalize_long_service]    ["Too$Long$.".repeat(20).as_str()]  ["too_long_.".repeat(10)]    [""];
+        [test_normalize_dash_service]    ["bad&service"]                        ["bad_service"]                [""];
+    )]
+    #[test]
+    fn test_name() {
+        match normalize_utils::normalize_service(input) {
+            Ok(val) => {
+                assert_eq!(expected_err, "");
+                assert_eq!(val, expected)
+            },
             Err(err) => {
                 assert_eq!(format!("{err}"), expected_err);
             }
