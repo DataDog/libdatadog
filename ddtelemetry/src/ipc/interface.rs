@@ -10,7 +10,7 @@ use futures::{
     future::{self, BoxFuture, Pending, Ready, Shared},
     FutureExt,
 };
-use http::Uri;
+
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tarpc::{context::Context, server::Channel};
@@ -159,7 +159,7 @@ impl SessionInfo {
     fn get_config(&self) -> MutexGuard<Option<Config>> {
         let mut cfg = self.session_config.lock().unwrap();
 
-        if let None = &*cfg {
+        if (*cfg).is_none() {
             *cfg = Some(FromEnv::config())
         }
 
@@ -168,7 +168,7 @@ impl SessionInfo {
 
     fn modify_config<F>(&self, mut f: F)
     where
-        F: FnMut(&mut Config) -> (),
+        F: FnMut(&mut Config),
     {
         if let Some(cfg) = &mut *self.get_config() {
             f(cfg)
