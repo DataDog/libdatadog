@@ -1,26 +1,24 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2022-Present Datadog, Inc.
 
-use crate::{slice::AsBytes, slice::CharSlice};
+use crate::slice::{AsBytes, CharSlice};
+use crate::Error;
 use ddcommon::tag::{parse_tags, Tag};
 
 #[must_use]
 #[no_mangle]
-pub extern "C" fn ddog_Vec_tag_new() -> crate::Vec<Tag> {
+pub extern "C" fn ddog_Vec_Tag_new() -> crate::Vec<Tag> {
     crate::Vec::default()
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_Vec_tag_drop(_: crate::Vec<Tag>) {}
+pub extern "C" fn ddog_Vec_Tag_drop(_: crate::Vec<Tag>) {}
 
 #[repr(C)]
 pub enum PushTagResult {
     Ok,
-    Err(crate::Vec<u8>),
+    Err(Error),
 }
-
-#[no_mangle]
-pub extern "C" fn ddog_PushTagResult_drop(_: PushTagResult) {}
 
 /// Creates a new Tag from the provided `key` and `value` by doing a utf8
 /// lossy conversion, and pushes into the `vec`. The strings `key` and `value`
@@ -32,7 +30,7 @@ pub extern "C" fn ddog_PushTagResult_drop(_: PushTagResult) {}
 /// `.len` properties claim.
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_Vec_tag_push(
+pub unsafe extern "C" fn ddog_Vec_Tag_push(
     vec: &mut crate::Vec<Tag>,
     key: CharSlice,
     value: CharSlice,
@@ -44,14 +42,14 @@ pub unsafe extern "C" fn ddog_Vec_tag_push(
             vec.push(tag);
             PushTagResult::Ok
         }
-        Err(err) => PushTagResult::Err(err.as_bytes().to_vec().into()),
+        Err(err) => PushTagResult::Err(Error::from(err.as_ref())),
     }
 }
 
 #[repr(C)]
 pub struct ParseTagsResult {
     tags: crate::Vec<Tag>,
-    error_message: Option<Box<crate::Vec<u8>>>,
+    error_message: Option<Box<Error>>,
 }
 
 /// # Safety
@@ -59,12 +57,12 @@ pub struct ParseTagsResult {
 /// .len property.
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_Vec_tag_parse(string: CharSlice) -> ParseTagsResult {
+pub unsafe extern "C" fn ddog_Vec_Tag_parse(string: CharSlice) -> ParseTagsResult {
     let string = string.to_utf8_lossy();
     let (tags, error) = parse_tags(string.as_ref());
     ParseTagsResult {
         tags: tags.into(),
-        error_message: error.map(|message| Box::new(crate::Vec::from(message.into_bytes()))),
+        error_message: error.map(Error::from).map(Box::new),
     }
 }
 
@@ -75,21 +73,21 @@ mod tests {
     #[test]
     fn empty_tag_name() {
         unsafe {
-            let mut tags = ddog_Vec_tag_new();
-            let result = ddog_Vec_tag_push(&mut tags, CharSlice::from(""), CharSlice::from("woof"));
+            let mut tags = ddog_Vec_Tag_new();
+            let result = ddog_Vec_Tag_push(&mut tags, CharSlice::from(""), CharSlice::from("woof"));
             assert!(!matches!(result, PushTagResult::Ok));
         }
     }
 
     #[test]
     fn test_lifetimes() {
-        let mut tags = ddog_Vec_tag_new();
+        let mut tags = ddog_Vec_Tag_new();
         unsafe {
             // make a string here so it has a scoped lifetime
             let key = String::from("key1");
             {
                 let value = String::from("value1");
-                let result = ddog_Vec_tag_push(
+                let result = ddog_Vec_Tag_push(
                     &mut tags,
                     CharSlice::from(key.as_str()),
                     CharSlice::from(value.as_str()),
@@ -105,9 +103,9 @@ mod tests {
     #[test]
     fn test_get() {
         unsafe {
-            let mut tags = ddog_Vec_tag_new();
+            let mut tags = ddog_Vec_Tag_new();
             let result =
-                ddog_Vec_tag_push(&mut tags, CharSlice::from("sound"), CharSlice::from("woof"));
+                ddog_Vec_Tag_push(&mut tags, CharSlice::from("sound"), CharSlice::from("woof"));
             assert!(matches!(result, PushTagResult::Ok));
             assert_eq!(1, tags.len());
             assert_eq!("sound:woof", tags.get(0).unwrap().to_string());
@@ -119,17 +117,18 @@ mod tests {
         let dd_tags = "env:staging:east, tags:, env_staging:east"; // contains an error
 
         // SAFETY: CharSlices from Rust strings are safe.
-        let result = unsafe { ddog_Vec_tag_parse(CharSlice::from(dd_tags)) };
+        let result = unsafe { ddog_Vec_Tag_parse(CharSlice::from(dd_tags)) };
         assert_eq!(2, result.tags.len());
         assert_eq!("env:staging:east", result.tags.get(0).unwrap().to_string());
         assert_eq!("env_staging:east", result.tags.get(1).unwrap().to_string());
 
         // 'tags:' cannot end in a semi-colon, so expect an error.
         assert!(result.error_message.is_some());
-        let error_message: Vec<u8> = (*result.error_message.unwrap()).into();
+        let error = *result.error_message.unwrap();
+        let error_message = error.as_ref();
         assert!(!error_message.is_empty());
 
-        let expected_error_message = b"Errors while parsing tags: tag 'tags:' ends with a colon";
-        assert_eq!(expected_error_message, error_message.as_slice())
+        let expected_error_message = "Errors while parsing tags: tag 'tags:' ends with a colon";
+        assert_eq!(expected_error_message, error_message)
     }
 }

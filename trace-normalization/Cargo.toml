@@ -1,0 +1,13 @@
+[package]
+name = "datadog-trace-normalization"
+version = "2.0.0"
+authors = ["David Lee <david.lee@datadoghq.com>"]
+edition = "2021"
+
+[dependencies]
+prost = "0.11.6"
+anyhow = "1.0"
+
+[dev-dependencies]
+rand = "0.8.5"
+duplicate = "0.4.1"

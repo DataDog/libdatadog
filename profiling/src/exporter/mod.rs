@@ -29,6 +29,8 @@ pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
 #[cfg(windows)]
 pub use connector::named_pipe::{named_pipe_path_from_uri, named_pipe_path_to_uri};
 
+use crate::profile::profiled_endpoints::ProfiledEndpointsStats;
+
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
 
 pub struct Exporter {
@@ -55,6 +57,7 @@ pub struct File<'a> {
     pub bytes: &'a [u8],
 }
 
+#[derive(Debug)]
 pub struct Request {
     timeout: Option<std::time::Duration>,
     req: hyper::Request<hyper::Body>,
@@ -152,6 +155,7 @@ impl ProfileExporter {
         end: DateTime<Utc>,
         files: &[File],
         additional_tags: Option<&Vec<Tag>>,
+        endpoint_counts: Option<&ProfiledEndpointsStats>,
         timeout: std::time::Duration,
     ) -> anyhow::Result<Request> {
         let mut form = multipart::Form::default();
@@ -208,6 +212,7 @@ impl ProfileExporter {
             "end": end.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
             "family": self.family.as_ref(),
             "version": "4",
+            "endpoint_counts" : endpoint_counts,
         })
         .to_string();
 

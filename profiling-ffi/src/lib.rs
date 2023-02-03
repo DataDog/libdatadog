@@ -19,7 +19,7 @@ pub struct Timespec {
 
 impl From<Timespec> for DateTime<Utc> {
     fn from(value: Timespec) -> Self {
-        Utc.timestamp(value.seconds, value.nanoseconds)
+        Utc.timestamp_opt(value.seconds, value.nanoseconds).unwrap()
     }
 }
 

@@ -11,7 +11,7 @@ require "rubygems/package"
 
 RSpec::Core::RakeTask.new(:spec)
 
-LIB_VERSION_TO_PACKAGE = "0.9.0"
+LIB_VERSION_TO_PACKAGE = "1.0.1"
 unless LIB_VERSION_TO_PACKAGE.start_with?(Libdatadog::LIB_VERSION)
   raise "`LIB_VERSION_TO_PACKAGE` setting in <Rakefile> (#{LIB_VERSION_TO_PACKAGE}) does not match " \
     "`LIB_VERSION` setting in <lib/libdatadog/version.rb> (#{Libdatadog::LIB_VERSION})"
@@ -20,29 +20,29 @@ end
 LIB_GITHUB_RELEASES = [
   {
     file: "libdatadog-aarch64-alpine-linux-musl.tar.gz",
-    sha256: "a094bae08153b521d467435e3ef5364d3099e4b8aac1291a16c70c51ccc2f171",
+    sha256: "e1a984278e7a62085f4a682a93775bd455947e1b3cccec90cf1b9ac85e2b22e8",
     ruby_platform: "aarch64-linux-musl"
   },
   {
     file: "libdatadog-aarch64-unknown-linux-gnu.tar.gz",
-    sha256: "9e55e8917521edf57c28bc2dad363bcc0a68570380480244f898714e31f356fb",
+    sha256: "8ada6b4a7a862d31ddad414c963f09399d234848f1a10a0de5066482f22ba517",
     ruby_platform: "aarch64-linux"
   },
   {
     file: "libdatadog-x86_64-alpine-linux-musl.tar.gz",
-    sha256: "15e6d94208b94ff5f0e757310c8de372da67099e982d6ebd5cc88fdf8d9c2756",
+    sha256: "84def9af463acf5124f6d9e17361672a9903b628c279d69a6bd34102e7ba1354",
     ruby_platform: "x86_64-linux-musl"
   },
   {
     file: "libdatadog-x86_64-unknown-linux-gnu.tar.gz",
-    sha256: "277d638d7e1cd9c6724ba3094fab5ce0e3a87a2c26b1cf0a89a86ae2a7f1ddc8",
+    sha256: "d299295cede51cb1618fc45320ec3b3a5a9ae1b2518453248363a5c45c185219",
     ruby_platform: "x86_64-linux"
   }
 ]
 
 task default: [
   :spec,
-  (:'standard:fix' unless RUBY_VERSION < "2.6")
+  (:"standard:fix" unless RUBY_VERSION < "2.6")
 ].compact
 
 desc "Download lib release from github"
@@ -88,7 +88,7 @@ end
 desc "Package lib downloaded releases as gems"
 task package: [
   :spec,
-  (:'standard:fix' unless RUBY_VERSION < "2.6"),
+  (:"standard:fix" unless RUBY_VERSION < "2.6"),
   :extract
 ] do
   gemspec = eval(File.read("libdatadog.gemspec"), nil, "libdatadog.gemspec") # standard:disable Security/Eval
@@ -116,9 +116,14 @@ end
 desc "Release all packaged gems"
 task push_to_rubygems: [
   :package,
-  :'release:guard_clean'
+  :"release:guard_clean"
 ] do
   system("gem signout") # make sure there are no existing credentials in use
+
+  puts "Please input 'libdatadog ruby release key' from 'Profiling - Falcon' Datadog 1Password:"
+  input = $stdin.gets.strip
+
+  ENV["GEM_HOST_API_KEY"] = input
 
   system("gem push pkg/libdatadog-#{Libdatadog::VERSION}.gem")
   system("gem push pkg/libdatadog-#{Libdatadog::VERSION}-x86_64-linux.gem")

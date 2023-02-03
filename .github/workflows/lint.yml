@@ -19,7 +19,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust_version: ["nightly", "1.60.0", "stable"]
+        # Ignore nightly for now, it fails too often
+        #rust_version: ["nightly", "1.60.0", "stable"]
+        rust_version: ["1.60.0", "stable"]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -84,7 +86,7 @@ jobs:
             --check-previous 
       - name: export the generated license file on failure
         if: ${{ failure() }}
-        uses: actions/upload-artifact@v1
+        uses: actions/upload-artifact@v3
         with:
           name: LICENSE-3rdparty.yml
           path: /tmp/CI.yaml
