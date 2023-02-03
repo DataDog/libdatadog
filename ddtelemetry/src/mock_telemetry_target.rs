@@ -37,7 +37,7 @@ impl MockServer {
         let addr = "127.0.0.1:0".parse().unwrap();
         let server = Server::bind(&addr).serve(make_service_fn(|_| async move {
             Ok::<_, Infallible>(service_fn(move |r: Request<Body>| async move {
-                println!("{:?}", r);
+                println!("{r:?}");
                 Ok::<_, Infallible>(Response::new(Body::from("Hello!")))
             }))
         }));

@@ -13,7 +13,7 @@ use std::{
 };
 use tokio::select;
 
-use nix::unistd::setsid;
+
 use nix::{sys::wait::waitpid, unistd::Pid};
 use tokio::net::UnixListener;
 use tokio_util::sync::CancellationToken;
