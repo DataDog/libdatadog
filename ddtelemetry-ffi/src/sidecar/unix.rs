@@ -146,7 +146,7 @@ pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_drop(meta: Box<RuntimeMeta>) {
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     transport: &mut Box<TelemetryTransport>,
-    instance_id: Box<InstanceId>,
+    instance_id: &Box<InstanceId>,
     queue_id: &QueueId,
     config_key: ffi::CharSlice,
     config_value: ffi::CharSlice,
@@ -168,7 +168,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
     transport: &mut Box<TelemetryTransport>,
-    instance_id: &InstanceId,
+    instance_id: &Box<InstanceId>,
     queue_id: &QueueId,
     dependency_name: ffi::CharSlice,
     dependency_version: ffi::CharSlice,
@@ -198,7 +198,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
     transport: &mut Box<TelemetryTransport>,
-    instance_id: &InstanceId,
+    instance_id: &Box<InstanceId>,
     queue_id: &QueueId,
     integration_name: ffi::CharSlice,
     integration_version: ffi::CharSlice,
@@ -229,7 +229,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
     transport: &mut Box<TelemetryTransport>,
-    instance_id: &InstanceId,
+    instance_id: &Box<InstanceId>,
     queue_id: &QueueId,
     runtime_meta: &RuntimeMeta,
     service_name: ffi::CharSlice,
