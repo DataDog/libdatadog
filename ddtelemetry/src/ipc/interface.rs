@@ -296,7 +296,7 @@ impl TelemetryServer {
 
         // TODO: log errors
         if let Ok((handle, worker_join)) = builder.spawn_with_config(config.clone()).await {
-            eprintln!("spawning worker {config:?}");
+            tracing::info!("spawning worker {config:?}");
 
             let instance = AppInstance {
                 telemetry: handle,

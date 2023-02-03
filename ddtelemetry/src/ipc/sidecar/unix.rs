@@ -1,7 +1,9 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use std::fs;
 use std::os::unix::net::UnixListener as StdUnixListener;
+use std::sync::Mutex;
 use std::time::{self, Instant};
 use std::{
     io::{self},
@@ -17,6 +19,7 @@ use nix::{sys::wait::waitpid, unistd::Pid};
 use tokio::net::UnixListener;
 use tokio_util::sync::CancellationToken;
 
+
 use crate::ipc::interface::blocking::TelemetryTransport;
 use crate::ipc::interface::TelemetryServer;
 use crate::ipc::platform::Channel as IpcChannel;
@@ -25,6 +28,8 @@ use crate::{
     fork::{fork_fn, getpid},
     ipc::setup::{self, Liaison},
 };
+
+use super::config;
 
 async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
     let counter = Arc::new(AtomicI32::new(0));
@@ -45,7 +50,7 @@ async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
 
             if consecutive_no_active_connections > 1 {
                 cloned_token.cancel();
-                println!("no active connections - shutting down");
+                tracing::info!("no active connections - shutting down");
             }
         }
     });
@@ -62,7 +67,7 @@ async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
             },
         };
 
-        println!("connection accepted");
+        tracing::info!("connection accepted");
         counter.fetch_add(1, Ordering::AcqRel);
 
         let cloned_counter = Arc::clone(&counter);
@@ -70,7 +75,7 @@ async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
         tokio::spawn(async move {
             server.accept_connection(socket).await;
             cloned_counter.fetch_add(-1, Ordering::AcqRel);
-            println!("connection closed");
+            tracing::info!("connection closed");
         });
     }
     Ok(())
@@ -93,7 +98,7 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
         let pid = fork_fn(listener, |listener| {
             fork_fn(listener, |listener| {
                 let now = Instant::now();
-                println!(
+                tracing::info!(
                     "[{}] starting sidecar, pid: {}",
                     time::SystemTime::now()
                         .duration_since(time::UNIX_EPOCH)
@@ -101,13 +106,13 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
                         .as_millis(),
                     getpid()
                 );
-                // TODO: add solution to redirect stderr/stdout + and enable/disable tracing
-                enable_tracing();
+
+                enable_tracing().ok();
 
                 if let Err(err) = enter_listener_loop(listener) {
-                    println!("Error: {err}")
+                    tracing::error!("Error: {err}")
                 }
-                println!(
+                tracing::info!(
                     "shutting down sidecar, pid: {}, total runtime: {:.3}s",
                     getpid(),
                     now.elapsed().as_secs_f64()
@@ -121,15 +126,11 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
 }
 
 pub fn start_or_connect_to_sidecar() -> io::Result<TelemetryTransport> {
-    let mode = std::env::var("_DD_DEBUG_IPC_MODE")
-        .ok()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+    let cfg = config::FromEnv::config();
 
-    let liaison = match mode.as_str() {
-        "shared" => setup::DefaultLiason::ipc_shared(),
-        "instance_per_process" => setup::DefaultLiason::ipc_per_process(),
-        _ => setup::DefaultLiason::ipc_shared(),
+    let liaison = match cfg.ipc_mode {
+        config::IpcMode::Shared => setup::DefaultLiason::ipc_shared(),
+        config::IpcMode::InstancePerProcess => setup::DefaultLiason::ipc_per_process(),
     };
 
     if let Some(listener) = liaison.attempt_listen()? {
@@ -139,6 +140,18 @@ pub fn start_or_connect_to_sidecar() -> io::Result<TelemetryTransport> {
     Ok(IpcChannel::from(liaison.connect_to_server()?).into())
 }
 
-fn enable_tracing() {
-    tracing_subscriber::fmt::init();
+fn enable_tracing() -> anyhow::Result<()> {
+    let subscriber = tracing_subscriber::fmt();
+
+    match config::FromEnv::config().log_method {
+        config::LogMethod::Stdout => subscriber.with_writer(io::stdout).init(),
+        config::LogMethod::Stderr => subscriber.with_writer(io::stderr).init(),
+        config::LogMethod::File(path) => {
+            let log_file = fs::File::options().write(true).append(true).open(path)?;
+            tracing_subscriber::fmt().with_writer(Mutex::new(log_file)).init()
+        },
+        config::LogMethod::Disabled => return Ok(()),
+    };
+
+    Ok(())
 }

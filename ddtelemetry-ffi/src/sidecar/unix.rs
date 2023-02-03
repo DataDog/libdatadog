@@ -277,7 +277,7 @@ mod test_c_sidecar {
     use std::{ffi::CString, io::Write, os::unix::prelude::AsRawFd};
 
     fn set_sidecar_per_process() {
-        std::env::set_var("_DD_DEBUG_IPC_MODE", "instance_per_process")
+        std::env::set_var("_DD_DEBUG_SIDECAR_IPC_MODE", "instance_per_process")
     }
 
     #[test]
