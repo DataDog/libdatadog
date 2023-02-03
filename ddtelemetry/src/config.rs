@@ -2,10 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use ddcommon::{connector, parse_uri, Endpoint, HttpClient, HttpRequestBuilder};
-use http::{
-    uri::PathAndQuery,
-    Uri,
-};
+use http::{uri::PathAndQuery, Uri};
 use lazy_static::lazy_static;
 
 use std::{
@@ -91,7 +88,10 @@ impl FromEnv {
     pub fn build_endpoint(agent_url: &str, api_key: Option<String>) -> Option<Endpoint> {
         let telemetry_uri = if api_key.is_some() {
             let telemetry_intake_base_url = Self::get_intake_base_url();
-            Uri::from_str(format!("{telemetry_intake_base_url}{DIRECT_TELEMETRY_URL_PATH}").as_str()).ok()?
+            Uri::from_str(
+                format!("{telemetry_intake_base_url}{DIRECT_TELEMETRY_URL_PATH}").as_str(),
+            )
+            .ok()?
         } else {
             build_full_telemetry_agent_url(agent_url).ok()?
         };
@@ -139,7 +139,10 @@ impl Config {
         let uri = parse_uri(url)?;
 
         if let "file" = uri.scheme_str().unwrap_or_default() {
-            self.endpoint = None;
+            self.endpoint = Some(Endpoint {
+                url: Uri::from_static("http://mock_endpoint/"),
+                api_key: None,
+            });
             self.mock_client_file = Some(uri.path().into());
         } else {
             self.endpoint = Some(Endpoint {
@@ -225,7 +228,10 @@ mod test {
         );
 
         cfg.set_url("unix:///compatiliby/path").unwrap();
-        assert_eq!("unix://2f636f6d706174696c6962792f70617468/telemetry/proxy/api/v2/apmtelemetry", cfg.clone().endpoint.unwrap().url.to_string());
+        assert_eq!(
+            "unix://2f636f6d706174696c6962792f70617468/telemetry/proxy/api/v2/apmtelemetry",
+            cfg.clone().endpoint.unwrap().url.to_string()
+        );
         assert_eq!(
             "/compatiliby/path",
             uds::socket_path_from_uri(&cfg.clone().endpoint.unwrap().url)

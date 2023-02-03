@@ -232,7 +232,7 @@ impl TelemetryServer {
     pub async fn accept_connection(self, socket: UnixStream) {
         let server = tarpc::server::BaseChannel::new(
             tarpc::server::Config {
-                pending_response_buffer: 100000,
+                pending_response_buffer: 10000,
             },
             Transport::try_from(AsyncChannel::from(socket)).unwrap(),
         );

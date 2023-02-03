@@ -149,6 +149,9 @@ impl TelemetryWorker {
             }
 
             let action = self.recv_next_action().await;
+
+            tracing::info!("handling action {action:?}");
+
             telemetry_worker_log!(self, DEBUG, "Handling action {:?}", action);
             match action {
                 Start => {
