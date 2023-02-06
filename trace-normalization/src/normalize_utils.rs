@@ -82,8 +82,7 @@ pub(crate) fn normalize_tag(tag: &str) -> anyhow::Result<String> {
         }
         if cur_char.is_uppercase() {
             let mut iter = cur_char.to_lowercase();
-            if iter.len() == 1 {
-                let c: char = iter.next().unwrap();
+            if let Some(c) = iter.next() {
                 result.push(c);
                 last_char = c;
             }
@@ -126,20 +125,34 @@ pub(crate) fn is_normalized_ascii_tag(tag: &str) -> bool {
     if tag.len() > MAX_TAG_LEN {
         return false;
     }
-    if !is_valid_ascii_start_char(tag.chars().next().unwrap()) {
-        return false;
-    }
-    for mut i in 0..tag.len() {
-        let b: char = tag.chars().nth(i).unwrap();
-        if is_valid_ascii_tag_char(b) {
-            continue;
-        }
-        if b == '_' {
-            // an underscore is only okay if followed by a valid non-underscore character
-            i += 1;
-            if i == tag.len() || !is_valid_ascii_tag_char(tag.chars().nth(i).unwrap()) {
+    match tag.chars().next() {
+        Some(c) => {
+            if !is_valid_ascii_start_char(c) {
                 return false;
             }
+        }
+        None => return false,
+    }
+
+    for mut i in 0..tag.len() {
+        let cur_char: char = match tag.chars().nth(i) {
+            Some(c) => c,
+            None => return false,
+        };
+        if is_valid_ascii_tag_char(cur_char) {
+            continue;
+        }
+        if cur_char == '_' {
+            // an underscore is only okay if followed by a valid non-underscore character
+            i += 1;
+            match tag.chars().nth(i) {
+                Some(c) => {
+                    if !is_valid_ascii_tag_char(c) {
+                        return false;
+                    }
+                }
+                None => return false,
+            };
         } else {
             return false;
         }
