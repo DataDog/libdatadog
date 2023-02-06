@@ -13,7 +13,7 @@ pub(crate) const MAX_SERVICE_LEN: usize = 100;
 // MAX_SERVICE_LEN the maximum length a tag can have
 pub(crate) const MAX_TAG_LEN: usize = 200;
 
-// TruncateUTF8 truncates the given string to make sure it uses less than limit bytes.
+// truncate_utf8 truncates the given string to make sure it uses less than limit bytes.
 // If the last character is a utf8 character that would be split, it removes it
 // entirely to make sure the resulting string is not broken.
 pub(crate) fn truncate_utf8(s: &str, limit: usize) -> &str {
@@ -32,7 +32,7 @@ pub(crate) fn truncate_utf8(s: &str, limit: usize) -> &str {
     s
 }
 
-// fallbackService returns the fallback service name for a service
+// fallback_service returns the fallback service name for a service
 // belonging to language lang.
 pub(crate) fn fallback_service() -> String {
     // In the go agent implementation, if a lang was specified in TagStats
@@ -40,7 +40,7 @@ pub(crate) fn fallback_service() -> String {
     DEFAULT_SERVICE_NAME.to_string()
 }
 
-// NormalizeService normalizes a span service and returns an error describing the reason
+// normalize_service normalizes a span service and returns an error describing the reason
 // (if any) why the name was modified.
 pub(crate) fn normalize_service(svc: &str) -> anyhow::Result<String> {
     anyhow::ensure!(!svc.is_empty(), "Normalizer Error: Empty service name.");
@@ -54,7 +54,7 @@ pub(crate) fn normalize_service(svc: &str) -> anyhow::Result<String> {
     normalize_tag(truncated_service)
 }
 
-// NormalizeTag applies some normalization to ensure the tags match the backend requirements.
+// normalize_tag applies some normalization to ensure the tags match the backend requirements.
 pub(crate) fn normalize_tag(tag: &str) -> anyhow::Result<String> {
     // Fast path: Check if the tag is valid and only contains ASCII characters,
     // if yes return it as-is right away. For most use-cases this reduces CPU usage.
@@ -265,11 +265,11 @@ mod tests {
     }
 
     #[duplicate_item(
-        test_name                       input                               expected                    expected_err;
-        [test_normalize_empty_service]   [""]                                [normalize_utils::DEFAULT_SERVICE_NAME]      ["Normalizer Error: Empty service name."];
-        [test_normalize_valid_service]   ["good"]                            ["good"]                    [""];
-        [test_normalize_long_service]    ["Too$Long$.".repeat(20).as_str()]  ["too_long_.".repeat(10)]    [""];
-        [test_normalize_dash_service]    ["bad&service"]                        ["bad_service"]                [""];
+        test_name                       input                               expected                                expected_err;
+        [test_normalize_empty_service]  [""]                                [normalize_utils::DEFAULT_SERVICE_NAME] ["Normalizer Error: Empty service name."];
+        [test_normalize_valid_service]  ["good"]                            ["good"]                                [""];
+        [test_normalize_long_service]   ["Too$Long$.".repeat(20).as_str()]  ["too_long_.".repeat(10)]               [""];
+        [test_normalize_dash_service]   ["bad&service"]                     ["bad_service"]                         [""];
     )]
     #[test]
     fn test_name() {
@@ -277,6 +277,62 @@ mod tests {
             Ok(val) => {
                 assert_eq!(expected_err, "");
                 assert_eq!(val, expected)
+            }
+            Err(err) => {
+                assert_eq!(format!("{err}"), expected_err);
+            }
+        }
+    }
+    #[duplicate_item(
+        test_name               input   expected    expected_err;
+        [test_normalize_tag_1]  ["#test_starting_hash"] ["test_starting_hash"] [""];
+        [test_normalize_tag_2]  ["TestCAPSandSuch"] ["testcapsandsuch"] [""];
+        [test_normalize_tag_3]  ["Test Conversion Of Weird !@#$%^&**() Characters"] ["test_conversion_of_weird_characters"] [""];
+        [test_normalize_tag_4]  ["$#weird_starting"] ["weird_starting"] [""];
+        [test_normalize_tag_5]  ["allowed:c0l0ns"] ["allowed:c0l0ns"] [""];
+        [test_normalize_tag_6]  ["1love"] ["love"] [""];
+        [test_normalize_tag_7]  ["ünicöde"] ["ünicöde"] [""];
+        [test_normalize_tag_8]  ["ünicöde:metäl"] ["ünicöde:metäl"] [""];
+        [test_normalize_tag_9]  ["Data🐨dog🐶 繋がっ⛰てて"] ["data_dog_繋がっ_てて"] [""];
+        [test_normalize_tag_10] [" spaces   "] ["spaces"] [""];
+        [test_normalize_tag_11] [" #hashtag!@#spaces #__<>#  "] ["hashtag_spaces"] [""];
+        [test_normalize_tag_12] [":testing"] [":testing"] [""];
+        [test_normalize_tag_13] ["_foo"] ["foo"] [""];
+        [test_normalize_tag_14] [":::test"] [":::test"] [""];
+        [test_normalize_tag_15] ["contiguous_____underscores"] ["contiguous_underscores"] [""];
+        [test_normalize_tag_16] ["foo_"] ["foo"] [""];
+        [test_normalize_tag_17] ["\u{017F}odd_\u{017F}case\u{017F}"] ["\u{017F}odd_\u{017F}case\u{017F}"]  [""]; // edge-case
+        [test_normalize_tag_18] [""] [""] [""];
+        [test_normalize_tag_19] [" "] [""] [""];
+        [test_normalize_tag_20] ["ok"] ["ok"] [""];
+        [test_normalize_tag_21] ["™Ö™Ö™™Ö™"] ["ö_ö_ö"] [""];
+        [test_normalize_tag_22] ["AlsO:ök"] ["also:ök"] [""];
+        [test_normalize_tag_23] [":still_ok"] [":still_ok"] [""];
+        [test_normalize_tag_24] ["___trim"] ["trim"] [""];
+        [test_normalize_tag_25] ["12.:trim@"] [":trim"] [""];
+        [test_normalize_tag_26] ["12.:trim@@"] [":trim"] [""];
+        [test_normalize_tag_27] ["fun:ky__tag/1"] ["fun:ky_tag/1"] [""];
+        [test_normalize_tag_28] ["fun:ky@tag/2"] ["fun:ky_tag/2"] [""];
+        [test_normalize_tag_29] ["fun:ky@@@tag/3"] ["fun:ky_tag/3"] [""];
+        [test_normalize_tag_30] ["tag:1/2.3"] ["tag:1/2.3"] [""];
+        [test_normalize_tag_31] ["---fun:k####y_ta@#g/1_@@#"]["fun:k_y_ta_g/1"] [""];
+        [test_normalize_tag_32] ["AlsO:œ#@ö))œk"] ["also:œ_ö_œk"] [""];
+        [test_normalize_tag_33] ["a".repeat(888).as_str()] ["a".repeat(200)] [""];
+        [test_normalize_tag_34] [("a".to_owned() + &"🐶".repeat(799)).as_str()] ["a"] [""];
+        [test_normalize_tag_35] [("a".to_string() + &char::REPLACEMENT_CHARACTER.to_string()).as_str()] ["a"] [""];
+        [test_normalize_tag_36] [("a".to_string() + &char::REPLACEMENT_CHARACTER.to_string() + &char::REPLACEMENT_CHARACTER.to_string()).as_str()] ["a"] [""];
+        [test_normalize_tag_37] [("a".to_string() + &char::REPLACEMENT_CHARACTER.to_string() + &char::REPLACEMENT_CHARACTER.to_string() + "b").as_str()] ["a_b"] [""];
+        [test_normalize_tag_38]
+            ["A00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 000000000000"]
+            ["a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000_0"]
+            [""];
+    )]
+    #[test]
+    fn test_name() {
+        match normalize_utils::normalize_tag(input) {
+            Ok(normalized_tag) => {
+                assert_eq!(expected_err, "");
+                assert_eq!(normalized_tag, expected)
             }
             Err(err) => {
                 assert_eq!(format!("{err}"), expected_err);
