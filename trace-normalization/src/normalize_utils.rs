@@ -4,14 +4,14 @@
 // Datadog, Inc.
 
 // DEFAULT_SERVICE_NAME is the default name we assign a service if it's missing and we have no reasonable fallback
-pub(crate) const DEFAULT_SERVICE_NAME: &str = "unnamed-service";
+const DEFAULT_SERVICE_NAME: &str = "unnamed-service";
 
 // MAX_NAME_LEN the maximum length a name can have
 pub(crate) const MAX_NAME_LEN: usize = 100;
 // MAX_SERVICE_LEN the maximum length a service can have
-pub(crate) const MAX_SERVICE_LEN: usize = 100;
+const MAX_SERVICE_LEN: usize = 100;
 // MAX_SERVICE_LEN the maximum length a tag can have
-pub(crate) const MAX_TAG_LEN: usize = 200;
+const MAX_TAG_LEN: usize = 200;
 
 // truncate_utf8 truncates the given string to make sure it uses less than limit bytes.
 // If the last character is a utf8 character that would be split, it removes it
@@ -69,9 +69,7 @@ pub(crate) fn normalize_tag(tag: &str) -> anyhow::Result<String> {
 
     let mut result = String::with_capacity(tag.len());
 
-    let char_vec: Vec<char> = tag.chars().collect();
-
-    for cur_char in char_vec {
+    for cur_char in tag.chars() {
         if result.len() == MAX_TAG_LEN {
             break;
         }
@@ -135,10 +133,7 @@ pub(crate) fn is_normalized_ascii_tag(tag: &str) -> bool {
     }
 
     for mut i in 0..tag.len() {
-        let cur_char: char = match tag.chars().nth(i) {
-            Some(c) => c,
-            None => return false,
-        };
+        let Some(cur_char) = tag.chars().nth(i) else { return false; };
         if is_valid_ascii_tag_char(cur_char) {
             continue;
         }

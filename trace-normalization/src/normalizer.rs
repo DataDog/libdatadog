@@ -113,7 +113,7 @@ mod tests {
     use std::collections::HashMap;
     use std::time::SystemTime;
 
-    pub fn new_test_span() -> pb::Span {
+    fn new_test_span() -> pb::Span {
         let mut rng = rand::thread_rng();
 
         pb::Span {
@@ -137,7 +137,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_name_passes() {
+    fn test_normalize_name_passes() {
         let mut test_span = new_test_span();
         let before_name = test_span.name.clone();
         assert!(normalizer::normalize(&mut test_span).is_ok());
@@ -145,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_empty_name() {
+    fn test_normalize_empty_name() {
         let mut test_span = new_test_span();
         test_span.name = "".to_string();
         assert!(normalizer::normalize(&mut test_span).is_ok());
@@ -153,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_long_name() {
+    fn test_normalize_long_name() {
         let mut test_span = new_test_span();
         test_span.name = "CAMEMBERT".repeat(100);
         assert!(normalizer::normalize(&mut test_span).is_ok());
@@ -161,7 +161,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_name_no_alphanumeric() {
+    fn test_normalize_name_no_alphanumeric() {
         let mut test_span = new_test_span();
         test_span.name = "/".to_string();
         assert!(normalizer::normalize(&mut test_span).is_ok());
@@ -169,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_name_for_metrics() {
+    fn test_normalize_name_for_metrics() {
         let expected_names = HashMap::from([
             (
                 "pylons.controller".to_string(),
@@ -190,7 +190,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_resource_passes() {
+    fn test_normalize_resource_passes() {
         let mut test_span = new_test_span();
         let before_resource = test_span.resource.clone();
         assert!(normalizer::normalize(&mut test_span).is_ok());
@@ -198,7 +198,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_empty_resource() {
+    fn test_normalize_empty_resource() {
         let mut test_span = new_test_span();
         test_span.resource = "".to_string();
         assert!(normalizer::normalize(&mut test_span).is_ok());
@@ -206,7 +206,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_trace_id_passes() {
+    fn test_normalize_trace_id_passes() {
         let mut test_span = new_test_span();
         let before_trace_id = test_span.trace_id;
         assert!(normalizer::normalize(&mut test_span).is_ok());
@@ -214,14 +214,14 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_no_trace_id() {
+    fn test_normalize_no_trace_id() {
         let mut test_span = new_test_span();
         test_span.trace_id = 0;
         assert!(normalizer::normalize(&mut test_span).is_err());
     }
 
     #[test]
-    pub fn test_normalize_component_to_name() {
+    fn test_normalize_component_to_name() {
         let mut test_span = new_test_span();
         let before_trace_id = test_span.trace_id;
         assert!(normalizer::normalize(&mut test_span).is_ok());
@@ -232,7 +232,7 @@ mod tests {
     //       implemented within the normalize function.
 
     #[test]
-    pub fn test_normalize_span_id_passes() {
+    fn test_normalize_span_id_passes() {
         let mut test_span = new_test_span();
         let before_span_id = test_span.span_id;
         assert!(normalizer::normalize(&mut test_span).is_ok());
@@ -240,14 +240,14 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_no_span_id() {
+    fn test_normalize_no_span_id() {
         let mut test_span = new_test_span();
         test_span.span_id = 0;
         assert!(normalizer::normalize(&mut test_span).is_err());
     }
 
     #[test]
-    pub fn test_normalize_start_passes() {
+    fn test_normalize_start_passes() {
         let mut test_span = new_test_span();
         let before_start = test_span.start;
         assert!(normalizer::normalize(&mut test_span).is_ok());
@@ -262,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_start_too_small() {
+    fn test_normalize_start_too_small() {
         let mut test_span = new_test_span();
 
         test_span.start = 42;
@@ -274,7 +274,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_start_too_small_with_large_duration() {
+    fn test_normalize_start_too_small_with_large_duration() {
         let mut test_span = new_test_span();
 
         test_span.start = 42;
@@ -287,7 +287,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_duration_passes() {
+    fn test_normalize_duration_passes() {
         let mut test_span = new_test_span();
         let before_duration = test_span.duration;
 
@@ -296,7 +296,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_empty_duration() {
+    fn test_normalize_empty_duration() {
         let mut test_span = new_test_span();
         test_span.duration = 0;
 
@@ -305,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_negative_duration() {
+    fn test_normalize_negative_duration() {
         let mut test_span = new_test_span();
         test_span.duration = -50;
 
@@ -314,7 +314,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_large_duration() {
+    fn test_normalize_large_duration() {
         let mut test_span = new_test_span();
         test_span.duration = std::i64::MAX;
 
@@ -323,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_error_passes() {
+    fn test_normalize_error_passes() {
         let mut test_span = new_test_span();
         let before_error = test_span.error;
 
@@ -332,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_metrics_passes() {
+    fn test_normalize_metrics_passes() {
         let mut test_span = new_test_span();
         let before_metrics = test_span.metrics.clone();
 
@@ -341,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_meta_passes() {
+    fn test_normalize_meta_passes() {
         let mut test_span = new_test_span();
         let before_meta = test_span.meta.clone();
 
@@ -350,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_parent_id_passes() {
+    fn test_normalize_parent_id_passes() {
         let mut test_span = new_test_span();
         let before_parent_id = test_span.parent_id;
 
@@ -359,7 +359,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_type_passes() {
+    fn test_normalize_type_passes() {
         let mut test_span = new_test_span();
         let before_type = test_span.r#type.clone();
 
@@ -368,7 +368,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_type_too_long() {
+    fn test_normalize_type_too_long() {
         let mut test_span = new_test_span();
         test_span.r#type = "sql".repeat(1000);
 
@@ -377,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_service_tag() {
+    fn test_normalize_service_tag() {
         let mut test_span = new_test_span();
         test_span.service = "retargeting(api-Staging ".to_string();
 
@@ -386,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_env() {
+    fn test_normalize_env() {
         let mut test_span = new_test_span();
         test_span
             .meta
@@ -397,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_special_zipkin_root_span() {
+    fn test_special_zipkin_root_span() {
         let mut test_span = new_test_span();
         test_span.parent_id = 42;
         test_span.trace_id = 42;
@@ -413,7 +413,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_normalize_trace_empty() {
+    fn test_normalize_trace_empty() {
         let mut test_span = new_test_span();
         test_span
             .meta
@@ -424,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_is_valid_status_code() {
+    fn test_is_valid_status_code() {
         assert!(normalizer::is_valid_status_code("100"));
         assert!(normalizer::is_valid_status_code("599"));
         assert!(!normalizer::is_valid_status_code("99"));
