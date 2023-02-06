@@ -35,11 +35,9 @@ pub(crate) fn truncate_utf8(s: &str, limit: usize) -> &str {
 // fallbackService returns the fallback service name for a service
 // belonging to language lang.
 pub(crate) fn fallback_service() -> String {
-    if lang.is_empty() {
-        return DEFAULT_SERVICE_NAME.to_string();
-    }
     // In the go agent implementation, if a lang was specified in TagStats
-    // (extracted from the payload header) the fallback_service name would be "unnamed-{lang}-service". 
+    // (extracted from the payload header) the fallback_service name would be "unnamed-{lang}-service".
+    DEFAULT_SERVICE_NAME.to_string()
 }
 
 // NormalizeService normalizes a span service and returns an error describing the reason
