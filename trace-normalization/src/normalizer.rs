@@ -23,7 +23,7 @@ pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
 
     let normalized_service = match normalize_utils::normalize_service(&s.service) {
         Ok(service) => service,
-        Err(_) => normalize_utils::fallback_service(""),
+        Err(_) => normalize_utils::fallback_service(),
     };
 
     s.service = normalized_service;

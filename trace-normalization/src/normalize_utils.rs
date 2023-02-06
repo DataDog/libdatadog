@@ -34,17 +34,12 @@ pub(crate) fn truncate_utf8(s: &str, limit: usize) -> &str {
 
 // fallbackService returns the fallback service name for a service
 // belonging to language lang.
-pub(crate) fn fallback_service(lang: &str) -> String {
+pub(crate) fn fallback_service() -> String {
     if lang.is_empty() {
         return DEFAULT_SERVICE_NAME.to_string();
     }
-    let mut service_name = String::new();
-    service_name.push_str("unnamed-");
-    service_name.push_str(lang);
-    service_name.push_str("-service");
-    // TODO: the original golang implementation uses a map to cache previously created
-    // service names. Implement that here.
-    service_name
+    // In the go agent implementation, if a lang was specified in TagStats
+    // (extracted from the payload header) the fallback_service name would be "unnamed-{lang}-service". 
 }
 
 // NormalizeService normalizes a span service and returns an error describing the reason
