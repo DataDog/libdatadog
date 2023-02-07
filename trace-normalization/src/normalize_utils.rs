@@ -132,7 +132,10 @@ pub(crate) fn is_normalized_ascii_tag(tag: &str) -> bool {
     }
 
     for mut i in 0..tag.len() {
-        let Some(cur_char) = tag.chars().nth(i) else { return false; };
+        let cur_char = match tag.chars().nth(i) {
+            Some(c) => c,
+            None => return false,
+        };
         if is_valid_ascii_tag_char(cur_char) {
             continue;
         }
