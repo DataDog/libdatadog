@@ -118,8 +118,6 @@ task push_to_rubygems: [
   :package,
   :"release:guard_clean"
 ] do
-  system("gem signout") # make sure there are no existing credentials in use
-
   puts "Please input 'libdatadog ruby release key' from 'Profiling - Falcon' Datadog 1Password:"
   input = $stdin.gets.strip
 
@@ -128,8 +126,6 @@ task push_to_rubygems: [
   system("gem push pkg/libdatadog-#{Libdatadog::VERSION}.gem")
   system("gem push pkg/libdatadog-#{Libdatadog::VERSION}-x86_64-linux.gem")
   system("gem push pkg/libdatadog-#{Libdatadog::VERSION}-aarch64-linux.gem")
-
-  system("gem signout") # leave no credentials behind
 end
 
 module Helpers
