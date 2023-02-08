@@ -118,7 +118,10 @@ pub(crate) fn is_normalized_ascii_tag(tag: &str) -> bool {
     if tag.len() > MAX_TAG_LEN {
         return false;
     }
-    match tag.chars().next() {
+
+    let mut tag_iter = tag.chars();
+
+    match tag_iter.next() {
         Some(c) => {
             if !is_valid_ascii_start_char(c) {
                 return false;
@@ -126,8 +129,6 @@ pub(crate) fn is_normalized_ascii_tag(tag: &str) -> bool {
         }
         None => return false,
     }
-
-    let mut tag_iter = tag.chars();
 
     while let Some(cur_char) = tag_iter.next() {
         if is_valid_ascii_tag_char(cur_char) {
