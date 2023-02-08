@@ -127,8 +127,10 @@ pub(crate) fn is_normalized_ascii_tag(tag: &str) -> bool {
         None => return false,
     }
 
-    for mut i in 0..tag.len() {
-        let cur_char = match tag.chars().nth(i) {
+    let mut tag_iter = tag.chars().peekable();
+
+    while tag_iter.peek().is_some() {
+        let cur_char = match tag_iter.next() {
             Some(c) => c,
             None => return false,
         };
@@ -137,8 +139,7 @@ pub(crate) fn is_normalized_ascii_tag(tag: &str) -> bool {
         }
         if cur_char == '_' {
             // an underscore is only okay if followed by a valid non-underscore character
-            i += 1;
-            match tag.chars().nth(i) {
+            match tag_iter.next() {
                 Some(c) => {
                     if !is_valid_ascii_tag_char(c) {
                         return false;
