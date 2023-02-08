@@ -44,11 +44,7 @@ pub(crate) fn fallback_service() -> String {
 pub(crate) fn normalize_service(svc: &str) -> anyhow::Result<String> {
     anyhow::ensure!(!svc.is_empty(), "Normalizer Error: Empty service name.");
 
-    let truncated_service = if svc.len() > MAX_SERVICE_LEN {
-        truncate_utf8(svc, MAX_SERVICE_LEN)
-    } else {
-        svc
-    };
+    let truncated_service = truncate_utf8(svc, MAX_SERVICE_LEN);
 
     normalize_tag(truncated_service)
 }
