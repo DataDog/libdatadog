@@ -127,13 +127,9 @@ pub(crate) fn is_normalized_ascii_tag(tag: &str) -> bool {
         None => return false,
     }
 
-    let mut tag_iter = tag.chars().peekable();
+    let mut tag_iter = tag.chars();
 
-    while tag_iter.peek().is_some() {
-        let cur_char = match tag_iter.next() {
-            Some(c) => c,
-            None => return false,
-        };
+    while let Some(cur_char) = tag_iter.next() {
         if is_valid_ascii_tag_char(cur_char) {
             continue;
         }
