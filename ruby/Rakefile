@@ -11,7 +11,7 @@ require "rubygems/package"
 
 RSpec::Core::RakeTask.new(:spec)
 
-LIB_VERSION_TO_PACKAGE = "1.0.1"
+LIB_VERSION_TO_PACKAGE = "2.0.0"
 unless LIB_VERSION_TO_PACKAGE.start_with?(Libdatadog::LIB_VERSION)
   raise "`LIB_VERSION_TO_PACKAGE` setting in <Rakefile> (#{LIB_VERSION_TO_PACKAGE}) does not match " \
     "`LIB_VERSION` setting in <lib/libdatadog/version.rb> (#{Libdatadog::LIB_VERSION})"
@@ -20,22 +20,22 @@ end
 LIB_GITHUB_RELEASES = [
   {
     file: "libdatadog-aarch64-alpine-linux-musl.tar.gz",
-    sha256: "e1a984278e7a62085f4a682a93775bd455947e1b3cccec90cf1b9ac85e2b22e8",
+    sha256: "ceca9edb50cc6918a85d73f3dbc71a8dc00858e297b95c9115691535e757f4c0",
     ruby_platform: "aarch64-linux-musl"
   },
   {
     file: "libdatadog-aarch64-unknown-linux-gnu.tar.gz",
-    sha256: "8ada6b4a7a862d31ddad414c963f09399d234848f1a10a0de5066482f22ba517",
+    sha256: "e3c4f6cab36e449faee4e15ac7fd3c41dfff16b3c11e3f83a9a4d8d2c898e528",
     ruby_platform: "aarch64-linux"
   },
   {
     file: "libdatadog-x86_64-alpine-linux-musl.tar.gz",
-    sha256: "84def9af463acf5124f6d9e17361672a9903b628c279d69a6bd34102e7ba1354",
+    sha256: "88818c03e1fb9a7212959b8d4d6cff06eaacdae48ad96e708784ffe051a10ea8",
     ruby_platform: "x86_64-linux-musl"
   },
   {
     file: "libdatadog-x86_64-unknown-linux-gnu.tar.gz",
-    sha256: "d299295cede51cb1618fc45320ec3b3a5a9ae1b2518453248363a5c45c185219",
+    sha256: "faca4ac2af0a9ecc150e9dbf6a21336afa43bcbb75a33765818bc3e0c0c9e00a",
     ruby_platform: "x86_64-linux"
   }
 ]
@@ -118,8 +118,6 @@ task push_to_rubygems: [
   :package,
   :"release:guard_clean"
 ] do
-  system("gem signout") # make sure there are no existing credentials in use
-
   puts "Please input 'libdatadog ruby release key' from 'Profiling - Falcon' Datadog 1Password:"
   input = $stdin.gets.strip
 
@@ -128,8 +126,6 @@ task push_to_rubygems: [
   system("gem push pkg/libdatadog-#{Libdatadog::VERSION}.gem")
   system("gem push pkg/libdatadog-#{Libdatadog::VERSION}-x86_64-linux.gem")
   system("gem push pkg/libdatadog-#{Libdatadog::VERSION}-aarch64-linux.gem")
-
-  system("gem signout") # leave no credentials behind
 end
 
 module Helpers
