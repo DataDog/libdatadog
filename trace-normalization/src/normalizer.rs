@@ -19,6 +19,14 @@ const DEFAULT_SPAN_NAME: &str = "unnamed_operation";
 const TAG_SAMPLING_PRIORITY: &str = "_sampling_priority_v1";
 const TAG_ORIGIN: &str = "_dd.origin";
 
+#[allow(dead_code)]
+const SAMPLER_PRIORITY_AUTO_DROP: i32 = 0;
+#[allow(dead_code)]
+const SAMPLER_PRIORITY_AUTO_KEEP: i32 = 1;
+#[allow(dead_code)]
+const SAMPLER_PRIORITY_USER_KEEP: i32 = 2;
+const SAMPLER_PRIORITY_NONE: i32 = i8::MIN as i32;
+
 fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
     anyhow::ensure!(s.trace_id != 0, "TraceID is zero (reason:trace_id_zero)");
     anyhow::ensure!(s.span_id != 0, "SpanID is zero (reason:span_id_zero)");
@@ -134,12 +142,19 @@ pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
 // normalizeChunk takes a trace chunk and
 // * populates Origin field if it wasn't populated
 // * populates Priority field if it wasn't populated
-pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root: pb::Span) {
+// the root span is used to populate these fields, and it's index
+// (within the spans vec in TraceChunk) must be passed.
+pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root_index: usize) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        chunk.spans.len() > root_index,
+        "Normalize Chunk Error: root_index > length of trace chunk spans"
+    );
     // check if priority is not populated
     // a value of i8::MIN (-128) indicates no prior priority value set.
-    if chunk.priority == i8::MIN as i32 {
+    let root_span = &chunk.spans[root_index];
+    if chunk.priority == SAMPLER_PRIORITY_NONE {
         // Older tracers set sampling priority in the root span.
-        if let Some(root_span_priority) = root.metrics.get(TAG_SAMPLING_PRIORITY) {
+        if let Some(root_span_priority) = root_span.metrics.get(TAG_SAMPLING_PRIORITY) {
             chunk.priority = *root_span_priority as i32;
         } else {
             for span in &chunk.spans {
@@ -151,11 +166,12 @@ pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root: pb::Span) {
         }
     }
     if chunk.origin.is_empty() {
-        if let Some(origin) = root.meta.get(TAG_ORIGIN) {
+        if let Some(origin) = root_span.meta.get(TAG_ORIGIN) {
             // Older tracers set origin in the root span.
             chunk.origin = origin.to_string();
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -193,10 +209,10 @@ mod tests {
     }
 
     fn new_test_chunk_with_span(span: pb::Span) -> pb::TraceChunk {
-        return pb::TraceChunk {
+        pb::TraceChunk {
             priority: 1,
             origin: "".to_string(),
-            spans: vec![],
+            spans: vec![span],
             tags: HashMap::new(),
             dropped_trace: false,
         }
@@ -499,7 +515,10 @@ mod tests {
         let mut trace = vec![span_1, span_2];
         let result = normalizer::normalize_trace(&mut trace);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Normalize Trace Error: Trace has foreign span"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Normalize Trace Error: Trace has foreign span"));
     }
 
     #[test]
@@ -517,7 +536,7 @@ mod tests {
     fn test_normalize_trace() {
         let span_1 = new_test_span();
         let mut span_2 = new_test_span();
-        span_2.span_id+=1;
+        span_2.span_id += 1;
 
         let mut trace = vec![span_1, span_2];
         assert!(normalizer::normalize_trace(&mut trace).is_ok());
@@ -535,10 +554,65 @@ mod tests {
     #[test]
     fn test_normalize_chunk_populating_origin() {
         let mut root = new_test_span();
-        root.meta.insert(normalizer::TAG_ORIGIN.to_string(), "rum".to_string());
+        root.meta
+            .insert(normalizer::TAG_ORIGIN.to_string(), "rum".to_string());
+
         let mut chunk = new_test_chunk_with_span(root);
         chunk.origin = "".to_string();
-        normalizer::normalize_chunk(&mut chunk, chunk.spans[0]);
-        // assert_eq!("rum".to_string(), chunk.origin);
+        assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
+        assert_eq!("rum".to_string(), chunk.origin);
+    }
+
+    #[test]
+    fn test_normalize_chunk_not_populating_origin() {
+        let mut root = new_test_span();
+        root.meta
+            .insert(normalizer::TAG_ORIGIN.to_string(), "rum".to_string());
+
+        let mut chunk = new_test_chunk_with_span(root);
+        chunk.origin = "lambda".to_string();
+        assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
+        assert_eq!("lambda".to_string(), chunk.origin);
+    }
+
+    #[test]
+    fn test_normalize_chunk_populating_sampling_priority() {
+        let mut root = new_test_span();
+        root.metrics.insert(
+            normalizer::TAG_SAMPLING_PRIORITY.to_string(),
+            normalizer::SAMPLER_PRIORITY_USER_KEEP.into(),
+        );
+
+        let mut chunk = new_test_chunk_with_span(root);
+        chunk.priority = normalizer::SAMPLER_PRIORITY_NONE;
+        assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
+        assert_eq!(normalizer::SAMPLER_PRIORITY_USER_KEEP, chunk.priority);
+    }
+
+    #[test]
+    fn test_normalize_chunk_not_populating_sampling_priority() {
+        let mut root = new_test_span();
+        root.metrics.insert(
+            normalizer::TAG_SAMPLING_PRIORITY.to_string(),
+            normalizer::SAMPLER_PRIORITY_USER_KEEP.into(),
+        );
+
+        let mut chunk = new_test_chunk_with_span(root);
+        chunk.priority = normalizer::SAMPLER_PRIORITY_AUTO_DROP;
+        assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
+        assert_eq!(normalizer::SAMPLER_PRIORITY_AUTO_DROP, chunk.priority);
+    }
+
+    #[test]
+    fn test_normalize_populate_priority_from_any_span() {
+        let mut chunk = new_test_chunk_with_span(new_test_span());
+        chunk.priority = normalizer::SAMPLER_PRIORITY_NONE;
+        chunk.spans = vec![new_test_span(), new_test_span(), new_test_span()];
+        chunk.spans[1].metrics.insert(
+            normalizer::TAG_SAMPLING_PRIORITY.to_string(),
+            normalizer::SAMPLER_PRIORITY_USER_KEEP.into(),
+        );
+        assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
+        assert_eq!(normalizer::SAMPLER_PRIORITY_USER_KEEP, chunk.priority);
     }
 }
