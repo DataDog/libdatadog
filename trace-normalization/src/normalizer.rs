@@ -134,7 +134,7 @@ pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
 // normalizeChunk takes a trace chunk and
 // * populates Origin field if it wasn't populated
 // * populates Priority field if it wasn't populated
-pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root: &mut pb::Span) {
+pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root: pb::Span) {
     // check if priority is not populated
     // a value of i8::MIN (-128) indicates no prior priority value set.
     if chunk.priority == i8::MIN as i32 {
@@ -163,6 +163,7 @@ mod tests {
 
     use crate::normalize_utils;
     use crate::normalizer;
+    use crate::normalizer::DEFAULT_SPAN_NAME;
     use crate::pb;
     use rand::Rng;
     use std::collections::HashMap;
@@ -188,6 +189,16 @@ mod tests {
             parent_id: 1111,
             r#type: "http".to_string(),
             meta_struct: HashMap::new(),
+        }
+    }
+
+    fn new_test_chunk_with_span(span: pb::Span) -> pb::TraceChunk {
+        return pb::TraceChunk {
+            priority: 1,
+            origin: "".to_string(),
+            spans: vec![],
+            tags: HashMap::new(),
+            dropped_trace: false,
         }
     }
 
@@ -479,11 +490,55 @@ mod tests {
     }
 
     #[test]
+    fn test_normalize_trace_trace_id_mismatch() {
+        let mut span_1 = new_test_span();
+        let mut span_2 = new_test_span();
+        span_1.trace_id = 1;
+        span_2.trace_id = 2;
+
+        let mut trace = vec![span_1, span_2];
+        let result = normalizer::normalize_trace(&mut trace);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Normalize Trace Error: Trace has foreign span"));
+    }
+
+    #[test]
+    fn test_normalize_trace_invalid_span_name() {
+        let span_1 = new_test_span();
+        let mut span_2 = new_test_span();
+        span_2.name = "".to_string(); // will be normalized
+
+        let mut trace = vec![span_1, span_2];
+        assert!(normalizer::normalize_trace(&mut trace).is_ok());
+        assert_eq!(trace[1].name, DEFAULT_SPAN_NAME);
+    }
+
+    #[test]
+    fn test_normalize_trace() {
+        let span_1 = new_test_span();
+        let mut span_2 = new_test_span();
+        span_2.span_id+=1;
+
+        let mut trace = vec![span_1, span_2];
+        assert!(normalizer::normalize_trace(&mut trace).is_ok());
+    }
+
+    #[test]
     fn test_is_valid_status_code() {
         assert!(normalizer::is_valid_status_code("100"));
         assert!(normalizer::is_valid_status_code("599"));
         assert!(!normalizer::is_valid_status_code("99"));
         assert!(!normalizer::is_valid_status_code("600"));
         assert!(!normalizer::is_valid_status_code("Invalid status code"));
+    }
+
+    #[test]
+    fn test_normalize_chunk_populating_origin() {
+        let mut root = new_test_span();
+        root.meta.insert(normalizer::TAG_ORIGIN.to_string(), "rum".to_string());
+        let mut chunk = new_test_chunk_with_span(root);
+        chunk.origin = "".to_string();
+        normalizer::normalize_chunk(&mut chunk, chunk.spans[0]);
+        // assert_eq!("rum".to_string(), chunk.origin);
     }
 }
