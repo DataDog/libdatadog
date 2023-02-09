@@ -1,7 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2022-Present Datadog, Inc.
 
-use crate::{slice::AsBytes, slice::CharSlice};
+use crate::slice::{AsBytes, CharSlice};
+use crate::Error;
 use ddcommon::tag::{parse_tags, Tag};
 
 #[must_use]
@@ -16,11 +17,8 @@ pub extern "C" fn ddog_Vec_Tag_drop(_: crate::Vec<Tag>) {}
 #[repr(C)]
 pub enum PushTagResult {
     Ok,
-    Err(crate::Vec<u8>),
+    Err(Error),
 }
-
-#[no_mangle]
-pub extern "C" fn ddog_Vec_Tag_PushResult_drop(_: PushTagResult) {}
 
 /// Creates a new Tag from the provided `key` and `value` by doing a utf8
 /// lossy conversion, and pushes into the `vec`. The strings `key` and `value`
@@ -44,14 +42,14 @@ pub unsafe extern "C" fn ddog_Vec_Tag_push(
             vec.push(tag);
             PushTagResult::Ok
         }
-        Err(err) => PushTagResult::Err(err.as_bytes().to_vec().into()),
+        Err(err) => PushTagResult::Err(Error::from(err.as_ref())),
     }
 }
 
 #[repr(C)]
 pub struct ParseTagsResult {
     tags: crate::Vec<Tag>,
-    error_message: Option<Box<crate::Vec<u8>>>,
+    error_message: Option<Box<Error>>,
 }
 
 /// # Safety
@@ -64,7 +62,7 @@ pub unsafe extern "C" fn ddog_Vec_Tag_parse(string: CharSlice) -> ParseTagsResul
     let (tags, error) = parse_tags(string.as_ref());
     ParseTagsResult {
         tags: tags.into(),
-        error_message: error.map(|message| Box::new(crate::Vec::from(message.into_bytes()))),
+        error_message: error.map(Error::from).map(Box::new),
     }
 }
 
@@ -126,10 +124,11 @@ mod tests {
 
         // 'tags:' cannot end in a semi-colon, so expect an error.
         assert!(result.error_message.is_some());
-        let error_message: Vec<u8> = (*result.error_message.unwrap()).into();
+        let error = *result.error_message.unwrap();
+        let error_message = error.as_ref();
         assert!(!error_message.is_empty());
 
-        let expected_error_message = b"Errors while parsing tags: tag 'tags:' ends with a colon";
-        assert_eq!(expected_error_message, error_message.as_slice())
+        let expected_error_message = "Errors while parsing tags: tag 'tags:' ends with a colon";
+        assert_eq!(expected_error_message, error_message)
     }
 }

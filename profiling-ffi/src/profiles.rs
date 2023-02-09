@@ -3,11 +3,25 @@
 
 use crate::Timespec;
 use datadog_profiling::profile as profiles;
+use datadog_profiling::profile::{profiled_endpoints, Profile};
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
-use profiles::profiled_endpoints;
+use ddcommon_ffi::Error;
 use std::convert::{TryFrom, TryInto};
+use std::ptr::NonNull;
 use std::str::Utf8Error;
 use std::time::{Duration, SystemTime};
+
+#[repr(C)]
+pub enum ProfileAddResult {
+    Ok(u64),
+    Err(Error),
+}
+
+#[repr(C)]
+pub enum SerializeResult {
+    Ok(EncodedProfile),
+    Err(Error),
+}
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -304,43 +318,77 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
     start_time: Option<&Timespec>,
-) -> Box<datadog_profiling::profile::Profile> {
-    let types: Vec<datadog_profiling::profile::api::ValueType> =
+) -> NonNull<Profile> {
+    let types: Vec<profiles::api::ValueType> =
         sample_types.into_slice().iter().map(Into::into).collect();
 
-    let builder = datadog_profiling::profile::Profile::builder()
+    let builder = Profile::builder()
         .period(period.map(Into::into))
         .sample_types(types)
         .start_time(start_time.map(SystemTime::from));
 
-    Box::new(builder.build())
+    NonNull::new_unchecked(Box::into_raw(Box::new(builder.build())))
 }
 
-#[no_mangle]
 /// # Safety
-/// The `profile` must point to an object created by another FFI routine in this
-/// module, such as `ddog_Profile_with_sample_types`.
-pub unsafe extern "C" fn ddog_prof_Profile_drop(
-    _profile: Box<datadog_profiling::profile::Profile>,
-) {
+/// The `profile` can be null, but if non-null it must point to a valid object
+/// created by the Rust Global allocator.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_drop(profile: Option<&mut Profile>) {
+    if let Some(reference) = profile {
+        // Safety: Profile is not repr(C), and is therefore boxed.
+        drop(Box::from_raw(reference as *mut _))
+    }
 }
 
-#[no_mangle]
+#[cfg(test)]
+impl From<ProfileAddResult> for Result<u64, String> {
+    fn from(result: ProfileAddResult) -> Self {
+        match result {
+            ProfileAddResult::Ok(ok) => Ok(ok),
+            ProfileAddResult::Err(err) => Err(err.into()),
+        }
+    }
+}
+
 /// # Safety
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module. All pointers inside the `sample` need to be valid for the duration
 /// of this call.
+///
+/// If successful, it returns the internal id of the sample (> 0) in the Ok
+/// variant. On error, it holds an error message in the error variant.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module.
 /// This call is _NOT_ thread-safe.
-pub extern "C" fn ddog_prof_Profile_add(
-    profile: &mut datadog_profiling::profile::Profile,
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_add(
+    profile: Option<&mut Profile>,
     sample: Sample,
-) -> u64 {
+) -> ProfileAddResult {
+    match ddog_prof_profile_add_impl(profile, sample) {
+        Ok(id) => ProfileAddResult::Ok(id),
+        Err(err) => ProfileAddResult::Err(Error::from(err.context("failed ddog_prof_Profile_add"))),
+    }
+}
+
+unsafe fn ddog_prof_profile_add_impl(
+    profile: Option<&mut Profile>,
+    sample: Sample,
+) -> anyhow::Result<u64> {
+    let profile = match profile {
+        Some(p) => p,
+        None => anyhow::bail!("profile pointer was null"),
+    };
     match sample.try_into().map(|s| profile.add(s)) {
         Ok(r) => match r {
-            Ok(id) => id.into(),
-            Err(_) => 0,
+            Ok(id) => Ok(u64::from(id)),
+            Err(err) => Err(err),
         },
-        Err(_) => 0,
+        Err(err) => Err(anyhow::Error::from(err)),
     }
 }
 
@@ -362,7 +410,7 @@ pub extern "C" fn ddog_prof_Profile_add(
 /// This call is _NOT_ thread-safe.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_Profile_set_endpoint(
-    profile: &mut datadog_profiling::profile::Profile,
+    profile: &mut Profile,
     local_root_span_id: u64,
     endpoint: CharSlice,
 ) {
@@ -382,7 +430,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_endpoint(
 /// This call is _NOT_ thread-safe.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
-    profile: &mut datadog_profiling::profile::Profile,
+    profile: &mut Profile,
     endpoint: CharSlice,
     value: i64,
 ) {
@@ -396,6 +444,20 @@ pub struct EncodedProfile {
     end: Timespec,
     buffer: ddcommon_ffi::Vec<u8>,
     endpoints_stats: Box<profiled_endpoints::ProfiledEndpointsStats>,
+}
+
+/// # Safety
+/// Only pass a reference to a valid `ddog_prof_EncodedProfile`, or null. A
+/// valid reference also means that it hasn't already been dropped (do not
+/// call this twice on the same object).
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(profile: Option<&mut EncodedProfile>) {
+    if let Some(reference) = profile {
+        // Safety: EncodedProfile's are repr(C), and not box allocated. If the
+        // user has followed the safety requirements of this function, then
+        // this is safe.
+        std::ptr::drop_in_place(reference as *mut _)
+    }
 }
 
 impl From<datadog_profiling::profile::EncodedProfile> for EncodedProfile {
@@ -414,14 +476,10 @@ impl From<datadog_profiling::profile::EncodedProfile> for EncodedProfile {
     }
 }
 
-#[repr(C)]
-pub enum SerializeResult {
-    Ok(EncodedProfile),
-    Err(ddcommon_ffi::Vec<u8>),
-}
-
-/// Serialize the aggregated profile. Don't forget to clean up the result by
-/// calling ddog_prof_Profile_SerializeResult_drop.
+/// Serialize the aggregated profile.
+///
+/// Don't forget to clean up the ok with `ddog_prof_EncodedProfile_drop` or
+/// the error variant with `ddog_Error_drop` when you are done with them.
 ///
 /// # Arguments
 /// * `profile` - a reference to the profile being serialized.
@@ -437,9 +495,10 @@ pub enum SerializeResult {
 /// The `profile` must point to a valid profile object.
 /// The `end_time` must be null or otherwise point to a valid TimeSpec object.
 /// The `duration_nanos` must be null or otherwise point to a valid i64.
+#[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_Profile_serialize(
-    profile: &datadog_profiling::profile::Profile,
+    profile: &Profile,
     end_time: Option<&Timespec>,
     duration_nanos: Option<&i64>,
 ) -> SerializeResult {
@@ -454,9 +513,6 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
         Err(err) => SerializeResult::Err(err.into()),
     }
 }
-
-#[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Profile_SerializeResult_drop(_result: SerializeResult) {}
 
 #[must_use]
 #[no_mangle]
@@ -478,7 +534,7 @@ pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &ddcommon_ffi::Vec<u8>) -> Sl
 /// If `time` is not null, it must point to a valid Timespec object.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_Profile_reset(
-    profile: &mut datadog_profiling::profile::Profile,
+    profile: &mut Profile,
     start_time: Option<&Timespec>,
 ) -> bool {
     profile.reset(start_time.map(SystemTime::from)).is_some()
@@ -493,8 +549,28 @@ mod test {
     fn ctor_and_dtor() {
         unsafe {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
-            let profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
-            ddog_prof_Profile_drop(profile);
+            let mut profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
+            ddog_prof_Profile_drop(Some(profile.as_mut()));
+        }
+    }
+
+    #[test]
+    fn add_failure() {
+        unsafe {
+            let sample_type: *const ValueType = &ValueType::new("samples", "count");
+            let mut profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
+
+            // wrong number of values (doesn't match sample types)
+            let values: &[i64] = &[];
+
+            let sample = Sample {
+                locations: Slice::default(),
+                values: Slice::from(values),
+                labels: Slice::default(),
+            };
+
+            let result = Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), sample));
+            result.unwrap_err();
         }
     }
 
@@ -537,19 +613,19 @@ mod test {
                 labels: Slice::from(&labels),
             };
 
-            let aggregator = &mut *profile;
-
-            let sample_id1 = ddog_prof_Profile_add(aggregator, sample);
+            let sample_id1 =
+                Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), sample)).unwrap();
             assert_eq!(sample_id1, 1);
 
-            let sample_id2 = ddog_prof_Profile_add(aggregator, sample);
+            let sample_id2 =
+                Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), sample)).unwrap();
             assert_eq!(sample_id1, sample_id2);
 
-            ddog_prof_Profile_drop(profile);
+            ddog_prof_Profile_drop(Some(profile.as_mut()));
         }
     }
 
-    unsafe fn provide_distinct_locations_ffi() -> datadog_profiling::profile::Profile {
+    unsafe fn provide_distinct_locations_ffi() -> NonNull<Profile> {
         let sample_type: *const ValueType = &ValueType::new("samples", "count");
         let mut profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
 
@@ -608,21 +684,22 @@ mod test {
             labels: Slice::from(labels.as_slice()),
         };
 
-        let aggregator = &mut *profile;
+        let sample_id1 =
+            Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), main_sample)).unwrap();
 
-        let sample_id1 = ddog_prof_Profile_add(aggregator, main_sample);
         assert_eq!(sample_id1, 1);
 
-        let sample_id2 = ddog_prof_Profile_add(aggregator, test_sample);
+        let sample_id2 =
+            Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), test_sample)).unwrap();
         assert_eq!(sample_id2, 2);
 
-        *profile
+        profile
     }
 
     #[test]
     fn distinct_locations_ffi() {
         unsafe {
-            provide_distinct_locations_ffi();
+            ddog_prof_Profile_drop(Some(provide_distinct_locations_ffi().as_mut()));
         }
     }
 }

@@ -48,9 +48,7 @@ mod tests {
     fn get_open_file_descriptors(
         pid: Option<libc::pid_t>,
     ) -> Result<BTreeMap<RawFd, String>, io::Error> {
-        let proc = pid
-            .map(|p| format!("{}", p))
-            .unwrap_or_else(|| "self".into());
+        let proc = pid.map(|p| format!("{p}")).unwrap_or_else(|| "self".into());
 
         let fds_path = std::path::Path::new("/proc").join(proc).join("fd");
         let fds = std::fs::read_dir(fds_path)?

@@ -26,7 +26,6 @@ Note: Publishing new releases to rubygems.org can only be done by Datadog employ
 3. [ ] Update the <lib/libdatadog/version.rb> file with the `LIB_VERSION` and `VERSION` to use
 4. [ ] Commit change, open PR, get it merged
 5. [ ] Release by running `docker-compose run push_to_rubygems`.
-    (When asked for rubygems credentials, check your local friendly Datadog 1Password.)
 6. [ ] Verify that release shows up correctly on: <https://rubygems.org/gems/libdatadog>
 
 ## Contributing
