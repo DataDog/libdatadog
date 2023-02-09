@@ -5,7 +5,6 @@
 
 use crate::normalize_utils;
 use crate::pb;
-use std::collections::HashSet;
 use std::time::SystemTime;
 
 const MAX_TYPE_LEN: usize = 100;
@@ -17,8 +16,10 @@ const YEAR_2000_NANOSEC_TS: i64 = 946684800000000000;
 // DEFAULT_SPAN_NAME is the default name we assign a span if it's missing and we have no reasonable fallback
 const DEFAULT_SPAN_NAME: &str = "unnamed_operation";
 
-#[allow(dead_code)]
-pub fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
+const TAG_SAMPLING_PRIORITY: &str = "_sampling_priority_v1";
+const TAG_ORIGIN: &str = "_dd.origin";
+
+fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
     anyhow::ensure!(s.trace_id != 0, "TraceID is zero (reason:trace_id_zero)");
     anyhow::ensure!(s.span_id != 0, "SpanID is zero (reason:span_id_zero)");
 
@@ -105,34 +106,57 @@ pub(crate) fn is_valid_status_code(sc: &str) -> bool {
 }
 
 // normalize_trace takes a trace and
-// * rejects the trace if there is a trace ID discrepancy between 2 spans
-// * rejects the trace if two spans have the same span_id
-// * rejects empty traces
-// * rejects traces where at least one span cannot be normalized
-// * return the normalized trace and an error:
-//   - nil if the trace can be accepted
-//   - a reason tag explaining the reason the traces failed normalization
-// pub fn normalize_trace(t: &mut [pb::Span]) -> anyhow::Result<()> {
-//     if t.is_empty() {
-//        anyhow::bail!("Normalize Trace Error: Trace is empty.");
-//     }
+// * returns an error if there is a trace ID discrepancy between 2 spans
+// * returns an error if two spans have the same span_id
+// * returns an error if at least one span cannot be normalized
+pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
+    if trace.is_empty() {
+        anyhow::bail!("Normalize Trace Error: Trace is empty.");
+    }
 
-//     let mut span_ids = HashSet::new();
+    let first_trace_id = trace[0].trace_id;
 
-//     let first_span = &t[0];
+    for span in trace {
+        if span.trace_id != first_trace_id {
+            anyhow::bail!(format!(
+                "Normalize Trace Error: Trace has foreign span: {:?}",
+                span
+            ));
+        }
+        match normalize(span) {
+            Ok(_) => {}
+            Err(e) => anyhow::bail!(e),
+        }
+    }
+    Ok(())
+}
 
-//     for i in 1..t.len() {
-//         if t[i].trace_id != first_span.trace_id {
-//             anyhow::bail!(format!("Normalize Trace Error: Trace has foreign span: {:?}", t[i]));
-//         }
-//         match normalize(t[i]) {
-//             Ok(_) => {}
-//             Err(e) => return Err(e)
-//         }
-//         span_ids.insert(&span.span_id);
-//     }
-//     Ok(())
-// }
+// normalizeChunk takes a trace chunk and
+// * populates Origin field if it wasn't populated
+// * populates Priority field if it wasn't populated
+pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root: &mut pb::Span) {
+    // check if priority is not populated
+    // a value of i8::MIN (-128) indicates no prior priority value set.
+    if chunk.priority == i8::MIN as i32 {
+        // Older tracers set sampling priority in the root span.
+        if let Some(root_span_priority) = root.metrics.get(TAG_SAMPLING_PRIORITY) {
+            chunk.priority = *root_span_priority as i32;
+        } else {
+            for span in &chunk.spans {
+                if let Some(priority) = span.metrics.get(TAG_SAMPLING_PRIORITY) {
+                    chunk.priority = *priority as i32;
+                    break;
+                }
+            }
+        }
+    }
+    if chunk.origin.is_empty() {
+        if let Some(origin) = root.meta.get(TAG_ORIGIN) {
+            // Older tracers set origin in the root span.
+            chunk.origin = origin.to_string();
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
