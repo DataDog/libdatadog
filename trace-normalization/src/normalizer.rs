@@ -5,6 +5,7 @@
 
 use crate::normalize_utils;
 use crate::pb;
+use std::collections::HashSet;
 use std::time::SystemTime;
 
 const MAX_TYPE_LEN: usize = 100;
@@ -102,6 +103,36 @@ pub(crate) fn is_valid_status_code(sc: &str) -> bool {
     }
     false
 }
+
+// normalize_trace takes a trace and
+// * rejects the trace if there is a trace ID discrepancy between 2 spans
+// * rejects the trace if two spans have the same span_id
+// * rejects empty traces
+// * rejects traces where at least one span cannot be normalized
+// * return the normalized trace and an error:
+//   - nil if the trace can be accepted
+//   - a reason tag explaining the reason the traces failed normalization
+// pub fn normalize_trace(t: &mut [pb::Span]) -> anyhow::Result<()> {
+//     if t.is_empty() {
+//        anyhow::bail!("Normalize Trace Error: Trace is empty.");
+//     }
+
+//     let mut span_ids = HashSet::new();
+
+//     let first_span = &t[0];
+
+//     for i in 1..t.len() {
+//         if t[i].trace_id != first_span.trace_id {
+//             anyhow::bail!(format!("Normalize Trace Error: Trace has foreign span: {:?}", t[i]));
+//         }
+//         match normalize(t[i]) {
+//             Ok(_) => {}
+//             Err(e) => return Err(e)
+//         }
+//         span_ids.insert(&span.span_id);
+//     }
+//     Ok(())
+// }
 
 #[cfg(test)]
 mod tests {
