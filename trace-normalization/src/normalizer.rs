@@ -115,7 +115,6 @@ pub(crate) fn is_valid_status_code(sc: &str) -> bool {
 
 // normalize_trace takes a trace and
 // * returns an error if there is a trace ID discrepancy between 2 spans
-// * returns an error if two spans have the same span_id
 // * returns an error if at least one span cannot be normalized
 pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
     if trace.is_empty() {
@@ -139,19 +138,17 @@ pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
     Ok(())
 }
 
-// normalizeChunk takes a trace chunk and
-// * populates Origin field if it wasn't populated
-// * populates Priority field if it wasn't populated
-// the root span is used to populate these fields, and it's index
-// (within the spans vec in TraceChunk) must be passed.
-pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root_index: usize) -> anyhow::Result<()> {
+// normalize_chunk takes a trace chunk and
+// * populates origin field if it wasn't populated
+// * populates priority field if it wasn't populated
+// the root span is used to populate these fields, and it's index in TraceChunk spans vec must be passed.
+pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root_span_index: usize) -> anyhow::Result<()> {
     anyhow::ensure!(
-        chunk.spans.len() > root_index,
-        "Normalize Chunk Error: root_index > length of trace chunk spans"
+        chunk.spans.len() > root_span_index,
+        "Normalize Chunk Error: root_span_index > length of trace chunk spans"
     );
     // check if priority is not populated
-    // a value of i8::MIN (-128) indicates no prior priority value set.
-    let root_span = &chunk.spans[root_index];
+    let root_span = &chunk.spans[root_span_index];
     if chunk.priority == SAMPLER_PRIORITY_NONE {
         // Older tracers set sampling priority in the root span.
         if let Some(root_span_priority) = root_span.metrics.get(TAG_SAMPLING_PRIORITY) {
@@ -165,6 +162,7 @@ pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root_index: usize) -> anyhow:
             }
         }
     }
+    // check if origin is not populated
     if chunk.origin.is_empty() {
         if let Some(origin) = root_span.meta.get(TAG_ORIGIN) {
             // Older tracers set origin in the root span.
