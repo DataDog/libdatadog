@@ -20,14 +20,15 @@ const TAG_SAMPLING_PRIORITY: &str = "_sampling_priority_v1";
 const TAG_ORIGIN: &str = "_dd.origin";
 
 #[allow(dead_code)]
-const SAMPLER_PRIORITY_AUTO_DROP: i32 = 0;
-#[allow(dead_code)]
-const SAMPLER_PRIORITY_AUTO_KEEP: i32 = 1;
-#[allow(dead_code)]
-const SAMPLER_PRIORITY_USER_KEEP: i32 = 2;
-const SAMPLER_PRIORITY_NONE: i32 = i8::MIN as i32;
+#[derive(Debug, PartialEq)]
+enum SamplerPriority {
+    AutoDrop = 0,
+    AutoKeep = 1,
+    UserKeep = 2,
+    None = i8::MIN as isize,
+}
 
-fn normalize(s: &mut pb::Span) -> anyhow::Result<()> {
+fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
     anyhow::ensure!(s.trace_id != 0, "TraceID is zero (reason:trace_id_zero)");
     anyhow::ensure!(s.span_id != 0, "SpanID is zero (reason:span_id_zero)");
 
@@ -117,11 +118,10 @@ pub(crate) fn is_valid_status_code(sc: &str) -> bool {
 /// * returns an error if there is a trace ID discrepancy between 2 spans
 /// * returns an error if at least one span cannot be normalized
 pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
-    if trace.is_empty() {
-        anyhow::bail!("Normalize Trace Error: Trace is empty.");
-    }
-
-    let first_trace_id = trace[0].trace_id;
+    let first_trace_id = match trace.get(0) {
+        Some(first_span) => first_span.trace_id,
+        None => anyhow::bail!("Normalize Trace Error: Trace is empty"),
+    };
 
     for span in trace {
         if span.trace_id != first_trace_id {
@@ -130,7 +130,7 @@ pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
                 span
             ));
         }
-        match normalize(span) {
+        match normalize_span(span) {
             Ok(_) => {}
             Err(e) => anyhow::bail!(e),
         }
@@ -138,18 +138,20 @@ pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
     Ok(())
 }
 
-// normalize_chunk takes a trace chunk and
-// * populates origin field if it wasn't populated
-// * populates priority field if it wasn't populated
-// the root span is used to populate these fields, and it's index in TraceChunk spans vec must be passed.
+/// normalize_chunk takes a trace chunk and
+/// * populates origin field if it wasn't populated
+/// * populates priority field if it wasn't populated
+/// the root span is used to populate these fields, and it's index in TraceChunk spans vec must be passed.
 pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root_span_index: usize) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        chunk.spans.len() > root_span_index,
-        "Normalize Chunk Error: root_span_index > length of trace chunk spans"
-    );
     // check if priority is not populated
-    let root_span = &chunk.spans[root_span_index];
-    if chunk.priority == SAMPLER_PRIORITY_NONE {
+    let root_span = match chunk.spans.get(root_span_index) {
+        Some(span) => span,
+        None => {
+            anyhow::bail!("Normalize Chunk Error: root_span_index > length of trace chunk spans")
+        }
+    };
+
+    if chunk.priority == SamplerPriority::None as i32 {
         // Older tracers set sampling priority in the root span.
         if let Some(root_span_priority) = root_span.metrics.get(TAG_SAMPLING_PRIORITY) {
             chunk.priority = *root_span_priority as i32;
@@ -220,7 +222,7 @@ mod tests {
     fn test_normalize_name_passes() {
         let mut test_span = new_test_span();
         let before_name = test_span.name.clone();
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(before_name, test_span.name);
     }
 
@@ -228,7 +230,7 @@ mod tests {
     fn test_normalize_empty_name() {
         let mut test_span = new_test_span();
         test_span.name = "".to_string();
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(test_span.name, normalizer::DEFAULT_SPAN_NAME);
     }
 
@@ -236,7 +238,7 @@ mod tests {
     fn test_normalize_long_name() {
         let mut test_span = new_test_span();
         test_span.name = "CAMEMBERT".repeat(100);
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert!(test_span.name.len() == normalize_utils::MAX_NAME_LEN);
     }
 
@@ -244,7 +246,7 @@ mod tests {
     fn test_normalize_name_no_alphanumeric() {
         let mut test_span = new_test_span();
         test_span.name = "/".to_string();
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(test_span.name, normalizer::DEFAULT_SPAN_NAME);
     }
 
@@ -264,7 +266,7 @@ mod tests {
         let mut test_span = new_test_span();
         for (name, expected_name) in expected_names {
             test_span.name = name;
-            assert!(normalizer::normalize(&mut test_span).is_ok());
+            assert!(normalizer::normalize_span(&mut test_span).is_ok());
             assert_eq!(test_span.name, expected_name);
         }
     }
@@ -273,7 +275,7 @@ mod tests {
     fn test_normalize_resource_passes() {
         let mut test_span = new_test_span();
         let before_resource = test_span.resource.clone();
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(before_resource, test_span.resource);
     }
 
@@ -281,7 +283,7 @@ mod tests {
     fn test_normalize_empty_resource() {
         let mut test_span = new_test_span();
         test_span.resource = "".to_string();
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(test_span.resource, test_span.name);
     }
 
@@ -289,7 +291,7 @@ mod tests {
     fn test_normalize_trace_id_passes() {
         let mut test_span = new_test_span();
         let before_trace_id = test_span.trace_id;
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(before_trace_id, test_span.trace_id);
     }
 
@@ -297,14 +299,14 @@ mod tests {
     fn test_normalize_no_trace_id() {
         let mut test_span = new_test_span();
         test_span.trace_id = 0;
-        assert!(normalizer::normalize(&mut test_span).is_err());
+        assert!(normalizer::normalize_span(&mut test_span).is_err());
     }
 
     #[test]
     fn test_normalize_component_to_name() {
         let mut test_span = new_test_span();
         let before_trace_id = test_span.trace_id;
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(before_trace_id, test_span.trace_id);
     }
 
@@ -315,7 +317,7 @@ mod tests {
     fn test_normalize_span_id_passes() {
         let mut test_span = new_test_span();
         let before_span_id = test_span.span_id;
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(before_span_id, test_span.span_id);
     }
 
@@ -323,14 +325,14 @@ mod tests {
     fn test_normalize_no_span_id() {
         let mut test_span = new_test_span();
         test_span.span_id = 0;
-        assert!(normalizer::normalize(&mut test_span).is_err());
+        assert!(normalizer::normalize_span(&mut test_span).is_err());
     }
 
     #[test]
     fn test_normalize_start_passes() {
         let mut test_span = new_test_span();
         let before_start = test_span.start;
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(before_start, test_span.start);
     }
 
@@ -348,7 +350,7 @@ mod tests {
         test_span.start = 42;
         let min_start = get_current_time() - test_span.duration;
 
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert!(test_span.start >= min_start);
         assert!(test_span.start <= get_current_time());
     }
@@ -361,7 +363,7 @@ mod tests {
         test_span.duration = get_current_time() * 2;
         let min_start = get_current_time();
 
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert!(test_span.start >= min_start); // start should have been reset to current time
         assert!(test_span.start <= get_current_time()); //start should have been reset to current time
     }
@@ -371,7 +373,7 @@ mod tests {
         let mut test_span = new_test_span();
         let before_duration = test_span.duration;
 
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(before_duration, test_span.duration);
     }
 
@@ -380,7 +382,7 @@ mod tests {
         let mut test_span = new_test_span();
         test_span.duration = 0;
 
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(test_span.duration, 0);
     }
 
@@ -389,7 +391,7 @@ mod tests {
         let mut test_span = new_test_span();
         test_span.duration = -50;
 
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(test_span.duration, 0);
     }
 
@@ -398,7 +400,7 @@ mod tests {
         let mut test_span = new_test_span();
         test_span.duration = std::i64::MAX;
 
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(test_span.duration, 0);
     }
 
@@ -407,7 +409,7 @@ mod tests {
         let mut test_span = new_test_span();
         let before_error = test_span.error;
 
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(before_error, test_span.error);
     }
 
@@ -416,7 +418,7 @@ mod tests {
         let mut test_span = new_test_span();
         let before_metrics = test_span.metrics.clone();
 
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(before_metrics, test_span.metrics);
     }
 
@@ -425,7 +427,7 @@ mod tests {
         let mut test_span = new_test_span();
         let before_meta = test_span.meta.clone();
 
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(before_meta, test_span.meta);
     }
 
@@ -434,7 +436,7 @@ mod tests {
         let mut test_span = new_test_span();
         let before_parent_id = test_span.parent_id;
 
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(before_parent_id, test_span.parent_id);
     }
 
@@ -443,7 +445,7 @@ mod tests {
         let mut test_span = new_test_span();
         let before_type = test_span.r#type.clone();
 
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(before_type, test_span.r#type);
     }
 
@@ -452,7 +454,7 @@ mod tests {
         let mut test_span = new_test_span();
         test_span.r#type = "sql".repeat(1000);
 
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(test_span.r#type.len(), normalizer::MAX_TYPE_LEN);
     }
 
@@ -461,7 +463,7 @@ mod tests {
         let mut test_span = new_test_span();
         test_span.service = "retargeting(api-Staging ".to_string();
 
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(test_span.service, "retargeting_api-staging");
     }
 
@@ -472,7 +474,7 @@ mod tests {
             .meta
             .insert("env".to_string(), "DEVELOPMENT".to_string());
 
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!("development", test_span.meta.get("env").unwrap());
     }
 
@@ -486,7 +488,7 @@ mod tests {
         let before_trace_id = test_span.trace_id;
         let before_span_id = test_span.span_id;
 
-        assert!(normalizer::normalize(&mut test_span).is_ok());
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(test_span.parent_id, 0);
         assert_eq!(test_span.trace_id, before_trace_id);
         assert_eq!(test_span.span_id, before_span_id);
@@ -494,13 +496,13 @@ mod tests {
 
     #[test]
     fn test_normalize_trace_empty() {
-        let mut test_span = new_test_span();
-        test_span
-            .meta
-            .insert("env".to_string(), "DEVELOPMENT".to_string());
-
-        assert!(normalizer::normalize(&mut test_span).is_ok());
-        assert_eq!("development", test_span.meta.get("env").unwrap());
+        let mut trace = vec![];
+        let result = normalizer::normalize_trace(&mut trace);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Normalize Trace Error: Trace is empty"));
     }
 
     #[test]
@@ -578,13 +580,13 @@ mod tests {
         let mut root = new_test_span();
         root.metrics.insert(
             normalizer::TAG_SAMPLING_PRIORITY.to_string(),
-            normalizer::SAMPLER_PRIORITY_USER_KEEP.into(),
+            normalizer::SamplerPriority::UserKeep as i32 as f64,
         );
 
         let mut chunk = new_test_chunk_with_span(root);
-        chunk.priority = normalizer::SAMPLER_PRIORITY_NONE;
+        chunk.priority = normalizer::SamplerPriority::None as i32;
         assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
-        assert_eq!(normalizer::SAMPLER_PRIORITY_USER_KEEP, chunk.priority);
+        assert_eq!(normalizer::SamplerPriority::UserKeep as i32, chunk.priority);
     }
 
     #[test]
@@ -592,25 +594,37 @@ mod tests {
         let mut root = new_test_span();
         root.metrics.insert(
             normalizer::TAG_SAMPLING_PRIORITY.to_string(),
-            normalizer::SAMPLER_PRIORITY_USER_KEEP.into(),
+            normalizer::SamplerPriority::UserKeep as i32 as f64,
         );
 
         let mut chunk = new_test_chunk_with_span(root);
-        chunk.priority = normalizer::SAMPLER_PRIORITY_AUTO_DROP;
+        chunk.priority = normalizer::SamplerPriority::AutoDrop as i32;
         assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
-        assert_eq!(normalizer::SAMPLER_PRIORITY_AUTO_DROP, chunk.priority);
+        assert_eq!(normalizer::SamplerPriority::AutoDrop as i32, chunk.priority);
+    }
+
+    #[test]
+    fn test_normalize_chunk_invalid_root_span() {
+        let mut chunk = new_test_chunk_with_span(new_test_span());
+
+        let result = normalizer::normalize_chunk(&mut chunk, 1);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Normalize Chunk Error: root_span_index > length of trace chunk spans"
+        );
     }
 
     #[test]
     fn test_normalize_populate_priority_from_any_span() {
         let mut chunk = new_test_chunk_with_span(new_test_span());
-        chunk.priority = normalizer::SAMPLER_PRIORITY_NONE;
+        chunk.priority = normalizer::SamplerPriority::None as i32;
         chunk.spans = vec![new_test_span(), new_test_span(), new_test_span()];
         chunk.spans[1].metrics.insert(
             normalizer::TAG_SAMPLING_PRIORITY.to_string(),
-            normalizer::SAMPLER_PRIORITY_USER_KEEP.into(),
+            normalizer::SamplerPriority::UserKeep as i32 as f64,
         );
         assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
-        assert_eq!(normalizer::SAMPLER_PRIORITY_USER_KEEP, chunk.priority);
+        assert_eq!(normalizer::SamplerPriority::UserKeep as i32, chunk.priority);
     }
 }
