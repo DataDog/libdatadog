@@ -130,10 +130,7 @@ pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
                 span
             ));
         }
-        match normalize_span(span) {
-            Ok(_) => {}
-            Err(e) => anyhow::bail!(e),
-        }
+        normalize_span(span)?;
     }
     Ok(())
 }
