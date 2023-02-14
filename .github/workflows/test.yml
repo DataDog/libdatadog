@@ -33,6 +33,8 @@ jobs:
         run: cargo test --workspace --verbose
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test --workspace --verbose -- --ignored --test-threads=1"
         run: cargo test --workspace --verbose -- --ignored --test-threads=1
+      - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo test --package test_spawn_from_lib --features prefer-dynamic -- --ignored"
+        run: RUSTFLAGS="-C prefer-dynamic" cargo test --package test_spawn_from_lib --features prefer-dynamic -- --ignored
 
   ffi:
     name: "FFI #${{ matrix.platform }} ${{ matrix.rust_version }}"
