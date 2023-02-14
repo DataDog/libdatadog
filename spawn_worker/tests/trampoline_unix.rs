@@ -1,13 +1,13 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
-
+#![cfg(unix)]
 use std::{
     ffi::CString,
     fs::File,
     io::{Read, Seek},
-    os::fd::OwnedFd,
 };
 
+use io_lifetimes::OwnedFd;
 use nix::sys::wait::WaitStatus;
 use spawn_worker::spawn::*;
 

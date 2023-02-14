@@ -24,7 +24,7 @@ pub unsafe fn get_dl_path_raw(addr: FnPointer) -> (Option<CString>, Option<CStri
         dli_sname: ptr::null(),
         dli_saddr: ptr::null_mut(),
     };
-    let res = unsafe { libc::dladdr(addr, &mut info as *mut libc::Dl_info) };
+    let res = libc::dladdr(addr, &mut info as *mut libc::Dl_info);
 
     if res == 0 {
         return (None, None);
@@ -32,13 +32,13 @@ pub unsafe fn get_dl_path_raw(addr: FnPointer) -> (Option<CString>, Option<CStri
     let path_name = if info.dli_fbase.is_null() || info.dli_fname.is_null() {
         None
     } else {
-        Some(unsafe { CStr::from_ptr(info.dli_fname) }.to_owned())
+        Some(CStr::from_ptr(info.dli_fname).to_owned())
     };
 
     let symbol_name = if info.dli_saddr.is_null() || info.dli_sname.is_null() {
         None
     } else {
-        Some(unsafe { CStr::from_ptr(info.dli_sname) }.to_owned())
+        Some(CStr::from_ptr(info.dli_sname).to_owned())
     };
 
     (path_name, symbol_name)

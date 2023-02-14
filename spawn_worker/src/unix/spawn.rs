@@ -1,5 +1,6 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+#![cfg(unix)]
 
 #[cfg(target_os = "linux")]
 mod linux {
@@ -22,12 +23,12 @@ mod linux {
 #[derive(Default)]
 struct ExecVec {
     data: Vec<CString>,
-    ptrs: Vec<*const ffi::c_char>,
+    ptrs: Vec<*const libc::c_char>,
 }
 
 struct SealedExecVec {
     _data: Vec<CString>,
-    ptrs: Vec<*const ffi::c_char>,
+    ptrs: Vec<*const libc::c_char>,
 }
 
 impl SealedExecVec {
@@ -251,16 +252,14 @@ impl Child {
 }
 
 use std::{
-    ffi::{self, CString},
+    ffi::CString,
     fs::Permissions,
     io::{Seek, Write},
-    os::{
-        fd::{AsRawFd, OwnedFd},
-        unix::prelude::PermissionsExt,
-    },
+    os::unix::prelude::{AsRawFd, PermissionsExt},
     ptr,
 };
 
+use io_lifetimes::OwnedFd;
 use nix::{sys::wait::WaitStatus, unistd::Pid};
 
 use crate::{Fork, TRAMPOLINE_BIN};

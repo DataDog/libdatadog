@@ -1654,6 +1654,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "cc_utils",
+ "io-lifetimes 1.0.5",
  "libc",
  "memfd",
  "nix 0.26.2",
@@ -1756,6 +1757,7 @@ name = "test_spawn_from_lib"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "io-lifetimes 1.0.5",
  "libc",
  "spawn_worker",
  "tempfile",

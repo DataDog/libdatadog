@@ -1,14 +1,13 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
-
 #![cfg(feature = "prefer-dynamic")]
 
 use std::{
     fs::File,
     io::{Read, Seek},
-    os::fd::OwnedFd,
 };
 
+use io_lifetimes::OwnedFd;
 use spawn_worker::{
     spawn::{SpawnCfg, Target},
     WaitStatus,
@@ -24,7 +23,7 @@ fn rewind_and_read_fd(fd: OwnedFd) -> anyhow::Result<String> {
     Ok(buf)
 }
 
-/// run with: RUSTFLAGS="-C prefer-dynamic" cargo test --features prefer-dynamic -- --ignored
+/// run with: RUSTFLAGS="-C prefer-dynamic" cargo test --package tests/spawn_from_lib --features prefer-dynamic -- --ignored
 #[test]
 #[ignore = "requires -C prefer-dynamic"]
 fn test_spawning_trampoline_worker() {
