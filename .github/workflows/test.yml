@@ -115,7 +115,9 @@ jobs:
       group: ci-${{ github.ref }}-${{ matrix.target }}
       cancel-in-progress: true
 
-    runs-on: ubuntu-latest
+    runs-on:
+      labels: ubuntu-latest-16-cores
+      group: APM Larger Runners
     steps:
       -
         name: Checkout
@@ -124,7 +126,7 @@ jobs:
         name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
         with:
-          config: .github/buildkitd.toml
+          config: .github/buildkitd-16-cores.toml
       -
         name: Build and Generate FFI
         uses: docker/bake-action@v2
