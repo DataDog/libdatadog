@@ -2,7 +2,9 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 #include <stdio.h>
 #include <string.h>
+#ifndef _WIN32
 #include <dlfcn.h>
+#endif
 
 int main(int argc, char *argv[])
 {
@@ -16,7 +18,7 @@ int main(int argc, char *argv[])
             printf("%s %s", library_path, symbol_name);
             return 0;
         }
-
+#ifndef _WIN32
         void *handle = dlopen(library_path, RTLD_LAZY);
         if (!handle)
         {
@@ -34,6 +36,7 @@ int main(int argc, char *argv[])
         }
         (*fn)();
         dlclose(handle);
+#endif        
         return 0;
     }
 
