@@ -393,7 +393,9 @@ name = "datadog-trace-obfuscation"
 version = "2.0.0"
 dependencies = [
  "anyhow",
+ "duplicate",
  "prost",
+ "regex",
 ]
 
 [[package]]
