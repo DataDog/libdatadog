@@ -247,6 +247,23 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
 
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_telemetry_end(
+    transport: &mut Box<TelemetryTransport>,
+    instance_id: &Box<InstanceId>,
+    queue_id: &QueueId,
+) -> MaybeError {
+    try_c!(blocking::enqueue_actions(
+        transport,
+        instance_id,
+        queue_id,
+        vec![TelemetryActions::Stop],
+    ));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_mock_start(result: &mut *mut MockServer) -> MaybeError {
     let server = try_c!(mock_telemetry_target::MockServer::start_random_local_port());
 
