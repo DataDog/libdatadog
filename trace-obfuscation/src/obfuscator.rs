@@ -6,6 +6,12 @@
 use crate::pb;
 use regex::Regex;
 
+pub trait TraceTagReplacer {
+    fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]);
+    fn parse_rules_from_string(rules: &[[&str; 3]]) -> anyhow::Result<Vec<ReplaceRule>>;
+}
+
+
 #[derive(Debug)]
 pub struct ReplaceRule {
     // name specifies the name of the tag that the replace rule addresses. However,
@@ -21,59 +27,66 @@ pub struct ReplaceRule {
     repl: String,
 }
 
-/// Replaces tag values of all spans within a trace with a given set of rules.
-pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
-    for rule in rules {
-        for span in &mut *trace {
-            match &rule.name[..] {
-                "*" => {
-                    for (_, val) in span.meta.iter_mut() {
-                        *val = rule.re.replace_all(val, &rule.repl).to_string();
+struct DefaultTraceTagReplacer {}
+
+impl TraceTagReplacer for DefaultTraceTagReplacer {
+
+    /// Replaces tag values of all spans within a trace with a given set of rules.
+    fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
+        for rule in rules {
+            for span in &mut *trace {
+                match &rule.name[..] {
+                    "*" => {
+                        for (_, val) in span.meta.iter_mut() {
+                            *val = rule.re.replace_all(val, &rule.repl).to_string();
+                        }
                     }
-                }
-                "resource.name" => {
-                    span.resource = rule.re.replace_all(&span.resource, &rule.repl).to_string();
-                }
-                _ => {
-                    if let Some(val) = span.meta.get_mut(&rule.name) {
-                        let replaced_tag = rule.re.replace_all(val, &rule.repl).to_string();
-                        *val = replaced_tag;
+                    "resource.name" => {
+                        span.resource = rule.re.replace_all(&span.resource, &rule.repl).to_string();
+                    }
+                    _ => {
+                        if let Some(val) = span.meta.get_mut(&rule.name) {
+                            let replaced_tag = rule.re.replace_all(val, &rule.repl).to_string();
+                            *val = replaced_tag;
+                        }
                     }
                 }
             }
         }
     }
-}
 
-pub fn parse_rules_from_string(rules: &[[&str; 3]]) -> anyhow::Result<Vec<ReplaceRule>> {
-    let mut vec: Vec<ReplaceRule> = Vec::with_capacity(rules.len());
+    fn parse_rules_from_string(rules: &[[&str; 3]]) -> anyhow::Result<Vec<ReplaceRule>> {
+        let mut vec: Vec<ReplaceRule> = Vec::with_capacity(rules.len());
 
-    for [name, pattern, repl] in rules {
-        let compiled_regex = match Regex::new(pattern) {
-            Ok(res) => res,
-            Err(err) => {
-                anyhow::bail!(format!(
-                    "Obfuscator Error: Error while parsing rule: {}",
-                    err
-                ))
-            }
-        };
-        vec.push(ReplaceRule {
-            name: name.to_string(),
-            re: compiled_regex,
-            repl: repl.to_string(),
-        });
+        for [name, pattern, repl] in rules {
+            let compiled_regex = match Regex::new(pattern) {
+                Ok(res) => res,
+                Err(err) => {
+                    anyhow::bail!(format!(
+                        "Obfuscator Error: Error while parsing rule: {}",
+                        err
+                    ))
+                }
+            };
+            vec.push(ReplaceRule {
+                name: name.to_string(),
+                re: compiled_regex,
+                repl: repl.to_string(),
+            });
+        }
+        Ok(vec)
     }
-    Ok(vec)
 }
 
 #[cfg(test)]
 mod tests {
 
-    use crate::obfuscator;
+    use crate::obfuscator::DefaultTraceTagReplacer;
     use crate::pb;
     use duplicate::duplicate_item;
     use std::collections::HashMap;
+
+    use super::TraceTagReplacer;
 
     fn new_test_span_with_tags(tags: HashMap<&str, &str>) -> pb::Span {
         let mut span = pb::Span {
@@ -154,12 +167,12 @@ mod tests {
     )]
     #[test]
     fn test_name() {
-        let parsed_rules = obfuscator::parse_rules_from_string(rules);
+        let parsed_rules = DefaultTraceTagReplacer::parse_rules_from_string(rules);
         let root_span = new_test_span_with_tags(input);
         let child_span = new_test_span_with_tags(input);
         let mut trace = [root_span, child_span];
 
-        obfuscator::replace_trace_tags(&mut trace, &parsed_rules.unwrap());
+        DefaultTraceTagReplacer::replace_trace_tags(&mut trace, &parsed_rules.unwrap());
 
         for (key, val) in expected {
             match key {
@@ -177,7 +190,7 @@ mod tests {
 
     #[test]
     fn test_parse_rules_invalid_regex() {
-        let result = obfuscator::parse_rules_from_string(&[["http.url", ")", "${1}?"]]);
+        let result = DefaultTraceTagReplacer::parse_rules_from_string(&[["http.url", ")", "${1}?"]]);
         assert!(result.is_err());
     }
 }
