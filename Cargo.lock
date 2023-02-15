@@ -389,6 +389,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-trace-obfuscation"
+version = "2.0.0"
+dependencies = [
+ "anyhow",
+ "prost",
+]
+
+[[package]]
 name = "ddcommon"
 version = "2.0.0"
 dependencies = [
