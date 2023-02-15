@@ -4,7 +4,16 @@
 pub(crate) const TRAMPOLINE_BIN: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/trampoline.bin"));
 
-#[cfg(target_family = "unix")]
+pub type TrampolineFn = unsafe extern "system" fn();
+
+#[cfg(unix)]
 mod unix;
-#[cfg(target_family = "unix")]
+
+#[cfg(unix)]
 pub use unix::*;
+
+#[cfg(windows)]
+mod win32;
+
+#[cfg(windows)]
+pub use crate::win32::*;

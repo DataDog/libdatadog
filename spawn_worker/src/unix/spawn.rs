@@ -1,7 +1,5 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
-#![cfg(unix)]
-
 #[cfg(target_os = "linux")]
 mod linux {
     use std::io::{Seek, Write};
@@ -52,7 +50,7 @@ impl ExecVec {
     }
 }
 
-fn write_trampline() -> anyhow::Result<tempfile::NamedTempFile> {
+fn write_trampoline() -> anyhow::Result<tempfile::NamedTempFile> {
     let tmp_file = tempfile::NamedTempFile::new()?;
     let mut file = tmp_file.as_file();
     file.set_len(TRAMPOLINE_BIN.len() as u64)?;
@@ -161,7 +159,7 @@ impl SpawnCfg {
             }
             SpawnMethod::Exec => {
                 let path = CString::new(
-                    write_trampline()?
+                    write_trampoline()?
                         .into_temp_path()
                         .keep()? // ensure the file is not auto cleaned in parent process
                         .as_os_str()

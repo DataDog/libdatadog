@@ -4,6 +4,8 @@
 #include <string.h>
 #ifndef _WIN32
 #include <dlfcn.h>
+#else
+#include <windows.h>
 #endif
 
 int main(int argc, char *argv[])
@@ -12,7 +14,7 @@ int main(int argc, char *argv[])
     {
         const char *library_path = argv[1];
         const char *symbol_name = argv[2];
-
+        
         if (strcmp("__dummy_mirror_test", library_path) == 0)
         {
             printf("%s %s", library_path, symbol_name);
@@ -36,6 +38,24 @@ int main(int argc, char *argv[])
         }
         (*fn)();
         dlclose(handle);
+#else
+        // HINSTANCE handle = LoadLibrary("C:\\Users\\pawel\\repos\\libdatadog\\target\\ihh\\debug\\test_spawn_from_lib.dll");
+        HINSTANCE handle = LoadLibrary(library_path);
+
+        if (!handle) {
+            fprintf(stderr, "not found #todo use getLastError\n");
+            return 10;
+        } 
+
+        void (*fn)() = GetProcAddress(handle, "exported_entrypoint");
+
+        if (!fn) {
+            DWORD res = GetLastError();
+            fprintf(stderr, "error: %i loading symbol: %s from: %s\n", res, symbol_name, library_path);
+            return 11;
+        }
+
+        (*fn)();
 #endif        
         return 0;
     }
