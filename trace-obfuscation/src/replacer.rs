@@ -31,7 +31,7 @@ pub struct ReplaceRule<'a> {
 struct DefaultTraceTagReplacer {}
 
 impl TraceTagReplacer for DefaultTraceTagReplacer {
-    /// Replaces tag values of all spans within a trace with a given set of rules.
+    /// replace_trace_tags replaces the tag values of all spans within a trace with a given set of rules.
     fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
         for rule in rules {
             for span in &mut *trace {
@@ -55,6 +55,9 @@ impl TraceTagReplacer for DefaultTraceTagReplacer {
         }
     }
 
+    /// parse_rules_from_string takes an array of rules, represented as an array of length 3 arrays
+    /// holding the tag name, regex pattern, and replacement string as strings.
+    /// * returns a vec of ReplaceRules
     fn parse_rules_from_string<'a>(
         rules: &'a [[&'a str; 3]],
     ) -> anyhow::Result<Vec<ReplaceRule<'a>>> {
