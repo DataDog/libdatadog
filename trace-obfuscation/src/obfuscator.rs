@@ -8,23 +8,23 @@ use regex::Regex;
 
 pub trait TraceTagReplacer {
     fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]);
-    fn parse_rules_from_string(rules: &[[&str; 3]]) -> anyhow::Result<Vec<ReplaceRule>>;
+    fn parse_rules_from_string<'a>(rules: &'a [[&'a str; 3]]) -> anyhow::Result<Vec<ReplaceRule<'a>>>;
 }
 
 
 #[derive(Debug)]
-pub struct ReplaceRule {
+pub struct ReplaceRule<'a> {
     // name specifies the name of the tag that the replace rule addresses. However,
     // some exceptions apply such as:
     // • "resource.name" will target the resource
     // • "*" will target all tags and the resource
-    name: String,
+    name: &'a str,
 
     // re holds the regex pattern for matching.
     re: regex::Regex,
 
     // repl specifies the replacement string to be used when Pattern matches.
-    repl: String,
+    repl: &'a str,
 }
 
 struct DefaultTraceTagReplacer {}
@@ -38,15 +38,15 @@ impl TraceTagReplacer for DefaultTraceTagReplacer {
                 match &rule.name[..] {
                     "*" => {
                         for (_, val) in span.meta.iter_mut() {
-                            *val = rule.re.replace_all(val, &rule.repl).to_string();
+                            *val = rule.re.replace_all(val, rule.repl).to_string();
                         }
                     }
                     "resource.name" => {
-                        span.resource = rule.re.replace_all(&span.resource, &rule.repl).to_string();
+                        span.resource = rule.re.replace_all(&span.resource, rule.repl).to_string();
                     }
                     _ => {
-                        if let Some(val) = span.meta.get_mut(&rule.name) {
-                            let replaced_tag = rule.re.replace_all(val, &rule.repl).to_string();
+                        if let Some(val) = span.meta.get_mut(rule.name) {
+                            let replaced_tag = rule.re.replace_all(val, rule.repl).to_string();
                             *val = replaced_tag;
                         }
                     }
@@ -55,7 +55,7 @@ impl TraceTagReplacer for DefaultTraceTagReplacer {
         }
     }
 
-    fn parse_rules_from_string(rules: &[[&str; 3]]) -> anyhow::Result<Vec<ReplaceRule>> {
+    fn parse_rules_from_string<'a>(rules: &'a [[&'a str; 3]]) -> anyhow::Result<Vec<ReplaceRule<'a>>> {
         let mut vec: Vec<ReplaceRule> = Vec::with_capacity(rules.len());
 
         for [name, pattern, repl] in rules {
@@ -69,9 +69,9 @@ impl TraceTagReplacer for DefaultTraceTagReplacer {
                 }
             };
             vec.push(ReplaceRule {
-                name: name.to_string(),
+                name: name,
                 re: compiled_regex,
-                repl: repl.to_string(),
+                repl: repl,
             });
         }
         Ok(vec)
