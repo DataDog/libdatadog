@@ -83,7 +83,7 @@ impl TraceTagReplacer for DefaultTraceTagReplacer {
 #[cfg(test)]
 mod tests {
 
-    use crate::obfuscator::DefaultTraceTagReplacer;
+    use crate::replacer::DefaultTraceTagReplacer;
     use crate::pb;
     use duplicate::duplicate_item;
     use std::collections::HashMap;

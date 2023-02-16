@@ -9,4 +9,4 @@ pub mod pb {
     include!("../../trace-normalization/src/pb/pb.rs");
 }
 
-pub mod obfuscator;
+pub mod replacer;
