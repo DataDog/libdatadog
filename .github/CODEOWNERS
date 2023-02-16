@@ -11,3 +11,4 @@ NOTICE              @Datadog/libdatadog
 rustfmt.toml        @Datadog/libdatadog
 README.md           @Datadog/libdatadog
 trace-normalization @Datadog/serverless
+trace-obfuscation   @Datadog/serverless
