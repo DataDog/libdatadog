@@ -1655,7 +1655,6 @@ dependencies = [
  "anyhow",
  "cc_utils",
  "io-lifetimes 1.0.5",
- "libc",
  "memfd",
  "nix 0.26.2",
  "tempfile",

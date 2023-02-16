@@ -19,6 +19,7 @@ mod linux {
         Ok(mfd)
     }
 }
+use nix::libc;
 
 #[derive(Default)]
 struct ExecVec {
@@ -161,7 +162,7 @@ impl SpawnCfg {
             }
             SpawnMethod::Exec => {
                 let path = CString::new(
-                    write_trampline()?
+                    write_trampoline()?
                         .into_temp_path()
                         .keep()? // ensure the file is not auto cleaned in parent process
                         .as_os_str()
