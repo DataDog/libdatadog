@@ -6,10 +6,6 @@
 use crate::pb;
 use regex::Regex;
 
-pub trait TraceTagReplacer {
-    fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]);
-}
-
 #[derive(Debug)]
 pub struct ReplaceRule<'a> {
     // name specifies the name of the tag that the replace rule addresses. However,
@@ -25,27 +21,23 @@ pub struct ReplaceRule<'a> {
     repl: &'a str,
 }
 
-struct DefaultTraceTagReplacer {}
-
-impl TraceTagReplacer for DefaultTraceTagReplacer {
-    /// replace_trace_tags replaces the tag values of all spans within a trace with a given set of rules.
-    fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
-        for rule in rules {
-            for span in &mut *trace {
-                match rule.name {
-                    "*" => {
-                        for (_, val) in span.meta.iter_mut() {
-                            *val = rule.re.replace_all(val, rule.repl).to_string();
-                        }
+/// replace_trace_tags replaces the tag values of all spans within a trace with a given set of rules.
+pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
+    for rule in rules {
+        for span in &mut *trace {
+            match rule.name {
+                "*" => {
+                    for (_, val) in span.meta.iter_mut() {
+                        *val = rule.re.replace_all(val, rule.repl).to_string();
                     }
-                    "resource.name" => {
-                        span.resource = rule.re.replace_all(&span.resource, rule.repl).to_string();
-                    }
-                    _ => {
-                        if let Some(val) = span.meta.get_mut(rule.name) {
-                            let replaced_tag = rule.re.replace_all(val, rule.repl).to_string();
-                            *val = replaced_tag;
-                        }
+                }
+                "resource.name" => {
+                    span.resource = rule.re.replace_all(&span.resource, rule.repl).to_string();
+                }
+                _ => {
+                    if let Some(val) = span.meta.get_mut(rule.name) {
+                        let replaced_tag = rule.re.replace_all(val, rule.repl).to_string();
+                        *val = replaced_tag;
                     }
                 }
             }
@@ -87,8 +79,6 @@ mod tests {
     use crate::replacer;
     use duplicate::duplicate_item;
     use std::collections::HashMap;
-
-    use super::TraceTagReplacer;
 
     fn new_test_span_with_tags(tags: HashMap<&str, &str>) -> pb::Span {
         let mut span = pb::Span {
@@ -174,7 +164,7 @@ mod tests {
         let child_span = new_test_span_with_tags(input);
         let mut trace = [root_span, child_span];
 
-        replacer::DefaultTraceTagReplacer::replace_trace_tags(&mut trace, &parsed_rules.unwrap());
+        replacer::replace_trace_tags(&mut trace, &parsed_rules.unwrap());
 
         for (key, val) in expected {
             match key {
