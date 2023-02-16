@@ -8,9 +8,6 @@ use regex::Regex;
 
 pub trait TraceTagReplacer {
     fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]);
-    fn parse_rules_from_string<'a>(
-        rules: &'a [[&'a str; 3]],
-    ) -> anyhow::Result<Vec<ReplaceRule<'a>>>;
 }
 
 #[derive(Debug)]
@@ -54,40 +51,40 @@ impl TraceTagReplacer for DefaultTraceTagReplacer {
             }
         }
     }
+}
 
-    /// parse_rules_from_string takes an array of rules, represented as an array of length 3 arrays
-    /// holding the tag name, regex pattern, and replacement string as strings.
-    /// * returns a vec of ReplaceRules
-    fn parse_rules_from_string<'a>(
-        rules: &'a [[&'a str; 3]],
-    ) -> anyhow::Result<Vec<ReplaceRule<'a>>> {
-        let mut vec: Vec<ReplaceRule> = Vec::with_capacity(rules.len());
+/// parse_rules_from_string takes an array of rules, represented as an array of length 3 arrays
+/// holding the tag name, regex pattern, and replacement string as strings.
+/// * returns a vec of ReplaceRules
+pub fn parse_rules_from_string<'a>(
+    rules: &'a [[&'a str; 3]],
+) -> anyhow::Result<Vec<ReplaceRule<'a>>> {
+    let mut vec: Vec<ReplaceRule> = Vec::with_capacity(rules.len());
 
-        for [name, pattern, repl] in rules {
-            let compiled_regex = match Regex::new(pattern) {
-                Ok(res) => res,
-                Err(err) => {
-                    anyhow::bail!(format!(
-                        "Obfuscator Error: Error while parsing rule: {}",
-                        err
-                    ))
-                }
-            };
-            vec.push(ReplaceRule {
-                name,
-                re: compiled_regex,
-                repl,
-            });
-        }
-        Ok(vec)
+    for [name, pattern, repl] in rules {
+        let compiled_regex = match Regex::new(pattern) {
+            Ok(res) => res,
+            Err(err) => {
+                anyhow::bail!(format!(
+                    "Obfuscator Error: Error while parsing rule: {}",
+                    err
+                ))
+            }
+        };
+        vec.push(ReplaceRule {
+            name,
+            re: compiled_regex,
+            repl,
+        });
     }
+    Ok(vec)
 }
 
 #[cfg(test)]
 mod tests {
 
     use crate::pb;
-    use crate::replacer::DefaultTraceTagReplacer;
+    use crate::replacer;
     use duplicate::duplicate_item;
     use std::collections::HashMap;
 
@@ -172,12 +169,12 @@ mod tests {
     )]
     #[test]
     fn test_name() {
-        let parsed_rules = DefaultTraceTagReplacer::parse_rules_from_string(rules);
+        let parsed_rules = replacer::parse_rules_from_string(rules);
         let root_span = new_test_span_with_tags(input);
         let child_span = new_test_span_with_tags(input);
         let mut trace = [root_span, child_span];
 
-        DefaultTraceTagReplacer::replace_trace_tags(&mut trace, &parsed_rules.unwrap());
+        replacer::DefaultTraceTagReplacer::replace_trace_tags(&mut trace, &parsed_rules.unwrap());
 
         for (key, val) in expected {
             match key {
@@ -195,8 +192,7 @@ mod tests {
 
     #[test]
     fn test_parse_rules_invalid_regex() {
-        let result =
-            DefaultTraceTagReplacer::parse_rules_from_string(&[["http.url", ")", "${1}?"]]);
+        let result = replacer::parse_rules_from_string(&[["http.url", ")", "${1}?"]]);
         assert!(result.is_err());
     }
 }
