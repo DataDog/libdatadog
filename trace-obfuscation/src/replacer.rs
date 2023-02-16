@@ -10,8 +10,8 @@ use regex::Regex;
 pub struct ReplaceRule<'a> {
     // name specifies the name of the tag that the replace rule addresses. However,
     // some exceptions apply such as:
-    // • "resource.name" will target the resource
-    // • "*" will target all tags and the resource
+    // * "resource.name" will target the resource
+    // * "*" will target all tags and the resource
     name: &'a str,
 
     // re holds the regex pattern for matching.
