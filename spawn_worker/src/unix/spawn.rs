@@ -52,7 +52,7 @@ impl ExecVec {
     }
 }
 
-fn write_trampline() -> anyhow::Result<tempfile::NamedTempFile> {
+fn write_trampoline() -> anyhow::Result<tempfile::NamedTempFile> {
     let tmp_file = tempfile::NamedTempFile::new()?;
     let mut file = tmp_file.as_file();
     file.set_len(TRAMPOLINE_BIN.len() as u64)?;
