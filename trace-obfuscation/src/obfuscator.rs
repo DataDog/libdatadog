@@ -8,9 +8,10 @@ use regex::Regex;
 
 pub trait TraceTagReplacer {
     fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]);
-    fn parse_rules_from_string<'a>(rules: &'a [[&'a str; 3]]) -> anyhow::Result<Vec<ReplaceRule<'a>>>;
+    fn parse_rules_from_string<'a>(
+        rules: &'a [[&'a str; 3]],
+    ) -> anyhow::Result<Vec<ReplaceRule<'a>>>;
 }
-
 
 #[derive(Debug)]
 pub struct ReplaceRule<'a> {
@@ -30,12 +31,11 @@ pub struct ReplaceRule<'a> {
 struct DefaultTraceTagReplacer {}
 
 impl TraceTagReplacer for DefaultTraceTagReplacer {
-
     /// Replaces tag values of all spans within a trace with a given set of rules.
     fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
         for rule in rules {
             for span in &mut *trace {
-                match &rule.name[..] {
+                match rule.name {
                     "*" => {
                         for (_, val) in span.meta.iter_mut() {
                             *val = rule.re.replace_all(val, rule.repl).to_string();
@@ -55,7 +55,9 @@ impl TraceTagReplacer for DefaultTraceTagReplacer {
         }
     }
 
-    fn parse_rules_from_string<'a>(rules: &'a [[&'a str; 3]]) -> anyhow::Result<Vec<ReplaceRule<'a>>> {
+    fn parse_rules_from_string<'a>(
+        rules: &'a [[&'a str; 3]],
+    ) -> anyhow::Result<Vec<ReplaceRule<'a>>> {
         let mut vec: Vec<ReplaceRule> = Vec::with_capacity(rules.len());
 
         for [name, pattern, repl] in rules {
@@ -69,9 +71,9 @@ impl TraceTagReplacer for DefaultTraceTagReplacer {
                 }
             };
             vec.push(ReplaceRule {
-                name: name,
+                name,
                 re: compiled_regex,
-                repl: repl,
+                repl,
             });
         }
         Ok(vec)
@@ -190,7 +192,8 @@ mod tests {
 
     #[test]
     fn test_parse_rules_invalid_regex() {
-        let result = DefaultTraceTagReplacer::parse_rules_from_string(&[["http.url", ")", "${1}?"]]);
+        let result =
+            DefaultTraceTagReplacer::parse_rules_from_string(&[["http.url", ")", "${1}?"]]);
         assert!(result.is_err());
     }
 }
