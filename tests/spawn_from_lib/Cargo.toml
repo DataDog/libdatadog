@@ -1,0 +1,23 @@
+[package]
+edition = "2021"
+name = "test_spawn_from_lib"
+version = "0.0.1"
+
+[lib]
+# needs to by dylib for the trampoline tests to work correctly
+crate-type = ["rlib", "dylib"]
+
+[features]
+# hack to avoid compilation and testing by default
+# as this lib/test requires prefer-dynamic on linux to succeed
+prefer-dynamic = []
+
+[dependencies]
+libc = { version = "0.2" }
+
+[dev-dependencies]
+anyhow = { version = "1.0" }
+spawn_worker = { path = "../../spawn_worker" }
+tempfile = { version = "3.3" }
+io-lifetimes = { version = "1.0" }
+
