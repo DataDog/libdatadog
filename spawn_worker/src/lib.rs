@@ -4,7 +4,33 @@
 pub(crate) const TRAMPOLINE_BIN: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/trampoline.bin"));
 
+#[cfg(not(target_os = "windows"))]
+pub(crate) const LD_PRELOAD_TRAMPOLINE_LIB: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/ld_preload_trampoline.shared_lib"
+));
+
 #[cfg(target_family = "unix")]
+#[macro_use]
 mod unix;
+
 #[cfg(target_family = "unix")]
 pub use unix::*;
+
+use std::ffi::CString;
+pub struct Entrypoint {
+    pub ptr: extern "C" fn(),
+    pub symbol_name: CString,
+}
+
+#[macro_export]
+macro_rules! entrypoint {
+    ($entrypoint:tt) => {{
+        let str = concat!(stringify!($entrypoint), "\0");
+        let bytes = str.as_bytes();
+        $crate::Entrypoint {
+            ptr: $entrypoint,
+            symbol_name: unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(bytes) }.to_owned(),
+        }
+    }};
+}
