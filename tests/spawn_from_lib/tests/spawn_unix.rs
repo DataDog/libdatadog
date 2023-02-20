@@ -31,8 +31,8 @@ fn test_spawning_trampoline_worker() {
     let stdout = tempfile::tempfile().unwrap();
     let stderr = tempfile::tempfile().unwrap();
 
-    let mut child = SpawnCfg::new()
-        .target(Target::Trampoline(exported_entrypoint))
+    let mut child = unsafe { SpawnCfg::new() }
+        .target(Target::ViaFnPtr(exported_entrypoint))
         .stdin(File::open("/dev/null").unwrap())
         .stdout(stdout)
         .stderr(stderr)

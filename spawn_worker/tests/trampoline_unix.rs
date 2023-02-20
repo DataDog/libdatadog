@@ -25,8 +25,8 @@ fn test_spawning_trampoline_worker() {
     let stdout = tempfile::tempfile().unwrap();
     let stderr = tempfile::tempfile().unwrap();
 
-    let mut child = SpawnCfg::new()
-        .target(Target::ManualTrampoline(
+    let mut child = unsafe { SpawnCfg::new() }
+        .target(Target::Manual(
             CString::new("__dummy_mirror_test").unwrap(),
             CString::new("symbol_name").unwrap(),
         ))

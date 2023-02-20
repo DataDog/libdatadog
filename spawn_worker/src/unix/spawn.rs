@@ -22,31 +22,30 @@ mod linux {
 use nix::libc;
 
 struct ExecVec {
+    items: Vec<CString>,
     // Always NULL ptr terminated
     ptrs: Vec<*const libc::c_char>,
 }
 
 impl ExecVec {
-    fn as_ptr(&self) -> *const *const i8 {
+    fn as_ptr(&self) -> *const *const libc::c_char {
         self.ptrs.as_ptr()
     }
 
-    fn new() -> Self {
-      Self { ptrs: vec![std::ptr::null()] }
+    fn empty() -> Self {
+        Self {
+            items: vec![],
+            ptrs: vec![std::ptr::null()],
+        }
     }
 
-    fn push(&mut self, item: CString) {
-        self.ptrs.last_mut().unwrap()(item.into_raw().as_ptr());
-        self.data.push(std::ptr::null());
+    pub fn push(&mut self, item: CString) {
+        let l = self.ptrs.len();
+        // replace previous trailing null with ptr to the item
+        self.ptrs[l - 1] = item.as_ptr();
+        self.ptrs.push(ptr::null());
+        self.items.push(item);
     }
-}
-
-impl Drop for ExecVec {
-  fn drop(&mut self) {
-    for &ptr in &self.ptrs[..self.ptrs.len() - 1] {
-      drop(unsafe { CString::from_raw(ptr.as_mut()) })
-    }
-  }
 }
 
 fn write_trampoline() -> anyhow::Result<tempfile::NamedTempFile> {
@@ -80,8 +79,8 @@ impl Default for SpawnMethod {
 }
 
 pub enum Target {
-    Trampoline(extern "C" fn()),
-    ManualTrampoline(CString, CString),
+    ViaFnPtr(extern "C" fn()),
+    Manual(CString, CString),
     Fork(fn()),
     Noop,
 }
@@ -92,19 +91,28 @@ pub struct SpawnCfg {
     stdout: Option<OwnedFd>,
     spawn_method: SpawnMethod,
     target: Target,
-    inherit_env: bool,
+    env: Vec<(ffi::OsString, ffi::OsString)>,
 }
 
 impl SpawnCfg {
-    pub fn new() -> Self {
+    pub fn from_env<E: IntoIterator<Item = (ffi::OsString, ffi::OsString)>>(env: E) -> Self {
         Self {
             stdin: None,
             stdout: None,
             stderr: None,
             target: Target::Noop,
-            inherit_env: true,
             spawn_method: Default::default(),
+            env: env.into_iter().collect(),
         }
+    }
+
+    /// # Safety
+    /// since the rust library code can coexist with other code written in other languages
+    /// access to environment (required to be read to be passed to subprocess) is unsafe
+    ///
+    /// ensure no other threads read the environment at the same time as this method is called
+    pub unsafe fn new() -> Self {
+        Self::from_env(env::vars_os())
     }
 
     pub fn target(&mut self, target: Target) -> &mut Self {
@@ -139,11 +147,45 @@ impl SpawnCfg {
     }
 
     fn do_spawn(&self) -> anyhow::Result<Option<libc::pid_t>> {
-        let mut argv = ExecVec::default();
+        let mut argv = ExecVec::empty();
         // set prog name (argv[0])
         argv.push(CString::new("trampoline")?);
-        type SpawnFn = dyn Fn(&SealedExecVec, &SealedExecVec);
 
+        match &self.target {
+            Target::ViaFnPtr(f) => {
+                let (library_path, symbol_name) =
+                    match unsafe { crate::get_dl_path_raw(*f as *const libc::c_void) } {
+                        (Some(p), Some(n)) => (p, n),
+                        _ => return Err(anyhow::format_err!("can't read symbol pointer data")),
+                    };
+                argv.push(library_path);
+                argv.push(symbol_name);
+            }
+            Target::Manual(library_path, symbol_name) => {
+                argv.push(library_path.clone());
+                argv.push(symbol_name.clone());
+            }
+            Target::Fork(_) => todo!(),
+            Target::Noop => return Ok(None),
+        };
+
+        let mut envp = ExecVec::empty();
+        for (k, v) in &self.env {
+            // reserve space for '=' and final null
+            let mut env_entry = OsString::with_capacity(k.len() + v.len() + 2);
+            env_entry.push(k);
+            env_entry.reserve(v.len() + 2);
+            env_entry.push("=");
+            env_entry.push(v);
+
+            if let Ok(env_entry) = CString::new(env_entry.into_vec()) {
+                envp.push(env_entry);
+            }
+        }
+
+        type SpawnFn = dyn Fn(&ExecVec, &ExecVec);
+
+        // build and allocate final exec fn and its dependencies
         let spawn: Box<SpawnFn> = match &self.spawn_method {
             #[cfg(target_os = "linux")]
             SpawnMethod::FdExec => {
@@ -175,39 +217,11 @@ impl SpawnCfg {
             }
         };
 
-        match &self.target {
-            Target::Trampoline(f) => {
-                let (library_path, symbol_name) =
-                    match unsafe { crate::get_dl_path_raw(*f as *const libc::c_void) } {
-                        (Some(p), Some(n)) => (p, n),
-                        _ => return Err(anyhow::format_err!("can't read symbol pointer data")),
-                    };
-                argv.push(library_path);
-                argv.push(symbol_name);
-            }
-            Target::ManualTrampoline(library_path, symbol_name) => {
-                argv.push(library_path.clone());
-                argv.push(symbol_name.clone());
-            }
-            Target::Fork(_) => todo!(),
-            Target::Noop => return Ok(None),
-        };
-
-        let argv = argv.seal();
-
-        let mut envp = ExecVec::default();
-
-        if self.inherit_env {
-            for (k, v) in std::env::vars() {
-                envp.push(CString::new(format!("{k}={v}"))?);
-            }
-        }
-
-        let envp = envp.seal();
-
+        // no allocations in the child process should happen by this point for maximum safety
         if let Fork::Parent(child_pid) = unsafe { crate::fork()? } {
             return Ok(Some(child_pid));
         }
+
         if let Some(fd) = &self.stdin {
             unsafe { libc::dup2(fd.as_raw_fd(), libc::STDIN_FILENO) };
         }
@@ -222,11 +236,6 @@ impl SpawnCfg {
 
         spawn(&argv, &envp);
         std::process::exit(1);
-    }
-}
-impl Default for SpawnCfg {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -249,10 +258,11 @@ impl Child {
 }
 
 use std::{
-    ffi::CString,
+    env,
+    ffi::{self, CString, OsString},
     fs::Permissions,
     io::{Seek, Write},
-    os::unix::prelude::{AsRawFd, PermissionsExt},
+    os::unix::prelude::{AsRawFd, OsStringExt, PermissionsExt},
     ptr,
 };
 
