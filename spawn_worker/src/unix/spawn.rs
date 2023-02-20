@@ -21,36 +21,32 @@ mod linux {
 }
 use nix::libc;
 
-#[derive(Default)]
 struct ExecVec {
-    data: Vec<CString>,
+    // Always NULL ptr terminated
     ptrs: Vec<*const libc::c_char>,
-}
-
-struct SealedExecVec {
-    _data: Vec<CString>,
-    ptrs: Vec<*const libc::c_char>,
-}
-
-impl SealedExecVec {
-    fn as_ptr(&self) -> *const *const i8 {
-        self.ptrs.as_ptr()
-    }
 }
 
 impl ExecVec {
-    fn push(&mut self, item: CString) {
-        self.ptrs.push(item.as_ptr());
-        self.data.push(item);
+    fn as_ptr(&self) -> *const *const i8 {
+        self.ptrs.as_ptr()
     }
 
-    fn seal(mut self) -> SealedExecVec {
-        self.ptrs.push(ptr::null());
-        SealedExecVec {
-            _data: self.data,
-            ptrs: self.ptrs,
-        }
+    fn new() -> Self {
+      Self { ptrs: vec![std::ptr::null()] }
     }
+
+    fn push(&mut self, item: CString) {
+        self.ptrs.last_mut().unwrap()(item.into_raw().as_ptr());
+        self.data.push(std::ptr::null());
+    }
+}
+
+impl Drop for ExecVec {
+  fn drop(&mut self) {
+    for &ptr in &self.ptrs[..self.ptrs.len() - 1] {
+      drop(unsafe { CString::from_raw(ptr.as_mut()) })
+    }
+  }
 }
 
 fn write_trampoline() -> anyhow::Result<tempfile::NamedTempFile> {
