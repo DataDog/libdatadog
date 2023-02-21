@@ -1,0 +1,15 @@
+[package]
+edition = "2021"
+name = "spawn_worker"
+version = "0.0.1"
+
+[dependencies]
+anyhow = { version = "1.0" }
+memfd = { version = "0.6" }
+nix = { version = "0.26" }
+tempfile = { version = "3.3" }
+io-lifetimes = { version = "1.0" }
+
+[build-dependencies]
+cc_utils = { path = "../tools/cc_utils" }
+
