@@ -118,7 +118,7 @@ task push_to_rubygems: [
   :package,
   :"release:guard_clean"
 ] do
-  puts "Please input 'libdatadog ruby release key' from 'Profiling - Falcon' Datadog 1Password:"
+  puts "Please input 'libdatadog ruby release key' from 'Shared-Profiling' Datadog 1Password:"
   input = $stdin.gets.strip
 
   ENV["GEM_HOST_API_KEY"] = input
