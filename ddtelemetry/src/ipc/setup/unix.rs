@@ -152,7 +152,8 @@ mod linux {
 
     impl Default for AbstractUnixSocketLiaison {
         fn default() -> Self {
-            Self::ipc_shared()
+            // TODO: another PR makes this configurable. However for now this will make tests more reliable
+            Self::ipc_in_process()
         }
     }
 
