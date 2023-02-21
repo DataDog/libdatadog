@@ -10,8 +10,11 @@ members = [
     "ddtelemetry",
     "ddtelemetry-ffi",
     "tools",
+    "tools/cc_utils",
     "trace-normalization",
     "trace-obfuscation",
+    "spawn_worker",
+    "tests/spawn_from_lib"
 ]
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"
