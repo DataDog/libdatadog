@@ -4,7 +4,7 @@
 pub(crate) const TRAMPOLINE_BIN: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/trampoline.bin"));
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub(crate) const LD_PRELOAD_TRAMPOLINE_LIB: &[u8] = include_bytes!(concat!(
     env!("OUT_DIR"),
     "/ld_preload_trampoline.shared_lib"

@@ -21,7 +21,6 @@ mod linux {
 }
 use std::fs::File;
 
-use std::path::PathBuf;
 use std::{
     env,
     ffi::{self, CString, OsString},
@@ -81,6 +80,7 @@ fn write_to_tmp_file(data: &[u8]) -> anyhow::Result<tempfile::NamedTempFile> {
 pub enum SpawnMethod {
     #[cfg(target_os = "linux")]
     FdExec,
+    #[cfg(not(target_os = "macos"))]
     LdPreload,
     Exec,
 }
@@ -92,8 +92,17 @@ pub enum Target {
 }
 
 impl Target {
-    /// Automatically detect which spawn method should be used
+    /// TODO: ld_preload type trampoline is not yet supported on osx
+    /// loading executables as shared libraries with dlload + dlsym however seems to work ok?
+    #[cfg(target_os = "macos")]
     pub fn detect_spawn_method(&self) -> std::io::Result<SpawnMethod> {
+        Ok(SpawnMethod::Exec)
+    }
+
+    /// Automatically detect which spawn method should be used
+    #[cfg(not(target_os = "macos"))]
+    pub fn detect_spawn_method(&self) -> std::io::Result<SpawnMethod> {
+        use std::path::PathBuf;
         let current_exec_path = env::current_exe()?;
         let current_exec_filename = current_exec_path.file_name().unwrap_or_default();
         #[cfg(target_os = "linux")]
@@ -361,6 +370,7 @@ impl SpawnWorker {
                     panic!("{}", std::io::Error::last_os_error());
                 })
             }
+            #[cfg(not(target_os = "macos"))]
             SpawnMethod::LdPreload => {
                 let lib_path = write_to_tmp_file(crate::LD_PRELOAD_TRAMPOLINE_LIB)?
                     .into_temp_path()

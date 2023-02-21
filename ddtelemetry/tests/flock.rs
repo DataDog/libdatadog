@@ -30,10 +30,11 @@ fn test_file_locking_works_as_expected() {
     let d = tempdir().unwrap();
     let lock_path = d.path().join("file.lock");
     let (mut local, remote) = UnixStream::pair().unwrap();
+    local.set_nonblocking(false).ok();
 
     let child = unsafe { spawn_worker::SpawnWorker::new() }
         .target(entrypoint!(flock_test_entrypoint))
-        .pass_fd(remote)
+        .pass_fd(remote.try_clone().unwrap())
         .stdin(Stdio::Null)
         .append_env(ENV_LOCK_PATH, lock_path.as_os_str())
         .spawn()
