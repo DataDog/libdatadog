@@ -3,7 +3,7 @@
 // developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
 // Datadog, Inc.
 
-use crate::pb;
+use datadog_trace_protobuf::pb;
 use regex::Regex;
 
 #[derive(Debug)]
@@ -24,7 +24,7 @@ pub struct ReplaceRule<'a> {
 /// replace_trace_tags replaces the tag values of all spans within a trace with a given set of rules.
 pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
     for rule in rules {
-        for span in &mut *trace {
+        for span in trace.iter_mut() {
             match rule.name {
                 "*" => {
                     for (_, val) in span.meta.iter_mut() {
@@ -75,8 +75,8 @@ pub fn parse_rules_from_string<'a>(
 #[cfg(test)]
 mod tests {
 
-    use crate::pb;
     use crate::replacer;
+    use datadog_trace_protobuf::pb;
     use duplicate::duplicate_item;
     use std::collections::HashMap;
 

@@ -5,4 +5,6 @@
 
 #![deny(clippy::all)]
 
-pub mod replacer;
+pub mod pb {
+    include!("./pb/pb.rs");
+}

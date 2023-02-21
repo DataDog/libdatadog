@@ -5,8 +5,8 @@ authors = ["David Lee <david.lee@datadoghq.com>"]
 edition = "2021"
 
 [dependencies]
-prost = "0.11.6"
 anyhow = "1.0"
+datadog-trace-protobuf = { path = "../trace-protobuf" }
 
 [dev-dependencies]
 rand = "0.8.5"

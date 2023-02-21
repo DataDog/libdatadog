@@ -391,8 +391,8 @@ name = "datadog-trace-normalization"
 version = "2.0.0"
 dependencies = [
  "anyhow",
+ "datadog-trace-protobuf",
  "duplicate",
- "prost",
  "rand",
 ]
 
@@ -401,9 +401,16 @@ name = "datadog-trace-obfuscation"
 version = "2.0.0"
 dependencies = [
  "anyhow",
+ "datadog-trace-protobuf",
  "duplicate",
- "prost",
  "regex",
+]
+
+[[package]]
+name = "datadog-trace-protobuf"
+version = "2.0.0"
+dependencies = [
+ "prost",
 ]
 
 [[package]]

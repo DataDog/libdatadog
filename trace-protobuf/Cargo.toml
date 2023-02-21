@@ -1,0 +1,8 @@
+[package]
+name = "datadog-trace-protobuf"
+version = "2.0.0"
+authors = ["David Lee <david.lee@datadoghq.com>"]
+edition = "2021"
+
+[dependencies]
+prost = "0.11.6"
