@@ -57,10 +57,7 @@ pub fn parse_rules_from_string<'a>(
         let compiled_regex = match Regex::new(pattern) {
             Ok(res) => res,
             Err(err) => {
-                anyhow::bail!(format!(
-                    "Obfuscator Error: Error while parsing rule: {}",
-                    err
-                ))
+                anyhow::bail!("Obfuscator Error: Error while parsing rule: {}", err)
             }
         };
         vec.push(ReplaceRule {
