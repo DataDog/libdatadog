@@ -1613,9 +1613,7 @@ dependencies = [
 
 [[package]]
 name = "tarpc"
-version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6dd84a0fdd485d04b67be6009a04603489c8cb00ade830e4dd2e3660bef855b1"
+version = "0.31.0"
 dependencies = [
  "anyhow",
  "fnv",
@@ -1638,8 +1636,6 @@ dependencies = [
 [[package]]
 name = "tarpc-plugins"
 version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ee42b4e559f17bce0385ebf511a7beb67d5cc33c12c96b7f4e9789919d9c10f"
 dependencies = [
  "proc-macro2",
  "quote",

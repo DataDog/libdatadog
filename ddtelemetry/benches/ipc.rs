@@ -33,16 +33,16 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("write only interface", |b| {
         b.iter(|| {
             transport
-                .send_ignore_response(ExampleInterfaceRequest::Notify {})
+                .send(ExampleInterfaceRequest::Notify {})
                 .unwrap()
         })
     });
 
     c.bench_function("two way interface", |b| {
-        b.iter(|| transport.send(ExampleInterfaceRequest::ReqCnt {}).unwrap())
+        b.iter(|| transport.call(ExampleInterfaceRequest::ReqCnt {}).unwrap())
     });
 
-    let requests_received = match transport.send(ExampleInterfaceRequest::ReqCnt {}).unwrap() {
+    let requests_received = match transport.call(ExampleInterfaceRequest::ReqCnt {}).unwrap() {
         ExampleInterfaceResponse::ReqCnt(cnt) => cnt,
         _ => panic!("shouldn't happen"),
     };

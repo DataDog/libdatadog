@@ -12,7 +12,7 @@ use std::{
 
 use bytes::{BufMut, BytesMut};
 use serde::{Deserialize, Serialize};
-use tarpc::{context, trace, Response};
+use tarpc::{context, trace, Response, ClientMessage, Request};
 
 use tokio_serde::{Deserializer, Serializer};
 
@@ -156,77 +156,6 @@ impl<IncomingItem, OutgoingItem> Clone for FramedBlocking<IncomingItem, Outgoing
     }
 }
 
-#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
-pub struct Request<T> {
-    /// Trace context, deadline, and other cross-cutting concerns.
-    pub context: context::Context,
-    /// Uniquely identifies the request across all requests sent over a single channel.
-    pub id: u64,
-    /// The request body.
-    pub message: T,
-}
-
-#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
-pub enum ClientMessage<T> {
-    Request(Request<T>),
-    Cancel {
-        #[serde(default)]
-        trace_context: trace::Context,
-        /// The ID of the request to cancel.
-        request_id: u64,
-    },
-}
-
-impl<T> TransferHandles for ClientMessage<T>
-where
-    T: TransferHandles,
-{
-    fn move_handles<Transport: HandlesTransport>(
-        &self,
-        transport: Transport,
-    ) -> Result<(), Transport::Error> {
-        match self {
-            ClientMessage::Request(r) => r.move_handles(transport),
-            ClientMessage::Cancel {
-                trace_context: _,
-                request_id: _,
-            } => Ok(()),
-        }
-    }
-
-    fn receive_handles<Transport: HandlesTransport>(
-        &mut self,
-        transport: Transport,
-    ) -> Result<(), Transport::Error> {
-        match self {
-            ClientMessage::Request(r) => r.receive_handles(transport),
-            ClientMessage::Cancel {
-                trace_context: _,
-                request_id: _,
-            } => todo!(),
-        }
-    }
-}
-
-impl<T> TransferHandles for Request<T>
-where
-    T: TransferHandles,
-{
-    fn move_handles<Transport: HandlesTransport>(
-        &self,
-        transport: Transport,
-    ) -> Result<(), Transport::Error> {
-        self.message.move_handles(transport)
-    }
-
-    fn receive_handles<Transport: HandlesTransport>(
-        &mut self,
-        transport: Transport,
-    ) -> Result<(), Transport::Error> {
-        self.message.receive_handles(transport)
-    }
-}
-
 impl<IncomingItem, OutgoingItem> BlockingTransport<IncomingItem, OutgoingItem>
 where
     OutgoingItem: Serialize + TransferHandles,
@@ -242,11 +171,10 @@ where
         if let Some(deadline) = deadline {
             context.deadline = deadline;
         }
-        // TODO: should request_id be random ?
 
         let request_id = self
             .requests_id
-            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         (
             request_id,
@@ -270,12 +198,12 @@ where
         self.transport.channel.set_write_timeout(timeout)
     }
 
-    pub fn send_ignore_response(&mut self, item: OutgoingItem) -> io::Result<()> {
+    pub fn send(&mut self, item: OutgoingItem) -> io::Result<()> {
         let (_, req) = self.new_client_message(item, None);
         self.transport.do_send(req)
     }
 
-    pub fn send(&mut self, item: OutgoingItem) -> io::Result<IncomingItem> {
+    pub fn call(&mut self, item: OutgoingItem) -> io::Result<IncomingItem> {
         let (request_id, req) = self.new_client_message(item, None);
         self.transport.do_send(req)?;
 

@@ -439,7 +439,7 @@ pub mod blocking {
         transport: &mut TelemetryTransport,
         instance_id: &InstanceId,
     ) -> io::Result<()> {
-        transport.send_ignore_response(TelemetryInterfaceRequest::ShutdownRuntime {
+        transport.send(TelemetryInterfaceRequest::ShutdownRuntime {
             instance_id: instance_id.clone(),
         })
     }
@@ -448,7 +448,7 @@ pub mod blocking {
         transport: &mut TelemetryTransport,
         session_id: String,
     ) -> io::Result<()> {
-        transport.send_ignore_response(TelemetryInterfaceRequest::ShutdownSession { session_id })
+        transport.send(TelemetryInterfaceRequest::ShutdownSession { session_id })
     }
 
     pub fn enqueue_actions(
@@ -457,7 +457,7 @@ pub mod blocking {
         queue_id: &QueueId,
         actions: Vec<TelemetryActions>,
     ) -> io::Result<()> {
-        transport.send_ignore_response(TelemetryInterfaceRequest::EqueueActions {
+        transport.send(TelemetryInterfaceRequest::EqueueActions {
             instance_id: instance_id.clone(),
             queue_id: queue_id.clone(),
             actions,
@@ -471,7 +471,7 @@ pub mod blocking {
         runtime_metadata: &RuntimeMeta,
         service_name: Cow<str>,
     ) -> io::Result<()> {
-        transport.send_ignore_response(
+        transport.send(
             TelemetryInterfaceRequest::RegisterServiceAndFlushQueuedActions {
                 instance_id: instance_id.clone(),
                 queue_id: queue_id.clone(),
@@ -486,7 +486,7 @@ pub mod blocking {
         session_id: String,
         agent_url: String,
     ) -> io::Result<()> {
-        let res = transport.send(TelemetryInterfaceRequest::SetSessionAgentUrl {
+        let res = transport.call(TelemetryInterfaceRequest::SetSessionAgentUrl {
             session_id,
             agent_url,
         })?;
@@ -501,7 +501,7 @@ pub mod blocking {
 
     pub fn ping(transport: &mut TelemetryTransport) -> io::Result<Duration> {
         let start = Instant::now();
-        transport.send(TelemetryInterfaceRequest::Ping {})?;
+        transport.call(TelemetryInterfaceRequest::Ping {})?;
 
         Ok(Instant::now()
             .checked_duration_since(start)
