@@ -5,17 +5,15 @@ use datadog_trace_obfuscation::replacer;
 use datadog_trace_protobuf::pb;
 
 fn criterion_benchmark(c: &mut Criterion) {
-
-    let rules: &[replacer::ReplaceRule] = &replacer::parse_rules_from_string(
-&[
-            ["http.url", "(token/)([^/]*)", "${1}?"],
-            ["http.url", "guid", "[REDACTED]"],
-            ["*", "(token/)([^/]*)", "${1}?"],
-            ["*", "this", "that"],
-            ["custom.tag", "(/foo/bar/).*", "${1}extra"],
-            ["resource.name", "prod", "stage"],
-        ]
-    ).unwrap();
+    let rules: &[replacer::ReplaceRule] = &replacer::parse_rules_from_string(&[
+        ["http.url", "(token/)([^/]*)", "${1}?"],
+        ["http.url", "guid", "[REDACTED]"],
+        ["*", "(token/)([^/]*)", "${1}?"],
+        ["*", "this", "that"],
+        ["custom.tag", "(/foo/bar/).*", "${1}extra"],
+        ["resource.name", "prod", "stage"],
+    ])
+    .unwrap();
 
     let span_1 = pb::Span {
         duration: 10000000,
@@ -28,8 +26,14 @@ fn criterion_benchmark(c: &mut Criterion) {
         trace_id: 424242,
         meta: HashMap::from([
             ("resource.name".to_string(), "this is prod".to_string()),
-            ("http.url".to_string(), "some/[REDACTED]/token/abcdef/abc".to_string()),
-            ("other.url".to_string(), "some/guid/token/abcdef/abc".to_string()),
+            (
+                "http.url".to_string(),
+                "some/[REDACTED]/token/abcdef/abc".to_string(),
+            ),
+            (
+                "other.url".to_string(),
+                "some/guid/token/abcdef/abc".to_string(),
+            ),
             ("custom.tag".to_string(), "/foo/bar/foo".to_string()),
         ]),
         metrics: HashMap::from([("cheese_weight".to_string(), 100000.0)]),
@@ -39,9 +43,11 @@ fn criterion_benchmark(c: &mut Criterion) {
     };
 
     let mut trace = [span_1];
-    c.bench_function("replace_trace_tags_bench", |b| b.iter(|| {
-        replacer::replace_trace_tags(black_box(&mut trace), black_box(rules));
-    }));
+    c.bench_function("replace_trace_tags_bench", |b| {
+        b.iter(|| {
+            replacer::replace_trace_tags(black_box(&mut trace), black_box(rules));
+        })
+    });
 }
 
 criterion_group!(benches, criterion_benchmark);
