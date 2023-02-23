@@ -12,6 +12,7 @@ members = [
     "tools",
     "tools/cc_utils",
     "trace-normalization",
+    "trace-obfuscation",
     "spawn_worker",
     "tests/spawn_from_lib"
 ]

@@ -4,7 +4,7 @@
 // Datadog, Inc.
 
 use crate::normalize_utils;
-use crate::pb;
+use datadog_trace_protobuf::pb;
 use std::time::SystemTime;
 
 const MAX_TYPE_LEN: usize = 100;
@@ -177,7 +177,7 @@ mod tests {
     use crate::normalize_utils;
     use crate::normalizer;
     use crate::normalizer::DEFAULT_SPAN_NAME;
-    use crate::pb;
+    use datadog_trace_protobuf::pb;
     use rand::Rng;
     use std::collections::HashMap;
     use std::time::SystemTime;
