@@ -14,5 +14,5 @@ duplicate = "0.4.1"
 criterion = "0.4"
 
 [[bench]]
-name = "replace_trace_tags_benchmark"
+name = "replace_trace_tags_bench"
 harness = false
