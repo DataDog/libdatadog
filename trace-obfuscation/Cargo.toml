@@ -11,3 +11,8 @@ datadog-trace-protobuf = { path = "../trace-protobuf" }
 
 [dev-dependencies]
 duplicate = "0.4.1"
+criterion = "0.4"
+
+[[bench]]
+name = "replace_trace_tags_benchmark"
+harness = false
