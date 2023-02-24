@@ -24,6 +24,12 @@ pub enum SerializeResult {
 }
 
 #[repr(C)]
+pub enum UpscalingRuleAddResult {
+    Ok(bool),
+    Err(Error),
+}
+
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ValueType<'a> {
     pub type_: CharSlice<'a>,
@@ -436,6 +442,42 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
 ) {
     let endpoint = endpoint.to_utf8_lossy();
     profile.add_endpoint_count(endpoint, value);
+}
+
+/// Add an upscaling rule which will be use to adjust values and make them
+/// closer to reality.
+///
+/// # Arguments
+/// * `profile` - a reference to the profile that will contain the samples.
+/// * `offset_values` - offset of the values
+/// * `label_name` - name of the label used to identify sample(s)
+/// * `label_value` - value of the label used to identify sample(s)
+/// * `ratio` - value to multiply the sample values at `offset_values` against
+///
+/// # Safety
+/// This function must be called before serialize and must not be called after.
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module.
+/// This call is _NOT_ thread-safe.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule(
+    profile: &mut Profile,
+    offset_values: Slice<usize>,
+    label_name: CharSlice,
+    label_value: CharSlice,
+    ratio: f64,
+) -> UpscalingRuleAddResult {
+    let label_name_n = label_name.to_utf8_lossy();
+    let label_value_n = label_value.to_utf8_lossy();
+    match profile.add_upscaling_rules(
+        offset_values.as_slice(),
+        label_name_n.as_ref(),
+        label_value_n.as_ref(),
+        ratio,
+    ) {
+        Ok(_) => UpscalingRuleAddResult::Ok(true),
+        Err(err) => UpscalingRuleAddResult::Err(err.into()),
+    }
 }
 
 #[repr(C)]

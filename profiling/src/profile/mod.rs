@@ -81,6 +81,13 @@ struct Sample {
     local_root_span_id_label_offset: Option<usize>,
 }
 
+struct UpscalingRules {
+    values_offset: Vec<usize>,
+    label_name: i64,
+    label_value: i64,
+    ratio: f64,
+}
+
 pub struct Profile {
     sample_types: Vec<ValueType>,
     samples: FxIndexMap<Sample, Vec<i64>>,
@@ -91,6 +98,7 @@ pub struct Profile {
     start_time: SystemTime,
     period: Option<(i64, ValueType)>,
     endpoints: Endpoints,
+    upscaling_rules: FxIndexMap<(i64, i64), Vec<UpscalingRules>>,
 }
 
 pub struct Endpoints {
@@ -257,6 +265,7 @@ impl Profile {
             start_time,
             period: None,
             endpoints: Default::default(),
+            upscaling_rules: Default::default(),
         };
 
         profile.intern("");
@@ -491,6 +500,69 @@ impl Profile {
             .add_endpoint_count(endpoint.into_owned(), value);
     }
 
+    pub fn add_upscaling_rules(
+        &mut self,
+        offset_values: &[usize],
+        label_name: &str,
+        label_value: &str,
+        ratio: f64,
+    ) -> anyhow::Result<()> {
+        let label_name_id = self.intern(label_name);
+        let label_value_id = self.intern(label_value);
+
+        let mut new_values_offset = offset_values.to_vec();
+        new_values_offset.sort_unstable();
+
+        // vectors are small ones
+        fn is_overlapping(v1: &[usize], v2: &[usize]) -> bool {
+            v1.iter().any(|x| v2.contains(x))
+        }
+
+        anyhow::ensure!(
+            self.upscaling_rules
+                .iter()
+                .all(|(_, rules)| rules.iter().all(|rule| !is_overlapping(
+                    &rule.values_offset,
+                    &new_values_offset
+                ) || rule.label_name != label_name_id
+                    || rule.label_value != label_value_id)),
+            "Duplicated upscaling rule"
+        );
+
+        anyhow::ensure!(
+            offset_values.iter().all(|x| x < &self.sample_types.len()),
+            "Invalid offset. Number of expected values: {}",
+            self.sample_types.len()
+        );
+
+        let rule = UpscalingRules {
+            values_offset: new_values_offset,
+            label_name: label_name_id,
+            label_value: label_value_id,
+            ratio,
+        };
+
+        match self
+            .upscaling_rules
+            .get_index_of(&(label_name_id, label_value_id))
+        {
+            None => {
+                let rules = vec![rule];
+                self.upscaling_rules
+                    .insert((label_name_id, label_value_id), rules);
+            }
+            Some(index) => {
+                let (_, rules) = self
+                    .upscaling_rules
+                    .get_index_mut(index)
+                    .expect("Already existing rules");
+                rules.push(rule);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Serialize the aggregated profile, adding the end time and duration.
     /// # Arguments
     /// * `end_time` - Optional end time of the profile. Passing None will use the current time.
@@ -561,6 +633,49 @@ impl Profile {
             .get(&local_root_span_id)
             .map(i64::clone))
     }
+
+    fn upscale_values(&self, values: &[i64], labels: &[Label]) -> anyhow::Result<Vec<i64>> {
+        let mut new_values = values.to_vec();
+
+        if !self.upscaling_rules.is_empty() {
+            let mut values_to_update: Vec<usize> = vec![0; self.sample_types.len()];
+
+            // get bylabel rules first (if any)
+            let mut group_of_rules = labels
+                .iter()
+                .filter_map(|label| self.upscaling_rules.get(&(label.key, label.str)))
+                .collect::<Vec<&Vec<UpscalingRules>>>();
+
+            // get byvalue rules if any
+            if let Some(byvalue_rules) = self.upscaling_rules.get(&(0, 0)) {
+                group_of_rules.push(byvalue_rules);
+            }
+
+            // check for collision(s)
+            group_of_rules.iter().for_each(|rules| {
+                rules.iter().for_each(|rule| {
+                    rule.values_offset
+                        .iter()
+                        .for_each(|offset| values_to_update[*offset] += 1)
+                })
+            });
+
+            anyhow::ensure!(
+                values_to_update.iter().all(|v| *v < 2),
+                "Multiple rules modifying the same offset for this sample"
+            );
+
+            group_of_rules.iter().for_each(|rules| {
+                rules.iter().for_each(|rule| {
+                    rule.values_offset
+                        .iter()
+                        .for_each(|offset| new_values[*offset] *= rule.ratio as i64)
+                })
+            });
+        }
+
+        Ok(new_values)
+    }
 }
 
 impl TryFrom<&Profile> for pprof::Profile {
@@ -594,9 +709,11 @@ impl TryFrom<&Profile> for pprof::Profile {
                     }
                 }
 
+                let new_values = profile.upscale_values(values.as_ref(), labels.as_ref())?;
+
                 Ok(pprof::Sample {
                     location_ids: sample.locations.iter().map(Into::into).collect(),
-                    values: values.to_vec(),
+                    values: new_values,
                     labels,
                 })
             })
@@ -876,6 +993,7 @@ mod api_test {
         assert!(profile.samples.is_empty());
         assert!(profile.endpoints.mappings.is_empty());
         assert!(profile.endpoints.stats.is_empty());
+        assert!(profile.upscaling_rules.is_empty());
 
         assert_eq!(profile.period, prev.period);
         assert_eq!(profile.sample_types, prev.sample_types);
@@ -1153,6 +1271,889 @@ mod api_test {
         };
 
         profile.add(sample).unwrap_err();
+    }
+
+    #[test]
+    fn test_no_upscaling_if_no_rules() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let id_label = api::Label {
+            key: "my label",
+            str: Some("coco"),
+            num: 10,
+            num_unit: None,
+        };
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000],
+            labels: vec![id_label],
+        };
+
+        profile.add(sample1).expect("add to success");
+
+        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+
+        let first = serialized_profile.samples.get(0).expect("one sample");
+
+        assert_eq!(first.values[0], 1);
+        assert_eq!(first.values[1], 10000);
+    }
+
+    #[test]
+    fn test_upscaling_by_value_a_zero_value() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![0, 10000, 42],
+            labels: vec![],
+        };
+
+        profile.add(sample1).expect("add to success");
+
+        let values_offset: Vec<usize> = vec![0];
+        profile
+            .add_upscaling_rules(values_offset.as_slice(), "", "", 2.0_f64)
+            .expect("Rule added");
+
+        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+
+        let first = serialized_profile.samples.get(0).expect("one sample");
+
+        assert_eq!(first.values[0], 0);
+        assert_eq!(first.values[1], 10000);
+        assert_eq!(first.values[2], 42);
+    }
+
+    #[test]
+    fn test_upscaling_by_value_on_one_value() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000, 42],
+            labels: vec![],
+        };
+
+        profile.add(sample1).expect("add to success");
+
+        let values_offset: Vec<usize> = vec![0];
+        profile
+            .add_upscaling_rules(values_offset.as_slice(), "", "", 2.0_f64)
+            .expect("Rule added");
+
+        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+
+        let first = serialized_profile.samples.get(0).expect("one sample");
+
+        assert_eq!(first.values[0], 2);
+        assert_eq!(first.values[1], 10000);
+        assert_eq!(first.values[2], 42);
+    }
+
+    #[test]
+    fn test_upscaling_by_value_on_two_values() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000, 21],
+            labels: vec![],
+        };
+
+        let main_lines = vec![api::Line {
+            function: api::Function {
+                name: "{main}",
+                system_name: "{main}",
+                filename: "index.php",
+                start_line: 0,
+            },
+            line: 0,
+        }];
+
+        let mapping = api::Mapping {
+            filename: "php",
+            ..Default::default()
+        };
+
+        let main_locations = vec![api::Location {
+            mapping,
+            lines: main_lines,
+            ..Default::default()
+        }];
+
+        let sample2 = api::Sample {
+            locations: main_locations,
+            values: vec![5, 24, 99],
+            labels: vec![],
+        };
+
+        profile.add(sample1).expect("add to success");
+        profile.add(sample2).expect("add to success");
+
+        // upscale the first value and the last one
+        let values_offset: Vec<usize> = vec![0, 2];
+
+        profile
+            .add_upscaling_rules(values_offset.as_slice(), "", "", 2.0_f64)
+            .expect("Rule added");
+
+        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+
+        let first = serialized_profile.samples.get(0).expect("first sample");
+
+        assert_eq!(first.values[0], 2);
+        assert_eq!(first.values[1], 10000);
+        assert_eq!(first.values[2], 42);
+
+        let second = serialized_profile.samples.get(1).expect("second sample");
+
+        assert_eq!(second.values[0], 10);
+        assert_eq!(second.values[1], 24);
+        assert_eq!(second.values[2], 198);
+    }
+
+    #[test]
+    fn test_upscaling_by_value_on_two_value_with_two_rules() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000, 21],
+            labels: vec![],
+        };
+
+        let main_lines = vec![api::Line {
+            function: api::Function {
+                name: "{main}",
+                system_name: "{main}",
+                filename: "index.php",
+                start_line: 0,
+            },
+            line: 0,
+        }];
+
+        let mapping = api::Mapping {
+            filename: "php",
+            ..Default::default()
+        };
+
+        let main_locations = vec![api::Location {
+            mapping,
+            lines: main_lines,
+            ..Default::default()
+        }];
+
+        let sample2 = api::Sample {
+            locations: main_locations,
+            values: vec![5, 24, 99],
+            labels: vec![],
+        };
+
+        profile.add(sample1).expect("add to success");
+        profile.add(sample2).expect("add to success");
+
+        let mut values_offset: Vec<usize> = vec![0];
+
+        profile
+            .add_upscaling_rules(values_offset.as_slice(), "", "", 2.0_f64)
+            .expect("Rule added");
+
+        // add another byvaluerule on the 3rd offset
+        values_offset.clear();
+        values_offset.push(2);
+
+        profile
+            .add_upscaling_rules(values_offset.as_slice(), "", "", 5.0_f64)
+            .expect("Rule added");
+
+        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+
+        let first = serialized_profile.samples.get(0).expect("first sample");
+
+        assert_eq!(first.values[0], 2);
+        assert_eq!(first.values[1], 10000);
+        assert_eq!(first.values[2], 105);
+
+        let second = serialized_profile.samples.get(1).expect("second sample");
+
+        assert_eq!(second.values[0], 10);
+        assert_eq!(second.values[1], 24);
+        assert_eq!(second.values[2], 495);
+    }
+
+    #[test]
+    fn test_no_upscaling_by_label_if_no_match() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let id_label = api::Label {
+            key: "my label",
+            str: Some("coco"),
+            num: 10,
+            num_unit: None,
+        };
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000, 42],
+            labels: vec![id_label],
+        };
+
+        profile.add(sample1).expect("add to success");
+
+        let values_offset: Vec<usize> = vec![0];
+
+        profile
+            .add_upscaling_rules(values_offset.as_slice(), "my label", "foobar", 2.0_f64)
+            .expect("Rule added");
+
+        profile
+            .add_upscaling_rules(values_offset.as_slice(), "my other label", "coco", 2.0_f64)
+            .expect("Rule added");
+
+        profile
+            .add_upscaling_rules(
+                values_offset.as_slice(),
+                "my other label",
+                "foobar",
+                2.0_f64,
+            )
+            .expect("Rule added");
+
+        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+
+        let first = serialized_profile.samples.get(0).expect("one sample");
+
+        assert_eq!(first.values[0], 1);
+        assert_eq!(first.values[1], 10000);
+        assert_eq!(first.values[2], 42);
+    }
+
+    #[test]
+    fn test_upscaling_by_label_on_one_value() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let id_label = api::Label {
+            key: "my label",
+            str: Some("coco"),
+            num: 10,
+            num_unit: None,
+        };
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000, 42],
+            labels: vec![id_label],
+        };
+
+        profile.add(sample1).expect("add to success");
+
+        let values_offset: Vec<usize> = vec![0];
+        profile
+            .add_upscaling_rules(
+                values_offset.as_slice(),
+                id_label.key,
+                id_label.str.unwrap(),
+                2.0_f64,
+            )
+            .expect("Rule added");
+
+        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+
+        let first = serialized_profile.samples.get(0).expect("one sample");
+
+        assert_eq!(first.values[0], 2);
+        assert_eq!(first.values[1], 10000);
+        assert_eq!(first.values[2], 42);
+    }
+
+    #[test]
+    fn test_upscaling_by_label_on_only_sample_out_of_two() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let id_label = api::Label {
+            key: "my label",
+            str: Some("coco"),
+            num: 10,
+            num_unit: None,
+        };
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000, 42],
+            labels: vec![id_label],
+        };
+
+        let main_lines = vec![api::Line {
+            function: api::Function {
+                name: "{main}",
+                system_name: "{main}",
+                filename: "index.php",
+                start_line: 0,
+            },
+            line: 0,
+        }];
+
+        let mapping = api::Mapping {
+            filename: "php",
+            ..Default::default()
+        };
+
+        let main_locations = vec![api::Location {
+            mapping,
+            lines: main_lines,
+            ..Default::default()
+        }];
+
+        let sample2 = api::Sample {
+            locations: main_locations,
+            values: vec![5, 24, 99],
+            labels: vec![],
+        };
+
+        profile.add(sample1).expect("add to success");
+        profile.add(sample2).expect("add to success");
+
+        let values_offset: Vec<usize> = vec![0];
+        profile
+            .add_upscaling_rules(
+                values_offset.as_slice(),
+                id_label.key,
+                id_label.str.unwrap(),
+                2.0_f64,
+            )
+            .expect("Rule added");
+
+        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+
+        let first = serialized_profile.samples.get(0).expect("one sample");
+
+        assert_eq!(first.values[0], 2);
+        assert_eq!(first.values[1], 10000);
+        assert_eq!(first.values[2], 42);
+
+        let second = serialized_profile.samples.get(1).expect("one sample");
+
+        assert_eq!(second.values[0], 5);
+        assert_eq!(second.values[1], 24);
+        assert_eq!(second.values[2], 99);
+    }
+
+    #[test]
+    fn test_upscaling_by_label_with_two_different_rules_on_two_different_sample() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let id_no_match_label = api::Label {
+            key: "another label",
+            str: Some("do not care"),
+            num: 10,
+            num_unit: None,
+        };
+
+        let id_label = api::Label {
+            key: "my label",
+            str: Some("coco"),
+            num: 10,
+            num_unit: None,
+        };
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000, 42],
+            labels: vec![id_label, id_no_match_label],
+        };
+
+        let main_lines = vec![api::Line {
+            function: api::Function {
+                name: "{main}",
+                system_name: "{main}",
+                filename: "index.php",
+                start_line: 0,
+            },
+            line: 0,
+        }];
+
+        let mapping = api::Mapping {
+            filename: "php",
+            ..Default::default()
+        };
+
+        let main_locations = vec![api::Location {
+            mapping,
+            lines: main_lines,
+            ..Default::default()
+        }];
+
+        let id_label2 = api::Label {
+            key: "my other label",
+            str: Some("foobar"),
+            num: 10,
+            num_unit: None,
+        };
+
+        let sample2 = api::Sample {
+            locations: main_locations,
+            values: vec![5, 24, 99],
+            labels: vec![id_no_match_label, id_label2],
+        };
+
+        profile.add(sample1).expect("add to success");
+        profile.add(sample2).expect("add to success");
+
+        // add rule for the first sample on the 1st value
+        let mut values_offset: Vec<usize> = vec![0];
+        profile
+            .add_upscaling_rules(
+                values_offset.as_slice(),
+                id_label.key,
+                id_label.str.unwrap(),
+                2.0_f64,
+            )
+            .expect("Rule added");
+
+        // add rule for the second sample on the 3rd value
+        values_offset.clear();
+        values_offset.push(2);
+        profile
+            .add_upscaling_rules(
+                values_offset.as_slice(),
+                id_label2.key,
+                id_label2.str.unwrap(),
+                10.0_f64,
+            )
+            .expect("Rule added");
+
+        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+
+        let first = serialized_profile.samples.get(0).expect("one sample");
+
+        assert_eq!(first.values[0], 2);
+        assert_eq!(first.values[1], 10000);
+        assert_eq!(first.values[2], 42);
+
+        let second = serialized_profile.samples.get(1).expect("one sample");
+
+        assert_eq!(second.values[0], 5);
+        assert_eq!(second.values[1], 24);
+        assert_eq!(second.values[2], 990);
+    }
+
+    #[test]
+    fn test_upscaling_by_label_on_two_values() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let id_label = api::Label {
+            key: "my label",
+            str: Some("coco"),
+            num: 10,
+            num_unit: None,
+        };
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000, 42],
+            labels: vec![id_label],
+        };
+
+        profile.add(sample1).expect("add to success");
+
+        // upscale samples and wall-time values
+        let values_offset: Vec<usize> = vec![0, 1];
+
+        profile
+            .add_upscaling_rules(
+                values_offset.as_slice(),
+                id_label.key,
+                id_label.str.unwrap(),
+                2.0_f64,
+            )
+            .expect("Rule added");
+
+        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+
+        let first = serialized_profile.samples.get(0).expect("one sample");
+
+        assert_eq!(first.values[0], 2);
+        assert_eq!(first.values[1], 20000);
+        assert_eq!(first.values[2], 42);
+    }
+
+    #[test]
+    fn test_upscaling_by_value_and_by_label_different_values() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let id_label = api::Label {
+            key: "my label",
+            str: Some("coco"),
+            num: 10,
+            num_unit: None,
+        };
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000, 42],
+            labels: vec![id_label],
+        };
+
+        profile.add(sample1).expect("add to success");
+
+        let mut value_offsets: Vec<usize> = vec![0];
+        profile
+            .add_upscaling_rules(value_offsets.as_slice(), "", "", 2.0_f64)
+            .expect("Rule added");
+
+        // a bylabel rule on the third offset
+        value_offsets.clear();
+        value_offsets.push(2);
+        profile
+            .add_upscaling_rules(
+                value_offsets.as_slice(),
+                id_label.key,
+                id_label.str.unwrap(),
+                5.0_f64,
+            )
+            .expect("Rule added");
+
+        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+
+        let first = serialized_profile.samples.get(0).expect("one sample");
+
+        assert_eq!(first.values[0], 2);
+        assert_eq!(first.values[1], 10000);
+        assert_eq!(first.values[2], 210);
+    }
+
+    #[test]
+    fn test_add_same_byvalue_rule_twice() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        // adding same offsets
+        let mut value_offsets: Vec<usize> = vec![0, 2];
+        profile
+            .add_upscaling_rules(value_offsets.as_slice(), "", "", 2.0_f64)
+            .expect("Rule added");
+        profile
+            .add_upscaling_rules(value_offsets.as_slice(), "", "", 2.0_f64)
+            .expect_err("Duplicated rules");
+
+        // adding offsets with overlap on 2
+        value_offsets.clear();
+        value_offsets.push(2);
+        value_offsets.push(1);
+        profile
+            .add_upscaling_rules(value_offsets.as_slice(), "", "", 2.0_f64)
+            .expect_err("Duplicated rules");
+
+        // same offsets in different order
+        value_offsets.clear();
+        value_offsets.push(2);
+        value_offsets.push(0);
+        profile
+            .add_upscaling_rules(value_offsets.as_slice(), "", "", 2.0_f64)
+            .expect_err("Duplicated rules");
+    }
+
+    #[test]
+    fn test_add_two_bylabel_rules_with_overlap_on_values() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        // adding same offsets
+        let mut value_offsets: Vec<usize> = vec![0, 2];
+        profile
+            .add_upscaling_rules(value_offsets.as_slice(), "my label", "coco", 2.0_f64)
+            .expect("Rule added");
+        profile
+            .add_upscaling_rules(value_offsets.as_slice(), "my label", "coco", 2.0_f64)
+            .expect_err("Duplicated rules");
+
+        // adding offsets with overlap on 2
+        value_offsets.clear();
+        value_offsets.push(2);
+        value_offsets.push(1);
+        profile
+            .add_upscaling_rules(value_offsets.as_slice(), "my label", "coco", 2.0_f64)
+            .expect_err("Duplicated rules");
+
+        // same offsets in different order
+        value_offsets.clear();
+        value_offsets.push(2);
+        value_offsets.push(0);
+        profile
+            .add_upscaling_rules(value_offsets.as_slice(), "my label", "coco", 2.0_f64)
+            .expect_err("Duplicated rules");
+    }
+
+    #[test]
+    fn test_add_rule_with_offset_out_of_bound() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        // adding same offsets
+        let by_value_offsets: Vec<usize> = vec![0, 4];
+        profile
+            .add_upscaling_rules(by_value_offsets.as_slice(), "my label", "coco", 2.0_f64)
+            .expect_err("Invalid offset");
+    }
+
+    #[test]
+    fn test_fails_serialization_if_two_rules_collide_at_runtime() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let id_label = api::Label {
+            key: "my label",
+            str: Some("coco"),
+            num: 10,
+            num_unit: None,
+        };
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 10000, 42],
+            labels: vec![id_label],
+        };
+
+        profile.add(sample1).expect("add to success");
+
+        let mut value_offsets: Vec<usize> = vec![0];
+        profile
+            .add_upscaling_rules(value_offsets.as_slice(), "", "", 2.0_f64)
+            .expect("Rule added");
+
+        // a bylabel rule on the third offset
+        value_offsets.clear();
+        value_offsets.push(0);
+        profile
+            .add_upscaling_rules(
+                value_offsets.as_slice(),
+                id_label.key,
+                id_label.str.unwrap(),
+                5.0_f64,
+            )
+            .expect("Rule added");
+
+        pprof::Profile::try_from(&profile)
+            .expect_err("Serialization failed due to rules collision");
     }
 
     #[test]

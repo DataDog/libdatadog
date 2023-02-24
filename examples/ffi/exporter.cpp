@@ -74,6 +74,19 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  uintptr_t offset[1] = {0};
+  ddog_prof_Slice_Usize offsets_slice = {.ptr = offset, .len = 1};
+  ddog_CharSlice empty_charslice = DDOG_CHARSLICE_C("");
+
+  auto upscaling_addresult =
+    ddog_prof_Profile_add_upscaling_rule(profile.get(), offsets_slice, empty_charslice, empty_charslice, 1.0);
+
+  if (upscaling_addresult.tag == DDOG_PROF_PROFILE_UPSCALING_ADD_RESULT_ERR) {
+    print_error("Failed to add an upscaling rule: ", upscaling_addresult.err);
+    ddog_Error_drop(&upscaling_addresult.err);
+    return 1; // in this specific case, we want to fail the executiong. But in general, we should not
+  }
+
   ddog_prof_Profile_SerializeResult serialize_result = ddog_prof_Profile_serialize(profile.get(), nullptr, nullptr);
   if (serialize_result.tag == DDOG_PROF_PROFILE_SERIALIZE_RESULT_ERR) {
     print_error("Failed to serialize profile: ", serialize_result.err);
