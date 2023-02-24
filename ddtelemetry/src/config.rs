@@ -187,7 +187,7 @@ impl Config {
 
 #[cfg(test)]
 mod test {
-    use ddcommon::connector::uds;
+    use ddcommon::{connector::uds, Endpoint};
 
     use super::Config;
 
@@ -209,7 +209,7 @@ mod test {
 
         cfg.set_url("file:///absolute/path").unwrap();
 
-        assert!(cfg.clone().endpoint.is_none());
+        assert_eq!("http://mock_endpoint/", cfg.clone().endpoint.unwrap().url.to_string());
         assert_eq!(
             "/absolute/path",
             cfg.clone().mock_client_file.unwrap().to_string_lossy()

@@ -12,9 +12,9 @@ use std::{
 
 use bytes::{BufMut, BytesMut};
 use serde::{Deserialize, Serialize};
-use tarpc::{context, trace, Response, ClientMessage, Request};
+use tarpc::{context::{self, Context}, trace, Response, ClientMessage, Request};
 
-use tokio_serde::{Deserializer, Serializer};
+use tokio_serde::{Deserializer, Serializer, formats::MessagePack};
 
 use tokio_serde::formats::Json;
 use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
@@ -23,6 +23,8 @@ use crate::ipc::{
     handles::{HandlesTransport, TransferHandles},
     platform::{Channel, Message},
 };
+
+use super::DefaultCodec;
 
 pub struct BlockingTransport<IncomingItem, OutgoingItem> {
     pid: libc::pid_t,
@@ -68,7 +70,7 @@ pub struct FramedBlocking<IncomingItem, OutgoingItem> {
     codec: LengthDelimitedCodec,
     read_buffer: BytesMut,
     channel: Channel,
-    serde_codec: Pin<Box<Json<Message<IncomingItem>, Message<OutgoingItem>>>>,
+    serde_codec: Pin<Box<DefaultCodec<Message<IncomingItem>, Message<OutgoingItem>>>>,
 }
 
 impl<IncomingItem, OutgoingItem> FramedBlocking<IncomingItem, OutgoingItem>
@@ -164,14 +166,8 @@ where
     fn new_client_message(
         &self,
         item: OutgoingItem,
-        deadline: Option<SystemTime>,
+        context: Context,
     ) -> (u64, ClientMessage<OutgoingItem>) {
-        let mut context = context::current();
-
-        if let Some(deadline) = deadline {
-            context.deadline = deadline;
-        }
-
         let request_id = self
             .requests_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -199,12 +195,14 @@ where
     }
 
     pub fn send(&mut self, item: OutgoingItem) -> io::Result<()> {
-        let (_, req) = self.new_client_message(item, None);
+        let mut ctx = Context::current();
+        ctx.discard_response = true;
+        let (_, req) = self.new_client_message(item, ctx);
         self.transport.do_send(req)
     }
 
     pub fn call(&mut self, item: OutgoingItem) -> io::Result<IncomingItem> {
-        let (request_id, req) = self.new_client_message(item, None);
+        let (request_id, req) = self.new_client_message(item, Context::current());
         self.transport.do_send(req)?;
 
         for resp in self {
