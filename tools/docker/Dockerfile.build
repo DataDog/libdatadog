@@ -78,12 +78,14 @@ COPY "ddtelemetry-ffi/Cargo.toml" "ddtelemetry-ffi/"
 COPY "profiling/Cargo.toml" "profiling/"
 COPY "profiling-ffi/Cargo.toml" "profiling-ffi/"
 COPY "trace-normalization/Cargo.toml" "trace-normalization/"
+COPY "trace-obfuscation/Cargo.toml" "trace-obfuscation/"
+COPY "trace-protobuf/Cargo.toml" "trace-protobuf/"
 COPY "tools/Cargo.toml" "tools/"
 COPY "tools/cc_utils/Cargo.toml" "tools/cc_utils/"
 COPY "spawn_worker/Cargo.toml" "spawn_worker/"
 COPY "tests/spawn_from_lib/Cargo.toml" "tests/spawn_from_lib/"
 RUN find -name "Cargo.toml" | sed -e s#Cargo.toml#src/lib.rs#g | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
-RUN echo ddtelemetry/benches/ipc.rs tools/src/bin/dedup_headers.rs ddtelemetry/examples/tm-worker-test.rs | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
+RUN echo trace-obfuscation/benches/replace_trace_tags_bench.rs ddtelemetry/benches/ipc.rs tools/src/bin/dedup_headers.rs ddtelemetry/examples/tm-worker-test.rs | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
 
 # cache dependencies
 RUN cargo fetch --locked

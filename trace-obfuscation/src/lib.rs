@@ -5,6 +5,4 @@
 
 #![deny(clippy::all)]
 
-pub mod normalizer;
-
-pub mod normalize_utils;
+pub mod replacer;
