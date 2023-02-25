@@ -1738,6 +1738,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sidecar"
+version = "0.1.0"
+dependencies = [
+ "ddcommon",
+ "nix 0.26.2",
+ "spawn_worker",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

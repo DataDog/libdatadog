@@ -1,0 +1,12 @@
+[package]
+edition = "2021"
+name = "sidecar"
+version = "0.1.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+ddcommon = {path = "../ddcommon"}
+nix = {version = "0.26"}
+spawn_worker = {path = "../spawn_worker"}

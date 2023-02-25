@@ -10,6 +10,7 @@ pub(crate) const LD_PRELOAD_TRAMPOLINE_LIB: &[u8] = include_bytes!(concat!(
     "/ld_preload_trampoline.shared_lib"
 ));
 
+
 #[cfg(target_family = "unix")]
 #[macro_use]
 mod unix;
@@ -33,4 +34,16 @@ macro_rules! entrypoint {
             symbol_name: unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(bytes) }.to_owned(),
         }
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{TRAMPOLINE_BIN, LD_PRELOAD_TRAMPOLINE_LIB};
+    #[test]
+    fn test_trampolines_sizes() {
+        assert!(TRAMPOLINE_BIN.len() < 100*1024);
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        assert!(LD_PRELOAD_TRAMPOLINE_LIB.len() < 100*1024);
+    }
 }

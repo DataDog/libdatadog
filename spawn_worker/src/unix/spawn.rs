@@ -37,18 +37,18 @@ use nix::{sys::wait::WaitStatus, unistd::Pid};
 use crate::fork::{fork, Fork};
 use nix::libc;
 
-struct ExecVec {
+pub struct ExecVec {
     items: Vec<CString>,
     // Always NULL ptr terminated
     ptrs: Vec<*const libc::c_char>,
 }
 
 impl ExecVec {
-    fn as_ptr(&self) -> *const *const libc::c_char {
+    pub fn as_ptr(&self) -> *const *const libc::c_char {
         self.ptrs.as_ptr()
     }
 
-    fn empty() -> Self {
+    pub fn empty() -> Self {
         Self {
             items: vec![],
             ptrs: vec![std::ptr::null()],
@@ -56,11 +56,15 @@ impl ExecVec {
     }
 
     pub fn push(&mut self, item: CString) {
+        self.push_ptr(item.as_ptr());
+        self.items.push(item);
+    }
+
+    pub fn push_ptr(&mut self, item: *const libc::c_char){
         let l = self.ptrs.len();
         // replace previous trailing null with ptr to the item
-        self.ptrs[l - 1] = item.as_ptr();
+        self.ptrs[l - 1] = item;
         self.ptrs.push(ptr::null());
-        self.items.push(item);
     }
 }
 

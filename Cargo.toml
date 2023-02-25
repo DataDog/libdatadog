@@ -14,6 +14,7 @@ members = [
     "trace-normalization",
     "trace-obfuscation",
     "spawn_worker",
+    "sidecar",
     "tests/spawn_from_lib"
 ]
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
