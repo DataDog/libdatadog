@@ -1,21 +1,10 @@
-// meant to be used for overriding using LD_PRELOAD
-//
-// allows executables to be hijacked to execute alternative entry points
-// int __libc_start_main(int (*main)(int, char **), int argc, char **argv,
-//                       int (*init)(int, char **, char **), void (*fini)(void),
-//                       void (*rtld_fini)(void), void *stack_end) {
-//   UNUSED(main);
-//   typeof(&__libc_start_main) libc_start_main = dlsym(RTLD_NEXT, "__libc_start_main");
-
-//   return libc_start_main(main_override, argc, argv, init, fini, rtld_fini, stack_end);
-// }
-
 use std::{
     ffi::{self, CStr, CString},
     sync::mpsc::Iter,
 };
 
 use ddcommon::cstr;
+use ddtelemetry::ipc::sidecar::start_or_connect_to_sidecar;
 use nix::libc;
 use spawn_worker::ExecVec;
 
@@ -103,13 +92,13 @@ unsafe extern "C" fn new_main(
     let mut env = CListMutPtr::from_raw_parts(*environ() as *mut *const ffi::c_char);
     env.remove_entry(|e| e.starts_with("LD_PRELOAD=".as_bytes()));
     
-    
     let mut env = env.into_exec_vec();
     env.push(cstr!("DD_TRACE_URL=http://localhost:8126").to_owned());
 
-
     let old_environ = *environ(); 
     *environ() = env.as_ptr();
+
+    start_or_connect_to_sidecar();
 
     let rv = match unsafe { ORIGINAL_MAIN } {
         Some(f) => f(argc, argv, env.as_ptr()),

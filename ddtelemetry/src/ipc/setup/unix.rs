@@ -64,8 +64,6 @@ impl Liaison for SharedDirLiaison {
         if self.socket_path.exists() {
             // if socket is already listening, then creating listener is not available
             if platform::sockets::is_listening(&self.socket_path)? {
-                println!("already_listening");
-                // return Err(io::Error::new(io::ErrorKind::Other, "already listening"));
                 return Ok(None);
             }
             fs::remove_file(&self.socket_path)?;
@@ -93,6 +91,10 @@ impl SharedDirLiaison {
 
     pub fn new_tmp_dir() -> Self {
         Self::new(env::temp_dir().join("libdatadog"))
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.socket_path.as_path()
     }
 }
 
