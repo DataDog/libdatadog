@@ -1,14 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use std::{
-    io,
-    os::unix::{
-        net::UnixStream,
-        prelude::{FromRawFd, IntoRawFd, RawFd},
-    },
-    path::Path,
-};
+use std::{io, os::unix::net::UnixStream, path::Path};
 pub fn is_listening<P: AsRef<Path>>(path: P) -> io::Result<bool> {
     if !path.as_ref().exists() {
         return Ok(false);
@@ -58,45 +51,5 @@ mod linux {
     }
 }
 
-use io_lifetimes::OwnedFd;
 #[cfg(target_os = "linux")]
 pub use linux::*;
-
-#[must_use]
-#[derive(Debug, Clone)]
-pub struct ForkableUnixHandlePair {
-    local: RawFd,
-    remote: RawFd,
-}
-
-impl ForkableUnixHandlePair {
-    pub fn new() -> io::Result<Self> {
-        let (local, remote) = UnixStream::pair()?;
-        Ok(Self {
-            local: local.into_raw_fd(),
-            remote: remote.into_raw_fd(),
-        })
-    }
-
-    /// returns socket from pair meant to use locally
-    ///
-    /// # Safety
-    ///
-    /// Caller must call the method only once per process instance
-    pub unsafe fn local(&self) -> UnixStream {
-        let _remote: OwnedFd = OwnedFd::from_raw_fd(self.remote);
-
-        UnixStream::from_raw_fd(self.local)
-    }
-
-    /// returns socket from pair meant to used in spawned process
-    ///
-    /// # Safety
-    ///
-    /// Caller must call the method only once per process instance
-    pub unsafe fn remote(&self) -> UnixStream {
-        let _local: OwnedFd = OwnedFd::from_raw_fd(self.local);
-
-        UnixStream::from_raw_fd(self.remote)
-    }
-}

@@ -11,6 +11,8 @@ use hyper::{
 pub mod azure_app_services;
 pub mod connector;
 pub mod container_id;
+#[macro_use]
+pub mod cstr;
 pub mod tag;
 
 pub mod header {

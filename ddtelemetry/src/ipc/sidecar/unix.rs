@@ -1,6 +1,9 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use libc::{c_char, dup, strerror, O_APPEND, O_CREAT, O_RDONLY, O_WRONLY};
+use spawn_worker::{entrypoint, getpid, Stdio};
+use std::ffi::CStr;
 use std::fs;
 use std::os::unix::net::UnixListener as StdUnixListener;
 use std::sync::Mutex;
@@ -13,11 +16,8 @@ use std::{
     },
     time::Duration,
 };
-use std::ffi::CStr;
-use libc::{c_char, dup, O_APPEND, O_CREAT, O_RDONLY, O_WRONLY, strerror};
 use tokio::select;
 
-use nix::{sys::wait::waitpid, errno::errno, unistd::{Pid, setsid}};
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -26,10 +26,7 @@ use crate::ipc::interface::blocking::TelemetryTransport;
 use crate::ipc::interface::TelemetryServer;
 use crate::ipc::platform::Channel as IpcChannel;
 
-use crate::{
-    fork::{fork_fn, getpid},
-    ipc::setup::{self, Liaison},
-};
+use crate::ipc::setup::{self, Liaison};
 
 use super::config;
 
@@ -117,55 +114,44 @@ fn enter_listener_loop(listener: StdUnixListener) -> anyhow::Result<()> {
     runtime.block_on(main_loop(listener)).map_err(|e| e.into())
 }
 
+#[no_mangle]
+pub extern "C" fn daemon_entry_point() {
+    if let Err(err) = nix::unistd::setsid() {
+        tracing::error!("Error calling setsid(): {err}")
+    }
+
+    enable_tracing().ok();
+    let now = Instant::now();
+
+    if let Some(fd) = spawn_worker::recv_passed_fd() {
+        let listener: StdUnixListener = fd.into();
+        tracing::info!("Starting sidecar, pid: {}", getpid());
+        if let Err(err) = enter_listener_loop(listener) {
+            tracing::error!("Error: {err}")
+        }
+    }
+
+    tracing::info!(
+        "shutting down sidecar, pid: {}, total runtime: {:.3}s",
+        getpid(),
+        now.elapsed().as_secs_f64()
+    )
+}
+
 fn daemonize(listener: StdUnixListener) -> io::Result<()> {
-    unsafe {
-        let pid = fork_fn(listener, |listener| {
-            fork_fn(listener, |listener| {
-                if let Err(err) = setsid() {
-                    println!("Setsid() Error: {}", err)
-                }
+    // TODO: allow passing presaved environment
+    let child = unsafe { spawn_worker::SpawnWorker::new() }
+        .pass_fd(listener)
+        .stdin(Stdio::Null)
+        .daemonize(true)
+        .target(entrypoint!(daemon_entry_point))
+        .spawn()
+        .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
 
-                // stdin
-                libc::close(0);
-                libc::open(static_cstr(b"/dev/null\0"), O_RDONLY);
+    child
+        .wait()
+        .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
 
-                // stdout
-                libc::close(1);
-                // TODO: make sidecar logfile configurable
-                let stdout = libc::open(static_cstr(b"/tmp/sidecar.log\0"), O_CREAT | O_WRONLY | O_APPEND, 0o777);
-                if stdout < 0 {
-                    panic!("Could not open /tmp/sidecar.log: {}", CStr::from_ptr(strerror(errno())).to_str().unwrap());
-                }
-
-                // stderr
-                libc::close(2);
-                dup(stdout);
-
-                enable_tracing().ok();
-
-                let now = Instant::now();
-                tracing::info!(
-                    "[{}] starting sidecar, pid: {}",
-                    time::SystemTime::now()
-                        .duration_since(time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis(),
-                    getpid()
-                );
-
-                if let Err(err) = enter_listener_loop(listener) {
-                    tracing::error!("Error: {err}")
-                }
-                tracing::info!(
-                    "shutting down sidecar, pid: {}, total runtime: {:.3}s",
-                    getpid(),
-                    now.elapsed().as_secs_f64()
-                )
-            })
-            .ok();
-        })?;
-        waitpid(Pid::from_raw(pid), None)?;
-    };
     Ok(())
 }
 

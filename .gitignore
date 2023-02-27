@@ -7,8 +7,7 @@
 .idea
 .vs
 .vscode
-build*
-!builder.rs
+build*/
 cmake-build-debug
 deliverables
 target

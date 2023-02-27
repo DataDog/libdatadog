@@ -330,7 +330,6 @@ mod test_c_sidecar {
     }
 
     #[test]
-    #[ignore] // run all tests that can fork in a separate run, to avoid any race conditions with default rust test harness
     fn test_ddog_sidecar_register_app() {
         set_sidecar_per_process();
 

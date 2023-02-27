@@ -20,8 +20,6 @@ use self::{
 };
 pub mod config;
 pub mod data;
-#[cfg(not(windows))]
-pub mod fork;
 pub mod info;
 // For now the IPC interface only works on unix systems
 #[cfg(not(windows))]

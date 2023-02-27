@@ -8,13 +8,11 @@ use std::{
 };
 
 use io_lifetimes::OwnedFd;
+use spawn_worker::getpid;
 
-use crate::{
-    fork::getpid,
-    ipc::{
-        handles::{HandlesTransport, TransferHandles},
-        platform::{Message, PlatformHandle, MAX_FDS},
-    },
+use crate::ipc::{
+    handles::{HandlesTransport, TransferHandles},
+    platform::{Message, PlatformHandle, MAX_FDS},
 };
 
 #[derive(Debug)]
