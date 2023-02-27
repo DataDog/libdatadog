@@ -1,5 +1,5 @@
 ---
-root_name: "datadog-profiling, ddcommon, datadog-profiling-ffi, ddcommon-ffi, ddtelemetry, spawn_worker, cc_utils, ddtelemetry-ffi, tools, datadog-trace-normalization, datadog-trace-protobuf, datadog-trace-obfuscation, spawn_worker"
+root_name: "datadog-profiling, ddcommon, datadog-profiling-ffi, ddcommon-ffi, ddtelemetry, spawn_worker, cc_utils, ddtelemetry-ffi, tools, datadog-trace-normalization, datadog-trace-protobuf, datadog-trace-obfuscation"
 third_party_libraries:
   - package_name: aho-corasick
     package_version: 0.7.20
