@@ -576,7 +576,7 @@ dependencies = [
  "pin-project",
  "pretty_assertions",
  "regex",
- "rmp-serde 0.15.5",
+ "rmp-serde",
  "sendfd",
  "serde",
  "serde_json",
