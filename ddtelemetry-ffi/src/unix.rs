@@ -95,7 +95,6 @@ mod test_c_sidecar {
     }
 
     #[test]
-    #[ignore] // run all tests that can fork in a separate run, to avoid any race conditions with default rust test harness
     fn test_ddog_sidecar_connection() {
         let mut transport = std::ptr::null_mut();
         assert_eq!(

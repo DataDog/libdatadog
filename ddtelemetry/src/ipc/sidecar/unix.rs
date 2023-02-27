@@ -1,6 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use spawn_worker::{entrypoint, getpid, Stdio};
 use std::os::unix::net::UnixListener as StdUnixListener;
 use std::{
     io::{self},
@@ -12,17 +13,13 @@ use std::{
 };
 use tokio::select;
 
-use nix::{sys::wait::waitpid, unistd::Pid};
 use tokio::net::UnixListener;
 use tokio_util::sync::CancellationToken;
 
 use crate::ipc::example_interface::{ExampleServer, ExampleTransport};
 use crate::ipc::platform::Channel as IpcChannel;
 
-use crate::{
-    fork::{fork_fn, getpid},
-    ipc::setup::{self, Liaison},
-};
+use crate::ipc::setup::{self, Liaison};
 
 async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
     let counter = Arc::new(AtomicI32::new(0));
@@ -86,19 +83,32 @@ fn enter_listener_loop(listener: StdUnixListener) -> anyhow::Result<()> {
     runtime.block_on(main_loop(listener)).map_err(|e| e.into())
 }
 
+#[no_mangle]
+pub extern "C" fn daemon_entry_point() {
+    if let Some(fd) = spawn_worker::recv_passed_fd() {
+        let listener: StdUnixListener = fd.into();
+
+        println!("starting sidecar, pid: {}", getpid());
+        if let Err(err) = enter_listener_loop(listener) {
+            println!("Error: {err}")
+        }
+    }
+}
+
 fn daemonize(listener: StdUnixListener) -> io::Result<()> {
-    unsafe {
-        let pid = fork_fn(listener, |listener| {
-            fork_fn(listener, |listener| {
-                println!("starting sidecar, pid: {}", getpid());
-                if let Err(err) = enter_listener_loop(listener) {
-                    println!("Error: {err}")
-                }
-            })
-            .ok();
-        })?;
-        waitpid(Pid::from_raw(pid), None)?;
-    };
+    // TODO: allow passing presaved environment
+    let child = unsafe { spawn_worker::SpawnWorker::new() }
+        .pass_fd(listener)
+        .stdin(Stdio::Null)
+        .daemonize(true)
+        .target(entrypoint!(daemon_entry_point))
+        .spawn()
+        .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+
+    child
+        .wait()
+        .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+
     Ok(())
 }
 

@@ -13,3 +13,5 @@ io-lifetimes = { version = "1.0" }
 [build-dependencies]
 cc_utils = { path = "../tools/cc_utils" }
 
+[target.'cfg(not(windows))'.dev-dependencies]
+rlimit = {version = "0.8"}

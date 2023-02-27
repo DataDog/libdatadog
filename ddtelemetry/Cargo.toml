@@ -29,6 +29,8 @@ tracing-subscriber = {version="0.3", default-features = false, features = ["std"
 uuid = {version = "0.8.2", features = ["v4"]}
 io-lifetimes = { version = "0.7" }
 
+spawn_worker = { path = "../spawn_worker" }
+
 [features]
 default = []
 
@@ -53,6 +55,3 @@ criterion = "0.3"
 libc = {version = "0.2"}
 nix = {version = "0.24", features = ["fs", "socket"]}
 sendfd = {version = "0.4", features = ["tokio"]}
-
-[target.'cfg(not(windows))'.dev-dependencies]
-rlimit = {version = "0.8"}

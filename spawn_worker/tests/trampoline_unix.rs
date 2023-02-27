@@ -7,37 +7,31 @@ use std::{
     io::{Read, Seek},
 };
 
-use io_lifetimes::OwnedFd;
 use nix::sys::wait::WaitStatus;
-use spawn_worker::spawn::*;
+use spawn_worker::{SpawnWorker, Stdio, Target};
 
-fn rewind_and_read_fd(fd: OwnedFd) -> anyhow::Result<String> {
-    let mut file = File::try_from(fd)?;
+fn rewind_and_read(file: &mut File) -> anyhow::Result<String> {
     file.rewind()?;
     let mut buf = String::new();
     file.read_to_string(&mut buf).unwrap();
-
     Ok(buf)
 }
 
 #[test]
 fn test_spawning_trampoline_worker() {
-    let stdout = tempfile::tempfile().unwrap();
-    let stderr = tempfile::tempfile().unwrap();
+    let mut stdout = tempfile::tempfile().unwrap();
+    let mut stderr = tempfile::tempfile().unwrap();
 
-    let mut child = unsafe { SpawnCfg::new() }
+    let child = unsafe { SpawnWorker::new() }
         .target(Target::Manual(
             CString::new("__dummy_mirror_test").unwrap(),
             CString::new("symbol_name").unwrap(),
         ))
-        .stdin(File::open("/dev/null").unwrap())
-        .stdout(stdout)
-        .stderr(stderr)
+        .stdin(Stdio::Null)
+        .stdout(stdout.try_clone().unwrap())
+        .stderr(stderr.try_clone().unwrap())
         .spawn()
         .unwrap();
-
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
 
     //wait for process exit
     let status = child.wait().unwrap();
@@ -46,13 +40,13 @@ fn test_spawning_trampoline_worker() {
         WaitStatus::Exited(_, s) => assert_eq!(0, s),
 
         others => {
-            eprintln!("{}", rewind_and_read_fd(stderr).unwrap());
+            eprintln!("{}", rewind_and_read(&mut stderr).unwrap());
             panic!("unexpected exit status = {others:?}")
         }
     }
 
     assert_eq!(
         "__dummy_mirror_test symbol_name",
-        rewind_and_read_fd(stdout).unwrap()
+        rewind_and_read(&mut stdout).unwrap()
     );
 }
