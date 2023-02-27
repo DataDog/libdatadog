@@ -1,7 +1,7 @@
 use std::{
     os::{
         fd::{AsRawFd, FromRawFd, IntoRawFd},
-        unix::net::UnixListener,
+        unix::net::UnixListener as StdUnixListener,
     },
     path::PathBuf,
     thread,
@@ -10,16 +10,27 @@ use std::{
 
 use ddtelemetry::ipc::setup::Liaison;
 use spawn_worker::{entrypoint, Stdio};
+use tokio::net::{UnixListener, UnixStream};
+
+use crate::mini_agent;
 
 #[no_mangle]
 pub extern "C" fn sidecar_entrypoint() {
-    eprintln!("ehlo mah dudes");
     if let Some(fd) = spawn_worker::recv_passed_fd() {
-        let listener = UnixListener::try_from(fd).unwrap();
-    }
+        let listener = StdUnixListener::try_from(fd).unwrap();
 
-    thread::sleep(Duration::from_secs(100));
-    eprintln!("bye");
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _rt_guard = rt.enter();
+        listener.set_nonblocking(true).unwrap();
+        let listener = UnixListener::from_std(listener).unwrap();
+
+        let server_future = mini_agent::main(listener);
+
+        rt.block_on(server_future).unwrap();
+    }
 }
 
 pub(crate) unsafe fn maybe_start() -> anyhow::Result<PathBuf> {

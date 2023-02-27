@@ -15,8 +15,15 @@ spawn_worker = {path = "../spawn_worker"}
 
 # mini agent deps
 bytes = {version = "1.4"}
-hyper = {version = "0.14", features = ["full"]}
-tokio = {version = "1.25", features = ["full"]}
 http-body-util = {version = "0.1.0-rc.2"}
-futures-util = {version = "0.3"}
+hyper = {version = "0.14", features = ["full"]}
+hyperlocal = {version = "0.8", features = ["server"]}
+pin-project = {version = "1.0"}
 pretty_env_logger = {version = "0.4"}
+tokio = {version = "1.25", features = ["full"]}
+serde = {version = "1.0" }
+rmp-serde = {version = "1.1"}
+serde_json = { version = "1.0" }
+
+[dev-dependencies]
+tokio-test = {version = "0.4"}

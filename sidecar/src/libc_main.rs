@@ -8,6 +8,8 @@ use ddtelemetry::ipc::sidecar::start_or_connect_to_sidecar;
 use nix::libc;
 use spawn_worker::ExecVec;
 
+use crate::sidecar::maybe_start;
+
 type StartMainFn = extern "C" fn(
     main: MainFn,
     argc: ffi::c_int,
@@ -93,12 +95,12 @@ unsafe extern "C" fn new_main(
     env.remove_entry(|e| e.starts_with("LD_PRELOAD=".as_bytes()));
     
     let mut env = env.into_exec_vec();
-    env.push(cstr!("DD_TRACE_URL=http://localhost:8126").to_owned());
+    let path = maybe_start().unwrap();
+    env.push(CString::new(format!("DD_TRACE_AGENT_URL=unix://{}", path.to_string_lossy())).unwrap());
+
 
     let old_environ = *environ(); 
     *environ() = env.as_ptr();
-
-    start_or_connect_to_sidecar();
 
     let rv = match unsafe { ORIGINAL_MAIN } {
         Some(f) => f(argc, argv, env.as_ptr()),
@@ -119,6 +121,7 @@ unsafe fn dlsym_fn(handle: *mut ffi::c_void, str: &CStr) -> Option<*mut ffi::c_v
     Some(std::mem::transmute(addr))
 }
 
+#[cfg(not(test))]
 #[no_mangle]
 pub extern "C" fn __libc_start_main(
     main: MainFn,
@@ -139,5 +142,3 @@ pub extern "C" fn __libc_start_main(
 }
 
 static mut ORIGINAL_MAIN: Option<MainFn> = None;
-
-static ENSURE_SIGNATURE_MATCHES: StartMainFn = __libc_start_main;
