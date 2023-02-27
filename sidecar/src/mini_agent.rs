@@ -2,11 +2,9 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use ddtelemetry::data::Payload;
-use hyper::body::HttpBody;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
-use hyperlocal::{SocketIncoming, UnixServerExt};
+
 use serde::{Deserialize, Serialize};
 use tokio::net::UnixListener;
 
@@ -123,7 +121,7 @@ mod tests {
         // where possible to avoid unnecessary allocations when processing incoming data
         //
         // note, serde borrow deserialization has some edgecases with nested types
-        // best to check if things are actually borrowed here. 
+        // best to check if things are actually borrowed here.
         let span = &data_new.traces[0].spans[0];
 
         // Option<Cow> is not borrowed by default

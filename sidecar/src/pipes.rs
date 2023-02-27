@@ -2,13 +2,11 @@ use std::{
     fs::File,
     io::{Read, Write},
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
-    process::{Command, Stdio},
-    ptr::null_mut,
     thread::{self, JoinHandle},
     time::Duration,
 };
 
-use nix::{fcntl::OFlag, libc::STDOUT_FILENO};
+use nix::libc::STDOUT_FILENO;
 
 struct FileDesc(OwnedFd);
 
@@ -34,11 +32,8 @@ impl Read for FileDesc {
     }
 }
 
-extern "C" fn at_exit() {
-    eprintln!("exiting");
-}
-
-pub(crate) fn piping_poc() -> anyhow::Result<JoinHandle<()>> {
+/// check if we can hijack stdout and tee it to 2 targets
+pub fn piping_poc() -> anyhow::Result<JoinHandle<()>> {
     let (stdout_forwarder, new_stdout) = nix::unistd::pipe()?;
     let old_stdout = nix::unistd::dup(STDOUT_FILENO)?;
     nix::unistd::dup2(new_stdout, STDOUT_FILENO)?;
@@ -59,7 +54,7 @@ pub(crate) fn piping_poc() -> anyhow::Result<JoinHandle<()>> {
                 Err(er) => {
                     eprintln!("{}", er);
                     break;
-                },
+                }
             };
 
             if let Err(err) = file.write_all(&buf[0..read]) {

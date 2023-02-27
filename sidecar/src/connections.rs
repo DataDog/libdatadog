@@ -1,15 +1,13 @@
 use std::{
-    future::Future,
-    isize,
     sync::{
         atomic::{
-            AtomicIsize, AtomicUsize,
-            Ordering::{AcqRel, Acquire, Relaxed},
+            AtomicUsize,
+            Ordering::{Acquire, Relaxed},
         },
         Arc,
     },
     task::{ready, Poll},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use hyper::server::accept::Accept;
@@ -143,11 +141,12 @@ impl TrackerWatcher {
         let mut prev_count = self.count.load(Relaxed);
         let mut prev_time = tokio::time::Instant::now();
         loop {
-            if let Err(_) = timeout(min_duration_without_instances, self.notifier.notified()).await
+            if timeout(min_duration_without_instances, self.notifier.notified())
+                .await
+                .is_err()
+                && prev_count == 0
             {
-                if prev_count == 0 {
-                    return;
-                }
+                return;
             }
 
             let count = self.count.load(Acquire);
@@ -168,6 +167,5 @@ impl TrackerWatcher {
 mod tests {
 
     #[tokio::test]
-    async fn test_a(){
-    }
+    async fn test_a() {}
 }

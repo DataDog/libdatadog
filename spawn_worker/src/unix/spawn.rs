@@ -60,7 +60,7 @@ impl ExecVec {
         self.items.push(item);
     }
 
-    pub fn push_ptr(&mut self, item: *const libc::c_char){
+    pub fn push_ptr(&mut self, item: *const libc::c_char) {
         let l = self.ptrs.len();
         // replace previous trailing null with ptr to the item
         self.ptrs[l - 1] = item;

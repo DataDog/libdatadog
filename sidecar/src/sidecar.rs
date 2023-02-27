@@ -1,16 +1,11 @@
 use std::{
-    os::{
-        fd::{AsRawFd, FromRawFd, IntoRawFd},
-        unix::net::UnixListener as StdUnixListener,
-    },
+    os::{fd::AsRawFd, unix::net::UnixListener as StdUnixListener},
     path::PathBuf,
-    thread,
-    time::Duration,
 };
 
 use ddtelemetry::ipc::setup::Liaison;
 use spawn_worker::{entrypoint, Stdio};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::net::UnixListener;
 
 use crate::mini_agent;
 
@@ -33,6 +28,7 @@ pub extern "C" fn sidecar_entrypoint() {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) unsafe fn maybe_start() -> anyhow::Result<PathBuf> {
     let liaison = ddtelemetry::ipc::setup::SharedDirLiaison::new_tmp_dir();
     if let Some(listener) = liaison.attempt_listen()? {

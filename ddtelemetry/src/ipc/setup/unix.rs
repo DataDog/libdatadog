@@ -94,7 +94,7 @@ impl SharedDirLiaison {
     }
 
     pub fn path(&self) -> &Path {
-        &self.socket_path.as_path()
+        self.socket_path.as_path()
     }
 }
 
