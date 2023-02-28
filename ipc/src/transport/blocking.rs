@@ -7,20 +7,20 @@ use std::{
     os::unix::net::UnixStream,
     pin::Pin,
     sync::{atomic::AtomicU64, Arc},
-    time::{Duration, SystemTime},
+    time::{Duration},
 };
 
 use bytes::{BufMut, BytesMut};
 use serde::{Deserialize, Serialize};
-use tarpc::{context::{self, Context}, trace, Response, ClientMessage, Request};
+use tarpc::{context::{Context}, Response, ClientMessage, Request};
 
-use tokio_serde::{Deserializer, Serializer, formats::MessagePack};
+use tokio_serde::{Deserializer, Serializer};
 
-use tokio_serde::formats::Json;
+
 use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 
 use crate::{
-    handles::{HandlesTransport, TransferHandles},
+    handles::{TransferHandles},
     platform::{Channel, Message},
 };
 

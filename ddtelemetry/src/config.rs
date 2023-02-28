@@ -187,7 +187,7 @@ impl Config {
 
 #[cfg(test)]
 mod test {
-    use ddcommon::{connector::uds, Endpoint};
+    use ddcommon::{connector::uds};
 
     use super::Config;
 

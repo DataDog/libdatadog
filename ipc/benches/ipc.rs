@@ -2,7 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use ddtelemetry::ipc::example_interface::{
+use datadog_ipc::example_interface::{
     ExampleInterfaceRequest, ExampleInterfaceResponse, ExampleServer, ExampleTransport,
 };
 use std::{

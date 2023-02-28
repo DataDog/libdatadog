@@ -16,7 +16,7 @@ use tokio::net::UnixStream;
 
 use super::{
     platform::{AsyncChannel, PlatformHandle},
-    transport::{blocking::BlockingTransport, Transport}, handles::{HandlesTransport, TransferHandles},
+    transport::{blocking::BlockingTransport, Transport},
 };
 
 #[tarpc::service]

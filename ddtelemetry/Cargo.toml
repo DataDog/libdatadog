@@ -21,7 +21,6 @@ regex = {version = "1"}
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
 spawn_worker = {path = "../spawn_worker"}
-dd-proc-macros = {path = "../tools/proc_macros"}
 sys-info = {version = "0.9.0"}
 tarpc = {path = "/home/pawel/repos/tarpc/tarpc", features = ["serde-transport"]}
 tokio = {version = "1.23", features = ["sync", "io-util", "signal"]}
@@ -36,16 +35,7 @@ uuid = {version = "0.8.2", features = ["v4"]}
 [features]
 default = []
 
-[[example]]
-name = "tm-worker-test"
-required-features = ["tracing", "tracing-subscriber"]
-
-[[bench]]
-harness = false
-name = "ipc"
-
 [dev-dependencies]
-criterion = "0.3"
 libc = {version = "0.2"}
 pretty_assertions = "*"
 tempfile = {version = "3.3"}

@@ -1,9 +1,9 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use libc::{c_char, dup, strerror, O_APPEND, O_CREAT, O_RDONLY, O_WRONLY};
+use libc::{c_char};
 use spawn_worker::{entrypoint, getpid, Stdio};
-use std::ffi::CStr;
+
 use std::fs;
 use std::os::unix::net::UnixListener as StdUnixListener;
 use std::sync::Mutex;

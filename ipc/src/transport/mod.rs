@@ -13,7 +13,7 @@ use std::{
 // TODO keep Json for now, however MessagePack seems to fail at deserialization 
 
 use pin_project::pin_project;
-use tokio_serde::formats::{Json, MessagePack};
+use tokio_serde::formats::{Json};
 
 use tokio_serde::Framed as SerdeFramed;
 

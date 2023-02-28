@@ -18,6 +18,7 @@ tokio-serde = {version = "0.8", features = ["messagepack", "json"]}
 tokio-util = {version = "0.6.9", features = ["codec"]}
 
 [dev-dependencies]
+criterion = "0.4"
 pretty_assertions = "*"
 tempfile = {version = "3.3"}
 tokio = {version = "1.23", features = ["macros", "rt-multi-thread", "rt", "tracing", "fs", "io-util"]}
@@ -29,3 +30,7 @@ spawn_worker = {path = "../spawn_worker"}
 libc = {version = "0.2"}
 nix = {version = "0.24", features = ["fs", "socket"]}
 sendfd = {version = "0.4", features = ["tokio"]}
+
+[[bench]]
+harness = false
+name = "ipc"

@@ -1,6 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use datadog_ipc::platform::PlatformHandle;
 use ddcommon_ffi as ffi;
 use std::{
     fs::File,
@@ -17,7 +18,6 @@ use ddtelemetry::{
         
         sidecar,
     },
-    mock_telemetry_target::{self, MockServer},
     worker::TelemetryActions,
 };
 use ffi::slice::AsBytes;
@@ -157,7 +157,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     ));
     try_c!(blocking::enqueue_actions(
         transport,
-        &instance_id,
+        instance_id,
         queue_id,
         vec![config_entry],
     ));
@@ -259,15 +259,6 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_end(
         vec![TelemetryActions::Stop],
     ));
 
-    MaybeError::None
-}
-
-#[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_mock_start(result: &mut *mut MockServer) -> MaybeError {
-    let server = try_c!(mock_telemetry_target::MockServer::start_random_local_port());
-
-    *result = Box::into_raw(Box::new(server));
     MaybeError::None
 }
 
