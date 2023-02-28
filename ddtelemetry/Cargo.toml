@@ -12,25 +12,24 @@ futures = {version = "0.3"}
 http = "0.2"
 hyper = {version = "0.14", features = ["client", "server"], default-features = false}
 lazy_static = {version = "1.4"}
-
 pin-project = "1"
+
+rand = "0.8.3"
 regex = {version = "1"}
-rmp-serde = {version = "0.15"}
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
-tarpc = { path = "/home/pawel/repos/tarpc/tarpc", features = ["serde-transport"]}
+spawn_worker = {path = "../spawn_worker"}
+dd-proc-macros = {path = "../tools/proc_macros"}
 sys-info = {version = "0.9.0"}
+tarpc = {path = "/home/pawel/repos/tarpc/tarpc", features = ["serde-transport"]}
 tokio = {version = "1.23", features = ["sync", "io-util", "signal"]}
-tokio-util = {version = "0.6.9", features = ["codec"]}
 tokio-serde = {version = "0.8", features = ["messagepack", "json"]}
-rand = "0.8.3"
+tokio-util = {version = "0.6.9", features = ["codec"]}
 
+io-lifetimes = {version = "0.7"}
 tracing = {version = "0.1", default-features = false, features = ["std"]}
-tracing-subscriber = {version="0.3", default-features = false, features = ["std", "fmt"]}
+tracing-subscriber = {version = "0.3", default-features = false, features = ["std", "fmt"]}
 uuid = {version = "0.8.2", features = ["v4"]}
-io-lifetimes = { version = "0.7" }
-
-spawn_worker = { path = "../spawn_worker" }
 
 [features]
 default = []
@@ -40,17 +39,17 @@ name = "tm-worker-test"
 required-features = ["tracing", "tracing-subscriber"]
 
 [[bench]]
-name = "ipc"
 harness = false
+name = "ipc"
 
 [dev-dependencies]
+criterion = "0.3"
 libc = {version = "0.2"}
 pretty_assertions = "*"
 tempfile = {version = "3.3"}
 tokio = {version = "1.23", features = ["macros", "rt-multi-thread", "rt", "tracing", "fs", "io-util"]}
 tracing = {version = "0.1"}
 tracing-subscriber = {version = "0.3.11"}
-criterion = "0.3"
 
 [target.'cfg(not(windows))'.dependencies]
 libc = {version = "0.2"}

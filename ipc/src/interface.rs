@@ -509,7 +509,7 @@ pub mod blocking {
 }
 
 mod transfer_handles_impl {
-    use crate::ipc::handles::{HandlesTransport, TransferHandles};
+    use crate::handles::{HandlesTransport, TransferHandles};
 
     use super::{TelemetryInterfaceRequest, TelemetryInterfaceResponse};
 

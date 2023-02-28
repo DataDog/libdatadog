@@ -10,7 +10,6 @@ use std::{
 };
 
 use futures::future::{pending, ready, Pending, Ready};
-use serde::Serialize;
 use tarpc::{context::Context, server::Channel};
 use tokio::net::UnixStream;
 
@@ -95,13 +94,9 @@ impl ExampleInterface for ExampleServer {
 }
 
 
-#[derive(dd_proc_macros::TransferHandles, Serialize)]
-struct Blah {
-
-}
 
 mod handles_impl {
-    use crate::ipc::handles::{HandlesTransport, TransferHandles};
+    use crate::handles::{HandlesTransport, TransferHandles};
 
     use super::{ExampleInterfaceRequest, ExampleInterfaceResponse};
 
