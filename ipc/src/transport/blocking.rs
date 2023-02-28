@@ -7,20 +7,19 @@ use std::{
     os::unix::net::UnixStream,
     pin::Pin,
     sync::{atomic::AtomicU64, Arc},
-    time::{Duration},
+    time::Duration,
 };
 
 use bytes::{BufMut, BytesMut};
 use serde::{Deserialize, Serialize};
-use tarpc::{context::{Context}, Response, ClientMessage, Request};
+use tarpc::{context::Context, ClientMessage, Request, Response};
 
 use tokio_serde::{Deserializer, Serializer};
-
 
 use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 
 use crate::{
-    handles::{TransferHandles},
+    handles::TransferHandles,
     platform::{Channel, Message},
 };
 

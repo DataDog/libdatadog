@@ -1,9 +1,16 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use std::{sync::atomic::{AtomicU64, Ordering}, time::{SystemTime}};
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::SystemTime,
+};
 
-use ddtelemetry::{data::{self, Telemetry, AppStarted, Application}, build_host, config::Config};
+use ddtelemetry::{
+    build_host,
+    config::Config,
+    data::{self, AppStarted, Application, Telemetry},
+};
 use http::header::CONTENT_TYPE;
 
 fn build_app_started_payload() -> AppStarted {
@@ -18,7 +25,6 @@ fn seq_id() -> u64 {
     static SEQ_ID: AtomicU64 = AtomicU64::new(0);
     SEQ_ID.fetch_add(1, Ordering::SeqCst)
 }
-
 
 fn build_request<'a>(
     application: &'a data::Application,
@@ -63,7 +69,6 @@ pub async fn push_telemetry(telemetry: &Telemetry<'_>) -> anyhow::Result<()> {
 // Simple worker that sends app-started telemetry request to the backend then exits
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-
     let app = Application::new_rust_app();
     let host = build_host();
     let payload = build_app_started_payload();

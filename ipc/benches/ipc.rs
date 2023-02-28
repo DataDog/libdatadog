@@ -31,11 +31,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     transport.set_nonblocking(false).unwrap();
 
     c.bench_function("write only interface", |b| {
-        b.iter(|| {
-            transport
-                .send(ExampleInterfaceRequest::Notify {})
-                .unwrap()
-        })
+        b.iter(|| transport.send(ExampleInterfaceRequest::Notify {}).unwrap())
     });
 
     c.bench_function("two way interface", |b| {

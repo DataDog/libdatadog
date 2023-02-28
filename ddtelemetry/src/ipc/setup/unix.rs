@@ -80,7 +80,7 @@ impl Liaison for SharedDirLiaison {
 
     fn ipc_per_process() -> Self {
         //TODO: implement per pid handling
-        Self::new_tmp_dir() 
+        Self::new_tmp_dir()
     }
 }
 

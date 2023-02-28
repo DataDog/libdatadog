@@ -15,7 +15,6 @@ use ddtelemetry::{
             blocking::{self, TelemetryTransport},
             InstanceId, QueueId, RuntimeMeta,
         },
-        
         sidecar,
     },
     worker::TelemetryActions,
@@ -306,12 +305,11 @@ mod test_c_sidecar {
         writeln!(file, "test").unwrap_err(); // file is closed, so write returns an error
     }
 
-
     #[test]
     #[ignore] // run all tests that can fork in a separate run, to avoid any race conditions with default rust test harness
     fn test_ddog_sidecar_connection() {
         set_sidecar_per_process();
-        
+
         let mut transport = std::ptr::null_mut();
         assert_eq!(ddog_sidecar_connect(&mut transport), MaybeError::None);
         let mut transport = unsafe { Box::from_raw(transport) };

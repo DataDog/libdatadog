@@ -3,13 +3,9 @@
 #![allow(clippy::mutex_atomic)]
 #![allow(clippy::nonminimal_bool)]
 
-
-
 use ddcommon::container_id;
 
-use self::{
-    config::Config,
-};
+use self::config::Config;
 pub mod config;
 pub mod data;
 pub mod info;

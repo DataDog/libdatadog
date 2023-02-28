@@ -13,7 +13,6 @@ use futures::future::{pending, ready, Pending, Ready};
 use tarpc::{context::Context, server::Channel};
 use tokio::net::UnixStream;
 
-
 use super::{
     platform::{AsyncChannel, PlatformHandle},
     transport::{blocking::BlockingTransport, Transport},
@@ -92,8 +91,6 @@ impl ExampleInterface for ExampleServer {
         ready(self.stored_files.lock().unwrap().pop())
     }
 }
-
-
 
 mod handles_impl {
     use crate::handles::{HandlesTransport, TransferHandles};

@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::Result;
 
-use datadog_ipc::{transport::Transport, platform::AsyncChannel};
+use datadog_ipc::{platform::AsyncChannel, transport::Transport};
 use futures::{
     future::{self, BoxFuture, Pending, Ready, Shared},
     FutureExt,
@@ -427,7 +427,7 @@ pub mod blocking {
 
     use datadog_ipc::transport::blocking::BlockingTransport;
 
-    use crate::{worker::TelemetryActions};
+    use crate::worker::TelemetryActions;
 
     use super::{
         InstanceId, QueueId, RuntimeMeta, TelemetryInterfaceRequest, TelemetryInterfaceResponse,
@@ -512,7 +512,7 @@ pub mod blocking {
 
 mod transfer_handles_impl {
 
-    use datadog_ipc::handles::{TransferHandles, HandlesTransport};
+    use datadog_ipc::handles::{HandlesTransport, TransferHandles};
 
     use super::{TelemetryInterfaceRequest, TelemetryInterfaceResponse};
 

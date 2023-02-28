@@ -30,9 +30,7 @@ fn test_blocking_client() {
 
     let mut transport = ExampleTransport::from(sock_b);
     transport.set_nonblocking(true).unwrap(); // sending one-way messages should be instantaineous, even if the RPC worker is not fully up
-    transport
-        .send(ExampleInterfaceRequest::Ping {})
-        .unwrap();
+    transport.send(ExampleInterfaceRequest::Ping {}).unwrap();
     transport.set_nonblocking(false).unwrap(); // write should still be quick, but we'll have to block waiting for RPC worker to come up
 
     transport
