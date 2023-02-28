@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::Result;
 
+use datadog_ipc::{transport::Transport, platform::AsyncChannel};
 use futures::{
     future::{self, BoxFuture, Pending, Ready, Shared},
     FutureExt,
@@ -21,7 +22,6 @@ use crate::{
     worker::{TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle},
 };
 
-use super::{platform::AsyncChannel, transport::Transport};
 #[tarpc::service]
 pub trait TelemetryInterface {
     async fn equeue_actions(
@@ -425,7 +425,9 @@ pub mod blocking {
         time::{Duration, Instant},
     };
 
-    use crate::{ipc::transport::blocking::BlockingTransport, worker::TelemetryActions};
+    use datadog_ipc::transport::blocking::BlockingTransport;
+
+    use crate::{worker::TelemetryActions};
 
     use super::{
         InstanceId, QueueId, RuntimeMeta, TelemetryInterfaceRequest, TelemetryInterfaceResponse,
@@ -509,7 +511,8 @@ pub mod blocking {
 }
 
 mod transfer_handles_impl {
-    use crate::ipc::handles::{HandlesTransport, TransferHandles};
+
+    use datadog_ipc::handles::{TransferHandles, HandlesTransport};
 
     use super::{TelemetryInterfaceRequest, TelemetryInterfaceResponse};
 

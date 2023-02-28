@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::ipc::interface::blocking::TelemetryTransport;
 use crate::ipc::interface::TelemetryServer;
-use crate::ipc::platform::Channel as IpcChannel;
+use datadog_ipc::platform::Channel as IpcChannel;
 
 use crate::ipc::setup::{self, Liaison};
 

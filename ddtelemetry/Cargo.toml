@@ -14,6 +14,8 @@ hyper = {version = "0.14", features = ["client", "server"], default-features = f
 lazy_static = {version = "1.4"}
 pin-project = "1"
 
+datadog-ipc = {path = "../ipc"}
+
 rand = "0.8.3"
 regex = {version = "1"}
 serde = {version = "1.0", features = ["derive"]}

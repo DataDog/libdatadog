@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::ipc::platform::{self, locks::FLock};
+use datadog_ipc::platform::{self, locks::FLock};
 
 /// Implementations of this interface must provide behavior repeatable across processes with the same version
 /// of library.
@@ -122,7 +122,7 @@ mod linux {
 
     use spawn_worker::getpid;
 
-    use crate::ipc::platform;
+    use datadog_ipc::platform;
 
     use super::Liaison;
 

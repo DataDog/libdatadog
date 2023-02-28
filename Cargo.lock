@@ -433,6 +433,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-ipc"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures",
+ "io-lifetimes 0.7.5",
+ "libc",
+ "nix 0.24.3",
+ "pin-project",
+ "pretty_assertions",
+ "rmp-serde",
+ "sendfd",
+ "serde",
+ "spawn_worker",
+ "tarpc",
+ "tempfile",
+ "tokio",
+ "tokio-serde",
+ "tokio-util 0.6.10",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "datadog-profiling"
 version = "2.0.0"
 dependencies = [
@@ -551,6 +575,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "criterion 0.3.6",
+ "datadog-ipc",
  "dd-proc-macros",
  "ddcommon",
  "futures",
@@ -979,29 +1004,6 @@ checksum = "1abeb7a0dd0f8181267ff8adc397075586500b81b28a73e8a0208b00fc170fb3"
 dependencies = [
  "libc",
  "windows-sys 0.45.0",
-]
-
-[[package]]
-name = "ipc"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "futures",
- "io-lifetimes 0.7.5",
- "libc",
- "nix 0.24.3",
- "pin-project",
- "pretty_assertions",
- "rmp-serde",
- "sendfd",
- "serde",
- "tarpc",
- "tempfile",
- "tokio",
- "tokio-serde",
- "tokio-util 0.6.10",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

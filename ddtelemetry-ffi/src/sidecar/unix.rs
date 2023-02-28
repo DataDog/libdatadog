@@ -14,7 +14,7 @@ use ddtelemetry::{
             blocking::{self, TelemetryTransport},
             InstanceId, QueueId, RuntimeMeta,
         },
-        platform::PlatformHandle,
+        
         sidecar,
     },
     mock_telemetry_target::{self, MockServer},

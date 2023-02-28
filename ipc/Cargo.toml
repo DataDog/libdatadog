@@ -1,6 +1,6 @@
 [package]
 edition = "2021"
-name = "ipc"
+name = "datadog-ipc"
 version = "0.1.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -23,6 +23,7 @@ tempfile = {version = "3.3"}
 tokio = {version = "1.23", features = ["macros", "rt-multi-thread", "rt", "tracing", "fs", "io-util"]}
 tracing = {version = "0.1"}
 tracing-subscriber = {version = "0.3.11"}
+spawn_worker = {path = "../spawn_worker"}
 
 [target.'cfg(not(windows))'.dependencies]
 libc = {version = "0.2"}
