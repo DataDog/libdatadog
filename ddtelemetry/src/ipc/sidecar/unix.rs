@@ -3,8 +3,9 @@
 
 use spawn_worker::{entrypoint, getpid, Stdio};
 
-use std::fs;
+use std::fs::{self, File};
 use std::os::unix::net::UnixListener as StdUnixListener;
+use std::process::Command;
 use std::sync::Mutex;
 use std::time::{self, Instant};
 use std::{
@@ -27,7 +28,7 @@ use datadog_ipc::platform::Channel as IpcChannel;
 
 use crate::ipc::setup::{self, Liaison};
 
-use super::config;
+use super::config::{self, Config};
 
 async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
     let counter = Arc::new(AtomicI32::new(0));
@@ -135,11 +136,31 @@ pub extern "C" fn daemon_entry_point() {
 
 fn daemonize(listener: StdUnixListener) -> io::Result<()> {
     // TODO: allow passing presaved environment
-    let child = unsafe { spawn_worker::SpawnWorker::new() }
+    let mut spawn_cfg = unsafe { spawn_worker::SpawnWorker::new() };
+    spawn_cfg
         .pass_fd(listener)
         .stdin(Stdio::Null)
         .daemonize(true)
-        .target(entrypoint!(daemon_entry_point))
+        .target(entrypoint!(daemon_entry_point));
+    let cfg = Config::get();
+    match cfg.log_method {
+        config::LogMethod::File(path) => {
+            let file = File::options()
+                .write(true)
+                .append(true)
+                .create(true)
+                .open(path)?;
+            spawn_cfg.stdout(Stdio::Fd(file.try_clone()?.into()));
+            spawn_cfg.stderr(Stdio::Fd(file.into()));
+        }
+        config::LogMethod::Disabled => {
+            spawn_cfg.stdout(Stdio::Null);
+            spawn_cfg.stdout(Stdio::Null);
+        }
+        _ => {}
+    }
+
+    let child = spawn_cfg
         .spawn()
         .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
 
