@@ -148,6 +148,7 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
             let file = File::options()
                 .write(true)
                 .append(true)
+                .truncate(false)
                 .create(true)
                 .open(path)?;
             spawn_cfg.stdout(Stdio::Fd(file.try_clone()?.into()));
