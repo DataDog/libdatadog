@@ -1,6 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+// Lint removed from stable clippy after rust 1.60 - this allow can be removed once we update rust version
+#![allow(clippy::needless_collect)]
 use std::{
     collections::HashMap,
     pin::Pin,
