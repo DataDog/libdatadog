@@ -11,7 +11,7 @@ members = [
     "ddtelemetry-ffi",
     "tools",
     "tools/cc_utils",
-    "tools/ld_preload_tester",
+    "tools/fork_safety_tester",
     "trace-normalization",
     "trace-obfuscation",
     "spawn_worker",
