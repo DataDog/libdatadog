@@ -12,9 +12,9 @@ use futures::{
     FutureExt,
 };
 
+use datadog_ipc::tarpc::{context::Context, server::Channel};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use datadog_ipc::tarpc::{context::Context, server::Channel};
 use tokio::net::UnixStream;
 
 use crate::{

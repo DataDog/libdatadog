@@ -33,7 +33,6 @@ mod tests {
             mock_client_file: Some(PathBuf::new()),
             telemetry_debug_logging_enabled: Some(true),
             endpoint: Some(FromEnv::build_endpoint("http://example.com", None).unwrap()),
-            ..ConfigBuilder::default()
         };
 
         let default_cfg = Config {
@@ -44,8 +43,8 @@ mod tests {
 
         let merged = builder.merge(default_cfg);
 
-        assert_eq!(merged.endpoint.is_some(), true);
-        assert_eq!(merged.telemetry_debug_logging_enabled, true);
-        assert_eq!(merged.mock_client_file.is_some(), true);
+        assert!(merged.endpoint.is_some());
+        assert!(merged.telemetry_debug_logging_enabled);
+        assert!(merged.mock_client_file.is_some());
     }
 }

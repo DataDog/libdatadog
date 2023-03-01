@@ -89,7 +89,7 @@ pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut TelemetryTransport)
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<TelemetryTransport>) -> MaybeError {
+pub extern "C" fn ddog_sidecar_ping(transport: &mut TelemetryTransport) -> MaybeError {
     try_c!(blocking::ping(transport));
 
     MaybeError::None
@@ -145,7 +145,7 @@ pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_drop(meta: Box<RuntimeMeta>) {
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     transport: &mut Box<TelemetryTransport>,
-    instance_id: &Box<InstanceId>,
+    instance_id: &InstanceId,
     queue_id: &QueueId,
     config_key: ffi::CharSlice,
     config_value: ffi::CharSlice,
@@ -167,7 +167,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
     transport: &mut Box<TelemetryTransport>,
-    instance_id: &Box<InstanceId>,
+    instance_id: &InstanceId,
     queue_id: &QueueId,
     dependency_name: ffi::CharSlice,
     dependency_version: ffi::CharSlice,
@@ -197,7 +197,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
     transport: &mut Box<TelemetryTransport>,
-    instance_id: &Box<InstanceId>,
+    instance_id: &InstanceId,
     queue_id: &QueueId,
     integration_name: ffi::CharSlice,
     integration_version: ffi::CharSlice,
@@ -228,7 +228,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
     transport: &mut Box<TelemetryTransport>,
-    instance_id: &Box<InstanceId>,
+    instance_id: &InstanceId,
     queue_id: &QueueId,
     runtime_meta: &RuntimeMeta,
     service_name: ffi::CharSlice,
@@ -248,7 +248,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_end(
     transport: &mut Box<TelemetryTransport>,
-    instance_id: &Box<InstanceId>,
+    instance_id: &InstanceId,
     queue_id: &QueueId,
 ) -> MaybeError {
     try_c!(blocking::enqueue_actions(
@@ -264,7 +264,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_end(
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_session_config_setAgentUrl(
-    transport: &mut Box<TelemetryTransport>,
+    transport: &mut TelemetryTransport,
     session_id: ffi::CharSlice,
     agent_url: ffi::CharSlice,
 ) -> MaybeError {
