@@ -105,7 +105,7 @@ macro_rules! try_c {
 pub(crate) use c_setters;
 pub(crate) use try_c;
 
-type MaybeError = ffi::Option<ffi::Vec<u8>>;
+pub type MaybeError = ffi::Option<ffi::Vec<u8>>;
 
 #[no_mangle]
 pub extern "C" fn ddog_MaybeError_drop(_: MaybeError) {}

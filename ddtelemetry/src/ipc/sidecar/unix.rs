@@ -1,7 +1,6 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use libc::c_char;
 use spawn_worker::{entrypoint, getpid, Stdio};
 
 use std::fs;
@@ -96,10 +95,6 @@ async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
     drop(shutdown_complete_tx);
     let _ = shutdown_complete_rx.recv().await;
     Ok(())
-}
-
-fn static_cstr(str: &'static [u8]) -> *const c_char {
-    str.as_ptr() as *const c_char
 }
 
 fn enter_listener_loop(listener: StdUnixListener) -> anyhow::Result<()> {

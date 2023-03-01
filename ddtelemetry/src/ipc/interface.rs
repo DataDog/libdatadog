@@ -14,13 +14,14 @@ use futures::{
 
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use tarpc::{context::Context, server::Channel};
+use datadog_ipc::tarpc::{context::Context, server::Channel};
 use tokio::net::UnixStream;
 
 use crate::{
     config::{Config, FromEnv, ProvideConfig},
     worker::{TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle},
 };
+use datadog_ipc::tarpc;
 
 #[tarpc::service]
 pub trait TelemetryInterface {
@@ -229,8 +230,8 @@ pub struct TelemetryServer {
 
 impl TelemetryServer {
     pub async fn accept_connection(self, socket: UnixStream) {
-        let server = tarpc::server::BaseChannel::new(
-            tarpc::server::Config {
+        let server = datadog_ipc::tarpc::server::BaseChannel::new(
+            datadog_ipc::tarpc::server::Config {
                 pending_response_buffer: 10000,
             },
             Transport::try_from(AsyncChannel::from(socket)).unwrap(),

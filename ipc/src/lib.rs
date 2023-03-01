@@ -5,3 +5,5 @@ pub mod platform;
 pub mod transport;
 
 pub mod example_interface;
+
+pub use tarpc;

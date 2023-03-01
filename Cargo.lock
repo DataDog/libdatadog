@@ -34,9 +34,9 @@ checksum = "2cb2f989d18dd141ab8ae82f64d1a8cdd37e0840f73a406896cf5e99502fab61"
 
 [[package]]
 name = "async-trait"
-version = "0.1.63"
+version = "0.1.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eff18d764974428cf3a9328e23fc5c986f5fbed46e6cd4cdf42544df5d297ec1"
+checksum = "1cd7fce9ba8c3c042128ce72d8b2ddbf3a05747efb67ea0313c635e10bda47a2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -491,7 +491,7 @@ dependencies = [
  "futures",
  "http",
  "hyper",
- "io-lifetimes 0.7.5",
+ "io-lifetimes 1.0.5",
  "lazy_static",
  "libc",
  "nix 0.24.3",
@@ -504,11 +504,10 @@ dependencies = [
  "serde_json",
  "spawn_worker",
  "sys-info",
- "tarpc",
  "tempfile",
  "tokio",
  "tokio-serde",
- "tokio-util 0.6.10",
+ "tokio-util 0.7.4",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -1745,6 +1744,7 @@ dependencies = [
 [[package]]
 name = "tarpc"
 version = "0.31.0"
+source = "git+https://github.com/pawelchcki/tarpc.git?branch=extend_rpc_with_streaming_msgs#e567304243b9ca2eb4aa03756200a3464dd72838"
 dependencies = [
  "anyhow",
  "fnv",
@@ -1767,6 +1767,7 @@ dependencies = [
 [[package]]
 name = "tarpc-plugins"
 version = "0.12.0"
+source = "git+https://github.com/pawelchcki/tarpc.git?branch=extend_rpc_with_streaming_msgs#e567304243b9ca2eb4aa03756200a3464dd72838"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2070,9 +2071,9 @@ checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
 name = "uuid"
-version = "0.8.2"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
+checksum = "1674845326ee10d37ca60470760d4288a6f80f304007d92e5c53bab78c9cfd79"
 dependencies = [
  "getrandom",
 ]
