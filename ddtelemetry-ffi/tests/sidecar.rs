@@ -5,7 +5,8 @@ use ddtelemetry_ffi::MaybeError;
 use std::{
     ffi::CString,
     fs::File,
-    io::Write, os::unix::prelude::{AsRawFd, FromRawFd},
+    io::Write,
+    os::unix::prelude::{AsRawFd, FromRawFd},
 };
 
 fn set_sidecar_per_process() {

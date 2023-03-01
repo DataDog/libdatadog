@@ -1,6 +1,5 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
-
 use criterion::{criterion_group, criterion_main, Criterion};
 use datadog_ipc::example_interface::{
     ExampleInterfaceRequest, ExampleInterfaceResponse, ExampleServer, ExampleTransport,
