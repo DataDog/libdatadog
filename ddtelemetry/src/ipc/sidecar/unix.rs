@@ -5,7 +5,7 @@ use spawn_worker::{entrypoint, getpid, Stdio};
 
 use std::fs::{self, File};
 use std::os::unix::net::UnixListener as StdUnixListener;
-use std::process::Command;
+
 use std::sync::Mutex;
 use std::time::{self, Instant};
 use std::{
