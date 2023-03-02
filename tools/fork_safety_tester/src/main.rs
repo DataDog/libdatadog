@@ -1,6 +1,6 @@
 use std::{
     env, io,
-    process::{Command, ExitStatus, Stdio, self},
+    process::{self, Command, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicIsize, AtomicUsize, Ordering},
         Arc,
@@ -16,30 +16,33 @@ use clap::Parser;
 
 use crate::perform::{perform_allocation, perform_dlopen, spawn_continous_action};
 
-
 extern "C" fn before_fork() {
-    eprintln!("forking!");
+    // eprintln!("forking!");
 }
 
 extern "C" fn after_fork_child() {
-    eprintln!("forking!");
+    // eprintln!("forking!");
 }
 
 extern "C" fn after_fork_parent() {
-    eprintln!("forking!");
+    // eprintln!("forking!");
 }
 
 fn main() {
     let cli = args::Cli::parse_from(std::env::args());
 
     let res = unsafe {
-        nix::libc::pthread_atfork(Some(before_fork), Some(after_fork_child), Some(after_fork_parent))
+        nix::libc::pthread_atfork(
+            Some(before_fork),
+            Some(after_fork_child),
+            Some(after_fork_parent),
+        )
     };
 
     if res != 0 {
         panic!("can't install pthread_atfork");
     }
-    
+
     match cli.command {
         args::Commands::ExecuteCmd(e) => {
             for id in 0..e.params.dl_open_threads {
@@ -76,12 +79,18 @@ fn main() {
                             .join()
                             .unwrap();
                         match res {
-                            Ok(e) if e.success() => {
-                                num_success.fetch_add(1, Ordering::Relaxed);
-                            }
-                            Ok(_) => {
-                                num_failures.fetch_add(1, Ordering::Relaxed);
-                            }
+                            Ok(status) => match status {
+                                spawn_worker::WaitStatus::Exited(_, code) => {
+                                    if code == 0 {
+                                        num_success.fetch_add(1, Ordering::Relaxed);
+                                    } else {
+                                        num_failures.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                }
+                                _ => {
+                                    num_errors.fetch_add(1, Ordering::Relaxed);
+                                }
+                            },
                             Err(_) => {
                                 num_errors.fetch_add(1, Ordering::Relaxed);
                             }

@@ -4,7 +4,7 @@ use nix::libc::RTLD_LAZY;
 
 
 pub fn perform_allocation_rust() {
-    let expected_size = 1 * 1024 * 1024;
+    let expected_size = 1024;
     let mut buffer = vec![0_u8; expected_size];
     buffer[0] = 0xff;
     buffer[expected_size - 1] = 0xff;
@@ -13,7 +13,7 @@ pub fn perform_allocation_rust() {
 
 pub fn perform_allocation() {
     unsafe {
-        let res = nix::libc::malloc(1*1024);
+        let res = nix::libc::malloc(1*10000);
         nix::libc::free(res);
     }
 }

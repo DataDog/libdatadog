@@ -721,6 +721,7 @@ dependencies = [
  "log",
  "nix 0.26.2",
  "num_cpus",
+ "spawn_worker",
 ]
 
 [[package]]
