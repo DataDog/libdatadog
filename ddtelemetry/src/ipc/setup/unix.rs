@@ -112,8 +112,6 @@ mod linux {
         path::PathBuf,
     };
 
-    use spawn_worker::getpid;
-
     use crate::ipc::platform;
 
     use super::Liaison;
@@ -146,7 +144,7 @@ mod linux {
         pub fn ipc_in_process() -> Self {
             let path = PathBuf::from(format!(
                 concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".{}.sock"),
-                getpid()
+                nix::unistd::getpid().as_raw()
             ));
             Self { path }
         }

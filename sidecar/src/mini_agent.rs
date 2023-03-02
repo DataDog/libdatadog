@@ -16,6 +16,7 @@ pub struct Span<'a> {
     service: Option<Cow<'a, str>>,
     #[serde(borrow)]
     name: Cow<'a, str>,
+    #[serde(borrow)]
     resource: Cow<'a, str>,
     trace_id: u64,
     span_id: u64,

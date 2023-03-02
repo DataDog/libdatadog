@@ -70,7 +70,7 @@ pub mod tests {
         },
     };
 
-    use crate::{assert_child_exit, fork::set_default_child_panic_handler, getpid};
+    use crate::{assert_child_exit, fork::set_default_child_panic_handler};
 
     #[test]
     #[ignore]
@@ -88,13 +88,13 @@ pub mod tests {
                     let mut sock_b = UnixStream::from_raw_fd(sock_b);
 
                     sock_b
-                        .write_all(format!("child-{}", getpid()).as_bytes())
+                        .write_all(format!("child-{}", nix::unistd::getpid().as_raw()).as_bytes())
                         .unwrap();
                 },
             )
         }
         .unwrap();
-        assert_ne!(pid, getpid());
+        assert_ne!(pid, nix::unistd::getpid().as_raw());
         unsafe {
             // Free unused socket
             OwnedFd::from_raw_fd(sock_b.as_raw_fd());

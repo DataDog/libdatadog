@@ -1,19 +1,16 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
-#![cfg(unix)]
 
 #[cfg(target_os = "linux")]
 mod linux {
     use std::io::{Seek, Write};
 
-    use crate::TRAMPOLINE_BIN;
-
     pub(crate) fn write_trampoline() -> anyhow::Result<memfd::Memfd> {
         let opts = memfd::MemfdOptions::default();
         let mfd = opts.create("spawn_worker_trampoline")?;
 
-        mfd.as_file().set_len(TRAMPOLINE_BIN.len() as u64)?;
-        mfd.as_file().write_all(TRAMPOLINE_BIN)?;
+        mfd.as_file().set_len(crate::trampoline::TRAMPOLINE_BIN.len() as u64)?;
+        mfd.as_file().write_all(crate::trampoline::TRAMPOLINE_BIN)?;
         mfd.as_file().rewind()?;
 
         Ok(mfd)
@@ -35,38 +32,8 @@ use io_lifetimes::OwnedFd;
 use nix::{sys::wait::WaitStatus, unistd::Pid};
 
 use crate::fork::{fork, Fork};
+use crate::utils::ExecVec;
 use nix::libc;
-
-pub struct ExecVec {
-    items: Vec<CString>,
-    // Always NULL ptr terminated
-    ptrs: Vec<*const libc::c_char>,
-}
-
-impl ExecVec {
-    pub fn as_ptr(&self) -> *const *const libc::c_char {
-        self.ptrs.as_ptr()
-    }
-
-    pub fn empty() -> Self {
-        Self {
-            items: vec![],
-            ptrs: vec![std::ptr::null()],
-        }
-    }
-
-    pub fn push(&mut self, item: CString) {
-        self.push_ptr(item.as_ptr());
-        self.items.push(item);
-    }
-
-    pub fn push_ptr(&mut self, item: *const libc::c_char) {
-        let l = self.ptrs.len();
-        // replace previous trailing null with ptr to the item
-        self.ptrs[l - 1] = item;
-        self.ptrs.push(ptr::null());
-    }
-}
 
 fn write_to_tmp_file(data: &[u8]) -> anyhow::Result<tempfile::NamedTempFile> {
     let tmp_file = tempfile::NamedTempFile::new()?;
@@ -83,14 +50,14 @@ fn write_to_tmp_file(data: &[u8]) -> anyhow::Result<tempfile::NamedTempFile> {
 #[derive(Clone)]
 pub enum SpawnMethod {
     #[cfg(target_os = "linux")]
-    FdExec,
+    FdExecTrampoline,
     #[cfg(not(target_os = "macos"))]
-    LdPreload,
-    Exec,
+    LdPreloadTrampoline,
+    ExecTrampoline,
 }
 
 pub enum Target {
-    Entrypoint(crate::Entrypoint),
+    Entrypoint(crate::trampoline::Entrypoint),
     Manual(CString, CString),
     Noop,
 }
@@ -110,7 +77,7 @@ impl Target {
         let current_exec_path = env::current_exe()?;
         let current_exec_filename = current_exec_path.file_name().unwrap_or_default();
         #[cfg(target_os = "linux")]
-        let default_method = SpawnMethod::FdExec;
+        let default_method = SpawnMethod::FdExecTrampoline;
 
         #[cfg(not(target_os = "linux"))]
         let default_method = SpawnMethod::Exec;
@@ -137,9 +104,9 @@ impl Target {
 
         // simple heuristic that should cover most cases
         // if both executable path and target's entrypoint path end up having the same filenames
-        // then it means its not a shared library - and we need to load the trampoline us ld_preload
+        // then it means its not a shared library - and we need to load the trampoline using ld_preload
         if current_exec_filename == target_filename {
-            Ok(SpawnMethod::LdPreload)
+            Ok(SpawnMethod::LdPreloadTrampoline)
         } else {
             Ok(default_method)
         }
@@ -285,31 +252,31 @@ impl SpawnWorker {
     }
 
     fn do_spawn(&self) -> anyhow::Result<Option<libc::pid_t>> {
-        let mut argv = ExecVec::empty();
+        let mut argv = ExecVec::<0>::empty();
         // set argv[0] and process name shown eg in `ps`
         let process_name = CString::new(self.process_name.as_deref().unwrap_or("spawned_worker"))?;
-        argv.push(process_name);
+        argv.push_cstring(process_name);
 
         match &self.target {
             Target::Entrypoint(entrypoint) => {
                 let path = match unsafe {
-                    crate::get_dl_path_raw(entrypoint.ptr as *const libc::c_void)
+                    crate::utils::get_dl_path_raw(entrypoint.ptr as *const libc::c_void)
                 } {
                     (Some(path), _) => path,
-                    _ => return Err(anyhow::format_err!("can'taaa read symbol pointer data")),
+                    _ => return Err(anyhow::format_err!("can't read symbol pointer data")),
                 };
 
-                argv.push(path);
-                argv.push(entrypoint.symbol_name.clone());
+                argv.push_cstring(path);
+                argv.push_cstring(entrypoint.symbol_name.clone());
             }
             Target::Manual(path, symbol_name) => {
-                argv.push(path.clone());
-                argv.push(symbol_name.clone());
+                argv.push_cstring(path.clone());
+                argv.push_cstring(symbol_name.clone());
             }
             Target::Noop => return Ok(None),
         };
 
-        let mut envp = ExecVec::empty();
+        let mut envp = ExecVec::<0>::empty();
         for (k, v) in &self.env {
             // reserve space for '=' and final null
             let mut env_entry = OsString::with_capacity(k.len() + v.len() + 2);
@@ -319,7 +286,7 @@ impl SpawnWorker {
             env_entry.push(v);
 
             if let Ok(env_entry) = CString::new(env_entry.into_vec()) {
-                envp.push(env_entry);
+                envp.push_cstring(env_entry);
             }
         }
 
@@ -336,7 +303,7 @@ impl SpawnWorker {
             //  TODO: this method is not perfect, ideally we should create an anonymous socket pair
             //        then send any FDs through that socket pair. Ensuring no random spawned processes could leak
             let fd = src_fd.try_clone()?;
-            envp.push(CString::new(format!(
+            envp.push_cstring(CString::new(format!(
                 "{}={}",
                 crate::ENV_PASS_FD_KEY,
                 fd.as_raw_fd()
@@ -355,7 +322,6 @@ impl SpawnWorker {
         };
 
         // setup final spawn
-
         let spawn_method = match &self.spawn_method {
             Some(m) => m.clone(),
             None => self.target.detect_spawn_method()?,
@@ -364,7 +330,7 @@ impl SpawnWorker {
         // build and allocate final exec fn and its dependencies
         let spawn: Box<dyn Fn()> = match spawn_method {
             #[cfg(target_os = "linux")]
-            SpawnMethod::FdExec => {
+            SpawnMethod::FdExecTrampoline => {
                 let fd = linux::write_trampoline()?;
                 Box::new(move || {
                     // not using nix crate here, as it would allocate args after fork, which will lead to crashes on systems
@@ -375,8 +341,8 @@ impl SpawnWorker {
                 })
             }
             #[cfg(not(target_os = "macos"))]
-            SpawnMethod::LdPreload => {
-                let lib_path = write_to_tmp_file(crate::LD_PRELOAD_TRAMPOLINE_LIB)?
+            SpawnMethod::LdPreloadTrampoline => {
+                let lib_path = write_to_tmp_file(crate::trampoline::LD_PRELOAD_TRAMPOLINE_LIB)?
                     .into_temp_path()
                     .keep()?;
                 let env_prefix = "LD_PRELOAD=";
@@ -386,7 +352,7 @@ impl SpawnWorker {
 
                 ld_env.push(env_prefix);
                 ld_env.push(lib_path);
-                envp.push(CString::new(ld_env.into_vec())?);
+                envp.push_cstring(CString::new(ld_env.into_vec())?);
 
                 let path = CString::new(env::current_exe()?.to_str().ok_or_else(|| {
                     anyhow::format_err!("can't convert current executable file to correct path")
@@ -398,9 +364,9 @@ impl SpawnWorker {
                     panic!("{}", std::io::Error::last_os_error());
                 })
             }
-            SpawnMethod::Exec => {
+            SpawnMethod::ExecTrampoline => {
                 let path = CString::new(
-                    write_to_tmp_file(crate::TRAMPOLINE_BIN)?
+                    write_to_tmp_file(crate::trampoline::TRAMPOLINE_BIN)?
                         .into_temp_path()
                         .keep()? // ensure the file is not auto cleaned in parent process
                         .as_os_str()
@@ -454,7 +420,6 @@ pub struct Child {
 
 impl Child {
     pub fn wait(self) -> anyhow::Result<WaitStatus> {
-        // Command::spawn(&mut self);
         let pid = match self.pid {
             Some(pid) => Pid::from_raw(pid),
             None => return Ok(WaitStatus::Exited(Pid::from_raw(0), 0)),

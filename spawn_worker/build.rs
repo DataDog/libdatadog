@@ -5,16 +5,16 @@ pub use cc_utils::cc;
 
 fn main() {
     cc_utils::ImprovedBuild::new()
-        .file("src/trampoline.c")
+        .file("src/trampoline/exec.c")
         .warnings(true)
         .warnings_into_errors(true)
         .emit_rerun_if_env_changed(true)
-        .try_compile_executable("trampoline.bin")
+        .try_compile_executable("exec_trampoline.bin")
         .unwrap();
 
     if !cfg!(target_os = "windows") {
         cc_utils::ImprovedBuild::new()
-            .file("src/ld_preload_trampoline.c")
+            .file("src/trampoline/ld_preload.c")
             .warnings(true)
             .warnings_into_errors(true)
             .emit_rerun_if_env_changed(true)

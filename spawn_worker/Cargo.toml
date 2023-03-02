@@ -5,13 +5,17 @@ version = "0.0.1"
 
 [dependencies]
 anyhow = { version = "1.0" }
-memfd = { version = "0.6" }
-nix = { version = "0.26" }
 tempfile = { version = "3.3" }
 io-lifetimes = { version = "1.0" }
+smallvec = {version = "1.10", features = ["const_generics"]}
+
+[target.'cfg(not(windows))'.dependencies]
+nix = { version = "0.26" }
+memfd = { version = "0.6" }
+
 
 [build-dependencies]
 cc_utils = { path = "../tools/cc_utils" }
 
 [target.'cfg(not(windows))'.dev-dependencies]
-rlimit = {version = "0.8"}
+rlimit = {version = "0.9"}

@@ -8,7 +8,6 @@ use std::{
 };
 
 use io_lifetimes::OwnedFd;
-use spawn_worker::getpid;
 
 use crate::ipc::{
     handles::{HandlesTransport, TransferHandles},
@@ -31,7 +30,7 @@ impl Default for ChannelMetadata {
             fds_received: Default::default(),
             fds_acked: Default::default(),
             fds_to_close: Default::default(),
-            pid: getpid(),
+            pid: nix::unistd::getpid().as_raw(),
         }
     }
 }

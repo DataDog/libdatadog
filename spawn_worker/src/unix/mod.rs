@@ -5,12 +5,10 @@ use io_lifetimes::OwnedFd;
 use nix::libc;
 use std::{
     env,
-    ffi::{CStr, CString},
     os::unix::prelude::{FromRawFd, RawFd},
     path::PathBuf,
-    ptr,
 };
-
+pub mod utils;
 pub mod fork;
 
 mod spawn;
@@ -18,46 +16,7 @@ pub use spawn::*;
 
 // Reexport nix::WaitStatus
 pub use nix::sys::wait::WaitStatus;
-
-use crate::Entrypoint;
-
-/// returns the path of the library from which the symbol pointed to by *addr* was loaded from
-///
-/// # Safety
-/// addr must be a valid address accepted by dladdr(2)
-pub(crate) unsafe fn get_dl_path_raw(
-    addr: *const libc::c_void,
-) -> (Option<CString>, Option<CString>) {
-    let mut info = libc::Dl_info {
-        dli_fname: ptr::null(),
-        dli_fbase: ptr::null_mut(),
-        dli_sname: ptr::null(),
-        dli_saddr: ptr::null_mut(),
-    };
-    let res = libc::dladdr(addr, &mut info as *mut libc::Dl_info);
-
-    if res == 0 {
-        return (None, None);
-    }
-    let path_name = if info.dli_fbase.is_null() || info.dli_fname.is_null() {
-        None
-    } else {
-        Some(CStr::from_ptr(info.dli_fname).to_owned())
-    };
-
-    let symbol_name = if info.dli_saddr.is_null() || info.dli_sname.is_null() {
-        None
-    } else {
-        Some(CStr::from_ptr(info.dli_sname).to_owned())
-    };
-
-    (path_name, symbol_name)
-}
-
-/// Returns PID of current process
-pub fn getpid() -> libc::pid_t {
-    unsafe { libc::getpid() }
-}
+use crate::trampoline::Entrypoint;
 
 impl From<Entrypoint> for spawn::Target {
     fn from(entrypoint: Entrypoint) -> Self {
@@ -67,7 +26,7 @@ impl From<Entrypoint> for spawn::Target {
 
 impl Entrypoint {
     pub fn get_fs_path(&self) -> Option<PathBuf> {
-        let (path, _) = unsafe { get_dl_path_raw(self.ptr as *const libc::c_void) };
+        let (path, _) = unsafe { utils::get_dl_path_raw(self.ptr as *const libc::c_void) };
 
         Some(PathBuf::from(path?.to_str().ok()?.to_owned()))
     }

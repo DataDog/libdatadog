@@ -7,6 +7,7 @@ version = "0.1.0"
 crate-type = ["cdylib"]
 
 [dependencies]
+smallvec = {version = "1.10", features = ["const_generics"]}
 anyhow = {version = "1"}
 ddcommon = {path = "../ddcommon"}
 ddtelemetry = {path = "../ddtelemetry"}
