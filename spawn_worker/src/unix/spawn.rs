@@ -88,6 +88,8 @@ pub enum SpawnMethod {
 pub enum Target {
     Entrypoint(crate::Entrypoint),
     Manual(CString, CString),
+    // execute external executable
+    External(String, Vec<String>),
     Noop,
 }
 
@@ -122,6 +124,7 @@ impl Target {
                 .to_str()
                 .map(PathBuf::from)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)),
+            Target::External(_, _ ) => return Ok(SpawnMethod::Exec),
             Target::Noop => return Ok(default_method),
         }?;
         let target_filename = target_path.file_name().ok_or_else(|| {
@@ -302,6 +305,7 @@ impl SpawnWorker {
                 argv.push(path.clone());
                 argv.push(symbol_name.clone());
             }
+            Target::External(_,_ )=>{},
             Target::Noop => return Ok(None),
         };
 
@@ -358,9 +362,26 @@ impl SpawnWorker {
         };
 
         // build and allocate final exec fn and its dependencies
-        let spawn: Box<dyn Fn()> = match spawn_method {
+        let spawn: Box<dyn Fn()> = match (spawn_method, &self.target) {
+            (SpawnMethod::Exec, Target::External(cmd,args )) => {
+                let cmd = CString::new(cmd.as_bytes())?;
+
+                for arg in args {
+                    argv.push(CString::new(arg.as_bytes())?);
+                }
+
+                Box::new(move || {
+                    // not using nix crate here, to avoid allocations post fork
+                    unsafe { libc::execve(cmd.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
+                    // if we're here then exec has failed
+                    panic!("{}", std::io::Error::last_os_error());
+                })
+            }
+            (_, Target::External(_, _)) => {
+                return Err(anyhow::format_err!("unsupported combination of Target and SpawnMethod"));
+            }
             #[cfg(target_os = "linux")]
-            SpawnMethod::FdExec => {
+            (SpawnMethod::FdExec, _) => {
                 let fd = linux::write_trampoline()?;
                 Box::new(move || {
                     // not using nix crate here, as it would allocate args after fork, which will lead to crashes on systems
@@ -371,7 +392,7 @@ impl SpawnWorker {
                 })
             }
             #[cfg(not(target_os = "macos"))]
-            SpawnMethod::LdPreload => {
+            (SpawnMethod::LdPreload, _) => {
                 let lib_path = write_to_tmp_file(crate::LD_PRELOAD_TRAMPOLINE_LIB)?
                     .into_temp_path()
                     .keep()?;
@@ -394,7 +415,7 @@ impl SpawnWorker {
                     panic!("{}", std::io::Error::last_os_error());
                 })
             }
-            SpawnMethod::Exec => {
+            (SpawnMethod::Exec, _) => {
                 let path = CString::new(
                     write_to_tmp_file(crate::TRAMPOLINE_BIN)?
                         .into_temp_path()
@@ -450,7 +471,6 @@ pub struct Child {
 
 impl Child {
     pub fn wait(self) -> anyhow::Result<WaitStatus> {
-        // Command::spawn(&mut self);
         let pid = match self.pid {
             Some(pid) => Pid::from_raw(pid),
             None => return Ok(WaitStatus::Exited(Pid::from_raw(0), 0)),
