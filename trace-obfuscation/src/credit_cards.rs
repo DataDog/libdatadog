@@ -33,7 +33,7 @@ pub fn is_card_number(s: &str, validate_luhn: bool) -> bool {
     if is_valid_iin == FuzzyBool::True && validate_luhn {
         return luhn_valid(num_s.as_str());
     }
-    return is_valid_iin == FuzzyBool::True;
+    is_valid_iin == FuzzyBool::True
 }
 
 /// luhnValid checks that the number represented in the given string validates the Luhn Checksum algorithm.
@@ -52,7 +52,7 @@ fn luhn_valid(str: &str) -> bool {
     let mut nums = nums_res.unwrap();
     let given_digit = nums.pop().unwrap();
 
-    return calculate_luhn(nums) == given_digit;
+    calculate_luhn(nums) == given_digit
 }
 
 /// Calculate the luhn checksum from a given payload
@@ -68,11 +68,11 @@ fn calculate_luhn(payload: Vec<u32>) -> u32 {
                 dbl_x
             }
         } else {
-            val.clone()
+            *val
         };
         acc += x;
     }
-    return 10 - (acc % 10) % 10;
+    10 - (acc % 10) % 10
 }
 
 #[derive(Debug, PartialEq)]
@@ -145,7 +145,7 @@ fn valid_card_prefix(n: u32) -> FuzzyBool {
         };
     }
     // unknown IIN
-    return FuzzyBool::False;
+    FuzzyBool::False
 }
 
 #[cfg(test)]
@@ -268,9 +268,8 @@ mod tests {
             "   -  ",
         ];
         for invalid_card in invalid_cards {
-            assert_eq!(
-                is_card_number(invalid_card, false),
-                false,
+            assert!(
+                !is_card_number(invalid_card, false),
                 "invalid card '{}' was detected as valid",
                 invalid_card
             );
@@ -407,9 +406,8 @@ mod tests {
             "4001 0200 0000 0009",
         ];
         for valid_card in valid_cards {
-            assert_eq!(
+            assert!(
                 is_card_number(valid_card, false),
-                true,
                 "valid card '{}' was detected as invalid",
                 valid_card
             );
