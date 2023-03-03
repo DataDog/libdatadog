@@ -9,7 +9,8 @@ mod linux {
         let opts = memfd::MemfdOptions::default();
         let mfd = opts.create("spawn_worker_trampoline")?;
 
-        mfd.as_file().set_len(crate::trampoline::TRAMPOLINE_BIN.len() as u64)?;
+        mfd.as_file()
+            .set_len(crate::trampoline::TRAMPOLINE_BIN.len() as u64)?;
         mfd.as_file().write_all(crate::trampoline::TRAMPOLINE_BIN)?;
         mfd.as_file().rewind()?;
 
@@ -24,7 +25,6 @@ use std::{
     fs::Permissions,
     io::{Seek, Write},
     os::unix::prelude::{AsRawFd, OsStringExt, PermissionsExt},
-    ptr,
 };
 
 use io_lifetimes::OwnedFd;
@@ -395,12 +395,11 @@ impl SpawnWorker {
             match unsafe { fork()? } {
                 Fork::Parent(_) => {
                     std::process::exit(0);
-                },
+                }
                 Fork::Child => {
                     // put the child in a new session to reparent it to init and fully daemonize it
                     unsafe { libc::setsid() };
-                },
-
+                }
             }
         }
 

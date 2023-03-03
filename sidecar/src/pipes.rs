@@ -51,8 +51,7 @@ pub fn piping_poc() -> anyhow::Result<JoinHandle<()>> {
             let mut buf = [0; 1000];
             let read = match stdout_forwarder.read(&mut buf) {
                 Ok(s) => s,
-                Err(er) => {
-                    eprintln!("{}", er);
+                Err(_er) => {
                     break;
                 }
             };

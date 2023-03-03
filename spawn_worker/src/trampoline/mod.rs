@@ -30,7 +30,7 @@ macro_rules! entrypoint {
 
 #[cfg(test)]
 mod tests {
-    use crate::trampoline::{TRAMPOLINE_BIN, LD_PRELOAD_TRAMPOLINE_LIB};
+    use crate::trampoline::{LD_PRELOAD_TRAMPOLINE_LIB, TRAMPOLINE_BIN};
 
     #[test]
     fn test_trampolines_sizes() {

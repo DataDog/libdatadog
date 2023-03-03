@@ -63,9 +63,7 @@ pub unsafe fn dlsym<T>(handle: *mut libc::c_void, str: &CStr) -> Option<Symbol<T
 impl<T> ::std::ops::Deref for Symbol<T> {
     type Target = T;
     fn deref(&self) -> &T {
-        unsafe {
-            &*(&self.ptr as *const *mut _ as *const T)
-        }
+        unsafe { &*(&self.ptr as *const *mut _ as *const T) }
     }
 }
 
@@ -116,7 +114,7 @@ impl<const N: usize> ExecVec<N> {
         ptrs.push(std::ptr::null());
         Self {
             heap_items: SmallVec::new(),
-            ptrs: ptrs,
+            ptrs,
         }
     }
 
@@ -164,11 +162,11 @@ impl<'a> CListMutPtr<'a> {
         self.inner.as_ptr()
     }
 
-    /// Copies data into owned Vec<CString> 
-    /// 
+    /// Copies data into owned Vec<CString>
+    ///
     /// # Safety
-    /// 
-    /// caller must ensure the underlying pointer is safe to read and points to valid null teminated list 
+    ///
+    /// caller must ensure the underlying pointer is safe to read and points to valid null teminated list
     /// of c strings
     pub unsafe fn to_owned_vec(&self) -> Vec<CString> {
         let mut vec = Vec::with_capacity(self.elements);

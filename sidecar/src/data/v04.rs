@@ -1,7 +1,4 @@
-use std::{
-    borrow::{Borrow, Cow},
-    collections::HashMap,
-};
+use std::{borrow::Cow, collections::HashMap};
 
 use datadog_trace_protobuf::pb;
 use hyper::HeaderMap;
@@ -54,23 +51,24 @@ impl<'a> Payload<'a> {
 #[derive(Clone, Debug)]
 pub struct AssemblerBuilder {
     hostname: String,
-    env: String,
     tags: HashMap<String, String>,
 }
 
 impl Default for AssemblerBuilder {
     fn default() -> Self {
-        Self { hostname: "".into(), env: "".into(), tags: Default::default() } //TODO: read tags from env 
+        Self {
+            hostname: "".into(),
+            tags: Default::default(),
+        } //TODO: read tags from env
     }
 }
-
 
 impl AssemblerBuilder {
     fn val_from_header<'a>(headers: &'a HeaderMap, key: &str) -> Option<Cow<'a, str>> {
         headers
             .get(key)
             .and_then(|v| v.to_str().ok())
-            .map(|s| Cow::Borrowed(s))
+            .map(Cow::Borrowed)
     }
 
     pub fn with_headers<'a>(&'a self, headers: &'a HeaderMap) -> TracerPayloadAssembler<'a> {
@@ -79,8 +77,7 @@ impl AssemblerBuilder {
             language_name: Self::val_from_header(headers, "datadog-meta-lang"),
             language_version: Self::val_from_header(headers, "datadog-meta-lang-version"),
             tracer_version: Self::val_from_header(headers, "datadog-meta-tracer-version"),
-            env: Some(self.env.as_str().into()),
-            hostname: self.hostname.as_str().into(),
+            hostname: self.hostname.as_str(),
             tags: &self.tags,
         }
     }
@@ -91,7 +88,6 @@ pub struct TracerPayloadAssembler<'a> {
     language_name: Option<Cow<'a, str>>,
     language_version: Option<Cow<'a, str>>,
     tracer_version: Option<Cow<'a, str>>,
-    env: Option<Cow<'a, str>>,
     hostname: &'a str,
     tags: &'a HashMap<String, String>,
 }
@@ -118,16 +114,16 @@ impl<'a> From<Span<'a>> for pb::Span {
                 .iter()
                 .map(|(key, value)| (key.to_string(), *value))
                 .collect(),
-            r#type: "custom".into(),            // TODO: ?
+            r#type: "custom".into(),         // TODO: ?
             meta_struct: Default::default(), //TODO: ?
         }
     }
 }
 
 impl<'a> TracerPayloadAssembler<'a> {
-    fn allemble_chunk<'b>(&self, src: Trace<'b>) -> pb::TraceChunk {
+    fn allemble_chunk(&self, src: Trace) -> pb::TraceChunk {
         pb::TraceChunk {
-            priority: 1,       // TODO: ?
+            priority: 1,                     // TODO: ?
             origin: "sidecar-origin".into(), //TODO: ?
             spans: src.spans.into_iter().map(Into::into).collect(),
             tags: Default::default(),
@@ -135,7 +131,7 @@ impl<'a> TracerPayloadAssembler<'a> {
         }
     }
 
-    pub fn assemble_payload<'b>(&self, src: Payload<'b>) -> pb::TracerPayload {
+    pub fn assemble_payload(&self, src: Payload) -> pb::TracerPayload {
         let rt_id = src.find_top_meta("runtime-id");
         let env = src.find_top_meta("env"); //TODO override from settings
         let version = src.find_top_meta("version");
@@ -165,12 +161,15 @@ impl<'a> TracerPayloadAssembler<'a> {
             chunks: src
                 .traces
                 .into_iter()
-                .map(|t| (&self).allemble_chunk(t))
+                .map(|t| self.allemble_chunk(t))
                 .collect(),
             tags: self.tags.clone(),
             env: env.as_ref().map(ToString::to_string).unwrap_or_default(),
             hostname: self.hostname.to_owned(),
-            app_version: version.as_ref().map(ToString::to_string).unwrap_or_default(),
+            app_version: version
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_default(),
         }
     }
 }
@@ -202,12 +201,11 @@ impl<'a> From<&'a pb::Span> for Span<'a> {
             start: *start,
             duration: *duration,
             error: *error,
-            meta: meta.iter().map(|(k,v)| (k.as_str(), v.as_str())).collect(),
-            metrics: metrics.iter().map(|(k,v)| (k.as_str(), *v)).collect(),
+            meta: meta.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect(),
+            metrics: metrics.iter().map(|(k, v)| (k.as_str(), *v)).collect(),
         }
     }
 }
-
 
 impl<'a> From<&'a pb::TraceChunk> for Trace<'a> {
     fn from(value: &'a pb::TraceChunk) -> Self {

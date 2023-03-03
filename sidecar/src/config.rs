@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    env::{Vars, VarsOs},
-    str::FromStr,
-};
+use std::{collections::HashMap, str::FromStr};
 
 use hyper::http::uri::PathAndQuery;
 
@@ -43,16 +39,15 @@ impl Config {
         let api_key = self.src.get("DD_API_KEY");
         let serverless_preferred = !self.get_bool("DD_DISABLE_SERVERLESS").unwrap_or(false);
         let mut http_headers: HashMap<String, String> = HashMap::new();
-        eprintln!("\n\n {} {:?}", serverless_preferred, api_key);
 
         match (serverless_preferred, api_key) {
             (true, Some(api_key)) => {
                 http_headers.insert("DD-API-KEY".into(), api_key.into());
-                return TracingConfig {
+                TracingConfig {
                     url: "https://trace.agent.datadoghq.com/api/v0.2/traces".into(),
                     protocol: TracingProtocol::BackendProtobufV01,
                     http_headers,
-                };
+                }
             }
             _ => {
                 let agent_url = self
@@ -65,11 +60,11 @@ impl Config {
 
                 let url = hyper::Uri::from_parts(parts).unwrap().to_string();
 
-                return TracingConfig {
+                TracingConfig {
                     protocol: TracingProtocol::AgentV04,
                     url,
                     http_headers,
-                };
+                }
             }
         }
     }
@@ -83,7 +78,10 @@ impl Config {
     }
 
     pub fn get_str(&self, key: &str) -> Option<&str> {
-        self.src.get(key).map(|s| s.as_str()).filter(|s| *s != "")
+        self.src
+            .get(key)
+            .map(|s| s.as_str())
+            .filter(|s| !s.is_empty())
     }
 
     pub fn init() -> Self {

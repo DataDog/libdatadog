@@ -12,7 +12,7 @@ pub mod header {
     pub const DATADOG_API_KEY: &str = "DD-API-KEY";
 }
 
-#[cfg(feature="agent-connector")]
+#[cfg(feature = "agent-connector")]
 pub type HttpClient = hyper::Client<crate::connector::Connector, hyper::Body>;
 pub type HttpResponse = hyper::Response<hyper::Body>;
 pub type HttpRequestBuilder = hyper::http::request::Builder;

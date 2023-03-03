@@ -8,15 +8,15 @@ use std::{
     os::unix::prelude::{FromRawFd, RawFd},
     path::PathBuf,
 };
-pub mod utils;
 pub mod fork;
+pub mod utils;
 
 mod spawn;
 pub use spawn::*;
 
 // Reexport nix::WaitStatus
-pub use nix::sys::wait::WaitStatus;
 use crate::trampoline::Entrypoint;
+pub use nix::sys::wait::WaitStatus;
 
 impl From<Entrypoint> for spawn::Target {
     fn from(entrypoint: Entrypoint) -> Self {

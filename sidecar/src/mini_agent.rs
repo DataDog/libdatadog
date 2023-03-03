@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::error::Error;
 use std::future::Future;
@@ -9,7 +8,7 @@ use std::time::Duration;
 use datadog_trace_protobuf::pb::{AgentPayload, TracerPayload};
 use datadog_trace_protobuf::prost::Message;
 use ddcommon::HttpClient;
-use hyper::service::{make_service_fn, service_fn, Service};
+use hyper::service::Service;
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
 
 use tokio::net::UnixListener;
@@ -42,7 +41,7 @@ struct MiniAgent {
 impl MiniAgent {
     fn new(tx: Sender<TracerPayload>) -> Self {
         Self {
-            v04_handler: V04Handler::new(tx.clone()),
+            v04_handler: V04Handler::new(tx),
         }
     }
 }
@@ -60,7 +59,6 @@ impl Service<Request<Body>> for MiniAgent {
     }
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
-
         match (req.method(), req.uri().path()) {
             // exit, shutting down the subprocess process.
             (&Method::GET, "/exit") => {
@@ -69,15 +67,11 @@ impl Service<Request<Body>> for MiniAgent {
             // node.js does put while Go does POST whoa
             (&Method::POST | &Method::PUT, "/v0.4/traces") => {
                 let handler = self.v04_handler.clone();
-                eprintln!("I got a new connection!");
-
                 Box::pin(async move { handler.handle(req).await })
             }
 
             // Return the 404 Not Found for other routes.
             _ => Box::pin(async move {
-                eprintln!("I got a new connection oh no wtf ?! {:?}", req);
-
                 let mut not_found = Response::default();
                 *not_found.status_mut() = StatusCode::NOT_FOUND;
                 Ok(not_found)
@@ -112,7 +106,7 @@ impl<'t, Target> Service<&'t Target> for MiniAgentSpawner {
 
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    fn poll_ready(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(&mut self, _cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
 
@@ -138,7 +132,7 @@ impl Uploader {
         Self {
             tracing_config: cfg.tracing_config(),
             system_info: cfg.system_info(),
-            client: client,
+            client,
         }
     }
 
@@ -154,7 +148,9 @@ impl Uploader {
                 {
                     head_span.metrics.insert("_dd.agent_psr".into(), 1.0);
                     head_span.metrics.insert("_sample_rate".into(), 1.0);
-                    head_span.metrics.insert("_sampling_priority_v1".into(), 1.0);
+                    head_span
+                        .metrics
+                        .insert("_sampling_priority_v1".into(), 1.0);
                     head_span.metrics.insert("_top_level".into(), 1.0);
                 }
 
@@ -162,7 +158,7 @@ impl Uploader {
                     host_name: self.system_info.hostname.clone(),
                     env: self.system_info.env.clone(),
                     tracer_payloads: payloads,
-                    tags: tags, //TODO: parse DD_TAGS
+                    tags, //TODO: parse DD_TAGS
                     agent_version: "libdatadog".into(),
                     target_tps: 60.0,
                     error_tps: 60.0,
@@ -203,16 +199,9 @@ impl Uploader {
                 req_builder.body(data.into())?
             }
         };
-        eprintln!("\n\n\req: {:?}\n\n\n", req);
 
         let mut resp = self.client.request(req).await?;
-        let data = hyper::body::to_bytes(resp.body_mut()).await?;
-        eprintln!(
-            "\n\n\nresp: {:?} \n {}\n\n\n",
-            resp,
-            String::from_utf8(data.to_vec()).unwrap()
-        );
-
+        let _data = hyper::body::to_bytes(resp.body_mut()).await?;
         Ok(())
     }
 }
@@ -231,12 +220,12 @@ pub(crate) async fn main(listener: UnixListener) -> anyhow::Result<()> {
                 }
 
                 _ = interval.tick() => {
-                    if payloads.len() == 0 {
+                    if payloads.is_empty() {
                         continue
                     }
                     match uploader.submit(payloads.drain(..).collect()).await {
                         Ok(()) => {},
-                        Err(e) => {eprintln!("q-----------------------------------------\n{:?}\n", e)}
+                        Err(e) => {eprintln!("{:?}", e)}
                     }
                 }
             }

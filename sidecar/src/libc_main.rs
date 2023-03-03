@@ -1,9 +1,9 @@
-use std::ffi::{self, CStr, CString};
+use std::ffi::{self, CString};
 
 use ddcommon::cstr;
 use nix::libc;
-use smallvec::SmallVec;
-use spawn_worker::utils::{raw_env, CListMutPtr, ExecVec};
+
+use spawn_worker::utils::{raw_env, ExecVec};
 
 use crate::sidecar::maybe_start;
 
@@ -56,6 +56,9 @@ unsafe extern "C" fn new_main(
     rv
 }
 
+/// # Safety
+///
+/// This method is meant to only be called by the default elf entrypoing once the symbol is replaced by LD_PRELOAD
 #[no_mangle]
 pub unsafe extern "C" fn __libc_start_main(
     main: MainFn,
