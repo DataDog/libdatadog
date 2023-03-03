@@ -25,6 +25,7 @@ tokio = {version = "1.25", features = ["full"]}
 serde = {version = "1.0" }
 rmp-serde = {version = "1.1"}
 serde_json = { version = "1.0" }
+datadog-trace-protobuf = { path = "../trace-protobuf" }
 
 [dev-dependencies]
 tokio-test = {version = "0.4"}

@@ -4,7 +4,7 @@
 // Datadog, Inc.
 
 #![deny(clippy::all)]
+pub mod pb;
 
-pub mod pb {
-    include!("./pb/pb.rs");
-}
+// reexport prost;
+pub use prost;
