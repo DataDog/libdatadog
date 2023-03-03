@@ -34,7 +34,7 @@ impl Config {
     pub fn system_info(&self) -> SystemInfo {
         let hostname = self
             .get_str("DD_HOSTNAME")
-            .unwrap_or("localhost")
+            .unwrap_or("todohostname")
             .to_string(); // TODO: fetch host hostname
         let env = self.get_str("DD_ENV").unwrap_or("default").to_string(); // TODO: ?
         SystemInfo { hostname, env }

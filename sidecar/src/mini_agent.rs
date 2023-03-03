@@ -6,11 +6,11 @@ use std::pin::Pin;
 use std::task::Poll;
 use std::time::Duration;
 
-use datadog_trace_protobuf::pb::{TracerPayload, AgentPayload};
+use datadog_trace_protobuf::pb::{AgentPayload, TracerPayload};
 use datadog_trace_protobuf::prost::Message;
+use ddcommon::HttpClient;
 use hyper::service::{make_service_fn, service_fn, Service};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
-use ddcommon::HttpClient;
 
 use tokio::net::UnixListener;
 use tokio::sync::mpsc::Sender;
@@ -60,19 +60,24 @@ impl Service<Request<Body>> for MiniAgent {
     }
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
+
         match (req.method(), req.uri().path()) {
             // exit, shutting down the subprocess process.
             (&Method::GET, "/exit") => {
                 std::process::exit(0);
             }
-            (&Method::POST, "/v0.4/traces") => {
+            // node.js does put while Go does POST whoa
+            (&Method::POST | &Method::PUT, "/v0.4/traces") => {
                 let handler = self.v04_handler.clone();
+                eprintln!("I got a new connection!");
 
                 Box::pin(async move { handler.handle(req).await })
             }
 
             // Return the 404 Not Found for other routes.
             _ => Box::pin(async move {
+                eprintln!("I got a new connection oh no wtf ?! {:?}", req);
+
                 let mut not_found = Response::default();
                 *not_found.status_mut() = StatusCode::NOT_FOUND;
                 Ok(not_found)
@@ -121,8 +126,7 @@ impl<'t, Target> Service<&'t Target> for MiniAgentSpawner {
 struct Uploader {
     tracing_config: crate::config::TracingConfig,
     system_info: crate::config::SystemInfo,
-    client: HttpClient
-
+    client: HttpClient,
 }
 
 impl Uploader {
@@ -138,17 +142,30 @@ impl Uploader {
         }
     }
 
-    pub async fn submit(&self, payloads: Vec<TracerPayload>) -> anyhow::Result<()> {
+    pub async fn submit(&self, mut payloads: Vec<TracerPayload>) -> anyhow::Result<()> {
         let req = match self.tracing_config.protocol {
             crate::config::TracingProtocol::BackendProtobufV01 => {
+                let mut tags = HashMap::new();
+                tags.insert("some_tag".into(), "value".into());
+
+                for head_span in payloads
+                    .iter_mut()
+                    .flat_map(|f| f.chunks.iter_mut().flat_map(|t| t.spans.first_mut()))
+                {
+                    head_span.metrics.insert("_dd.agent_psr".into(), 1.0);
+                    head_span.metrics.insert("_sample_rate".into(), 1.0);
+                    head_span.metrics.insert("_sampling_priority_v1".into(), 1.0);
+                    head_span.metrics.insert("_top_level".into(), 1.0);
+                }
+
                 let payload = AgentPayload {
                     host_name: self.system_info.hostname.clone(),
                     env: self.system_info.env.clone(),
                     tracer_payloads: payloads,
-                    tags: HashMap::new(), //TODO: parse DD_TAGS
+                    tags: tags, //TODO: parse DD_TAGS
                     agent_version: "libdatadog".into(),
-                    target_tps: 100.0,
-                    error_tps: 100.0,
+                    target_tps: 60.0,
+                    error_tps: 60.0,
                 };
 
                 let mut req_builder = Request::builder()
@@ -156,40 +173,45 @@ impl Uploader {
                     .header("Content-Type", "application/x-protobuf")
                     .header("X-Datadog-Reported-Languages", "rust,TODO")
                     .uri(&self.tracing_config.url);
-                    
+
                 for (key, value) in &self.tracing_config.http_headers {
                     req_builder = req_builder.header(key, value);
                 }
                 let data = payload.encode_to_vec();
 
                 req_builder.body(data.into())?
-            },
+            }
             crate::config::TracingProtocol::AgentV04 => {
-                let data: Vec<v04::Trace> = payloads.iter().flat_map(|p| p.chunks.iter().map(|c| c.into())).collect();
-                let data = v04::Payload{
-                    traces: data,
-                };
+                let data: Vec<v04::Trace> = payloads
+                    .iter()
+                    .flat_map(|p| p.chunks.iter().map(|c| c.into()))
+                    .collect();
+                let data = v04::Payload { traces: data };
                 let data = serde_json::to_vec(&data)?;
-                // let data = rmp_serde::to_vec(&data)?;
 
+                // TODO: fix msgpack serialization
+                // let data = rmp_serde::to_vec(&data)?;
 
                 let mut req_builder = Request::builder()
                     .method(Method::POST)
                     .header("Content-Type", "application/json")
                     .uri(&self.tracing_config.url);
-                
+
                 for (key, value) in &self.tracing_config.http_headers {
                     req_builder = req_builder.header(key, value);
                 }
                 req_builder.body(data.into())?
-            },
+            }
         };
         eprintln!("\n\n\req: {:?}\n\n\n", req);
 
         let mut resp = self.client.request(req).await?;
         let data = hyper::body::to_bytes(resp.body_mut()).await?;
-        eprintln!("\n\n\nresp: {:?} \n {}\n\n\n", resp, String::from_utf8(data.to_vec()).unwrap());
-        
+        eprintln!(
+            "\n\n\nresp: {:?} \n {}\n\n\n",
+            resp,
+            String::from_utf8(data.to_vec()).unwrap()
+        );
 
         Ok(())
     }

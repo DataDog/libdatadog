@@ -392,8 +392,15 @@ impl SpawnWorker {
         }
 
         if self.daemonize {
-            if let Fork::Parent(_) = unsafe { fork()? } {
-                std::process::exit(0);
+            match unsafe { fork()? } {
+                Fork::Parent(_) => {
+                    std::process::exit(0);
+                },
+                Fork::Child => {
+                    // put the child in a new session to reparent it to init and fully daemonize it
+                    unsafe { libc::setsid() };
+                },
+
             }
         }
 
