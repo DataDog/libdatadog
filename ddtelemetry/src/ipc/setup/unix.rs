@@ -64,8 +64,6 @@ impl Liaison for SharedDirLiaison {
         if self.socket_path.exists() {
             // if socket is already listening, then creating listener is not available
             if platform::sockets::is_listening(&self.socket_path)? {
-                println!("already_listening");
-                // return Err(io::Error::new(io::ErrorKind::Other, "already listening"));
                 return Ok(None);
             }
             fs::remove_file(&self.socket_path)?;
@@ -94,6 +92,10 @@ impl SharedDirLiaison {
     pub fn new_tmp_dir() -> Self {
         Self::new(env::temp_dir().join("libdatadog"))
     }
+
+    pub fn path(&self) -> &Path {
+        self.socket_path.as_path()
+    }
 }
 
 impl Default for SharedDirLiaison {
@@ -109,8 +111,6 @@ mod linux {
         os::unix::net::{UnixListener, UnixStream},
         path::PathBuf,
     };
-
-    use spawn_worker::getpid;
 
     use crate::ipc::platform;
 
@@ -144,7 +144,7 @@ mod linux {
         pub fn ipc_in_process() -> Self {
             let path = PathBuf::from(format!(
                 concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".{}.sock"),
-                getpid()
+                nix::unistd::getpid().as_raw()
             ));
             Self { path }
         }

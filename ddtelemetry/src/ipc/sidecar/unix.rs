@@ -1,7 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use spawn_worker::{entrypoint, getpid, Stdio};
+use spawn_worker::{entrypoint, Stdio};
 use std::os::unix::net::UnixListener as StdUnixListener;
 use std::{
     io::{self},
@@ -88,7 +88,7 @@ pub extern "C" fn daemon_entry_point() {
     if let Some(fd) = spawn_worker::recv_passed_fd() {
         let listener: StdUnixListener = fd.into();
 
-        println!("starting sidecar, pid: {}", getpid());
+        println!("starting sidecar, pid: {}", nix::unistd::getpid().as_raw());
         if let Err(err) = enter_listener_loop(listener) {
             println!("Error: {err}")
         }
