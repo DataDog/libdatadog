@@ -16,3 +16,7 @@ criterion = "0.4"
 [[bench]]
 name = "replace_trace_tags_bench"
 harness = false
+
+[[bench]]
+name = "credit_cards_bench"
+harness = false

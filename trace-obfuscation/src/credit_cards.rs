@@ -12,52 +12,49 @@ pub fn is_card_number(s: &str, validate_luhn: bool) -> bool {
         return false;
     }
 
-    // Only valid characters are 0-9, space (" ") and dash("-")
-    let num_s = s.replace([' ', '-'], "");
-    if num_s.len() < 12 || num_s.len() > 16 {
-        return false;
+    let mut num_s = Vec::with_capacity(s.len());
+    for c in s.chars() {
+        // Only valid characters are 0-9, space (" ") and dash("-")
+        match c {
+            ' ' | '-' => continue,
+            _ => (),
+        };
+        if !c.is_numeric() {
+            return false;
+        }
+        num_s.push(c.to_digit(10).unwrap());
     }
-    if num_s.chars().any(|c| !c.is_numeric()) {
-        // Must be ALL digits
+    if num_s.len() < 12 || num_s.len() > 16 {
         return false;
     }
 
     let mut is_valid_iin = FuzzyBool::Maybe;
-    let mut cs = num_s.chars();
-    let mut prefix: u32 = cs.next().unwrap().to_digit(10).unwrap();
+    let mut cs = num_s.iter();
+    let mut prefix: u32 = *cs.next().unwrap();
     while is_valid_iin == FuzzyBool::Maybe {
         is_valid_iin = valid_card_prefix(prefix);
-        prefix = 10 * prefix + cs.next().unwrap().to_digit(10).unwrap();
+        prefix = 10 * prefix + cs.next().unwrap();
     }
 
     if is_valid_iin == FuzzyBool::True && validate_luhn {
-        return luhn_valid(num_s.as_str());
+        return luhn_valid(num_s.as_slice());
     }
     is_valid_iin == FuzzyBool::True
 }
 
-/// luhnValid checks that the number represented in the given string validates the Luhn Checksum algorithm.
-/// str must be non-empty, if any non-digits are found it will return false
+/// luhnValid checks that the number represented in the given vector validates the Luhn Checksum algorithm.
+/// nums must be non-empty
 ///
 /// See:
 /// https://en.wikipedia.org/wiki/Luhn_algorithm
-fn luhn_valid(str: &str) -> bool {
-    let nums_res: Result<Vec<u32>, &str> = str
-        .chars()
-        .map(|c| c.to_digit(10).ok_or("non digit found"))
-        .collect();
-    if nums_res.is_err() {
-        return false;
-    }
-    let mut nums = nums_res.unwrap();
-    let given_digit = nums.pop().unwrap();
-
-    calculate_luhn(nums) == given_digit
+fn luhn_valid(nums: &[u32]) -> bool {
+    let (given_digit, payload) = nums.split_last().unwrap();
+    calculate_luhn(payload) == *given_digit
 }
 
 /// Calculate the luhn checksum from a given payload
 /// Note that any existing checksum digit should already be removed from the payload provided
-fn calculate_luhn(payload: Vec<u32>) -> u32 {
+fn calculate_luhn(payload: &[u32]) -> u32 {
     let mut acc = 0;
     for (i, val) in payload.iter().rev().enumerate() {
         let x = if i % 2 == 0 {
@@ -416,7 +413,7 @@ mod tests {
 
     #[test]
     fn test_calculate_luhn() {
-        let actual = calculate_luhn(vec![7, 9, 9, 2, 7, 3, 9, 8, 7, 1]);
+        let actual = calculate_luhn(&[7, 9, 9, 2, 7, 3, 9, 8, 7, 1]);
         assert_eq!(actual, 3);
     }
 }
