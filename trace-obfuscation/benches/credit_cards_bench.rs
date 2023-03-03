@@ -1,3 +1,8 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0. This product includes software
+// developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
+// Datadog, Inc.
+
 use criterion::Throughput::Elements;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use datadog_trace_obfuscation::credit_cards::is_card_number;
