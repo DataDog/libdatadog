@@ -128,6 +128,11 @@ pub struct Sample<'a> {
     pub labels: Vec<Label<'a>>,
 }
 
+pub enum UpscalingInfo {
+    Poisson { x: usize, y: usize, threshold: i64 },
+    Proportional { total_sampled: i64, total_real: i64 },
+}
+
 pub struct Profile<'a> {
     pub duration: Duration,
     pub period: Option<(i64, ValueType<'a>)>,

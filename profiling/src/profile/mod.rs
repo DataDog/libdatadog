@@ -16,6 +16,8 @@ use pprof::{Function, Label, Line, Location, ValueType};
 use profiled_endpoints::ProfiledEndpointsStats;
 use prost::{EncodeError, Message};
 
+use self::api::UpscalingInfo;
+
 pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<rustc_hash::FxHasher>>;
 pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::FxHasher>>;
 
@@ -81,11 +83,26 @@ struct Sample {
     local_root_span_id_label_offset: Option<usize>,
 }
 
-struct UpscalingRules {
+struct UpscalingRule {
     values_offset: Vec<usize>,
     label_name: i64,
     label_value: i64,
-    ratio: f64,
+    upscaling_info: UpscalingInfo,
+}
+
+impl UpscalingRule {
+    pub fn compute_scale(&self, values: &[i64]) -> f64 {
+        match self.upscaling_info {
+            UpscalingInfo::Poisson { x, y, threshold } => {
+                let avg = (values[x] / values[y]) as f64;
+                1_f64 / (1_f64 - (-avg / threshold as f64).exp())
+            }
+            UpscalingInfo::Proportional {
+                total_sampled,
+                total_real,
+            } => total_real as f64 / total_sampled as f64,
+        }
+    }
 }
 
 pub struct Profile {
@@ -98,7 +115,7 @@ pub struct Profile {
     start_time: SystemTime,
     period: Option<(i64, ValueType)>,
     endpoints: Endpoints,
-    upscaling_rules: FxIndexMap<(i64, i64), Vec<UpscalingRules>>,
+    upscaling_rules: FxIndexMap<(i64, i64), Vec<UpscalingRule>>,
 }
 
 pub struct Endpoints {
@@ -505,7 +522,7 @@ impl Profile {
         offset_values: &[usize],
         label_name: &str,
         label_value: &str,
-        ratio: f64,
+        upscaling_info: UpscalingInfo,
     ) -> anyhow::Result<()> {
         let label_name_id = self.intern(label_name);
         let label_value_id = self.intern(label_value);
@@ -513,7 +530,6 @@ impl Profile {
         let mut new_values_offset = offset_values.to_vec();
         new_values_offset.sort_unstable();
 
-        // vectors are small ones
         fn is_overlapping(v1: &[usize], v2: &[usize]) -> bool {
             v1.iter().any(|x| v2.contains(x))
         }
@@ -535,11 +551,24 @@ impl Profile {
             self.sample_types.len()
         );
 
-        let rule = UpscalingRules {
+        anyhow::ensure!(
+            match upscaling_info {
+                UpscalingInfo::Poisson { x, y, threshold: _ } =>
+                    x < self.sample_types.len() && y < self.sample_types.len(),
+                UpscalingInfo::Proportional {
+                    total_sampled: _,
+                    total_real: _,
+                } => true,
+            },
+            "Upscaling info contains invalid offsets. Number of expected values: {}",
+            self.sample_types.len()
+        );
+
+        let rule = UpscalingRule {
             values_offset: new_values_offset,
             label_name: label_name_id,
             label_value: label_value_id,
-            ratio,
+            upscaling_info,
         };
 
         match self
@@ -644,7 +673,7 @@ impl Profile {
             let mut group_of_rules = labels
                 .iter()
                 .filter_map(|label| self.upscaling_rules.get(&(label.key, label.str)))
-                .collect::<Vec<&Vec<UpscalingRules>>>();
+                .collect::<Vec<&Vec<UpscalingRule>>>();
 
             // get byvalue rules if any
             if let Some(byvalue_rules) = self.upscaling_rules.get(&(0, 0)) {
@@ -667,9 +696,10 @@ impl Profile {
 
             group_of_rules.iter().for_each(|rules| {
                 rules.iter().for_each(|rule| {
-                    rule.values_offset
-                        .iter()
-                        .for_each(|offset| new_values[*offset] *= rule.ratio as i64)
+                    let scale = rule.compute_scale(values);
+                    rule.values_offset.iter().for_each(|offset| {
+                        new_values[*offset] = (new_values[*offset] as f64 * scale) as i64
+                    })
                 })
             });
         }
@@ -1338,9 +1368,13 @@ mod api_test {
 
         profile.add(sample1).expect("add to success");
 
+        let upscaling_info = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
         let values_offset: Vec<usize> = vec![0];
         profile
-            .add_upscaling_rules(values_offset.as_slice(), "", "", 2.0_f64)
+            .add_upscaling_rules(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
@@ -1379,9 +1413,13 @@ mod api_test {
 
         profile.add(sample1).expect("add to success");
 
+        let upscaling_info = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
         let values_offset: Vec<usize> = vec![0];
         profile
-            .add_upscaling_rules(values_offset.as_slice(), "", "", 2.0_f64)
+            .add_upscaling_rules(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
@@ -1391,6 +1429,52 @@ mod api_test {
         assert_eq!(first.values[0], 2);
         assert_eq!(first.values[1], 10000);
         assert_eq!(first.values[2], 42);
+    }
+
+    #[test]
+    fn test_upscaling_by_value_on_one_value_with_poisson() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "alloc-size",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "allo-count",
+                unit: "count",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 16, 4],
+            labels: vec![],
+        };
+
+        profile.add(sample1).expect("add to success");
+
+        let upscaling_info = UpscalingInfo::Poisson {
+            x: 1,
+            y: 2,
+            threshold: 10,
+        };
+        let values_offset: Vec<usize> = vec![0];
+        profile
+            .add_upscaling_rules(values_offset.as_slice(), "", "", upscaling_info)
+            .expect("Rule added");
+
+        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+
+        let first = serialized_profile.samples.get(0).expect("one sample");
+
+        assert_eq!(first.values[0], 3);
+        assert_eq!(first.values[1], 16);
+        assert_eq!(first.values[2], 4);
     }
 
     #[test]
@@ -1451,8 +1535,12 @@ mod api_test {
         // upscale the first value and the last one
         let values_offset: Vec<usize> = vec![0, 2];
 
+        let upscaling_info = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
         profile
-            .add_upscaling_rules(values_offset.as_slice(), "", "", 2.0_f64)
+            .add_upscaling_rules(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
@@ -1527,16 +1615,25 @@ mod api_test {
 
         let mut values_offset: Vec<usize> = vec![0];
 
+        let upscaling_info = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
         profile
-            .add_upscaling_rules(values_offset.as_slice(), "", "", 2.0_f64)
+            .add_upscaling_rules(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
         // add another byvaluerule on the 3rd offset
         values_offset.clear();
         values_offset.push(2);
 
+        let upscaling_info2 = UpscalingInfo::Proportional {
+            total_sampled: 3,
+            total_real: 15,
+        };
+
         profile
-            .add_upscaling_rules(values_offset.as_slice(), "", "", 5.0_f64)
+            .add_upscaling_rules(values_offset.as_slice(), "", "", upscaling_info2)
             .expect("Rule added");
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
@@ -1590,20 +1687,42 @@ mod api_test {
 
         let values_offset: Vec<usize> = vec![0];
 
+        let upscaling_info = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
         profile
-            .add_upscaling_rules(values_offset.as_slice(), "my label", "foobar", 2.0_f64)
+            .add_upscaling_rules(
+                values_offset.as_slice(),
+                "my label",
+                "foobar",
+                upscaling_info,
+            )
             .expect("Rule added");
 
+        let upscaling_info2 = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
         profile
-            .add_upscaling_rules(values_offset.as_slice(), "my other label", "coco", 2.0_f64)
+            .add_upscaling_rules(
+                values_offset.as_slice(),
+                "my other label",
+                "coco",
+                upscaling_info2,
+            )
             .expect("Rule added");
 
+        let upscaling_info3 = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
         profile
             .add_upscaling_rules(
                 values_offset.as_slice(),
                 "my other label",
                 "foobar",
-                2.0_f64,
+                upscaling_info3,
             )
             .expect("Rule added");
 
@@ -1650,13 +1769,17 @@ mod api_test {
 
         profile.add(sample1).expect("add to success");
 
+        let upscaling_info = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
         let values_offset: Vec<usize> = vec![0];
         profile
             .add_upscaling_rules(
                 values_offset.as_slice(),
                 id_label.key,
                 id_label.str.unwrap(),
-                2.0_f64,
+                upscaling_info,
             )
             .expect("Rule added");
 
@@ -1731,13 +1854,17 @@ mod api_test {
         profile.add(sample1).expect("add to success");
         profile.add(sample2).expect("add to success");
 
+        let upscaling_info = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
         let values_offset: Vec<usize> = vec![0];
         profile
             .add_upscaling_rules(
                 values_offset.as_slice(),
                 id_label.key,
                 id_label.str.unwrap(),
-                2.0_f64,
+                upscaling_info,
             )
             .expect("Rule added");
 
@@ -1833,17 +1960,25 @@ mod api_test {
         profile.add(sample2).expect("add to success");
 
         // add rule for the first sample on the 1st value
+        let upscaling_info = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
         let mut values_offset: Vec<usize> = vec![0];
         profile
             .add_upscaling_rules(
                 values_offset.as_slice(),
                 id_label.key,
                 id_label.str.unwrap(),
-                2.0_f64,
+                upscaling_info,
             )
             .expect("Rule added");
 
         // add rule for the second sample on the 3rd value
+        let upscaling_info2 = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 20,
+        };
         values_offset.clear();
         values_offset.push(2);
         profile
@@ -1851,7 +1986,7 @@ mod api_test {
                 values_offset.as_slice(),
                 id_label2.key,
                 id_label2.str.unwrap(),
-                10.0_f64,
+                upscaling_info2,
             )
             .expect("Rule added");
 
@@ -1907,12 +2042,16 @@ mod api_test {
         // upscale samples and wall-time values
         let values_offset: Vec<usize> = vec![0, 1];
 
+        let upscaling_info = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
         profile
             .add_upscaling_rules(
                 values_offset.as_slice(),
                 id_label.key,
                 id_label.str.unwrap(),
-                2.0_f64,
+                upscaling_info,
             )
             .expect("Rule added");
 
@@ -1959,12 +2098,20 @@ mod api_test {
 
         profile.add(sample1).expect("add to success");
 
+        let upscaling_info = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
         let mut value_offsets: Vec<usize> = vec![0];
         profile
-            .add_upscaling_rules(value_offsets.as_slice(), "", "", 2.0_f64)
+            .add_upscaling_rules(value_offsets.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
         // a bylabel rule on the third offset
+        let upscaling_info2 = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 10,
+        };
         value_offsets.clear();
         value_offsets.push(2);
         profile
@@ -1972,7 +2119,7 @@ mod api_test {
                 value_offsets.as_slice(),
                 id_label.key,
                 id_label.str.unwrap(),
-                5.0_f64,
+                upscaling_info2,
             )
             .expect("Rule added");
 
@@ -2005,28 +2152,45 @@ mod api_test {
         let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
 
         // adding same offsets
+        let upscaling_info = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
         let mut value_offsets: Vec<usize> = vec![0, 2];
         profile
-            .add_upscaling_rules(value_offsets.as_slice(), "", "", 2.0_f64)
+            .add_upscaling_rules(value_offsets.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
+
+        let upscaling_info2 = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
         profile
-            .add_upscaling_rules(value_offsets.as_slice(), "", "", 2.0_f64)
+            .add_upscaling_rules(value_offsets.as_slice(), "", "", upscaling_info2)
             .expect_err("Duplicated rules");
 
         // adding offsets with overlap on 2
         value_offsets.clear();
         value_offsets.push(2);
         value_offsets.push(1);
+        let upscaling_info3 = UpscalingInfo::Proportional {
+            total_sampled: 5,
+            total_real: 10,
+        };
         profile
-            .add_upscaling_rules(value_offsets.as_slice(), "", "", 2.0_f64)
+            .add_upscaling_rules(value_offsets.as_slice(), "", "", upscaling_info3)
             .expect_err("Duplicated rules");
 
         // same offsets in different order
         value_offsets.clear();
         value_offsets.push(2);
         value_offsets.push(0);
+        let upscaling_info4 = UpscalingInfo::Proportional {
+            total_sampled: 3,
+            total_real: 6,
+        };
         profile
-            .add_upscaling_rules(value_offsets.as_slice(), "", "", 2.0_f64)
+            .add_upscaling_rules(value_offsets.as_slice(), "", "", upscaling_info4)
             .expect_err("Duplicated rules");
     }
 
@@ -2051,27 +2215,58 @@ mod api_test {
 
         // adding same offsets
         let mut value_offsets: Vec<usize> = vec![0, 2];
+        let upscaling_info = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
         profile
-            .add_upscaling_rules(value_offsets.as_slice(), "my label", "coco", 2.0_f64)
+            .add_upscaling_rules(value_offsets.as_slice(), "my label", "coco", upscaling_info)
             .expect("Rule added");
+        let upscaling_info2 = UpscalingInfo::Proportional {
+            total_sampled: 5,
+            total_real: 10,
+        };
         profile
-            .add_upscaling_rules(value_offsets.as_slice(), "my label", "coco", 2.0_f64)
+            .add_upscaling_rules(
+                value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info2,
+            )
             .expect_err("Duplicated rules");
 
         // adding offsets with overlap on 2
         value_offsets.clear();
         value_offsets.push(2);
         value_offsets.push(1);
+        let upscaling_info3 = UpscalingInfo::Proportional {
+            total_sampled: 4,
+            total_real: 8,
+        };
         profile
-            .add_upscaling_rules(value_offsets.as_slice(), "my label", "coco", 2.0_f64)
+            .add_upscaling_rules(
+                value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info3,
+            )
             .expect_err("Duplicated rules");
 
         // same offsets in different order
         value_offsets.clear();
         value_offsets.push(2);
         value_offsets.push(0);
+        let upscaling_info4 = UpscalingInfo::Proportional {
+            total_sampled: 6,
+            total_real: 12,
+        };
         profile
-            .add_upscaling_rules(value_offsets.as_slice(), "my label", "coco", 2.0_f64)
+            .add_upscaling_rules(
+                value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info4,
+            )
             .expect_err("Duplicated rules");
     }
 
@@ -2096,8 +2291,125 @@ mod api_test {
 
         // adding same offsets
         let by_value_offsets: Vec<usize> = vec![0, 4];
+        let upscaling_info = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
         profile
-            .add_upscaling_rules(by_value_offsets.as_slice(), "my label", "coco", 2.0_f64)
+            .add_upscaling_rules(
+                by_value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info,
+            )
+            .expect_err("Invalid offset");
+    }
+
+    #[test]
+    fn test_add_rule_with_offset_out_of_bound_poisson_function() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        // adding same offsets
+        let by_value_offsets: Vec<usize> = vec![0, 4];
+        let upscaling_info = UpscalingInfo::Poisson {
+            x: 1,
+            y: 100,
+            threshold: 1,
+        };
+        profile
+            .add_upscaling_rules(
+                by_value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info,
+            )
+            .expect_err("Invalid offset");
+    }
+
+    #[test]
+    fn test_add_rule_with_offset_out_of_bound_poisson_function2() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        // adding same offsets
+        let by_value_offsets: Vec<usize> = vec![0, 4];
+        let upscaling_info = UpscalingInfo::Poisson {
+            x: 100,
+            y: 1,
+            threshold: 1,
+        };
+        profile
+            .add_upscaling_rules(
+                by_value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info,
+            )
+            .expect_err("Invalid offset");
+    }
+
+    #[test]
+    fn test_add_rule_with_offset_out_of_bound_poisson_function3() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        // adding same offsets
+        let by_value_offsets: Vec<usize> = vec![0, 4];
+        let upscaling_info = UpscalingInfo::Poisson {
+            x: 1100,
+            y: 100,
+            threshold: 1,
+        };
+        profile
+            .add_upscaling_rules(
+                by_value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info,
+            )
             .expect_err("Invalid offset");
     }
 
@@ -2136,19 +2448,27 @@ mod api_test {
         profile.add(sample1).expect("add to success");
 
         let mut value_offsets: Vec<usize> = vec![0];
+        let upscaling_info = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
         profile
-            .add_upscaling_rules(value_offsets.as_slice(), "", "", 2.0_f64)
+            .add_upscaling_rules(value_offsets.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
         // a bylabel rule on the third offset
         value_offsets.clear();
         value_offsets.push(0);
+        let upscaling_info2 = UpscalingInfo::Proportional {
+            total_sampled: 10,
+            total_real: 20,
+        };
         profile
             .add_upscaling_rules(
                 value_offsets.as_slice(),
                 id_label.key,
                 id_label.str.unwrap(),
-                5.0_f64,
+                upscaling_info2,
             )
             .expect("Rule added");
 

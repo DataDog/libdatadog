@@ -30,6 +30,28 @@ pub enum UpscalingRuleAddResult {
 }
 
 #[repr(C)]
+pub enum UpscalingInfo {
+    Poisson { x: usize, y: usize, threshold: i64 },
+    Proportional { total_sampled: i64, total_real: i64 },
+}
+impl From<UpscalingInfo> for profiles::api::UpscalingInfo {
+    fn from(src: UpscalingInfo) -> profiles::api::UpscalingInfo {
+        match src {
+            UpscalingInfo::Poisson { x, y, threshold } => {
+                profiles::api::UpscalingInfo::Poisson { x, y, threshold }
+            }
+            UpscalingInfo::Proportional {
+                total_sampled,
+                total_real,
+            } => profiles::api::UpscalingInfo::Proportional {
+                total_sampled,
+                total_real,
+            },
+        }
+    }
+}
+
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ValueType<'a> {
     pub type_: CharSlice<'a>,
@@ -465,7 +487,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule(
     offset_values: Slice<usize>,
     label_name: CharSlice,
     label_value: CharSlice,
-    ratio: f64,
+    upscaling_info: UpscalingInfo,
 ) -> UpscalingRuleAddResult {
     let label_name_n = label_name.to_utf8_lossy();
     let label_value_n = label_value.to_utf8_lossy();
@@ -473,7 +495,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule(
         offset_values.as_slice(),
         label_name_n.as_ref(),
         label_value_n.as_ref(),
-        ratio,
+        upscaling_info.into(),
     ) {
         Ok(_) => UpscalingRuleAddResult::Ok(true),
         Err(err) => UpscalingRuleAddResult::Err(err.into()),
