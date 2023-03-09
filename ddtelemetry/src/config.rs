@@ -185,7 +185,7 @@ impl Config {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_family = "unix"))]
 mod test {
     use ddcommon::connector::uds;
 
