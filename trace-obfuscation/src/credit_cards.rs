@@ -6,7 +6,8 @@
 /// is_card_number checks if b could be a credit card number by checking the digit count and IIN prefix.
 /// If validateLuhn is true, the Luhn checksum is also applied to potential candidates.
 /// Note: This code is based on the code from datadog-agent/pkg/obfuscate/credit_cards.go
-pub fn is_card_number(s: &str, validate_luhn: bool) -> bool {
+pub fn is_card_number<T: AsRef<str>>(s: T, validate_luhn: bool) -> bool {
+    let s = s.as_ref();
     if s.len() < 12 {
         // fast path
         return false;
@@ -17,12 +18,9 @@ pub fn is_card_number(s: &str, validate_luhn: bool) -> bool {
         // Only valid characters are 0-9, space (" ") and dash("-")
         match c {
             ' ' | '-' => continue,
-            _ => (),
+            '0'..='9' => num_s.push(c.to_digit(10).unwrap()),
+            _ => return false,
         };
-        if !c.is_numeric() {
-            return false;
-        }
-        num_s.push(c.to_digit(10).unwrap());
     }
     if num_s.len() < 12 || num_s.len() > 16 {
         return false;
@@ -263,6 +261,7 @@ mod tests {
             "",
             "7712378231899",
             "   -  ",
+            "3714djkkkksii3三",
         ];
         for invalid_card in invalid_cards {
             assert!(
