@@ -14,7 +14,7 @@ use io_lifetimes::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::ipc::handles::TransferHandles;
+use crate::handles::TransferHandles;
 
 /// PlatformHandle contains a valid reference counted FileDescriptor and associated Type information
 /// allowing safe transfer and sharing of file handles across processes, and threads
@@ -157,14 +157,14 @@ impl<T> AsRawFd for PlatformHandle<T> {
 }
 
 impl<T> TransferHandles for PlatformHandle<T> {
-    fn move_handles<Transport: crate::ipc::handles::HandlesTransport>(
+    fn move_handles<Transport: crate::handles::HandlesTransport>(
         &self,
         transport: Transport,
     ) -> Result<(), Transport::Error> {
         transport.move_handle(self.clone())
     }
 
-    fn receive_handles<Transport: crate::ipc::handles::HandlesTransport>(
+    fn receive_handles<Transport: crate::handles::HandlesTransport>(
         &mut self,
         transport: Transport,
     ) -> Result<(), Transport::Error> {

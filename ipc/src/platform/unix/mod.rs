@@ -25,7 +25,7 @@ mod tests {
         os::unix::prelude::{AsRawFd, RawFd},
     };
 
-    use crate::ipc::platform::{metadata::ChannelMetadata, unix::message::MAX_FDS};
+    use crate::platform::{metadata::ChannelMetadata, unix::message::MAX_FDS};
 
     use super::PlatformHandle;
 

@@ -30,7 +30,7 @@ pub trait ExampleInterface {
 
 pub type ExampleTransport = BlockingTransport<ExampleInterfaceResponse, ExampleInterfaceRequest>;
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct ExampleServer {
     req_cnt: Arc<AtomicU32>,
     stored_files: Arc<Mutex<Vec<PlatformHandle<File>>>>,
@@ -93,7 +93,7 @@ impl ExampleInterface for ExampleServer {
 }
 
 mod handles_impl {
-    use crate::ipc::handles::{HandlesTransport, TransferHandles};
+    use crate::handles::{HandlesTransport, TransferHandles};
 
     use super::{ExampleInterfaceRequest, ExampleInterfaceResponse};
 

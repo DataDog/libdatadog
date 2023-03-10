@@ -10,8 +10,8 @@ include_guard = "DDOG_TELEMETRY_H"
 style = "both"
 
 no_includes = true
-sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
-includes = ["datadog/common.h"]
+sys_includes = ["stdbool.h", "stddef.h", "stdint.h", "stdio.h"]
+includes = ["common.h"]
 
 [export]
 prefix = "ddog_"

@@ -1,11 +1,16 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+mod builder;
+mod http_client;
+
 use crate::{
     config::{self, ProvideConfig},
     metrics::{ContextKey, MetricBuckets, MetricContexts},
     DEFAULT_API_VERSION,
 };
+
+use self::builder::ConfigBuilder;
 
 use super::{
     data::{self, Application, Dependency, DependencyType, Host, Integration, Log, Telemetry},
@@ -20,7 +25,6 @@ use std::{
 };
 
 use anyhow::Result;
-use ddcommon::HttpClient;
 use futures::future::{self};
 use http::Request;
 
@@ -116,7 +120,7 @@ pub struct TelemetryWorker {
     cancellation_token: CancellationToken,
     seq_id: u64,
     runtime_id: String,
-    client: HttpClient,
+    client: Box<dyn http_client::HttpClient + Sync + Send>,
     deadlines: Scheduler,
     data: TelemetryWorkerData,
 }
@@ -125,6 +129,8 @@ impl TelemetryWorker {
     fn handle_result(&self, result: &Result<()>) {
         if let Err(err) = result {
             telemetry_worker_log!(self, ERROR, "{}", err);
+        } else {
+            telemetry_worker_log!(self, DEBUG, "Request successfully request",);
         }
     }
 
@@ -143,6 +149,9 @@ impl TelemetryWorker {
             }
 
             let action = self.recv_next_action().await;
+
+            tracing::info!("handling action {action:?}");
+
             telemetry_worker_log!(self, DEBUG, "Handling action {:?}", action);
             match action {
                 Start => {
@@ -450,8 +459,23 @@ impl TelemetryWorkerHandle {
             .register_metric_context(name, tags, metric_type, common, namespace)
     }
 
-    pub async fn try_send_msg(&self, msg: TelemetryActions) -> Result<()> {
+    pub fn try_send_msg(&self, msg: TelemetryActions) -> Result<()> {
         Ok(self.sender.try_send(msg)?)
+    }
+
+    pub async fn send_msg(&self, msg: TelemetryActions) -> Result<()> {
+        Ok(self.sender.send(msg).await?)
+    }
+
+    pub async fn send_msgs<T>(&self, msgs: T) -> Result<()>
+    where
+        T: IntoIterator<Item = TelemetryActions>,
+    {
+        for msg in msgs {
+            self.sender.send(msg).await?;
+        }
+
+        Ok(())
     }
 
     pub async fn send_msg_timeout(
@@ -549,6 +573,7 @@ pub struct TelemetryWorkerBuilder {
     pub library_config: Vec<(String, String)>,
     pub native_deps: bool,
     pub rust_shared_lib_deps: bool,
+    pub config: builder::ConfigBuilder,
 }
 
 impl TelemetryWorkerBuilder {
@@ -571,6 +596,7 @@ impl TelemetryWorkerBuilder {
             library_config: Vec::new(),
             native_deps: true,
             rust_shared_lib_deps: false,
+            config: ConfigBuilder::default(),
         }
     }
 
@@ -597,6 +623,7 @@ impl TelemetryWorkerBuilder {
             library_config: Vec::new(),
             native_deps: true,
             rust_shared_lib_deps: false,
+            config: ConfigBuilder::default(),
         }
     }
 
@@ -606,7 +633,7 @@ impl TelemetryWorkerBuilder {
 
     fn build_worker(
         self,
-        config: Config,
+        external_config: Config,
         tokio_runtime: Handle,
     ) -> Result<(TelemetryWorkerHandle, TelemetryWorker)> {
         let (tx, mailbox) = mpsc::channel(5000);
@@ -618,7 +645,8 @@ impl TelemetryWorkerBuilder {
         let contexts = MetricContexts::default();
         let token = CancellationToken::new();
         let unflushed_dependencies = self.gather_deps();
-        let client = config.http_client();
+        let config = self.config.merge(external_config);
+        let client = http_client::from_config(&config);
         let worker = TelemetryWorker {
             data: TelemetryWorkerData {
                 started: false,
@@ -655,8 +683,15 @@ impl TelemetryWorkerBuilder {
     }
 
     pub async fn spawn(self) -> Result<(TelemetryWorkerHandle, JoinHandle<()>)> {
-        let tokio_runtime = tokio::runtime::Handle::current();
         let config = config::FromEnv::config();
+        self.spawn_with_config(config).await
+    }
+
+    pub async fn spawn_with_config(
+        self,
+        config: Config,
+    ) -> Result<(TelemetryWorkerHandle, JoinHandle<()>)> {
+        let tokio_runtime = tokio::runtime::Handle::current();
 
         let (worker_handle, worker) = self.build_worker(config, tokio_runtime.clone())?;
 

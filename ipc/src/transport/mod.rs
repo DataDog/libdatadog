@@ -9,7 +9,12 @@ use std::{
     sync::{Arc, Mutex},
     task::{Context, Poll},
 };
-use tokio_serde::formats::MessagePack;
+
+// TODO keep Json for now, however MessagePack seems to fail at deserialization
+
+use pin_project::pin_project;
+use tokio_serde::formats::Json;
+
 use tokio_serde::Framed as SerdeFramed;
 
 use futures::{Sink, Stream};
@@ -23,7 +28,7 @@ use super::{
     platform::{metadata::ChannelMetadata, AsyncChannel, Channel, Message},
 };
 
-pub type DefaultCodec<Item, SinkItem> = MessagePack<Item, SinkItem>;
+pub type DefaultCodec<Item, SinkItem> = Json<Item, SinkItem>;
 
 type DefaultSerdeFramed<Item, SinkItem> = SerdeFramed<
     Framed<AsyncChannel, LengthDelimitedCodec>,

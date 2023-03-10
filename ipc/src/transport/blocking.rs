@@ -7,19 +7,23 @@ use std::{
     os::unix::net::UnixStream,
     pin::Pin,
     sync::{atomic::AtomicU64, Arc},
-    time::{Duration, SystemTime},
+    time::Duration,
 };
 
 use bytes::{BufMut, BytesMut};
 use serde::{Deserialize, Serialize};
-use tarpc::{context, trace, Response};
-use tokio_serde::{formats::MessagePack, Deserializer, Serializer};
+use tarpc::{context::Context, ClientMessage, Request, Response};
+
+use tokio_serde::{Deserializer, Serializer};
+
 use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 
-use crate::ipc::{
-    handles::{HandlesTransport, TransferHandles},
+use crate::{
+    handles::TransferHandles,
     platform::{Channel, Message},
 };
+
+use super::DefaultCodec;
 
 pub struct BlockingTransport<IncomingItem, OutgoingItem> {
     pid: libc::pid_t,
@@ -65,7 +69,7 @@ pub struct FramedBlocking<IncomingItem, OutgoingItem> {
     codec: LengthDelimitedCodec,
     read_buffer: BytesMut,
     channel: Channel,
-    serde_codec: Pin<Box<MessagePack<Message<IncomingItem>, Message<OutgoingItem>>>>,
+    serde_codec: Pin<Box<DefaultCodec<Message<IncomingItem>, Message<OutgoingItem>>>>,
 }
 
 impl<IncomingItem, OutgoingItem> FramedBlocking<IncomingItem, OutgoingItem>
@@ -153,77 +157,6 @@ impl<IncomingItem, OutgoingItem> Clone for FramedBlocking<IncomingItem, Outgoing
     }
 }
 
-#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
-pub struct Request<T> {
-    /// Trace context, deadline, and other cross-cutting concerns.
-    pub context: context::Context,
-    /// Uniquely identifies the request across all requests sent over a single channel.
-    pub id: u64,
-    /// The request body.
-    pub message: T,
-}
-
-#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
-pub enum ClientMessage<T> {
-    Request(Request<T>),
-    Cancel {
-        #[serde(default)]
-        trace_context: trace::Context,
-        /// The ID of the request to cancel.
-        request_id: u64,
-    },
-}
-
-impl<T> TransferHandles for ClientMessage<T>
-where
-    T: TransferHandles,
-{
-    fn move_handles<Transport: HandlesTransport>(
-        &self,
-        transport: Transport,
-    ) -> Result<(), Transport::Error> {
-        match self {
-            ClientMessage::Request(r) => r.move_handles(transport),
-            ClientMessage::Cancel {
-                trace_context: _,
-                request_id: _,
-            } => Ok(()),
-        }
-    }
-
-    fn receive_handles<Transport: HandlesTransport>(
-        &mut self,
-        transport: Transport,
-    ) -> Result<(), Transport::Error> {
-        match self {
-            ClientMessage::Request(r) => r.receive_handles(transport),
-            ClientMessage::Cancel {
-                trace_context: _,
-                request_id: _,
-            } => todo!(),
-        }
-    }
-}
-
-impl<T> TransferHandles for Request<T>
-where
-    T: TransferHandles,
-{
-    fn move_handles<Transport: HandlesTransport>(
-        &self,
-        transport: Transport,
-    ) -> Result<(), Transport::Error> {
-        self.message.move_handles(transport)
-    }
-
-    fn receive_handles<Transport: HandlesTransport>(
-        &mut self,
-        transport: Transport,
-    ) -> Result<(), Transport::Error> {
-        self.message.receive_handles(transport)
-    }
-}
-
 impl<IncomingItem, OutgoingItem> BlockingTransport<IncomingItem, OutgoingItem>
 where
     OutgoingItem: Serialize + TransferHandles,
@@ -232,17 +165,11 @@ where
     fn new_client_message(
         &self,
         item: OutgoingItem,
-        deadline: Option<SystemTime>,
+        context: Context,
     ) -> (u64, ClientMessage<OutgoingItem>) {
-        let mut context = context::current();
-
-        if let Some(deadline) = deadline {
-            context.deadline = deadline;
-        }
-
         let request_id = self
             .requests_id
-            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         (
             request_id,
@@ -266,13 +193,15 @@ where
         self.transport.channel.set_write_timeout(timeout)
     }
 
-    pub fn send_ignore_response(&mut self, item: OutgoingItem) -> io::Result<()> {
-        let (_, req) = self.new_client_message(item, None);
+    pub fn send(&mut self, item: OutgoingItem) -> io::Result<()> {
+        let mut ctx = Context::current();
+        ctx.discard_response = true;
+        let (_, req) = self.new_client_message(item, ctx);
         self.transport.do_send(req)
     }
 
-    pub fn send(&mut self, item: OutgoingItem) -> io::Result<IncomingItem> {
-        let (request_id, req) = self.new_client_message(item, None);
+    pub fn call(&mut self, item: OutgoingItem) -> io::Result<IncomingItem> {
+        let (request_id, req) = self.new_client_message(item, Context::current());
         self.transport.do_send(req)?;
 
         for resp in self {
