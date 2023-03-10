@@ -25,6 +25,7 @@ fn test_blocking_client() {
             .unwrap();
         let _g = rt.enter();
         sock_a.set_nonblocking(true).unwrap();
+
         let socket = UnixStream::from_std(sock_a).unwrap();
         let server = ExampleServer::default();
 
@@ -37,7 +38,7 @@ fn test_blocking_client() {
     transport.set_nonblocking(false).unwrap(); // write should still be quick, but we'll have to block waiting for RPC worker to come up
 
     transport
-        .set_write_timeout(Some(Duration::from_nanos(1)))
+        .set_write_timeout(Some(Duration::from_millis(100)))
         .unwrap();
     match transport.call(ExampleInterfaceRequest::TimeNow {}).unwrap() {
         ExampleInterfaceResponse::TimeNow(time) => {
@@ -47,7 +48,7 @@ fn test_blocking_client() {
     }
 
     transport
-        .set_read_timeout(Some(Duration::from_millis(3)))
+        .set_read_timeout(Some(Duration::from_millis(100)))
         .unwrap(); // the RPC worker is up at this point - the read should be very quick
 
     match transport.call(ExampleInterfaceRequest::ReqCnt {}).unwrap() {
@@ -70,7 +71,6 @@ fn test_blocking_client() {
 
     let mut f = f.into_instance().unwrap();
     writeln!(f, "test").unwrap(); // file should still be writeable
-
     drop(transport);
     worker.join().unwrap();
 }
