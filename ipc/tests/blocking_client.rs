@@ -18,7 +18,7 @@ use datadog_ipc::example_interface::{
 fn test_blocking_client() {
     let (sock_a, sock_b) = StdUnixStream::pair().unwrap();
 
-    let worker = thread::spawn(move || {
+    thread::spawn(move || {
         let rt = runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -71,6 +71,4 @@ fn test_blocking_client() {
 
     let mut f = f.into_instance().unwrap();
     writeln!(f, "test").unwrap(); // file should still be writeable
-    drop(transport);
-    worker.join().unwrap();
 }
