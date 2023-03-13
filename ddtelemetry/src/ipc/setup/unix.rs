@@ -10,14 +10,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::ipc::platform::{self, locks::FLock};
+use datadog_ipc::platform::{self, locks::FLock};
 
 /// Implementations of this interface must provide behavior repeatable across processes with the same version
 /// of library.
 /// Allowing all instances of the same version of the library to establish a shared connection
-pub trait Liaison {
+pub trait Liaison: Sized {
     fn connect_to_server(&self) -> io::Result<UnixStream>;
     fn attempt_listen(&self) -> io::Result<Option<UnixListener>>;
+    fn ipc_shared() -> Self;
+    fn ipc_per_process() -> Self;
 }
 
 fn ensure_dir_world_writable<P: AsRef<Path>>(path: P) -> io::Result<()> {
@@ -56,7 +58,7 @@ impl Liaison for SharedDirLiaison {
             // failing to acquire lock
             // means that another process is creating the socket
             Err(err) => {
-                println!("failed_locking");
+                tracing::debug!("failed_locking");
                 return Err(err);
             }
         };
@@ -64,13 +66,21 @@ impl Liaison for SharedDirLiaison {
         if self.socket_path.exists() {
             // if socket is already listening, then creating listener is not available
             if platform::sockets::is_listening(&self.socket_path)? {
-                println!("already_listening");
-                // return Err(io::Error::new(io::ErrorKind::Other, "already listening"));
+                tracing::debug!("already_listening");
                 return Ok(None);
             }
             fs::remove_file(&self.socket_path)?;
         }
         Ok(Some(UnixListener::bind(&self.socket_path)?))
+    }
+
+    fn ipc_shared() -> Self {
+        Self::new_tmp_dir()
+    }
+
+    fn ipc_per_process() -> Self {
+        //TODO: implement per pid handling
+        Self::new_tmp_dir()
     }
 }
 
@@ -98,7 +108,7 @@ impl SharedDirLiaison {
 
 impl Default for SharedDirLiaison {
     fn default() -> Self {
-        Self::new_tmp_dir()
+        Self::ipc_per_process()
     }
 }
 
@@ -112,7 +122,7 @@ mod linux {
 
     use spawn_worker::getpid;
 
-    use crate::ipc::platform;
+    use datadog_ipc::platform;
 
     use super::Liaison;
 
@@ -133,15 +143,13 @@ mod linux {
                 Err(err) => Err(err),
             }
         }
-    }
 
-    impl AbstractUnixSocketLiaison {
-        pub fn ipc_shared() -> Self {
+        fn ipc_shared() -> AbstractUnixSocketLiaison {
             let path = PathBuf::from(concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".sock"));
             Self { path }
         }
 
-        pub fn ipc_in_process() -> Self {
+        fn ipc_per_process() -> AbstractUnixSocketLiaison {
             let path = PathBuf::from(format!(
                 concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".{}.sock"),
                 getpid()
@@ -152,14 +160,13 @@ mod linux {
 
     impl Default for AbstractUnixSocketLiaison {
         fn default() -> Self {
-            // TODO: another PR makes this configurable. However for now this will make tests more reliable
-            Self::ipc_in_process()
+            Self::ipc_shared()
         }
     }
 
     #[test]
     fn test_abstract_socket_can_connect() {
-        let l = AbstractUnixSocketLiaison::ipc_in_process();
+        let l = AbstractUnixSocketLiaison::ipc_per_process();
         super::tests::basic_liaison_connection_test(&l).unwrap();
     }
 }

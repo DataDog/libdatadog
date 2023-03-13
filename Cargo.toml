@@ -3,18 +3,19 @@
 
 [workspace]
 members = [
-    "profiling",
-    "profiling-ffi",
-    "ddcommon",
-    "ddcommon-ffi",
-    "ddtelemetry",
-    "ddtelemetry-ffi",
-    "tools",
-    "tools/cc_utils",
-    "trace-normalization",
-    "trace-obfuscation",
-    "spawn_worker",
-    "tests/spawn_from_lib"
+  "profiling",
+  "profiling-ffi",
+  "ddcommon",
+  "ddcommon-ffi",
+  "ddtelemetry",
+  "ddtelemetry-ffi",
+  "tools",
+  "ipc",
+  "tools/cc_utils",
+  "trace-normalization",
+  "trace-obfuscation",
+  "spawn_worker",
+  "tests/spawn_from_lib",
 ]
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"
@@ -23,7 +24,7 @@ resolver = "2"
 debug = 2 # full debug info
 
 [profile.release]
+codegen-units = 1 
 debug = 1 # line tables only
-lto = true
-codegen-units = 1
+lto = true 
 opt-level = "s" # optimize for size

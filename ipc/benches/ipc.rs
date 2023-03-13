@@ -1,8 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
-
 use criterion::{criterion_group, criterion_main, Criterion};
-use ddtelemetry::ipc::example_interface::{
+use datadog_ipc::example_interface::{
     ExampleInterfaceRequest, ExampleInterfaceResponse, ExampleServer, ExampleTransport,
 };
 use std::{
@@ -31,18 +30,14 @@ fn criterion_benchmark(c: &mut Criterion) {
     transport.set_nonblocking(false).unwrap();
 
     c.bench_function("write only interface", |b| {
-        b.iter(|| {
-            transport
-                .send_ignore_response(ExampleInterfaceRequest::Notify {})
-                .unwrap()
-        })
+        b.iter(|| transport.send(ExampleInterfaceRequest::Notify {}).unwrap())
     });
 
     c.bench_function("two way interface", |b| {
-        b.iter(|| transport.send(ExampleInterfaceRequest::ReqCnt {}).unwrap())
+        b.iter(|| transport.call(ExampleInterfaceRequest::ReqCnt {}).unwrap())
     });
 
-    let requests_received = match transport.send(ExampleInterfaceRequest::ReqCnt {}).unwrap() {
+    let requests_received = match transport.call(ExampleInterfaceRequest::ReqCnt {}).unwrap() {
         ExampleInterfaceResponse::ReqCnt(cnt) => cnt,
         _ => panic!("shouldn't happen"),
     };
