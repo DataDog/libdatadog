@@ -7,7 +7,8 @@ use std::{
     ffi::CString,
     fs::File,
     io::Write,
-    os::unix::prelude::{AsRawFd, FromRawFd}, time::Duration,
+    os::unix::prelude::{AsRawFd, FromRawFd},
+    time::Duration,
 };
 
 fn set_sidecar_per_process() {
@@ -52,8 +53,12 @@ fn test_ddog_sidecar_register_app() {
     let mut transport = std::ptr::null_mut();
     assert_eq!(ddog_sidecar_connect(&mut transport), MaybeError::None);
     let mut transport = unsafe { Box::from_raw(transport) };
-    transport.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
-    transport.set_write_timeout(Some(Duration::from_secs(1))).unwrap();
+    transport
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    transport
+        .set_write_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
 
     unsafe {
         ddog_sidecar_session_config_setAgentUrl(
