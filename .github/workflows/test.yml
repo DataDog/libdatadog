@@ -118,7 +118,7 @@ jobs:
         uses: ./.github/actions/cache
         with:
           rust_version: cross-centos7
-      - run: cargo install cross
+      - run: cargo install cross || true
       - run: cross build --all
       - run: cross test --all
 
