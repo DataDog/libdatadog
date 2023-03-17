@@ -4,13 +4,18 @@
 pub use cc_utils::cc;
 
 fn main() {
-    cc_utils::ImprovedBuild::new()
+    let mut builder = cc_utils::ImprovedBuild::new();
+    builder
         .file("src/trampoline.c")
         .warnings(true)
         .warnings_into_errors(true)
-        .emit_rerun_if_env_changed(true)
-        .try_compile_executable("trampoline.bin")
-        .unwrap();
+        .emit_rerun_if_env_changed(true);
+
+    if !cfg!(target_os = "windows") {
+        builder.link_dynamically("dl");
+    }
+
+    builder.try_compile_executable("trampoline.bin").unwrap();
 
     if !cfg!(target_os = "windows") {
         cc_utils::ImprovedBuild::new()
