@@ -4,7 +4,7 @@
 // Lint removed from stable clippy after rust 1.60 - this allow can be removed once we update rust version
 #![allow(clippy::needless_collect)]
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     pin::Pin,
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -24,7 +24,7 @@ use tokio::net::UnixStream;
 
 use crate::{
     config::{Config, FromEnv, ProvideConfig},
-    worker::{TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle},
+    worker::{TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle}, data::{Dependency, Integration},
 };
 use datadog_ipc::tarpc;
 
@@ -224,8 +224,36 @@ struct AppInstance {
     telemetry_worker_shutdown: Shared<BoxFuture<'static, Option<()>>>,
 }
 
+#[derive(Default)]
 struct EnqueuedData {
+    seen_deps: HashSet<Dependency>,
+    seen_cfg: HashMap<String,String>,
+    seen_integrations: HashSet<Integration>,
     actions: Vec<TelemetryActions>,
+}
+
+impl EnqueuedData {
+    pub fn proces(&mut self, mut action: Vec<TelemetryActions>) {
+        // match &action {
+        //     TelemetryActions::AddConfig((k, v)) => {
+        //         if self.seen_cfg.get(&k).map(|prev_v| prev_v != &v) {
+        //             self.actions.append(other)
+        //         }
+        //     },
+        //     TelemetryActions::AddDependecy(_) => todo!(),
+        //     TelemetryActions::AddIntegration(_) => todo!(),
+        //     TelemetryActions::AddLog(_) => todo!(),
+        // }
+
+        self.actions.append(&mut action);
+
+    }
+
+    pub fn processed(action: Vec<TelemetryActions>) -> Self {
+        let mut data = Self::default();
+        data.proces(action);
+        data
+    }
 }
 
 #[derive(Default, Clone)]
@@ -365,10 +393,9 @@ impl TelemetryInterface for TelemetryServer {
         let rt_info = self.get_runtime(&instance_id);
         let mut queue = rt_info.enqueued_actions.lock().unwrap();
         match queue.get_mut(&queue_id) {
-            Some(data) => data.actions.append(&mut actions),
+            Some(data) => data.proces(actions),
             None => {
-                let data = EnqueuedData { actions };
-                queue.insert(queue_id, data);
+                queue.insert(queue_id, EnqueuedData::processed(actions));
             }
         };
 
