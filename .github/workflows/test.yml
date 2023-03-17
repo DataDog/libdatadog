@@ -107,12 +107,12 @@ jobs:
           cmake --build .
   cross-centos7:
     name: build and test using cross - on centos7
+    runs-on: ubuntu-latest
     concurrency: 
       group: ci-${{ github.ref }}-cross-centos7
       cancel-in-progress: true
     steps:
-      -
-        name: Checkout
+      - name: Checkout
         uses: actions/checkout@v3
       - name: Cache
         uses: ./.github/actions/cache
