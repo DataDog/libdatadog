@@ -25,6 +25,7 @@ pub enum SerializeResult {
 
 #[repr(C)]
 pub enum UpscalingRuleAddResult {
+    // Do not use the value of Ok. This value only exists to overcome Rust -> C code generation.
     Ok(bool),
     Err(Error),
 }
@@ -481,6 +482,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module.
 /// This call is _NOT_ thread-safe.
+#[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule(
     profile: &mut Profile,
