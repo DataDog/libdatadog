@@ -152,11 +152,11 @@ pub(crate) fn is_normalized_ascii_tag(tag: &str) -> bool {
 }
 
 pub(crate) fn is_valid_ascii_start_char(c: char) -> bool {
-    ('a'..='z').contains(&c) || c == ':'
+    c.is_ascii_lowercase() || c == ':'
 }
 
 pub(crate) fn is_valid_ascii_tag_char(c: char) -> bool {
-    is_valid_ascii_start_char(c) || ('0'..='9').contains(&c) || c == '.' || c == '/' || c == '-'
+    is_valid_ascii_start_char(c) || c.is_ascii_digit() || c == '.' || c == '/' || c == '-'
 }
 
 // normalize_name normalizes a span name or an error describing why normalization failed.
@@ -220,11 +220,11 @@ pub(crate) fn normalize_metric_names(name: &str) -> anyhow::Result<String> {
 }
 
 pub(crate) fn is_alpha(c: char) -> bool {
-    ('a'..='z').contains(&c) || ('A'..='Z').contains(&c)
+    c.is_ascii_lowercase() || c.is_ascii_uppercase()
 }
 
 pub(crate) fn is_alpha_num(c: char) -> bool {
-    is_alpha(c) || ('0'..='9').contains(&c)
+    is_alpha(c) || c.is_ascii_digit()
 }
 
 #[cfg(test)]

@@ -360,7 +360,7 @@ dependencies = [
  "futures",
  "io-lifetimes 0.7.5",
  "libc",
- "nix 0.24.3",
+ "nix",
  "pin-project",
  "pretty_assertions",
  "rmp-serde",
@@ -494,7 +494,7 @@ dependencies = [
  "io-lifetimes 1.0.5",
  "lazy_static",
  "libc",
- "nix 0.24.3",
+ "nix",
  "pin-project",
  "pretty_assertions",
  "rand",
@@ -1062,20 +1062,6 @@ dependencies = [
  "cfg-if",
  "libc",
  "memoffset 0.6.5",
-]
-
-[[package]]
-name = "nix"
-version = "0.26.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfdda3d196821d6af13126e40375cdf7da646a96114af134d5f417a9a1dc8e1a"
-dependencies = [
- "bitflags",
- "cfg-if",
- "libc",
- "memoffset 0.7.1",
- "pin-utils",
- "static_assertions",
 ]
 
 [[package]]
@@ -1694,7 +1680,7 @@ dependencies = [
  "cc_utils",
  "io-lifetimes 1.0.5",
  "memfd",
- "nix 0.26.2",
+ "nix",
  "rlimit",
  "tempfile",
 ]

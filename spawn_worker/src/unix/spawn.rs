@@ -7,7 +7,6 @@ mod linux {
     use std::io::{Seek, Write};
 
     use crate::TRAMPOLINE_BIN;
-
     pub(crate) fn write_trampoline() -> anyhow::Result<memfd::Memfd> {
         let opts = memfd::MemfdOptions::default();
         let mfd = opts.create("spawn_worker_trampoline")?;
