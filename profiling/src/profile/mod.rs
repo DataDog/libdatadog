@@ -93,14 +93,28 @@ struct UpscalingRule {
 impl UpscalingRule {
     pub fn compute_scale(&self, values: &[i64]) -> f64 {
         match self.upscaling_info {
-            UpscalingInfo::Poisson { x, y, threshold } => {
+            UpscalingInfo::Poisson {
+                x,
+                y,
+                sampling_distance,
+            } => {
+                if values[y] == 0 {
+                    return 0_f64;
+                }
+
                 let avg = (values[x] / values[y]) as f64;
-                1_f64 / (1_f64 - (-avg / threshold as f64).exp())
+                1_f64 / (1_f64 - (-avg / sampling_distance as f64).exp())
             }
             UpscalingInfo::Proportional {
                 total_sampled,
                 total_real,
-            } => total_real as f64 / total_sampled as f64,
+            } => {
+                if total_sampled == 0 {
+                    return 0_f64;
+                }
+
+                total_real as f64 / total_sampled as f64
+            }
         }
     }
 }
@@ -553,8 +567,11 @@ impl Profile {
 
         anyhow::ensure!(
             match upscaling_info {
-                UpscalingInfo::Poisson { x, y, threshold: _ } =>
-                    x < self.sample_types.len() && y < self.sample_types.len(),
+                UpscalingInfo::Poisson {
+                    x,
+                    y,
+                    sampling_distance: _,
+                } => x < self.sample_types.len() && y < self.sample_types.len(),
                 UpscalingInfo::Proportional {
                     total_sampled: _,
                     total_real: _,
@@ -1387,6 +1404,51 @@ mod api_test {
     }
 
     #[test]
+    fn test_upscaling_by_value_a_zero_sampled_value_with_proportional() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![0, 10000, 42],
+            labels: vec![],
+        };
+
+        profile.add(sample1).expect("add to success");
+
+        let upscaling_info = UpscalingInfo::Proportional {
+            total_sampled: 0,
+            total_real: 4,
+        };
+        let values_offset: Vec<usize> = vec![0];
+        profile
+            .add_upscaling_rules(values_offset.as_slice(), "", "", upscaling_info)
+            .expect("Rule added");
+
+        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+
+        let first = serialized_profile.samples.get(0).expect("one sample");
+
+        assert_eq!(first.values[0], 0);
+        assert_eq!(first.values[1], 10000);
+        assert_eq!(first.values[2], 42);
+    }
+
+    #[test]
     fn test_upscaling_by_value_on_one_value() {
         let sample_types = vec![
             api::ValueType {
@@ -1432,7 +1494,7 @@ mod api_test {
     }
 
     #[test]
-    fn test_upscaling_by_value_on_one_value_with_poisson() {
+    fn test_upscaling_by_value_on_zero_value_with_poisson() {
         let sample_types = vec![
             api::ValueType {
                 r#type: "samples",
@@ -1452,7 +1514,7 @@ mod api_test {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 16, 4],
+            values: vec![1, 16, 0],
             labels: vec![],
         };
 
@@ -1461,9 +1523,9 @@ mod api_test {
         let upscaling_info = UpscalingInfo::Poisson {
             x: 1,
             y: 2,
-            threshold: 10,
+            sampling_distance: 10,
         };
-        let values_offset: Vec<usize> = vec![0];
+        let values_offset: Vec<usize> = vec![2];
         profile
             .add_upscaling_rules(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
@@ -1472,9 +1534,9 @@ mod api_test {
 
         let first = serialized_profile.samples.get(0).expect("one sample");
 
-        assert_eq!(first.values[0], 3);
+        assert_eq!(first.values[0], 1);
         assert_eq!(first.values[1], 16);
-        assert_eq!(first.values[2], 4);
+        assert_eq!(first.values[2], 0);
     }
 
     #[test]
@@ -2329,7 +2391,7 @@ mod api_test {
         let upscaling_info = UpscalingInfo::Poisson {
             x: 1,
             y: 100,
-            threshold: 1,
+            sampling_distance: 1,
         };
         profile
             .add_upscaling_rules(
@@ -2365,7 +2427,7 @@ mod api_test {
         let upscaling_info = UpscalingInfo::Poisson {
             x: 100,
             y: 1,
-            threshold: 1,
+            sampling_distance: 1,
         };
         profile
             .add_upscaling_rules(
@@ -2401,7 +2463,7 @@ mod api_test {
         let upscaling_info = UpscalingInfo::Poisson {
             x: 1100,
             y: 100,
-            threshold: 1,
+            sampling_distance: 1,
         };
         profile
             .add_upscaling_rules(

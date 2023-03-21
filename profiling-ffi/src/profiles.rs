@@ -32,15 +32,28 @@ pub enum UpscalingRuleAddResult {
 
 #[repr(C)]
 pub enum UpscalingInfo {
-    Poisson { x: usize, y: usize, threshold: i64 },
-    Proportional { total_sampled: i64, total_real: i64 },
+    Poisson {
+        x: usize,
+        y: usize,
+        sampling_distance: i64,
+    },
+    Proportional {
+        total_sampled: i64,
+        total_real: i64,
+    },
 }
 impl From<UpscalingInfo> for profiles::api::UpscalingInfo {
     fn from(src: UpscalingInfo) -> profiles::api::UpscalingInfo {
         match src {
-            UpscalingInfo::Poisson { x, y, threshold } => {
-                profiles::api::UpscalingInfo::Poisson { x, y, threshold }
-            }
+            UpscalingInfo::Poisson {
+                x,
+                y,
+                sampling_distance,
+            } => profiles::api::UpscalingInfo::Poisson {
+                x,
+                y,
+                sampling_distance,
+            },
             UpscalingInfo::Proportional {
                 total_sampled,
                 total_real,

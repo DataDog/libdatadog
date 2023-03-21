@@ -129,8 +129,15 @@ pub struct Sample<'a> {
 }
 
 pub enum UpscalingInfo {
-    Poisson { x: usize, y: usize, threshold: i64 },
-    Proportional { total_sampled: i64, total_real: i64 },
+    Poisson {
+        x: usize,
+        y: usize,
+        sampling_distance: i64,
+    },
+    Proportional {
+        total_sampled: i64,
+        total_real: i64,
+    },
 }
 
 pub struct Profile<'a> {
