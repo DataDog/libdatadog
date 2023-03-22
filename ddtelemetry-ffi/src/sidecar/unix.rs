@@ -89,7 +89,7 @@ pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut TelemetryTransport)
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_sidecar_ping(transport: &mut TelemetryTransport) -> MaybeError {
+pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<TelemetryTransport>) -> MaybeError {
     try_c!(blocking::ping(transport));
 
     MaybeError::None
@@ -264,7 +264,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_end(
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_session_config_setAgentUrl(
-    transport: &mut TelemetryTransport,
+    transport: &mut Box<TelemetryTransport>,
     session_id: ffi::CharSlice,
     agent_url: ffi::CharSlice,
 ) -> MaybeError {
