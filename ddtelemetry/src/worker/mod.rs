@@ -202,12 +202,12 @@ impl TelemetryWorker {
                         return;
                     }
                     self.data.metric_buckets.flush_agregates();
-                    let requests = 
-                    [
+                    let requests = [
                         Some(self.build_app_stop()),
                         self.build_integrations_change(),
                         self.build_dependencies_loaded(),
-                    ].into_iter()
+                    ]
+                    .into_iter()
                     .flat_map(|i| i)
                     .chain(self.build_metrics_series())
                     .map(|r| self.send_request(r));
@@ -240,7 +240,7 @@ impl TelemetryWorker {
     }
 
     async fn flush_deps(&mut self) {
-        let req = match self.build_dependencies_loaded(){
+        let req = match self.build_dependencies_loaded() {
             Some(r) => r,
             None => return,
         };
@@ -249,13 +249,11 @@ impl TelemetryWorker {
     }
 
     async fn flush_intgs(&mut self) {
-
-
         let req = match self.build_integrations_change() {
             Some(r) => r,
             None => return,
         };
-        
+
         self.send_request(req).await;
         self.deadlines.send_integrations_done();
     }
@@ -343,10 +341,17 @@ impl TelemetryWorker {
     }
 
     fn build_integrations_change(&mut self) -> Option<Result<Request<hyper::Body>>> {
-        let integrations = std::mem::take(&mut self.data.unflushed_integrations);
+        let mut integrations = std::mem::take(&mut self.data.unflushed_integrations);
         if integrations.is_empty() {
             return None;
         }
+        integrations.push(Integration {
+            name: "aaa".into(),
+            version: None,
+            compatible: None,
+            enabled: None,
+            auto_enabled: None,
+        });
         let integrations_change =
             data::Payload::AppIntegrationsChange(data::AppIntegrationsChange {
                 integrations: integrations,
