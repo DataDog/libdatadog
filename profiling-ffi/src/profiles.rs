@@ -31,41 +31,6 @@ pub enum UpscalingRuleAddResult {
 }
 
 #[repr(C)]
-pub enum UpscalingInfo {
-    Poisson {
-        x: usize,
-        y: usize,
-        sampling_distance: i64,
-    },
-    Proportional {
-        total_sampled: i64,
-        total_real: i64,
-    },
-}
-impl From<UpscalingInfo> for profiles::api::UpscalingInfo {
-    fn from(src: UpscalingInfo) -> profiles::api::UpscalingInfo {
-        match src {
-            UpscalingInfo::Poisson {
-                x,
-                y,
-                sampling_distance,
-            } => profiles::api::UpscalingInfo::Poisson {
-                x,
-                y,
-                sampling_distance,
-            },
-            UpscalingInfo::Proportional {
-                total_sampled,
-                total_real,
-            } => profiles::api::UpscalingInfo::Proportional {
-                total_sampled,
-                total_real,
-            },
-        }
-    }
-}
-
-#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ValueType<'a> {
     pub type_: CharSlice<'a>,
@@ -480,7 +445,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
     profile.add_endpoint_count(endpoint, value);
 }
 
-/// Add an upscaling rule which will be use to adjust values and make them
+/// Add a poisson-based upscaling rule which will be use to adjust values and make them
 /// closer to reality.
 ///
 /// # Arguments
@@ -488,7 +453,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
 /// * `offset_values` - offset of the values
 /// * `label_name` - name of the label used to identify sample(s)
 /// * `label_value` - value of the label used to identify sample(s)
-/// * `ratio` - value to multiply the sample values at `offset_values` against
+/// * `sum_value_offset` - offset of the value used as a sum (compute the average with `count_value_offset`)
+/// * `count_value_offset` - offset of the value used as a count (compute the average with `sum_value_offset`)
+/// * `sampling_distance` - this is the threshold for this sampling window. This value must not be equal to 0
 ///
 /// # Safety
 /// This function must be called before serialize and must not be called after.
@@ -497,20 +464,93 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
 /// This call is _NOT_ thread-safe.
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule(
+pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_poisson(
     profile: &mut Profile,
     offset_values: Slice<usize>,
     label_name: CharSlice,
     label_value: CharSlice,
-    upscaling_info: UpscalingInfo,
+    sum_value_offset: usize,
+    count_value_offset: usize,
+    sampling_distance: u64,
+) -> UpscalingRuleAddResult {
+    if sampling_distance == 0 {
+        return UpscalingRuleAddResult::Err(ddcommon_ffi::Error::from(
+            "sampling_distance parameter must be greater than 0",
+        ));
+    }
+    let upscaling_info = profiles::api::UpscalingInfo::Poisson {
+        sum_value_offset,
+        count_value_offset,
+        sampling_distance,
+    };
+
+    add_upscaling_rule(
+        profile,
+        offset_values,
+        label_name,
+        label_value,
+        upscaling_info,
+    )
+}
+
+/// Add a proportional-based upscaling rule which will be use to adjust values and make them
+/// closer to reality.
+///
+/// # Arguments
+/// * `profile` - a reference to the profile that will contain the samples.
+/// * `offset_values` - offset of the values
+/// * `label_name` - name of the label used to identify sample(s)
+/// * `label_value` - value of the label used to identify sample(s)
+/// * `total_sampled` - number of sampled event (found in the pprof). This value must not be equal to 0
+/// * `total_real` - number of events the profiler actually witnessed. This value must not be equal to 0
+///
+/// # Safety
+/// This function must be called before serialize and must not be called after.
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module.
+/// This call is _NOT_ thread-safe.
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_proportional(
+    profile: &mut Profile,
+    offset_values: Slice<usize>,
+    label_name: CharSlice,
+    label_value: CharSlice,
+    total_sampled: u64,
+    total_real: u64,
+) -> UpscalingRuleAddResult {
+    if total_sampled == 0 || total_real == 0 {
+        return UpscalingRuleAddResult::Err(ddcommon_ffi::Error::from(
+            "total_sampled and total_real parameters must not be equal to 0",
+        ));
+    }
+
+    let upscaling_info = profiles::api::UpscalingInfo::Proportional {
+        scale: total_real as f64 / total_sampled as f64,
+    };
+    add_upscaling_rule(
+        profile,
+        offset_values,
+        label_name,
+        label_value,
+        upscaling_info,
+    )
+}
+
+unsafe fn add_upscaling_rule(
+    profile: &mut Profile,
+    offset_values: Slice<usize>,
+    label_name: CharSlice,
+    label_value: CharSlice,
+    upscaling_info: profiles::api::UpscalingInfo,
 ) -> UpscalingRuleAddResult {
     let label_name_n = label_name.to_utf8_lossy();
     let label_value_n = label_value.to_utf8_lossy();
-    match profile.add_upscaling_rules(
+    match profile.add_upscaling_rule(
         offset_values.as_slice(),
         label_name_n.as_ref(),
         label_value_n.as_ref(),
-        upscaling_info.into(),
+        upscaling_info,
     ) {
         Ok(_) => UpscalingRuleAddResult::Ok(true),
         Err(err) => UpscalingRuleAddResult::Err(err.into()),

@@ -130,13 +130,13 @@ pub struct Sample<'a> {
 
 pub enum UpscalingInfo {
     Poisson {
-        x: usize,
-        y: usize,
-        sampling_distance: i64,
+        // sum_value_offset and count_value_offset are offsets in the profile values type array
+        sum_value_offset: usize,
+        count_value_offset: usize,
+        sampling_distance: u64,
     },
     Proportional {
-        total_sampled: i64,
-        total_real: i64,
+        scale: f64,
     },
 }
 
@@ -144,22 +144,17 @@ impl std::fmt::Display for UpscalingInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             UpscalingInfo::Poisson {
-                x,
-                y,
+                sum_value_offset,
+                count_value_offset,
                 sampling_distance,
             } => write!(
                 f,
-                "Poisson = x: {}, y: {}, sampling_distance: {}",
-                x, y, sampling_distance
+                "Poisson = sum_value_offset: {}, count_value_offset: {}, sampling_distance: {}",
+                sum_value_offset, count_value_offset, sampling_distance
             ),
-            UpscalingInfo::Proportional {
-                total_sampled,
-                total_real,
-            } => write!(
-                f,
-                "Proportional = total_sampled: {}, total_real: {}",
-                total_sampled, total_real
-            ),
+            UpscalingInfo::Proportional { scale } => {
+                write!(f, "Proportional = scale: {}", scale)
+            }
         }
     }
 }
@@ -168,15 +163,15 @@ impl UpscalingInfo {
     pub fn check_validity(&self, number_of_values: usize) -> anyhow::Result<()> {
         match self {
             UpscalingInfo::Poisson {
-                x,
-                y,
+                sum_value_offset,
+                count_value_offset,
                 sampling_distance,
             } => {
                 anyhow::ensure!(
-                    x <= &number_of_values && y <= &number_of_values,
-                    "x {} and y {} must be strictly less than {}",
-                    x,
-                    y,
+                    sum_value_offset < &number_of_values && count_value_offset < &number_of_values,
+                    "sum_value_offset {} and count_value_offset {} must be strictly less than {}",
+                    sum_value_offset,
+                    count_value_offset,
                     number_of_values
                 );
                 anyhow::ensure!(
@@ -185,15 +180,7 @@ impl UpscalingInfo {
                     sampling_distance
                 )
             }
-            UpscalingInfo::Proportional {
-                total_sampled,
-                total_real,
-            } => anyhow::ensure!(
-                total_sampled > &0 && total_real > &0,
-                "total_sampled {} and total_real {} must be greater than 0",
-                total_sampled,
-                total_real
-            ),
+            UpscalingInfo::Proportional { scale: _ } => (),
         }
         anyhow::Ok(())
     }

@@ -78,13 +78,8 @@ int main(int argc, char *argv[]) {
   ddog_prof_Slice_Usize offsets_slice = {.ptr = offset, .len = 1};
   ddog_CharSlice empty_charslice = DDOG_CHARSLICE_C("");
 
-  ddog_prof_Profile_UpscalingInfo info = {
-    .tag = DDOG_PROF_PROFILE_UPSCALING_INFO_PROPORTIONAL,
-    .PROPORTIONAL = { .total_sampled = 1, .total_real = 1 }
-  };
-
   auto upscaling_addresult =
-    ddog_prof_Profile_add_upscaling_rule(profile.get(), offsets_slice, empty_charslice, empty_charslice, info);
+    ddog_prof_Profile_add_upscaling_rule_proportional(profile.get(), offsets_slice, empty_charslice, empty_charslice, 1, 1);
 
   if (upscaling_addresult.tag == DDOG_PROF_PROFILE_UPSCALING_RULE_ADD_RESULT_ERR) {
     print_error("Failed to add an upscaling rule: ", upscaling_addresult.err);
