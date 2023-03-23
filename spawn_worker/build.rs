@@ -1,6 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use std::env;
+
 pub use cc_utils::cc;
 
 fn main() {
@@ -11,13 +13,13 @@ fn main() {
         .warnings_into_errors(true)
         .emit_rerun_if_env_changed(true);
 
-    if !cfg!(target_os = "windows") {
+    if !env::var("TARGET").unwrap().contains("windows") {
         builder.link_dynamically("dl");
     }
 
     builder.try_compile_executable("trampoline.bin").unwrap();
 
-    if !cfg!(target_os = "windows") {
+    if !env::var("TARGET").unwrap().contains("windows")  {
         cc_utils::ImprovedBuild::new()
             .file("src/ld_preload_trampoline.c")
             .warnings(true)
