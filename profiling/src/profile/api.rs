@@ -140,6 +140,65 @@ pub enum UpscalingInfo {
     },
 }
 
+impl std::fmt::Display for UpscalingInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UpscalingInfo::Poisson {
+                x,
+                y,
+                sampling_distance,
+            } => write!(
+                f,
+                "Poisson = x: {}, y: {}, sampling_distance: {}",
+                x, y, sampling_distance
+            ),
+            UpscalingInfo::Proportional {
+                total_sampled,
+                total_real,
+            } => write!(
+                f,
+                "Proportional = total_sampled: {}, total_real: {}",
+                total_sampled, total_real
+            ),
+        }
+    }
+}
+
+impl UpscalingInfo {
+    pub fn check_validity(&self, number_of_values: usize) -> anyhow::Result<()> {
+        match self {
+            UpscalingInfo::Poisson {
+                x,
+                y,
+                sampling_distance,
+            } => {
+                anyhow::ensure!(
+                    x <= &number_of_values && y <= &number_of_values,
+                    "x {} and y {} must be strictly less than {}",
+                    x,
+                    y,
+                    number_of_values
+                );
+                anyhow::ensure!(
+                    sampling_distance != &0,
+                    "sampling_distance {} must be greater than 0",
+                    sampling_distance
+                )
+            }
+            UpscalingInfo::Proportional {
+                total_sampled,
+                total_real,
+            } => anyhow::ensure!(
+                total_sampled > &0 && total_real > &0,
+                "total_sampled {} and total_real {} must be greater than 0",
+                total_sampled,
+                total_real
+            ),
+        }
+        anyhow::Ok(())
+    }
+}
+
 pub struct Profile<'a> {
     pub duration: Duration,
     pub period: Option<(i64, ValueType<'a>)>,

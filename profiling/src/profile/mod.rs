@@ -85,8 +85,6 @@ struct Sample {
 
 struct UpscalingRule {
     values_offset: Vec<usize>,
-    label_name: i64,
-    label_value: i64,
     upscaling_info: UpscalingInfo,
 }
 
@@ -98,23 +96,19 @@ impl UpscalingRule {
                 y,
                 sampling_distance,
             } => {
-                if values[y] == 0 {
-                    return 0_f64;
+                // This should not happen, but if it happens,
+                // do not upscale
+                if values[y] == 0 || values[x] == 0 {
+                    return 1_f64;
                 }
 
-                let avg = (values[x] / values[y]) as f64;
+                let avg = values[x] as f64 / values[y] as f64;
                 1_f64 / (1_f64 - (-avg / sampling_distance as f64).exp())
             }
             UpscalingInfo::Proportional {
                 total_sampled,
                 total_real,
-            } => {
-                if total_sampled == 0 {
-                    return 0_f64;
-                }
-
-                total_real as f64 / total_sampled as f64
-            }
+            } => total_real as f64 / total_sampled as f64,
         }
     }
 }
@@ -544,47 +538,78 @@ impl Profile {
         let mut new_values_offset = offset_values.to_vec();
         new_values_offset.sort_unstable();
 
+        // Check for duplicates
         fn is_overlapping(v1: &[usize], v2: &[usize]) -> bool {
             v1.iter().any(|x| v2.contains(x))
         }
 
-        anyhow::ensure!(
-            self.upscaling_rules
+        // do not know if something like that exist
+        fn vec_to_string(v: &[usize]) -> String {
+            format!("{:?}", v)
+        }
+
+        let colliding_rule = match self
+            .upscaling_rules
+            .get_key_value(&(label_name_id, label_value_id))
+        {
+            Some((_, rules)) => rules
                 .iter()
-                .all(|(_, rules)| rules.iter().all(|rule| !is_overlapping(
-                    &rule.values_offset,
-                    &new_values_offset
-                ) || rule.label_name != label_name_id
-                    || rule.label_value != label_value_id)),
-            "Duplicated upscaling rule"
+                .find(|rule| is_overlapping(&rule.values_offset, &new_values_offset)),
+            None => None,
+        };
+
+        anyhow::ensure!(
+            colliding_rule.is_none(),
+            "There are dupicated by-label rules for the same label name: {} and label value: {} with at least one value offset in common.\n\
+            Existing values offset(s) {}, new rule values offset(s) {}.\n\
+            Existing upscaling info: {}, new rule upscaling info: {}",
+            vec_to_string(&colliding_rule.unwrap().values_offset), vec_to_string(&new_values_offset),
+            label_name, label_value,
+            upscaling_info, colliding_rule.unwrap().upscaling_info
         );
+
+        // if we are adding a by-value rule, we need to check against
+        // all by-label rules for collisions
+        if label_name.is_empty() && label_value.is_empty() {
+            let colliding_rule = self
+                .upscaling_rules
+                .iter()
+                // filter out by-value rule, since it has already been done earlier
+                .filter(|((name_id, value_id), _)| name_id != &0 && value_id != &0)
+                .find(|(_, rules)| {
+                    rules
+                        .iter()
+                        .any(|rule| is_overlapping(&rule.values_offset, &new_values_offset))
+                });
+            anyhow::ensure!(
+                colliding_rule.is_none(),
+                "The by-value rule is collinding with at least one by-label rule (label name {}, label value {})\n\
+                by-value rule values offset(s) {}",
+                self.strings[colliding_rule.unwrap().0 .0 as usize],
+                self.strings[colliding_rule.unwrap().0 .1 as usize],
+                vec_to_string(&new_values_offset)
+            )
+        } else if let Some(rules) = self.upscaling_rules.get(&(0, 0)) {
+            let colliding_rule = rules
+                .iter()
+                .find(|rule| is_overlapping(&rule.values_offset, &new_values_offset));
+            anyhow::ensure!(colliding_rule.is_none(),
+                "The by-label rule (label name {}, label value {}) is colliding with a by-value rule on values offsets\n\
+                Existing values offset(s) {}, new rule values offset(s) {}",
+                label_name, label_value,vec_to_string(&colliding_rule.unwrap().values_offset),
+                vec_to_string(&new_values_offset))
+        }
 
         anyhow::ensure!(
             offset_values.iter().all(|x| x < &self.sample_types.len()),
-            "Invalid offset. Number of expected values: {}",
-            self.sample_types.len()
+            "Invalid offset. Highest expected offset: {}",
+            self.sample_types.len() - 1
         );
 
-        anyhow::ensure!(
-            match upscaling_info {
-                UpscalingInfo::Poisson {
-                    x,
-                    y,
-                    sampling_distance: _,
-                } => x < self.sample_types.len() && y < self.sample_types.len(),
-                UpscalingInfo::Proportional {
-                    total_sampled: _,
-                    total_real: _,
-                } => true,
-            },
-            "Upscaling info contains invalid offsets. Number of expected values: {}",
-            self.sample_types.len()
-        );
+        upscaling_info.check_validity(self.sample_types.len())?;
 
         let rule = UpscalingRule {
             values_offset: new_values_offset,
-            label_name: label_name_id,
-            label_value: label_value_id,
             upscaling_info,
         };
 
@@ -1338,7 +1363,7 @@ mod api_test {
         let id_label = api::Label {
             key: "my label",
             str: Some("coco"),
-            num: 10,
+            num: 0,
             num_unit: None,
         };
 
@@ -1434,18 +1459,21 @@ mod api_test {
             total_sampled: 0,
             total_real: 4,
         };
-        let values_offset: Vec<usize> = vec![0];
+        let mut values_offset: Vec<usize> = vec![0];
         profile
             .add_upscaling_rules(values_offset.as_slice(), "", "", upscaling_info)
-            .expect("Rule added");
+            .expect_err("Must not add a rule if total_sampled is equal to 0");
 
-        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        let upscaling_info2 = UpscalingInfo::Proportional {
+            total_sampled: 4,
+            total_real: 0,
+        };
 
-        let first = serialized_profile.samples.get(0).expect("one sample");
-
-        assert_eq!(first.values[0], 0);
-        assert_eq!(first.values[1], 10000);
-        assert_eq!(first.values[2], 42);
+        values_offset.clear();
+        values_offset.push(1);
+        profile
+            .add_upscaling_rules(values_offset.as_slice(), "", "", upscaling_info2)
+            .expect_err("Must not add a rule if total_real is equal to 0");
     }
 
     #[test]
@@ -1525,7 +1553,7 @@ mod api_test {
             y: 2,
             sampling_distance: 10,
         };
-        let values_offset: Vec<usize> = vec![2];
+        let values_offset: Vec<usize> = vec![1];
         profile
             .add_upscaling_rules(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
@@ -1537,6 +1565,66 @@ mod api_test {
         assert_eq!(first.values[0], 1);
         assert_eq!(first.values[1], 16);
         assert_eq!(first.values[2], 0);
+    }
+
+    #[test]
+    fn test_cannot_add_a_rule_with_invalid_poisson_info() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "alloc-size",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "allo-count",
+                unit: "count",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 16, 0],
+            labels: vec![],
+        };
+
+        profile.add(sample1).expect("add to success");
+
+        // invalid sampling_distance vaue
+        let upscaling_info = UpscalingInfo::Poisson {
+            x: 1,
+            y: 2,
+            sampling_distance: 0,
+        };
+
+        let values_offset: Vec<usize> = vec![1];
+        profile
+            .add_upscaling_rules(values_offset.as_slice(), "", "", upscaling_info)
+            .expect_err("Cannot add a rule if sampling_distance is equal to 0");
+
+        // x value is greater than the number of value types
+        let upscaling_info2 = UpscalingInfo::Poisson {
+            x: 42,
+            y: 2,
+            sampling_distance: 10,
+        };
+        profile
+            .add_upscaling_rules(values_offset.as_slice(), "", "", upscaling_info2)
+            .expect_err("Cannot add a rule if the offset x is invalid");
+
+        // y value is greater than the number of value types
+        let upscaling_info3 = UpscalingInfo::Poisson {
+            x: 1,
+            y: 42,
+            sampling_distance: 10,
+        };
+        profile
+            .add_upscaling_rules(values_offset.as_slice(), "", "", upscaling_info3)
+            .expect_err("Cannot add a rule if the offset y is invalid");
     }
 
     #[test]
@@ -2333,6 +2421,86 @@ mod api_test {
     }
 
     #[test]
+    fn test_fail_if_bylabel_rule_and_by_value_rule_with_overlap_on_values() {
+        let sample_types = vec![
+            api::ValueType {
+                r#type: "samples",
+                unit: "count",
+            },
+            api::ValueType {
+                r#type: "wall-time",
+                unit: "nanoseconds",
+            },
+            api::ValueType {
+                r#type: "cpu-time",
+                unit: "nanoseconds",
+            },
+        ];
+
+        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+
+        // adding same offsets
+        let mut value_offsets: Vec<usize> = vec![0, 2];
+        let upscaling_info = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
+
+        // add by value rule
+        profile
+            .add_upscaling_rules(value_offsets.as_slice(), "", "", upscaling_info)
+            .expect("Rule added");
+
+        // add by-label rule
+        let upscaling_info2 = UpscalingInfo::Proportional {
+            total_sampled: 5,
+            total_real: 10,
+        };
+        profile
+            .add_upscaling_rules(
+                value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info2,
+            )
+            .expect_err("Duplicated rules");
+
+        // adding offsets with overlap on 2
+        value_offsets.clear();
+        value_offsets.push(2);
+        value_offsets.push(1);
+        let upscaling_info3 = UpscalingInfo::Proportional {
+            total_sampled: 4,
+            total_real: 8,
+        };
+        profile
+            .add_upscaling_rules(
+                value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info3,
+            )
+            .expect_err("Duplicated rules");
+
+        // same offsets in different order
+        value_offsets.clear();
+        value_offsets.push(2);
+        value_offsets.push(0);
+        let upscaling_info4 = UpscalingInfo::Proportional {
+            total_sampled: 6,
+            total_real: 12,
+        };
+        profile
+            .add_upscaling_rules(
+                value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info4,
+            )
+            .expect_err("Duplicated rules");
+    }
+
+    #[test]
     fn test_add_rule_with_offset_out_of_bound() {
         let sample_types = vec![
             api::ValueType {
@@ -2476,7 +2644,7 @@ mod api_test {
     }
 
     #[test]
-    fn test_fails_serialization_if_two_rules_collide_at_runtime() {
+    fn test_fails_when_adding_byvalue_rule_collinding_on_offset_with_existing_bylabel_rule() {
         let sample_types = vec![
             api::ValueType {
                 r#type: "samples",
@@ -2509,18 +2677,8 @@ mod api_test {
 
         profile.add(sample1).expect("add to success");
 
-        let mut value_offsets: Vec<usize> = vec![0];
-        let upscaling_info = UpscalingInfo::Proportional {
-            total_sampled: 2,
-            total_real: 4,
-        };
-        profile
-            .add_upscaling_rules(value_offsets.as_slice(), "", "", upscaling_info)
-            .expect("Rule added");
-
-        // a bylabel rule on the third offset
-        value_offsets.clear();
-        value_offsets.push(0);
+        let mut value_offsets: Vec<usize> = vec![0, 1];
+        // Add by-label rule first
         let upscaling_info2 = UpscalingInfo::Proportional {
             total_sampled: 10,
             total_real: 20,
@@ -2534,8 +2692,16 @@ mod api_test {
             )
             .expect("Rule added");
 
-        pprof::Profile::try_from(&profile)
-            .expect_err("Serialization failed due to rules collision");
+        // add by-value rule
+        let upscaling_info = UpscalingInfo::Proportional {
+            total_sampled: 2,
+            total_real: 4,
+        };
+        value_offsets.clear();
+        value_offsets.push(0);
+        profile
+            .add_upscaling_rules(value_offsets.as_slice(), "", "", upscaling_info)
+            .expect_err("Rule added");
     }
 
     #[test]
