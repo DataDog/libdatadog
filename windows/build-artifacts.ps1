@@ -11,7 +11,7 @@ function Invoke-Call {
 $output_dir = $args[0]
 
 if ([string]::IsNullOrEmpty($output_dir)) {
-    throw "You must specify an output directory. Ex: $($myInvocation.InvocationName) bin"
+    throw "You must specify an output directory. Ex: $($myInvocation.InvocationName) my_rust_project/ bin"
 }
 
 if (![System.IO.Path]::IsPathRooted($output_dir)) {
