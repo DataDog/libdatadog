@@ -13,7 +13,7 @@ use crate::{
 use self::builder::ConfigBuilder;
 
 use super::{
-    data::{self, Application, Dependency, DependencyType, Host, Integration, Log, Telemetry},
+    data::{self, Application, Dependency, Host, Integration, Log, Telemetry},
     Config,
 };
 
@@ -509,7 +509,6 @@ impl TelemetryWorkerHandle {
                 name,
                 version,
                 hash: None,
-                type_: DependencyType::PlatformStandard,
             }))?;
         Ok(())
     }

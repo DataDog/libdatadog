@@ -9,7 +9,7 @@ use std::{
 };
 
 use ddtelemetry::{
-    data::{Dependency, DependencyType, Integration},
+    data::{Dependency, Integration},
     ipc::{
         interface::{
             blocking::{self, TelemetryTransport},
@@ -180,7 +180,6 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
         name: dependency_name.to_utf8_lossy().into_owned(),
         version,
         hash: None,
-        type_: DependencyType::PlatformStandard,
     });
 
     try_c!(blocking::enqueue_actions(

@@ -4,11 +4,6 @@
 use crate::data::metrics;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
-pub enum DependencyType {
-    SharedSystemLibrary,
-    PlatformStandard, // Default when not specified.
-}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Dependency {
@@ -17,8 +12,6 @@ pub struct Dependency {
     pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hash: Option<String>,
-    #[serde(rename = "type")]
-    pub type_: DependencyType, // TODO convert to enum?
 }
 
 #[derive(Serialize, Deserialize, Debug)]
