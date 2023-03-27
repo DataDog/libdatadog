@@ -305,8 +305,6 @@ impl TelemetryWorker {
 
         Some(
             self.build_request(data::Payload::GenerateMetrics(data::GenerateMetrics {
-                lib_language: self.data.app.language_name.clone(),
-                lib_version: self.data.app.tracer_version.clone(),
                 series,
             })),
         )

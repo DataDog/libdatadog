@@ -46,8 +46,6 @@ pub struct AppIntegrationsChange {
 
 #[derive(Serialize, Debug)]
 pub struct GenerateMetrics {
-    pub lib_language: String,
-    pub lib_version: String,
     pub series: Vec<metrics::Serie>,
 }
 
