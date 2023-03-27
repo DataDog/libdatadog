@@ -17,7 +17,7 @@ fn build_app_started_payload() -> AppStarted {
     AppStarted {
         integrations: Vec::new(),
         dependencies: Vec::new(),
-        config: Vec::new(),
+        configuration: Vec::new(),
     }
 }
 

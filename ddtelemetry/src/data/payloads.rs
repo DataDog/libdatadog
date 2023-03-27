@@ -27,11 +27,17 @@ pub struct Integration {
     pub auto_enabled: Option<bool>,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Configuration {
+    pub name: String,
+    pub value: String,  
+}
+
 #[derive(Serialize, Debug)]
 pub struct AppStarted {
     pub integrations: Vec<Integration>,
     pub dependencies: Vec<Dependency>,
-    pub config: Vec<(String, String)>,
+    pub configuration: Vec<Configuration>,
 }
 
 #[derive(Serialize, Debug)]

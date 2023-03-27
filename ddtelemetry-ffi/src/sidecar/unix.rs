@@ -9,7 +9,7 @@ use std::{
 };
 
 use ddtelemetry::{
-    data::{Dependency, Integration},
+    data::{Dependency, Integration, self},
     ipc::{
         interface::{
             blocking::{self, TelemetryTransport},
@@ -150,10 +150,10 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     config_key: ffi::CharSlice,
     config_value: ffi::CharSlice,
 ) -> MaybeError {
-    let config_entry = TelemetryActions::AddConfig((
-        config_key.to_utf8_lossy().into_owned(),
-        config_value.to_utf8_lossy().into_owned(),
-    ));
+    let config_entry = TelemetryActions::AddConfig(data::Configuration {
+        name: config_key.to_utf8_lossy().into_owned(),
+        value: config_value.to_utf8_lossy().into_owned(),
+    });
     try_c!(blocking::enqueue_actions(
         transport,
         instance_id,

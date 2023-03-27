@@ -69,7 +69,7 @@ pub enum TelemetryActions {
     AddPoint((f64, ContextKey, Vec<Tag>)),
     FlushMetricAggregate,
     SendMetrics,
-    AddConfig((String, String)),
+    AddConfig(data::Configuration),
     AddDependecy(Dependency),
     SendDependencies,
 
@@ -104,7 +104,7 @@ struct UnfluhsedLogEntry {
 // Holds the current state of the telemetry worker
 struct TelemetryWorkerData {
     started: bool,
-    library_config: Vec<(String, String)>,
+    library_config: Vec<data::Configuration>,
     unflushed_integrations: Vec<Integration>,
     unflushed_dependencies: Vec<Dependency>,
     unflushed_logs: HashMap<LogIdentifier, UnfluhsedLogEntry>,
@@ -318,7 +318,7 @@ impl TelemetryWorker {
         let app_started = data::AppStarted {
             integrations: std::mem::take(&mut self.data.unflushed_integrations),
             dependencies: std::mem::take(&mut self.data.unflushed_dependencies),
-            config: std::mem::take(&mut self.data.library_config),
+            configuration: std::mem::take(&mut self.data.library_config),
         };
         self.build_request(data::Payload::AppStarted(app_started))
     }
@@ -567,7 +567,7 @@ pub struct TelemetryWorkerBuilder {
     pub host: Host,
     pub application: Application,
     pub runtime_id: Option<String>,
-    pub library_config: Vec<(String, String)>,
+    pub library_config: Vec<data::Configuration>,
     pub native_deps: bool,
     pub rust_shared_lib_deps: bool,
     pub config: builder::ConfigBuilder,
