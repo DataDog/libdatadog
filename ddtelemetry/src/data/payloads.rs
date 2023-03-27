@@ -27,19 +27,19 @@ pub struct Integration {
     pub auto_enabled: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 pub struct AppStarted {
     pub integrations: Vec<Integration>,
     pub dependencies: Vec<Dependency>,
     pub config: Vec<(String, String)>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 pub struct AppDependenciesLoaded {
     pub dependencies: Vec<Dependency>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 pub struct AppIntegrationsChange {
     pub integrations: Vec<Integration>,
 }
