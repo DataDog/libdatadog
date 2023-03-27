@@ -52,19 +52,3 @@ pub struct Host {
     pub kernel_release: Option<String>,
     pub kernel_version: Option<String>,
 }
-
-impl Application {
-    pub fn new_rust_app() -> Self {
-        Self {
-            service_name: String::from(env!("CARGO_PKG_NAME")),
-            service_version: Some(String::from(env!("CARGO_PKG_VERSION"))),
-            env: None,
-            language_name: String::from("rust"),
-            language_version: String::from("n/a"),
-            tracer_version: String::from("n/a"),
-            runtime_name: None,
-            runtime_version: None,
-            runtime_patches: None,
-        }
-    }
-}

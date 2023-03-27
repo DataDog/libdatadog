@@ -69,7 +69,17 @@ pub async fn push_telemetry(telemetry: &Telemetry<'_>) -> anyhow::Result<()> {
 // Simple worker that sends app-started telemetry request to the backend then exits
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let app = Application::new_rust_app();
+    let app = Application {
+        service_name: String::from(env!("CARGO_PKG_NAME")),
+        service_version: Some(String::from(env!("CARGO_PKG_VERSION"))),
+        env: None,
+        language_name: String::from("rust"),
+        language_version: String::from("n/a"),
+        tracer_version: String::from("n/a"),
+        runtime_name: None,
+        runtime_version: None,
+        runtime_patches: None,
+    };
     let host = build_host();
     let payload = build_app_started_payload();
 
