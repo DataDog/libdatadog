@@ -46,9 +46,14 @@ pub struct Host {
     pub hostname: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub container_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub os: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub os_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kernel_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kernel_release: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kernel_version: Option<String>,
 }
