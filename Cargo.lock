@@ -486,6 +486,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-trace-utils"
+version = "2.1.0"
+dependencies = [
+ "curl",
+ "datadog-trace-protobuf",
+ "hyper",
+ "rmp-serde 1.1.1",
+ "serde",
+]
+
+[[package]]
 name = "ddcommon"
 version = "2.1.0"
 dependencies = [
@@ -1765,12 +1776,10 @@ dependencies = [
 name = "serverless_mini_agent"
 version = "0.1.0"
 dependencies = [
- "curl",
  "datadog-trace-protobuf",
+ "datadog-trace-utils",
  "hyper",
  "prost",
- "rmp-serde 1.1.1",
- "serde",
  "serde_json",
  "tokio",
 ]

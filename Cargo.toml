@@ -14,6 +14,7 @@ members = [
   "tools/cc_utils",
   "trace-normalization",
   "trace-obfuscation",
+  "trace-utils",
   "spawn_worker",
   "tests/spawn_from_lib",
   "serverless"

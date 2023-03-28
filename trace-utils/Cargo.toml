@@ -1,0 +1,12 @@
+[package]
+name = "datadog-trace-utils"
+version = "2.1.0"
+authors = ["David Lee <david.lee@datadoghq.com>"]
+edition = "2021"
+
+[dependencies]
+curl = "0.4.44"
+hyper = { version = "0.14", features = ["full"] }
+serde = { version = "1.0.145", features = ["derive"] }
+rmp-serde = "1.1.1"
+datadog-trace-protobuf = { path = "../trace-protobuf" }
