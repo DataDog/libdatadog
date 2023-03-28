@@ -1,22 +1,18 @@
-use curl::easy::{Easy, List};
-
+use hyper::body::Buf;
+use hyper::service::{make_service_fn, service_fn};
+use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::env;
-use std::io::Cursor;
-use std::io::Read;
 use std::net::SocketAddr;
 use std::str;
-use hyper::body::Buf;
-use hyper::{Body, Method, Request, Response, Server, StatusCode};
-use hyper::service::{make_service_fn, service_fn};
 
 use prost::Message;
 
 use serde::{Deserialize, Serialize};
-use rmp_serde::{Deserializer, Serializer};
 
 use datadog_trace_protobuf::pb;
+
+use serverless_mini_agent::trace_sender;
 
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -39,23 +35,21 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 
 async fn endpoint_handler(req: Request<Body>) -> Result<Response<Body>, Infallible> {
-    println!("Processing new request: '{}' at route '{}'", req.method(), req.uri().path());
-
     match (req.method(), req.uri().path()) {
         (&Method::PUT, "/v0.4/traces") => {
             let res = traces(req).await;
-            return Ok(res);
+            Ok(res)
         }
         // Return the 404 Not Found for other routes.
         _ => {
             let mut not_found = Response::default();
             *not_found.status_mut() = StatusCode::NOT_FOUND;
-            return Ok(not_found);
+            Ok(not_found)
         }
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Span {
     service: Option<String>,
     name: String,
@@ -73,7 +67,15 @@ pub struct Span {
 async fn deserialize_trace(req: Request<Body>) -> Vec<Span> {
     let buffer = hyper::body::aggregate(req).await.unwrap();
 
-    rmp_serde::from_read(buffer.reader()).unwrap()
+    let vecs: Vec<Vec<Span>> = match rmp_serde::from_read(buffer.reader()) {
+        Ok(res) => res,
+        Err(err) => {
+            println!("error deserializing trace: {:#?}", err);
+            panic!("sad")
+        }
+    };
+
+    return vecs.get(0).unwrap().to_vec();
 }
 
 fn protobuf_trace_convert(trace: Vec<Span>) -> Vec<pb::Span> {
@@ -143,30 +145,26 @@ fn protobuf_trace_convert(trace: Vec<Span>) -> Vec<pb::Span> {
 }
 
 fn construct_agent_payload(spans: Vec<pb::Span>) -> pb::AgentPayload {
-    let chunks = vec![
-        pb::TraceChunk {
-            priority: 1,
-            origin: "ffi-origin".to_string(),
-            spans,
-            tags: HashMap::new(),
-            dropped_trace: false,
-        }
-    ];
+    let chunks = vec![pb::TraceChunk {
+        priority: 1,
+        origin: "ffi-origin".to_string(),
+        spans,
+        tags: HashMap::new(),
+        dropped_trace: false,
+    }];
 
-    let tracer_payloads = vec![
-        pb::TracerPayload {
-            app_version: "mini-agent-1.0.0".to_string(),
-            language_name: "mini-agent-nodejs".to_string(),
-            container_id: "mini-agent-containerid".to_string(),
-            chunks,
-            env: "mini-agent-env".to_string(),
-            hostname: "mini-agent-hostname".to_string(),
-            language_version: "mini-agent-nodejs-version".to_string(),
-            runtime_id: "mini-agent-runtime-id".to_string(),
-            tags: HashMap::new(),
-            tracer_version: "tracer-v-1".to_string(),
-        }
-    ];
+    let tracer_payloads = vec![pb::TracerPayload {
+        app_version: "mini-agent-1.0.0".to_string(),
+        language_name: "mini-agent-nodejs".to_string(),
+        container_id: "mini-agent-containerid".to_string(),
+        chunks,
+        env: "mini-agent-env".to_string(),
+        hostname: "mini-agent-hostname".to_string(),
+        language_version: "mini-agent-nodejs-version".to_string(),
+        runtime_id: "mini-agent-runtime-id".to_string(),
+        tags: HashMap::new(),
+        tracer_version: "tracer-v-1".to_string(),
+    }];
 
     pb::AgentPayload {
         host_name: "ffi-test-hostname".to_string(),
@@ -186,53 +184,6 @@ pub fn serialize_agent_payload(payload: &pb::AgentPayload) -> Vec<u8> {
     buf
 }
 
-fn construct_headers() -> std::io::Result<List> {
-    let api_key = match env::var("DD_API_KEY") {
-        Ok(key) => key,
-        Err(_) => panic!("oopsy, no DD_API_KEY was provided"),
-    };
-    let mut list = List::new();
-    list.append(format!("User-agent: {}", "ffi-test").as_str())?;
-    list.append(format!("Content-type: {}", "application/x-protobuf").as_str())?;
-    list.append(format!("DD-API-KEY: {}", &api_key).as_str())?;
-    list.append(format!("X-Datadog-Reported-Languages: {}", "nodejs").as_str())?;
-    Ok(list)
-}
-
-fn send(data: Vec<u8>) -> std::io::Result<Vec<u8>> {
-    let mut easy = Easy::new();
-    let mut dst = Vec::new();
-    let len = data.len();
-    let mut data_cursor = Cursor::new(data);
-    {
-        easy.url("https://trace.agent.datadoghq.com/api/v0.2/traces")?;
-        easy.post(true)?;
-        easy.post_field_size(len as u64)?;
-        easy.http_headers(construct_headers()?)?;
-
-        let mut transfer = easy.transfer();
-
-        transfer.read_function(|buf| Ok(data_cursor.read(buf).unwrap_or(0)))?;
-
-        println!("PERFORMING SEND NOW");
-
-        transfer.write_function(|result_data| {
-            dst.extend_from_slice(result_data);
-            match str::from_utf8(result_data) {
-                Ok(v) => {
-                    println!("sent-----------------");
-                    println!("successfully sent:::::: {:?}", v);
-                }
-                Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
-            };
-            Ok(result_data.len())
-        })?;
-
-        transfer.perform()?;
-    }
-    Ok(dst)
-}
-
 async fn traces(req: Request<Body>) -> Response<Body> {
     println!("in post_trace");
 
@@ -243,17 +194,15 @@ async fn traces(req: Request<Body>) -> Response<Body> {
     let agent_payload = construct_agent_payload(protobuf_spans);
 
     println!("spans: {:#?}", agent_payload);
-    
+
     let serialized_agent_payload = serialize_agent_payload(&agent_payload);
 
-    match send(serialized_agent_payload) {
+    match trace_sender::send(serialized_agent_payload) {
         Ok(_) => {}
         Err(e) => {
             panic!("Error sending trace: {:?}", e);
         }
     }
 
-    Response::builder()
-        .body(Body::default())
-        .unwrap()
+    Response::builder().body(Body::default()).unwrap()
 }
