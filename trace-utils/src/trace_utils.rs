@@ -15,7 +15,9 @@ use prost::Message;
 
 use datadog_trace_protobuf::pb;
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+const TRACE_INTAKE_URL: &str = "https://trace.agent.datadoghq.com/api/v0.2/traces";
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct Span {
     service: Option<String>,
     name: String,
@@ -30,114 +32,79 @@ pub struct Span {
     metrics: Option<HashMap<String, f64>>,
 }
 
-pub async fn deserialize_trace_from_hyper_req_body(req: Request<Body>) -> Vec<Span> {
+pub async fn get_traces_from_request_body(
+    req: Request<Body>,
+) -> anyhow::Result<Vec<Vec<pb::Span>>> {
     let buffer = hyper::body::aggregate(req).await.unwrap();
 
-    let vecs: Vec<Vec<Span>> = match rmp_serde::from_read(buffer.reader()) {
+    let traces: Vec<Vec<Span>> = match rmp_serde::from_read(buffer.reader()) {
         Ok(res) => res,
         Err(err) => {
-            println!("error deserializing trace: {:#?}", err);
-            panic!("sad")
+            anyhow::bail!("error deserializing trace: {:#?}", err)
         }
     };
 
-    println!("vecs deserialized from hyper req body: {:#?}", vecs);
+    let mut pb_traces = Vec::<Vec<pb::Span>>::new();
+    for trace in traces {
+        let mut pb_spans = Vec::<pb::Span>::new();
+        for span in trace.iter() {
+            let span = pb::Span {
+                service: span.service.clone().unwrap_or_default(),
+                name: span.name.clone(),
+                resource: span.resource.clone(),
+                trace_id: span.trace_id,
+                span_id: span.span_id,
+                parent_id: span.parent_id.unwrap_or_default(),
+                start: span.start,
+                duration: span.duration,
+                error: span.error.unwrap_or(0),
+                meta: span.meta.clone(),
+                meta_struct: HashMap::new(),
+                metrics: span.metrics.clone().unwrap_or_default(),
+                r#type: "custom".to_string(),
+            };
 
-    return vecs.get(0).unwrap().to_vec();
+            pb_spans.push(span);
+        }
+        if !pb_spans.is_empty() {
+            pb_traces.push(pb_spans);
+        }
+    }
+
+    if pb_traces.is_empty() {
+        anyhow::bail!("no traces deserialized from the request body.")
+    }
+
+    Ok(pb_traces)
 }
 
-pub fn convert_to_pb_trace(trace: Vec<Span>) -> Vec<pb::Span> {
-    let mut pb_spans = Vec::<pb::Span>::new();
+pub fn construct_agent_payload(traces: Vec<Vec<pb::Span>>) -> pb::AgentPayload {
+    let mut tracer_payloads = Vec::<pb::TracerPayload>::new();
 
-    for span in trace.iter() {
-        let span = pb::Span {
-            service: span.service.clone().unwrap_or_default(),
-            name: span.name.clone(),
-            resource: span.resource.clone(),
-            trace_id: span.trace_id,
-            span_id: span.span_id,
-            parent_id: span.parent_id.unwrap_or_default(),
-            start: span.start,
-            duration: span.duration,
-            error: span.error.unwrap_or(0),
-            meta: span.meta.clone(),
-            meta_struct: HashMap::new(),
-            metrics: span.metrics.clone().unwrap_or_default(),
-            r#type: "custom".to_string(),
+    for trace in traces {
+        let chunks = vec![pb::TraceChunk {
+            priority: 1,
+            origin: "ffi-origin".to_string(),
+            spans: trace,
+            tags: HashMap::new(),
+            dropped_trace: false,
+        }];
+
+        let tracer_payload = pb::TracerPayload {
+            app_version: "mini-agent-1.0.0".to_string(),
+            language_name: "mini-agent-nodejs".to_string(),
+            container_id: "mini-agent-containerid".to_string(),
+            chunks,
+            env: "mini-agent-env".to_string(),
+            hostname: "mini-agent-hostname".to_string(),
+            language_version: "mini-agent-nodejs-version".to_string(),
+            runtime_id: "mini-agent-runtime-id".to_string(),
+            tags: HashMap::new(),
+            tracer_version: "tracer-v-1".to_string(),
         };
 
-        pb_spans.push(span);
+        tracer_payloads.push(tracer_payload);
     }
-
-    pb_spans
-}
-
-pub fn add_enclosing_span(trace: &mut Vec<pb::Span>) {
-    let mut min_start_date = i64::MAX;
-    let mut max_end_date = 0;
-    let mut trace_id = 0;
-    let mut span_id = 0;
-
-    for span in trace.iter() {
-        if span.start < min_start_date {
-            span_id = span.span_id;
-            min_start_date = span.start;
-        }
-
-        if span.start + span.duration > max_end_date {
-            max_end_date = span.start + span.duration;
-        }
-
-        trace_id = span.trace_id;
-    }
-
-    // create the enclosing span
-    let enclosing_span = pb::Span {
-        service: "mini-agent-service".to_string(),
-        name: "gcp.cloud-function".to_string(),
-        resource: "gcp.cloud-function".to_string(),
-        trace_id,
-        span_id: span_id + 1,
-        parent_id: 0,
-        start: min_start_date,
-        duration: max_end_date - min_start_date,
-        error: 0,
-        meta: HashMap::new(),
-        meta_struct: HashMap::new(),
-        metrics: HashMap::new(),
-        r#type: "custom".to_string(),
-    };
-
-    trace.push(enclosing_span);
-
-    for span in trace.iter_mut() {
-        if span.span_id == span_id {
-            span.parent_id = span_id + 1;
-        }
-    }
-}
-
-pub fn construct_agent_payload(spans: Vec<pb::Span>) -> pb::AgentPayload {
-    let chunks = vec![pb::TraceChunk {
-        priority: 1,
-        origin: "ffi-origin".to_string(),
-        spans,
-        tags: HashMap::new(),
-        dropped_trace: false,
-    }];
-
-    let tracer_payloads = vec![pb::TracerPayload {
-        app_version: "mini-agent-1.0.0".to_string(),
-        language_name: "mini-agent-nodejs".to_string(),
-        container_id: "mini-agent-containerid".to_string(),
-        chunks,
-        env: "mini-agent-env".to_string(),
-        hostname: "mini-agent-hostname".to_string(),
-        language_version: "mini-agent-nodejs-version".to_string(),
-        runtime_id: "mini-agent-runtime-id".to_string(),
-        tags: HashMap::new(),
-        tracer_version: "tracer-v-1".to_string(),
-    }];
 
     pb::AgentPayload {
         host_name: "ffi-test-hostname".to_string(),
@@ -150,10 +117,10 @@ pub fn construct_agent_payload(spans: Vec<pb::Span>) -> pb::AgentPayload {
     }
 }
 
-fn construct_headers() -> std::io::Result<List> {
+fn construct_headers() -> anyhow::Result<List> {
     let api_key = match env::var("DD_API_KEY") {
         Ok(key) => key,
-        Err(_) => panic!("oopsy, no DD_API_KEY was provided"),
+        Err(_) => anyhow::bail!("oopsy, no DD_API_KEY was provided"),
     };
     let mut list = List::new();
     list.append(format!("User-agent: {}", "ffi-test").as_str())?;
@@ -170,13 +137,13 @@ pub fn serialize_agent_payload(payload: pb::AgentPayload) -> Vec<u8> {
     buf
 }
 
-pub fn send(data: Vec<u8>) -> std::io::Result<Vec<u8>> {
+pub fn send(data: Vec<u8>) -> anyhow::Result<Vec<u8>> {
     let mut easy = Easy::new();
     let mut dst = Vec::new();
     let len = data.len();
     let mut data_cursor = Cursor::new(data);
     {
-        easy.url("https://trace.agent.datadoghq.com/api/v0.2/traces")?;
+        easy.url(TRACE_INTAKE_URL)?;
         easy.post(true)?;
         easy.post_field_size(len as u64)?;
         easy.http_headers(construct_headers()?)?;
@@ -185,16 +152,13 @@ pub fn send(data: Vec<u8>) -> std::io::Result<Vec<u8>> {
 
         transfer.read_function(|buf| Ok(data_cursor.read(buf).unwrap_or(0)))?;
 
-        println!("PERFORMING SEND NOW");
-
         transfer.write_function(|result_data| {
             dst.extend_from_slice(result_data);
             match str::from_utf8(result_data) {
-                Ok(v) => {
-                    println!("sent-----------------");
-                    println!("successfully sent:::::: {:?}", v);
+                Ok(_) => {
+                    println!("successfully sent traces");
                 }
-                Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
+                Err(e) => println!("failed to send traces: error: {}", e),
             };
             Ok(result_data.len())
         })?;
@@ -202,4 +166,88 @@ pub fn send(data: Vec<u8>) -> std::io::Result<Vec<u8>> {
         transfer.perform()?;
     }
     Ok(dst)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use datadog_trace_protobuf::pb;
+    use serde_json::json;
+
+    use hyper::Request;
+
+    use crate::trace_utils;
+
+    #[tokio::test]
+    async fn test_get_traces_from_request_body() {
+        let pairs = vec![
+            (
+                json!([{
+                    "service": "test-service",
+                    "name": "test-service-name",
+                    "resource": "test-service-resource",
+                    "trace_id": 111,
+                    "span_id": 222,
+                    "parent_id": 333,
+                    "start": 1,
+                    "duration": 5,
+                    "error": 0,
+                    "meta": {},
+                    "metrics": {},
+                }]),
+                vec![vec![pb::Span {
+                    service: "test-service".to_string(),
+                    name: "test-service-name".to_string(),
+                    resource: "test-service-resource".to_string(),
+                    trace_id: 111,
+                    span_id: 222,
+                    parent_id: 333,
+                    start: 1,
+                    duration: 5,
+                    error: 0,
+                    meta: HashMap::new(),
+                    metrics: HashMap::new(),
+                    meta_struct: HashMap::new(),
+                    r#type: "custom".to_string(),
+                }]],
+            ),
+            (
+                json!([{
+                    "name": "test-service-name",
+                    "resource": "test-service-resource",
+                    "trace_id": 111,
+                    "span_id": 222,
+                    "start": 1,
+                    "duration": 5,
+                    "meta": {},
+                }]),
+                vec![vec![pb::Span {
+                    service: "".to_string(),
+                    name: "test-service-name".to_string(),
+                    resource: "test-service-resource".to_string(),
+                    trace_id: 111,
+                    span_id: 222,
+                    parent_id: 0,
+                    start: 1,
+                    duration: 5,
+                    error: 0,
+                    meta: HashMap::new(),
+                    metrics: HashMap::new(),
+                    meta_struct: HashMap::new(),
+                    r#type: "custom".to_string(),
+                }]],
+            ),
+        ];
+
+        for (trace_input, output) in pairs {
+            let bytes = rmp_serde::to_vec(&vec![&trace_input]).unwrap();
+            let request = Request::builder()
+                .body(hyper::body::Body::from(bytes))
+                .unwrap();
+            let res = trace_utils::get_traces_from_request_body(request).await;
+            assert!(res.is_ok());
+            assert_eq!(res.unwrap(), output);
+        }
+    }
 }
