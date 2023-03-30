@@ -14,10 +14,6 @@ pub struct Metric {
 
 #[derive(PartialEq, Debug)]
 pub enum MetricType {
-    Counter,
-    Gauge,
-    Timer,
-    Set,
     Distribution,
 }
 
@@ -42,17 +38,10 @@ impl Metric {
             .collect();
 
         let metric_type = match type_str {
-            "c" => MetricType::Counter,
-            "g" => MetricType::Gauge,
-            "ms" => MetricType::Timer,
-            "s" => MetricType::Set,
+            // Only support Distribution metrics for now
             "d" => MetricType::Distribution,
             _ => return None,
         };
-
-        if metric_type != MetricType::Distribution {
-            return None;
-        }
 
         let mut sample_rate = 1.0;
         let mut tags = vec![];
