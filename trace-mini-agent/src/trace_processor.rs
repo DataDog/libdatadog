@@ -34,7 +34,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
             Ok(res) => res,
             Err(err) => {
                 return Response::builder().body(Body::from(format!(
-                    "error deserializing trace from request body: {}",
+                    "Error deserializing trace from request body: {}",
                     err
                 )));
             }
@@ -44,10 +44,10 @@ impl TraceProcessor for ServerlessTraceProcessor {
         match tx.send(traces).await {
             Ok(_) => Response::builder()
                 .status(200)
-                .body(Body::from("successfully buffered traces to be flushed.")),
-            Err(_) => Response::builder()
+                .body(Body::from("Successfully buffered traces to be flushed.")),
+            Err(e) => Response::builder()
                 .status(500)
-                .body(Body::from("error sending traces to the trace flusher.")),
+                .body(Body::from(format!("Error sending traces to the trace flusher. Error: {}", e))),
         }
     }
 }

@@ -33,7 +33,6 @@ impl MiniAgent {
         let trace_flusher = self.trace_flusher.clone();
         tokio::spawn(async move {
             let trace_flusher = trace_flusher.clone();
-            println!("starting trace flusher");
             trace_flusher.start_trace_flusher(rx).await;
         });
 
@@ -55,7 +54,7 @@ impl MiniAgent {
 
         // start hyper http server
         if let Err(e) = server.await {
-            println!("server error: {}", e);
+            println!("Server error: {}", e);
         }
 
         Ok(())
@@ -71,7 +70,7 @@ impl MiniAgent {
                 match trace_processor.process_traces(req, tx).await {
                     Ok(res) => Ok(res),
                     Err(err) => Ok(Response::new(Body::from(format!(
-                        "error processing traces: {}",
+                        "Error processing traces: {}",
                         err
                     )))),
                 }

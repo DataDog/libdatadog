@@ -37,7 +37,7 @@ impl TraceFlusher for ServerlessTraceFlusher {
 
             buffer.append(&mut traces);
             if buffer.len() >= BUFFER_FLUSH_SIZE {
-                println!("attempting to flush buffer");
+                println!("Attempting to flush buffer");
                 self.flush_traces(buffer.to_vec());
                 buffer.clear();
             }
