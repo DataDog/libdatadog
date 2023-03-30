@@ -8,7 +8,7 @@ pub struct Metric {
     name: String,
     values: Vec<f64>,
     metric_type: MetricType,
-    sample_rate: Option<f64>,
+    sample_rate: f64,
     tags: Vec<Tag>,
 }
 
@@ -54,31 +54,30 @@ impl Metric {
             return None;
         }
 
-        let mut parsed_metric = Self {
-            name: metric_name.to_string(),
-            values,
-            metric_type,
-            sample_rate: None,
-            tags: vec![],
-        };
+        let mut sample_rate = 1.0;
+        let mut tags = vec![];
 
         // The first 2 tokens are metric name and values, which we have parsed above
         // The next 2 tokens are optional, and are a combination of sampling_rate and tags
         for token in &tokens[2..] {
             let identifier = token.chars().next()?;
             match identifier {
-                '@' => {
-                    parsed_metric.sample_rate = token[1..].parse::<f64>().ok();
-                }
+                '@' => sample_rate = token[1..].parse::<f64>().ok().unwrap_or(1.0),
                 '#' => {
-                    let (tags, _) = parse_tags(&token[1..]);
-                    parsed_metric.tags = tags;
+                    let (parsed_tags, _) = parse_tags(&token[1..]);
+                    tags = parsed_tags;
                 }
                 _ => {}
             }
         }
 
-        Some(parsed_metric)
+        Some(Self {
+            name: metric_name.to_string(),
+            values,
+            metric_type,
+            sample_rate,
+            tags,
+        })
     }
 }
 
@@ -94,7 +93,7 @@ mod tests {
             name: "my.distribution".to_string(),
             values: vec![10.2, 13.1, 14.5, 15.0],
             metric_type: MetricType::Distribution,
-            sample_rate: None,
+            sample_rate: 1.0,
             tags: vec![
                 Tag::from_value("tag1").unwrap(),
                 Tag::new("tag2", "value2").unwrap(),
@@ -112,7 +111,7 @@ mod tests {
             name: "my.distribution".to_string(),
             values: vec![10.0],
             metric_type: MetricType::Distribution,
-            sample_rate: None,
+            sample_rate: 1.0,
             tags: vec![
                 Tag::from_value("tag1").unwrap(),
                 Tag::new("tag2", "value2").unwrap(),
@@ -130,7 +129,7 @@ mod tests {
             name: "my.distribution".to_string(),
             values: vec![10.0],
             metric_type: MetricType::Distribution,
-            sample_rate: None,
+            sample_rate: 1.0,
             tags: vec![],
         };
 
@@ -151,7 +150,7 @@ mod tests {
             name: "my.distribution".to_string(),
             values: vec![10.0],
             metric_type: MetricType::Distribution,
-            sample_rate: Some(1.0),
+            sample_rate: 1.0,
             tags: vec![],
         };
 
@@ -173,7 +172,7 @@ mod tests {
             name: "my.distribution".to_string(),
             values: vec![10.0],
             metric_type: MetricType::Distribution,
-            sample_rate: None,
+            sample_rate: 1.0,
             tags: vec![],
         };
 
