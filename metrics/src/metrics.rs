@@ -4,12 +4,15 @@
 use ddcommon::tag::{parse_tags, Tag};
 
 #[derive(PartialEq, Debug)]
-pub struct Metric {
-    name: String,
+pub struct Points {
+    timestamp: u64,
     values: Vec<f64>,
-    metric_type: MetricType,
-    sample_rate: f64,
-    tags: Vec<Tag>,
+}
+
+impl Points {
+    pub fn new(values: Vec<f64>, timestamp: u64) -> Self {
+        Self { timestamp, values }
+    }
 }
 
 #[derive(PartialEq, Debug)]
@@ -17,8 +20,19 @@ pub enum MetricType {
     Distribution,
 }
 
+#[derive(PartialEq, Debug)]
+pub struct Metric {
+    name: String,
+    points: Points,
+    metric_type: MetricType,
+    sample_rate: f64,
+    tags: Vec<Tag>,
+}
+
 impl Metric {
-    pub fn from_string(s: &str) -> Option<Self> {
+    // from_string takes in a single line from a dogstatsd udp packet
+    // and parses it into a Metric struct.
+    pub fn from_string(s: &str, timestamp: u64) -> Option<Self> {
         let (metric_name, parts) = s.split_once(':')?;
         if metric_name.is_empty() {
             return None;
@@ -32,10 +46,13 @@ impl Metric {
         let values_str = tokens[0];
         let type_str = tokens[1];
 
-        let values: Vec<f64> = values_str
-            .split(',')
-            .filter_map(|value| value.parse().ok())
-            .collect();
+        let points = Points::new(
+            values_str
+                .split(',')
+                .filter_map(|value| value.parse().ok())
+                .collect(),
+            timestamp,
+        );
 
         let metric_type = match type_str {
             // Only support Distribution metrics for now
@@ -52,17 +69,14 @@ impl Metric {
             let identifier = token.chars().next()?;
             match identifier {
                 '@' => sample_rate = token[1..].parse::<f64>().unwrap_or(1.0),
-                '#' => {
-                    let (parsed_tags, _) = parse_tags(&token[1..]);
-                    tags = parsed_tags;
-                }
+                '#' => tags = parse_tags(&token[1..]).0,
                 _ => {}
             }
         }
 
         Some(Self {
             name: metric_name.to_string(),
-            values,
+            points,
             metric_type,
             sample_rate,
             tags,
@@ -80,7 +94,7 @@ mod tests {
 
         let expected = Metric {
             name: "my.distribution".to_string(),
-            values: vec![10.2, 13.1, 14.5, 15.0],
+            points: Points::new(vec![10.2, 13.1, 14.5, 15.0], 0),
             metric_type: MetricType::Distribution,
             sample_rate: 1.0,
             tags: vec![
@@ -89,7 +103,7 @@ mod tests {
             ],
         };
 
-        assert_eq!(Metric::from_string(input), Some(expected));
+        assert_eq!(Metric::from_string(input, 0), Some(expected));
     }
 
     #[test]
@@ -98,7 +112,7 @@ mod tests {
 
         let expected = Metric {
             name: "my.distribution".to_string(),
-            values: vec![10.0],
+            points: Points::new(vec![10.0], 0),
             metric_type: MetricType::Distribution,
             sample_rate: 1.0,
             tags: vec![
@@ -107,7 +121,7 @@ mod tests {
             ],
         };
 
-        assert_eq!(Metric::from_string(input), Some(expected));
+        assert_eq!(Metric::from_string(input, 0), Some(expected));
     }
 
     #[test]
@@ -116,19 +130,19 @@ mod tests {
 
         let expected = Metric {
             name: "my.distribution".to_string(),
-            values: vec![10.0],
+            points: Points::new(vec![10.0], 0),
             metric_type: MetricType::Distribution,
             sample_rate: 1.0,
             tags: vec![],
         };
 
-        assert_eq!(Metric::from_string(input), Some(expected));
+        assert_eq!(Metric::from_string(input, 0), Some(expected));
     }
 
     #[test]
     fn test_parse_metric_distribution_empty() {
         let input = "";
-        assert_eq!(Metric::from_string(input), None);
+        assert_eq!(Metric::from_string(input, 0), None);
     }
 
     #[test]
@@ -137,20 +151,20 @@ mod tests {
 
         let expected = Metric {
             name: "my.distribution".to_string(),
-            values: vec![10.0],
+            points: Points::new(vec![10.0], 0),
             metric_type: MetricType::Distribution,
             sample_rate: 1.0,
             tags: vec![],
         };
 
-        assert_eq!(Metric::from_string(input), Some(expected));
+        assert_eq!(Metric::from_string(input, 0), Some(expected));
     }
 
     #[test]
     fn test_parse_metric_count() {
         let input = "my.distribution:10|c|@1.0";
 
-        assert_eq!(Metric::from_string(input), None);
+        assert_eq!(Metric::from_string(input, 0), None);
     }
 
     #[test]
@@ -159,27 +173,27 @@ mod tests {
 
         let expected = Metric {
             name: "my.distribution".to_string(),
-            values: vec![10.0],
+            points: Points::new(vec![10.0], 0),
             metric_type: MetricType::Distribution,
             sample_rate: 1.0,
             tags: vec![],
         };
 
-        assert_eq!(Metric::from_string(input), Some(expected));
+        assert_eq!(Metric::from_string(input, 0), Some(expected));
     }
 
     #[test]
     fn test_parse_metric_distribution_malformed_inputs() {
         let input = ":|d|@1.0";
-        assert_eq!(Metric::from_string(input), None);
+        assert_eq!(Metric::from_string(input, 0), None);
 
         let input2 = "";
-        assert_eq!(Metric::from_string(input2), None);
+        assert_eq!(Metric::from_string(input2, 0), None);
 
         let input3 = "||||";
-        assert_eq!(Metric::from_string(input3), None);
+        assert_eq!(Metric::from_string(input3, 0), None);
 
         let input4 = ":@:@:@:@";
-        assert_eq!(Metric::from_string(input4), None);
+        assert_eq!(Metric::from_string(input4, 0), None);
     }
 }
