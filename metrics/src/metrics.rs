@@ -1,7 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use std::collections::HashMap;
+use ddcommon::tag::{parse_tags, Tag};
 
 #[derive(PartialEq, Debug)]
 pub struct Metric {
@@ -9,7 +9,7 @@ pub struct Metric {
     values: Vec<f64>,
     metric_type: MetricType,
     sample_rate: Option<f64>,
-    tags: Option<HashMap<String, String>>,
+    tags: Vec<Tag>,
 }
 
 #[derive(PartialEq, Debug)]
@@ -59,7 +59,7 @@ impl Metric {
             values,
             metric_type,
             sample_rate: None,
-            tags: None,
+            tags: vec![],
         };
 
         // The first 2 tokens are metric name and values, which we have parsed above
@@ -71,19 +71,8 @@ impl Metric {
                     parsed_metric.sample_rate = token[1..].parse::<f64>().ok();
                 }
                 '#' => {
-                    let tags: HashMap<String, String> = token[1..]
-                        .split(',')
-                        .map(|tag| {
-                            let kv: Vec<&str> = tag.split(':').collect();
-                            match kv.len() {
-                                1 => (kv[0][..kv[0].len()].to_string(), "".to_string()),
-                                2 => (kv[0].to_string(), kv[1].to_string()),
-                                _ => ("".to_string(), "".to_string()),
-                            }
-                        })
-                        .filter(|(key, _)| !key.is_empty())
-                        .collect();
-                    parsed_metric.tags = if tags.is_empty() { None } else { Some(tags) }
+                    let (tags, errors) = parse_tags(&token[1..]);
+                    parsed_metric.tags = tags;
                 }
                 _ => {}
             }
@@ -101,16 +90,15 @@ mod tests {
     fn test_parse_metric_distribution() {
         let input = "my.distribution:10.2,13.1,14.5,15.0|d|#tag1,tag2:value2";
 
-        let mut expected_tags = HashMap::new();
-        expected_tags.insert("tag1".to_string(), "".to_string());
-        expected_tags.insert("tag2".to_string(), "value2".to_string());
-
         let expected = Metric {
             name: "my.distribution".to_string(),
             values: vec![10.2, 13.1, 14.5, 15.0],
             metric_type: MetricType::Distribution,
             sample_rate: None,
-            tags: Some(expected_tags),
+            tags: vec![
+                Tag::from_value("tag1").unwrap(),
+                Tag::new("tag2", "value2").unwrap(),
+            ],
         };
 
         assert_eq!(Metric::from_string(input), Some(expected));
@@ -120,16 +108,15 @@ mod tests {
     fn test_parse_metric_distribution_one_value() {
         let input = "my.distribution:10|d|#tag1,tag2:value2";
 
-        let mut expected_tags = HashMap::new();
-        expected_tags.insert("tag1".to_string(), "".to_string());
-        expected_tags.insert("tag2".to_string(), "value2".to_string());
-
         let expected = Metric {
             name: "my.distribution".to_string(),
             values: vec![10.0],
             metric_type: MetricType::Distribution,
             sample_rate: None,
-            tags: Some(expected_tags),
+            tags: vec![
+                Tag::from_value("tag1").unwrap(),
+                Tag::new("tag2", "value2").unwrap(),
+            ],
         };
 
         assert_eq!(Metric::from_string(input), Some(expected));
@@ -144,7 +131,7 @@ mod tests {
             values: vec![10.0],
             metric_type: MetricType::Distribution,
             sample_rate: None,
-            tags: None,
+            tags: vec![],
         };
 
         assert_eq!(Metric::from_string(input), Some(expected));
@@ -165,7 +152,7 @@ mod tests {
             values: vec![10.0],
             metric_type: MetricType::Distribution,
             sample_rate: Some(1.0),
-            tags: None,
+            tags: vec![],
         };
 
         assert_eq!(Metric::from_string(input), Some(expected));
@@ -187,7 +174,7 @@ mod tests {
             values: vec![10.0],
             metric_type: MetricType::Distribution,
             sample_rate: None,
-            tags: None,
+            tags: vec![],
         };
 
         assert_eq!(Metric::from_string(input), Some(expected));
