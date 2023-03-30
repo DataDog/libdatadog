@@ -45,9 +45,10 @@ impl TraceProcessor for ServerlessTraceProcessor {
             Ok(_) => Response::builder()
                 .status(200)
                 .body(Body::from("Successfully buffered traces to be flushed.")),
-            Err(e) => Response::builder()
-                .status(500)
-                .body(Body::from(format!("Error sending traces to the trace flusher. Error: {}", e))),
+            Err(e) => Response::builder().status(500).body(Body::from(format!(
+                "Error sending traces to the trace flusher. Error: {}",
+                e
+            ))),
         }
     }
 }
