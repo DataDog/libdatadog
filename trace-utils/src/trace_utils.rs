@@ -40,7 +40,7 @@ pub async fn get_traces_from_request_body(
     let traces: Vec<Vec<Span>> = match rmp_serde::from_read(buffer.reader()) {
         Ok(res) => res,
         Err(err) => {
-            anyhow::bail!("error deserializing trace: {:#?}", err)
+            anyhow::bail!("Error deserializing trace from request body: {}", err)
         }
     };
 
@@ -72,7 +72,7 @@ pub async fn get_traces_from_request_body(
     }
 
     if pb_traces.is_empty() {
-        anyhow::bail!("no traces deserialized from the request body.")
+        anyhow::bail!("No traces deserialized from the request body.")
     }
 
     Ok(pb_traces)
@@ -156,9 +156,9 @@ pub fn send(data: Vec<u8>) -> anyhow::Result<Vec<u8>> {
             dst.extend_from_slice(result_data);
             match str::from_utf8(result_data) {
                 Ok(_) => {
-                    println!("successfully sent traces");
+                    println!("Successfully sent traces");
                 }
-                Err(e) => println!("failed to send traces: error: {}", e),
+                Err(e) => println!("Failed to send traces: error: {}", e),
             };
             Ok(result_data.len())
         })?;
