@@ -82,7 +82,7 @@ impl Metric {
                         })
                         .filter(|(key, _)| !key.is_empty())
                         .collect();
-                    parsed_metric.tags = (!tags.is_empty()).then_some(tags);
+                    parsed_metric.tags = if tags.is_empty() { None } else { Some(tags) }
                 }
                 _ => return None,
             }

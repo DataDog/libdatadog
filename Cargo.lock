@@ -1033,7 +1033,7 @@ dependencies = [
 
 [[package]]
 name = "metrics"
-version = "0.1.0"
+version = "0.0.1"
 
 [[package]]
 name = "mime"
