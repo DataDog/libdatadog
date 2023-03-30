@@ -71,7 +71,7 @@ impl Metric {
                     parsed_metric.sample_rate = token[1..].parse::<f64>().ok();
                 }
                 '#' => {
-                    let (tags, errors) = parse_tags(&token[1..]);
+                    let (tags, _) = parse_tags(&token[1..]);
                     parsed_metric.tags = tags;
                 }
                 _ => {}
