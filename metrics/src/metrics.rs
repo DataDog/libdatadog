@@ -62,7 +62,7 @@ impl Metric {
         for token in &tokens[2..] {
             let identifier = token.chars().next()?;
             match identifier {
-                '@' => sample_rate = token[1..].parse::<f64>().ok().unwrap_or(1.0),
+                '@' => sample_rate = token[1..].parse::<f64>().unwrap_or(1.0),
                 '#' => {
                     let (parsed_tags, _) = parse_tags(&token[1..]);
                     tags = parsed_tags;
