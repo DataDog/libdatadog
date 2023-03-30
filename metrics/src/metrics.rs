@@ -41,7 +41,6 @@ impl Metric {
             .filter_map(|value| value.parse().ok())
             .collect();
 
-        // Parse the metric type
         let metric_type = match type_str {
             "c" => MetricType::Counter,
             "g" => MetricType::Gauge,
@@ -63,6 +62,8 @@ impl Metric {
             tags: None,
         };
 
+        // The first 2 tokens are metric name and values, which we have parsed above
+        // The next 2 tokens are optional, and are a combination of sampling_rate and tags
         for token in &tokens[2..] {
             let identifier = token.chars().next()?;
             match identifier {
@@ -84,7 +85,7 @@ impl Metric {
                         .collect();
                     parsed_metric.tags = if tags.is_empty() { None } else { Some(tags) }
                 }
-                _ => return None,
+                _ => {}
             }
         }
 
