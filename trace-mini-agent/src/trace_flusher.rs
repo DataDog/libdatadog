@@ -17,7 +17,7 @@ type Buffer = Arc<Mutex<Vec<Vec<pb::Span>>>>;
 #[async_trait]
 pub trait TraceFlusher: DynClone {
     /// Starts a trace flusher that listens for traces sent to the tokio mpsc Receiver,
-    /// implementing flushing logic that calls flush_traces. 
+    /// implementing flushing logic that calls flush_traces.
     async fn start_trace_flusher(&self, mut rx: Receiver<Vec<Vec<pb::Span>>>);
     /// Flushes traces to the Datadog trace intake.
     fn flush_traces(&self, traces: Vec<Vec<pb::Span>>);
