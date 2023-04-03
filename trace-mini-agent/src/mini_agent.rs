@@ -26,7 +26,8 @@ impl MiniAgent {
         // setup a channel to send processed traces to our flusher
         // tx is passed through each endpoint_handler to the trace processor, which uses it to send de-serialized processed
         // traces to our trace flusher.
-        let (tx, rx): (Sender<pb::TracerPayload>, Receiver<pb::TracerPayload>) = mpsc::channel(TRACER_PAYLOAD_CHANNEL_BUFFER_SIZE);
+        let (tx, rx): (Sender<pb::TracerPayload>, Receiver<pb::TracerPayload>) =
+            mpsc::channel(TRACER_PAYLOAD_CHANNEL_BUFFER_SIZE);
 
         // start our trace flusher. receives traces and handles buffering + deciding when to flush to backend.
         let trace_flusher = self.trace_flusher.clone();

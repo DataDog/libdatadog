@@ -79,7 +79,6 @@ pub struct TracerTags<'a> {
     lang_interpreter: &'a str,
     lang_vendor: &'a str,
     tracer_version: &'a str,
-    endpoint_version: &'a str,
 }
 
 pub fn get_tracer_tags_from_request_header(headers: &HeaderMap<HeaderValue>) -> TracerTags {
@@ -89,22 +88,31 @@ pub fn get_tracer_tags_from_request_header(headers: &HeaderMap<HeaderValue>) -> 
         lang_interpreter: "",
         lang_vendor: "",
         tracer_version: "",
-        endpoint_version: "v0.5",
     };
     if let Some(lang) = headers.get("datadog-meta-lang") {
-        if let Ok(val) = lang.to_str() { ts.lang = val }
+        if let Ok(val) = lang.to_str() {
+            ts.lang = val;
+        }
     }
     if let Some(lang_version) = headers.get("datadog-meta-lang-version") {
-        if let Ok(val) = lang_version.to_str() { ts.lang_version = val }
+        if let Ok(val) = lang_version.to_str() {
+            ts.lang_version = val;
+        }
     }
     if let Some(lang_interpreter) = headers.get("datadog-meta-lang-interpreter") {
-        if let Ok(val) = lang_interpreter.to_str() { ts.lang_interpreter = val }
+        if let Ok(val) = lang_interpreter.to_str() {
+            ts.lang_interpreter = val;
+        }
     }
     if let Some(lang_vendor) = headers.get("datadog-meta-lang-vendor") {
-        if let Ok(val) = lang_vendor.to_str() { ts.lang_vendor = val }
+        if let Ok(val) = lang_vendor.to_str() {
+            ts.lang_vendor = val;
+        }
     }
     if let Some(tracer_version) = headers.get("datadog-meta-tracer-version") {
-        if let Ok(val) = tracer_version.to_str() { ts.tracer_version = val }
+        if let Ok(val) = tracer_version.to_str() {
+            ts.tracer_version = val;
+        }
     }
     ts
 }
