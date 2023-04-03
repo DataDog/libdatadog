@@ -1,21 +1,16 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-use curl::easy::{Easy, List};
-use hyper::{body::Buf, Body, Request};
+use hyper::{body::Buf, Body, Client, Method, Request};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::{
-    env,
-    io::{Cursor, Read},
-    str,
-};
+use std::{env, str};
 
 use prost::Message;
 
 use datadog_trace_protobuf::pb;
 
-const TRACE_INTAKE_URL: &str = "https://trace.agent.datadoghq.com/api/v0.2/traces";
+const TRACE_INTAKE_URL: &str = "http://trace.agent.datadoghq.com/api/v0.2/traces";
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct Span {
@@ -117,19 +112,6 @@ pub fn construct_agent_payload(traces: Vec<Vec<pb::Span>>) -> pb::AgentPayload {
     }
 }
 
-fn construct_headers() -> anyhow::Result<List> {
-    let api_key = match env::var("DD_API_KEY") {
-        Ok(key) => key,
-        Err(_) => anyhow::bail!("oopsy, no DD_API_KEY was provided"),
-    };
-    let mut list = List::new();
-    list.append(format!("User-agent: {}", "ffi-test").as_str())?;
-    list.append(format!("Content-type: {}", "application/x-protobuf").as_str())?;
-    list.append(format!("DD-API-KEY: {}", &api_key).as_str())?;
-    list.append(format!("X-Datadog-Reported-Languages: {}", "nodejs").as_str())?;
-    Ok(list)
-}
-
 pub fn serialize_agent_payload(payload: pb::AgentPayload) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.reserve(payload.encoded_len());
@@ -137,35 +119,29 @@ pub fn serialize_agent_payload(payload: pb::AgentPayload) -> Vec<u8> {
     buf
 }
 
-pub fn send(data: Vec<u8>) -> anyhow::Result<Vec<u8>> {
-    let mut easy = Easy::new();
-    let mut dst = Vec::new();
-    let len = data.len();
-    let mut data_cursor = Cursor::new(data);
-    {
-        easy.url(TRACE_INTAKE_URL)?;
-        easy.post(true)?;
-        easy.post_field_size(len as u64)?;
-        easy.http_headers(construct_headers()?)?;
+pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
+    let api_key = match env::var("DD_API_KEY") {
+        Ok(key) => key,
+        Err(_) => anyhow::bail!("oopsy, no DD_API_KEY was provided"),
+    };
 
-        let mut transfer = easy.transfer();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(TRACE_INTAKE_URL)
+        .header("User-agent", "ffi-test")
+        .header("Content-type", "application/x-protobuf")
+        .header("DD-API-KEY", &api_key)
+        .header("X-Datadog-Reported-Languages", "nodejs")
+        .body(Body::from(data))?;
 
-        transfer.read_function(|buf| Ok(data_cursor.read(buf).unwrap_or(0)))?;
-
-        transfer.write_function(|result_data| {
-            dst.extend_from_slice(result_data);
-            match str::from_utf8(result_data) {
-                Ok(_) => {
-                    println!("Successfully sent traces");
-                }
-                Err(e) => println!("Failed to send traces: error: {}", e),
-            };
-            Ok(result_data.len())
-        })?;
-
-        transfer.perform()?;
+    let client = Client::new();
+    match client.request(req).await {
+        Ok(_) => {
+            println!("Successfully sent traces");
+        }
+        Err(e) => println!("Failed to send traces: {}", e),
     }
-    Ok(dst)
+    Ok(())
 }
 
 #[cfg(test)]
