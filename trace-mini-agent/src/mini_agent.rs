@@ -13,8 +13,7 @@ use crate::{trace_flusher, trace_processor};
 
 const MINI_AGENT_PORT: usize = 8126;
 const TRACE_ENDPOINT_PATH: &str = "/v0.4/traces";
-
-type Trace = Vec<pb::Span>;
+const TRACER_PAYLOAD_CHANNEL_BUFFER_SIZE: usize = 10;
 
 pub struct MiniAgent {
     pub trace_processor: Box<dyn trace_processor::TraceProcessor + Send + Sync>,
@@ -27,7 +26,7 @@ impl MiniAgent {
         // setup a channel to send processed traces to our flusher
         // tx is passed through each endpoint_handler to the trace processor, which uses it to send de-serialized processed
         // traces to our trace flusher.
-        let (tx, rx): (Sender<Vec<Trace>>, Receiver<Vec<Trace>>) = mpsc::channel(10);
+        let (tx, rx): (Sender<pb::TracerPayload>, Receiver<pb::TracerPayload>) = mpsc::channel(TRACER_PAYLOAD_CHANNEL_BUFFER_SIZE);
 
         // start our trace flusher. receives traces and handles buffering + deciding when to flush to backend.
         let trace_flusher = self.trace_flusher.clone();
@@ -63,7 +62,7 @@ impl MiniAgent {
     async fn trace_endpoint_handler(
         req: Request<Body>,
         trace_processor: Box<dyn trace_processor::TraceProcessor + Send + Sync>,
-        tx: Sender<Vec<Vec<pb::Span>>>,
+        tx: Sender<pb::TracerPayload>,
     ) -> Result<Response<Body>, Infallible> {
         match (req.method(), req.uri().path()) {
             (&Method::PUT, TRACE_ENDPOINT_PATH) => {

@@ -1,6 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
+use hyper::http::HeaderValue;
+use hyper::HeaderMap;
 use hyper::{body::Buf, Body, Client, Method, Request};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -27,10 +29,8 @@ pub struct Span {
     metrics: Option<HashMap<String, f64>>,
 }
 
-pub async fn get_traces_from_request_body(
-    req: Request<Body>,
-) -> anyhow::Result<Vec<Vec<pb::Span>>> {
-    let buffer = hyper::body::aggregate(req).await.unwrap();
+pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<Vec<Vec<pb::Span>>> {
+    let buffer = hyper::body::aggregate(body).await.unwrap();
 
     let traces: Vec<Vec<Span>> = match rmp_serde::from_read(buffer.reader()) {
         Ok(res) => res,
@@ -73,34 +73,43 @@ pub async fn get_traces_from_request_body(
     Ok(pb_traces)
 }
 
-pub fn construct_agent_payload(traces: Vec<Vec<pb::Span>>) -> pb::AgentPayload {
-    let mut tracer_payloads = Vec::<pb::TracerPayload>::new();
+pub struct TracerTags<'a> {
+    lang: &'a str,
+    lang_version: &'a str,
+    lang_interpreter: &'a str,
+    lang_vendor: &'a str,
+    tracer_version: &'a str,
+    endpoint_version: &'a str,
+}
 
-    for trace in traces {
-        let chunks = vec![pb::TraceChunk {
-            priority: 1,
-            origin: "ffi-origin".to_string(),
-            spans: trace,
-            tags: HashMap::new(),
-            dropped_trace: false,
-        }];
-
-        let tracer_payload = pb::TracerPayload {
-            app_version: "mini-agent-1.0.0".to_string(),
-            language_name: "mini-agent-nodejs".to_string(),
-            container_id: "mini-agent-containerid".to_string(),
-            chunks,
-            env: "mini-agent-env".to_string(),
-            hostname: "mini-agent-hostname".to_string(),
-            language_version: "mini-agent-nodejs-version".to_string(),
-            runtime_id: "mini-agent-runtime-id".to_string(),
-            tags: HashMap::new(),
-            tracer_version: "tracer-v-1".to_string(),
-        };
-
-        tracer_payloads.push(tracer_payload);
+pub fn get_tracer_tags_from_request_header(headers: &HeaderMap<HeaderValue>) -> TracerTags {
+    let mut ts = TracerTags {
+        lang: "",
+        lang_version: "",
+        lang_interpreter: "",
+        lang_vendor: "",
+        tracer_version: "",
+        endpoint_version: "v0.5",
+    };
+    if let Some(lang) = headers.get("datadog-meta-lang") {
+        if let Ok(val) = lang.to_str() { ts.lang = val }
     }
+    if let Some(lang_version) = headers.get("datadog-meta-lang-version") {
+        if let Ok(val) = lang_version.to_str() { ts.lang_version = val }
+    }
+    if let Some(lang_interpreter) = headers.get("datadog-meta-lang-interpreter") {
+        if let Ok(val) = lang_interpreter.to_str() { ts.lang_interpreter = val }
+    }
+    if let Some(lang_vendor) = headers.get("datadog-meta-lang-vendor") {
+        if let Ok(val) = lang_vendor.to_str() { ts.lang_vendor = val }
+    }
+    if let Some(tracer_version) = headers.get("datadog-meta-tracer-version") {
+        if let Ok(val) = tracer_version.to_str() { ts.tracer_version = val }
+    }
+    ts
+}
 
+pub fn construct_agent_payload(tracer_payloads: Vec<pb::TracerPayload>) -> pb::AgentPayload {
     pb::AgentPayload {
         host_name: "ffi-test-hostname".to_string(),
         env: "ffi-test-env".to_string(),
@@ -109,6 +118,34 @@ pub fn construct_agent_payload(traces: Vec<Vec<pb::Span>>) -> pb::AgentPayload {
         target_tps: 60.0,
         tags: HashMap::new(),
         tracer_payloads,
+    }
+}
+
+pub fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
+    pb::TraceChunk {
+        priority: 1,
+        origin: "".to_string(),
+        spans: trace,
+        tags: HashMap::new(),
+        dropped_trace: false,
+    }
+}
+
+pub fn construct_tracer_payload(
+    chunks: Vec<pb::TraceChunk>,
+    tracer_tags: TracerTags,
+) -> pb::TracerPayload {
+    pb::TracerPayload {
+        app_version: "placeholder_version".to_string(),
+        language_name: tracer_tags.lang.to_string(),
+        container_id: "".to_string(),
+        env: "placeholder_env".to_string(),
+        runtime_id: "".to_string(),
+        chunks,
+        hostname: "".to_string(),
+        language_version: tracer_tags.lang_version.to_string(),
+        tags: HashMap::new(),
+        tracer_version: tracer_tags.tracer_version.to_string(),
     }
 }
 
@@ -221,7 +258,7 @@ mod tests {
             let request = Request::builder()
                 .body(hyper::body::Body::from(bytes))
                 .unwrap();
-            let res = trace_utils::get_traces_from_request_body(request).await;
+            let res = trace_utils::get_traces_from_request_body(request.into_body()).await;
             assert!(res.is_ok());
             assert_eq!(res.unwrap(), output);
         }

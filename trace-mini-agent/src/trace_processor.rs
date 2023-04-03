@@ -16,7 +16,7 @@ pub trait TraceProcessor: DynClone {
     async fn process_traces(
         &self,
         req: Request<Body>,
-        tx: Sender<Vec<Vec<pb::Span>>>,
+        tx: Sender<pb::TracerPayload>,
     ) -> http::Result<Response<Body>>;
 }
 dyn_clone::clone_trait_object!(TraceProcessor);
@@ -29,10 +29,13 @@ impl TraceProcessor for ServerlessTraceProcessor {
     async fn process_traces(
         &self,
         req: Request<Body>,
-        tx: Sender<Vec<Vec<pb::Span>>>,
+        tx: Sender<pb::TracerPayload>,
     ) -> http::Result<Response<Body>> {
+        let (parts, body) = req.into_parts();
+        let tracer_tags = trace_utils::get_tracer_tags_from_request_header(&parts.headers);
+
         // deserialize traces from the request body, convert to protobuf structs (see trace-protobuf crate)
-        let traces = match trace_utils::get_traces_from_request_body(req).await {
+        let traces = match trace_utils::get_traces_from_request_body(body).await {
             Ok(res) => res,
             Err(err) => {
                 return Response::builder().body(Body::from(format!(
@@ -42,8 +45,15 @@ impl TraceProcessor for ServerlessTraceProcessor {
             }
         };
 
+        let trace_chunks: Vec<pb::TraceChunk> = traces
+            .iter()
+            .map(|trace| trace_utils::construct_trace_chunk(trace.to_vec()))
+            .collect();
+
+        let tracer_payload = trace_utils::construct_tracer_payload(trace_chunks, tracer_tags);
+
         // send traces to our trace flusher
-        match tx.send(traces).await {
+        match tx.send(tracer_payload).await {
             Ok(_) => Response::builder()
                 .status(200)
                 .body(Body::from("Successfully buffered traces to be flushed.")),
