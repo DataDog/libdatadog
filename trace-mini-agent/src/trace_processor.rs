@@ -11,6 +11,8 @@ use tokio::sync::mpsc::Sender;
 
 #[async_trait]
 pub trait TraceProcessor: DynClone {
+    /// Deserializes traces from a hyper request body and sends them through 
+    /// the provided tokio mpsc Sender.
     async fn process_traces(
         &self,
         req: Request<Body>,

@@ -43,7 +43,7 @@ impl MiniAgent {
             let tx = tx.clone();
 
             let service = service_fn(move |req| {
-                MiniAgent::endpoint_handler(req, trace_processor.clone(), tx.clone())
+                MiniAgent::trace_endpoint_handler(req, trace_processor.clone(), tx.clone())
             });
 
             async move { Ok::<_, Infallible>(service) }
@@ -60,7 +60,7 @@ impl MiniAgent {
         Ok(())
     }
 
-    async fn endpoint_handler(
+    async fn trace_endpoint_handler(
         req: Request<Body>,
         trace_processor: Box<dyn trace_processor::TraceProcessor + Send + Sync>,
         tx: Sender<Vec<Vec<pb::Span>>>,
