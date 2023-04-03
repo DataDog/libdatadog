@@ -191,7 +191,7 @@ mod test {
         cfg.set_url("file:///absolute/path").unwrap();
 
         assert_eq!(
-            "http://mock_endpoint/",
+            "http://datadoghq.invalid/",
             cfg.clone().endpoint.unwrap().url.to_string()
         );
         assert_eq!(
