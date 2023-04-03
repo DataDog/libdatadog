@@ -6,19 +6,16 @@ use serde::Serialize;
 
 #[derive(Serialize, Debug)]
 #[serde(tag = "request_type", content = "payload")]
+#[serde(rename_all = "kebab-case")]
 pub enum Payload {
-    #[serde(rename = "app-started")]
     AppStarted(AppStarted),
-    #[serde(rename = "app-dependencies-loaded")]
     AppDependenciesLoaded(AppDependenciesLoaded),
-    #[serde(rename = "app-integrations-change")]
     AppIntegrationsChange(AppIntegrationsChange),
-    #[serde(rename = "app-heartbeat")]
+    AppClientConfigurationChange(AppClientConfigurationChange),
     AppHearbeat(()),
-    #[serde(rename = "app-closing")]
     AppClosing(()),
-    #[serde(rename = "generate-metrics")]
     GenerateMetrics(GenerateMetrics),
-    #[serde(rename = "logs")]
     Logs(Vec<Log>),
+    MessageBatch(MessageBatch),
+    AppExtendedHeartbeats(AppStarted),
 }

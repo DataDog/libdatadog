@@ -9,7 +9,7 @@ use std::{
 };
 
 use ddtelemetry::{
-    data::{Dependency, Integration, self},
+    data::{self, Dependency, Integration},
     ipc::{
         interface::{
             blocking::{self, TelemetryTransport},
@@ -17,7 +17,7 @@ use ddtelemetry::{
         },
         sidecar,
     },
-    worker::TelemetryActions,
+    worker::{LifecycleAction, TelemetryActions},
 };
 use ffi::slice::AsBytes;
 
@@ -254,7 +254,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_end(
         transport,
         instance_id,
         queue_id,
-        vec![TelemetryActions::Stop],
+        vec![TelemetryActions::Lifecycle(LifecycleAction::Stop)],
     ));
 
     MaybeError::None

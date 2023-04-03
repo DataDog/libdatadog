@@ -1,39 +1,28 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use ddcommon::{connector, parse_uri, Endpoint, HttpClient, HttpRequestBuilder};
+use ddcommon::{parse_uri, Endpoint};
 use http::{uri::PathAndQuery, Uri};
 use lazy_static::lazy_static;
 
-use std::{
-    borrow::{Borrow, Cow},
-    env,
-    path::PathBuf,
-    str::FromStr,
-    time::Duration,
-};
+use std::{borrow::Cow, env, path::PathBuf, str::FromStr};
 
 pub const DEFAULT_DD_SITE: &str = "datadoghq.com";
 pub const PROD_INTAKE_FORMAT_PREFIX: &str = "https://instrumentation-telemetry-intake";
 
-pub const STAGING_INTAKE: &str = "https://all-http-intake.logs.datad0g.com";
 const DIRECT_TELEMETRY_URL_PATH: &str = "/api/v2/apmtelemetry";
 const AGENT_TELEMETRY_URL_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
 
 const DEFAULT_AGENT_HOST: &str = "localhost";
 const DEFAULT_AGENT_PORT: u16 = 8126;
 
-const DD_APM_TELEMETRY_DD_URL: &str = "DD_APM_TELEMETRY_DD_URL";
-const _DD_SHARED_LIB_DEBUG: &str = "_DD_SHARED_LIB_DEBUG";
-const DD_API_KEY: &str = "DD_API_KEY";
-const DD_AGENT_HOST: &str = "DD_AGENT_HOST";
-const DD_AGENT_PORT: &str = "DD_AGENT_PORT";
-const DD_SITE: &str = "DD_SITE";
-
 #[derive(Clone, Debug)]
 pub struct Config {
+    /// Endpoint to send the data to
     pub endpoint: Option<Endpoint>,
+    /// Path to a file where the data is written instead of sent to the intake
     pub mock_client_file: Option<PathBuf>,
+    /// Enables debug logging
     pub telemetry_debug_logging_enabled: bool,
 }
 
@@ -50,44 +39,62 @@ fn build_full_telemetry_agent_url(agent_url: &str) -> anyhow::Result<Uri> {
 
 pub struct FromEnv {}
 
+// TODO Paul LGDC: if this struct carries no data, it would probably be better to have it as a module
 impl FromEnv {
-    fn get_agent_base_url() -> String {
-        let agent_port = env::var(DD_AGENT_PORT)
-            .ok()
-            .and_then(|p| p.parse::<u16>().ok())
-            .unwrap_or(DEFAULT_AGENT_PORT);
+    const DD_APM_TELEMETRY_DD_URL: &'static str = "DD_APM_TELEMETRY_DD_URL";
+    const DD_API_KEY: &'static str = "DD_API_KEY";
+    const DD_AGENT_HOST: &'static str = "DD_AGENT_HOST";
+    const DD_AGENT_PORT: &'static str = "DD_AGENT_PORT";
+    const DD_SITE: &'static str = "DD_SITE";
+
+    // Development env variables
+    const _DD_SHARED_LIB_DEBUG: &'static str = "_DD_SHARED_LIB_DEBUG";
+    const _DD_DIRECT_SUBMISSION_ENABLED: &'static str = "_DD_DIRECT_SUBMISSION_ENABLED";
+
+    fn agent_port() -> Option<u16> {
+        env::var(Self::DD_AGENT_PORT).ok()?.parse::<u16>().ok()
+    }
+
+    fn direct_submission_enabled() -> bool {
+        env::var(Self::_DD_DIRECT_SUBMISSION_ENABLED).is_ok()
+    }
+
+    fn agent_base_url() -> String {
+        let agent_port = Self::agent_port().unwrap_or(DEFAULT_AGENT_PORT);
         let agent_host =
-            env::var(DD_AGENT_HOST).unwrap_or_else(|_| String::from(DEFAULT_AGENT_HOST));
+            env::var(Self::DD_AGENT_HOST).unwrap_or_else(|_| String::from(DEFAULT_AGENT_HOST));
 
-        format!("http://{agent_host}:{agent_port}")
+        format!("http://{agent_host}:{agent_port}{AGENT_TELEMETRY_URL_PATH}")
     }
 
-    fn get_intake_base_url() -> String {
-        if let Some(url) = env::var(DD_APM_TELEMETRY_DD_URL)
-            .ok()
-            .filter(|s| !s.is_empty())
-        {
-            return url;
+    fn intake_base_url() -> Option<String> {
+        match env::var(Self::DD_APM_TELEMETRY_DD_URL) {
+            Ok(url) if !url.is_empty() => return Some(url),
+            _ => {}
         }
-
-        if let Ok(dd_site) = env::var(DD_SITE) {
-            if dd_site.is_empty() {
-                format!("{PROD_INTAKE_FORMAT_PREFIX}.{DEFAULT_DD_SITE}")
-            } else {
-                format!("{PROD_INTAKE_FORMAT_PREFIX}.{dd_site}")
+        match env::var(Self::DD_SITE) {
+            Ok(dd_site) if !dd_site.is_empty() => {
+                return Some(format!(
+                    "{PROD_INTAKE_FORMAT_PREFIX}.{dd_site}{DIRECT_TELEMETRY_URL_PATH}"
+                ))
             }
-        } else {
-            String::from(STAGING_INTAKE)
+            _ => {}
         }
+        None
     }
 
-    fn get_api_key() -> Option<String> {
-        env::var(DD_API_KEY).ok().filter(|p| !p.is_empty())
+    fn debug_enabled() -> Option<bool> {
+        let var = env::var(Self::_DD_SHARED_LIB_DEBUG).ok()?;
+        Some(var == "true" || var == "1")
+    }
+
+    fn api_key() -> Option<String> {
+        env::var(Self::DD_API_KEY).ok().filter(|p| !p.is_empty())
     }
 
     pub fn build_endpoint(agent_url: &str, api_key: Option<String>) -> Option<Endpoint> {
         let telemetry_uri = if api_key.is_some() {
-            let telemetry_intake_base_url = Self::get_intake_base_url();
+            let telemetry_intake_base_url = Self::intake_base_url()?;
             Uri::from_str(
                 format!("{telemetry_intake_base_url}{DIRECT_TELEMETRY_URL_PATH}").as_str(),
             )
@@ -103,34 +110,39 @@ impl FromEnv {
     }
 }
 
-impl ProvideConfig for FromEnv {
-    fn config() -> Config {
-        let agent_url = Self::get_agent_base_url();
-        let api_key = Self::get_api_key();
-        let endpoint = Self::build_endpoint(&agent_url, api_key);
-        let debug_enabled = env::var(_DD_SHARED_LIB_DEBUG)
-            .ok()
-            .and_then(|x| {
-                match x.parse::<bool>() {
-                    Ok(v) => Ok(v),
-                    Err(_) => x.parse::<u32>().map(|x| x == 1u32),
-                }
-                .ok()
-            })
-            .unwrap_or(false);
-
-        Config {
-            telemetry_debug_logging_enabled: debug_enabled,
-            mock_client_file: None,
-            endpoint,
-        }
-    }
+macro_rules! try_block {
+    ($($st:stmt)*) => {
+        (|| {$($st)*})()
+    };
 }
 
 impl Config {
+    pub fn from_env() -> Self {
+        let direct_submission_enabled = FromEnv::direct_submission_enabled();
+        let debug_enabled = FromEnv::debug_enabled().unwrap_or(false);
+
+        let endpoint = try_block! {if !direct_submission_enabled {
+            Some(Endpoint {
+                url: Uri::from_str(&FromEnv::agent_base_url()).ok()?,
+                api_key: None,
+            })
+        } else {
+            Some(Endpoint {
+                url: Uri::from_str(&FromEnv::agent_base_url()).ok()?,
+                api_key: FromEnv::api_key().map(Cow::Owned),
+            })
+        }};
+
+        Self {
+            telemetry_debug_logging_enabled: debug_enabled,
+            endpoint,
+            mock_client_file: None,
+        }
+    }
+
     pub fn get() -> &'static Self {
         lazy_static! {
-            static ref CFG: Config = FromEnv::config();
+            static ref CFG: Config = Config::from_env();
         }
         &CFG
     }
@@ -140,7 +152,7 @@ impl Config {
 
         if let "file" = uri.scheme_str().unwrap_or_default() {
             self.endpoint = Some(Endpoint {
-                url: Uri::from_static("http://mock_endpoint/"),
+                url: Uri::from_static("http://datadoghq.invalid/"),
                 api_key: None,
             });
             self.mock_client_file = Some(uri.path().into());
@@ -151,37 +163,6 @@ impl Config {
             })
         }
         Ok(())
-    }
-
-    pub fn is_telemetry_debug_logging_enabled(&self) -> bool {
-        self.telemetry_debug_logging_enabled
-    }
-
-    pub fn api_key(&self) -> Option<Cow<str>> {
-        self.endpoint.as_ref()?.api_key.clone() //TODO remove this getter
-    }
-
-    pub fn endpoint(&self) -> &Option<Endpoint> {
-        self.endpoint.borrow()
-    }
-
-    pub fn http_client(&self) -> HttpClient {
-        hyper::Client::builder()
-            .pool_idle_timeout(Duration::from_secs(30))
-            .build(connector::Connector::new())
-    }
-
-    pub fn into_request_builder(&self) -> anyhow::Result<HttpRequestBuilder> {
-        match self.endpoint() {
-            Some(e) => e.into_request_builder(concat!("telemetry/", env!("CARGO_PKG_VERSION"))),
-            None => Err(anyhow::Error::msg(
-                "no valid endpoint found, can't build the request".to_string(),
-            )),
-        }
-    }
-
-    pub fn is_direct(&self) -> bool {
-        self.api_key().is_some() // If API key is provided call directly
     }
 }
 

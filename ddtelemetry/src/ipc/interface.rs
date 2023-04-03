@@ -23,8 +23,8 @@ use serde::{Deserialize, Serialize};
 use tokio::net::UnixStream;
 
 use crate::{
-    config::{Config, FromEnv, ProvideConfig},
-    worker::{TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle},
+    config::Config,
+    worker::{LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle},
 };
 use datadog_ipc::tarpc;
 
@@ -165,7 +165,7 @@ impl SessionInfo {
         let mut cfg = self.session_config.lock().unwrap();
 
         if (*cfg).is_none() {
-            *cfg = Some(FromEnv::config())
+            *cfg = Some(Config::from_env())
         }
 
         cfg
@@ -207,7 +207,7 @@ impl RuntimeInfo {
                 tokio::spawn(async move {
                     instance
                         .telemetry
-                        .send_msg(crate::worker::TelemetryActions::Stop)
+                        .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop))
                         .await
                         .ok();
                     instance.telemetry_worker_shutdown.await;
@@ -297,7 +297,7 @@ impl TelemetryServer {
             .lock()
             .unwrap()
             .clone()
-            .unwrap_or_else(FromEnv::config);
+            .unwrap_or_else(Config::from_env);
 
         // TODO: log errors
         if let Ok((handle, worker_join)) = builder.spawn_with_config(config.clone()).await {
@@ -315,7 +315,7 @@ impl TelemetryServer {
 
             instance
                 .telemetry
-                .send_msg(TelemetryActions::Start)
+                .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
                 .await
                 .ok();
             Some(instance)

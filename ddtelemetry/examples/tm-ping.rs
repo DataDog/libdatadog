@@ -10,6 +10,7 @@ use ddtelemetry::{
     build_host,
     config::Config,
     data::{self, AppStarted, Application, Telemetry},
+    worker::http_client::request_builder,
 };
 use http::header::CONTENT_TYPE;
 
@@ -29,7 +30,7 @@ fn seq_id() -> u64 {
 fn build_request<'a>(
     application: &'a data::Application,
     host: &'a data::Host,
-    payload: data::Payload,
+    payload: &'a data::Payload,
 ) -> data::Telemetry<'a> {
     data::Telemetry {
         api_version: data::ApiVersion::V1,
@@ -47,9 +48,8 @@ fn build_request<'a>(
 
 pub async fn push_telemetry(telemetry: &Telemetry<'_>) -> anyhow::Result<()> {
     let config = Config::get();
-    let client = config.http_client();
-    let req = config
-        .into_request_builder()?
+    let client = ddtelemetry::worker::http_client::from_config(config);
+    let req = request_builder(config)?
         .method(http::Method::POST)
         .header(CONTENT_TYPE, "application/json")
         .body(serde_json::to_string(telemetry)?.into())?;
@@ -81,9 +81,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         runtime_patches: None,
     };
     let host = build_host();
-    let payload = build_app_started_payload();
-
-    let telemetry = build_request(&app, &host, data::payload::Payload::AppStarted(payload));
+    let payload = data::payload::Payload::AppStarted(build_app_started_payload());
+    let telemetry = build_request(&app, &host, &payload);
 
     println!(
         "Payload to be sent: {}",

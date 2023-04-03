@@ -9,6 +9,8 @@ use crate::data::*;
 pub enum ApiVersion {
     #[serde(rename = "v1")]
     V1,
+    #[serde(rename = "v2")]
+    V2,
 }
 
 #[derive(Serialize, Debug)]
@@ -20,7 +22,7 @@ pub struct Telemetry<'a> {
     pub application: &'a Application,
     pub host: &'a Host,
     #[serde(flatten)]
-    pub payload: Payload,
+    pub payload: &'a Payload,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]

@@ -1,6 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use ddcommon::HttpRequestBuilder;
 use http::{Request, Response};
 use hyper::Body;
 use std::{
@@ -20,6 +21,15 @@ pub trait HttpClient {
     fn request(&self, req: Request<hyper::Body>) -> ResponseFuture;
 }
 
+pub fn request_builder(c: &Config) -> anyhow::Result<HttpRequestBuilder> {
+    match &c.endpoint {
+        Some(e) => e.into_request_builder(concat!("telemetry/", env!("CARGO_PKG_VERSION"))),
+        None => Err(anyhow::Error::msg(
+            "no valid endpoint found, can't build the request".to_string(),
+        )),
+    }
+}
+
 pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
     if let Some(ref p) = c.mock_client_file {
         Box::new(MockClient {
@@ -29,7 +39,9 @@ pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
         })
     } else {
         Box::new(HyperClient {
-            inner: c.http_client(),
+            inner: hyper::Client::builder()
+                .pool_idle_timeout(std::time::Duration::from_secs(30))
+                .build(ddcommon::connector::Connector::new()),
         })
     }
 }

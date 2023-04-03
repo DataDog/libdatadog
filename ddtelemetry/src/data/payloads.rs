@@ -2,10 +2,11 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use crate::data::metrics;
+use crate::data::Payload;
+
 use serde::{Deserialize, Serialize};
 
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
 pub struct Dependency {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -14,7 +15,7 @@ pub struct Dependency {
     pub hash: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
 pub struct Integration {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -27,10 +28,10 @@ pub struct Integration {
     pub auto_enabled: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
 pub struct Configuration {
     pub name: String,
-    pub value: String,  
+    pub value: String,
 }
 
 #[derive(Serialize, Debug)]
@@ -50,12 +51,17 @@ pub struct AppIntegrationsChange {
     pub integrations: Vec<Integration>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct AppClientConfigurationChange {
+    pub configuration: Vec<Configuration>,
+}
+
 #[derive(Serialize, Debug)]
 pub struct GenerateMetrics {
     pub series: Vec<metrics::Serie>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Log {
     pub message: String,
     pub level: LogLevel,
@@ -63,11 +69,16 @@ pub struct Log {
     pub stack_trace: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
 #[serde(rename_all = "UPPERCASE")]
 #[repr(C)]
 pub enum LogLevel {
     Error,
     Warn,
     Debug,
+}
+
+#[derive(Serialize, Debug)]
+pub struct MessageBatch {
+    pub payload: Vec<Payload>,
 }

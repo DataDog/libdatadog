@@ -3,7 +3,10 @@
 use std::path::{Path, PathBuf};
 
 use ddcommon_ffi as ffi;
-use ddtelemetry::{worker::{TelemetryWorkerBuilder, TelemetryWorkerHandle}, data};
+use ddtelemetry::{
+    data,
+    worker::{TelemetryWorkerBuilder, TelemetryWorkerHandle},
+};
 use ffi::slice::AsBytes;
 
 use crate::MaybeError;
@@ -132,7 +135,9 @@ pub unsafe extern "C" fn ddog_builder_with_config(
 ) -> MaybeError {
     let name = name.to_utf8_lossy().into_owned();
     let value = value.to_utf8_lossy().into_owned();
-    builder.library_config.push(data::Configuration{name, value});
+    builder
+        .library_config
+        .push(data::Configuration { name, value });
     MaybeError::None
 }
 
