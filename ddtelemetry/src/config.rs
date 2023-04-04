@@ -5,7 +5,7 @@ use ddcommon::{parse_uri, Endpoint};
 use http::{uri::PathAndQuery, Uri};
 use lazy_static::lazy_static;
 
-use std::{borrow::Cow, env, path::PathBuf, str::FromStr};
+use std::{borrow::Cow, env, path::PathBuf, str::FromStr, time::Duration};
 
 pub const DEFAULT_DD_SITE: &str = "datadoghq.com";
 pub const PROD_INTAKE_FORMAT_PREFIX: &str = "https://instrumentation-telemetry-intake";
@@ -24,6 +24,7 @@ pub struct Config {
     pub mock_client_file: Option<PathBuf>,
     /// Enables debug logging
     pub telemetry_debug_logging_enabled: bool,
+    pub telemetry_hearbeat_interval: Duration,
 }
 
 pub trait ProvideConfig {
@@ -46,10 +47,20 @@ impl FromEnv {
     const DD_AGENT_HOST: &'static str = "DD_AGENT_HOST";
     const DD_AGENT_PORT: &'static str = "DD_AGENT_PORT";
     const DD_SITE: &'static str = "DD_SITE";
+    const DD_TELEMETRY_HEARTBEAT_INTERVAL: &'static str = "DD_TELEMETRY_HEARTBEAT_INTERVAL";
 
     // Development env variables
     const _DD_SHARED_LIB_DEBUG: &'static str = "_DD_SHARED_LIB_DEBUG";
     const _DD_DIRECT_SUBMISSION_ENABLED: &'static str = "_DD_DIRECT_SUBMISSION_ENABLED";
+
+    fn telemetry_hearbeat_interval() -> Option<Duration> {
+        Some(Duration::from_secs_f32(
+            env::var(Self::DD_TELEMETRY_HEARTBEAT_INTERVAL)
+                .ok()?
+                .parse::<f32>()
+                .ok()?,
+        ))
+    }
 
     fn agent_port() -> Option<u16> {
         env::var(Self::DD_AGENT_PORT).ok()?.parse::<u16>().ok()
@@ -116,11 +127,22 @@ macro_rules! try_block {
     };
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            endpoint: None,
+            mock_client_file: None,
+            telemetry_debug_logging_enabled: false,
+            telemetry_hearbeat_interval: Duration::from_secs(60),
+        }
+    }
+}
+
 impl Config {
     pub fn from_env() -> Self {
-        let direct_submission_enabled = FromEnv::direct_submission_enabled();
-        let debug_enabled = FromEnv::debug_enabled().unwrap_or(false);
+        let default = Self::default();
 
+        let direct_submission_enabled = FromEnv::direct_submission_enabled();
         let endpoint = try_block! {if !direct_submission_enabled {
             Some(Endpoint {
                 url: Uri::from_str(&FromEnv::agent_base_url()).ok()?,
@@ -133,9 +155,15 @@ impl Config {
             })
         }};
 
+        let telemetry_debug_logging_enabled =
+            FromEnv::debug_enabled().unwrap_or(default.telemetry_debug_logging_enabled);
+        let telemetry_hearbeat_interval =
+            FromEnv::telemetry_hearbeat_interval().unwrap_or(default.telemetry_hearbeat_interval);
+
         Self {
-            telemetry_debug_logging_enabled: debug_enabled,
+            telemetry_debug_logging_enabled,
             endpoint,
+            telemetry_hearbeat_interval,
             mock_client_file: None,
         }
     }
@@ -174,11 +202,7 @@ mod test {
 
     #[test]
     fn test_config_url_update() {
-        let mut cfg = Config {
-            endpoint: None,
-            mock_client_file: None,
-            telemetry_debug_logging_enabled: false,
-        };
+        let mut cfg = Config::default();
 
         cfg.set_url("http://example.com/any_path_will_be_ignored")
             .unwrap();

@@ -715,6 +715,7 @@ impl TelemetryWorkerBuilder {
         let contexts = MetricContexts::default();
         let token = CancellationToken::new();
         let config = self.config.merge(external_config);
+        let telemetry_hearbeat_interval = config.telemetry_hearbeat_interval;
         let client = http_client::from_config(&config);
         let mut configurations = store::Store::new(MAX_ITEMS);
         configurations.extend(self.library_config);
@@ -742,7 +743,7 @@ impl TelemetryWorkerBuilder {
                     time::Duration::from_secs(10),
                     LifecycleAction::FlushMetricAggr,
                 ),
-                (time::Duration::from_secs(60), LifecycleAction::FlushData),
+                (telemetry_hearbeat_interval, LifecycleAction::FlushData),
                 (
                     time::Duration::from_secs(60 * 60 * 24),
                     LifecycleAction::ExtendedHeartbeat,
