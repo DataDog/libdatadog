@@ -369,7 +369,7 @@ dependencies = [
  "nix",
  "pin-project",
  "pretty_assertions",
- "rmp-serde",
+ "rmp-serde 1.1.1",
  "sendfd",
  "serde",
  "spawn_worker",
@@ -1459,6 +1459,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rmp-serde"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5b13be192e0220b8afb7222aa5813cb62cc269ebb5cac346ca6487681d2913e"
+dependencies = [
+ "byteorder",
+ "rmp",
+ "serde",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1889,7 +1900,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "pin-project",
- "rmp-serde",
+ "rmp-serde 0.15.5",
  "serde",
  "serde_json",
 ]
