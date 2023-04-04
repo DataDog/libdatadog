@@ -3,7 +3,6 @@
 
 use async_trait::async_trait;
 use datadog_trace_protobuf::pb;
-use dyn_clone::DynClone;
 use hyper::{http, Body, Request, Response};
 use tokio::sync::mpsc::Sender;
 
@@ -11,7 +10,7 @@ use datadog_trace_normalization::normalizer;
 use datadog_trace_utils::trace_utils;
 
 #[async_trait]
-pub trait TraceProcessor: DynClone {
+pub trait TraceProcessor {
     /// Deserializes traces from a hyper request body and sends them through
     /// the provided tokio mpsc Sender.
     async fn process_traces(
@@ -20,7 +19,6 @@ pub trait TraceProcessor: DynClone {
         tx: Sender<pb::TracerPayload>,
     ) -> http::Result<Response<Body>>;
 }
-dyn_clone::clone_trait_object!(TraceProcessor);
 
 #[derive(Clone)]
 pub struct ServerlessTraceProcessor {}
@@ -100,7 +98,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
             payload_app_version,
         );
 
-        // send traces to our trace flusher
+        // send trace payload to our trace flusher
         match tx.send(tracer_payload).await {
             Ok(_) => Response::builder()
                 .status(200)

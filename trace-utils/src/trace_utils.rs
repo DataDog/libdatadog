@@ -4,6 +4,7 @@
 use hyper::http::HeaderValue;
 use hyper::HeaderMap;
 use hyper::{body::Buf, Body, Client, Method, Request};
+use hyper_rustls::HttpsConnectorBuilder;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::{env, str};
@@ -12,7 +13,22 @@ use prost::Message;
 
 use datadog_trace_protobuf::pb;
 
-const TRACE_INTAKE_URL: &str = "http://trace.agent.datadoghq.com/api/v0.2/traces";
+const TRACE_INTAKE_URL: &str = "https://trace.agent.datadoghq.com/api/v0.2/traces";
+
+macro_rules! parse_header {
+    (
+        $header_map:ident,
+        { $($header:literal => $($field:ident).+ ,)+ }
+    ) => {
+        $(
+            if let Some(h) = $header_map.get($header) {
+                if let Ok(h) = h.to_str() {
+                    $($field).+ = h;
+                }
+            }
+        )+
+    }
+}
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct Span {
@@ -42,20 +58,20 @@ pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<Vec<Vec<
     let mut pb_traces = Vec::<Vec<pb::Span>>::new();
     for trace in traces {
         let mut pb_spans = Vec::<pb::Span>::new();
-        for span in trace.iter() {
+        for span in trace {
             let span = pb::Span {
-                service: span.service.clone().unwrap_or_default(),
-                name: span.name.clone(),
-                resource: span.resource.clone(),
+                service: span.service.unwrap_or_default(),
+                name: span.name,
+                resource: span.resource,
                 trace_id: span.trace_id,
                 span_id: span.span_id,
                 parent_id: span.parent_id.unwrap_or_default(),
                 start: span.start,
                 duration: span.duration,
                 error: span.error.unwrap_or(0),
-                meta: span.meta.clone(),
+                meta: span.meta,
                 meta_struct: HashMap::new(),
-                metrics: span.metrics.clone().unwrap_or_default(),
+                metrics: span.metrics.unwrap_or_default(),
                 r#type: "custom".to_string(),
             };
 
@@ -74,6 +90,7 @@ pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<Vec<Vec<
 }
 
 /// tags and metadata extracted from tracer http request headers
+#[derive(Default)]
 pub struct TracerTags<'a> {
     pub lang: &'a str,
     pub lang_version: &'a str,
@@ -87,46 +104,19 @@ pub struct TracerTags<'a> {
 }
 
 pub fn get_tracer_tags_from_request_header(headers: &HeaderMap<HeaderValue>) -> TracerTags {
-    let mut ts = TracerTags {
-        lang: "",
-        lang_version: "",
-        lang_interpreter: "",
-        lang_vendor: "",
-        tracer_version: "",
-        client_computed_top_level: false,
-        client_computed_stats: false,
-    };
-    if let Some(lang) = headers.get("datadog-meta-lang") {
-        if let Ok(val) = lang.to_str() {
-            ts.lang = val;
+    let mut tags = TracerTags::default();
+    parse_header!(
+        headers,
+        {
+            "datadog-meta-lang" => tags.lang,
+            "datadog-meta-lang-version" => tags.lang_version,
+            "datadog-meta-lang-interpreter" => tags.lang_interpreter,
+            "datadog-meta-lang-vendor" => tags.lang_vendor,
+            "datadog-meta-tracer-version" => tags.tracer_version,
+            "datadog-client-computed-top-level" => tags.client_computed_top_level,
+            "datadog-client-computed-stats" => tags.client_computed_stats,
         }
-    }
-    if let Some(lang_version) = headers.get("datadog-meta-lang-version") {
-        if let Ok(val) = lang_version.to_str() {
-            ts.lang_version = val;
-        }
-    }
-    if let Some(lang_interpreter) = headers.get("datadog-meta-lang-interpreter") {
-        if let Ok(val) = lang_interpreter.to_str() {
-            ts.lang_interpreter = val;
-        }
-    }
-    if let Some(lang_vendor) = headers.get("datadog-meta-lang-vendor") {
-        if let Ok(val) = lang_vendor.to_str() {
-            ts.lang_vendor = val;
-        }
-    }
-    if let Some(tracer_version) = headers.get("datadog-meta-tracer-version") {
-        if let Ok(val) = tracer_version.to_str() {
-            ts.tracer_version = val;
-        }
-    }
-    if headers.get("datadog-client-computed-top-level").is_some() {
-        ts.client_computed_top_level = true;
-    }
-    if headers.get("datadog-client-computed-stats").is_some() {
-        ts.client_computed_stats = true;
-    }
+    );
     ts
 }
 
@@ -194,7 +184,12 @@ pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
         .header("X-Datadog-Reported-Languages", "nodejs")
         .body(Body::from(data))?;
 
-    let client = Client::new();
+    let https = HttpsConnectorBuilder::new()
+        .with_native_roots()
+        .https_only()
+        .enable_http1()
+        .build();
+    let client: Client<_, hyper::Body> = Client::builder().build(https);
     match client.request(req).await {
         Ok(_) => {
             println!("Successfully sent traces");
