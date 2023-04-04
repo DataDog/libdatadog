@@ -441,7 +441,6 @@ name = "datadog-trace-mini-agent"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "datadog-trace-normalization",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
  "hyper",
