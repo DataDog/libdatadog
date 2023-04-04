@@ -77,6 +77,7 @@ impl MiniAgent {
                 }
             }
             _ => {
+                println!("{}", req.uri().path());
                 let mut not_found = Response::default();
                 *not_found.status_mut() = StatusCode::NOT_FOUND;
                 Ok(not_found)

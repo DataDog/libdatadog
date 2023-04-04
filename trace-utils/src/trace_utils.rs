@@ -4,7 +4,7 @@
 use hyper::http::HeaderValue;
 use hyper::HeaderMap;
 use hyper::{body::Buf, Body, Client, Method, Request};
-use hyper_tls::HttpsConnector;
+use hyper_rustls::HttpsConnectorBuilder;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::{env, str};
@@ -175,16 +175,16 @@ pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
         .header("X-Datadog-Reported-Languages", "nodejs")
         .body(Body::from(data))?;
 
-    let https = HttpsConnector::new();
-    let client = Client::builder().build::<_, hyper::Body>(https);
+    let https = HttpsConnectorBuilder::new()
+        .with_native_roots()
+        .https_only()
+        .enable_http1()
+        .build();
+    let client: Client<_, hyper::Body> = Client::builder().build(https);
     match client.request(req).await {
-        Ok(res) => match hyper::body::to_bytes(res.into_body()).await {
-            Ok(res) => println!("Successfully sent traces. Response body: {:#?}", res),
-            Err(e) => println!(
-                "Successfully sent trace. Error when reading response body: {}",
-                e
-            ),
-        },
+        Ok(_) => {
+            println!("Successfully sent traces");
+        }
         Err(e) => println!("Failed to send traces: {}", e),
     }
     Ok(())

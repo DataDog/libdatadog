@@ -7,7 +7,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0"
 hyper = { version = "0.14", features = ["full"] }
-hyper-tls = { version = "0.4.3", features = ["vendored"] }
+hyper-rustls = {version = "0.23", default-features = false, features = ["native-tokio", "http1", "tls12"]}
 serde = { version = "1.0.145", features = ["derive"] }
 prost = "0.11.6"
 rmp-serde = "1.1.1"
