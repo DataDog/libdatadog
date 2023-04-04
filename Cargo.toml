@@ -14,8 +14,10 @@ members = [
   "tools/cc_utils",
   "trace-normalization",
   "trace-obfuscation",
+  "trace-utils",
   "spawn_worker",
   "tests/spawn_from_lib",
+  "serverless"
 ]
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"
@@ -28,3 +30,6 @@ codegen-units = 1
 debug = 1 # line tables only
 lto = true 
 opt-level = "s" # optimize for size
+
+[profile.release.package.datadog-serverless-trace-mini-agent]
+strip = true
