@@ -6,6 +6,7 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
@@ -16,8 +17,8 @@ const TRACE_ENDPOINT_PATH: &str = "/v0.4/traces";
 const TRACER_PAYLOAD_CHANNEL_BUFFER_SIZE: usize = 10;
 
 pub struct MiniAgent {
-    pub trace_processor: Box<dyn trace_processor::TraceProcessor + Send + Sync>,
-    pub trace_flusher: Box<dyn trace_flusher::TraceFlusher + Send + Sync>,
+    pub trace_processor: Arc<dyn trace_processor::TraceProcessor + Send + Sync>,
+    pub trace_flusher: Arc<dyn trace_flusher::TraceFlusher + Send + Sync>,
 }
 
 impl MiniAgent {
@@ -62,7 +63,7 @@ impl MiniAgent {
 
     async fn trace_endpoint_handler(
         req: Request<Body>,
-        trace_processor: Box<dyn trace_processor::TraceProcessor + Send + Sync>,
+        trace_processor: Arc<dyn trace_processor::TraceProcessor + Send + Sync>,
         tx: Sender<pb::TracerPayload>,
     ) -> Result<Response<Body>, Infallible> {
         match (req.method(), req.uri().path()) {

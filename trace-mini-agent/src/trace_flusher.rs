@@ -3,22 +3,20 @@
 
 use async_trait::async_trait;
 use datadog_trace_protobuf::pb;
-use dyn_clone::DynClone;
 
 use datadog_trace_utils::trace_utils;
 use tokio::sync::mpsc::Receiver;
 
-const BUFFER_FLUSH_SIZE: usize = 3;
+const BUFFER_FLUSH_SIZE: usize = 1;
 
 #[async_trait]
-pub trait TraceFlusher: DynClone {
+pub trait TraceFlusher {
     /// Starts a trace flusher that listens for trace payloads sent to the tokio mpsc Receiver,
     /// implementing flushing logic that calls flush_traces.
     async fn start_trace_flusher(&self, mut rx: Receiver<pb::TracerPayload>);
     /// Flushes traces to the Datadog trace intake.
     async fn flush_traces(&self, traces: Vec<pb::TracerPayload>);
 }
-dyn_clone::clone_trait_object!(TraceFlusher);
 
 #[derive(Clone)]
 pub struct ServerlessTraceFlusher {}
