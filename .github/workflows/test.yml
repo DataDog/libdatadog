@@ -22,6 +22,9 @@ jobs:
         uses: ./.github/actions/cache
         with:
           rust_version: ${{ matrix.rust_version }}
+      - name: Free up space on windows
+        if: ${{ matrix.platform == 'windows-latest' }}
+        run: sudo rm -rf /usr/share/dotnet && sudo rm -rf /opt/ghc && sudo rm -rf "/usr/local/share/boost" && sudo rm -rf "$AGENT_TOOLSDIRECTORY"
       - name: Install Rust ${{ matrix.rust_version }}
         if: ${{ matrix.rust_version != '' }}
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
