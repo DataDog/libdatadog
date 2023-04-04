@@ -22,9 +22,6 @@ jobs:
         uses: ./.github/actions/cache
         with:
           rust_version: ${{ matrix.rust_version }}
-      - name: Free up space on windows
-        if: ${{ matrix.platform == 'windows-latest' }}
-        run: sudo rm -rf /usr/share/dotnet && sudo rm -rf /opt/ghc && sudo rm -rf "/usr/local/share/boost" && sudo rm -rf "$AGENT_TOOLSDIRECTORY"
       - name: Install Rust ${{ matrix.rust_version }}
         if: ${{ matrix.rust_version != '' }}
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
@@ -32,6 +29,10 @@ jobs:
         run: echo "version=$(rustc --version)" >> $GITHUB_OUTPUT
       - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --verbose"
         run: cargo build --workspace --verbose
+      - name: Show free space on windows
+        shell: bash
+        if: ${{ matrix.platform == 'windows-latest' }}
+        run: df -h
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test --workspace --verbose"
         run: cargo test --workspace --verbose
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test --workspace --verbose -- --ignored --test-threads=1"
