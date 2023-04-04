@@ -51,7 +51,18 @@ impl MiniAgent {
         });
 
         let addr = SocketAddr::from(([127, 0, 0, 1], MINI_AGENT_PORT as u16));
-        let server = Server::bind(&addr).serve(make_svc);
+        let server_builder = match Server::try_bind(&addr) {
+            Ok(res) => res,
+            Err(e) => {
+                println!(
+                    "Failed to bind server to address. The mini-agent may already be running. {}",
+                    e
+                );
+                return Ok(());
+            }
+        };
+
+        let server = server_builder.serve(make_svc);
 
         // start hyper http server
         if let Err(e) = server.await {

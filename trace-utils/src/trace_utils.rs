@@ -15,7 +15,7 @@ use datadog_trace_protobuf::pb;
 
 const TRACE_INTAKE_URL: &str = "https://trace.agent.datadoghq.com/api/v0.2/traces";
 
-macro_rules! parse_header {
+macro_rules! parse_string_header {
     (
         $header_map:ident,
         { $($header:literal => $($field:ident).+ ,)+ }
@@ -91,16 +91,20 @@ pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<Vec<Vec<
 
 #[derive(Default)]
 pub struct TracerTags<'a> {
-    lang: &'a str,
-    lang_version: &'a str,
-    lang_interpreter: &'a str,
-    lang_vendor: &'a str,
-    tracer_version: &'a str,
+    pub lang: &'a str,
+    pub lang_version: &'a str,
+    pub lang_interpreter: &'a str,
+    pub lang_vendor: &'a str,
+    pub tracer_version: &'a str,
+    // specifies that the client has marked top-level spans, when set. Any non-empty value will mean 'yes'.
+    pub client_computed_top_level: bool,
+    // specifies whether the client has computed stats so that the agent doesn't have to. Any non-empty value will mean 'yes'.
+    pub client_computed_stats: bool,
 }
 
 pub fn get_tracer_tags_from_request_header(headers: &HeaderMap<HeaderValue>) -> TracerTags {
     let mut tags = TracerTags::default();
-    parse_header!(
+    parse_string_header!(
         headers,
         {
             "datadog-meta-lang" => tags.lang,
@@ -110,6 +114,12 @@ pub fn get_tracer_tags_from_request_header(headers: &HeaderMap<HeaderValue>) -> 
             "datadog-meta-tracer-version" => tags.tracer_version,
         }
     );
+    if headers.get("datadog-client-computed-top-level").is_some() {
+        tags.client_computed_top_level = true;
+    }
+    if headers.get("datadog-client-computed-stats").is_some() {
+        tags.client_computed_stats = true;
+    }
     tags
 }
 
@@ -138,12 +148,14 @@ pub fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
 pub fn construct_tracer_payload(
     chunks: Vec<pb::TraceChunk>,
     tracer_tags: TracerTags,
+    env: &str,
+    app_version: &str,
 ) -> pb::TracerPayload {
     pb::TracerPayload {
-        app_version: "placeholder_version".to_string(),
+        app_version: app_version.to_string(),
         language_name: tracer_tags.lang.to_string(),
         container_id: "".to_string(),
-        env: "placeholder_env".to_string(),
+        env: env.to_string(),
         runtime_id: "".to_string(),
         chunks,
         hostname: "".to_string(),
@@ -188,6 +200,93 @@ pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
         Err(e) => println!("Failed to send traces: {}", e),
     }
     Ok(())
+}
+
+pub fn get_root_span_index(trace: &Vec<pb::Span>) -> anyhow::Result<usize> {
+    if trace.is_empty() {
+        anyhow::bail!("Cannot find root span index in an empty trace.");
+    }
+
+    // parent_id -> (child_span, index_of_child_span_in_trace)
+    let mut parent_id_to_child_map: HashMap<u64, (&pb::Span, usize)> = HashMap::new();
+
+    // look for the span with parent_id == 0 (starting from the end) since some clients put the root span last.
+    for i in (0..trace.len()).rev() {
+        let cur_span = &trace[i];
+        if cur_span.parent_id == 0 {
+            return Ok(i);
+        }
+        parent_id_to_child_map.insert(cur_span.parent_id, (cur_span, i));
+    }
+
+    for span in trace {
+        if parent_id_to_child_map.contains_key(&span.span_id) {
+            parent_id_to_child_map.remove(&span.span_id);
+        }
+    }
+
+    // if the trace is valid, parent_id_to_child_map should just have 1 entry at this point.
+
+    if parent_id_to_child_map.len() != 1 {
+        println!(
+            "Could not find the root span for trace with trace_id: {}",
+            &trace[0].trace_id,
+        );
+    }
+
+    // pick a span without a parent
+    let span_tuple = match parent_id_to_child_map.values().copied().next() {
+        Some(res) => res,
+        None => {
+            // just return the index of the last span in the trace.
+            println!("Returning index of last span in trace as root span index.");
+            return Ok(trace.len() - 1);
+        }
+    };
+
+    Ok(span_tuple.1)
+}
+
+/// Updates all the spans top-level attribute.
+/// A span is considered top-level if:
+///   - it's a root span
+///   - OR its parent is unknown (other part of the code, distributed trace)
+///   - OR its parent belongs to another service (in that case it's a "local root"
+///     being the highest ancestor of other spans belonging to this service and
+///     attached to it).
+pub fn compute_top_level_span(trace: &mut [pb::Span]) {
+    let mut span_id_to_service: HashMap<u64, String> = HashMap::new();
+    for span in trace.iter() {
+        span_id_to_service.insert(span.span_id, span.service.clone());
+    }
+    for span in trace.iter_mut() {
+        if span.parent_id == 0 {
+            set_top_level_span(span, true);
+            continue;
+        }
+        match span_id_to_service.get(&span.parent_id) {
+            Some(parent_span_service) => {
+                if !parent_span_service.eq(&span.service) {
+                    // parent is not in the same service
+                    set_top_level_span(span, true)
+                }
+            }
+            None => {
+                // span has no parent in chunk
+                set_top_level_span(span, true)
+            }
+        }
+    }
+}
+
+fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
+    if !is_top_level {
+        if span.metrics.contains_key("_top_level") {
+            span.metrics.remove("_top_level");
+        }
+        return;
+    }
+    span.metrics.insert("_top_level".to_string(), 1.0);
 }
 
 #[cfg(test)]
