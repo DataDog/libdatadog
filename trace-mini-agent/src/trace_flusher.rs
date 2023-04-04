@@ -12,7 +12,7 @@ const BUFFER_FLUSH_SIZE: usize = 3;
 
 #[async_trait]
 pub trait TraceFlusher: DynClone {
-    /// Starts a trace flusher that listens for traces sent to the tokio mpsc Receiver,
+    /// Starts a trace flusher that listens for trace payloads sent to the tokio mpsc Receiver,
     /// implementing flushing logic that calls flush_traces.
     async fn start_trace_flusher(&self, mut rx: Receiver<pb::TracerPayload>);
     /// Flushes traces to the Datadog trace intake.
@@ -28,7 +28,7 @@ impl TraceFlusher for ServerlessTraceFlusher {
     async fn start_trace_flusher(&self, mut rx: Receiver<pb::TracerPayload>) {
         let mut buffer: Vec<pb::TracerPayload> = Vec::with_capacity(BUFFER_FLUSH_SIZE);
 
-        // receive traces from http endpoint handlers and add them to the buffer. flush if
+        // receive trace payloads from http endpoint handlers and add them to the buffer. flush if
         // the buffer gets to BUFFER_FLUSH_SIZE size.
         while let Some(tracer_payload) = rx.recv().await {
             buffer.push(tracer_payload);

@@ -25,11 +25,11 @@ impl MiniAgent {
     pub async fn start_mini_agent(&self) -> Result<(), Box<dyn std::error::Error>> {
         // setup a channel to send processed traces to our flusher
         // tx is passed through each endpoint_handler to the trace processor, which uses it to send de-serialized processed
-        // traces to our trace flusher.
+        // trace payloads to our trace flusher.
         let (tx, rx): (Sender<pb::TracerPayload>, Receiver<pb::TracerPayload>) =
             mpsc::channel(TRACER_PAYLOAD_CHANNEL_BUFFER_SIZE);
 
-        // start our trace flusher. receives traces and handles buffering + deciding when to flush to backend.
+        // start our trace flusher. receives trace payloads and handles buffering + deciding when to flush to backend.
         let trace_flusher = self.trace_flusher.clone();
         tokio::spawn(async move {
             let trace_flusher = trace_flusher.clone();

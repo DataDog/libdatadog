@@ -52,7 +52,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
 
         let tracer_payload = trace_utils::construct_tracer_payload(trace_chunks, tracer_tags);
 
-        // send traces to our trace flusher
+        // send trace payload to our trace flusher
         match tx.send(tracer_payload).await {
             Ok(_) => Response::builder()
                 .status(200)
