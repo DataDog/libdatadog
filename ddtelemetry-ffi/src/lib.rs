@@ -107,22 +107,6 @@ pub(crate) use try_c;
 
 pub type MaybeError = ffi::Option<ffi::Vec<u8>>;
 
-#[macro_export(assert_maybe_no_error)]
-macro_rules! assert_maybe_no_error {
-    ($maybe_erroring:expr) => {
-        match $maybe_erroring {
-            ddcommon_ffi::Option::Some(err) => panic!(
-                "{}",
-                std::ffi::CStr::from_bytes_with_nul(unsafe { err.as_slice().into_slice() })
-                    .expect("valid cstr")
-                    .to_str()
-                    .expect("valid str")
-            ),
-            ddcommon_ffi::Option::None => {}
-        }
-    };
-}
-
 #[no_mangle]
 pub extern "C" fn ddog_MaybeError_drop(_: MaybeError) {}
 
