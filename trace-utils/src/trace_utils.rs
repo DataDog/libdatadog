@@ -142,12 +142,14 @@ pub fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
 pub fn construct_tracer_payload(
     chunks: Vec<pb::TraceChunk>,
     tracer_tags: TracerTags,
+    env: &str,
+    app_version: &str,
 ) -> pb::TracerPayload {
     pb::TracerPayload {
-        app_version: "placeholder_version".to_string(),
+        app_version: app_version.to_string(),
         language_name: tracer_tags.lang.to_string(),
         container_id: "".to_string(),
-        env: "placeholder_env".to_string(),
+        env: env.to_string(),
         runtime_id: "".to_string(),
         chunks,
         hostname: "".to_string(),
@@ -187,6 +189,51 @@ pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
         Err(e) => println!("Failed to send traces: {}", e),
     }
     Ok(())
+}
+
+pub fn get_root_span_index(trace: Vec<pb::Span>) -> anyhow::Result<usize> {
+    if trace.is_empty() {
+        anyhow::bail!("Cannot find root span index in an empty trace.");
+    }
+
+    // parent_id -> (child_span, index_of_child_span_in_trace)
+    let mut parent_id_to_child_map: HashMap<u64, (&pb::Span, usize)> = HashMap::new();
+
+    // look for the span with parent_id == 0 (starting from the end) since some clients put the root span last.
+    for i in (0..trace.len()).rev() {
+        let cur_span = &trace[i];
+        if cur_span.parent_id == 0 {
+            return Ok(i);
+        }
+        parent_id_to_child_map.insert(cur_span.parent_id, (cur_span, i));
+    }
+
+    for span in &trace {
+        if parent_id_to_child_map.contains_key(&span.span_id) {
+            parent_id_to_child_map.remove(&span.span_id);
+        }
+    }
+
+    // if the trace is valid, parent_id_to_child_map should just have 1 entry at this point.
+
+    if parent_id_to_child_map.len() != 1 {
+        println!(
+            "Could not find the root span for trace with trace_id: {}",
+            &trace[0].trace_id,
+        );
+    }
+
+    // pick a span without a parent
+    let span_tuple = match parent_id_to_child_map.values().copied().next() {
+        Some(res) => res,
+        None => {
+            // just return the index of the last span in the trace.
+            println!("Returning index of last span in trace as root span index.");
+            return Ok(trace.len() - 1);
+        }
+    };
+
+    Ok(span_tuple.1)
 }
 
 #[cfg(test)]

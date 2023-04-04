@@ -5,9 +5,10 @@ use async_trait::async_trait;
 use datadog_trace_protobuf::pb;
 use dyn_clone::DynClone;
 use hyper::{http, Body, Request, Response};
-
-use datadog_trace_utils::trace_utils;
 use tokio::sync::mpsc::Sender;
+
+use datadog_trace_normalization::normalizer;
+use datadog_trace_utils::trace_utils;
 
 #[async_trait]
 pub trait TraceProcessor: DynClone {
@@ -35,7 +36,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
         let tracer_tags = trace_utils::get_tracer_tags_from_request_header(&parts.headers);
 
         // deserialize traces from the request body, convert to protobuf structs (see trace-protobuf crate)
-        let traces = match trace_utils::get_traces_from_request_body(body).await {
+        let mut traces = match trace_utils::get_traces_from_request_body(body).await {
             Ok(res) => res,
             Err(err) => {
                 return Response::builder().body(Body::from(format!(
@@ -45,12 +46,55 @@ impl TraceProcessor for ServerlessTraceProcessor {
             }
         };
 
-        let trace_chunks: Vec<pb::TraceChunk> = traces
-            .iter()
-            .map(|trace| trace_utils::construct_trace_chunk(trace.to_vec()))
-            .collect();
+        let mut trace_chunks: Vec<pb::TraceChunk> = Vec::new();
 
-        let tracer_payload = trace_utils::construct_tracer_payload(trace_chunks, tracer_tags);
+        let mut payload_env = "";
+        let mut payload_app_version = "";
+
+        for trace in traces.iter_mut() {
+            match normalizer::normalize_trace(trace) {
+                Ok(_) => (),
+                Err(e) => println!("Error normalizing trace: {}", e),
+            }
+
+            let mut chunk = trace_utils::construct_trace_chunk(trace.to_vec());
+
+            let root_span_index = match trace_utils::get_root_span_index(trace.to_vec()) {
+                Ok(res) => res,
+                Err(e) => {
+                    println!(
+                        "Error getting the root span index of a trace, skipping. {}",
+                        e,
+                    );
+                    continue;
+                }
+            };
+
+            match normalizer::normalize_chunk(&mut chunk, root_span_index) {
+                Ok(_) => (),
+                Err(e) => println!("Error normalizing trace chunk: {}", e),
+            }
+
+            trace_chunks.push(chunk);
+
+            if payload_env.is_empty() {
+                if let Some(payload_env_root) = trace[root_span_index].meta.get("env") {
+                    payload_env = payload_env_root;
+                }
+            }
+            if payload_app_version.is_empty() {
+                if let Some(payload_app_version_root) = trace[root_span_index].meta.get("version") {
+                    payload_app_version = payload_app_version_root;
+                }
+            }
+        }
+
+        let tracer_payload = trace_utils::construct_tracer_payload(
+            trace_chunks,
+            tracer_tags,
+            payload_env,
+            payload_app_version,
+        );
 
         // send traces to our trace flusher
         match tx.send(tracer_payload).await {
@@ -58,7 +102,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 .status(200)
                 .body(Body::from("Successfully buffered traces to be flushed.")),
             Err(e) => Response::builder().status(500).body(Body::from(format!(
-                "Error sending traces to the trace flusher. Error: {}",
+                "Error sending traces to the trace flusher. {}",
                 e
             ))),
         }
