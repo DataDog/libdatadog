@@ -15,7 +15,7 @@ use datadog_trace_protobuf::pb;
 
 const TRACE_INTAKE_URL: &str = "https://trace.agent.datadoghq.com/api/v0.2/traces";
 
-macro_rules! parse_header {
+macro_rules! parse_string_header {
     (
         $header_map:ident,
         { $($header:literal => $($field:ident).+ ,)+ }
@@ -105,7 +105,7 @@ pub struct TracerTags<'a> {
 
 pub fn get_tracer_tags_from_request_header(headers: &HeaderMap<HeaderValue>) -> TracerTags {
     let mut tags = TracerTags::default();
-    parse_header!(
+    parse_string_header!(
         headers,
         {
             "datadog-meta-lang" => tags.lang,
@@ -113,11 +113,15 @@ pub fn get_tracer_tags_from_request_header(headers: &HeaderMap<HeaderValue>) -> 
             "datadog-meta-lang-interpreter" => tags.lang_interpreter,
             "datadog-meta-lang-vendor" => tags.lang_vendor,
             "datadog-meta-tracer-version" => tags.tracer_version,
-            "datadog-client-computed-top-level" => tags.client_computed_top_level,
-            "datadog-client-computed-stats" => tags.client_computed_stats,
         }
     );
-    ts
+    if headers.get("datadog-client-computed-top-level").is_some() {
+        tags.client_computed_top_level = true;
+    }
+    if headers.get("datadog-client-computed-stats").is_some() {
+        tags.client_computed_stats = true;
+    }
+    tags
 }
 
 pub fn construct_agent_payload(tracer_payloads: Vec<pb::TracerPayload>) -> pb::AgentPayload {
