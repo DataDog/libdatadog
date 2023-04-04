@@ -47,7 +47,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
 
         let trace_chunks: Vec<pb::TraceChunk> = traces
             .iter()
-            .map(|trace| trace_utils::construct_trace_chunk(trace.to_vec()))
+            .map(|trace| trace_utils::construct_trace_chunk(trace))
             .collect();
 
         let tracer_payload = trace_utils::construct_tracer_payload(trace_chunks, tracer_tags);
