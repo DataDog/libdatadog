@@ -57,9 +57,9 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 Err(e) => println!("Error normalizing trace: {}", e),
             }
 
-            let mut chunk = trace_utils::construct_trace_chunk(trace.to_vec());
+            let mut chunk = trace_utils::construct_trace_chunk(trace);
 
-            let root_span_index = match trace_utils::get_root_span_index(trace.to_vec()) {
+            let root_span_index = match trace_utils::get_root_span_index(trace) {
                 Ok(res) => res,
                 Err(e) => {
                     println!(
@@ -73,6 +73,10 @@ impl TraceProcessor for ServerlessTraceProcessor {
             match normalizer::normalize_chunk(&mut chunk, root_span_index) {
                 Ok(_) => (),
                 Err(e) => println!("Error normalizing trace chunk: {}", e),
+            }
+
+            if !tracer_tags.client_computed_top_level {
+                trace_utils::compute_top_level_span(trace);
             }
 
             trace_chunks.push(chunk);
