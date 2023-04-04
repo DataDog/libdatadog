@@ -178,12 +178,13 @@ pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
     let https = HttpsConnector::new();
     let client = Client::builder().build::<_, hyper::Body>(https);
     match client.request(req).await {
-        Ok(res) => {
-            match hyper::body::to_bytes(res.into_body()).await {
-                Ok(res) => println!("Successfully sent traces. Response body: {:#?}", res),
-                Err(e) => println!("Successfully sent trace. Error when reading response body: {}", e),
-            }
-        }
+        Ok(res) => match hyper::body::to_bytes(res.into_body()).await {
+            Ok(res) => println!("Successfully sent traces. Response body: {:#?}", res),
+            Err(e) => println!(
+                "Successfully sent trace. Error when reading response body: {}",
+                e
+            ),
+        },
         Err(e) => println!("Failed to send traces: {}", e),
     }
     Ok(())
