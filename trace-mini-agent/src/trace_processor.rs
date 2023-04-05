@@ -12,12 +12,12 @@ use datadog_trace_utils::trace_utils;
 
 macro_rules! parse_root_span_tags {
     (
-        $meta_map:ident,
-        { $($header:literal => $($field:ident).+ ,)+ }
+        $root_span_meta_map:ident,
+        { $($tag:literal => $($root_span_tags_struct_field:ident).+ ,)+ }
     ) => {
         $(
-            if let Some(tag) = $meta_map.get($header) {
-                $($field).+ = tag;
+            if let Some(root_span_tag_value) = $root_span_meta_map.get($tag) {
+                $($root_span_tags_struct_field).+ = root_span_tag_value;
             }
         )+
     }

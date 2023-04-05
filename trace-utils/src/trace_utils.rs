@@ -19,11 +19,11 @@ const TRACE_INTAKE_URL: &str = "https://trace.agent.datadoghq.com/api/v0.2/trace
 macro_rules! parse_string_header {
     (
         $header_map:ident,
-        { $($header:literal => $($field:ident).+ ,)+ }
+        { $($header_key:literal => $($field:ident).+ ,)+ }
     ) => {
         $(
-            if let Some(h) = $header_map.get($header) {
-                if let Ok(h) = h.to_str() {
+            if let Some(header_value) = $header_map.get($header_key) {
+                if let Ok(h) = header_value.to_str() {
                     $($field).+ = h;
                 }
             }
