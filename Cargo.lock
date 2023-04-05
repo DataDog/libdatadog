@@ -1036,7 +1036,6 @@ name = "metrics"
 version = "0.0.1"
 dependencies = [
  "ddcommon",
- "futures",
  "hyper",
  "hyper-rustls",
  "serde",
