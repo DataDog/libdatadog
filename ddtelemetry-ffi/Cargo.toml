@@ -15,7 +15,6 @@ datadog-ipc = { path = "../ipc" }
 ddcommon-ffi = { path = "../ddcommon-ffi" }
 paste = "1"
 libc = "0.2"
-rand = "0.8.3"
 
 [dev-dependencies]
 tempfile = {version = "3.3"}

@@ -104,9 +104,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.0.78"
+version = "1.0.79"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a20104e2335ce8a659d6dd92a51a767a0c062599c73b343fd152cb401e828c3d"
+checksum = "50d30906286121d95be3d479533b458f87493b30a4b5f79a607db8f5d11aa91f"
 
 [[package]]
 name = "cc_utils"
@@ -364,12 +364,11 @@ dependencies = [
  "bytes",
  "criterion",
  "futures",
- "io-lifetimes 0.7.5",
+ "io-lifetimes",
  "libc",
  "nix",
  "pin-project",
  "pretty_assertions",
- "rmp-serde",
  "sendfd",
  "serde",
  "spawn_worker",
@@ -428,6 +427,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-serverless-trace-mini-agent"
+version = "0.1.0"
+dependencies = [
+ "datadog-trace-mini-agent",
+ "datadog-trace-protobuf",
+ "datadog-trace-utils",
+]
+
+[[package]]
+name = "datadog-trace-mini-agent"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "datadog-trace-protobuf",
+ "datadog-trace-utils",
+ "hyper",
+ "tokio",
+]
+
+[[package]]
 name = "datadog-trace-normalization"
 version = "2.1.0"
 dependencies = [
@@ -453,6 +472,21 @@ name = "datadog-trace-protobuf"
 version = "2.1.0"
 dependencies = [
  "prost",
+]
+
+[[package]]
+name = "datadog-trace-utils"
+version = "2.1.0"
+dependencies = [
+ "anyhow",
+ "datadog-trace-protobuf",
+ "hyper",
+ "hyper-rustls",
+ "prost",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -492,18 +526,16 @@ name = "ddtelemetry"
 version = "2.1.0"
 dependencies = [
  "anyhow",
- "bytes",
  "datadog-ipc",
  "ddcommon",
  "futures",
  "http",
  "hyper",
- "io-lifetimes 1.0.5",
+ "io-lifetimes",
  "lazy_static",
  "libc",
  "nix",
  "pin-project",
- "pretty_assertions",
  "rand",
  "regex",
  "sendfd",
@@ -513,7 +545,6 @@ dependencies = [
  "sys-info",
  "tempfile",
  "tokio",
- "tokio-serde",
  "tokio-util 0.7.4",
  "tracing",
  "tracing-subscriber",
@@ -529,7 +560,6 @@ dependencies = [
  "ddtelemetry",
  "libc",
  "paste",
- "rand",
  "tempfile",
 ]
 
@@ -929,16 +959,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a5bbe824c507c5da5956355e86a746d82e0e1464f65d862cc5e71da70e94b2c"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "io-lifetimes"
-version = "0.7.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59ce5ef949d49ee85593fc4d3f3f95ad61657076395cbbce23e2121fc5542074"
-dependencies = [
- "libc",
- "windows-sys 0.42.0",
 ]
 
 [[package]]
@@ -1552,9 +1572,9 @@ dependencies = [
 
 [[package]]
 name = "rmp-serde"
-version = "0.15.5"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "723ecff9ad04f4ad92fe1c8ca6c20d2196d9286e9c60727c4cb5511629260e9d"
+checksum = "c5b13be192e0220b8afb7222aa5813cb62cc269ebb5cac346ca6487681d2913e"
 dependencies = [
  "byteorder",
  "rmp",
@@ -1584,7 +1604,7 @@ checksum = "f43abb88211988493c1abb44a70efa56ff0ce98f233b7b276146f1f3f7ba9644"
 dependencies = [
  "bitflags",
  "errno",
- "io-lifetimes 1.0.5",
+ "io-lifetimes",
  "libc",
  "linux-raw-sys",
  "windows-sys 0.45.0",
@@ -1788,7 +1808,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "cc_utils",
- "io-lifetimes 1.0.5",
+ "io-lifetimes",
  "memfd",
  "nix",
  "rlimit",
@@ -1899,7 +1919,7 @@ name = "test_spawn_from_lib"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "io-lifetimes 1.0.5",
+ "io-lifetimes",
  "libc",
  "spawn_worker",
  "tempfile",
@@ -1988,6 +2008,7 @@ checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
 dependencies = [
  "native-tls",
  "tokio",
+ "syn 2.0.12"
 ]
 
 [[package]]
@@ -2012,7 +2033,6 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "pin-project",
- "rmp-serde",
  "serde",
  "serde_json",
 ]

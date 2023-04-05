@@ -14,6 +14,7 @@ members = [
   "tools/cc_utils",
   "trace-normalization",
   "trace-obfuscation",
+  "trace-utils",
   "spawn_worker",
   "tests/spawn_from_lib",
   "metrics",
@@ -29,3 +30,6 @@ codegen-units = 1
 debug = 1 # line tables only
 lto = true 
 opt-level = "s" # optimize for size
+
+[profile.release.package.datadog-serverless-trace-mini-agent]
+strip = true

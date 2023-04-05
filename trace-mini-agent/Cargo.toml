@@ -1,0 +1,11 @@
+[package]
+name = "datadog-trace-mini-agent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+hyper = { version = "0.14", default-features = false, features = ["server"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"]}
+async-trait = "0.1.64"
+datadog-trace-protobuf = { path = "../trace-protobuf" }
+datadog-trace-utils = { path = "../trace-utils" }
