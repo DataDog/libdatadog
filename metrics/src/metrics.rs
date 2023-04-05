@@ -2,11 +2,12 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use ddcommon::tag::{parse_tags, Tag};
+use serde::Serialize;
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Serialize, Clone)]
 pub struct Points {
-    timestamp: u64,
-    values: Vec<f64>,
+    pub timestamp: u64,
+    pub values: Vec<f64>,
 }
 
 impl Points {
@@ -15,18 +16,20 @@ impl Points {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Serialize, Clone)]
 pub enum MetricType {
     Distribution,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Serialize, Clone)]
 pub struct Metric {
-    name: String,
-    points: Points,
+    pub metric: String,
+    pub points: Points,
+    pub tags: Vec<Tag>,
+    #[serde(skip)]
     metric_type: MetricType,
+    #[serde(skip)]
     sample_rate: f64,
-    tags: Vec<Tag>,
 }
 
 impl Metric {
@@ -75,17 +78,27 @@ impl Metric {
         }
 
         Some(Self {
-            name: metric_name.to_string(),
+            metric: metric_name.to_string(),
             points,
             metric_type,
             sample_rate,
             tags,
         })
     }
+
+    pub fn new(metric: String, points: Points, tags: Vec<Tag>) -> Self {
+        Self {
+            metric,
+            points,
+            tags,
+            sample_rate: 1.0,
+            metric_type: MetricType::Distribution,
+        }
+    }
 }
 
+#[cfg(test)]
 mod tests {
-    #[allow(unused_imports)]
     use super::*;
 
     #[test]
@@ -93,7 +106,7 @@ mod tests {
         let input = "my.distribution:10.2,13.1,14.5,15.0|d|#tag1,tag2:value2";
 
         let expected = Metric {
-            name: "my.distribution".to_string(),
+            metric: "my.distribution".to_string(),
             points: Points::new(vec![10.2, 13.1, 14.5, 15.0], 0),
             metric_type: MetricType::Distribution,
             sample_rate: 1.0,
@@ -111,7 +124,7 @@ mod tests {
         let input = "my.distribution:10|d|#tag1,tag2:value2";
 
         let expected = Metric {
-            name: "my.distribution".to_string(),
+            metric: "my.distribution".to_string(),
             points: Points::new(vec![10.0], 0),
             metric_type: MetricType::Distribution,
             sample_rate: 1.0,
@@ -129,7 +142,7 @@ mod tests {
         let input = "my.distribution:10|d";
 
         let expected = Metric {
-            name: "my.distribution".to_string(),
+            metric: "my.distribution".to_string(),
             points: Points::new(vec![10.0], 0),
             metric_type: MetricType::Distribution,
             sample_rate: 1.0,
@@ -150,7 +163,7 @@ mod tests {
         let input = "my.distribution:10|d|@1.0";
 
         let expected = Metric {
-            name: "my.distribution".to_string(),
+            metric: "my.distribution".to_string(),
             points: Points::new(vec![10.0], 0),
             metric_type: MetricType::Distribution,
             sample_rate: 1.0,
@@ -172,7 +185,7 @@ mod tests {
         let input = "my.distribution:10|d|@a|#";
 
         let expected = Metric {
-            name: "my.distribution".to_string(),
+            metric: "my.distribution".to_string(),
             points: Points::new(vec![10.0], 0),
             metric_type: MetricType::Distribution,
             sample_rate: 1.0,
