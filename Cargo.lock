@@ -448,6 +448,8 @@ dependencies = [
  "datadog-trace-utils",
  "hyper",
  "log",
+ "rmp-serde 1.1.1",
+ "serde_json",
  "tokio",
 ]
 

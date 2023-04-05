@@ -311,6 +311,8 @@ mod tests {
 
     use crate::trace_utils;
 
+    use super::get_root_span_index;
+
     #[tokio::test]
     async fn test_get_traces_from_request_body() {
         let pairs = vec![
@@ -381,5 +383,51 @@ mod tests {
             assert!(res.is_ok());
             assert_eq!(res.unwrap(), output);
         }
+    }
+
+    fn create_test_span(trace_id: u64, span_id: u64, parent_id: u64) -> pb::Span {
+        pb::Span {
+            trace_id,
+            span_id,
+            service: "service".to_string(),
+            name: "name".to_string(),
+            resource: "".to_string(),
+            parent_id,
+            start: 0,
+            duration: 5,
+            error: 0,
+            meta: HashMap::new(),
+            metrics: HashMap::new(),
+            r#type: "".to_string(),
+            meta_struct: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_get_root_span_index_from_complete_trace() {
+        let trace = vec![
+            create_test_span(1234, 12341, 0),
+            create_test_span(1234, 12342, 12341),
+            create_test_span(1234, 12343, 12342),
+            create_test_span(1234, 12344, 12343),
+            create_test_span(1234, 12345, 12344),
+        ];
+
+        let root_span_index = get_root_span_index(&trace);
+        assert!(root_span_index.is_ok());
+        assert_eq!(root_span_index.unwrap(), 0);
+    }
+
+    #[test]
+    fn test_get_root_span_index_from_partial_trace() {
+        let trace = vec![
+            create_test_span(1234, 12342, 12341),
+            create_test_span(1234, 12341, 12340), // this is the root span, it's parent is not in the trace
+            create_test_span(1234, 12343, 12342),
+        ];
+
+        let root_span_index = get_root_span_index(&trace);
+        assert!(root_span_index.is_ok());
+        assert_eq!(root_span_index.unwrap(), 1);
     }
 }

@@ -91,7 +91,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
             }
 
             if !tracer_header_tags.client_computed_top_level {
-                trace_utils::compute_top_level_span(trace);
+                trace_utils::compute_top_level_span(&mut chunk.spans);
             }
 
             trace_chunks.push(chunk);
@@ -124,5 +124,183 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 e
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use std::{
+        collections::HashMap,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use tokio::sync::mpsc::{self, Receiver, Sender};
+
+    use crate::trace_processor::{self, TraceProcessor};
+    use datadog_trace_protobuf::pb;
+    use hyper::Request;
+    use serde_json::json;
+
+    fn create_test_span(start: i64, span_id: u64, parent_id: u64, is_top_level: bool) -> pb::Span {
+        let mut span = pb::Span {
+            trace_id: 111,
+            span_id,
+            service: "test-service".to_string(),
+            name: "test_name".to_string(),
+            resource: "test-resource".to_string(),
+            parent_id,
+            start,
+            duration: 5,
+            error: 0,
+            meta: HashMap::from([
+                ("service".to_string(), "test-service".to_string()),
+                ("env".to_string(), "test-env".to_string()),
+                (
+                    "runtime-id".to_string(),
+                    "afjksdljfkllksdj-28934889".to_string(),
+                ),
+            ]),
+            metrics: HashMap::new(),
+            r#type: "custom".to_string(),
+            meta_struct: HashMap::new(),
+        };
+        if is_top_level {
+            span.metrics.insert("_top_level".to_string(), 1.0);
+        }
+        span
+    }
+
+    fn create_test_json_span(start: i64, span_id: u64, parent_id: u64) -> serde_json::Value {
+        json!(
+            {
+                "trace_id": 111,
+                "span_id": span_id,
+                "service": "test-service",
+                "name": "test_name",
+                "resource": "test-resource",
+                "parent_id": parent_id,
+                "start": start,
+                "duration": 5,
+                "error": 0,
+                "meta": {
+                    "service": "test-service",
+                    "env": "test-env",
+                    "runtime-id": "afjksdljfkllksdj-28934889",
+                },
+                "metrics": {},
+                "meta_struct": {},
+            }
+        )
+    }
+
+    #[tokio::test]
+    async fn test_process_trace() {
+        let (tx, mut rx): (Sender<pb::TracerPayload>, Receiver<pb::TracerPayload>) =
+            mpsc::channel(1);
+
+        let start = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as i64;
+
+        let json_span = create_test_json_span(start, 222, 0);
+
+        let bytes = rmp_serde::to_vec(&vec![vec![json_span]]).unwrap();
+        let request = Request::builder()
+            .header("datadog-meta-tracer-version", "4.0.0")
+            .header("datadog-meta-lang", "nodejs")
+            .header("datadog-meta-lang-version", "v19.7.0")
+            .header("datadog-meta-lang-interpreter", "v8")
+            .header("datadog-container-id", "33")
+            .body(hyper::body::Body::from(bytes))
+            .unwrap();
+
+        let trace_processor = trace_processor::ServerlessTraceProcessor {};
+        trace_processor.process_traces(request, tx).await;
+
+        let tracer_payload = rx.recv().await;
+
+        assert!(tracer_payload.is_some());
+
+        let expected_tracer_payload = pb::TracerPayload {
+            container_id: "33".to_string(),
+            language_name: "nodejs".to_string(),
+            language_version: "v19.7.0".to_string(),
+            tracer_version: "4.0.0".to_string(),
+            runtime_id: "afjksdljfkllksdj-28934889".to_string(),
+            chunks: vec![pb::TraceChunk {
+                priority: 1,
+                origin: "".to_string(),
+                spans: vec![create_test_span(start, 222, 0, true)],
+                tags: HashMap::new(),
+                dropped_trace: false,
+            }],
+            tags: HashMap::new(),
+            env: "test-env".to_string(),
+            hostname: "".to_string(),
+            app_version: "".to_string(),
+        };
+
+        assert_eq!(expected_tracer_payload, tracer_payload.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_process_trace_top_level_span_set() {
+        let (tx, mut rx): (Sender<pb::TracerPayload>, Receiver<pb::TracerPayload>) =
+            mpsc::channel(1);
+
+        let start = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as i64;
+
+        let json_trace = vec![
+            create_test_json_span(start, 333, 222),
+            create_test_json_span(start, 222, 0),
+            create_test_json_span(start, 444, 333),
+        ];
+
+        let bytes = rmp_serde::to_vec(&vec![json_trace]).unwrap();
+        let request = Request::builder()
+            .header("datadog-meta-tracer-version", "4.0.0")
+            .header("datadog-meta-lang", "nodejs")
+            .header("datadog-meta-lang-version", "v19.7.0")
+            .header("datadog-meta-lang-interpreter", "v8")
+            .header("datadog-container-id", "33")
+            .body(hyper::body::Body::from(bytes))
+            .unwrap();
+
+        let trace_processor = trace_processor::ServerlessTraceProcessor {};
+        trace_processor.process_traces(request, tx).await;
+
+        let tracer_payload = rx.recv().await;
+
+        assert!(tracer_payload.is_some());
+
+        let expected_tracer_payload = pb::TracerPayload {
+            container_id: "33".to_string(),
+            language_name: "nodejs".to_string(),
+            language_version: "v19.7.0".to_string(),
+            tracer_version: "4.0.0".to_string(),
+            runtime_id: "afjksdljfkllksdj-28934889".to_string(),
+            chunks: vec![pb::TraceChunk {
+                priority: 1,
+                origin: "".to_string(),
+                spans: vec![
+                    create_test_span(start, 333, 222, false),
+                    create_test_span(start, 222, 0, true),
+                    create_test_span(start, 444, 333, false),
+                ],
+                tags: HashMap::new(),
+                dropped_trace: false,
+            }],
+            tags: HashMap::new(),
+            env: "test-env".to_string(),
+            hostname: "".to_string(),
+            app_version: "".to_string(),
+        };
+
+        assert_eq!(expected_tracer_payload, tracer_payload.unwrap());
     }
 }
