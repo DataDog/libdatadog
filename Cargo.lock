@@ -446,6 +446,7 @@ dependencies = [
  "datadog-trace-normalization",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
+ "futures",
  "hyper",
  "log",
  "rmp-serde 1.1.1",

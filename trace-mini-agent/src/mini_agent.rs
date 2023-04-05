@@ -65,6 +65,8 @@ impl MiniAgent {
 
         let server = server_builder.serve(make_svc);
 
+        debug!("Mini Agent listening on port {}", MINI_AGENT_PORT);
+
         // start hyper http server
         if let Err(e) = server.await {
             error!("Server error: {}", e);

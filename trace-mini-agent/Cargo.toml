@@ -8,6 +8,7 @@ hyper = { version = "0.14", default-features = false, features = ["server"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"]}
 async-trait = "0.1.64"
 log = "0.4"
+futures = "0.3"
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-utils = { path = "../trace-utils" }
 datadog-trace-normalization = { path = "../trace-normalization" }
