@@ -51,16 +51,7 @@ impl MiniAgent {
         });
 
         let addr = SocketAddr::from(([127, 0, 0, 1], MINI_AGENT_PORT as u16));
-        let server_builder = match Server::try_bind(&addr) {
-            Ok(res) => res,
-            Err(e) => {
-                error!(
-                    "Failed to bind server to address. The mini-agent may already be running. {}",
-                    e
-                );
-                return Ok(());
-            }
-        };
+        let server_builder = Server::try_bind(&addr)?;
 
         let server = server_builder.serve(make_svc);
 
