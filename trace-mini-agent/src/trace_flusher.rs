@@ -1,15 +1,14 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-use std::{sync::Arc, time};
-
 use async_trait::async_trait;
-use futures::lock::Mutex;
-use log::{error, info};
+use log::error;
 use tokio::sync::mpsc::Receiver;
 
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
+
+const BUFFER_FLUSH_SIZE: usize = 1;
 
 #[async_trait]
 pub trait TraceFlusher {
@@ -26,29 +25,16 @@ pub struct ServerlessTraceFlusher {}
 #[async_trait]
 impl TraceFlusher for ServerlessTraceFlusher {
     async fn start_trace_flusher(&self, mut rx: Receiver<pb::TracerPayload>) {
-        let buffer: Arc<Mutex<Vec<pb::TracerPayload>>> = Arc::new(Mutex::new(Vec::new()));
-
-        let buffer_producer = buffer.clone();
-        let buffer_consumer = buffer.clone();
+        let mut buffer: Vec<pb::TracerPayload> = Vec::with_capacity(BUFFER_FLUSH_SIZE);
 
         // receive trace payloads from http endpoint handlers and add them to the buffer. flush if
         // the buffer gets to BUFFER_FLUSH_SIZE size.
-        tokio::spawn(async move {
-            while let Some(tracer_payload) = rx.recv().await {
-                let mut buffer = buffer_producer.lock().await;
-                buffer.push(tracer_payload);
+        while let Some(tracer_payload) = rx.recv().await {
+            buffer.push(tracer_payload);
+            if buffer.len() >= BUFFER_FLUSH_SIZE {
+                self.flush_traces(buffer.to_vec()).await;
+                buffer.clear();
             }
-        });
-
-        loop {
-            tokio::time::sleep(time::Duration::from_millis(3000)).await;
-
-            let mut buffer = buffer_consumer.lock().await;
-            if buffer.is_empty() {
-                continue;
-            }
-            self.flush_traces(buffer.to_vec()).await;
-            buffer.clear();
         }
     }
 
@@ -56,7 +42,6 @@ impl TraceFlusher for ServerlessTraceFlusher {
         if traces.is_empty() {
             return;
         }
-        info!("Flushing traces");
 
         let agent_payload = trace_utils::construct_agent_payload(traces);
         let serialized_agent_payload = trace_utils::serialize_agent_payload(agent_payload);
