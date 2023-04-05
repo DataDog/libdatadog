@@ -1,6 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use crate::config::Config;
 use crate::metrics::Metric;
 use crate::payload::construct_distribution_payload;
 
@@ -151,117 +152,5 @@ impl MetricsAgent {
                 }
             }
         }
-    }
-}
-
-#[derive(Debug)]
-pub struct Config {
-    api_key: String,
-    site: String,
-}
-
-pub struct ConfigBuilder {
-    api_key: Option<String>,
-    site: Option<String>,
-}
-
-impl ConfigBuilder {
-    pub fn new() -> Self {
-        ConfigBuilder {
-            api_key: None,
-            site: None,
-        }
-    }
-
-    pub fn api_key(mut self, api_key: String) -> Self {
-        self.api_key = Some(api_key);
-        self
-    }
-
-    pub fn site(mut self, site: String) -> Self {
-        self.site = Some(site);
-        self
-    }
-
-    pub fn build(self) -> Result<Config, String> {
-        let api_key = self
-            .api_key
-            .ok_or_else(|| "API key is missing".to_string())?;
-        let site = self.site.unwrap_or_else(|| String::from("datadoghq.com"));
-
-        let valid_sites = [
-            "datadoghq.com",
-            "us1.datadoghq.com",
-            "us3.datadoghq.com",
-            "us5.datadoghq.com",
-            "datadoghq.eu",
-            "ddog-gov.com",
-        ];
-
-        if !valid_sites.contains(&site.as_str()) {
-            return Err(format!("Site {} is not a valid Datadog site", site));
-        }
-
-        Ok(Config { api_key, site })
-    }
-}
-
-impl Default for ConfigBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_config_builder_success() {
-        let config = ConfigBuilder::new()
-            .api_key("test_api_key".to_string())
-            .site("us1.datadoghq.com".to_string())
-            .build();
-
-        assert!(config.is_ok());
-
-        let config = config.unwrap();
-        assert_eq!(config.api_key, "test_api_key");
-        assert_eq!(config.site, "us1.datadoghq.com");
-    }
-
-    #[test]
-    fn test_config_builder_missing_api_key() {
-        let config = ConfigBuilder::new()
-            .site("us1.datadoghq.com".to_string())
-            .build();
-
-        assert!(config.is_err());
-        assert_eq!(config.unwrap_err(), "API key is missing");
-    }
-
-    #[test]
-    fn test_config_builder_missing_site() {
-        let config = ConfigBuilder::new()
-            .api_key("test_api_key".to_string())
-            .build();
-
-        assert!(config.is_ok());
-
-        assert_eq!(config.unwrap().site, "datadoghq.com");
-    }
-
-    #[test]
-    fn test_config_builder_invalid_site() {
-        let config = ConfigBuilder::new()
-            .api_key("test_api_key".to_string())
-            .site("invalid_site.com".to_string())
-            .build();
-
-        assert!(config.is_err());
-        assert_eq!(
-            config.unwrap_err(),
-            "Site invalid_site.com is not a valid Datadog site"
-        );
     }
 }
