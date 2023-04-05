@@ -46,11 +46,8 @@ impl TraceFlusher for ServerlessTraceFlusher {
         let agent_payload = trace_utils::construct_agent_payload(traces);
         let serialized_agent_payload = trace_utils::serialize_agent_payload(agent_payload);
 
-        match trace_utils::send(serialized_agent_payload).await {
-            Ok(_) => {}
-            Err(e) => {
-                error!("Error sending trace: {:?}", e);
-            }
+        if let Err(e) = trace_utils::send(serialized_agent_payload).await {
+            error!("Error sending trace: {:?}", e);
         }
     }
 }
