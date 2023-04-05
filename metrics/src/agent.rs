@@ -35,11 +35,10 @@ impl MetricsAgent {
 
     pub async fn run(&self) {
         // Create a UDP socket and bind to the dogstatsd port
-        let socket = UdpSocket::bind(
-            format!("0.0.0.0:{}", DOGSTATSD_PORT)
-                .parse::<SocketAddr>()
-                .unwrap(),
-        )
+        let socket = UdpSocket::bind(SocketAddr::new(
+            std::net::Ipv4Addr::new(0, 0, 0, 0).into(),
+            DOGSTATSD_PORT,
+        ))
         .await
         .expect("Error binding to socket");
 
@@ -92,13 +91,15 @@ impl MetricsAgent {
 
                 let mut metrics_to_process = buf_producer.lock().await;
                 for metric in metrics {
-                    metrics_to_process.push(metric.clone());
+                    metrics_to_process.push(metric);
                 }
             }
         });
 
         // Process metrics we've parsed and flush them to Datadog
         loop {
+            // We flush every three seconds so we don't send too many requests to Datadog
+            // in a short amount of time. It's a good default for now.
             tokio::time::sleep(time::Duration::from_millis(3000)).await;
 
             let mut metrics_to_process = buf_consumer.lock().await;
