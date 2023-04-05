@@ -7,6 +7,18 @@ use serde::Serialize;
 use crate::metrics::Metric;
 
 #[derive(Serialize)]
+struct DistributionPayload {
+    series: Vec<MetricPayload>,
+}
+
+#[derive(Serialize)]
+struct MetricPayload {
+    metric: String,
+    points: Vec<(u64, Vec<f64>)>,
+    tags: Vec<Tag>,
+}
+
+#[derive(Serialize)]
 pub struct DistributionPayloadBuf {
     series: Vec<Metric>,
 }
@@ -15,18 +27,6 @@ pub struct DistributionPayloadBuf {
 // for the submit distribution metrics payload.
 // docs: https://docs.datadoghq.com/api/latest/metrics/?code-lang=curl#submit-distribution-points
 pub fn construct_distribution_payload(metrics: Vec<Metric>) -> Result<String, serde_json::Error> {
-    #[derive(Serialize)]
-    struct DistributionPayload {
-        series: Vec<MetricPayload>,
-    }
-
-    #[derive(Serialize)]
-    struct MetricPayload {
-        metric: String,
-        points: Vec<(u64, Vec<f64>)>,
-        tags: Vec<Tag>,
-    }
-
     let mut payloads: Vec<MetricPayload> = vec![];
 
     for metric in metrics {
