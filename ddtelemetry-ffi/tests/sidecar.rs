@@ -1,7 +1,24 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 #![cfg(unix)]
-use ddtelemetry_ffi::{assert_maybe_no_error, sidecar::unix::*};
+use ddtelemetry_ffi::sidecar::unix::*;
+
+macro_rules! assert_maybe_no_error {
+    ($maybe_erroring:expr) => {
+        match $maybe_erroring {
+            ddcommon_ffi::Option::Some(err) => panic!(
+                "{}",
+                String::from_utf8_lossy(
+                    #[allow(unused_unsafe)]
+                    unsafe {
+                        err.as_slice().into_slice()
+                    }
+                )
+            ),
+            ddcommon_ffi::Option::None => {}
+        }
+    };
+}
 
 use std::{
     ffi::CString,

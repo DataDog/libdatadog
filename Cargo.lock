@@ -364,12 +364,11 @@ dependencies = [
  "bytes",
  "criterion",
  "futures",
- "io-lifetimes 0.7.5",
+ "io-lifetimes",
  "libc",
  "nix",
  "pin-project",
  "pretty_assertions",
- "rmp-serde 1.1.1",
  "sendfd",
  "serde",
  "spawn_worker",
@@ -448,7 +447,7 @@ dependencies = [
  "datadog-trace-utils",
  "hyper",
  "log",
- "rmp-serde 1.1.1",
+ "rmp-serde",
  "serde_json",
  "tokio",
 ]
@@ -491,7 +490,7 @@ dependencies = [
  "hyper-rustls",
  "log",
  "prost",
- "rmp-serde 1.1.1",
+ "rmp-serde",
  "serde",
  "serde_json",
  "tokio",
@@ -534,18 +533,16 @@ name = "ddtelemetry"
 version = "2.1.0"
 dependencies = [
  "anyhow",
- "bytes",
  "datadog-ipc",
  "ddcommon",
  "futures",
  "http",
  "hyper",
- "io-lifetimes 1.0.5",
+ "io-lifetimes",
  "lazy_static",
  "libc",
  "nix",
  "pin-project",
- "pretty_assertions",
  "rand",
  "regex",
  "sendfd",
@@ -555,7 +552,6 @@ dependencies = [
  "sys-info",
  "tempfile",
  "tokio",
- "tokio-serde",
  "tokio-util 0.7.4",
  "tracing",
  "tracing-subscriber",
@@ -571,7 +567,6 @@ dependencies = [
  "ddtelemetry",
  "libc",
  "paste",
- "rand",
  "tempfile",
 ]
 
@@ -977,16 +972,6 @@ dependencies = [
 
 [[package]]
 name = "io-lifetimes"
-version = "0.7.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59ce5ef949d49ee85593fc4d3f3f95ad61657076395cbbce23e2121fc5542074"
-dependencies = [
- "libc",
- "windows-sys 0.42.0",
-]
-
-[[package]]
-name = "io-lifetimes"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1abeb7a0dd0f8181267ff8adc397075586500b81b28a73e8a0208b00fc170fb3"
@@ -1002,7 +987,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "256017f749ab3117e93acb91063009e1f1bb56d03965b14c2c8df4eb02c524d8"
 dependencies = [
  "hermit-abi 0.3.1",
- "io-lifetimes 1.0.5",
+ "io-lifetimes",
  "rustix 0.37.7",
  "windows-sys 0.45.0",
 ]
@@ -1539,17 +1524,6 @@ dependencies = [
 
 [[package]]
 name = "rmp-serde"
-version = "0.15.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "723ecff9ad04f4ad92fe1c8ca6c20d2196d9286e9c60727c4cb5511629260e9d"
-dependencies = [
- "byteorder",
- "rmp",
- "serde",
-]
-
-[[package]]
-name = "rmp-serde"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5b13be192e0220b8afb7222aa5813cb62cc269ebb5cac346ca6487681d2913e"
@@ -1582,7 +1556,7 @@ checksum = "f43abb88211988493c1abb44a70efa56ff0ce98f233b7b276146f1f3f7ba9644"
 dependencies = [
  "bitflags",
  "errno 0.2.8",
- "io-lifetimes 1.0.5",
+ "io-lifetimes",
  "libc",
  "linux-raw-sys 0.1.4",
  "windows-sys 0.45.0",
@@ -1596,7 +1570,7 @@ checksum = "2aae838e49b3d63e9274e1c01833cc8139d3fec468c3b84688c628f44b1ae11d"
 dependencies = [
  "bitflags",
  "errno 0.3.0",
- "io-lifetimes 1.0.5",
+ "io-lifetimes",
  "libc",
  "linux-raw-sys 0.3.1",
  "windows-sys 0.45.0",
@@ -1800,7 +1774,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "cc_utils",
- "io-lifetimes 1.0.5",
+ "io-lifetimes",
  "memfd",
  "nix",
  "rlimit",
@@ -1911,7 +1885,7 @@ name = "test_spawn_from_lib"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "io-lifetimes 1.0.5",
+ "io-lifetimes",
  "libc",
  "spawn_worker",
  "tempfile",
@@ -2015,7 +1989,6 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "pin-project",
- "rmp-serde 0.15.5",
  "serde",
  "serde_json",
 ]
