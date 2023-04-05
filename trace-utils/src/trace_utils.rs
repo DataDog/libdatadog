@@ -5,7 +5,7 @@ use hyper::http::HeaderValue;
 use hyper::HeaderMap;
 use hyper::{body::Buf, Body, Client, Method, Request};
 use hyper_rustls::HttpsConnectorBuilder;
-use log::info;
+use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::{env, str};
@@ -208,7 +208,7 @@ pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
         Ok(_) => {
             info!("Successfully sent traces");
         }
-        Err(e) => println!("Failed to send traces: {}", e),
+        Err(e) => error!("Failed to send traces: {}", e),
     }
     Ok(())
 }
@@ -238,7 +238,7 @@ pub fn get_root_span_index(trace: &Vec<pb::Span>) -> anyhow::Result<usize> {
 
     // if the trace is valid, parent_id_to_child_map should just have 1 entry at this point.
     if parent_id_to_child_map.len() != 1 {
-        println!(
+        error!(
             "Could not find the root span for trace with trace_id: {}",
             &trace[0].trace_id,
         );
@@ -249,7 +249,7 @@ pub fn get_root_span_index(trace: &Vec<pb::Span>) -> anyhow::Result<usize> {
         Some(res) => res,
         None => {
             // just return the index of the last span in the trace.
-            println!("Returning index of last span in trace as root span index.");
+            info!("Returning index of last span in trace as root span index.");
             return Ok(trace.len() - 1);
         }
     };
