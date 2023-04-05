@@ -81,7 +81,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 }
             };
 
-            if let Err(e) =  normalizer::normalize_chunk(&mut chunk, root_span_index) {
+            if let Err(e) = normalizer::normalize_chunk(&mut chunk, root_span_index) {
                 error!("Error normalizing trace chunk: {}", e);
             }
 
