@@ -427,26 +427,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-serverless-trace-mini-agent"
-version = "0.1.0"
-dependencies = [
- "datadog-trace-mini-agent",
- "datadog-trace-protobuf",
- "datadog-trace-utils",
-]
-
-[[package]]
-name = "datadog-trace-mini-agent"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "datadog-trace-protobuf",
- "datadog-trace-utils",
- "hyper",
- "tokio",
-]
-
-[[package]]
 name = "datadog-trace-normalization"
 version = "2.1.0"
 dependencies = [
@@ -2008,7 +1988,6 @@ checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
 dependencies = [
  "native-tls",
  "tokio",
- "syn 2.0.12"
 ]
 
 [[package]]

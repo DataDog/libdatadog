@@ -181,7 +181,7 @@ impl ConfigBuilder {
         let api_key = self
             .api_key
             .ok_or_else(|| "API key is missing".to_string())?;
-        let site = self.site.unwrap_or(String::from("datadoghq.com"));
+        let site = self.site.unwrap_or_else(|| String::from("datadoghq.com"));
 
         let valid_sites = [
             "datadoghq.com",
