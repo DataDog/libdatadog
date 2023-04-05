@@ -4,6 +4,7 @@
 use async_trait::async_trait;
 use datadog_trace_protobuf::pb;
 use hyper::{http, Body, Request, Response};
+use log::error;
 use tokio::sync::mpsc::Sender;
 
 use datadog_trace_normalization::normalizer;
@@ -52,7 +53,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
         for trace in traces.iter_mut() {
             match normalizer::normalize_trace(trace) {
                 Ok(_) => (),
-                Err(e) => println!("Error normalizing trace: {}", e),
+                Err(e) => error!("Error normalizing trace: {}", e),
             }
 
             let mut chunk = trace_utils::construct_trace_chunk(trace.to_vec());
@@ -60,7 +61,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
             let root_span_index = match trace_utils::get_root_span_index(trace) {
                 Ok(res) => res,
                 Err(e) => {
-                    println!(
+                    error!(
                         "Error getting the root span index of a trace, skipping. {}",
                         e,
                     );
@@ -70,7 +71,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
 
             match normalizer::normalize_chunk(&mut chunk, root_span_index) {
                 Ok(_) => (),
-                Err(e) => println!("Error normalizing trace chunk: {}", e),
+                Err(e) => error!("Error normalizing trace chunk: {}", e),
             }
 
             if !tracer_tags.client_computed_top_level {

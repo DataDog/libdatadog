@@ -5,6 +5,7 @@ use hyper::http::HeaderValue;
 use hyper::HeaderMap;
 use hyper::{body::Buf, Body, Client, Method, Request};
 use hyper_rustls::HttpsConnectorBuilder;
+use log::info;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::{env, str};
@@ -195,7 +196,7 @@ pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
     let client: Client<_, hyper::Body> = Client::builder().build(https);
     match client.request(req).await {
         Ok(_) => {
-            println!("Successfully sent traces");
+            info!("Successfully sent traces");
         }
         Err(e) => println!("Failed to send traces: {}", e),
     }

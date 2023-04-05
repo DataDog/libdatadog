@@ -4,6 +4,7 @@
 use datadog_trace_protobuf::pb;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
+use log::{error, info};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -54,7 +55,7 @@ impl MiniAgent {
         let server_builder = match Server::try_bind(&addr) {
             Ok(res) => res,
             Err(e) => {
-                println!(
+                error!(
                     "Failed to bind server to address. The mini-agent may already be running. {}",
                     e
                 );
@@ -66,7 +67,7 @@ impl MiniAgent {
 
         // start hyper http server
         if let Err(e) = server.await {
-            println!("Server error: {}", e);
+            error!("Server error: {}", e);
         }
 
         Ok(())
@@ -88,7 +89,7 @@ impl MiniAgent {
                 }
             }
             _ => {
-                println!("{}", req.uri().path());
+                info!("{}", req.uri().path());
                 let mut not_found = Response::default();
                 *not_found.status_mut() = StatusCode::NOT_FOUND;
                 Ok(not_found)
