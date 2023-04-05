@@ -91,20 +91,30 @@ pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<Vec<Vec<
 }
 
 #[derive(Default)]
-pub struct TracerTags<'a> {
+pub struct TracerHeaderTags<'a> {
     pub lang: &'a str,
     pub lang_version: &'a str,
     pub lang_interpreter: &'a str,
     pub lang_vendor: &'a str,
     pub tracer_version: &'a str,
+    pub container_id: &'a str,
     // specifies that the client has marked top-level spans, when set. Any non-empty value will mean 'yes'.
     pub client_computed_top_level: bool,
     // specifies whether the client has computed stats so that the agent doesn't have to. Any non-empty value will mean 'yes'.
     pub client_computed_stats: bool,
 }
 
-pub fn get_tracer_tags_from_request_header(headers: &HeaderMap<HeaderValue>) -> TracerTags {
-    let mut tags = TracerTags::default();
+// Tags gathered from a trace's root span
+#[derive(Default)]
+pub struct RootSpanTags<'a> {
+    pub env: &'a str,
+    pub app_version: &'a str,
+    pub hostname: &'a str,
+    pub runtime_id: &'a str,
+}
+
+pub fn get_tracer_header_tags(headers: &HeaderMap<HeaderValue>) -> TracerHeaderTags {
+    let mut tags = TracerHeaderTags::default();
     parse_string_header!(
         headers,
         {
@@ -113,6 +123,7 @@ pub fn get_tracer_tags_from_request_header(headers: &HeaderMap<HeaderValue>) -> 
             "datadog-meta-lang-interpreter" => tags.lang_interpreter,
             "datadog-meta-lang-vendor" => tags.lang_vendor,
             "datadog-meta-tracer-version" => tags.tracer_version,
+            "datadog-container-id" => tags.container_id,
         }
     );
     if headers.get("datadog-client-computed-top-level").is_some() {
@@ -148,18 +159,17 @@ pub fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
 
 pub fn construct_tracer_payload(
     chunks: Vec<pb::TraceChunk>,
-    tracer_tags: TracerTags,
-    env: &str,
-    app_version: &str,
+    tracer_tags: TracerHeaderTags,
+    root_span_tags: RootSpanTags,
 ) -> pb::TracerPayload {
     pb::TracerPayload {
-        app_version: app_version.to_string(),
+        app_version: root_span_tags.app_version.to_string(),
         language_name: tracer_tags.lang.to_string(),
-        container_id: "".to_string(),
-        env: env.to_string(),
-        runtime_id: "".to_string(),
+        container_id: tracer_tags.container_id.to_string(),
+        env: root_span_tags.env.to_string(),
+        runtime_id: root_span_tags.runtime_id.to_string(),
         chunks,
-        hostname: "".to_string(),
+        hostname: root_span_tags.hostname.to_string(),
         language_version: tracer_tags.lang_version.to_string(),
         tags: HashMap::new(),
         tracer_version: tracer_tags.tracer_version.to_string(),

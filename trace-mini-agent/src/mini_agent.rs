@@ -4,7 +4,7 @@
 use datadog_trace_protobuf::pb;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
-use log::{error, info};
+use log::{debug, error};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -89,7 +89,7 @@ impl MiniAgent {
                 }
             }
             _ => {
-                info!("{}", req.uri().path());
+                debug!("{}", req.uri().path());
                 let mut not_found = Response::default();
                 *not_found.status_mut() = StatusCode::NOT_FOUND;
                 Ok(not_found)

@@ -4,11 +4,24 @@
 use async_trait::async_trait;
 use datadog_trace_protobuf::pb;
 use hyper::{http, Body, Request, Response};
-use log::error;
+use log::{error, info};
 use tokio::sync::mpsc::Sender;
 
 use datadog_trace_normalization::normalizer;
 use datadog_trace_utils::trace_utils;
+
+macro_rules! parse_root_span_tags {
+    (
+        $meta_map:ident,
+        { $($header:literal => $($field:ident).+ ,)+ }
+    ) => {
+        $(
+            if let Some(tag) = $meta_map.get($header) {
+                $($field).+ = tag;
+            }
+        )+
+    }
+}
 
 #[async_trait]
 pub trait TraceProcessor {
@@ -32,7 +45,10 @@ impl TraceProcessor for ServerlessTraceProcessor {
         tx: Sender<pb::TracerPayload>,
     ) -> http::Result<Response<Body>> {
         let (parts, body) = req.into_parts();
-        let tracer_tags = trace_utils::get_tracer_tags_from_request_header(&parts.headers);
+
+        info!("request parts: {:#?}", parts);
+
+        let tracer_header_tags = trace_utils::get_tracer_header_tags(&parts.headers);
 
         // deserialize traces from the request body, convert to protobuf structs (see trace-protobuf crate)
         let mut traces = match trace_utils::get_traces_from_request_body(body).await {
@@ -47,8 +63,8 @@ impl TraceProcessor for ServerlessTraceProcessor {
 
         let mut trace_chunks: Vec<pb::TraceChunk> = Vec::new();
 
-        let mut payload_env = "";
-        let mut payload_app_version = "";
+        let mut gathered_root_span_tags = false;
+        let mut root_span_tags = trace_utils::RootSpanTags::default();
 
         for trace in traces.iter_mut() {
             match normalizer::normalize_trace(trace) {
@@ -74,30 +90,29 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 Err(e) => error!("Error normalizing trace chunk: {}", e),
             }
 
-            if !tracer_tags.client_computed_top_level {
+            if !tracer_header_tags.client_computed_top_level {
                 trace_utils::compute_top_level_span(trace);
             }
 
             trace_chunks.push(chunk);
 
-            if payload_env.is_empty() {
-                if let Some(payload_env_root) = trace[root_span_index].meta.get("env") {
-                    payload_env = payload_env_root;
-                }
-            }
-            if payload_app_version.is_empty() {
-                if let Some(payload_app_version_root) = trace[root_span_index].meta.get("version") {
-                    payload_app_version = payload_app_version_root;
-                }
+            if !gathered_root_span_tags {
+                gathered_root_span_tags = true;
+                let meta_map = &trace[root_span_index].meta;
+                parse_root_span_tags!(
+                    meta_map,
+                    {
+                        "env" => root_span_tags.env,
+                        "version" => root_span_tags.app_version,
+                        "_dd.hostname" => root_span_tags.hostname,
+                        "runtime-id" => root_span_tags.runtime_id,
+                    }
+                );
             }
         }
 
-        let tracer_payload = trace_utils::construct_tracer_payload(
-            trace_chunks,
-            tracer_tags,
-            payload_env,
-            payload_app_version,
-        );
+        let tracer_payload =
+            trace_utils::construct_tracer_payload(trace_chunks, tracer_header_tags, root_span_tags);
 
         // send trace payload to our trace flusher
         match tx.send(tracer_payload).await {
