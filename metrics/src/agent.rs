@@ -15,7 +15,7 @@ use tokio::net::UdpSocket;
 use hyper::header::CONTENT_TYPE;
 use hyper::http::HeaderValue;
 use hyper::{Body, Client, Request};
-use hyper_tls::HttpsConnector;
+use hyper_rustls::HttpsConnectorBuilder;
 
 const DOGSTATSD_PORT: u16 = 8125;
 const BUFFER_SIZE: usize = 8192;
@@ -52,7 +52,12 @@ impl MetricsAgent {
         let buf_producer = self.buf.clone();
         let buf_consumer = self.buf.clone();
 
-        let http_client = Client::builder().build::<_, Body>(HttpsConnector::new());
+        let https = HttpsConnectorBuilder::new()
+            .with_native_roots()
+            .https_only()
+            .enable_http1()
+            .build();
+        let http_client = Client::builder().build::<_, Body>(https);
 
         // Process DogstatsD UDP packets and write them to our shared buffer
         tokio::spawn(async move {
