@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use datadog_trace_protobuf::pb;
 use hyper::{http, Body, Request, Response};
-use log::{error, info};
+use log::error;
 use tokio::sync::mpsc::Sender;
 
 use datadog_trace_normalization::normalizer;
@@ -25,8 +25,7 @@ macro_rules! parse_root_span_tags {
 
 #[async_trait]
 pub trait TraceProcessor {
-    /// Deserializes traces from a hyper request body and sends them through
-    /// the provided tokio mpsc Sender.
+    /// Deserializes traces from a hyper request body and sends them through the provided tokio mpsc Sender.
     async fn process_traces(
         &self,
         req: Request<Body>,
@@ -45,8 +44,6 @@ impl TraceProcessor for ServerlessTraceProcessor {
         tx: Sender<pb::TracerPayload>,
     ) -> http::Result<Response<Body>> {
         let (parts, body) = req.into_parts();
-
-        info!("request parts: {:#?}", parts);
 
         let tracer_header_tags = trace_utils::get_tracer_header_tags(&parts.headers);
 
@@ -129,18 +126,16 @@ impl TraceProcessor for ServerlessTraceProcessor {
 
 #[cfg(test)]
 mod tests {
-
+    use hyper::Request;
+    use serde_json::json;
     use std::{
         collections::HashMap,
         time::{SystemTime, UNIX_EPOCH},
     };
-
     use tokio::sync::mpsc::{self, Receiver, Sender};
 
     use crate::trace_processor::{self, TraceProcessor};
     use datadog_trace_protobuf::pb;
-    use hyper::Request;
-    use serde_json::json;
 
     fn create_test_span(start: i64, span_id: u64, parent_id: u64, is_top_level: bool) -> pb::Span {
         let mut span = pb::Span {
@@ -194,15 +189,19 @@ mod tests {
         )
     }
 
+    fn get_current_timestamp_nanos() -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as i64
+    }
+
     #[tokio::test]
     async fn test_process_trace() {
         let (tx, mut rx): (Sender<pb::TracerPayload>, Receiver<pb::TracerPayload>) =
             mpsc::channel(1);
 
-        let start = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as i64;
+        let start = get_current_timestamp_nanos();
 
         let json_span = create_test_json_span(start, 222, 0);
 
@@ -251,10 +250,7 @@ mod tests {
         let (tx, mut rx): (Sender<pb::TracerPayload>, Receiver<pb::TracerPayload>) =
             mpsc::channel(1);
 
-        let start = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as i64;
+        let start = get_current_timestamp_nanos();
 
         let json_trace = vec![
             create_test_json_span(start, 333, 222),

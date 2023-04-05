@@ -237,7 +237,6 @@ pub fn get_root_span_index(trace: &Vec<pb::Span>) -> anyhow::Result<usize> {
     }
 
     // if the trace is valid, parent_id_to_child_map should just have 1 entry at this point.
-
     if parent_id_to_child_map.len() != 1 {
         println!(
             "Could not find the root span for trace with trace_id: {}",
@@ -262,9 +261,8 @@ pub fn get_root_span_index(trace: &Vec<pb::Span>) -> anyhow::Result<usize> {
 /// A span is considered top-level if:
 ///   - it's a root span
 ///   - OR its parent is unknown (other part of the code, distributed trace)
-///   - OR its parent belongs to another service (in that case it's a "local root"
-///     being the highest ancestor of other spans belonging to this service and
-///     attached to it).
+///   - OR its parent belongs to another service (in that case it's a "local root" being the highest
+///     ancestor of other spans belonging to this service and attached to it).
 pub fn compute_top_level_span(trace: &mut [pb::Span]) {
     let mut span_id_to_service: HashMap<u64, String> = HashMap::new();
     for span in trace.iter() {
@@ -302,16 +300,13 @@ fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
 
 #[cfg(test)]
 mod tests {
+    use hyper::Request;
+    use serde_json::json;
     use std::collections::HashMap;
 
-    use datadog_trace_protobuf::pb;
-    use serde_json::json;
-
-    use hyper::Request;
-
-    use crate::trace_utils;
-
     use super::get_root_span_index;
+    use crate::trace_utils;
+    use datadog_trace_protobuf::pb;
 
     #[tokio::test]
     async fn test_get_traces_from_request_body() {
@@ -409,8 +404,6 @@ mod tests {
             create_test_span(1234, 12341, 0),
             create_test_span(1234, 12342, 12341),
             create_test_span(1234, 12343, 12342),
-            create_test_span(1234, 12344, 12343),
-            create_test_span(1234, 12345, 12344),
         ];
 
         let root_span_index = get_root_span_index(&trace);
