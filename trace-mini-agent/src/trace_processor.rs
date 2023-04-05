@@ -217,7 +217,8 @@ mod tests {
             .unwrap();
 
         let trace_processor = trace_processor::ServerlessTraceProcessor {};
-        trace_processor.process_traces(request, tx).await;
+        let res = trace_processor.process_traces(request, tx).await;
+        assert!(res.is_ok());
 
         let tracer_payload = rx.recv().await;
 
@@ -272,7 +273,8 @@ mod tests {
             .unwrap();
 
         let trace_processor = trace_processor::ServerlessTraceProcessor {};
-        trace_processor.process_traces(request, tx).await;
+        let res = trace_processor.process_traces(request, tx).await;
+        assert!(res.is_ok());
 
         let tracer_payload = rx.recv().await;
 
