@@ -8,11 +8,9 @@ use crate::payload::construct_distribution_payload;
 use std::net::SocketAddr;
 use std::str;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 use std::time::{self, SystemTime};
 use tokio::net::UdpSocket;
-use tokio::sync::Mutex;
 
 use hyper::header::CONTENT_TYPE;
 use hyper::http::HeaderValue;
