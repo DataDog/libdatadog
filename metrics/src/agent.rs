@@ -7,6 +7,7 @@ use crate::payload::construct_distribution_payload;
 
 use std::net::SocketAddr;
 use std::str;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 use std::time::{self, SystemTime};
@@ -23,15 +24,11 @@ const BUFFER_SIZE: usize = 8192;
 
 pub struct MetricsAgent {
     config: Config,
-    buf: Arc<Mutex<Vec<Metric>>>,
 }
 
 impl MetricsAgent {
     pub fn with_config(config: Config) -> Self {
-        Self {
-            config,
-            buf: Arc::new(Mutex::new(Vec::new())),
-        }
+        Self { config }
     }
 
     pub async fn run(&self) {
@@ -45,19 +42,14 @@ impl MetricsAgent {
 
         println!("Listening for dogstatsd packets on port {}", DOGSTATSD_PORT);
 
-        // We use a shared vec here instead of a channel because we need to buffer the data at
-        // some point anyways. If we had used a channel here, we'd still need to add it to
-        // some type of buffer, so we'd need to implement a vector buffer anyways.
-        // Instead, we can save a step and just add it to the buffer directly.
-        let buf_producer = self.buf.clone();
-        let buf_consumer = self.buf.clone();
-
         let https = HttpsConnectorBuilder::new()
             .with_native_roots()
             .https_only()
             .enable_http1()
             .build();
         let http_client = Client::builder().build::<_, Body>(https);
+
+        let (tx, rx): (Sender<Metric>, Receiver<Metric>) = mpsc::channel();
 
         // Process DogstatsD UDP packets and write them to our shared buffer
         tokio::spawn(async move {
@@ -90,67 +82,72 @@ impl MetricsAgent {
                     }
                 };
 
-                let mut metrics_to_process = buf_producer.lock().await;
                 for metric in metrics {
-                    metrics_to_process.push(metric);
+                    tx.send(metric).expect("No error sending metric");
                 }
             }
         });
 
+        let mut recv_buf = vec![];
+
         // Process metrics we've parsed and flush them to Datadog
         loop {
-            // We flush every three seconds so we don't send too many requests to Datadog
-            // in a short amount of time. It's a good default for now.
+            {
+                for metric in rx.try_iter() {
+                    recv_buf.push(metric);
+                }
+
+                if recv_buf.is_empty() {
+                    continue;
+                }
+
+                let payload = match construct_distribution_payload(recv_buf.to_vec()) {
+                    Ok(payload) => payload,
+                    Err(e) => {
+                        println!("Error serializing payload: {}", e);
+                        continue;
+                    }
+                };
+
+                println!("Sending payload: {}", payload);
+
+                // Create a POST request with the headers and payload
+                let request_option = Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "https://api.{}/api/v1/distribution_points",
+                        self.config.site
+                    ))
+                    .header("DD-API-KEY", &self.config.api_key)
+                    .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+                    .body(Body::from(payload.to_string()));
+
+                let request = match request_option {
+                    Ok(request) => request,
+                    Err(e) => {
+                        println!("Error constructing payload: {}", e);
+                        continue;
+                    }
+                };
+
+                // Send the request and handle the response
+                match http_client.request(request).await {
+                    Ok(_) => {
+                        println!("Successfully posted request");
+                        // Remove all elements from the buffer, as they've
+                        // been sent at this point
+                        recv_buf.clear();
+                    }
+                    Err(e) => {
+                        println!("Error sending request to Datadog: {}", e);
+                    }
+                }
+            }
+
+            // Sleep for 3 seconds so we avoid polling the queue too often
+            // and sending single payloads to Datadog. We'd like to buffer them
+            // for 3 seconds and batch send them all at once.
             tokio::time::sleep(time::Duration::from_millis(3000)).await;
-
-            let mut metrics_to_process = buf_consumer.lock().await;
-
-            // We don't have any new metrics
-            if metrics_to_process.is_empty() {
-                continue;
-            }
-
-            let payload = match construct_distribution_payload(metrics_to_process.to_vec()) {
-                Ok(payload) => payload,
-                Err(e) => {
-                    println!("Error serializing payload: {}", e);
-                    continue;
-                }
-            };
-
-            println!("Sending payload: {}", payload);
-
-            // Create a POST request with the headers and payload
-            let request_option = Request::builder()
-                .method("POST")
-                .uri(format!(
-                    "https://api.{}/api/v1/distribution_points",
-                    self.config.site
-                ))
-                .header("DD-API-KEY", &self.config.api_key)
-                .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-                .body(Body::from(payload.to_string()));
-
-            let request = match request_option {
-                Ok(request) => request,
-                Err(e) => {
-                    println!("Error constructing payload: {}", e);
-                    continue;
-                }
-            };
-
-            // Send the request and handle the response
-            match http_client.request(request).await {
-                Ok(_) => {
-                    println!("Successfully posted request");
-                    // Remove all elements from the buffer, as they've
-                    // been sent at this point
-                    metrics_to_process.clear();
-                }
-                Err(e) => {
-                    println!("Error sending request to Datadog: {}", e);
-                }
-            }
         }
     }
 }
