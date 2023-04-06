@@ -149,7 +149,7 @@ pub fn construct_agent_payload(tracer_payloads: Vec<pb::TracerPayload>) -> pb::A
 
 pub fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
     pb::TraceChunk {
-        priority: 1,
+        priority: -128,
         origin: "".to_string(),
         spans: trace,
         tags: HashMap::new(),
