@@ -577,11 +577,7 @@ impl TelemetryWorkerHandle {
 
     pub fn add_dependency(&self, name: String, version: Option<String>) -> Result<()> {
         self.sender
-            .try_send(TelemetryActions::AddDependecy(Dependency {
-                name,
-                version,
-                hash: None,
-            }))?;
+            .try_send(TelemetryActions::AddDependecy(Dependency { name, version }))?;
         Ok(())
     }
 
@@ -644,7 +640,9 @@ pub struct TelemetryWorkerBuilder {
     pub host: Host,
     pub application: Application,
     pub runtime_id: Option<String>,
-    pub library_config: Vec<data::Configuration>,
+    pub dependencies: store::Store<data::Dependency>,
+    pub integrations: store::Store<data::Integration>,
+    pub configurations: store::Store<data::Configuration>,
     pub native_deps: bool,
     pub rust_shared_lib_deps: bool,
     pub config: builder::ConfigBuilder,
@@ -659,18 +657,13 @@ impl TelemetryWorkerBuilder {
     ) -> Self {
         Self {
             host: crate::build_host(),
-            application: Application {
+            ..Self::new(
+                String::new(),
                 service_name,
                 language_name,
                 language_version,
                 tracer_version,
-                ..Default::default()
-            },
-            runtime_id: None,
-            library_config: Vec::new(),
-            native_deps: true,
-            rust_shared_lib_deps: false,
-            config: ConfigBuilder::default(),
+            )
         }
     }
 
@@ -694,7 +687,9 @@ impl TelemetryWorkerBuilder {
                 ..Default::default()
             },
             runtime_id: None,
-            library_config: Vec::new(),
+            dependencies: store::Store::new(MAX_ITEMS),
+            integrations: store::Store::new(MAX_ITEMS),
+            configurations: store::Store::new(MAX_ITEMS),
             native_deps: true,
             rust_shared_lib_deps: false,
             config: ConfigBuilder::default(),
@@ -711,20 +706,18 @@ impl TelemetryWorkerBuilder {
             is_shutdown: Mutex::new(false),
             condvar: Condvar::new(),
         });
-
         let contexts = MetricContexts::default();
         let token = CancellationToken::new();
         let config = self.config.merge(external_config);
         let telemetry_hearbeat_interval = config.telemetry_hearbeat_interval;
         let client = http_client::from_config(&config);
-        let mut configurations = store::Store::new(MAX_ITEMS);
-        configurations.extend(self.library_config);
+
         let worker = TelemetryWorker {
             data: TelemetryWorkerData {
                 started: false,
-                dependencies: store::Store::new(MAX_ITEMS),
-                integrations: store::Store::new(MAX_ITEMS),
-                configurations,
+                dependencies: self.dependencies,
+                integrations: self.integrations,
+                configurations: self.configurations,
                 logs: store::QueueHashMap::default(),
                 metric_contexts: contexts.clone(),
                 metric_buckets: MetricBuckets::default(),

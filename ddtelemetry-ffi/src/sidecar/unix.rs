@@ -179,7 +179,6 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
     let dependency = TelemetryActions::AddDependecy(Dependency {
         name: dependency_name.to_utf8_lossy().into_owned(),
         version,
-        hash: None,
     });
 
     try_c!(blocking::enqueue_actions(

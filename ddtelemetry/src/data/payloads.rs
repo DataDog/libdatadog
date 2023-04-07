@@ -6,16 +6,14 @@ use crate::data::Payload;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
 pub struct Dependency {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hash: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
 pub struct Integration {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -28,7 +26,7 @@ pub struct Integration {
     pub auto_enabled: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
 pub struct Configuration {
     pub name: String,
     pub value: String,
