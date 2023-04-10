@@ -6,7 +6,6 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize)]
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Span {
     /// service is the name of the service with which this span is associated.
@@ -62,7 +61,6 @@ pub struct Span {
     >,
 }
 /// TraceChunk represents a list of spans with the same trace ID. In other words, a chunk of a trace.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TraceChunk {
     /// priority specifies sampling priority of the trace.
@@ -85,7 +83,6 @@ pub struct TraceChunk {
     pub dropped_trace: bool,
 }
 /// TracerPayload represents a payload the trace agent receives from tracers.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TracerPayload {
     /// containerID specifies the ID of the container where the tracer is running on.
@@ -123,7 +120,6 @@ pub struct TracerPayload {
     pub app_version: ::prost::alloc::string::String,
 }
 /// AgentPayload represents payload the agent sends to the intake.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AgentPayload {
     /// hostName specifies hostname of where the agent is running.

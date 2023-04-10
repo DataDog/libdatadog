@@ -32,7 +32,7 @@ fn generate_protobuf() {
 
     config.out_dir(output_path.clone());
 
-    config.message_attribute("Span", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("Span", "#[derive(Deserialize, Serialize)]");
     config.field_attribute("service", "#[serde(default)]");
     config.field_attribute("parentID", "#[serde(default)]");
     config.field_attribute("error", "#[serde(default)]");
@@ -51,19 +51,13 @@ fn generate_protobuf() {
         )
         .unwrap();
 
-    // add the serde import to the top of the protobuf rust structs file
-    let serde_import = "use serde::{Deserialize, Serialize};
-
-"
-    .as_bytes();
-
-    prepend_to_file(serde_import, &output_path.join("pb.rs"));
-
-    // add license to the top of the protobuf rust structs file
+    // add license & serde imports to the top of the protobuf rust structs file
     let license = "// Unless explicitly stated otherwise all files in this repository are licensed
 // under the Apache License Version 2.0. This product includes software
 // developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
 // Datadog, Inc.
+
+use serde::{Deserialize, Serialize};
 
 "
     .as_bytes();
