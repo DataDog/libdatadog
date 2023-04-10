@@ -2,8 +2,9 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Method, Request, Response, Server, StatusCode};
+use hyper::{http, Body, Method, Request, Response, Server, StatusCode};
 use log::{error, info};
+use serde_json::json;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -14,6 +15,7 @@ use datadog_trace_protobuf::pb;
 
 const MINI_AGENT_PORT: usize = 8126;
 const TRACE_ENDPOINT_PATH: &str = "/v0.4/traces";
+const INFO_ENDPOINT_PATH: &str = "/info";
 const TRACER_PAYLOAD_CHANNEL_BUFFER_SIZE: usize = 10;
 
 pub struct MiniAgent {
@@ -79,11 +81,34 @@ impl MiniAgent {
                     )))),
                 }
             }
+            (_, INFO_ENDPOINT_PATH) => match Self::info_handler() {
+                Ok(res) => Ok(res),
+                Err(err) => Ok(Response::new(Body::from(format!(
+                    "Info endpoint error: {}",
+                    err
+                )))),
+            },
             _ => {
                 let mut not_found = Response::default();
                 *not_found.status_mut() = StatusCode::NOT_FOUND;
                 Ok(not_found)
             }
         }
+    }
+
+    fn info_handler() -> http::Result<Response<Body>> {
+        let response_json = json!(
+            {
+                "endpoints": [
+                    TRACE_ENDPOINT_PATH,
+                    INFO_ENDPOINT_PATH
+                ],
+                "client_drop_p0s": true,
+                "span_meta_structs": true,
+            }
+        );
+        Response::builder()
+            .status(200)
+            .body(Body::from(response_json.to_string()))
     }
 }
