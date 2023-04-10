@@ -8,6 +8,7 @@ use std::sync::Arc;
 use datadog_trace_mini_agent::{mini_agent, trace_flusher, trace_processor};
 
 pub fn main() {
+    println!("cargo:rerun-if-changed=src/pb");
     let env = Env::new().filter_or("DD_LOG_LEVEL", "info");
 
     Builder::from_env(env).target(Target::Stdout).init();
