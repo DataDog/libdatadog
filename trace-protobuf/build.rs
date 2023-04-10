@@ -5,6 +5,7 @@ use std::path::Path;
 
 // compiles the .proto files into rust structs
 fn main() -> Result<()> {
+    println!("cargo:rerun-if-changed=src/pb");
     let mut config = prost_build::Config::new();
 
     let cur_working_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
