@@ -164,11 +164,15 @@ mod tests {
                 ),
             ]),
             metrics: HashMap::new(),
-            r#type: "custom".to_string(),
+            r#type: "".to_string(),
             meta_struct: HashMap::new(),
         };
         if is_top_level {
             span.metrics.insert("_top_level".to_string(), 1.0);
+            span.meta.insert("functionname".to_string(), "".to_string());
+            span.meta
+                .insert("_dd.origin".to_string(), "gcp_function".to_string());
+            span.r#type = "serverless".to_string();
         }
         span
     }
@@ -237,7 +241,7 @@ mod tests {
             tracer_version: "4.0.0".to_string(),
             runtime_id: "afjksdljfkllksdj-28934889".to_string(),
             chunks: vec![pb::TraceChunk {
-                priority: 1,
+                priority: i8::MIN as i32,
                 origin: "".to_string(),
                 spans: vec![create_test_span(start, 222, 0, true)],
                 tags: HashMap::new(),
@@ -290,7 +294,7 @@ mod tests {
             tracer_version: "4.0.0".to_string(),
             runtime_id: "afjksdljfkllksdj-28934889".to_string(),
             chunks: vec![pb::TraceChunk {
-                priority: 1,
+                priority: i8::MIN as i32,
                 origin: "".to_string(),
                 spans: vec![
                     create_test_span(start, 333, 222, false),
