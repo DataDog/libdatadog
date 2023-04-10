@@ -8,6 +8,7 @@ use {
     std::path::Path,
 };
 
+// to re-generate protobuf structs, run cargo build --features generate-protobuf
 fn main() -> Result<()> {
     #[cfg(feature = "generate-protobuf")]
     {

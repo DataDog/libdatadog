@@ -3,5 +3,6 @@
 // developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
 // Datadog, Inc.
 
+#![allow(unknown_lints)]
 #[rustfmt::skip]
 pub mod pb;
