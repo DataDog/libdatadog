@@ -31,63 +31,21 @@ macro_rules! parse_string_header {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
-pub struct Span {
-    service: Option<String>,
-    name: String,
-    resource: String,
-    trace_id: u64,
-    span_id: u64,
-    parent_id: Option<u64>,
-    start: i64,
-    duration: i64,
-    error: Option<i32>,
-    meta: HashMap<String, String>,
-    metrics: Option<HashMap<String, f64>>,
-}
-
 pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<Vec<Vec<pb::Span>>> {
     let buffer = hyper::body::aggregate(body).await.unwrap();
 
-    let traces: Vec<Vec<Span>> = match rmp_serde::from_read(buffer.reader()) {
+    let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_read(buffer.reader()) {
         Ok(res) => res,
         Err(err) => {
             anyhow::bail!("Error deserializing trace from request body: {}", err)
         }
     };
 
-    let mut pb_traces = Vec::<Vec<pb::Span>>::new();
-    for trace in traces {
-        let mut pb_spans = Vec::<pb::Span>::new();
-        for span in trace {
-            let span = pb::Span {
-                service: span.service.unwrap_or_default(),
-                name: span.name,
-                resource: span.resource,
-                trace_id: span.trace_id,
-                span_id: span.span_id,
-                parent_id: span.parent_id.unwrap_or_default(),
-                start: span.start,
-                duration: span.duration,
-                error: span.error.unwrap_or(0),
-                meta: span.meta,
-                meta_struct: HashMap::new(),
-                metrics: span.metrics.unwrap_or_default(),
-                r#type: "custom".to_string(),
-            };
-
-            pb_spans.push(span);
-        }
-        if !pb_spans.is_empty() {
-            pb_traces.push(pb_spans);
-        }
-    }
-
-    if pb_traces.is_empty() {
+    if traces.is_empty() {
         anyhow::bail!("No traces deserialized from the request body.")
     }
 
-    Ok(pb_traces)
+    Ok(traces)
 }
 
 #[derive(Default)]
