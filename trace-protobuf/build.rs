@@ -1,11 +1,23 @@
-use std::env;
-use std::fs::File;
-use std::io::{Read, Result, Write};
-use std::path::Path;
+use std::io::Result;
 
-// compiles the .proto files into rust structs
+#[cfg(feature = "generate-protobuf")]
+use {
+    std::env,
+    std::fs::File,
+    std::io::{Read, Write},
+    std::path::Path,
+};
+
 fn main() -> Result<()> {
-    println!("cargo:rerun-if-changed=src/pb");
+    // compiles the .proto files into rust structs
+    #[cfg(feature = "generate-protobuf")]
+    generate_protobuf();
+
+    Ok(())
+}
+
+#[cfg(feature = "generate-protobuf")]
+fn generate_protobuf() {
     let mut config = prost_build::Config::new();
 
     let cur_working_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -22,14 +34,16 @@ fn main() -> Result<()> {
     config.field_attribute("meta_struct", "#[serde(default)]");
     config.field_attribute("type", "#[serde(default)]");
 
-    config.compile_protos(
-        &[
-            "src/pb/agent_payload.proto",
-            "src/pb/tracer_payload.proto",
-            "src/pb/span.proto",
-        ],
-        &["src/pb/"],
-    )?;
+    config
+        .compile_protos(
+            &[
+                "src/pb/agent_payload.proto",
+                "src/pb/tracer_payload.proto",
+                "src/pb/span.proto",
+            ],
+            &["src/pb/"],
+        )
+        .unwrap();
 
     // add the serde import to the top of the protobuf rust structs file
     let serde_import = "use serde::{Deserialize, Serialize};
@@ -49,10 +63,9 @@ fn main() -> Result<()> {
     .as_bytes();
 
     prepend_to_file(license, &output_path.join("pb.rs"));
-
-    Ok(())
 }
 
+#[cfg(feature = "generate-protobuf")]
 fn prepend_to_file(data: &[u8], file_path: &Path) {
     let mut f = File::open(file_path).unwrap();
     let mut content = data.to_owned();
