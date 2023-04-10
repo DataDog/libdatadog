@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use datadog_trace_protobuf::pb;
 use hyper::{http, Body, Request, Response};
-use log::error;
+use log::{error, info};
 use tokio::sync::mpsc::Sender;
 
 use datadog_trace_normalization::normalizer;
@@ -51,7 +51,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
         let mut traces = match trace_utils::get_traces_from_request_body(body).await {
             Ok(res) => res,
             Err(err) => {
-                println!("Error deserializing trace from request body: {}", err);
+                error!("Error deserializing trace from request body: {}", err);
                 return Response::builder().body(Body::from(format!(
                     "Error deserializing trace from request body: {}",
                     err
@@ -113,13 +113,13 @@ impl TraceProcessor for ServerlessTraceProcessor {
         // send trace payload to our trace flusher
         match tx.send(tracer_payload).await {
             Ok(_) => {
-                println!("Successfully buffered traces to be flushed.");
+                info!("Successfully buffered traces to be flushed.");
                 Response::builder().status(200).body(Body::from(
                     r#"{"message":"Successfully buffered traces to be flushed."}"#,
                 ))
             }
             Err(e) => {
-                println!("Error sending traces to the trace flusher: {}", e);
+                error!("Error sending traces to the trace flusher: {}", e);
                 Response::builder().status(500).body(Body::from(format!(
                     "{{\"message\":\"Error sending traces to the trace flusher: {}\"}}",
                     e
