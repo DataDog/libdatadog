@@ -255,6 +255,16 @@ fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
     span.metrics.insert("_top_level".to_string(), 1.0);
 }
 
+pub fn set_serverless_root_span_tags(span: &mut pb::Span) {
+    span.r#type = "serverless".to_string();
+    span.meta
+        .insert("_dd.origin".to_string(), "gcp_function".to_string());
+    span.meta.insert(
+        "functionname".to_string(),
+        env::var("K_SERVICE").unwrap_or_default(),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use hyper::Request;

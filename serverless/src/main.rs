@@ -10,9 +10,7 @@ use datadog_trace_mini_agent::{mini_agent, trace_flusher, trace_processor};
 pub fn main() {
     let env = Env::new().filter_or("DD_LOG_LEVEL", "info");
 
-    Builder::from_env(env)
-        .target(Target::Stdout)
-        .init();
+    Builder::from_env(env).target(Target::Stdout).init();
 
     info!("Starting serverless trace mini agent");
 
