@@ -3,7 +3,5 @@
 // developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
 // Datadog, Inc.
 
-#![deny(clippy::all)]
-
 #[rustfmt::skip]
 pub mod pb;
