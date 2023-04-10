@@ -90,6 +90,8 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 trace_utils::compute_top_level_span(&mut chunk.spans);
             }
 
+            trace_utils::set_serverless_root_span_tags(&mut chunk.spans[root_span_index]);
+
             trace_chunks.push(chunk);
 
             if !gathered_root_span_tags {
