@@ -2,12 +2,12 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use async_trait::async_trait;
-use datadog_trace_protobuf::pb;
 use hyper::{http, Body, Request, Response};
 use log::{error, info};
 use tokio::sync::mpsc::Sender;
 
 use datadog_trace_normalization::normalizer;
+use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
 
 macro_rules! parse_root_span_tags {

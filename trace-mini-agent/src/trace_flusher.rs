@@ -1,10 +1,9 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-use std::{sync::Arc, time};
-
 use async_trait::async_trait;
 use log::{error, info};
+use std::{sync::Arc, time};
 use tokio::sync::{mpsc::Receiver, Mutex};
 
 use datadog_trace_protobuf::pb;
@@ -58,8 +57,12 @@ impl TraceFlusher for ServerlessTraceFlusher {
         let agent_payload = trace_utils::construct_agent_payload(traces);
         let serialized_agent_payload = trace_utils::serialize_agent_payload(agent_payload);
 
-        if let Err(e) = trace_utils::send(serialized_agent_payload).await {
-            error!("Error sending trace: {:?}", e);
+        match trace_utils::send(serialized_agent_payload).await {
+            Ok(_) => info!("Successfully sent traces"),
+            Err(e) => {
+                error!("Error sending trace: {:?}", e)
+                // TODO: Retries
+            }
         }
     }
 }

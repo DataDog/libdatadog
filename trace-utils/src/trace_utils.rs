@@ -2,14 +2,12 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use hyper::http::HeaderValue;
-use hyper::HeaderMap;
-use hyper::{body::Buf, Body, Client, Method, Request};
+use hyper::{body::Buf, Body, Client, HeaderMap, Method, Request, StatusCode};
 use hyper_rustls::HttpsConnectorBuilder;
 use log::{error, info};
+use prost::Message;
 use std::collections::HashMap;
 use std::{env, str};
-
-use prost::Message;
 
 use datadog_trace_protobuf::pb;
 
@@ -152,7 +150,6 @@ pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
         .header("User-agent", "ffi-test")
         .header("Content-type", "application/x-protobuf")
         .header("DD-API-KEY", &api_key)
-        .header("X-Datadog-Reported-Languages", "nodejs")
         .body(Body::from(data))?;
 
     let https = HttpsConnectorBuilder::new()
@@ -162,12 +159,16 @@ pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
         .build();
     let client: Client<_, hyper::Body> = Client::builder().build(https);
     match client.request(req).await {
-        Ok(_) => {
-            info!("Successfully sent traces");
+        Ok(response) => {
+            if response.status() != StatusCode::ACCEPTED {
+                let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+                let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
+                anyhow::bail!("Server did not accept traces: {}", response_body);
+            }
+            Ok(())
         }
-        Err(e) => error!("Failed to send traces: {}", e),
+        Err(e) => anyhow::bail!("Failed to send traces: {}", e),
     }
-    Ok(())
 }
 
 pub fn get_root_span_index(trace: &Vec<pb::Span>) -> anyhow::Result<usize> {
