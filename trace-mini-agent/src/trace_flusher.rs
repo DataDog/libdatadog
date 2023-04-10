@@ -2,10 +2,11 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use async_trait::async_trait;
-use datadog_trace_protobuf::pb;
-
-use datadog_trace_utils::trace_utils;
+use log::error;
 use tokio::sync::mpsc::Receiver;
+
+use datadog_trace_protobuf::pb;
+use datadog_trace_utils::trace_utils;
 
 const BUFFER_FLUSH_SIZE: usize = 1;
 
@@ -45,11 +46,8 @@ impl TraceFlusher for ServerlessTraceFlusher {
         let agent_payload = trace_utils::construct_agent_payload(traces);
         let serialized_agent_payload = trace_utils::serialize_agent_payload(agent_payload);
 
-        match trace_utils::send(serialized_agent_payload).await {
-            Ok(_) => {}
-            Err(e) => {
-                println!("Error sending trace: {:?}", e);
-            }
+        if let Err(e) = trace_utils::send(serialized_agent_payload).await {
+            error!("Error sending trace: {:?}", e);
         }
     }
 }
