@@ -305,7 +305,7 @@ mod tests {
                     meta: HashMap::new(),
                     metrics: HashMap::new(),
                     meta_struct: HashMap::new(),
-                    r#type: "custom".to_string(),
+                    r#type: "".to_string(),
                 }]],
             ),
             (
@@ -331,7 +331,7 @@ mod tests {
                     meta: HashMap::new(),
                     metrics: HashMap::new(),
                     meta_struct: HashMap::new(),
-                    r#type: "custom".to_string(),
+                    r#type: "".to_string(),
                 }]],
             ),
         ];
