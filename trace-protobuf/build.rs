@@ -9,10 +9,15 @@ use {
 };
 
 fn main() -> Result<()> {
-    // compiles the .proto files into rust structs
     #[cfg(feature = "generate-protobuf")]
-    generate_protobuf();
+    {
+        // protoc is required to compile proto files. This uses protobuf_src to compile protoc
+        // from the source, setting the env var to tell prost_build where to find it.
+        std::env::set_var("PROTOC", protobuf_src::protoc());
 
+        // compiles the .proto files into rust structs
+        generate_protobuf();
+    }
     Ok(())
 }
 
