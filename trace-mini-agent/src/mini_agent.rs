@@ -1,17 +1,16 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-use datadog_trace_protobuf::pb;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use log::{error, info};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
-
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
 use crate::{trace_flusher, trace_processor};
+use datadog_trace_protobuf::pb;
 
 const MINI_AGENT_PORT: usize = 8126;
 const TRACE_ENDPOINT_PATH: &str = "/v0.4/traces";
