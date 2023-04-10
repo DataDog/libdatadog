@@ -4,7 +4,7 @@
 use std::{sync::Arc, time};
 
 use async_trait::async_trait;
-use log::error;
+use log::{error, info};
 use tokio::sync::{mpsc::Receiver, Mutex};
 
 use datadog_trace_protobuf::pb;
@@ -53,7 +53,7 @@ impl TraceFlusher for ServerlessTraceFlusher {
         if traces.is_empty() {
             return;
         }
-        println!("Flushing traces");
+        info!("Flushing traces");
 
         let agent_payload = trace_utils::construct_agent_payload(traces);
         let serialized_agent_payload = trace_utils::serialize_agent_payload(agent_payload);

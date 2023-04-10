@@ -6,7 +6,6 @@ use hyper::HeaderMap;
 use hyper::{body::Buf, Body, Client, Method, Request};
 use hyper_rustls::HttpsConnectorBuilder;
 use log::{error, info};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::{env, str};
 
