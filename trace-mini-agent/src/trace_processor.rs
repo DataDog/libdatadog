@@ -51,6 +51,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
         let mut traces = match trace_utils::get_traces_from_request_body(body).await {
             Ok(res) => res,
             Err(err) => {
+                println!("Error deserializing trace from request body: {}", err);
                 return Response::builder().body(Body::from(format!(
                     "Error deserializing trace from request body: {}",
                     err
@@ -111,13 +112,19 @@ impl TraceProcessor for ServerlessTraceProcessor {
 
         // send trace payload to our trace flusher
         match tx.send(tracer_payload).await {
-            Ok(_) => Response::builder()
-                .status(200)
-                .body(Body::from("Successfully buffered traces to be flushed.")),
-            Err(e) => Response::builder().status(500).body(Body::from(format!(
-                "Error sending traces to the trace flusher. {}",
-                e
-            ))),
+            Ok(_) => {
+                println!("Successfully buffered traces to be flushed.");
+                Response::builder().status(200).body(Body::from(
+                    r#"{"message":"Successfully buffered traces to be flushed."}"#,
+                ))
+            }
+            Err(e) => {
+                println!("Error sending traces to the trace flusher: {}", e);
+                Response::builder().status(500).body(Body::from(format!(
+                    "{{\"message\":\"Error sending traces to the trace flusher: {}\"}}",
+                    e
+                )))
+            }
         }
     }
 }
