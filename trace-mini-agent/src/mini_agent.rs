@@ -70,23 +70,28 @@ impl MiniAgent {
         req: Request<Body>,
         trace_processor: Arc<dyn trace_processor::TraceProcessor + Send + Sync>,
         tx: Sender<pb::TracerPayload>,
-    ) -> Result<Response<Body>, Infallible> {
+    ) -> http::Result<Response<Body>> {
         match (req.method(), req.uri().path()) {
             (&Method::PUT, TRACE_ENDPOINT_PATH) => {
                 match trace_processor.process_traces(req, tx).await {
                     Ok(res) => Ok(res),
-                    Err(err) => Ok(Response::new(Body::from(format!(
-                        "Error processing traces: {}",
-                        err
-                    )))),
+                    Err(err) => {
+                        let response_body =
+                            format!("{{\"message\":\"Error processing traces: {}\"}}", err);
+                        Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(Body::from(response_body))
+                    }
                 }
             }
             (_, INFO_ENDPOINT_PATH) => match Self::info_handler() {
                 Ok(res) => Ok(res),
-                Err(err) => Ok(Response::new(Body::from(format!(
-                    "Info endpoint error: {}",
-                    err
-                )))),
+                Err(err) => {
+                    let response_body = format!("{{\"message\":\"Info endpoint error: {}\"}}", err);
+                    Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Body::from(response_body))
+                }
             },
             _ => {
                 let mut not_found = Response::default();
