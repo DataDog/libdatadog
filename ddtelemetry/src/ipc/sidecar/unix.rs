@@ -134,15 +134,15 @@ pub extern "C" fn daemon_entry_point() {
     )
 }
 
-fn daemonize(listener: StdUnixListener) -> io::Result<()> {
+fn daemonize(listener: StdUnixListener, cfg: Config) -> io::Result<()> {
     // TODO: allow passing presaved environment
     let mut spawn_cfg = unsafe { spawn_worker::SpawnWorker::new() };
     spawn_cfg
         .pass_fd(listener)
         .stdin(Stdio::Null)
         .daemonize(true)
+        .shared_lib_dependencies(cfg.library_dependencies.clone())
         .target(entrypoint!(daemon_entry_point));
-    let cfg = Config::get();
     match cfg.log_method {
         config::LogMethod::File(path) => {
             let file = File::options()
@@ -172,8 +172,7 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
     Ok(())
 }
 
-pub fn start_or_connect_to_sidecar() -> io::Result<TelemetryTransport> {
-    let cfg = config::Config::get();
+pub fn start_or_connect_to_sidecar(cfg: config::Config) -> io::Result<TelemetryTransport> {
 
     let liaison = match cfg.ipc_mode {
         config::IpcMode::Shared => setup::DefaultLiason::ipc_shared(),
@@ -181,7 +180,7 @@ pub fn start_or_connect_to_sidecar() -> io::Result<TelemetryTransport> {
     };
 
     match liaison.attempt_listen() {
-        Ok(Some(listener)) => daemonize(listener)?,
+        Ok(Some(listener)) => daemonize(listener, cfg)?,
         Ok(None) => {}
         Err(err) => tracing::error!("Error starting sidecar {}", err),
     }

@@ -82,7 +82,9 @@ pub extern "C" fn ddog_sidecar_transport_clone(
 /// Caller must ensure the process is safe to fork, at the time when this method is called
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut TelemetryTransport) -> MaybeError {
-    let stream = Box::new(try_c!(sidecar::start_or_connect_to_sidecar()));
+    let cfg = sidecar::config::Config::get();
+
+    let stream = Box::new(try_c!(sidecar::start_or_connect_to_sidecar(cfg)));
     *connection = Box::into_raw(stream);
 
     MaybeError::None

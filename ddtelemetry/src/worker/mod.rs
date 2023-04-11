@@ -345,13 +345,7 @@ impl TelemetryWorker {
         if integrations.is_empty() {
             return None;
         }
-        integrations.push(Integration {
-            name: "aaa".into(),
-            version: None,
-            compatible: None,
-            enabled: None,
-            auto_enabled: None,
-        });
+
         let integrations_change =
             data::Payload::AppIntegrationsChange(data::AppIntegrationsChange {
                 integrations: integrations,

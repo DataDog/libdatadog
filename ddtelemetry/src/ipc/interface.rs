@@ -233,25 +233,37 @@ struct EnqueuedData {
 }
 
 impl EnqueuedData {
-    pub fn proces(&mut self, mut action: Vec<TelemetryActions>) {
-        // match &action {
-        //     TelemetryActions::AddConfig((k, v)) => {
-        //         if self.seen_cfg.get(&k).map(|prev_v| prev_v != &v) {
-        //             self.actions.append(other)
-        //         }
-        //     },
-        //     TelemetryActions::AddDependecy(_) => todo!(),
-        //     TelemetryActions::AddIntegration(_) => todo!(),
-        //     TelemetryActions::AddLog(_) => todo!(),
-        // }
-
-        self.actions.append(&mut action);
-
+    pub fn process(&mut self, actions: Vec<TelemetryActions>) {
+        for action in actions {
+            match action {
+                TelemetryActions::AddConfig((key, value)) => {
+                    if self.seen_cfg.get(&key) != Some(&value) {
+                        self.seen_cfg.insert(key.clone(), value.clone());
+                        self.actions.push(TelemetryActions::AddConfig((key, value)))
+                    }
+                },
+                TelemetryActions::AddDependecy(d) => {
+                    if !self.seen_deps.contains(&d) {
+                        self.seen_deps.insert(d.clone());
+                        self.actions.push(TelemetryActions::AddDependecy(d))
+                    }
+                },
+                TelemetryActions::AddIntegration(i) => {
+                    if !self.seen_integrations.contains(&i) {
+                        self.seen_integrations.insert(i.clone());
+                        self.actions.push(TelemetryActions::AddIntegration(i));
+                    }
+                }
+                other => {
+                    self.actions.push(other)
+                }
+            }
+        }
     }
 
     pub fn processed(action: Vec<TelemetryActions>) -> Self {
         let mut data = Self::default();
-        data.proces(action);
+        data.process(action);
         data
     }
 }
@@ -388,12 +400,12 @@ impl TelemetryInterface for TelemetryServer {
         _context: Context,
         instance_id: InstanceId,
         queue_id: QueueId,
-        mut actions: Vec<TelemetryActions>,
+        actions: Vec<TelemetryActions>,
     ) -> Self::EqueueActionsFut {
         let rt_info = self.get_runtime(&instance_id);
         let mut queue = rt_info.enqueued_actions.lock().unwrap();
         match queue.get_mut(&queue_id) {
-            Some(data) => data.proces(actions),
+            Some(data) => data.process(actions),
             None => {
                 queue.insert(queue_id, EnqueuedData::processed(actions));
             }
