@@ -1,0 +1,88 @@
+use std::{env, io::Write};
+
+use hyper::{body::Buf, Body, Client, Method, Request, StatusCode};
+use hyper_rustls::HttpsConnectorBuilder;
+use libflate::gzip::Encoder;
+use log::info;
+
+use datadog_trace_protobuf::pb;
+
+const STATS_INTAKE_URL: &str = "https://trace.agent.datadoghq.com/api/v0.2/stats";
+
+pub async fn get_stats_from_request_body(body: Body) -> anyhow::Result<pb::ClientStatsPayload> {
+    let buffer = hyper::body::aggregate(body).await.unwrap();
+
+    info!("getting stats from req body");
+
+    let client_stats_payload: pb::ClientStatsPayload = match rmp_serde::from_read(buffer.reader()) {
+        Ok(res) => res,
+        Err(err) => {
+            anyhow::bail!("Error deserializing stats from request body: {}", err)
+        }
+    };
+
+    if client_stats_payload.stats.is_empty() {
+        anyhow::bail!("no stats in stats payload");
+    }
+    info!("successfully deserialized trace stats from request body");
+    Ok(client_stats_payload)
+}
+
+pub fn construct_stats_payload(stats: pb::ClientStatsPayload) -> pb::StatsPayload {
+    pb::StatsPayload {
+        agent_hostname: "".to_string(),
+        agent_env: "".to_string(),
+        stats: vec![stats],
+        agent_version: "".to_string(),
+        client_computed: true,
+    }
+}
+
+pub fn serialize_stats_payload(payload: pb::StatsPayload) -> Vec<u8> {
+    let msgpack = rmp_serde::to_vec_named(&payload).unwrap();
+    let mut encoder = Encoder::new(Vec::new()).unwrap();
+    encoder.write_all(&msgpack).unwrap();
+    encoder.finish().into_result().unwrap()
+}
+
+pub async fn send_stats_payload(data: Vec<u8>) -> anyhow::Result<()> {
+    let api_key = match env::var("DD_API_KEY") {
+        Ok(key) => key,
+        Err(_) => anyhow::bail!("oopsy, no DD_API_KEY was provided"),
+    };
+
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(STATS_INTAKE_URL)
+        .header("Content-Type", "application/msgpack")
+        .header("Content-Encoding", "gzip")
+        .header("DD-API-KEY", &api_key)
+        .header("X-Datadog-Reported-Languages", "nodejs")
+        .body(Body::from(data))?;
+
+    info!("request to be send: {:#?}", req);
+
+    let https = HttpsConnectorBuilder::new()
+        .with_native_roots()
+        .https_only()
+        .enable_http1()
+        .build();
+    let client: Client<_, hyper::Body> = Client::builder().build(https);
+    match client.request(req).await {
+        Ok(response) => {
+            let (parts, body) = response.into_parts();
+            let body_bytes = hyper::body::to_bytes(body).await?;
+            if parts.status != StatusCode::ACCEPTED {
+                let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
+                anyhow::bail!("Server did not accept trace stats: {}", response_body);
+            }
+            let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+            info!(
+                "Successfully sent stats, parts: {:#?}, body: {:#?}",
+                parts, body_str
+            );
+        }
+        Err(e) => anyhow::bail!("Failed to send trace stats: {}", e),
+    }
+    Ok(())
+}
