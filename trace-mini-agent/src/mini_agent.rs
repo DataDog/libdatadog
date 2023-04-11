@@ -10,42 +10,53 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
-use crate::{trace_flusher, trace_processor};
+use crate::{stats_processor, trace_flusher, trace_processor};
 use datadog_trace_protobuf::pb;
 
 const MINI_AGENT_PORT: usize = 8126;
 const TRACE_ENDPOINT_PATH: &str = "/v0.4/traces";
+const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
 const INFO_ENDPOINT_PATH: &str = "/info";
 const TRACER_PAYLOAD_CHANNEL_BUFFER_SIZE: usize = 10;
 
 pub struct MiniAgent {
     pub trace_processor: Arc<dyn trace_processor::TraceProcessor + Send + Sync>,
     pub trace_flusher: Arc<dyn trace_flusher::TraceFlusher + Send + Sync>,
+    pub stats_processor: Arc<dyn stats_processor::StatsProcessor + Send + Sync>,
 }
 
 impl MiniAgent {
     #[tokio::main]
     pub async fn start_mini_agent(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // setup a channel to send processed traces to our flusher tx is passed through each endpoint_handler
+        // setup a channel to send processed traces to our flusher. tx is passed through each endpoint_handler
         // to the trace processor, which uses it to send de-serialized processed trace payloads to our trace flusher.
-        let (tx, rx): (Sender<pb::TracerPayload>, Receiver<pb::TracerPayload>) =
+        let (trace_tx, trace_rx): (Sender<pb::TracerPayload>, Receiver<pb::TracerPayload>) =
             mpsc::channel(TRACER_PAYLOAD_CHANNEL_BUFFER_SIZE);
 
         // start our trace flusher. receives trace payloads and handles buffering + deciding when to flush to backend.
         let trace_flusher = self.trace_flusher.clone();
         tokio::spawn(async move {
             let trace_flusher = trace_flusher.clone();
-            trace_flusher.start_trace_flusher(rx).await;
+            trace_flusher.start_trace_flusher(trace_rx).await;
         });
 
         // setup our hyper http server, where the endpoint_handler handles incoming requests
         let trace_processor = self.trace_processor.clone();
+        let stats_processor = self.stats_processor.clone();
+
         let make_svc = make_service_fn(move |_| {
             let trace_processor = trace_processor.clone();
-            let tx = tx.clone();
+            let trace_tx = trace_tx.clone();
+
+            let stats_processor = stats_processor.clone();
 
             let service = service_fn(move |req| {
-                MiniAgent::trace_endpoint_handler(req, trace_processor.clone(), tx.clone())
+                MiniAgent::endpoint_handler(
+                    req,
+                    trace_processor.clone(),
+                    trace_tx.clone(),
+                    stats_processor.clone(),
+                )
             });
 
             async move { Ok::<_, Infallible>(service) }
@@ -66,10 +77,11 @@ impl MiniAgent {
         Ok(())
     }
 
-    async fn trace_endpoint_handler(
+    async fn endpoint_handler(
         req: Request<Body>,
         trace_processor: Arc<dyn trace_processor::TraceProcessor + Send + Sync>,
         tx: Sender<pb::TracerPayload>,
+        stats_processor: Arc<dyn stats_processor::StatsProcessor + Send + Sync>,
     ) -> http::Result<Response<Body>> {
         match (req.method(), req.uri().path()) {
             (&Method::PUT, TRACE_ENDPOINT_PATH) => {
@@ -84,6 +96,16 @@ impl MiniAgent {
                     }
                 }
             }
+            (&Method::PUT, STATS_ENDPOINT_PATH) => match stats_processor.process_stats(req).await {
+                Ok(res) => Ok(res),
+                Err(err) => {
+                    let error_message = format!("Error processing trace stats: {}", err);
+                    let response_body = json!({ "message": error_message }).to_string();
+                    Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Body::from(response_body))
+                }
+            },
             (_, INFO_ENDPOINT_PATH) => match Self::info_handler() {
                 Ok(res) => Ok(res),
                 Err(err) => {

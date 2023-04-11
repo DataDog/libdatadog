@@ -33,12 +33,51 @@ fn generate_protobuf() {
     config.out_dir(output_path.clone());
 
     config.type_attribute("Span", "#[derive(Deserialize, Serialize)]");
-    config.field_attribute("service", "#[serde(default)]");
-    config.field_attribute("parentID", "#[serde(default)]");
-    config.field_attribute("error", "#[serde(default)]");
-    config.field_attribute("metrics", "#[serde(default)]");
-    config.field_attribute("meta_struct", "#[serde(default)]");
-    config.field_attribute("type", "#[serde(default)]");
+    config.field_attribute("Span.service", "#[serde(default)]");
+    config.field_attribute("Span.parentID", "#[serde(default)]");
+    config.field_attribute("Span.error", "#[serde(default)]");
+    config.field_attribute("Span.metrics", "#[serde(default)]");
+    config.field_attribute("Span.meta_struct", "#[serde(default)]");
+    config.field_attribute("Span.type", "#[serde(default)]");
+
+    config.type_attribute("StatsPayload", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("ClientStatsPayload", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute(
+        "ClientStatsPayload",
+        "#[serde(rename_all = \"PascalCase\")]",
+    );
+    config.type_attribute("ClientStatsBucket", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("ClientStatsBucket", "#[serde(rename_all = \"PascalCase\")]");
+    config.type_attribute("ClientGroupedStats", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute(
+        "ClientGroupedStats",
+        "#[serde(rename_all = \"PascalCase\")]",
+    );
+
+    config.field_attribute("ClientStatsPayload.agentAggregation", "#[serde(default)]");
+    config.field_attribute("ClientStatsPayload.service", "#[serde(default)]");
+    config.field_attribute("ClientStatsPayload.containerID", "#[serde(default)]");
+    config.field_attribute("ClientStatsPayload.tags", "#[serde(default)]");
+    config.field_attribute("ClientStatsBucket.agentTimeShift", "#[serde(default)]");
+    config.field_attribute("ClientGroupedStats.DB_type", "#[serde(default)]");
+
+    config.field_attribute(
+        "ClientGroupedStats.okSummary",
+        "#[serde(with = \"serde_bytes\")]",
+    );
+    config.field_attribute(
+        "ClientGroupedStats.errorSummary",
+        "#[serde(with = \"serde_bytes\")]",
+    );
+
+    config.field_attribute(
+        "ClientStatsPayload.runtimeID",
+        "#[serde(rename = \"RuntimeID\")]",
+    );
+    config.field_attribute(
+        "ClientGroupedStats.HTTP_status_code",
+        "#[serde(rename = \"HTTPStatusCode\")]",
+    );
 
     config
         .compile_protos(
@@ -46,6 +85,7 @@ fn generate_protobuf() {
                 "src/pb/agent_payload.proto",
                 "src/pb/tracer_payload.proto",
                 "src/pb/span.proto",
+                "src/pb/stats.proto",
             ],
             &["src/pb/"],
         )
