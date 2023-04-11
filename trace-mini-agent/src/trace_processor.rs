@@ -10,6 +10,7 @@ use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
 
+/// Used to populate root_span_tags fields if they exist in the root span's meta tags
 macro_rules! parse_root_span_tags {
     (
         $root_span_meta_map:ident,

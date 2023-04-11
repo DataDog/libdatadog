@@ -58,7 +58,7 @@ impl TraceFlusher for ServerlessTraceFlusher {
         let serialized_agent_payload = trace_utils::serialize_agent_payload(agent_payload);
 
         match trace_utils::send(serialized_agent_payload).await {
-            Ok(_) => info!("Successfully sent traces"),
+            Ok(_) => info!("Successfully flushed traces"),
             Err(e) => {
                 error!("Error sending trace: {:?}", e)
                 // TODO: Retries
