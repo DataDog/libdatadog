@@ -24,7 +24,8 @@ use tokio::net::UnixStream;
 
 use crate::{
     config::{Config, FromEnv, ProvideConfig},
-    worker::{TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle}, data::{Dependency, Integration},
+    data::{Dependency, Integration},
+    worker::{TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle},
 };
 use datadog_ipc::tarpc;
 
@@ -227,7 +228,7 @@ struct AppInstance {
 #[derive(Default)]
 struct EnqueuedData {
     seen_deps: HashSet<Dependency>,
-    seen_cfg: HashMap<String,String>,
+    seen_cfg: HashMap<String, String>,
     seen_integrations: HashSet<Integration>,
     actions: Vec<TelemetryActions>,
 }
@@ -241,22 +242,20 @@ impl EnqueuedData {
                         self.seen_cfg.insert(key.clone(), value.clone());
                         self.actions.push(TelemetryActions::AddConfig((key, value)))
                     }
-                },
+                }
                 TelemetryActions::AddDependecy(d) => {
                     if !self.seen_deps.contains(&d) {
                         self.seen_deps.insert(d.clone());
                         self.actions.push(TelemetryActions::AddDependecy(d))
                     }
-                },
+                }
                 TelemetryActions::AddIntegration(i) => {
                     if !self.seen_integrations.contains(&i) {
                         self.seen_integrations.insert(i.clone());
                         self.actions.push(TelemetryActions::AddIntegration(i));
                     }
                 }
-                other => {
-                    self.actions.push(other)
-                }
+                other => self.actions.push(other),
             }
         }
     }

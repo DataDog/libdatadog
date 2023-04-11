@@ -1,7 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use std::{path::PathBuf, time::Duration, collections::HashMap};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use ddcommon::parse_uri;
 

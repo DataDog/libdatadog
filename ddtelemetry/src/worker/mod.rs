@@ -208,7 +208,7 @@ impl TelemetryWorker {
                         self.build_dependencies_loaded(),
                     ]
                     .into_iter()
-                    .flat_map(|i| i)
+                    .flatten()
                     .chain(self.build_metrics_series())
                     .map(|r| self.send_request(r));
                     future::join_all(requests).await;
@@ -341,15 +341,13 @@ impl TelemetryWorker {
     }
 
     fn build_integrations_change(&mut self) -> Option<Result<Request<hyper::Body>>> {
-        let mut integrations = std::mem::take(&mut self.data.unflushed_integrations);
+        let integrations = std::mem::take(&mut self.data.unflushed_integrations);
         if integrations.is_empty() {
             return None;
         }
 
         let integrations_change =
-            data::Payload::AppIntegrationsChange(data::AppIntegrationsChange {
-                integrations: integrations,
-            });
+            data::Payload::AppIntegrationsChange(data::AppIntegrationsChange { integrations });
         Some(self.build_request(integrations_change))
     }
 

@@ -98,7 +98,9 @@ macro_rules! try_c {
     ($failable:expr) => {
         match $failable {
             Ok(o) => o,
-            Err(e) => return $crate::MaybeError::Some(ddcommon_ffi::Vec::from(e.to_string().into_bytes())),
+            Err(e) => {
+                return $crate::MaybeError::Some(ddcommon_ffi::Vec::from(e.to_string().into_bytes()))
+            }
         }
     };
 }

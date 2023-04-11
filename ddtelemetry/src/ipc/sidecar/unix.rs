@@ -173,7 +173,6 @@ fn daemonize(listener: StdUnixListener, cfg: Config) -> io::Result<()> {
 }
 
 pub fn start_or_connect_to_sidecar(cfg: config::Config) -> io::Result<TelemetryTransport> {
-
     let liaison = match cfg.ipc_mode {
         config::IpcMode::Shared => setup::DefaultLiason::ipc_shared(),
         config::IpcMode::InstancePerProcess => setup::DefaultLiason::ipc_per_process(),

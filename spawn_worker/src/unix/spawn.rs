@@ -102,7 +102,6 @@ impl Target {
     /// Automatically detect which spawn method should be used
     #[cfg(not(target_os = "macos"))]
     pub fn detect_spawn_method(&self) -> std::io::Result<SpawnMethod> {
-        use std::path::PathBuf;
         let current_exec_path = env::current_exe()?;
         let current_exec_filename = current_exec_path.file_name().unwrap_or_default();
         #[cfg(target_os = "linux")]
@@ -366,7 +365,7 @@ impl SpawnWorker {
         } else {
             None
         };
-  
+
         // setup final spawn
 
         let spawn_method = match &self.spawn_method {
