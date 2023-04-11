@@ -53,11 +53,10 @@ impl TraceProcessor for ServerlessTraceProcessor {
         let mut traces = match trace_utils::get_traces_from_request_body(body).await {
             Ok(res) => res,
             Err(err) => {
-                error!("Error deserializing trace from request body: {}", err);
-                return Response::builder().body(Body::from(format!(
-                    "Error deserializing trace from request body: {}",
-                    err
-                )));
+                let error_message = format!("Error deserializing trace from request body: {}", err);
+                error!("{}", error_message);
+                let body = json!({ "message": error_message }).to_string();
+                return Response::builder().status(500).body(Body::from(body));
             }
         };
 
