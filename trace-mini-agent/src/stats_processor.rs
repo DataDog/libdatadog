@@ -1,6 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use async_trait::async_trait;
 use hyper::{http, Body, Request, Response};
 use log::{error, info};
@@ -39,14 +41,21 @@ impl StatsProcessor for ServerlessStatsProcessor {
                 }
             };
 
-        let stats_payload = stats_utils::construct_stats_payload(stats);
+        let mut stats_payload = stats_utils::construct_stats_payload(stats);
+
+        let start = SystemTime::now();
+        let timestamp = start.duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        stats_payload.stats[0].stats[0].start = timestamp as u64;
 
         info!("StatsPayload: {:#?}", stats_payload);
 
         let data = stats_utils::serialize_stats_payload(stats_payload);
 
         if let Err(err) = stats_utils::send_stats_payload(data).await {
-            error!("Error sending stats: {:?}", err);
+            let error_message = format!("Error sending trace stats: {}", err);
+            error!("{}", error_message);
+            let body = json!({ "message": error_message }).to_string();
+            return Response::builder().status(500).body(Body::from(body));
         };
 
         info!("Successfully processed trace stats.");
