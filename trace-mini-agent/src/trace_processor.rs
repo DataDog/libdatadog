@@ -4,6 +4,7 @@
 use async_trait::async_trait;
 use hyper::{http, Body, Request, Response};
 use log::{error, info};
+use serde_json::json;
 use tokio::sync::mpsc::Sender;
 
 use datadog_trace_normalization::normalizer;
@@ -117,16 +118,15 @@ impl TraceProcessor for ServerlessTraceProcessor {
         match tx.send(tracer_payload).await {
             Ok(_) => {
                 info!("Successfully buffered traces to be flushed.");
-                Response::builder().status(200).body(Body::from(
-                    r#"{"message":"Successfully buffered traces to be flushed."}"#,
-                ))
+                let body =
+                    json!({ "message": "Successfully buffered traces to be flushed." }).to_string();
+                Response::builder().status(200).body(Body::from(body))
             }
             Err(e) => {
-                error!("Error sending traces to the trace flusher: {}", e);
-                Response::builder().status(500).body(Body::from(format!(
-                    "{{\"message\":\"Error sending traces to the trace flusher: {}\"}}",
-                    e
-                )))
+                let error_message = format!("Error sending traces to the trace flusher: {}", e);
+                error!("{}", error_message);
+                let body = json!({ "message": error_message }).to_string();
+                Response::builder().status(500).body(Body::from(body))
             }
         }
     }
