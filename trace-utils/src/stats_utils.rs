@@ -1,9 +1,11 @@
-use std::{env, io::Write};
+// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use hyper::{body::Buf, Body, Client, Method, Request, StatusCode};
 use hyper_rustls::HttpsConnectorBuilder;
 use libflate::gzip::Encoder;
 use log::info;
+use std::{env, io::Write};
 
 use datadog_trace_protobuf::pb;
 
@@ -39,10 +41,13 @@ pub fn construct_stats_payload(stats: pb::ClientStatsPayload) -> pb::StatsPayloa
 }
 
 pub fn serialize_stats_payload(payload: pb::StatsPayload) -> Vec<u8> {
+    info!("encoded payload: {:?}", payload);
     let msgpack = rmp_serde::to_vec_named(&payload).unwrap();
-    let mut encoder = Encoder::new(Vec::new()).unwrap();
+    let mut encoded: Vec<u8> = Vec::new();
+    let mut encoder = Encoder::new(&mut encoded).unwrap();
     encoder.write_all(&msgpack).unwrap();
-    encoder.finish().into_result().unwrap()
+    encoder.finish().into_result().unwrap();
+    encoded
 }
 
 pub async fn send_stats_payload(data: Vec<u8>) -> anyhow::Result<()> {
@@ -58,9 +63,7 @@ pub async fn send_stats_payload(data: Vec<u8>) -> anyhow::Result<()> {
         .header("Content-Encoding", "gzip")
         .header("DD-API-KEY", &api_key)
         .header("X-Datadog-Reported-Languages", "nodejs")
-        .body(Body::from(data))?;
-
-    info!("request to be send: {:#?}", req);
+        .body(Body::from(data.clone()))?;
 
     let https = HttpsConnectorBuilder::new()
         .with_native_roots()

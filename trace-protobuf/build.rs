@@ -41,6 +41,8 @@ fn generate_protobuf() {
     config.field_attribute("Span.type", "#[serde(default)]");
 
     config.type_attribute("StatsPayload", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("StatsPayload", "#[serde(rename_all = \"PascalCase\")]");
+
     config.type_attribute("ClientStatsPayload", "#[derive(Deserialize, Serialize)]");
     config.type_attribute(
         "ClientStatsPayload",
@@ -75,8 +77,16 @@ fn generate_protobuf() {
         "#[serde(rename = \"RuntimeID\")]",
     );
     config.field_attribute(
+        "ClientStatsPayload.containerID",
+        "#[serde(rename = \"ContainerID\")]",
+    );
+    config.field_attribute(
         "ClientGroupedStats.HTTP_status_code",
         "#[serde(rename = \"HTTPStatusCode\")]",
+    );
+    config.field_attribute(
+        "ClientGroupedStats.DB_type",
+        "#[serde(rename = \"DBType\")]",
     );
 
     config

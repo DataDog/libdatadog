@@ -153,6 +153,7 @@ pub struct AgentPayload {
 }
 /// StatsPayload is the payload used to send stats from the agent to the backend.
 #[derive(Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StatsPayload {
     #[prost(string, tag = "1")]
@@ -211,6 +212,7 @@ pub struct ClientStatsPayload {
     /// be enhanced by the agent to ensure it is unique.
     #[prost(string, tag = "11")]
     #[serde(default)]
+    #[serde(rename = "ContainerID")]
     pub container_id: ::prost::alloc::string::String,
     /// Tags specifies a set of tags obtained from the orchestrator (where applicable) using the specified containerID.
     /// This field should be left empty by the client. It only applies to some specific environment.
@@ -256,6 +258,7 @@ pub struct ClientGroupedStats {
     /// db_type might be used in the future to help in the obfuscation step
     #[prost(string, tag = "6")]
     #[serde(default)]
+    #[serde(rename = "DBType")]
     pub db_type: ::prost::alloc::string::String,
     /// count of all spans aggregated in the groupedstats
     #[prost(uint64, tag = "7")]
