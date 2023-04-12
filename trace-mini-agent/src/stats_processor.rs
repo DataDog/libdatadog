@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use hyper::{http, Body, Request, Response};
-use log::info;
+use log::{debug, info};
 
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::stats_utils;
@@ -46,6 +46,11 @@ impl StatsProcessor for ServerlessStatsProcessor {
         let start = SystemTime::now();
         let timestamp = start.duration_since(UNIX_EPOCH).unwrap().as_nanos();
         stats_payload.stats[0].stats[0].start = timestamp as u64;
+
+        debug!(
+            "Attempting to serialize and send trace stats payload: {:?}",
+            stats_payload
+        );
 
         let data = match stats_utils::serialize_stats_payload(stats_payload) {
             Ok(res) => res,
