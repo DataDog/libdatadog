@@ -178,21 +178,26 @@ pub struct ClientStatsPayload {
     pub env: ::prost::alloc::string::String,
     /// version tag set on spans or in the tracers, used for aggregation
     #[prost(string, tag = "3")]
+    #[serde(default)]
     pub version: ::prost::alloc::string::String,
     #[prost(message, repeated, tag = "4")]
     pub stats: ::prost::alloc::vec::Vec<ClientStatsBucket>,
     /// informative field not used for aggregation
     #[prost(string, tag = "5")]
+    #[serde(default)]
     pub lang: ::prost::alloc::string::String,
     /// informative field not used for aggregation
     #[prost(string, tag = "6")]
+    #[serde(default)]
     pub tracer_version: ::prost::alloc::string::String,
     /// used on stats payloads sent by the tracer to identify uniquely a message
     #[prost(string, tag = "7")]
+    #[serde(default)]
     #[serde(rename = "RuntimeID")]
     pub runtime_id: ::prost::alloc::string::String,
     /// used on stats payloads sent by the tracer to identify uniquely a message
     #[prost(uint64, tag = "8")]
+    #[serde(default)]
     pub sequence: u64,
     /// AgentAggregation is set by the agent on tracer payloads modified by the agent aggregation layer
     /// characterizes counts only and distributions only payloads
@@ -250,6 +255,7 @@ pub struct ClientGroupedStats {
     #[serde(rename = "HTTPStatusCode")]
     pub http_status_code: u32,
     #[prost(string, tag = "5")]
+    #[serde(default)]
     pub r#type: ::prost::alloc::string::String,
     /// db_type might be used in the future to help in the obfuscation step
     #[prost(string, tag = "6")]
