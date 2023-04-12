@@ -49,7 +49,15 @@ impl StatsProcessor for ServerlessStatsProcessor {
 
         info!("StatsPayload: {:#?}", stats_payload);
 
-        let data = stats_utils::serialize_stats_payload(stats_payload);
+        let data = match stats_utils::serialize_stats_payload(stats_payload) {
+            Ok(res) => res,
+            Err(err) => {
+                let error_message = format!("Error serializing stats payload: {}", err);
+                error!("{}", error_message);
+                let body = json!({ "message": error_message }).to_string();
+                return Response::builder().status(500).body(Body::from(body));
+            }
+        };
 
         if let Err(err) = stats_utils::send_stats_payload(data).await {
             let error_message = format!("Error sending trace stats: {}", err);
