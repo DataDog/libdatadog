@@ -60,8 +60,14 @@ fn generate_protobuf() {
     config.field_attribute("ClientStatsPayload.service", "#[serde(default)]");
     config.field_attribute("ClientStatsPayload.containerID", "#[serde(default)]");
     config.field_attribute("ClientStatsPayload.tags", "#[serde(default)]");
+    config.field_attribute("ClientStatsPayload.version", "#[serde(default)]");
+    config.field_attribute("ClientStatsPayload.lang", "#[serde(default)]");
+    config.field_attribute("ClientStatsPayload.tracerVersion", "#[serde(default)]");
+    config.field_attribute("ClientStatsPayload.runtimeID", "#[serde(default)]");
+    config.field_attribute("ClientStatsPayload.sequence", "#[serde(default)]");
     config.field_attribute("ClientStatsBucket.agentTimeShift", "#[serde(default)]");
     config.field_attribute("ClientGroupedStats.DB_type", "#[serde(default)]");
+    config.field_attribute("ClientGroupedStats.type", "#[serde(default)]");
 
     config.field_attribute(
         "ClientGroupedStats.okSummary",
