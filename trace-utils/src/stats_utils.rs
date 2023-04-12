@@ -1,9 +1,9 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
+use flate2::{write::GzEncoder, Compression};
 use hyper::{body::Buf, Body, Client, Method, Request, StatusCode};
 use hyper_rustls::HttpsConnectorBuilder;
-use libflate::gzip::Encoder;
 use log::info;
 use std::{env, io::Write};
 
@@ -40,14 +40,15 @@ pub fn construct_stats_payload(stats: pb::ClientStatsPayload) -> pb::StatsPayloa
     }
 }
 
-pub fn serialize_stats_payload(payload: pb::StatsPayload) -> Vec<u8> {
+pub fn serialize_stats_payload(payload: pb::StatsPayload) -> anyhow::Result<Vec<u8>> {
     info!("encoded payload: {:?}", payload);
-    let msgpack = rmp_serde::to_vec_named(&payload).unwrap();
-    let mut encoded: Vec<u8> = Vec::new();
-    let mut encoder = Encoder::new(&mut encoded).unwrap();
-    encoder.write_all(&msgpack).unwrap();
-    encoder.finish().into_result().unwrap();
-    encoded
+    let msgpack = rmp_serde::to_vec_named(&payload)?;
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+    encoder.write_all(&msgpack)?;
+    match encoder.finish() {
+        Ok(res) => Ok(res),
+        Err(e) => anyhow::bail!("Error serializing stats payload: {}", e),
+    }
 }
 
 pub async fn send_stats_payload(data: Vec<u8>) -> anyhow::Result<()> {
