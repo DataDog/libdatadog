@@ -13,6 +13,11 @@ use datadog_trace_protobuf::pb;
 
 const TRACE_INTAKE_URL: &str = "https://trace.agent.datadoghq.com/api/v0.2/traces";
 
+/// Span metric the mini agent must set for the backend to recognize top level span
+const TOP_LEVEL_KEY: &str = "_top_level";
+/// Span metric the tracer sets to denote a top level span
+const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
+
 macro_rules! parse_string_header {
     (
         $header_map:ident,
@@ -248,12 +253,12 @@ pub fn compute_top_level_span(trace: &mut [pb::Span]) {
 
 fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
     if !is_top_level {
-        if span.metrics.contains_key("_top_level") {
-            span.metrics.remove("_top_level");
+        if span.metrics.contains_key(TOP_LEVEL_KEY) {
+            span.metrics.remove(TOP_LEVEL_KEY);
         }
         return;
     }
-    span.metrics.insert("_top_level".to_string(), 1.0);
+    span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
 }
 
 pub fn set_serverless_root_span_tags(span: &mut pb::Span) {
@@ -264,6 +269,12 @@ pub fn set_serverless_root_span_tags(span: &mut pb::Span) {
         "functionname".to_string(),
         env::var("K_SERVICE").unwrap_or_default(),
     );
+}
+
+pub fn update_tracer_top_level(span: &mut pb::Span) {
+    if span.metrics.contains_key(TRACER_TOP_LEVEL_KEY) {
+        span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
+    }
 }
 
 #[cfg(test)]

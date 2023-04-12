@@ -88,6 +88,13 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 error!("Error normalizing trace chunk: {}", e);
             }
 
+            for span in chunk.spans.iter_mut() {
+                // TODO: obfuscate & truncate spans
+                if tracer_header_tags.client_computed_top_level {
+                    trace_utils::update_tracer_top_level(span);
+                }
+            }
+
             if !tracer_header_tags.client_computed_top_level {
                 trace_utils::compute_top_level_span(&mut chunk.spans);
             }
