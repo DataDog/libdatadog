@@ -17,5 +17,23 @@ pub enum Payload {
     GenerateMetrics(GenerateMetrics),
     Logs(Vec<Log>),
     MessageBatch(Vec<Payload>),
-    AppExtendedHeartbeats(AppStarted),
+    AppExtendedHeartbeat(AppStarted),
+}
+
+impl Payload {
+    pub fn request_type(&self) -> &'static str {
+        use Payload::*;
+        match self {
+            AppStarted(_) => "app-started",
+            AppDependenciesLoaded(_) => "app-dependencies-loaded",
+            AppIntegrationsChange(_) => "app-integrations-change",
+            AppClientConfigurationChange(_) => "app-client-configuration-change",
+            AppHearbeat(_) => "app-heartbeat",
+            AppClosing(_) => "app-closing",
+            GenerateMetrics(_) => "generate-metrics",
+            Logs(_) => "logs",
+            MessageBatch(_) => "message-batch",
+            AppExtendedHeartbeat(_) => "app-extended-heartbeat",
+        }
+    }
 }

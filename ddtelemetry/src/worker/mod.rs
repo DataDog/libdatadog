@@ -8,7 +8,7 @@ mod store;
 
 use crate::{
     config::{self},
-    data::{self, Application, Dependency, Host, Integration, Log, Telemetry, Payload},
+    data::{self, Application, Dependency, Host, Integration, Log, Payload, Telemetry},
     metrics::{ContextKey, MetricBuckets, MetricContexts},
     worker::builder::ConfigBuilder,
     Config,
@@ -28,7 +28,7 @@ use std::{
 
 use anyhow::Result;
 use futures::future::{self};
-use http::Request;
+use http::{header, HeaderValue, Request};
 use serde::{Deserialize, Serialize};
 use tokio::{
     runtime::{self, Handle},
@@ -125,6 +125,16 @@ pub struct TelemetryWorker {
     client: Box<dyn http_client::HttpClient + Sync + Send>,
     deadlines: scheduler::Scheduler<LifecycleAction>,
     data: TelemetryWorkerData,
+}
+
+mod serialize {
+    use crate::data;
+    use http::HeaderValue;
+    #[allow(clippy::declare_interior_mutable_const)]
+    pub const CONTENT_TYPE_VALUE: HeaderValue = ddcommon::header::APPLICATION_JSON;
+    pub fn serialize(telemetry: &data::Telemetry) -> anyhow::Result<Vec<u8>> {
+        Ok(serde_json::to_vec(telemetry)?)
+    }
 }
 
 impl TelemetryWorker {
@@ -392,7 +402,7 @@ impl TelemetryWorker {
         use data::Payload::*;
         match payload {
             AppStarted(p) => self.app_started_sent_success(p),
-            AppExtendedHeartbeats(p) => self.app_started_sent_success(p),
+            AppExtendedHeartbeat(p) => self.app_started_sent_success(p),
             AppDependenciesLoaded(p) => {
                 self.data.dependencies.removed_flushed(p.dependencies.len())
             }
@@ -469,9 +479,26 @@ impl TelemetryWorker {
 
         let req = http_client::request_builder(&self.config)?
             .method(http::Method::POST)
-            .header(http::header::CONTENT_TYPE, "application/json");
+            .header(header::CONTENT_TYPE, serialize::CONTENT_TYPE_VALUE)
+            .header(
+                http_client::header::REQUEST_TYPE,
+                HeaderValue::from_static(payload.request_type()),
+            )
+            .header(
+                http_client::header::API_VERSION,
+                HeaderValue::from_static(data::ApiVersion::V2.to_str()),
+            )
+            .header(
+                http_client::header::LIBRARY_LANGUAGE,
+                // Note: passing by ref here just causes the clone to happen underneath
+                tel.application.language_name.clone(),
+            )
+            .header(
+                http_client::header::LIBRARY_VERSION,
+                &tel.application.language_version.clone(),
+            );
 
-        let body = hyper::Body::from(serde_json::to_vec(&tel)?);
+        let body = hyper::Body::from(serialize::serialize(&tel)?);
         Ok(req.body(body)?)
     }
 

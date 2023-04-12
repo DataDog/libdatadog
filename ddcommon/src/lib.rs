@@ -16,8 +16,11 @@ pub mod cstr;
 pub mod tag;
 
 pub mod header {
-    pub const DATADOG_CONTAINER_ID: &str = "Datadog-Container-ID";
-    pub const DATADOG_API_KEY: &str = "DD-API-KEY";
+    #![allow(clippy::declare_interior_mutable_const)]
+    use hyper::{header::HeaderName, http::HeaderValue};
+    pub const DATADOG_CONTAINER_ID: HeaderName = HeaderName::from_static("datadog-container-id");
+    pub const DATADOG_API_KEY: HeaderName = HeaderName::from_static("dd-api-key");
+    pub const APPLICATION_JSON: HeaderValue = HeaderValue::from_static("application/json");
 }
 
 pub type HttpClient = hyper::Client<connector::Connector, hyper::Body>;

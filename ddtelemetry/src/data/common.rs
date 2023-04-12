@@ -13,6 +13,15 @@ pub enum ApiVersion {
     V2,
 }
 
+impl ApiVersion {
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            ApiVersion::V1 => "v1",
+            ApiVersion::V2 => "v2",
+        }
+    }
+}
+
 #[derive(Serialize, Debug)]
 pub struct Telemetry<'a> {
     pub api_version: ApiVersion,
