@@ -41,7 +41,6 @@ pub fn construct_stats_payload(stats: pb::ClientStatsPayload) -> pb::StatsPayloa
 }
 
 pub fn serialize_stats_payload(payload: pb::StatsPayload) -> anyhow::Result<Vec<u8>> {
-    info!("encoded payload: {:?}", payload);
     let msgpack = rmp_serde::to_vec_named(&payload)?;
     let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
     encoder.write_all(&msgpack)?;

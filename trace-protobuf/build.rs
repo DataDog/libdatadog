@@ -32,6 +32,18 @@ fn generate_protobuf() {
 
     config.out_dir(output_path.clone());
 
+    // The following prost_build config changes modify the protobuf generated structs in
+    // in the following ways:
+
+    // - annotate generated structs to use PascalCase, expected in the trace stats intake.
+    //   deserialization will result in an empty stats payload otherwise (though will not explicitly fail).
+
+    // - annotate certain Span fields so serde will use the default value of a field's type if the field
+    //   doesn't exist during deserialization.
+
+    // - handle edge case struct field names that the trace stats intake expects.
+    //   example: the trace intake expects the name ContainerID rather than the PascalCase ContainerId
+
     config.type_attribute("Span", "#[derive(Deserialize, Serialize)]");
     config.field_attribute("Span.service", "#[serde(default)]");
     config.field_attribute("Span.parentID", "#[serde(default)]");
