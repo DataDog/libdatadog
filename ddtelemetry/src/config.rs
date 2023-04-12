@@ -2,10 +2,10 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use ddcommon::{parse_uri, Endpoint};
+use std::{borrow::Cow, path::PathBuf, time::Duration};
+
 use http::{uri::PathAndQuery, Uri};
 use lazy_static::lazy_static;
-
-use std::{borrow::Cow, env, path::PathBuf, str::FromStr, time::Duration};
 
 pub const DEFAULT_DD_SITE: &str = "datadoghq.com";
 pub const PROD_INTAKE_FORMAT_PREFIX: &str = "https://instrumentation-telemetry-intake";
@@ -27,104 +27,115 @@ pub struct Config {
     pub telemetry_hearbeat_interval: Duration,
 }
 
-pub trait ProvideConfig {
-    fn config() -> Config;
-}
-
-fn build_full_telemetry_agent_url(agent_url: &str) -> anyhow::Result<Uri> {
+fn url_with_telemetry_path(agent_url: &str) -> anyhow::Result<Uri> {
     let mut agent_uri_parts = parse_uri(agent_url)?.into_parts();
     agent_uri_parts.path_and_query = Some(PathAndQuery::from_static(AGENT_TELEMETRY_URL_PATH));
 
     Ok(Uri::from_parts(agent_uri_parts)?)
 }
 
-pub struct FromEnv {}
+mod parse_env {
+    use ddcommon::parse_uri;
+    use http::Uri;
+    use std::{env, str::FromStr, time::Duration};
 
-// TODO Paul LGDC: if this struct carries no data, it would probably be better to have it as a module
-impl FromEnv {
-    const DD_APM_TELEMETRY_DD_URL: &'static str = "DD_APM_TELEMETRY_DD_URL";
-    const DD_API_KEY: &'static str = "DD_API_KEY";
-    const DD_AGENT_HOST: &'static str = "DD_AGENT_HOST";
-    const DD_AGENT_PORT: &'static str = "DD_AGENT_PORT";
-    const DD_SITE: &'static str = "DD_SITE";
-    const DD_TELEMETRY_HEARTBEAT_INTERVAL: &'static str = "DD_TELEMETRY_HEARTBEAT_INTERVAL";
-
-    // Development env variables
-    const _DD_SHARED_LIB_DEBUG: &'static str = "_DD_SHARED_LIB_DEBUG";
-    const _DD_DIRECT_SUBMISSION_ENABLED: &'static str = "_DD_DIRECT_SUBMISSION_ENABLED";
-
-    fn telemetry_hearbeat_interval() -> Option<Duration> {
+    pub fn duration(name: &str) -> Option<Duration> {
         Some(Duration::from_secs_f32(
-            env::var(Self::DD_TELEMETRY_HEARTBEAT_INTERVAL)
-                .ok()?
-                .parse::<f32>()
-                .ok()?,
+            env::var(name).ok()?.parse::<f32>().ok()?,
         ))
     }
 
-    fn agent_port() -> Option<u16> {
-        env::var(Self::DD_AGENT_PORT).ok()?.parse::<u16>().ok()
+    pub fn int<T: FromStr>(name: &str) -> Option<T> {
+        env::var(name).ok()?.parse::<T>().ok()
     }
 
-    fn direct_submission_enabled() -> bool {
-        env::var(Self::_DD_DIRECT_SUBMISSION_ENABLED).is_ok()
-    }
-
-    fn agent_base_url() -> String {
-        let agent_port = Self::agent_port().unwrap_or(DEFAULT_AGENT_PORT);
-        let agent_host =
-            env::var(Self::DD_AGENT_HOST).unwrap_or_else(|_| String::from(DEFAULT_AGENT_HOST));
-
-        format!("http://{agent_host}:{agent_port}{AGENT_TELEMETRY_URL_PATH}")
-    }
-
-    fn intake_base_url() -> Option<String> {
-        match env::var(Self::DD_APM_TELEMETRY_DD_URL) {
-            Ok(url) if !url.is_empty() => return Some(url),
-            _ => {}
-        }
-        match env::var(Self::DD_SITE) {
-            Ok(dd_site) if !dd_site.is_empty() => {
-                return Some(format!(
-                    "{PROD_INTAKE_FORMAT_PREFIX}.{dd_site}{DIRECT_TELEMETRY_URL_PATH}"
-                ))
-            }
-            _ => {}
-        }
-        None
-    }
-
-    fn debug_enabled() -> Option<bool> {
-        let var = env::var(Self::_DD_SHARED_LIB_DEBUG).ok()?;
+    pub fn bool(name: &str) -> Option<bool> {
+        let var = env::var(name).ok()?;
         Some(var == "true" || var == "1")
     }
 
-    fn api_key() -> Option<String> {
-        env::var(Self::DD_API_KEY).ok().filter(|p| !p.is_empty())
+    pub fn str_not_empty(name: &str) -> Option<String> {
+        env::var(name).ok().filter(|s| !s.is_empty())
     }
 
-    pub fn build_endpoint(agent_url: &str, api_key: Option<String>) -> Option<Endpoint> {
-        let telemetry_uri = if api_key.is_some() {
-            let telemetry_intake_base_url = Self::intake_base_url()?;
-            Uri::from_str(
-                format!("{telemetry_intake_base_url}{DIRECT_TELEMETRY_URL_PATH}").as_str(),
-            )
-            .ok()?
-        } else {
-            build_full_telemetry_agent_url(agent_url).ok()?
-        };
-
-        Some(Endpoint {
-            url: telemetry_uri,
-            api_key: api_key.map(|v| v.into()),
-        })
+    pub fn uri(name: &str) -> Option<Uri> {
+        parse_uri(&str_not_empty(name)?).ok()
     }
 }
 
-macro_rules! try_block {
-    ($($st:stmt)*) => {
-        (|| {$($st)*})()
-    };
+/// Settings gathers configuration options we receive from the environment
+/// (either through env variable, or that could be set from the )
+pub struct Settings {
+    pub agent_host: String,
+    pub trace_agent_port: u16,
+    pub trace_agent_url: Option<Uri>,
+    pub direct_submission_enabled: bool,
+    pub api_key: Option<String>,
+    pub site: Option<String>,
+    pub telemetry_dd_url: Option<String>,
+    pub telemetry_heartbeat_interval: Duration,
+    pub telemetry_extended_heartbeat_interval: Duration,
+    pub shared_lib_debug: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            agent_host: DEFAULT_AGENT_HOST.to_owned(),
+            trace_agent_port: DEFAULT_AGENT_PORT.to_owned(),
+            trace_agent_url: None,
+            direct_submission_enabled: false,
+            api_key: None,
+            site: None,
+            telemetry_dd_url: None,
+            telemetry_heartbeat_interval: Duration::from_secs(60),
+            telemetry_extended_heartbeat_interval: Duration::from_secs(60 * 60 * 24),
+            shared_lib_debug: false,
+        }
+    }
+}
+
+impl Settings {
+    // Agent connection configuration
+    const DD_AGENT_HOST: &'static str = "DD_AGENT_HOST";
+    const DD_TRACE_AGENT_PORT: &'static str = "DD_TRACE_AGENT_PORT";
+    const DD_TRACE_AGENT_URL: &'static str = "DD_TRACE_AGENT_URL";
+
+    // Direct submission configuration
+    const _DD_DIRECT_SUBMISSION_ENABLED: &'static str = "_DD_DIRECT_SUBMISSION_ENABLED";
+    const DD_API_KEY: &'static str = "DD_API_KEY";
+    const DD_SITE: &'static str = "DD_SITE";
+    const DD_APM_TELEMETRY_DD_URL: &'static str = "DD_APM_TELEMETRY_DD_URL";
+
+    // Development and test env variables - should not be used by customers
+    const DD_TELEMETRY_HEARTBEAT_INTERVAL: &'static str = "DD_TELEMETRY_HEARTBEAT_INTERVAL";
+    const DD_TELEMETRY_EXTENDED_HEARTBEAT_INTERVAL: &'static str =
+        "DD_TELEMETRY_EXTENDED_HEARTBEAT_INTERVAL";
+    const _DD_SHARED_LIB_DEBUG: &'static str = "_DD_SHARED_LIB_DEBUG";
+
+    pub fn from_env() -> Self {
+        let default = Self::default();
+        Self {
+            agent_host: parse_env::str_not_empty(Self::DD_AGENT_HOST).unwrap_or(default.agent_host),
+            trace_agent_port: parse_env::int(Self::DD_TRACE_AGENT_PORT)
+                .unwrap_or(default.trace_agent_port),
+            trace_agent_url: parse_env::uri(Self::DD_TRACE_AGENT_URL).or(default.trace_agent_url),
+            direct_submission_enabled: parse_env::bool(Self::_DD_DIRECT_SUBMISSION_ENABLED)
+                .unwrap_or(default.direct_submission_enabled),
+            api_key: parse_env::str_not_empty(Self::DD_API_KEY),
+            site: parse_env::str_not_empty(Self::DD_SITE),
+            telemetry_dd_url: parse_env::str_not_empty(Self::DD_APM_TELEMETRY_DD_URL),
+            telemetry_heartbeat_interval: parse_env::duration(
+                Self::DD_TELEMETRY_HEARTBEAT_INTERVAL,
+            )
+            .unwrap_or(Duration::from_secs(60)),
+            telemetry_extended_heartbeat_interval: parse_env::duration(
+                Self::DD_TELEMETRY_EXTENDED_HEARTBEAT_INTERVAL,
+            )
+            .unwrap_or(Duration::from_secs(60 * 60 * 24)),
+            shared_lib_debug: parse_env::bool(Self::_DD_SHARED_LIB_DEBUG).unwrap_or(false),
+        }
+    }
 }
 
 impl Default for Config {
@@ -139,33 +150,73 @@ impl Default for Config {
 }
 
 impl Config {
-    pub fn from_env() -> Self {
-        let default = Self::default();
-
-        let direct_submission_enabled = FromEnv::direct_submission_enabled();
-        let endpoint = try_block! {if !direct_submission_enabled {
-            Some(Endpoint {
-                url: Uri::from_str(&FromEnv::agent_base_url()).ok()?,
-                api_key: None,
+    fn url_from_settings(settings: &Settings) -> String {
+        None.or_else(|| {
+            if !settings.direct_submission_enabled || settings.api_key.is_none() {
+                return None;
+            }
+            settings.telemetry_dd_url.clone().or_else(|| {
+                Some(format!(
+                    "{}.{}{}",
+                    PROD_INTAKE_FORMAT_PREFIX,
+                    settings.site.as_ref()?,
+                    DIRECT_TELEMETRY_URL_PATH
+                ))
             })
-        } else {
-            Some(Endpoint {
-                url: Uri::from_str(&FromEnv::agent_base_url()).ok()?,
-                api_key: FromEnv::api_key().map(Cow::Owned),
-            })
-        }};
+        })
+        .unwrap_or_else(|| {
+            format!(
+                "http://{}:{}{}",
+                settings.agent_host, settings.trace_agent_port, AGENT_TELEMETRY_URL_PATH
+            )
+        })
+    }
 
-        let telemetry_debug_logging_enabled =
-            FromEnv::debug_enabled().unwrap_or(default.telemetry_debug_logging_enabled);
-        let telemetry_hearbeat_interval =
-            FromEnv::telemetry_hearbeat_interval().unwrap_or(default.telemetry_hearbeat_interval);
-
-        Self {
-            telemetry_debug_logging_enabled,
-            endpoint,
-            telemetry_hearbeat_interval,
-            mock_client_file: None,
+    fn api_key_from_settings(settings: &Settings) -> Option<Cow<'static, str>> {
+        if !settings.direct_submission_enabled {
+            return None;
         }
+        settings.api_key.clone().map(Cow::Owned)
+    }
+
+    fn set_endpoint(
+        &mut self,
+        url: &str,
+        api_key: Option<Cow<'static, str>>,
+    ) -> anyhow::Result<()> {
+        if let Some(path) = url.strip_prefix("file://") {
+            self.endpoint = Some(Endpoint {
+                url: Uri::from_static("http://datadoghq.invalid/"),
+                api_key,
+            });
+            self.mock_client_file = Some(path.into());
+        } else {
+            self.endpoint = Some(Endpoint {
+                url: url_with_telemetry_path(url)?,
+                api_key,
+            })
+        }
+        Ok(())
+    }
+
+    pub fn from_settings(settings: &Settings) -> Self {
+        let url = Self::url_from_settings(settings);
+        let api_key = Self::api_key_from_settings(settings);
+
+        let mut this = Self {
+            endpoint: None,
+            mock_client_file: None,
+            telemetry_debug_logging_enabled: settings.shared_lib_debug,
+            telemetry_hearbeat_interval: settings.telemetry_heartbeat_interval,
+        };
+        let _res = this.set_endpoint(&url, api_key);
+
+        this
+    }
+
+    pub fn from_env() -> Self {
+        let settings = Settings::from_env();
+        Self::from_settings(&settings)
     }
 
     pub fn get() -> &'static Self {
@@ -176,21 +227,8 @@ impl Config {
     }
 
     pub fn set_url(&mut self, url: &str) -> anyhow::Result<()> {
-        let uri = parse_uri(url)?;
-
-        if let "file" = uri.scheme_str().unwrap_or_default() {
-            self.endpoint = Some(Endpoint {
-                url: Uri::from_static("http://datadoghq.invalid/"),
-                api_key: None,
-            });
-            self.mock_client_file = Some(uri.path().into());
-        } else {
-            self.endpoint = Some(Endpoint {
-                url: build_full_telemetry_agent_url(url)?,
-                api_key: None,
-            })
-        }
-        Ok(())
+        let api_key = self.endpoint.take().and_then(|e| e.api_key);
+        self.set_endpoint(url, api_key)
     }
 }
 

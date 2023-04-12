@@ -32,20 +32,18 @@ impl ConfigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::FromEnv;
 
     #[test]
     fn test_config_builder_merge() {
         let builder = ConfigBuilder {
             mock_client_file: Some(PathBuf::new()),
             telemetry_debug_logging_enabled: Some(true),
-            endpoint: Some(FromEnv::build_endpoint("http://example.com", None).unwrap()),
+            endpoint: None,
             telemetry_hearbeat_interval: None,
         };
 
         let merged = builder.merge(Config::default());
 
-        assert!(merged.endpoint.is_some());
         assert!(merged.telemetry_debug_logging_enabled);
         assert!(merged.mock_client_file.is_some());
     }
