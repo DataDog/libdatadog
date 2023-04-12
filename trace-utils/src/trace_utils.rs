@@ -146,7 +146,7 @@ pub fn serialize_agent_payload(payload: pb::AgentPayload) -> Vec<u8> {
 pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
     let api_key = match env::var("DD_API_KEY") {
         Ok(key) => key,
-        Err(_) => anyhow::bail!("oopsy, no DD_API_KEY was provided"),
+        Err(_) => anyhow::bail!("Sending traces failed. Missing DD_API_KEY"),
     };
 
     let req = Request::builder()

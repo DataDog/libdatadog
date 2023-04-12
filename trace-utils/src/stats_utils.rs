@@ -14,7 +14,7 @@ const STATS_INTAKE_URL: &str = "https://trace.agent.datadoghq.com/api/v0.2/stats
 pub async fn get_stats_from_request_body(body: Body) -> anyhow::Result<pb::ClientStatsPayload> {
     let buffer = hyper::body::aggregate(body).await.unwrap();
 
-    info!("getting stats from req body");
+    info!("Getting stats from req body");
 
     let client_stats_payload: pb::ClientStatsPayload = match rmp_serde::from_read(buffer.reader()) {
         Ok(res) => res,
@@ -24,9 +24,9 @@ pub async fn get_stats_from_request_body(body: Body) -> anyhow::Result<pb::Clien
     };
 
     if client_stats_payload.stats.is_empty() {
-        anyhow::bail!("no stats in stats payload");
+        anyhow::bail!("No stats in stats payload");
     }
-    info!("successfully deserialized trace stats from request body");
+    info!("Successfully deserialized trace stats from request body");
     Ok(client_stats_payload)
 }
 
@@ -53,7 +53,7 @@ pub fn serialize_stats_payload(payload: pb::StatsPayload) -> anyhow::Result<Vec<
 pub async fn send_stats_payload(data: Vec<u8>) -> anyhow::Result<()> {
     let api_key = match env::var("DD_API_KEY") {
         Ok(key) => key,
-        Err(_) => anyhow::bail!("oopsy, no DD_API_KEY was provided"),
+        Err(_) => anyhow::bail!("Sending trace stats failed. Missing DD_API_KEY"),
     };
 
     let req = Request::builder()
@@ -73,19 +73,13 @@ pub async fn send_stats_payload(data: Vec<u8>) -> anyhow::Result<()> {
     let client: Client<_, hyper::Body> = Client::builder().build(https);
     match client.request(req).await {
         Ok(response) => {
-            let (parts, body) = response.into_parts();
-            let body_bytes = hyper::body::to_bytes(body).await?;
-            if parts.status != StatusCode::ACCEPTED {
+            if response.status() != StatusCode::ACCEPTED {
+                let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
                 let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
                 anyhow::bail!("Server did not accept trace stats: {}", response_body);
             }
-            let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
-            info!(
-                "Successfully sent stats, parts: {:#?}, body: {:#?}",
-                parts, body_str
-            );
+            Ok(())
         }
         Err(e) => anyhow::bail!("Failed to send trace stats: {}", e),
     }
-    Ok(())
 }
