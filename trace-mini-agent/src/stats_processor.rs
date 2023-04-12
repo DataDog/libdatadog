@@ -64,6 +64,6 @@ impl StatsProcessor for ServerlessStatsProcessor {
             ));
         };
 
-        log_and_return_http_success_response("Successfully processed trace stats.")
+        log_and_return_http_success_response("Successfully processed and sent trace stats.")
     }
 }
