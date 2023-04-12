@@ -130,6 +130,11 @@ impl ImprovedBuild {
         self
     }
 
+    pub fn flag(&mut self, flag: &str) -> &mut Self {
+        self.cc_build.flag(flag);
+        self
+    }
+
     pub fn warnings(&mut self, warnings: bool) -> &mut Self {
         self.cc_build.warnings(warnings);
         self
