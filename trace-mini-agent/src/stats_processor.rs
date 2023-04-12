@@ -5,11 +5,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use hyper::{http, Body, Request, Response};
-use log::{error, info};
-use serde_json::json;
+use log::info;
 
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::stats_utils;
+
+use crate::http_utils::{log_and_return_http_error_response, log_and_return_http_success_response};
 
 #[async_trait]
 pub trait StatsProcessor {
@@ -33,11 +34,10 @@ impl StatsProcessor for ServerlessStatsProcessor {
             match stats_utils::get_stats_from_request_body(body).await {
                 Ok(res) => res,
                 Err(err) => {
-                    let error_message =
-                        format!("Error deserializing trace stats from request body: {}", err);
-                    error!("{}", error_message);
-                    let body = json!({ "message": error_message }).to_string();
-                    return Response::builder().status(500).body(Body::from(body));
+                    return log_and_return_http_error_response(&format!(
+                        "Error deserializing trace stats from request body: {}",
+                        err
+                    ));
                 }
             };
 
@@ -52,22 +52,20 @@ impl StatsProcessor for ServerlessStatsProcessor {
         let data = match stats_utils::serialize_stats_payload(stats_payload) {
             Ok(res) => res,
             Err(err) => {
-                let error_message = format!("Error serializing stats payload: {}", err);
-                error!("{}", error_message);
-                let body = json!({ "message": error_message }).to_string();
-                return Response::builder().status(500).body(Body::from(body));
+                return log_and_return_http_error_response(&format!(
+                    "Error serializing stats payload: {}",
+                    err
+                ));
             }
         };
 
         if let Err(err) = stats_utils::send_stats_payload(data).await {
-            let error_message = format!("Error sending trace stats: {}", err);
-            error!("{}", error_message);
-            let body = json!({ "message": error_message }).to_string();
-            return Response::builder().status(500).body(Body::from(body));
+            return log_and_return_http_error_response(&format!(
+                "Error sending trace stats: {}",
+                err
+            ));
         };
 
-        info!("Successfully processed trace stats.");
-        let body = json!({ "message": "Successfully processed trace stats." }).to_string();
-        Response::builder().status(200).body(Body::from(body))
+        log_and_return_http_success_response("Successfully processed trace stats.")
     }
 }

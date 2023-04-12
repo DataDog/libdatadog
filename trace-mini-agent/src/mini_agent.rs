@@ -10,6 +10,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
+use crate::http_utils::log_and_return_http_error_response;
 use crate::{stats_processor, trace_flusher, trace_processor};
 use datadog_trace_protobuf::pb;
 
@@ -87,33 +88,23 @@ impl MiniAgent {
             (&Method::PUT, TRACE_ENDPOINT_PATH) => {
                 match trace_processor.process_traces(req, tx).await {
                     Ok(res) => Ok(res),
-                    Err(err) => {
-                        let error_message = format!("Error processing traces: {}", err);
-                        let response_body = json!({ "message": error_message }).to_string();
-                        Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body(Body::from(response_body))
-                    }
+                    Err(err) => log_and_return_http_error_response(&format!(
+                        "Error processing traces: {}",
+                        err
+                    )),
                 }
             }
             (&Method::PUT, STATS_ENDPOINT_PATH) => match stats_processor.process_stats(req).await {
                 Ok(res) => Ok(res),
-                Err(err) => {
-                    let error_message = format!("Error processing trace stats: {}", err);
-                    let response_body = json!({ "message": error_message }).to_string();
-                    Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body(Body::from(response_body))
-                }
+                Err(err) => log_and_return_http_error_response(&format!(
+                    "Error processing trace stats: {}",
+                    err
+                )),
             },
             (_, INFO_ENDPOINT_PATH) => match Self::info_handler() {
                 Ok(res) => Ok(res),
                 Err(err) => {
-                    let error_message = format!("Info endpoint error: {}", err);
-                    let response_body = json!({ "message": error_message }).to_string();
-                    Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body(Body::from(response_body))
+                    log_and_return_http_error_response(&format!("Info endpoint error: {}", err))
                 }
             },
             _ => {
