@@ -120,6 +120,7 @@ impl MiniAgent {
             {
                 "endpoints": [
                     TRACE_ENDPOINT_PATH,
+                    STATS_ENDPOINT_PATH,
                     INFO_ENDPOINT_PATH
                 ],
                 "client_drop_p0s": true,
