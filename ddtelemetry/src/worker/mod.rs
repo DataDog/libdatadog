@@ -8,7 +8,7 @@ mod store;
 
 use crate::{
     config::{self},
-    data::{self, Application, Dependency, Host, Integration, Log, Telemetry},
+    data::{self, Application, Dependency, Host, Integration, Log, Telemetry, Payload},
     metrics::{ContextKey, MetricBuckets, MetricContexts},
     worker::builder::ConfigBuilder,
     Config,
@@ -223,23 +223,33 @@ impl TelemetryWorker {
                     return CONTINUE;
                 }
                 let mut batch = self.build_message_batch();
-                batch.payload.push(data::Payload::AppHearbeat(()));
-                let batch = data::Payload::MessageBatch(batch);
-                match self.send_payload(&batch).await {
-                    Ok(()) => self.payload_sent_success(&batch),
+                let payload = if batch.is_empty() {
+                    data::Payload::AppHearbeat(())
+                } else {
+                    batch.push(data::Payload::AppHearbeat(()));
+                    data::Payload::MessageBatch(batch)
+                };
+                match self.send_payload(&payload).await {
+                    Ok(()) => self.payload_sent_success(&payload),
                     Err(err) => self.log_err(&err),
                 }
 
-                let logs = data::Payload::Logs(self.build_logs());
-                match self.send_payload(&logs).await {
-                    Ok(()) => self.payload_sent_success(&logs),
-                    Err(err) => self.log_err(&err),
+                let logs = self.build_logs();
+                if !logs.is_empty() {
+                    let logs = data::Payload::Logs(logs);
+                    match self.send_payload(&logs).await {
+                        Ok(()) => self.payload_sent_success(&logs),
+                        Err(err) => self.log_err(&err),
+                    }
                 }
 
-                // TODO Paul LGDC: flush metrics only if success
-                let metrics = data::Payload::GenerateMetrics(self.build_metrics_series());
-                if let Err(err) = self.send_payload(&metrics).await {
-                    self.log_err(&err);
+                let metrics = self.build_metrics_series();
+                if !metrics.series.is_empty() {
+                    // TODO Paul LGDC: flush metrics only if success
+                    let metrics = data::Payload::GenerateMetrics(metrics);
+                    if let Err(err) = self.send_payload(&metrics).await {
+                        self.log_err(&err);
+                    }
                 }
 
                 self.deadlines
@@ -273,7 +283,7 @@ impl TelemetryWorker {
                 self.data.metric_buckets.flush_agregates();
 
                 let mut batch = self.build_message_batch();
-                batch.payload.push(data::Payload::AppClosing(()));
+                batch.push(data::Payload::AppClosing(()));
 
                 future::join_all(
                     [
@@ -302,7 +312,7 @@ impl TelemetryWorker {
         CONTINUE
     }
 
-    fn build_message_batch(&self) -> data::MessageBatch {
+    fn build_message_batch(&self) -> Vec<Payload> {
         let mut payloads = Vec::new();
 
         if self.data.dependencies.flush_not_empty() {
@@ -326,8 +336,7 @@ impl TelemetryWorker {
                 },
             ))
         }
-
-        data::MessageBatch { payload: payloads }
+        payloads
     }
 
     fn build_metrics_series(&mut self) -> data::GenerateMetrics {
@@ -395,7 +404,7 @@ impl TelemetryWorker {
                 .configurations
                 .removed_flushed(p.configuration.len()),
             MessageBatch(batch) => {
-                for p in &batch.payload {
+                for p in batch {
                     self.payload_sent_success(p);
                 }
             }

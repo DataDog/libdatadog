@@ -12,10 +12,10 @@ pub enum Payload {
     AppDependenciesLoaded(AppDependenciesLoaded),
     AppIntegrationsChange(AppIntegrationsChange),
     AppClientConfigurationChange(AppClientConfigurationChange),
-    AppHearbeat(()),
-    AppClosing(()),
+    AppHearbeat(#[serde(skip_serializing)] ()),
+    AppClosing(#[serde(skip_serializing)] ()),
     GenerateMetrics(GenerateMetrics),
     Logs(Vec<Log>),
-    MessageBatch(MessageBatch),
+    MessageBatch(Vec<Payload>),
     AppExtendedHeartbeats(AppStarted),
 }

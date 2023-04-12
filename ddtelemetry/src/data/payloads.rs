@@ -2,7 +2,6 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use crate::data::metrics;
-use crate::data::Payload;
 
 use serde::{Deserialize, Serialize};
 
@@ -74,9 +73,4 @@ pub enum LogLevel {
     Error,
     Warn,
     Debug,
-}
-
-#[derive(Serialize, Debug)]
-pub struct MessageBatch {
-    pub payload: Vec<Payload>,
 }
