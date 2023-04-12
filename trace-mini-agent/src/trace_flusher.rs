@@ -2,7 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use async_trait::async_trait;
-use log::{error, info};
+use log::{debug, error, info};
 use std::{sync::Arc, time};
 use tokio::sync::{mpsc::Receiver, Mutex};
 
@@ -55,6 +55,10 @@ impl TraceFlusher for ServerlessTraceFlusher {
         info!("Flushing traces");
 
         let agent_payload = trace_utils::construct_agent_payload(traces);
+        debug!(
+            "Attempting to serialize and send trace agent payload: {:?}",
+            agent_payload
+        );
         let serialized_agent_payload = trace_utils::serialize_agent_payload(agent_payload);
 
         match trace_utils::send(serialized_agent_payload).await {
