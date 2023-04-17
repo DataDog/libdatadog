@@ -4,6 +4,7 @@
 use datadog_trace_protobuf::pb;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
+use log::{error, info};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -24,9 +25,8 @@ pub struct MiniAgent {
 impl MiniAgent {
     #[tokio::main]
     pub async fn start_mini_agent(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // setup a channel to send processed traces to our flusher
-        // tx is passed through each endpoint_handler to the trace processor, which uses it to send de-serialized processed
-        // trace payloads to our trace flusher.
+        // setup a channel to send processed traces to our flusher tx is passed through each endpoint_handler
+        // to the trace processor, which uses it to send de-serialized processed trace payloads to our trace flusher.
         let (tx, rx): (Sender<pb::TracerPayload>, Receiver<pb::TracerPayload>) =
             mpsc::channel(TRACER_PAYLOAD_CHANNEL_BUFFER_SIZE);
 
@@ -51,11 +51,15 @@ impl MiniAgent {
         });
 
         let addr = SocketAddr::from(([127, 0, 0, 1], MINI_AGENT_PORT as u16));
-        let server = Server::bind(&addr).serve(make_svc);
+        let server_builder = Server::try_bind(&addr)?;
+
+        let server = server_builder.serve(make_svc);
+
+        info!("Mini Agent listening on port {}", MINI_AGENT_PORT);
 
         // start hyper http server
         if let Err(e) = server.await {
-            println!("Server error: {}", e);
+            error!("Server error: {}", e);
         }
 
         Ok(())
@@ -77,7 +81,6 @@ impl MiniAgent {
                 }
             }
             _ => {
-                println!("{}", req.uri().path());
                 let mut not_found = Response::default();
                 *not_found.status_mut() = StatusCode::NOT_FOUND;
                 Ok(not_found)
