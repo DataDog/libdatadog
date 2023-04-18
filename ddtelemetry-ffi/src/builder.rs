@@ -132,12 +132,13 @@ pub unsafe extern "C" fn ddog_builder_with_config(
     builder: &mut TelemetryWorkerBuilder,
     name: ffi::CharSlice,
     value: ffi::CharSlice,
+    origin: data::ConfigurationOrigin,
 ) -> MaybeError {
     let name = name.to_utf8_lossy().into_owned();
     let value = value.to_utf8_lossy().into_owned();
     builder
         .configurations
-        .insert(data::Configuration { name, value });
+        .insert(data::Configuration { name, value, origin });
     MaybeError::None
 }
 

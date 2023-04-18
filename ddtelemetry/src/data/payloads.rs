@@ -25,10 +25,21 @@ pub struct Integration {
     pub auto_enabled: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
 pub struct Configuration {
     pub name: String,
     pub value: String,
+    pub origin: ConfigurationOrigin,
+}
+
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
+#[repr(C)]
+pub enum ConfigurationOrigin {
+    EnvVar,
+    Code,
+    DdConfig,
+    RemoteConfig,
+    Default,
 }
 
 #[derive(Serialize, Debug)]

@@ -495,7 +495,7 @@ impl TelemetryWorker {
             )
             .header(
                 http_client::header::LIBRARY_VERSION,
-                &tel.application.language_version.clone(),
+                &tel.application.tracer_version.clone(),
             );
 
         let body = hyper::Body::from(serialize::serialize(&tel)?);
