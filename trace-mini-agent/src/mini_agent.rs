@@ -30,7 +30,7 @@ pub struct MiniAgent {
 impl MiniAgent {
     #[tokio::main]
     pub async fn start_mini_agent(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // verify we are in a google cloud funtion environment. if not 
+        // verify we are in a google cloud funtion environment. if not, shut down the mini agent.
         let env_verifier = self.env_verifier.clone();
         tokio::spawn(async move {
             let env_verifier = env_verifier.clone();
