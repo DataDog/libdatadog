@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
 use crate::http_utils::log_and_return_http_error_response;
-use crate::{stats_processor, trace_flusher, trace_processor};
+use crate::{env_verifier, stats_processor, trace_flusher, trace_processor};
 use datadog_trace_protobuf::pb;
 
 const MINI_AGENT_PORT: usize = 8126;
@@ -24,11 +24,19 @@ pub struct MiniAgent {
     pub trace_processor: Arc<dyn trace_processor::TraceProcessor + Send + Sync>,
     pub trace_flusher: Arc<dyn trace_flusher::TraceFlusher + Send + Sync>,
     pub stats_processor: Arc<dyn stats_processor::StatsProcessor + Send + Sync>,
+    pub env_verifier: Arc<dyn env_verifier::EnvVerifier + Send + Sync>,
 }
 
 impl MiniAgent {
     #[tokio::main]
     pub async fn start_mini_agent(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // verify we are in a google cloud funtion environment. if not 
+        let env_verifier = self.env_verifier.clone();
+        tokio::spawn(async move {
+            let env_verifier = env_verifier.clone();
+            // env_verifier.verify_environment().await;
+        });
+
         // setup a channel to send processed traces to our flusher. tx is passed through each endpoint_handler
         // to the trace processor, which uses it to send de-serialized processed trace payloads to our trace flusher.
         let (trace_tx, trace_rx): (Sender<pb::TracerPayload>, Receiver<pb::TracerPayload>) =

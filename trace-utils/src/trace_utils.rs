@@ -12,6 +12,7 @@ use std::{env, str};
 use datadog_trace_protobuf::pb;
 
 const TRACE_INTAKE_URL: &str = "https://trace.agent.datadoghq.com/api/v0.2/traces";
+const GCP_METADATA_URL: &str = "http://metadata.google.internal";
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
@@ -275,6 +276,40 @@ pub fn update_tracer_top_level(span: &mut pb::Span) {
     if span.metrics.contains_key(TRACER_TOP_LEVEL_KEY) {
         span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
     }
+}
+
+/// checks if we are running in a google cloud function environment.
+/// if not, returns an error with the verification failure reason.
+pub async fn check_is_gcp_function() -> anyhow::Result<()> {
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(GCP_METADATA_URL)
+        .body(Body::empty())?;
+
+    let https = HttpsConnectorBuilder::new()
+        .with_native_roots()
+        .https_only()
+        .enable_http1()
+        .build();
+    let client: Client<_, hyper::Body> = Client::builder().build(https);
+    let response = match client.request(req).await {
+        Ok(res) => res,
+        Err(e) => {
+            anyhow::bail!("Can't communicate with Google Metadata Server. {}", e)
+        }
+    };
+    let headers = response.headers();
+    match headers.get("Server") {
+        Some(val) => {
+            if val != "Metadata Server for Serverless" {
+                anyhow::bail!("Using Google Compute Engine, but not in cloud function environment.")
+            }
+        },
+        None => {
+            anyhow::bail!("Using Google Compute Engine, but not in cloud function environment.")
+        },
+    }
+    Ok(())
 }
 
 #[cfg(test)]
