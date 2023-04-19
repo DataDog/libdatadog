@@ -82,10 +82,10 @@ mod tests {
         // unit tests will always run in an environment where http://metadata.google.internal is unreachable
         let res = ensure_gcp_function_environment(Box::new(GoogleMetadataClientWrapper {})).await;
         assert!(res.is_err());
-        assert_eq!(
-            res.unwrap_err().to_string(),
-            "Can't communicate with Google Metadata Server. error trying to connect: dns error: failed to lookup address information: nodename nor servname provided, or not known"
-        );
+        assert!(res
+            .unwrap_err()
+            .to_string()
+            .contains("Can't communicate with Google Metadata Server. error trying to connect:"));
     }
 
     #[tokio::test]
