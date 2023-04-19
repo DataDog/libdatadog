@@ -9,6 +9,7 @@ use prost::Message;
 use std::collections::HashMap;
 use std::{env, str};
 
+use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
 
 const TRACE_INTAKE_URL: &str = "https://trace.agent.datadoghq.com/api/v0.2/traces";
@@ -109,7 +110,7 @@ pub fn construct_agent_payload(tracer_payloads: Vec<pb::TracerPayload>) -> pb::A
 
 pub fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
     pb::TraceChunk {
-        priority: i8::MIN as i32, // SamplerPriority::None
+        priority: normalizer::SamplerPriority::None as i32,
         origin: "".to_string(),
         spans: trace,
         tags: HashMap::new(),

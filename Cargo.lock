@@ -497,6 +497,7 @@ name = "datadog-trace-utils"
 version = "2.1.0"
 dependencies = [
  "anyhow",
+ "datadog-trace-normalization",
  "datadog-trace-protobuf",
  "hyper",
  "hyper-rustls",
