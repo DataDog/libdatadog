@@ -40,11 +40,10 @@ impl TraceFlusher for ServerlessTraceFlusher {
             tokio::time::sleep(time::Duration::from_millis(3000)).await;
 
             let mut buffer = buffer_consumer.lock().await;
-            if buffer.is_empty() {
-                continue;
+            if !buffer.is_empty() {
+                self.flush_traces(buffer.to_vec()).await;
+                buffer.clear();
             }
-            self.flush_traces(buffer.to_vec()).await;
-            buffer.clear();
         }
     }
 
@@ -52,7 +51,9 @@ impl TraceFlusher for ServerlessTraceFlusher {
         if traces.is_empty() {
             return;
         }
-        info!("Flushing traces");
+        info!("Flushing {} traces", traces.len());
+
+        debug!("Traces to be flushed: {:?}", traces);
 
         let agent_payload = trace_utils::construct_agent_payload(traces);
         debug!(
