@@ -18,8 +18,8 @@ pub struct ServerlessEnvVerifier {}
 #[async_trait]
 impl EnvVerifier for ServerlessEnvVerifier {
     async fn verify_environment(&self) {
-        if let Err(_) = trace_utils::check_is_gcp_function().await {
-            error!("Google Cloud Function environment verification failed. The Mini Agent cannot be run in a non cloud function environment. Shutting down now.");
+        if let Err(e) = trace_utils::check_is_gcp_function().await {
+            error!("Google Cloud Function environment verification failed. The Mini Agent cannot be run in a non cloud function environment. Error: {}. Shutting down now.", e);
             process::exit(1);
         }
         debug!("Google Cloud Function environment verification suceeded.")

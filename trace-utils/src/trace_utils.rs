@@ -288,7 +288,7 @@ pub async fn check_is_gcp_function() -> anyhow::Result<()> {
 
     let https = HttpsConnectorBuilder::new()
         .with_native_roots()
-        .https_only()
+        .https_or_http()
         .enable_http1()
         .build();
     let client: Client<_, hyper::Body> = Client::builder().build(https);
