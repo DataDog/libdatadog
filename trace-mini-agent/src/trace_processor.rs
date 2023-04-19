@@ -130,8 +130,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 Response::builder().status(200).body(Body::from(body))
             }
             Err(e) => {
-                let error_message = format!("Error sending traces to the trace flusher: {}", e);
-                error!("{}", error_message);
+                error!("Error sending traces to the trace flusher: {e}");
                 let body = json!({ "message": error_message }).to_string();
                 Response::builder().status(500).body(Body::from(body))
             }
