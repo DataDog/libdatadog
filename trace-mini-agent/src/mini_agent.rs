@@ -56,11 +56,11 @@ impl MiniAgent {
 
         let server = server_builder.serve(make_svc);
 
-        info!("Mini Agent started: listening on port {}", MINI_AGENT_PORT);
+        info!("Mini Agent started: listening on port {MINI_AGENT_PORT}");
 
         // start hyper http server
         if let Err(e) = server.await {
-            error!("Server error: {}", e);
+            error!("Server error: {e}");
         }
 
         Ok(())
@@ -76,7 +76,7 @@ impl MiniAgent {
                 match trace_processor.process_traces(req, tx).await {
                     Ok(res) => Ok(res),
                     Err(err) => {
-                        let error_message = format!("Error processing traces: {}", err);
+                        let error_message = format!("Error processing traces: {err}");
                         let response_body = json!({ "message": error_message }).to_string();
                         Response::builder()
                             .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -87,7 +87,7 @@ impl MiniAgent {
             (_, INFO_ENDPOINT_PATH) => match Self::info_handler() {
                 Ok(res) => Ok(res),
                 Err(err) => {
-                    let error_message = format!("Info endpoint error: {}", err);
+                    let error_message = format!("Info endpoint error: {err}");
                     let response_body = json!({ "message": error_message }).to_string();
                     Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)

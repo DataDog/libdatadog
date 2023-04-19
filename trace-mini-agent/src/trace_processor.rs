@@ -53,10 +53,9 @@ impl TraceProcessor for ServerlessTraceProcessor {
         let mut traces = match trace_utils::get_traces_from_request_body(body).await {
             Ok(res) => res,
             Err(err) => {
-                error!("Error deserializing trace from request body: {}", err);
+                error!("Error deserializing trace from request body: err");
                 return Response::builder().body(Body::from(format!(
-                    "Error deserializing trace from request body: {}",
-                    err
+                    "Error deserializing trace from request body: {err}"
                 )));
             }
         };
@@ -76,16 +75,13 @@ impl TraceProcessor for ServerlessTraceProcessor {
             let root_span_index = match trace_utils::get_root_span_index(trace) {
                 Ok(res) => res,
                 Err(e) => {
-                    error!(
-                        "Error getting the root span index of a trace, skipping. {}",
-                        e,
-                    );
+                    error!("Error getting the root span index of a trace, skipping. {e}");
                     continue;
                 }
             };
 
             if let Err(e) = normalizer::normalize_chunk(&mut chunk, root_span_index) {
-                error!("Error normalizing trace chunk: {}", e);
+                error!("Error normalizing trace chunk: {e}");
             }
 
             for span in chunk.spans.iter_mut() {
