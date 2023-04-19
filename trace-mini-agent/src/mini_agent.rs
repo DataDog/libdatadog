@@ -34,7 +34,7 @@ impl MiniAgent {
         let env_verifier = self.env_verifier.clone();
         tokio::spawn(async move {
             let env_verifier = env_verifier.clone();
-            // env_verifier.verify_environment().await;
+            env_verifier.verify_environment().await;
         });
 
         // setup a channel to send processed traces to our flusher. tx is passed through each endpoint_handler
