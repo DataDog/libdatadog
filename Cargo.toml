@@ -3,13 +3,21 @@
 
 [workspace]
 members = [
-    "profiling",
-    "profiling-ffi",
-    "ddcommon",
-    "ddcommon-ffi",
-    "ddtelemetry",
-    "ddtelemetry-ffi",
-    "tools",
+  "profiling",
+  "profiling-ffi",
+  "ddcommon",
+  "ddcommon-ffi",
+  "ddtelemetry",
+  "ddtelemetry-ffi",
+  "tools",
+  "ipc",
+  "tools/cc_utils",
+  "trace-normalization",
+  "trace-obfuscation",
+  "trace-utils",
+  "spawn_worker",
+  "tests/spawn_from_lib",
+  "serverless"
 ]
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"
@@ -18,7 +26,10 @@ resolver = "2"
 debug = 2 # full debug info
 
 [profile.release]
+codegen-units = 1 
 debug = 1 # line tables only
-lto = true
-codegen-units = 1
+lto = true 
 opt-level = "s" # optimize for size
+
+[profile.release.package.datadog-serverless-trace-mini-agent]
+strip = true

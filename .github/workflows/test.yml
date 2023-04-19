@@ -33,7 +33,10 @@ jobs:
         run: cargo test --workspace --verbose
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test --workspace --verbose -- --ignored --test-threads=1"
         run: cargo test --workspace --verbose -- --ignored --test-threads=1
-
+      - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo test --package test_spawn_from_lib --features prefer-dynamic -- --ignored"
+        run: cargo test --package test_spawn_from_lib --features prefer-dynamic -- --ignored
+        env:
+          RUSTFLAGS: "-C prefer-dynamic" 
   ffi:
     name: "FFI #${{ matrix.platform }} ${{ matrix.rust_version }}"
     runs-on: ${{ matrix.platform }}
@@ -102,6 +105,22 @@ jobs:
           cd examples/ffi/build
           cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling
           cmake --build .
+  cross-centos7:
+    name: build and test using cross - on centos7
+    runs-on: ubuntu-latest
+    concurrency: 
+      group: ci-${{ github.ref }}-cross-centos7
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Cache
+        uses: ./.github/actions/cache
+        with:
+          rust_version: cross-centos7
+      - run: cargo install cross || true
+      - run: cross build --all
+      - run: cross test --all
 
   ffi_bake:
     strategy:
@@ -113,7 +132,9 @@ jobs:
       group: ci-${{ github.ref }}-${{ matrix.target }}
       cancel-in-progress: true
 
-    runs-on: ubuntu-latest
+    runs-on:
+      labels: ubuntu-latest-16-cores
+      group: APM Larger Runners
     steps:
       -
         name: Checkout
@@ -122,7 +143,7 @@ jobs:
         name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
         with:
-          config: .github/buildkitd.toml
+          config: .github/buildkitd-16-cores.toml
       -
         name: Build and Generate FFI
         uses: docker/bake-action@v2

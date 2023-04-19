@@ -1,0 +1,22 @@
+[package]
+name = "datadog-trace-obfuscation"
+version = "2.1.0"
+authors = ["David Lee <david.lee@datadoghq.com>"]
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+regex = "1"
+datadog-trace-protobuf = { path = "../trace-protobuf" }
+
+[dev-dependencies]
+duplicate = "0.4.1"
+criterion = "0.4"
+
+[[bench]]
+name = "replace_trace_tags_bench"
+harness = false
+
+[[bench]]
+name = "credit_cards_bench"
+harness = false
