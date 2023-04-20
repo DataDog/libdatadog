@@ -23,7 +23,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       - name: Build project
-        run: cargo build --release
+        run: cargo build --release -p datadog-serverless-trace-mini-agent 
       - name: Upload artifacts for release step
         uses: actions/upload-artifact@v3
         with:
