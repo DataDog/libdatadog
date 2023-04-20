@@ -21,14 +21,14 @@ impl EnvVerifier for ServerlessEnvVerifier {
         if let Err(e) =
             ensure_gcp_function_environment(Box::new(GoogleMetadataClientWrapper {})).await
         {
-            error!("Google Cloud Function environment verification failed. The Mini Agent cannot be run in a non cloud function environment. Error: {}. Shutting down now.", e);
+            error!("Google Cloud Function environment verification failed. The Mini Agent cannot be run in a non cloud function environment. Error: {e}. Shutting down now.");
             process::exit(1);
         }
         debug!("Google Cloud Function environment verification suceeded.")
     }
 }
 
-/// GoogleMetadataClient trait is used so we can mock google metadata server response in unit tests
+/// GoogleMetadataClient trait is used so we can mock a google metadata server response in unit tests
 #[async_trait]
 trait GoogleMetadataClient {
     async fn get_metadata(&self) -> Result<Response<Body>, Error>;
@@ -51,18 +51,18 @@ async fn ensure_gcp_function_environment(
     let response = match metadata_client.get_metadata().await {
         Ok(res) => res,
         Err(e) => {
-            anyhow::bail!("Can't communicate with Google Metadata Server. {}", e)
+            anyhow::bail!("Can't communicate with Google Metadata Server. {e}")
         }
     };
     let headers = response.headers();
     match headers.get("Server") {
         Some(val) => {
             if val != "Metadata Server for Serverless" {
-                anyhow::bail!("Using Google Compute Engine, but not in cloud function environment.")
+                anyhow::bail!("In Google Cloud, but not in a function environment.")
             }
         }
         None => {
-            anyhow::bail!("Using Google Compute Engine, but server identifier not found.")
+            anyhow::bail!("In Google Cloud, but server identifier not found.")
         }
     }
     Ok(())
@@ -104,7 +104,7 @@ mod tests {
         assert!(res.is_err());
         assert_eq!(
             res.unwrap_err().to_string(),
-            "Using Google Compute Engine, but server identifier not found."
+            "In Google Cloud, but server identifier not found."
         );
     }
 
@@ -125,7 +125,7 @@ mod tests {
         assert!(res.is_err());
         assert_eq!(
             res.unwrap_err().to_string(),
-            "Using Google Compute Engine, but not in cloud function environment."
+            "In Google Cloud, but not in a function environment."
         );
     }
 
