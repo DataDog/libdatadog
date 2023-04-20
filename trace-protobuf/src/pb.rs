@@ -154,6 +154,7 @@ pub struct AgentPayload {
 /// StatsPayload is the payload used to send stats from the agent to the backend.
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StatsPayload {
     #[prost(string, tag = "1")]
@@ -171,6 +172,7 @@ pub struct StatsPayload {
 /// the payload sent by tracers to the agent when stats in tracer are enabled.
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClientStatsPayload {
     /// Hostname is the tracer hostname. It's extracted from spans with "_dd.hostname" meta
@@ -228,6 +230,7 @@ pub struct ClientStatsPayload {
 /// ClientStatsBucket is a time bucket containing aggregated stats.
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClientStatsBucket {
     /// bucket start in nanoseconds
@@ -247,6 +250,7 @@ pub struct ClientStatsBucket {
 /// ClientGroupedStats aggregate stats on spans grouped by service, name, resource, status_code, type
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClientGroupedStats {
     #[prost(string, tag = "1")]

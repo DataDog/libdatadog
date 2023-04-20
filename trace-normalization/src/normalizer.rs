@@ -21,7 +21,7 @@ const TAG_ORIGIN: &str = "_dd.origin";
 
 #[allow(dead_code)]
 #[derive(Debug, PartialEq)]
-enum SamplerPriority {
+pub enum SamplerPriority {
     AutoDrop = 0,
     AutoKeep = 1,
     UserKeep = 2,

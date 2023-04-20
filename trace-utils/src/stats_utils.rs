@@ -4,7 +4,7 @@
 use flate2::{write::GzEncoder, Compression};
 use hyper::{body::Buf, Body, Client, Method, Request, StatusCode};
 use hyper_rustls::HttpsConnectorBuilder;
-use log::info;
+use log::debug;
 use std::{env, io::Write};
 
 use datadog_trace_protobuf::pb;
@@ -14,8 +14,6 @@ const STATS_INTAKE_URL: &str = "https://trace.agent.datadoghq.com/api/v0.2/stats
 pub async fn get_stats_from_request_body(body: Body) -> anyhow::Result<pb::ClientStatsPayload> {
     let buffer = hyper::body::aggregate(body).await.unwrap();
 
-    info!("Getting stats from req body");
-
     let client_stats_payload: pb::ClientStatsPayload = match rmp_serde::from_read(buffer.reader()) {
         Ok(res) => res,
         Err(err) => {
@@ -24,9 +22,9 @@ pub async fn get_stats_from_request_body(body: Body) -> anyhow::Result<pb::Clien
     };
 
     if client_stats_payload.stats.is_empty() {
+        debug!("Empty trace stats payload received");
         anyhow::bail!("No stats in stats payload");
     }
-    info!("Successfully deserialized trace stats from request body");
     Ok(client_stats_payload)
 }
 

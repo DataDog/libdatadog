@@ -9,7 +9,7 @@ use std::{
 };
 
 use ddtelemetry::{
-    data::{Dependency, DependencyType, Integration},
+    data::{self, Dependency, Integration},
     ipc::{
         interface::{
             blocking::{self, TelemetryTransport},
@@ -17,7 +17,7 @@ use ddtelemetry::{
         },
         sidecar,
     },
-    worker::TelemetryActions,
+    worker::{LifecycleAction, TelemetryActions},
 };
 use ffi::slice::AsBytes;
 
@@ -82,14 +82,16 @@ pub extern "C" fn ddog_sidecar_transport_clone(
 /// Caller must ensure the process is safe to fork, at the time when this method is called
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut TelemetryTransport) -> MaybeError {
-    let stream = Box::new(try_c!(sidecar::start_or_connect_to_sidecar()));
+    let cfg = sidecar::config::Config::get();
+
+    let stream = Box::new(try_c!(sidecar::start_or_connect_to_sidecar(cfg)));
     *connection = Box::into_raw(stream);
 
     MaybeError::None
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_sidecar_ping(transport: &mut TelemetryTransport) -> MaybeError {
+pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<TelemetryTransport>) -> MaybeError {
     try_c!(blocking::ping(transport));
 
     MaybeError::None
@@ -149,11 +151,13 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     queue_id: &QueueId,
     config_key: ffi::CharSlice,
     config_value: ffi::CharSlice,
+    origin: data::ConfigurationOrigin,
 ) -> MaybeError {
-    let config_entry = TelemetryActions::AddConfig((
-        config_key.to_utf8_lossy().into_owned(),
-        config_value.to_utf8_lossy().into_owned(),
-    ));
+    let config_entry = TelemetryActions::AddConfig(data::Configuration {
+        name: config_key.to_utf8_lossy().into_owned(),
+        value: config_value.to_utf8_lossy().into_owned(),
+        origin,
+    });
     try_c!(blocking::enqueue_actions(
         transport,
         instance_id,
@@ -179,8 +183,6 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
     let dependency = TelemetryActions::AddDependecy(Dependency {
         name: dependency_name.to_utf8_lossy().into_owned(),
         version,
-        hash: None,
-        type_: DependencyType::PlatformStandard,
     });
 
     try_c!(blocking::enqueue_actions(
@@ -201,6 +203,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
     queue_id: &QueueId,
     integration_name: ffi::CharSlice,
     integration_version: ffi::CharSlice,
+    integration_enabled: bool,
 ) -> MaybeError {
     let version = integration_version
         .is_empty()
@@ -208,9 +211,9 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
 
     let integration = TelemetryActions::AddIntegration(Integration {
         name: integration_name.to_utf8_lossy().into_owned(),
+        enabled: integration_enabled,
         version,
         compatible: None,
-        enabled: None,
         auto_enabled: None,
     });
 
@@ -255,7 +258,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_end(
         transport,
         instance_id,
         queue_id,
-        vec![TelemetryActions::Stop],
+        vec![TelemetryActions::Lifecycle(LifecycleAction::Stop)],
     ));
 
     MaybeError::None
@@ -264,7 +267,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_end(
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_session_config_setAgentUrl(
-    transport: &mut TelemetryTransport,
+    transport: &mut Box<TelemetryTransport>,
     session_id: ffi::CharSlice,
     agent_url: ffi::CharSlice,
 ) -> MaybeError {

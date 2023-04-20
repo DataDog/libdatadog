@@ -35,8 +35,7 @@ impl StatsProcessor for ServerlessStatsProcessor {
                 Ok(res) => res,
                 Err(err) => {
                     return log_and_return_http_error_response(&format!(
-                        "Error deserializing trace stats from request body: {}",
-                        err
+                        "Error deserializing trace stats from request body: {err}"
                     ));
                 }
             };
@@ -47,25 +46,20 @@ impl StatsProcessor for ServerlessStatsProcessor {
         let timestamp = start.duration_since(UNIX_EPOCH).unwrap().as_nanos();
         stats_payload.stats[0].stats[0].start = timestamp as u64;
 
-        debug!(
-            "Attempting to serialize and send trace stats payload: {:?}",
-            stats_payload
-        );
+        debug!("Stats payload to be sent: {:?}", stats_payload);
 
         let data = match stats_utils::serialize_stats_payload(stats_payload) {
             Ok(res) => res,
             Err(err) => {
                 return log_and_return_http_error_response(&format!(
-                    "Error serializing stats payload: {}",
-                    err
+                    "Error serializing stats payload: {err}",
                 ));
             }
         };
 
         if let Err(err) = stats_utils::send_stats_payload(data).await {
             return log_and_return_http_error_response(&format!(
-                "Error sending trace stats: {}",
-                err
+                "Error sending trace stats: {err}",
             ));
         };
 

@@ -8,7 +8,9 @@ fn main() {
     builder
         .file("src/trampoline.c")
         .warnings(true)
+        .link_dynamically("dl")
         .warnings_into_errors(true)
+        .flag("-std=c99")
         .emit_rerun_if_env_changed(true);
 
     if !cfg!(target_os = "windows") {
@@ -20,6 +22,7 @@ fn main() {
     if !cfg!(target_os = "windows") {
         cc_utils::ImprovedBuild::new()
             .file("src/ld_preload_trampoline.c")
+            .link_dynamically("dl")
             .warnings(true)
             .warnings_into_errors(true)
             .emit_rerun_if_env_changed(true)

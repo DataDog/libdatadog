@@ -15,6 +15,7 @@ log = "0.4"
 serde_json = "1.0"
 flate2 = "1.0"
 datadog-trace-protobuf = { path = "../trace-protobuf" }
+datadog-trace-normalization = { path = "../trace-normalization" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

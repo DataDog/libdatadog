@@ -27,8 +27,8 @@ pub unsafe extern "C" fn ddog_handle_add_integration(
     handle: &TelemetryWorkerHandle,
     dependency_name: ffi::CharSlice,
     dependency_version: ffi::CharSlice,
+    enabled: bool,
     compatible: ffi::Option<bool>,
-    enabled: ffi::Option<bool>,
     auto_enabled: ffi::Option<bool>,
 ) -> MaybeError {
     let name = dependency_name.to_utf8_lossy().into_owned();
@@ -37,9 +37,9 @@ pub unsafe extern "C" fn ddog_handle_add_integration(
         .then(|| dependency_version.to_utf8_lossy().into_owned());
     crate::try_c!(handle.add_integration(
         name,
+        enabled,
         version,
         compatible.into(),
-        enabled.into(),
         auto_enabled.into(),
     ));
     MaybeError::None
