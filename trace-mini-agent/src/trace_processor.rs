@@ -3,13 +3,14 @@
 
 use async_trait::async_trait;
 use hyper::{http, Body, Request, Response};
-use log::{error, info};
-use serde_json::json;
+use log::error;
 use tokio::sync::mpsc::Sender;
 
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
+
+use crate::http_utils::{log_and_return_http_error_response, log_and_return_http_success_response};
 
 /// Used to populate root_span_tags fields if they exist in the root span's meta tags
 macro_rules! parse_root_span_tags {
@@ -53,10 +54,9 @@ impl TraceProcessor for ServerlessTraceProcessor {
         let mut traces = match trace_utils::get_traces_from_request_body(body).await {
             Ok(res) => res,
             Err(err) => {
-                error!("Error deserializing trace from request body: err");
-                return Response::builder().body(Body::from(format!(
+                return log_and_return_http_error_response(&format!(
                     "Error deserializing trace from request body: {err}"
-                )));
+                ));
             }
         };
 
@@ -67,7 +67,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
 
         for trace in traces.iter_mut() {
             if let Err(e) = normalizer::normalize_trace(trace) {
-                error!("Error normalizing trace: {}", e);
+                error!("Error normalizing trace: {e}");
             }
 
             let mut chunk = trace_utils::construct_trace_chunk(trace.to_vec());
@@ -120,16 +120,14 @@ impl TraceProcessor for ServerlessTraceProcessor {
         // send trace payload to our trace flusher
         match tx.send(tracer_payload).await {
             Ok(_) => {
-                info!("Successfully buffered traces to be flushed.");
-                let body =
-                    json!({ "message": "Successfully buffered traces to be flushed." }).to_string();
-                Response::builder().status(200).body(Body::from(body))
+                return log_and_return_http_success_response(
+                    "Successfully buffered traces to be flushed.",
+                );
             }
-            Err(e) => {
-                let message = format!("Error sending traces to the trace flusher: {e}");
-                error!("Error sending traces to the trace flusher: {message}");
-                let body = json!({ "message": message }).to_string();
-                Response::builder().status(500).body(Body::from(body))
+            Err(err) => {
+                return log_and_return_http_error_response(&format!(
+                    "Error sending traces to the trace flusher: {err}"
+                ));
             }
         }
     }
