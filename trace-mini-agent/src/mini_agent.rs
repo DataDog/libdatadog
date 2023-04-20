@@ -60,7 +60,7 @@ impl MiniAgent {
             let stats_processor = stats_processor.clone();
 
             let service = service_fn(move |req| {
-                MiniAgent::endpoint_handler(
+                MiniAgent::trace_endpoint_handler(
                     req,
                     trace_processor.clone(),
                     trace_tx.clone(),
@@ -76,17 +76,17 @@ impl MiniAgent {
 
         let server = server_builder.serve(make_svc);
 
-        info!("Mini Agent started: listening on port {}", MINI_AGENT_PORT);
+        info!("Mini Agent started: listening on port {MINI_AGENT_PORT}");
 
         // start hyper http server
         if let Err(e) = server.await {
-            error!("Server error: {}", e);
+            error!("Server error: {e}");
         }
 
         Ok(())
     }
 
-    async fn endpoint_handler(
+    async fn trace_endpoint_handler(
         req: Request<Body>,
         trace_processor: Arc<dyn trace_processor::TraceProcessor + Send + Sync>,
         tx: Sender<pb::TracerPayload>,
@@ -97,22 +97,20 @@ impl MiniAgent {
                 match trace_processor.process_traces(req, tx).await {
                     Ok(res) => Ok(res),
                     Err(err) => log_and_return_http_error_response(&format!(
-                        "Error processing traces: {}",
-                        err
+                        "Error processing traces: {err}"
                     )),
                 }
             }
             (&Method::PUT, STATS_ENDPOINT_PATH) => match stats_processor.process_stats(req).await {
                 Ok(res) => Ok(res),
                 Err(err) => log_and_return_http_error_response(&format!(
-                    "Error processing trace stats: {}",
-                    err
+                    "Error processing trace stats: {err}",
                 )),
             },
             (_, INFO_ENDPOINT_PATH) => match Self::info_handler() {
                 Ok(res) => Ok(res),
                 Err(err) => {
-                    log_and_return_http_error_response(&format!("Info endpoint error: {}", err))
+                    log_and_return_http_error_response(&format!("Info endpoint error: {err}"))
                 }
             },
             _ => {

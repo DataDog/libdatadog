@@ -11,7 +11,7 @@ use serde_json::json;
 ///     "message": message
 /// }
 pub fn log_and_return_http_success_response(message: &str) -> http::Result<Response<Body>> {
-    info!("{}", message);
+    info!("{message}");
     let body = json!({ "message": message }).to_string();
     Response::builder()
         .status(StatusCode::OK)
@@ -24,7 +24,7 @@ pub fn log_and_return_http_success_response(message: &str) -> http::Result<Respo
 ///     "message": message
 /// }
 pub fn log_and_return_http_error_response(message: &str) -> http::Result<Response<Body>> {
-    error!("{}", message);
+    error!("{message}");
     let body = json!({ "message": message }).to_string();
     Response::builder()
         .status(StatusCode::INTERNAL_SERVER_ERROR)

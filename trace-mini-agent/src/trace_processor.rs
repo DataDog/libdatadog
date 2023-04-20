@@ -55,8 +55,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
             Ok(res) => res,
             Err(err) => {
                 return log_and_return_http_error_response(&format!(
-                    "Error deserializing trace from request body: {}",
-                    err
+                    "Error deserializing trace from request body: {err}"
                 ));
             }
         };
@@ -68,7 +67,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
 
         for trace in traces.iter_mut() {
             if let Err(e) = normalizer::normalize_trace(trace) {
-                error!("Error normalizing trace: {}", e);
+                error!("Error normalizing trace: {e}");
             }
 
             let mut chunk = trace_utils::construct_trace_chunk(trace.to_vec());
@@ -76,16 +75,13 @@ impl TraceProcessor for ServerlessTraceProcessor {
             let root_span_index = match trace_utils::get_root_span_index(trace) {
                 Ok(res) => res,
                 Err(e) => {
-                    error!(
-                        "Error getting the root span index of a trace, skipping. {}",
-                        e,
-                    );
+                    error!("Error getting the root span index of a trace, skipping. {e}");
                     continue;
                 }
             };
 
             if let Err(e) = normalizer::normalize_chunk(&mut chunk, root_span_index) {
-                error!("Error normalizing trace chunk: {}", e);
+                error!("Error normalizing trace chunk: {e}");
             }
 
             for span in chunk.spans.iter_mut() {
@@ -128,10 +124,9 @@ impl TraceProcessor for ServerlessTraceProcessor {
                     "Successfully buffered traces to be flushed.",
                 );
             }
-            Err(e) => {
+            Err(err) => {
                 return log_and_return_http_error_response(&format!(
-                    "Error sending traces to the trace flusher: {}",
-                    e
+                    "Error sending traces to the trace flusher: {err}"
                 ));
             }
         }
