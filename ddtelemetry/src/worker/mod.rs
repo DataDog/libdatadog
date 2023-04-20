@@ -234,9 +234,9 @@ impl TelemetryWorker {
                 }
                 let mut batch = self.build_message_batch();
                 let payload = if batch.is_empty() {
-                    data::Payload::AppHearbeat(())
+                    data::Payload::AppHeartbeat(())
                 } else {
-                    batch.push(data::Payload::AppHearbeat(()));
+                    batch.push(data::Payload::AppHeartbeat(()));
                     data::Payload::MessageBatch(batch)
                 };
                 match self.send_payload(&payload).await {
@@ -423,7 +423,7 @@ impl TelemetryWorker {
                     self.data.logs.pop_front();
                 }
             }
-            AppHearbeat(()) | AppClosing(()) => {}
+            AppHeartbeat(()) | AppClosing(()) => {}
             // TODO Paul lgdc flush metrics only if success
             GenerateMetrics(_) => {}
         }

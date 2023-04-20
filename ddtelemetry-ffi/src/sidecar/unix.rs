@@ -149,7 +149,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     queue_id: &QueueId,
     config_key: ffi::CharSlice,
     config_value: ffi::CharSlice,
-    origin: data::ConfigurationOrigin
+    origin: data::ConfigurationOrigin,
 ) -> MaybeError {
     let config_entry = TelemetryActions::AddConfig(data::Configuration {
         name: config_key.to_utf8_lossy().into_owned(),

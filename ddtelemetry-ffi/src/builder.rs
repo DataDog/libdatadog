@@ -136,9 +136,11 @@ pub unsafe extern "C" fn ddog_builder_with_config(
 ) -> MaybeError {
     let name = name.to_utf8_lossy().into_owned();
     let value = value.to_utf8_lossy().into_owned();
-    builder
-        .configurations
-        .insert(data::Configuration { name, value, origin });
+    builder.configurations.insert(data::Configuration {
+        name,
+        value,
+        origin,
+    });
     MaybeError::None
 }
 
