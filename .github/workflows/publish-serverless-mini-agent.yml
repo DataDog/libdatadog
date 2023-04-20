@@ -44,9 +44,11 @@ jobs:
           path: target/release/datadog-serverless-trace-mini-agent-binaries
       - name: UPX compress binaries
         run: |
-          for file in target/release/datadog-serverless-trace-mini-agent-binaries/*
-          do
-            upx "$file" --ultra-brute
+          for dir in target/release/datadog-serverless-trace-mini-agent-binaries/*
+            for file in "target/release/datadog-serverless-trace-mini-agent-binaries/$dir"
+            do
+              upx "$file" --ultra-brute
+            done
           done
       - name: Zip up artifacts
         run: zip -r target/release/datadog-serverless-trace-mini-agent-binaries.zip target/release/datadog-serverless-trace-mini-agent-binaries
