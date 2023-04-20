@@ -203,6 +203,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
     queue_id: &QueueId,
     integration_name: ffi::CharSlice,
     integration_version: ffi::CharSlice,
+    integration_enabled: bool,
 ) -> MaybeError {
     let version = integration_version
         .is_empty()
@@ -210,9 +211,9 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
 
     let integration = TelemetryActions::AddIntegration(Integration {
         name: integration_name.to_utf8_lossy().into_owned(),
+        enabled: integration_enabled,
         version,
         compatible: None,
-        enabled: None,
         auto_enabled: None,
     });
 

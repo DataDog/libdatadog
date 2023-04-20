@@ -384,18 +384,14 @@ impl TelemetryWorker {
 
     fn build_app_started(&mut self) -> data::AppStarted {
         data::AppStarted {
-            integrations: self.data.integrations.unflushed().cloned().collect(),
-            dependencies: self.data.dependencies.unflushed().cloned().collect(),
             configuration: self.data.configurations.unflushed().cloned().collect(),
         }
     }
 
     fn app_started_sent_success(&mut self, p: &data::AppStarted) {
-        self.data.dependencies.removed_flushed(p.dependencies.len());
         self.data
             .configurations
             .removed_flushed(p.configuration.len());
-        self.data.integrations.removed_flushed(p.integrations.len());
     }
 
     fn payload_sent_success(&mut self, payload: &data::Payload) {
@@ -620,9 +616,9 @@ impl TelemetryWorkerHandle {
     pub fn add_integration(
         &self,
         name: String,
+        enabled: bool,
         version: Option<String>,
         compatible: Option<bool>,
-        enabled: Option<bool>,
         auto_enabled: Option<bool>,
     ) -> Result<()> {
         self.sender

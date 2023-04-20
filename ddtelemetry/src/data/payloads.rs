@@ -15,12 +15,11 @@ pub struct Dependency {
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
 pub struct Integration {
     pub name: String,
+    pub enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compatible: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_enabled: Option<bool>,
 }
@@ -44,8 +43,6 @@ pub enum ConfigurationOrigin {
 
 #[derive(Serialize, Debug)]
 pub struct AppStarted {
-    pub integrations: Vec<Integration>,
-    pub dependencies: Vec<Dependency>,
     pub configuration: Vec<Configuration>,
 }
 

@@ -16,8 +16,6 @@ use http::header::CONTENT_TYPE;
 
 fn build_app_started_payload() -> AppStarted {
     AppStarted {
-        integrations: Vec::new(),
-        dependencies: Vec::new(),
         configuration: Vec::new(),
     }
 }
