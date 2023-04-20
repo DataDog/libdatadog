@@ -9,6 +9,17 @@ use crate::data::*;
 pub enum ApiVersion {
     #[serde(rename = "v1")]
     V1,
+    #[serde(rename = "v2")]
+    V2,
+}
+
+impl ApiVersion {
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            ApiVersion::V1 => "v1",
+            ApiVersion::V2 => "v2",
+        }
+    }
 }
 
 #[derive(Serialize, Debug)]
@@ -20,7 +31,7 @@ pub struct Telemetry<'a> {
     pub application: &'a Application,
     pub host: &'a Host,
     #[serde(flatten)]
-    pub payload: Payload,
+    pub payload: &'a Payload,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
@@ -46,25 +57,14 @@ pub struct Host {
     pub hostname: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub container_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub os: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub os_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kernel_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kernel_release: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kernel_version: Option<String>,
-}
-
-impl Application {
-    pub fn new_rust_app() -> Self {
-        Self {
-            service_name: String::from(env!("CARGO_PKG_NAME")),
-            service_version: Some(String::from(env!("CARGO_PKG_VERSION"))),
-            env: None,
-            language_name: String::from("rust"),
-            language_version: String::from("n/a"),
-            tracer_version: String::from("n/a"),
-            runtime_name: None,
-            runtime_version: None,
-            runtime_patches: None,
-        }
-    }
 }
