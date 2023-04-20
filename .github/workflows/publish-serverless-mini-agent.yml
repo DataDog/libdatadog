@@ -41,21 +41,21 @@ jobs:
       - name: Download artifacts from build step
         uses: actions/download-artifact@v3
         with:
-          path: target/release/datadog-serverless-trace-mini-agent-binaries
+          path: target/release/binaries
       - name: UPX compress binaries
         run: |
-          for file in target/release/datadog-serverless-trace-mini-agent-binaries/*/*
+          for file in target/release/binaries/*/*
           do
             chmod +x "$file"
             upx "$file" --ultra-brute
           done
       - name: Zip up artifacts
-        run: zip -r target/release/datadog-serverless-trace-mini-agent-binaries.zip target/release/datadog-serverless-trace-mini-agent-binaries
+        run: zip -r datadog-serverless-trace-mini-agent-binaries.zip target/release/binaries
       - name: Upload zip
         uses: actions/upload-artifact@v3
         with:
-          name: datadog-serverless-trace-mini-agent-binaries.zip
-          path: target/release/datadog-serverless-trace-mini-agent-binaries.zip
+          name: datadog-serverless-trace-mini-agent-binaries
+          path: datadog-serverless-trace-mini-agent-binaries.zip
       # - name: Release
       #   uses: softprops/action-gh-release@v1
       #   with:
