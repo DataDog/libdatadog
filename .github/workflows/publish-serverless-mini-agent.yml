@@ -44,7 +44,7 @@ jobs:
           path: target/release/datadog-serverless-trace-mini-agent-binaries
       - name: UPX compress binaries
         run: |
-          for file in target/release/datadog-serverless-trace-mini-agent-binaries
+          for file in target/release/datadog-serverless-trace-mini-agent-binaries/*
           do
             upx "$file" --ultra-brute
           done
