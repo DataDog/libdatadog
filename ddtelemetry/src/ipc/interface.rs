@@ -24,7 +24,11 @@ use tokio::net::UnixStream;
 
 use crate::{
     config::Config,
-    worker::{LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle},
+    data,
+    worker::{
+        store::Store, LifecycleAction, TelemetryActions, TelemetryWorkerBuilder,
+        TelemetryWorkerHandle, MAX_ITEMS,
+    },
 };
 use datadog_ipc::tarpc;
 
@@ -225,7 +229,40 @@ struct AppInstance {
 }
 
 struct EnqueuedData {
+    dependencies: Store<data::Dependency>,
+    configurations: Store<data::Configuration>,
+    integrations: Store<data::Integration>,
     actions: Vec<TelemetryActions>,
+}
+
+impl Default for EnqueuedData {
+    fn default() -> Self {
+        Self {
+            dependencies: Store::new(MAX_ITEMS),
+            configurations: Store::new(MAX_ITEMS),
+            integrations: Store::new(MAX_ITEMS),
+            actions: Vec::new(),
+        }
+    }
+}
+
+impl EnqueuedData {
+    pub fn process(&mut self, actions: Vec<TelemetryActions>) {
+        for action in actions {
+            match action {
+                TelemetryActions::AddConfig(c) => self.configurations.insert(c),
+                TelemetryActions::AddDependecy(d) => self.dependencies.insert(d),
+                TelemetryActions::AddIntegration(i) => self.integrations.insert(i),
+                other => self.actions.push(other),
+            }
+        }
+    }
+
+    pub fn processed(action: Vec<TelemetryActions>) -> Self {
+        let mut data = Self::default();
+        data.process(action);
+        data
+    }
 }
 
 #[derive(Default, Clone)]
@@ -360,15 +397,14 @@ impl TelemetryInterface for TelemetryServer {
         _context: Context,
         instance_id: InstanceId,
         queue_id: QueueId,
-        mut actions: Vec<TelemetryActions>,
+        actions: Vec<TelemetryActions>,
     ) -> Self::EqueueActionsFut {
         let rt_info = self.get_runtime(&instance_id);
         let mut queue = rt_info.enqueued_actions.lock().unwrap();
         match queue.get_mut(&queue_id) {
-            Some(data) => data.actions.append(&mut actions),
+            Some(data) => data.process(actions),
             None => {
-                let data = EnqueuedData { actions };
-                queue.insert(queue_id, data);
+                queue.insert(queue_id, EnqueuedData::processed(actions));
             }
         };
 
@@ -396,10 +432,20 @@ impl TelemetryInterface for TelemetryServer {
                     .lock()
                     .unwrap()
                     .get_mut(&queue_id)
-                    .map(|data| data.actions.drain(0..).collect::<Vec<_>>())
+                    .map(|data| {
+                        let mut actions = std::mem::take(&mut data.actions);
+                        for d in data.dependencies.unflushed() {
+                            actions.push(TelemetryActions::AddDependecy(d.clone()));
+                        }
+                        for c in data.configurations.unflushed() {
+                            actions.push(TelemetryActions::AddConfig(c.clone()));
+                        }
+                        for i in data.integrations.unflushed() {
+                            actions.push(TelemetryActions::AddIntegration(i.clone()));
+                        }
+                        actions
+                    })
                     .unwrap_or_default();
-
-                // TODO log error
                 app.telemetry.send_msgs(actions).await.ok();
             }
         });

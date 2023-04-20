@@ -12,7 +12,7 @@ pub struct Dependency {
     pub version: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
 pub struct Integration {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]

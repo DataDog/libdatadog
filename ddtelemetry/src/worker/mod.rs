@@ -4,7 +4,7 @@
 mod builder;
 pub mod http_client;
 mod scheduler;
-mod store;
+pub(crate) mod store;
 
 use crate::{
     config::{self},
@@ -670,7 +670,7 @@ impl TelemetryWorkerHandle {
 }
 
 /// How many dependencies/integrations/configs we keep in memory at most
-const MAX_ITEMS: usize = 5000;
+pub const MAX_ITEMS: usize = 5000;
 
 pub struct TelemetryWorkerBuilder {
     pub host: Host,
