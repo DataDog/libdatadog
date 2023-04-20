@@ -50,12 +50,13 @@ jobs:
             upx "$file" --ultra-brute
           done
       - name: Zip up artifacts
-        run: zip -r datadog-serverless-trace-mini-agent-binaries.zip target/release/binaries/*
+        working-directory: target/release/binaries/
+        run: zip -r datadog-serverless-trace-mini-agent-binaries.zip .
       - name: Upload zip
         uses: actions/upload-artifact@v3
         with:
           name: datadog-serverless-trace-mini-agent-binaries
-          path: datadog-serverless-trace-mini-agent-binaries.zip
+          path: target/release/binaries/datadog-serverless-trace-mini-agent-binaries.zip
       # - name: Release
       #   uses: softprops/action-gh-release@v1
       #   with:
