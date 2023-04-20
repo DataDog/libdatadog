@@ -4,7 +4,7 @@
 // Lint removed from stable clippy after rust 1.60 - this allow can be removed once we update rust version
 #![allow(clippy::needless_collect)]
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     pin::Pin,
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -23,9 +23,12 @@ use serde::{Deserialize, Serialize};
 use tokio::net::UnixStream;
 
 use crate::{
-    config::{Config, FromEnv, ProvideConfig},
-    data::{Dependency, Integration},
-    worker::{TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle},
+    config::Config,
+    data,
+    worker::{
+        store::Store, LifecycleAction, TelemetryActions, TelemetryWorkerBuilder,
+        TelemetryWorkerHandle, MAX_ITEMS,
+    },
 };
 use datadog_ipc::tarpc;
 
@@ -166,7 +169,7 @@ impl SessionInfo {
         let mut cfg = self.session_config.lock().unwrap();
 
         if (*cfg).is_none() {
-            *cfg = Some(FromEnv::config())
+            *cfg = Some(Config::from_env())
         }
 
         cfg
@@ -208,7 +211,7 @@ impl RuntimeInfo {
                 tokio::spawn(async move {
                     instance
                         .telemetry
-                        .send_msg(crate::worker::TelemetryActions::Stop)
+                        .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop))
                         .await
                         .ok();
                     instance.telemetry_worker_shutdown.await;
@@ -225,36 +228,31 @@ struct AppInstance {
     telemetry_worker_shutdown: Shared<BoxFuture<'static, Option<()>>>,
 }
 
-#[derive(Default)]
 struct EnqueuedData {
-    seen_deps: HashSet<Dependency>,
-    seen_cfg: HashMap<String, String>,
-    seen_integrations: HashSet<Integration>,
+    dependencies: Store<data::Dependency>,
+    configurations: Store<data::Configuration>,
+    integrations: Store<data::Integration>,
     actions: Vec<TelemetryActions>,
+}
+
+impl Default for EnqueuedData {
+    fn default() -> Self {
+        Self {
+            dependencies: Store::new(MAX_ITEMS),
+            configurations: Store::new(MAX_ITEMS),
+            integrations: Store::new(MAX_ITEMS),
+            actions: Vec::new(),
+        }
+    }
 }
 
 impl EnqueuedData {
     pub fn process(&mut self, actions: Vec<TelemetryActions>) {
         for action in actions {
             match action {
-                TelemetryActions::AddConfig((key, value)) => {
-                    if self.seen_cfg.get(&key) != Some(&value) {
-                        self.seen_cfg.insert(key.clone(), value.clone());
-                        self.actions.push(TelemetryActions::AddConfig((key, value)))
-                    }
-                }
-                TelemetryActions::AddDependecy(d) => {
-                    if !self.seen_deps.contains(&d) {
-                        self.seen_deps.insert(d.clone());
-                        self.actions.push(TelemetryActions::AddDependecy(d))
-                    }
-                }
-                TelemetryActions::AddIntegration(i) => {
-                    if !self.seen_integrations.contains(&i) {
-                        self.seen_integrations.insert(i.clone());
-                        self.actions.push(TelemetryActions::AddIntegration(i));
-                    }
-                }
+                TelemetryActions::AddConfig(c) => self.configurations.insert(c),
+                TelemetryActions::AddDependecy(d) => self.dependencies.insert(d),
+                TelemetryActions::AddIntegration(i) => self.integrations.insert(i),
                 other => self.actions.push(other),
             }
         }
@@ -336,7 +334,7 @@ impl TelemetryServer {
             .lock()
             .unwrap()
             .clone()
-            .unwrap_or_else(FromEnv::config);
+            .unwrap_or_else(Config::from_env);
 
         // TODO: log errors
         if let Ok((handle, worker_join)) = builder.spawn_with_config(config.clone()).await {
@@ -354,7 +352,7 @@ impl TelemetryServer {
 
             instance
                 .telemetry
-                .send_msg(TelemetryActions::Start)
+                .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
                 .await
                 .ok();
             Some(instance)
@@ -434,10 +432,20 @@ impl TelemetryInterface for TelemetryServer {
                     .lock()
                     .unwrap()
                     .get_mut(&queue_id)
-                    .map(|data| data.actions.drain(0..).collect::<Vec<_>>())
+                    .map(|data| {
+                        let mut actions = std::mem::take(&mut data.actions);
+                        for d in data.dependencies.unflushed() {
+                            actions.push(TelemetryActions::AddDependecy(d.clone()));
+                        }
+                        for c in data.configurations.unflushed() {
+                            actions.push(TelemetryActions::AddConfig(c.clone()));
+                        }
+                        for i in data.integrations.unflushed() {
+                            actions.push(TelemetryActions::AddIntegration(i.clone()));
+                        }
+                        actions
+                    })
                     .unwrap_or_default();
-
-                // TODO log error
                 app.telemetry.send_msgs(actions).await.ok();
             }
         });

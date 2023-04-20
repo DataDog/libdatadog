@@ -15,8 +15,6 @@ pub mod ipc;
 pub mod metrics;
 pub mod worker;
 
-const DEFAULT_API_VERSION: data::ApiVersion = data::ApiVersion::V1;
-
 pub fn build_host() -> data::Host {
     data::Host {
         hostname: info::os::real_hostname().unwrap_or_else(|_| String::from("unknown_hostname")),
