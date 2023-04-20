@@ -1,4 +1,4 @@
-name: Build and Release Serverless
+name: Build and Release Serverless Agent
 on:
   push: 
     branches:
@@ -6,7 +6,7 @@ on:
 # on:
 #   push:
 #     tags:
-#       - 'serverless-**'
+#       - 'sls-**'
 
 jobs:
   build:
@@ -17,10 +17,10 @@ jobs:
         include:
           - os: ubuntu-latest
             executable_name: datadog-serverless-trace-mini-agent
-            asset_name: datadog-serverless-trace-mini-agent-linux-amd64
+            asset_name: datadog-serverless-agent-linux-amd64
           - os: windows-latest
             executable_name: datadog-serverless-trace-mini-agent.exe
-            asset_name: datadog-serverless-trace-mini-agent-windows-amd64
+            asset_name: datadog-serverless-agent-windows-amd64
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -51,15 +51,15 @@ jobs:
           done
       - name: Zip up artifacts
         working-directory: target/release/binaries/
-        run: zip -r datadog-serverless-mini-agent.zip .
+        run: zip -r datadog-serverless-agent.zip .
       - name: Upload zip
         uses: actions/upload-artifact@v3
         with:
-          name: datadog-serverless-mini-agent
-          path: target/release/binaries/datadog-serverless-mini-agent.zip
+          name: datadog-serverless-agent
+          path: target/release/binaries/datadog-serverless-agent.zip
       # - name: Release
       #   uses: softprops/action-gh-release@v1
       #   with:
       #     draft: true
       #     generate_release_notes: true
-      #     files: target/release/binaries/datadog-serverless-mini-agent.zip
+      #     files: target/release/binaries/datadog-serverless-agent.zip
