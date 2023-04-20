@@ -1,5 +1,8 @@
 name: Publish Serverless Mini Agent Binaries to NPM & PyPi
-on: [workflow_dispatch]
+on:
+  push: 
+    branches:
+      - david.lee/mini-agent-releasing-test
 # on:
 #   push:
 #     tags:
