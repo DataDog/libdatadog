@@ -52,7 +52,7 @@ impl MiniAgent {
             let stats_processor = stats_processor.clone();
 
             let service = service_fn(move |req| {
-                MiniAgent::endpoint_handler(
+                MiniAgent::trace_endpoint_handler(
                     req,
                     trace_processor.clone(),
                     trace_tx.clone(),
@@ -78,7 +78,7 @@ impl MiniAgent {
         Ok(())
     }
 
-    async fn endpoint_handler(
+    async fn trace_endpoint_handler(
         req: Request<Body>,
         trace_processor: Arc<dyn trace_processor::TraceProcessor + Send + Sync>,
         tx: Sender<pb::TracerPayload>,

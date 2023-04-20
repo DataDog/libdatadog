@@ -46,10 +46,7 @@ impl StatsProcessor for ServerlessStatsProcessor {
         let timestamp = start.duration_since(UNIX_EPOCH).unwrap().as_nanos();
         stats_payload.stats[0].stats[0].start = timestamp as u64;
 
-        debug!(
-            "Attempting to serialize and send trace stats payload: {:?}",
-            stats_payload
-        );
+        debug!("Stats payload to be sent: {:?}", stats_payload);
 
         let data = match stats_utils::serialize_stats_payload(stats_payload) {
             Ok(res) => res,
