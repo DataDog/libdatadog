@@ -2,11 +2,11 @@ name: Publish Serverless Mini Agent Binaries to NPM & PyPi
 on:
   push:
     tags:
-      - 'sls-mini-agent-**'
+      - 'serverless-**'
 
 jobs:
-  release:
-    name: Build and Release
+  build:
+    name: Build
     runs-on: ${{ matrix.config.os }}
     strategy:
       matrix:
@@ -17,15 +17,31 @@ jobs:
             asset_name: datadog-serverless-trace-mini-agent-windows-amd64
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Build project
         run: cargo build --release
-      - name: Rename output file
-        run: mv target/release/datadog-serverless-trace-mini-agent target/release/${{ matrix.asset_name }}
+      - name: Upload artifacts for release step
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.asset_name }}
+          path: target/release/datadog-serverless-trace-mini-agent
+  release:
+    name: Zip and Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Download artifacts from build step
+        uses: actions/download-artifact@v3
+        with:
+          path: target/release/datadog-serverless-trace-mini-agent-binaries
+      - name: Zip up artifacts
+        run: zip -r target/release/datadog-serverless-trace-mini-agent-binaries.zip target/release/datadog-serverless-trace-mini-agent-binaries
       - name: Release
         uses: softprops/action-gh-release@v1
         with:
           draft: true
           generate_release_notes: true
           files: |
-            target/release/${{ matrix.asset_name }}
+            target/release/datadog-serverless-trace-mini-agent-binaries.zip
