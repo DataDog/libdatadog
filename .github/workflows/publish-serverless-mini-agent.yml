@@ -1,4 +1,4 @@
-name: Publish Serverless Mini Agent Binaries to NPM & PyPi
+name: Build and Release Serverless
 on:
   push: 
     branches:
@@ -42,10 +42,19 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           path: target/release/datadog-serverless-trace-mini-agent-binaries
+      - name: UPX compress binaries
+        run: |
+          for file in target/release/datadog-serverless-trace-mini-agent-binaries
+          do
+            upx "$file" --ultra-brute
+          done
       - name: Zip up artifacts
         run: zip -r target/release/datadog-serverless-trace-mini-agent-binaries.zip target/release/datadog-serverless-trace-mini-agent-binaries
-      - name: List release directory
-        run: ls ./target/release
+      - name: Upload zip
+        uses: actions/upload-artifact@v3
+        with:
+          name: datadog-serverless-trace-mini-agent-binaries.zip
+          path: target/release/datadog-serverless-trace-mini-agent-binaries.zip
       # - name: Release
       #   uses: softprops/action-gh-release@v1
       #   with:
