@@ -202,11 +202,13 @@ impl TelemetryWorker {
                         return;
                     }
                     self.data.metric_buckets.flush_agregates();
-                    let requests = IntoIterator::into_iter([
-                        self.build_app_stop(),
+                    let requests = [
+                        Some(self.build_app_stop()),
                         self.build_integrations_change(),
                         self.build_dependencies_loaded(),
-                    ])
+                    ]
+                    .into_iter()
+                    .flatten()
                     .chain(self.build_metrics_series())
                     .map(|r| self.send_request(r));
                     future::join_all(requests).await;
@@ -238,20 +240,20 @@ impl TelemetryWorker {
     }
 
     async fn flush_deps(&mut self) {
-        if self.data.unflushed_dependencies.is_empty() {
-            return;
-        }
-        let req = self.build_dependencies_loaded();
+        let req = match self.build_dependencies_loaded() {
+            Some(r) => r,
+            None => return,
+        };
         self.send_request(req).await;
         self.deadlines.send_dependency_done();
     }
 
     async fn flush_intgs(&mut self) {
-        if self.data.unflushed_integrations.is_empty() {
-            return;
-        }
+        let req = match self.build_integrations_change() {
+            Some(r) => r,
+            None => return,
+        };
 
-        let req = self.build_integrations_change();
         self.send_request(req).await;
         self.deadlines.send_integrations_done();
     }
@@ -325,20 +327,28 @@ impl TelemetryWorker {
         self.build_request(data::Payload::AppStarted(app_started))
     }
 
-    fn build_dependencies_loaded(&mut self) -> Result<Request<hyper::Body>> {
+    fn build_dependencies_loaded(&mut self) -> Option<Result<Request<hyper::Body>>> {
+        let deps = std::mem::take(&mut self.data.unflushed_dependencies);
+        if deps.is_empty() {
+            return None;
+        }
+
         let deps_loaded = data::Payload::AppDependenciesLoaded(data::AppDependenciesLoaded {
-            dependencies: std::mem::take(&mut self.data.unflushed_dependencies),
+            dependencies: deps,
         });
 
-        self.build_request(deps_loaded)
+        Some(self.build_request(deps_loaded))
     }
 
-    fn build_integrations_change(&mut self) -> Result<Request<hyper::Body>> {
+    fn build_integrations_change(&mut self) -> Option<Result<Request<hyper::Body>>> {
+        let integrations = std::mem::take(&mut self.data.unflushed_integrations);
+        if integrations.is_empty() {
+            return None;
+        }
+
         let integrations_change =
-            data::Payload::AppIntegrationsChange(data::AppIntegrationsChange {
-                integrations: std::mem::take(&mut self.data.unflushed_integrations),
-            });
-        self.build_request(integrations_change)
+            data::Payload::AppIntegrationsChange(data::AppIntegrationsChange { integrations });
+        Some(self.build_request(integrations_change))
     }
 
     fn build_logs(&mut self) -> Result<Request<hyper::Body>> {

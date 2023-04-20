@@ -82,14 +82,16 @@ pub extern "C" fn ddog_sidecar_transport_clone(
 /// Caller must ensure the process is safe to fork, at the time when this method is called
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut TelemetryTransport) -> MaybeError {
-    let stream = Box::new(try_c!(sidecar::start_or_connect_to_sidecar()));
+    let cfg = sidecar::config::Config::get();
+
+    let stream = Box::new(try_c!(sidecar::start_or_connect_to_sidecar(cfg)));
     *connection = Box::into_raw(stream);
 
     MaybeError::None
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_sidecar_ping(transport: &mut TelemetryTransport) -> MaybeError {
+pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<TelemetryTransport>) -> MaybeError {
     try_c!(blocking::ping(transport));
 
     MaybeError::None
@@ -264,7 +266,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_end(
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_session_config_setAgentUrl(
-    transport: &mut TelemetryTransport,
+    transport: &mut Box<TelemetryTransport>,
     session_id: ffi::CharSlice,
     agent_url: ffi::CharSlice,
 ) -> MaybeError {

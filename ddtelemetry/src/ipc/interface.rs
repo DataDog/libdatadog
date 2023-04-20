@@ -4,7 +4,7 @@
 // Lint removed from stable clippy after rust 1.60 - this allow can be removed once we update rust version
 #![allow(clippy::needless_collect)]
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     pin::Pin,
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -24,6 +24,7 @@ use tokio::net::UnixStream;
 
 use crate::{
     config::{Config, FromEnv, ProvideConfig},
+    data::{Dependency, Integration},
     worker::{TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle},
 };
 use datadog_ipc::tarpc;
@@ -224,8 +225,46 @@ struct AppInstance {
     telemetry_worker_shutdown: Shared<BoxFuture<'static, Option<()>>>,
 }
 
+#[derive(Default)]
 struct EnqueuedData {
+    seen_deps: HashSet<Dependency>,
+    seen_cfg: HashMap<String, String>,
+    seen_integrations: HashSet<Integration>,
     actions: Vec<TelemetryActions>,
+}
+
+impl EnqueuedData {
+    pub fn process(&mut self, actions: Vec<TelemetryActions>) {
+        for action in actions {
+            match action {
+                TelemetryActions::AddConfig((key, value)) => {
+                    if self.seen_cfg.get(&key) != Some(&value) {
+                        self.seen_cfg.insert(key.clone(), value.clone());
+                        self.actions.push(TelemetryActions::AddConfig((key, value)))
+                    }
+                }
+                TelemetryActions::AddDependecy(d) => {
+                    if !self.seen_deps.contains(&d) {
+                        self.seen_deps.insert(d.clone());
+                        self.actions.push(TelemetryActions::AddDependecy(d))
+                    }
+                }
+                TelemetryActions::AddIntegration(i) => {
+                    if !self.seen_integrations.contains(&i) {
+                        self.seen_integrations.insert(i.clone());
+                        self.actions.push(TelemetryActions::AddIntegration(i));
+                    }
+                }
+                other => self.actions.push(other),
+            }
+        }
+    }
+
+    pub fn processed(action: Vec<TelemetryActions>) -> Self {
+        let mut data = Self::default();
+        data.process(action);
+        data
+    }
 }
 
 #[derive(Default, Clone)]
@@ -360,15 +399,14 @@ impl TelemetryInterface for TelemetryServer {
         _context: Context,
         instance_id: InstanceId,
         queue_id: QueueId,
-        mut actions: Vec<TelemetryActions>,
+        actions: Vec<TelemetryActions>,
     ) -> Self::EqueueActionsFut {
         let rt_info = self.get_runtime(&instance_id);
         let mut queue = rt_info.enqueued_actions.lock().unwrap();
         match queue.get_mut(&queue_id) {
-            Some(data) => data.actions.append(&mut actions),
+            Some(data) => data.process(actions),
             None => {
-                let data = EnqueuedData { actions };
-                queue.insert(queue_id, data);
+                queue.insert(queue_id, EnqueuedData::processed(actions));
             }
         };
 

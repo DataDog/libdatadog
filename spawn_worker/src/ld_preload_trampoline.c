@@ -12,7 +12,10 @@
 int main_override(int argc, char **argv) {
   if (argc > 2) {
     // const char *_library_path = argv[1];
-    const char *symbol_name = argv[2];
+    // TODO: support loading additional shared libraries
+
+    // Last entry is always the symbol name
+    const char *symbol_name = argv[argc-1];
     void (*fn)() = dlsym(RTLD_DEFAULT, symbol_name);
     char *error = NULL;
 
