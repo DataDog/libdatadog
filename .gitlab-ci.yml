@@ -11,6 +11,6 @@ trigger_internal_build:
     LIBDATADOG_COMMIT_SHA: $CI_COMMIT_SHA
     LIBDATADOG_SHORT_COMMIT_SHA: ${CI_COMMIT_SHORT_SHA}
   trigger:
-    project: DataDog/libddprof-build
+    project: DataDog/apm-reliability/libddprof-build
     strategy: depend
     branch: $DOWNSTREAM_BRANCH
