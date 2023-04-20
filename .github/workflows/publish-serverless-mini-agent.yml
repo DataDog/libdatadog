@@ -16,19 +16,21 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
+            executable_name: datadog-serverless-trace-mini-agent
             asset_name: datadog-serverless-trace-mini-agent-linux-amd64
           - os: windows-latest
+            executable_name: datadog-serverless-trace-mini-agent.exe
             asset_name: datadog-serverless-trace-mini-agent-windows-amd64
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
       - name: Build project
-        run: cargo build --release -p datadog-serverless-trace-mini-agent 
+        run: cargo build --release -p datadog-serverless-trace-mini-agent
       - name: Upload artifacts for release step
         uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.asset_name }}
-          path: target/release/datadog-serverless-trace-mini-agent
+          path: target/release/${{ matrix.executable_name }}
   release:
     name: Zip and Release
     needs: build
