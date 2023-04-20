@@ -13,8 +13,6 @@ jobs:
         include:
           - os: ubuntu-latest
             asset_name: datadog-serverless-trace-mini-agent-linux-amd64
-          - os: macos-latest
-            asset_name: datadog-serverless-trace-mini-agent-darwin-amd64
           - os: windows-latest
             asset_name: datadog-serverless-trace-mini-agent-windows-amd64
     steps:
