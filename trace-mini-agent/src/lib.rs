@@ -3,6 +3,7 @@
 
 pub mod http_utils;
 pub mod mini_agent;
+pub mod stats_flusher;
 pub mod stats_processor;
 pub mod trace_flusher;
 pub mod trace_processor;

@@ -5,7 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use hyper::{http, Body, Request, Response};
-use log::{debug, info};
+use log::info;
+use tokio::sync::mpsc::Sender;
 
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::stats_utils;
@@ -14,9 +15,13 @@ use crate::http_utils::{log_and_return_http_error_response, log_and_return_http_
 
 #[async_trait]
 pub trait StatsProcessor {
-    /// Deserializes traces from a hyper request body and sends them through
+    /// Deserializes trace stats from a hyper request body and sends them through
     /// the provided tokio mpsc Sender.
-    async fn process_stats(&self, req: Request<Body>) -> http::Result<Response<Body>>;
+    async fn process_stats(
+        &self,
+        req: Request<Body>,
+        tx: Sender<pb::ClientStatsPayload>,
+    ) -> http::Result<Response<Body>>;
 }
 
 #[derive(Clone)]
@@ -24,13 +29,17 @@ pub struct ServerlessStatsProcessor {}
 
 #[async_trait]
 impl StatsProcessor for ServerlessStatsProcessor {
-    async fn process_stats(&self, req: Request<Body>) -> http::Result<Response<Body>> {
+    async fn process_stats(
+        &self,
+        req: Request<Body>,
+        tx: Sender<pb::ClientStatsPayload>,
+    ) -> http::Result<Response<Body>> {
         let body = req.into_body();
 
         info!("Recieved trace stats to process");
 
         // deserialize trace stats from the request body, convert to protobuf structs (see trace-protobuf crate)
-        let stats: pb::ClientStatsPayload =
+        let mut stats: pb::ClientStatsPayload =
             match stats_utils::get_stats_from_request_body(body).await {
                 Ok(res) => res,
                 Err(err) => {
@@ -40,32 +49,25 @@ impl StatsProcessor for ServerlessStatsProcessor {
                 }
             };
 
-        let mut stats_payload = stats_utils::construct_stats_payload(stats);
-
         let start = SystemTime::now();
-        let timestamp = start.duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        stats_payload.stats[0].stats[0].start = timestamp as u64;
+        let timestamp = start
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        stats.stats[0].start = timestamp as u64;
 
-        debug!(
-            "Attempting to serialize and send trace stats payload: {:?}",
-            stats_payload
-        );
-
-        let data = match stats_utils::serialize_stats_payload(stats_payload) {
-            Ok(res) => res,
+        // send trace payload to our trace flusher
+        match tx.send(stats).await {
+            Ok(_) => {
+                return log_and_return_http_success_response(
+                    "Successfully buffered stats to be flushed.",
+                );
+            }
             Err(err) => {
                 return log_and_return_http_error_response(&format!(
-                    "Error serializing stats payload: {err}",
+                    "Error sending stats to the stats flusher: {err}"
                 ));
             }
-        };
-
-        if let Err(err) = stats_utils::send_stats_payload(data).await {
-            return log_and_return_http_error_response(&format!(
-                "Error sending trace stats: {err}",
-            ));
-        };
-
-        log_and_return_http_success_response("Successfully processed and sent trace stats.")
+        }
     }
 }

@@ -4,7 +4,7 @@
 use flate2::{write::GzEncoder, Compression};
 use hyper::{body::Buf, Body, Client, Method, Request, StatusCode};
 use hyper_rustls::HttpsConnectorBuilder;
-use log::info;
+use log::debug;
 use std::{env, io::Write};
 
 use datadog_trace_protobuf::pb;
@@ -12,9 +12,7 @@ use datadog_trace_protobuf::pb;
 const STATS_INTAKE_URL: &str = "https://trace.agent.datadoghq.com/api/v0.2/stats";
 
 pub async fn get_stats_from_request_body(body: Body) -> anyhow::Result<pb::ClientStatsPayload> {
-    let buffer = hyper::body::aggregate(body).await.unwrap();
-
-    info!("Getting stats from req body");
+    let buffer = hyper::body::aggregate(body).await?;
 
     let client_stats_payload: pb::ClientStatsPayload = match rmp_serde::from_read(buffer.reader()) {
         Ok(res) => res,
@@ -24,17 +22,17 @@ pub async fn get_stats_from_request_body(body: Body) -> anyhow::Result<pb::Clien
     };
 
     if client_stats_payload.stats.is_empty() {
+        debug!("Empty trace stats payload received");
         anyhow::bail!("No stats in stats payload");
     }
-    info!("Successfully deserialized trace stats from request body");
     Ok(client_stats_payload)
 }
 
-pub fn construct_stats_payload(stats: pb::ClientStatsPayload) -> pb::StatsPayload {
+pub fn construct_stats_payload(stats: Vec<pb::ClientStatsPayload>) -> pb::StatsPayload {
     pb::StatsPayload {
         agent_hostname: "".to_string(),
         agent_env: "".to_string(),
-        stats: vec![stats],
+        stats,
         agent_version: "".to_string(),
         client_computed: true,
     }
@@ -62,7 +60,6 @@ pub async fn send_stats_payload(data: Vec<u8>) -> anyhow::Result<()> {
         .header("Content-Type", "application/msgpack")
         .header("Content-Encoding", "gzip")
         .header("DD-API-KEY", &api_key)
-        .header("X-Datadog-Reported-Languages", "nodejs")
         .body(Body::from(data.clone()))?;
 
     let https = HttpsConnectorBuilder::new()
