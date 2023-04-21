@@ -28,7 +28,6 @@ pub struct NativeFile {
     pub handle: Box<PlatformHandle<File>>,
 }
 
-#[repr(C)]
 pub struct NativeUnixStream {
     pub handle: PlatformHandle<UnixStream>,
 }
