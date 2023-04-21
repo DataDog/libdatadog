@@ -6,19 +6,34 @@ use serde::Serialize;
 
 #[derive(Serialize, Debug)]
 #[serde(tag = "request_type", content = "payload")]
+#[serde(rename_all = "kebab-case")]
 pub enum Payload {
-    #[serde(rename = "app-started")]
     AppStarted(AppStarted),
-    #[serde(rename = "app-dependencies-loaded")]
     AppDependenciesLoaded(AppDependenciesLoaded),
-    #[serde(rename = "app-integrations-change")]
     AppIntegrationsChange(AppIntegrationsChange),
-    #[serde(rename = "app-heartbeat")]
-    AppHearbeat(()),
-    #[serde(rename = "app-closing")]
-    AppClosing(()),
-    #[serde(rename = "generate-metrics")]
+    AppClientConfigurationChange(AppClientConfigurationChange),
+    AppHeartbeat(#[serde(skip_serializing)] ()),
+    AppClosing(#[serde(skip_serializing)] ()),
     GenerateMetrics(GenerateMetrics),
-    #[serde(rename = "logs")]
     Logs(Vec<Log>),
+    MessageBatch(Vec<Payload>),
+    AppExtendedHeartbeat(AppStarted),
+}
+
+impl Payload {
+    pub fn request_type(&self) -> &'static str {
+        use Payload::*;
+        match self {
+            AppStarted(_) => "app-started",
+            AppDependenciesLoaded(_) => "app-dependencies-loaded",
+            AppIntegrationsChange(_) => "app-integrations-change",
+            AppClientConfigurationChange(_) => "app-client-configuration-change",
+            AppHeartbeat(_) => "app-heartbeat",
+            AppClosing(_) => "app-closing",
+            GenerateMetrics(_) => "generate-metrics",
+            Logs(_) => "logs",
+            MessageBatch(_) => "message-batch",
+            AppExtendedHeartbeat(_) => "app-extended-heartbeat",
+        }
+    }
 }
