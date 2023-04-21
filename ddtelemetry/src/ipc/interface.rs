@@ -313,6 +313,7 @@ impl TelemetryServer {
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMeta,
         service_name: &String,
+        inital_actions: Vec<TelemetryActions>,
     ) -> Option<AppInstance> {
         let rt_info = self.get_runtime(instance_id);
 
@@ -349,6 +350,12 @@ impl TelemetryServer {
                 .lock()
                 .unwrap()
                 .insert(service_name.clone(), instance.clone());
+
+            instance
+                .telemetry
+                .send_msgs(inital_actions.into_iter())
+                .await
+                .ok();
 
             instance
                 .telemetry
@@ -422,8 +429,29 @@ impl TelemetryInterface for TelemetryServer {
         service_name: String,
     ) -> Self::RegisterServiceAndFlushQueuedActionsFut {
         tokio::spawn(async move {
+            let actions = self
+                .get_runtime(&instance_id)
+                .enqueued_actions
+                .lock()
+                .unwrap()
+                .get_mut(&queue_id)
+                .map(|data| {
+                    let mut actions: Vec<TelemetryActions> = vec![];
+                    for d in data.dependencies.unflushed() {
+                        actions.push(TelemetryActions::AddDependecy(d.clone()));
+                    }
+                    for c in data.configurations.unflushed() {
+                        actions.push(TelemetryActions::AddConfig(c.clone()));
+                    }
+                    for i in data.integrations.unflushed() {
+                        actions.push(TelemetryActions::AddIntegration(i.clone()));
+                    }
+                    actions
+                })
+                .unwrap_or_default();
+
             if let Some(app) = self
-                .get_app(&instance_id, &runtime_meta, &service_name)
+                .get_app(&instance_id, &runtime_meta, &service_name, actions)
                 .await
             {
                 let actions = self
@@ -432,19 +460,7 @@ impl TelemetryInterface for TelemetryServer {
                     .lock()
                     .unwrap()
                     .get_mut(&queue_id)
-                    .map(|data| {
-                        let mut actions = std::mem::take(&mut data.actions);
-                        for d in data.dependencies.unflushed() {
-                            actions.push(TelemetryActions::AddDependecy(d.clone()));
-                        }
-                        for c in data.configurations.unflushed() {
-                            actions.push(TelemetryActions::AddConfig(c.clone()));
-                        }
-                        for i in data.integrations.unflushed() {
-                            actions.push(TelemetryActions::AddIntegration(i.clone()));
-                        }
-                        actions
-                    })
+                    .map(|data| std::mem::take(&mut data.actions))
                     .unwrap_or_default();
                 app.telemetry.send_msgs(actions).await.ok();
             }
