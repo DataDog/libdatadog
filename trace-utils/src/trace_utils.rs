@@ -153,7 +153,6 @@ pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
     let req = Request::builder()
         .method(Method::POST)
         .uri(TRACE_INTAKE_URL)
-        .header("User-agent", "ffi-test")
         .header("Content-type", "application/x-protobuf")
         .header("DD-API-KEY", &api_key)
         .body(Body::from(data))?;
