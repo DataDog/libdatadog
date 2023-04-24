@@ -49,14 +49,11 @@ jobs:
             chmod +x "$file"
             upx "$file" --ultra-brute
           done
-      - name: Zip up artifacts
-        working-directory: target/release/binaries/
-        run: zip -r datadog-serverless-agent.zip .
       - name: Upload zip
         uses: actions/upload-artifact@v3
         with:
           name: datadog-serverless-agent
-          path: target/release/binaries/datadog-serverless-agent.zip
+          path: target/release/binaries
       # - name: Release
       #   uses: softprops/action-gh-release@v1
       #   with:
