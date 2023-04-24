@@ -2,7 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use ddcommon::tag::Tag;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 #[derive(Serialize, Debug)]
 pub struct Serie {
@@ -23,9 +23,8 @@ pub enum MetricNamespace {
     Appsec,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Debug, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
-
 pub enum MetricType {
     #[serde(rename = "gauge")]
     Gauge,

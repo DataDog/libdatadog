@@ -20,6 +20,7 @@ mod linux {
 }
 use std::fs::File;
 
+use std::path::PathBuf;
 use std::{
     env,
     ffi::{self, CString, OsString},
@@ -101,7 +102,12 @@ impl Target {
     /// Automatically detect which spawn method should be used
     #[cfg(not(target_os = "macos"))]
     pub fn detect_spawn_method(&self) -> std::io::Result<SpawnMethod> {
-        use std::path::PathBuf;
+        if let Ok(env) = env::var("DD_SPAWN_WORKER_USE_EXEC") {
+            if !env.is_empty() {
+                return Ok(SpawnMethod::Exec);
+            }
+        }
+
         let current_exec_path = env::current_exe()?;
         let current_exec_filename = current_exec_path.file_name().unwrap_or_default();
         #[cfg(target_os = "linux")]
@@ -196,6 +202,7 @@ pub struct SpawnWorker {
     spawn_method: Option<SpawnMethod>,
     fd_to_pass: Option<OwnedFd>,
     target: Target,
+    shared_lib_dependencies: Vec<PathBuf>,
     env: Vec<(ffi::OsString, ffi::OsString)>,
     process_name: Option<String>,
 }
@@ -212,6 +219,7 @@ impl SpawnWorker {
             fd_to_pass: None,
             env: env.into_iter().collect(),
             process_name: None,
+            shared_lib_dependencies: vec![],
         }
     }
 
@@ -226,6 +234,11 @@ impl SpawnWorker {
 
     pub fn target<T: Into<Target>>(&mut self, target: T) -> &mut Self {
         self.target = target.into();
+        self
+    }
+
+    pub fn shared_lib_dependencies(&mut self, deps: Vec<PathBuf>) -> &mut Self {
+        self.shared_lib_dependencies = deps;
         self
     }
 
@@ -291,14 +304,24 @@ impl SpawnWorker {
                     crate::get_dl_path_raw(entrypoint.ptr as *const libc::c_void)
                 } {
                     (Some(path), _) => path,
-                    _ => return Err(anyhow::format_err!("can'taaa read symbol pointer data")),
+                    _ => return Err(anyhow::format_err!("can't read symbol pointer data")),
                 };
 
                 argv.push(path);
+                for dep in &self.shared_lib_dependencies {
+                    if let Ok(s) = CString::new(dep.to_string_lossy().to_string()) {
+                        argv.push(s)
+                    }
+                }
                 argv.push(entrypoint.symbol_name.clone());
             }
             Target::Manual(path, symbol_name) => {
                 argv.push(path.clone());
+                for dep in &self.shared_lib_dependencies {
+                    if let Ok(s) = CString::new(dep.to_string_lossy().to_string()) {
+                        argv.push(s)
+                    }
+                }
                 argv.push(symbol_name.clone());
             }
             Target::Noop => return Ok(None),

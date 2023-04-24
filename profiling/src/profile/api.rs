@@ -128,6 +128,64 @@ pub struct Sample<'a> {
     pub labels: Vec<Label<'a>>,
 }
 
+pub enum UpscalingInfo {
+    Poisson {
+        // sum_value_offset and count_value_offset are offsets in the profile values type array
+        sum_value_offset: usize,
+        count_value_offset: usize,
+        sampling_distance: u64,
+    },
+    Proportional {
+        scale: f64,
+    },
+}
+
+impl std::fmt::Display for UpscalingInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UpscalingInfo::Poisson {
+                sum_value_offset,
+                count_value_offset,
+                sampling_distance,
+            } => write!(
+                f,
+                "Poisson = sum_value_offset: {}, count_value_offset: {}, sampling_distance: {}",
+                sum_value_offset, count_value_offset, sampling_distance
+            ),
+            UpscalingInfo::Proportional { scale } => {
+                write!(f, "Proportional = scale: {}", scale)
+            }
+        }
+    }
+}
+
+impl UpscalingInfo {
+    pub fn check_validity(&self, number_of_values: usize) -> anyhow::Result<()> {
+        match self {
+            UpscalingInfo::Poisson {
+                sum_value_offset,
+                count_value_offset,
+                sampling_distance,
+            } => {
+                anyhow::ensure!(
+                    sum_value_offset < &number_of_values && count_value_offset < &number_of_values,
+                    "sum_value_offset {} and count_value_offset {} must be strictly less than {}",
+                    sum_value_offset,
+                    count_value_offset,
+                    number_of_values
+                );
+                anyhow::ensure!(
+                    sampling_distance != &0,
+                    "sampling_distance {} must be greater than 0",
+                    sampling_distance
+                )
+            }
+            UpscalingInfo::Proportional { scale: _ } => (),
+        }
+        anyhow::Ok(())
+    }
+}
+
 pub struct Profile<'a> {
     pub duration: Duration,
     pub period: Option<(i64, ValueType<'a>)>,

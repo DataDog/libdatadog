@@ -41,6 +41,7 @@ renaming_overrides_prefixing = true
 "SendResult" = "ddog_prof_Exporter_SendResult"
 "SerializeResult" = "ddog_prof_Profile_SerializeResult"
 "Slice_File" = "ddog_prof_Exporter_Slice_File"
+"UpscalingRuleAddResult" = "ddog_prof_Profile_UpscalingRuleAddResult"
 
 [export.mangle]
 rename_types = "PascalCase"
