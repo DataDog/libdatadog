@@ -4,14 +4,14 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use hyper::{http, Body, Request, Response};
+use hyper::{http, Body, Request, Response, StatusCode};
 use log::info;
 use tokio::sync::mpsc::Sender;
 
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::stats_utils;
 
-use crate::http_utils::{log_and_return_http_error_response, log_and_return_http_success_response};
+use crate::http_utils::log_and_create_http_response;
 
 #[async_trait]
 pub trait StatsProcessor {
@@ -43,9 +43,10 @@ impl StatsProcessor for ServerlessStatsProcessor {
             match stats_utils::get_stats_from_request_body(body).await {
                 Ok(res) => res,
                 Err(err) => {
-                    return log_and_return_http_error_response(&format!(
-                        "Error deserializing trace stats from request body: {err}"
-                    ));
+                    return log_and_create_http_response(
+                        &format!("Error deserializing trace stats from request body: {err}"),
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                    );
                 }
             };
 
@@ -59,14 +60,16 @@ impl StatsProcessor for ServerlessStatsProcessor {
         // send trace payload to our trace flusher
         match tx.send(stats).await {
             Ok(_) => {
-                return log_and_return_http_success_response(
+                return log_and_create_http_response(
                     "Successfully buffered stats to be flushed.",
+                    StatusCode::ACCEPTED,
                 );
             }
             Err(err) => {
-                return log_and_return_http_error_response(&format!(
-                    "Error sending stats to the stats flusher: {err}"
-                ));
+                return log_and_create_http_response(
+                    &format!("Error sending stats to the stats flusher: {err}"),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                );
             }
         }
     }

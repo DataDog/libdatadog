@@ -2,7 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use async_trait::async_trait;
-use hyper::{http, Body, Request, Response};
+use hyper::{http, Body, Request, Response, StatusCode};
 use log::error;
 use tokio::sync::mpsc::Sender;
 
@@ -10,7 +10,7 @@ use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
 
-use crate::http_utils::{log_and_return_http_error_response, log_and_return_http_success_response};
+use crate::http_utils::log_and_create_http_response;
 
 /// Used to populate root_span_tags fields if they exist in the root span's meta tags
 macro_rules! parse_root_span_tags {
@@ -54,9 +54,10 @@ impl TraceProcessor for ServerlessTraceProcessor {
         let mut traces = match trace_utils::get_traces_from_request_body(body).await {
             Ok(res) => res,
             Err(err) => {
-                return log_and_return_http_error_response(&format!(
-                    "Error deserializing trace from request body: {err}"
-                ));
+                return log_and_create_http_response(
+                    &format!("Error deserializing trace from request body: {err}"),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                );
             }
         };
 
@@ -120,14 +121,16 @@ impl TraceProcessor for ServerlessTraceProcessor {
         // send trace payload to our trace flusher
         match tx.send(tracer_payload).await {
             Ok(_) => {
-                return log_and_return_http_success_response(
+                return log_and_create_http_response(
                     "Successfully buffered traces to be flushed.",
+                    StatusCode::ACCEPTED,
                 );
             }
             Err(err) => {
-                return log_and_return_http_error_response(&format!(
-                    "Error sending traces to the trace flusher: {err}"
-                ));
+                return log_and_create_http_response(
+                    &format!("Error sending traces to the trace flusher: {err}"),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                );
             }
         }
     }

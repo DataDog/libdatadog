@@ -5,28 +5,22 @@ use hyper::{http, Body, Response, StatusCode};
 use log::{error, info};
 use serde_json::json;
 
-/// Logs a message (at the info level) and returns the same message in the body of response with status code 200.
-/// Response body:
+/// Does two things:
+/// - Logs the given message. StatusCode::OK will cause an info log to be written, otherwise error will be written.
+/// - Returns the given message in the body of JSON response with the given status code.
+/// Response body format:
 /// {
 ///     "message": message
 /// }
-pub fn log_and_return_http_success_response(message: &str) -> http::Result<Response<Body>> {
-    info!("{message}");
+pub fn log_and_create_http_response(
+    message: &str,
+    status: StatusCode,
+) -> http::Result<Response<Body>> {
+    if status == StatusCode::OK {
+        info!("{message}");
+    } else {
+        error!("{message}");
+    }
     let body = json!({ "message": message }).to_string();
-    Response::builder()
-        .status(StatusCode::OK)
-        .body(Body::from(body))
-}
-
-/// Logs a message (at the error level) and returns the same message in the body of response with status code 500.
-/// Response body:
-/// {
-///     "message": message
-/// }
-pub fn log_and_return_http_error_response(message: &str) -> http::Result<Response<Body>> {
-    error!("{message}");
-    let body = json!({ "message": message }).to_string();
-    Response::builder()
-        .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .body(Body::from(body))
+    Response::builder().status(status).body(Body::from(body))
 }
