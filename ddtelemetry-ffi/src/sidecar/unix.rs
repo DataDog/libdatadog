@@ -3,10 +3,7 @@
 
 use datadog_ipc::platform::PlatformHandle;
 use ddcommon_ffi as ffi;
-use std::{
-    fs::File,
-    os::unix::{net::UnixStream, prelude::FromRawFd},
-};
+use std::{fs::File, os::unix::prelude::FromRawFd};
 
 use ddtelemetry::{
     data::{self, Dependency, Integration},
@@ -26,11 +23,6 @@ use crate::{try_c, MaybeError};
 #[repr(C)]
 pub struct NativeFile {
     pub handle: Box<PlatformHandle<File>>,
-}
-
-#[repr(C)]
-pub struct NativeUnixStream {
-    pub handle: PlatformHandle<UnixStream>,
 }
 
 /// This creates Rust PlatformHandle<File> from supplied C std FILE object.
@@ -58,11 +50,6 @@ pub extern "C" fn ddog_ph_file_clone(platform_handle: &NativeFile) -> Box<Native
 
 #[no_mangle]
 pub extern "C" fn ddog_ph_file_drop(ph: NativeFile) {
-    drop(ph)
-}
-
-#[no_mangle]
-pub extern "C" fn ddog_ph_unix_stream_drop(ph: Box<NativeUnixStream>) {
     drop(ph)
 }
 
