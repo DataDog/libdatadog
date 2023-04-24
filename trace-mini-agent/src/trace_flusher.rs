@@ -53,8 +53,6 @@ impl TraceFlusher for ServerlessTraceFlusher {
         }
         info!("Flushing {} traces", traces.len());
 
-        debug!("Traces to be flushed: {:?}", traces);
-
         let agent_payload = trace_utils::construct_agent_payload(traces);
         let serialized_agent_payload = match trace_utils::serialize_agent_payload(agent_payload) {
             Ok(res) => res,
