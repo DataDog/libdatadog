@@ -35,7 +35,7 @@ macro_rules! parse_string_header {
 }
 
 pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<Vec<Vec<pb::Span>>> {
-    let buffer = hyper::body::aggregate(body).await.unwrap();
+    let buffer = hyper::body::aggregate(body).await?;
 
     let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_read(buffer.reader()) {
         Ok(res) => res,
@@ -137,11 +137,11 @@ pub fn construct_tracer_payload(
     }
 }
 
-pub fn serialize_agent_payload(payload: pb::AgentPayload) -> Vec<u8> {
+pub fn serialize_agent_payload(payload: pb::AgentPayload) -> anyhow::Result<Vec<u8>> {
     let mut buf = Vec::new();
     buf.reserve(payload.encoded_len());
-    payload.encode(&mut buf).unwrap();
-    buf
+    payload.encode(&mut buf)?;
+    Ok(buf)
 }
 
 pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
