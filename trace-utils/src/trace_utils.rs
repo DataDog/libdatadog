@@ -98,9 +98,9 @@ pub fn get_tracer_header_tags(headers: &HeaderMap<HeaderValue>) -> TracerHeaderT
 
 pub fn construct_agent_payload(tracer_payloads: Vec<pb::TracerPayload>) -> pb::AgentPayload {
     pb::AgentPayload {
-        host_name: "ffi-test-hostname".to_string(),
-        env: "ffi-test-env".to_string(),
-        agent_version: "ffi-agent-version".to_string(),
+        host_name: "".to_string(),
+        env: "".to_string(),
+        agent_version: "".to_string(),
         error_tps: 60.0,
         target_tps: 60.0,
         tags: HashMap::new(),
