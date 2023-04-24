@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
-use crate::http_utils::log_and_return_http_error_response;
+use crate::http_utils::log_and_create_http_response;
 use crate::{stats_flusher, stats_processor, trace_flusher, trace_processor};
 use datadog_trace_protobuf::pb;
 
@@ -106,24 +106,27 @@ impl MiniAgent {
             (&Method::PUT, TRACE_ENDPOINT_PATH) => {
                 match trace_processor.process_traces(req, trace_tx).await {
                     Ok(res) => Ok(res),
-                    Err(err) => log_and_return_http_error_response(&format!(
-                        "Error processing traces: {err}"
-                    )),
+                    Err(err) => log_and_create_http_response(
+                        &format!("Error processing traces: {err}"),
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                    ),
                 }
             }
             (&Method::PUT, STATS_ENDPOINT_PATH) => {
                 match stats_processor.process_stats(req, stats_tx).await {
                     Ok(res) => Ok(res),
-                    Err(err) => log_and_return_http_error_response(&format!(
-                        "Error processing trace stats: {err}",
-                    )),
+                    Err(err) => log_and_create_http_response(
+                        &format!("Error processing trace stats: {err}"),
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                    ),
                 }
             }
             (_, INFO_ENDPOINT_PATH) => match Self::info_handler() {
                 Ok(res) => Ok(res),
-                Err(err) => {
-                    log_and_return_http_error_response(&format!("Info endpoint error: {err}"))
-                }
+                Err(err) => log_and_create_http_response(
+                    &format!("Info endpoint error: {err}"),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                ),
             },
             _ => {
                 let mut not_found = Response::default();

@@ -9,6 +9,8 @@ use tokio::sync::{mpsc::Receiver, Mutex};
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
 
+const TRACE_FLUSH_INTERVAL_MS: u64 = 3000;
+
 #[async_trait]
 pub trait TraceFlusher {
     /// Starts a trace flusher that listens for trace payloads sent to the tokio mpsc Receiver,
@@ -37,7 +39,7 @@ impl TraceFlusher for ServerlessTraceFlusher {
         });
 
         loop {
-            tokio::time::sleep(time::Duration::from_millis(3000)).await;
+            tokio::time::sleep(time::Duration::from_millis(TRACE_FLUSH_INTERVAL_MS)).await;
 
             let mut buffer = buffer_consumer.lock().await;
             if !buffer.is_empty() {
