@@ -35,7 +35,7 @@ macro_rules! parse_string_header {
 }
 
 pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<Vec<Vec<pb::Span>>> {
-    let buffer = hyper::body::aggregate(body).await.unwrap();
+    let buffer = hyper::body::aggregate(body).await?;
 
     let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_read(buffer.reader()) {
         Ok(res) => res,
@@ -98,9 +98,9 @@ pub fn get_tracer_header_tags(headers: &HeaderMap<HeaderValue>) -> TracerHeaderT
 
 pub fn construct_agent_payload(tracer_payloads: Vec<pb::TracerPayload>) -> pb::AgentPayload {
     pb::AgentPayload {
-        host_name: "ffi-test-hostname".to_string(),
-        env: "ffi-test-env".to_string(),
-        agent_version: "ffi-agent-version".to_string(),
+        host_name: "".to_string(),
+        env: "".to_string(),
+        agent_version: "".to_string(),
         error_tps: 60.0,
         target_tps: 60.0,
         tags: HashMap::new(),
@@ -137,11 +137,11 @@ pub fn construct_tracer_payload(
     }
 }
 
-pub fn serialize_agent_payload(payload: pb::AgentPayload) -> Vec<u8> {
+pub fn serialize_agent_payload(payload: pb::AgentPayload) -> anyhow::Result<Vec<u8>> {
     let mut buf = Vec::new();
     buf.reserve(payload.encoded_len());
-    payload.encode(&mut buf).unwrap();
-    buf
+    payload.encode(&mut buf)?;
+    Ok(buf)
 }
 
 pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
@@ -153,7 +153,6 @@ pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
     let req = Request::builder()
         .method(Method::POST)
         .uri(TRACE_INTAKE_URL)
-        .header("User-agent", "ffi-test")
         .header("Content-type", "application/x-protobuf")
         .header("DD-API-KEY", &api_key)
         .body(Body::from(data))?;
