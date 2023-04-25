@@ -2,14 +2,16 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use async_trait::async_trait;
-use datadog_trace_protobuf::pb;
 use hyper::{http, Body, Request, Response};
-use log::error;
+use log::{error, info};
+use serde_json::json;
 use tokio::sync::mpsc::Sender;
 
 use datadog_trace_normalization::normalizer;
+use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
 
+/// Used to populate root_span_tags fields if they exist in the root span's meta tags
 macro_rules! parse_root_span_tags {
     (
         $root_span_meta_map:ident,
@@ -51,9 +53,9 @@ impl TraceProcessor for ServerlessTraceProcessor {
         let mut traces = match trace_utils::get_traces_from_request_body(body).await {
             Ok(res) => res,
             Err(err) => {
+                error!("Error deserializing trace from request body: err");
                 return Response::builder().body(Body::from(format!(
-                    "Error deserializing trace from request body: {}",
-                    err
+                    "Error deserializing trace from request body: {err}"
                 )));
             }
         };
@@ -73,21 +75,27 @@ impl TraceProcessor for ServerlessTraceProcessor {
             let root_span_index = match trace_utils::get_root_span_index(trace) {
                 Ok(res) => res,
                 Err(e) => {
-                    error!(
-                        "Error getting the root span index of a trace, skipping. {}",
-                        e,
-                    );
+                    error!("Error getting the root span index of a trace, skipping. {e}");
                     continue;
                 }
             };
 
             if let Err(e) = normalizer::normalize_chunk(&mut chunk, root_span_index) {
-                error!("Error normalizing trace chunk: {}", e);
+                error!("Error normalizing trace chunk: {e}");
+            }
+
+            for span in chunk.spans.iter_mut() {
+                // TODO: obfuscate & truncate spans
+                if tracer_header_tags.client_computed_top_level {
+                    trace_utils::update_tracer_top_level(span);
+                }
             }
 
             if !tracer_header_tags.client_computed_top_level {
                 trace_utils::compute_top_level_span(&mut chunk.spans);
             }
+
+            trace_utils::set_serverless_root_span_tags(&mut chunk.spans[root_span_index]);
 
             trace_chunks.push(chunk);
 
@@ -111,13 +119,18 @@ impl TraceProcessor for ServerlessTraceProcessor {
 
         // send trace payload to our trace flusher
         match tx.send(tracer_payload).await {
-            Ok(_) => Response::builder()
-                .status(200)
-                .body(Body::from("Successfully buffered traces to be flushed.")),
-            Err(e) => Response::builder().status(500).body(Body::from(format!(
-                "Error sending traces to the trace flusher. {}",
-                e
-            ))),
+            Ok(_) => {
+                info!("Successfully buffered traces to be flushed.");
+                let body =
+                    json!({ "message": "Successfully buffered traces to be flushed." }).to_string();
+                Response::builder().status(200).body(Body::from(body))
+            }
+            Err(e) => {
+                let message = format!("Error sending traces to the trace flusher: {e}");
+                error!("Error sending traces to the trace flusher: {message}");
+                let body = json!({ "message": message }).to_string();
+                Response::builder().status(500).body(Body::from(body))
+            }
         }
     }
 }
@@ -155,11 +168,15 @@ mod tests {
                 ),
             ]),
             metrics: HashMap::new(),
-            r#type: "custom".to_string(),
+            r#type: "".to_string(),
             meta_struct: HashMap::new(),
         };
         if is_top_level {
             span.metrics.insert("_top_level".to_string(), 1.0);
+            span.meta.insert("functionname".to_string(), "".to_string());
+            span.meta
+                .insert("_dd.origin".to_string(), "gcp_function".to_string());
+            span.r#type = "serverless".to_string();
         }
         span
     }
@@ -228,7 +245,7 @@ mod tests {
             tracer_version: "4.0.0".to_string(),
             runtime_id: "afjksdljfkllksdj-28934889".to_string(),
             chunks: vec![pb::TraceChunk {
-                priority: 1,
+                priority: i8::MIN as i32,
                 origin: "".to_string(),
                 spans: vec![create_test_span(start, 222, 0, true)],
                 tags: HashMap::new(),
@@ -281,7 +298,7 @@ mod tests {
             tracer_version: "4.0.0".to_string(),
             runtime_id: "afjksdljfkllksdj-28934889".to_string(),
             chunks: vec![pb::TraceChunk {
-                priority: 1,
+                priority: i8::MIN as i32,
                 origin: "".to_string(),
                 spans: vec![
                     create_test_span(start, 333, 222, false),

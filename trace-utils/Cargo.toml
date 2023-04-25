@@ -13,6 +13,7 @@ prost = "0.11.6"
 rmp-serde = "1.1.1"
 log = "0.4"
 datadog-trace-protobuf = { path = "../trace-protobuf" }
+datadog-trace-normalization = { path = "../trace-normalization" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
