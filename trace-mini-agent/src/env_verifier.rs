@@ -121,10 +121,12 @@ async fn ensure_gcp_function_environment(
     let gcp_metadata = match get_gcp_metadata_from_body(body).await {
         Ok(res) => res,
         Err(err) => {
-            debug!("Failed to get GCP Function Metadata. Will not enrich spans. {err}");
+            error!("Failed to get GCP Function Metadata. Will not enrich spans. {err}");
             return Ok(GCPMetadata::default());
         }
     };
+
+    error!("debugging gcp func metadata, in ensure_gcp_function_environment: {:?}", gcp_metadata);
 
     Ok(gcp_metadata)
 }
