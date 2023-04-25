@@ -132,14 +132,16 @@ async fn ensure_gcp_function_environment(
 async fn get_gcp_metadata_from_body(body: hyper::Body) -> anyhow::Result<GCPMetadata> {
     let bytes = hyper::body::to_bytes(body).await?;
     let body_str = String::from_utf8(bytes.to_vec())?;
+    error!("GCP METADATA body string: {:?}", body_str);
     let gcp_metadata: GCPMetadata = serde_json::from_str(&body_str)?;
+    error!("GCP METADATA DESERIALIZED: {:?}", gcp_metadata);
     Ok(gcp_metadata)
 }
 
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
-    use hyper::{Body, Error, Response, StatusCode};
+    use hyper::{Body, Response, StatusCode};
 
     use crate::env_verifier::{ensure_gcp_function_environment, GoogleMetadataClient};
 
