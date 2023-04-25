@@ -277,6 +277,32 @@ pub fn update_tracer_top_level(span: &mut pb::Span) {
     }
 }
 
+#[derive(Clone, Default, Debug)]
+pub struct MiniAgentMetadata {
+    pub gcp_project_id: Option<String>,
+    pub gcp_numeric_project_id: Option<u64>,
+    pub gcp_region: Option<String>,
+}
+
+pub async fn enrich_span_with_mini_agent_metadata(
+    span: &mut pb::Span,
+    mini_agent_metadata: MiniAgentMetadata,
+) {
+    if let Some(gcp_project_id) = mini_agent_metadata.gcp_project_id {
+        span.meta
+            .insert("gcp_project_id".to_string(), gcp_project_id);
+    }
+    if let Some(gcp_numeric_project_id) = mini_agent_metadata.gcp_numeric_project_id {
+        span.meta.insert(
+            "gcp_numeric_project_id".to_string(),
+            gcp_numeric_project_id.to_string(),
+        );
+    }
+    if let Some(gcp_region) = mini_agent_metadata.gcp_region {
+        span.meta.insert("gcp_region".to_string(), gcp_region);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use hyper::Request;

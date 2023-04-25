@@ -1,10 +1,12 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use hyper::{http, Body, Request, Response, StatusCode};
 use log::error;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::{mpsc::Sender, Mutex};
 
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
@@ -33,6 +35,7 @@ pub trait TraceProcessor {
         &self,
         req: Request<Body>,
         tx: Sender<pb::TracerPayload>,
+        mini_agent_metadata: Arc<Mutex<trace_utils::MiniAgentMetadata>>,
     ) -> http::Result<Response<Body>>;
 }
 
@@ -45,6 +48,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
         &self,
         req: Request<Body>,
         tx: Sender<pb::TracerPayload>,
+        mini_agent_metadata: Arc<Mutex<trace_utils::MiniAgentMetadata>>,
     ) -> http::Result<Response<Body>> {
         let (parts, body) = req.into_parts();
 
@@ -90,6 +94,8 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 if tracer_header_tags.client_computed_top_level {
                     trace_utils::update_tracer_top_level(span);
                 }
+                let temp = mini_agent_metadata.lock().await;
+                trace_utils::enrich_span_with_mini_agent_metadata(span, temp.clone()).await;
             }
 
             if !tracer_header_tags.client_computed_top_level {
@@ -142,12 +148,15 @@ mod tests {
     use serde_json::json;
     use std::{
         collections::HashMap,
+        sync::Arc,
         time::{SystemTime, UNIX_EPOCH},
     };
     use tokio::sync::mpsc::{self, Receiver, Sender};
+    use tokio::sync::Mutex;
 
     use crate::trace_processor::{self, TraceProcessor};
     use datadog_trace_protobuf::pb;
+    use datadog_trace_utils::trace_utils;
 
     fn create_test_span(start: i64, span_id: u64, parent_id: u64, is_top_level: bool) -> pb::Span {
         let mut span = pb::Span {
@@ -232,7 +241,13 @@ mod tests {
             .unwrap();
 
         let trace_processor = trace_processor::ServerlessTraceProcessor {};
-        let res = trace_processor.process_traces(request, tx).await;
+        let res = trace_processor
+            .process_traces(
+                request,
+                tx,
+                Arc::new(Mutex::new(trace_utils::MiniAgentMetadata::default())),
+            )
+            .await;
         assert!(res.is_ok());
 
         let tracer_payload = rx.recv().await;
@@ -285,7 +300,13 @@ mod tests {
             .unwrap();
 
         let trace_processor = trace_processor::ServerlessTraceProcessor {};
-        let res = trace_processor.process_traces(request, tx).await;
+        let res = trace_processor
+            .process_traces(
+                request,
+                tx,
+                Arc::new(Mutex::new(trace_utils::MiniAgentMetadata::default())),
+            )
+            .await;
         assert!(res.is_ok());
 
         let tracer_payload = rx.recv().await;

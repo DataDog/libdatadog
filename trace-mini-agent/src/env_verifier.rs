@@ -6,14 +6,9 @@ use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use std::process;
 
-const GCP_METADATA_URL: &str = "http://metadata.google.internal/computeMetadata/v1/?recursive=true";
+use datadog_trace_utils::trace_utils;
 
-#[derive(Default, Debug)]
-pub struct MiniAgentMetadata {
-    pub gcp_project_id: Option<String>,
-    pub gcp_numeric_project_id: Option<u64>,
-    pub gcp_region: Option<String>,
-}
+const GCP_METADATA_URL: &str = "http://metadata.google.internal/computeMetadata/v1/?recursive=true";
 
 #[derive(Default, Debug, Deserialize, Serialize)]
 pub struct GCPMetadata {
@@ -26,7 +21,7 @@ pub struct GCPInstance {
     pub region: Option<String>,
 }
 
-#[derive(Default, Debug, Deserialize, Serialize)]
+#[derive(Clone, Default, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GCPProject {
     pub numeric_project_id: Option<u64>,
@@ -36,14 +31,14 @@ pub struct GCPProject {
 #[async_trait]
 pub trait EnvVerifier {
     /// verifies the mini agent is running in the intended environment. if not, exit the process.
-    async fn verify_environment(&self) -> MiniAgentMetadata;
+    async fn verify_environment(&self) -> trace_utils::MiniAgentMetadata;
 }
 
 pub struct ServerlessEnvVerifier {}
 
 #[async_trait]
 impl EnvVerifier for ServerlessEnvVerifier {
-    async fn verify_environment(&self) -> MiniAgentMetadata {
+    async fn verify_environment(&self) -> trace_utils::MiniAgentMetadata {
         let gcp_metadata = match ensure_gcp_function_environment(Box::new(
             GoogleMetadataClientWrapper {},
         ))
@@ -56,7 +51,7 @@ impl EnvVerifier for ServerlessEnvVerifier {
             }
         };
         debug!("Google Cloud Function environment verification suceeded.");
-        MiniAgentMetadata {
+        trace_utils::MiniAgentMetadata {
             gcp_project_id: gcp_metadata.project.project_id,
             gcp_numeric_project_id: gcp_metadata.project.numeric_project_id,
             gcp_region: gcp_metadata.instance.region,
@@ -126,17 +121,13 @@ async fn ensure_gcp_function_environment(
         }
     };
 
-    error!("debugging gcp func metadata, in ensure_gcp_function_environment: {:?}", gcp_metadata);
-
     Ok(gcp_metadata)
 }
 
 async fn get_gcp_metadata_from_body(body: hyper::Body) -> anyhow::Result<GCPMetadata> {
     let bytes = hyper::body::to_bytes(body).await?;
     let body_str = String::from_utf8(bytes.to_vec())?;
-    error!("GCP METADATA body string: {:?}", body_str);
     let gcp_metadata: GCPMetadata = serde_json::from_str(&body_str)?;
-    error!("GCP METADATA DESERIALIZED: {:?}", gcp_metadata);
     Ok(gcp_metadata)
 }
 
