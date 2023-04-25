@@ -1,0 +1,10 @@
+[package]
+edition = "2021"
+name = "sidecar_mockgen"
+version = "0.1.0"
+
+[dependencies]
+object = {version = "0.31.0"}
+
+[[bin]]
+name = "sidecar_mockgen"

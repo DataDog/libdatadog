@@ -1,4 +1,4 @@
-root_name: datadog-profiling, ddcommon, datadog-profiling-ffi, ddcommon-ffi, ddtelemetry, datadog-ipc, spawn_worker, cc_utils, ddtelemetry-ffi, tools, datadog-trace-normalization, datadog-trace-protobuf, datadog-trace-obfuscation, datadog-trace-utils, test_spawn_from_lib, datadog-serverless-trace-mini-agent
+root_name: datadog-profiling, ddcommon, datadog-profiling-ffi, ddcommon-ffi, ddtelemetry, datadog-ipc, spawn_worker, cc_utils, ddtelemetry-ffi, tools, datadog-trace-normalization, datadog-trace-protobuf, datadog-trace-obfuscation, datadog-trace-utils, test_spawn_from_lib, datadog-serverless-trace-mini-agent, sidecar_mockgen
 third_party_libraries:
 - package_name: ahash
   package_version: 0.7.6
