@@ -177,6 +177,7 @@ pub struct ClientStatsPayload {
     pub hostname: ::prost::alloc::string::String,
     /// env tag set on spans or in the tracers, used for aggregation
     #[prost(string, tag = "2")]
+    #[serde(default)]
     pub env: ::prost::alloc::string::String,
     /// version tag set on spans or in the tracers, used for aggregation
     #[prost(string, tag = "3")]
