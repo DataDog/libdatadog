@@ -9,7 +9,7 @@ use tokio::sync::{mpsc::Receiver, Mutex};
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::stats_utils;
 
-const STATS_FLUSH_INTERVAL_MS: u64 = 3000;
+const STATS_FLUSH_INTERVAL_SEC: u64 = 3;
 
 #[async_trait]
 pub trait StatsFlusher {
@@ -39,7 +39,7 @@ impl StatsFlusher for ServerlessStatsFlusher {
         });
 
         loop {
-            tokio::time::sleep(time::Duration::from_millis(STATS_FLUSH_INTERVAL_MS)).await;
+            tokio::time::sleep(time::Duration::from_secs(STATS_FLUSH_INTERVAL_SEC)).await;
 
             let mut buffer = buffer_consumer.lock().await;
             if !buffer.is_empty() {
