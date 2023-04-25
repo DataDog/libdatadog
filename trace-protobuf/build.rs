@@ -69,6 +69,7 @@ fn generate_protobuf() {
     );
 
     config.field_attribute("ClientStatsPayload.agentAggregation", "#[serde(default)]");
+    config.field_attribute("ClientStatsPayload.env", "#[serde(default)]");
     config.field_attribute("ClientStatsPayload.service", "#[serde(default)]");
     config.field_attribute("ClientStatsPayload.containerID", "#[serde(default)]");
     config.field_attribute("ClientStatsPayload.tags", "#[serde(default)]");
