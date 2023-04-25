@@ -47,7 +47,8 @@ impl EnvVerifier for ServerlessEnvVerifier {
             Ok(res) => res,
             Err(e) => {
                 error!("Google Cloud Function environment verification failed. The Mini Agent cannot be run in a non cloud function environment. Error: {e}. Shutting down now.");
-                process::exit(1);
+                // process::exit(1);
+                return trace_utils::MiniAgentMetadata::default();
             }
         };
         debug!("Google Cloud Function environment verification suceeded.");

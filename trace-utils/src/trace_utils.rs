@@ -284,7 +284,7 @@ pub struct MiniAgentMetadata {
     pub gcp_region: Option<String>,
 }
 
-pub async fn enrich_span_with_mini_agent_metadata(
+pub fn enrich_span_with_mini_agent_metadata(
     span: &mut pb::Span,
     mini_agent_metadata: MiniAgentMetadata,
 ) {

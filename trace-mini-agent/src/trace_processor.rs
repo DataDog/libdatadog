@@ -92,10 +92,11 @@ impl TraceProcessor for ServerlessTraceProcessor {
             for span in chunk.spans.iter_mut() {
                 // TODO: obfuscate & truncate spans
                 if tracer_header_tags.client_computed_top_level {
+                    error!("client computed top level. update tracer top level now.");
                     trace_utils::update_tracer_top_level(span);
                 }
                 let temp = mini_agent_metadata.lock().await;
-                trace_utils::enrich_span_with_mini_agent_metadata(span, temp.clone()).await;
+                trace_utils::enrich_span_with_mini_agent_metadata(span, temp.clone());
             }
 
             if !tracer_header_tags.client_computed_top_level {
