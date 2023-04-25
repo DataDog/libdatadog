@@ -24,6 +24,6 @@ pub fn main() {
     });
 
     if let Err(e) = mini_agent.start_mini_agent() {
-        error!("Error when starting serverless trace mini agent: {}", e);
+        error!("Error when starting serverless trace mini agent: {e}");
     }
 }
