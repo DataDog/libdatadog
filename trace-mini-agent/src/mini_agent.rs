@@ -61,6 +61,7 @@ impl MiniAgent {
         // start hyper http server
         if let Err(e) = server.await {
             error!("Server error: {e}");
+            return Err(e.into());
         }
 
         Ok(())
