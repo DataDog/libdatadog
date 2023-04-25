@@ -484,6 +484,7 @@ dependencies = [
  "hyper",
  "log",
  "rmp-serde",
+ "serde",
  "serde_json",
  "tokio",
 ]

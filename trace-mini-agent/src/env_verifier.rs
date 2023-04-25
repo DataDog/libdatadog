@@ -1,45 +1,96 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 use async_trait::async_trait;
-use hyper::{Body, Client, Error, Response, Uri};
+use hyper::{Body, Client, Method, Request, Response};
 use log::{debug, error};
+use serde::{Deserialize, Serialize};
 use std::process;
 
-const GCP_METADATA_URL: &str = "http://metadata.google.internal";
+const GCP_METADATA_URL: &str = "http://metadata.google.internal/computeMetadata/v1/?recursive=true";
+
+#[derive(Default, Debug)]
+pub struct MiniAgentMetadata {
+    pub gcp_project_id: Option<String>,
+    pub gcp_numeric_project_id: Option<u64>,
+    pub gcp_region: Option<String>,
+}
+
+#[derive(Default, Debug, Deserialize, Serialize)]
+pub struct GCPMetadata {
+    pub instance: GCPInstance,
+    pub project: GCPProject,
+}
+
+#[derive(Default, Debug, Deserialize, Serialize)]
+pub struct GCPInstance {
+    pub region: Option<String>,
+}
+
+#[derive(Default, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GCPProject {
+    pub numeric_project_id: Option<u64>,
+    pub project_id: Option<String>,
+}
 
 #[async_trait]
 pub trait EnvVerifier {
     /// verifies the mini agent is running in the intended environment. if not, exit the process.
-    async fn verify_environment(&self);
+    async fn verify_environment(&self) -> MiniAgentMetadata;
 }
 
 pub struct ServerlessEnvVerifier {}
 
 #[async_trait]
 impl EnvVerifier for ServerlessEnvVerifier {
-    async fn verify_environment(&self) {
-        if let Err(e) =
-            ensure_gcp_function_environment(Box::new(GoogleMetadataClientWrapper {})).await
+    async fn verify_environment(&self) -> MiniAgentMetadata {
+        let gcp_metadata = match ensure_gcp_function_environment(Box::new(
+            GoogleMetadataClientWrapper {},
+        ))
+        .await
         {
-            error!("Google Cloud Function environment verification failed. The Mini Agent cannot be run in a non cloud function environment. Error: {e}. Shutting down now.");
-            process::exit(1);
+            Ok(res) => res,
+            Err(e) => {
+                error!("Google Cloud Function environment verification failed. The Mini Agent cannot be run in a non cloud function environment. Error: {e}. Shutting down now.");
+                process::exit(1);
+            }
+        };
+        debug!("Google Cloud Function environment verification suceeded.");
+        MiniAgentMetadata {
+            gcp_project_id: gcp_metadata.project.project_id,
+            gcp_numeric_project_id: gcp_metadata.project.numeric_project_id,
+            gcp_region: gcp_metadata.instance.region,
         }
-        debug!("Google Cloud Function environment verification suceeded.")
     }
 }
 
 /// GoogleMetadataClient trait is used so we can mock a google metadata server response in unit tests
 #[async_trait]
 trait GoogleMetadataClient {
-    async fn get_metadata(&self) -> Result<Response<Body>, Error>;
+    async fn get_metadata(&self) -> anyhow::Result<Response<Body>>;
 }
 struct GoogleMetadataClientWrapper {}
 
 #[async_trait]
 impl GoogleMetadataClient for GoogleMetadataClientWrapper {
-    async fn get_metadata(&self) -> Result<Response<Body>, Error> {
+    // async fn get_metadata(&self) -> anyhow::Result<Response<Body>> {
+    async fn get_metadata(&self) -> anyhow::Result<Response<Body>> {
+        let req = match Request::builder()
+            .method(Method::POST)
+            .uri(GCP_METADATA_URL)
+            .header("Metadata-Flavor", "Google")
+            .body(Body::empty())
+        {
+            Ok(res) => res,
+            Err(err) => {
+                anyhow::bail!(err.to_string())
+            }
+        };
         let client = Client::new();
-        client.get(Uri::from_static(GCP_METADATA_URL)).await
+        match client.request(req).await {
+            Ok(res) => Ok(res),
+            Err(err) => anyhow::bail!(err.to_string()),
+        }
     }
 }
 
@@ -47,14 +98,15 @@ impl GoogleMetadataClient for GoogleMetadataClientWrapper {
 /// if not, returns an error with the verification failure reason.
 async fn ensure_gcp_function_environment(
     metadata_client: Box<dyn GoogleMetadataClient + Send + Sync>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<GCPMetadata> {
     let response = match metadata_client.get_metadata().await {
         Ok(res) => res,
         Err(e) => {
             anyhow::bail!("Can't communicate with Google Metadata Server. {e}")
         }
     };
-    let headers = response.headers();
+    let (parts, body) = response.into_parts();
+    let headers = parts.headers;
     match headers.get("Server") {
         Some(val) => {
             if val != "Metadata Server for Serverless" {
@@ -65,7 +117,23 @@ async fn ensure_gcp_function_environment(
             anyhow::bail!("In Google Cloud, but server identifier not found.")
         }
     }
-    Ok(())
+
+    let gcp_metadata = match get_gcp_metadata_from_body(body).await {
+        Ok(res) => res,
+        Err(err) => {
+            debug!("Failed to get GCP Function Metadata. Will not enrich spans. {err}");
+            return Ok(GCPMetadata::default());
+        }
+    };
+
+    Ok(gcp_metadata)
+}
+
+async fn get_gcp_metadata_from_body(body: hyper::Body) -> anyhow::Result<GCPMetadata> {
+    let bytes = hyper::body::to_bytes(body).await?;
+    let body_str = String::from_utf8(bytes.to_vec())?;
+    let gcp_metadata: GCPMetadata = serde_json::from_str(&body_str)?;
+    Ok(gcp_metadata)
 }
 
 #[cfg(test)]
@@ -93,7 +161,7 @@ mod tests {
         struct MockGoogleMetadataClient {}
         #[async_trait]
         impl GoogleMetadataClient for MockGoogleMetadataClient {
-            async fn get_metadata(&self) -> Result<Response<Body>, Error> {
+            async fn get_metadata(&self) -> anyhow::Result<Response<Body>> {
                 Ok(Response::builder()
                     .status(StatusCode::OK)
                     .body(Body::empty())
@@ -113,7 +181,7 @@ mod tests {
         struct MockGoogleMetadataClient {}
         #[async_trait]
         impl GoogleMetadataClient for MockGoogleMetadataClient {
-            async fn get_metadata(&self) -> Result<Response<Body>, Error> {
+            async fn get_metadata(&self) -> anyhow::Result<Response<Body>> {
                 Ok(Response::builder()
                     .status(StatusCode::OK)
                     .header("Server", "Metadata Server NOT for Serverless")
@@ -134,7 +202,7 @@ mod tests {
         struct MockGoogleMetadataClient {}
         #[async_trait]
         impl GoogleMetadataClient for MockGoogleMetadataClient {
-            async fn get_metadata(&self) -> Result<Response<Body>, Error> {
+            async fn get_metadata(&self) -> anyhow::Result<Response<Body>> {
                 Ok(Response::builder()
                     .status(StatusCode::OK)
                     .header("Server", "Metadata Server for Serverless")
