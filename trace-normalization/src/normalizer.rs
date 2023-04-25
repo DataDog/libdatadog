@@ -20,7 +20,7 @@ const TAG_SAMPLING_PRIORITY: &str = "_sampling_priority_v1";
 const TAG_ORIGIN: &str = "_dd.origin";
 
 #[allow(dead_code)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum SamplerPriority {
     AutoDrop = 0,
     AutoKeep = 1,
