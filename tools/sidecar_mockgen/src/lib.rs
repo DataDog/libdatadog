@@ -18,9 +18,7 @@ fn check_and_parse<'a>(
         Ok(bin_data) => bin_data,
     };
     match File::parse(bin_data.as_slice()) {
-        Err(e) => {
-            return Err(format!("Could not parse {}: {}", path.to_string_lossy(), e));
-        }
+        Err(e) => Err(format!("Could not parse {}: {}", path.to_string_lossy(), e)),
         Ok(parsed) => Ok(parsed),
     }
 }
