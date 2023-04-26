@@ -24,7 +24,7 @@ pub fn main() {
     let config = match config::Config::new() {
         Ok(c) => c,
         Err(e) => {
-            error!("Error when starting serverless trace mini agent: {e}");
+            error!("Error creating config on serverless trace mini agent startup: {e}");
             return;
         }
     };
