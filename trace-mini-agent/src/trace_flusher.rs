@@ -2,13 +2,12 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use async_trait::async_trait;
-use log::error;
-use tokio::sync::mpsc::Receiver;
+use log::{debug, error, info};
+use std::{sync::Arc, time};
+use tokio::sync::{mpsc::Receiver, Mutex};
 
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
-
-const BUFFER_FLUSH_SIZE: usize = 1;
 
 #[async_trait]
 pub trait TraceFlusher {
@@ -25,13 +24,23 @@ pub struct ServerlessTraceFlusher {}
 #[async_trait]
 impl TraceFlusher for ServerlessTraceFlusher {
     async fn start_trace_flusher(&self, mut rx: Receiver<pb::TracerPayload>) {
-        let mut buffer: Vec<pb::TracerPayload> = Vec::with_capacity(BUFFER_FLUSH_SIZE);
+        let buffer: Arc<Mutex<Vec<pb::TracerPayload>>> = Arc::new(Mutex::new(Vec::new()));
 
-        // receive trace payloads from http endpoint handlers and add them to the buffer. flush if
-        // the buffer gets to BUFFER_FLUSH_SIZE size.
-        while let Some(tracer_payload) = rx.recv().await {
-            buffer.push(tracer_payload);
-            if buffer.len() >= BUFFER_FLUSH_SIZE {
+        let buffer_producer = buffer.clone();
+        let buffer_consumer = buffer.clone();
+
+        tokio::spawn(async move {
+            while let Some(tracer_payload) = rx.recv().await {
+                let mut buffer = buffer_producer.lock().await;
+                buffer.push(tracer_payload);
+            }
+        });
+
+        loop {
+            tokio::time::sleep(time::Duration::from_secs(3)).await;
+
+            let mut buffer = buffer_consumer.lock().await;
+            if !buffer.is_empty() {
                 self.flush_traces(buffer.to_vec()).await;
                 buffer.clear();
             }
@@ -42,12 +51,25 @@ impl TraceFlusher for ServerlessTraceFlusher {
         if traces.is_empty() {
             return;
         }
+        info!("Flushing {} traces", traces.len());
+
+        debug!("Traces to be flushed: {traces:?}");
 
         let agent_payload = trace_utils::construct_agent_payload(traces);
-        let serialized_agent_payload = trace_utils::serialize_agent_payload(agent_payload);
+        let serialized_agent_payload = match trace_utils::serialize_agent_payload(agent_payload) {
+            Ok(res) => res,
+            Err(err) => {
+                error!("Failed to serialize trace agent payload, dropping traces: {err}");
+                return;
+            }
+        };
 
-        if let Err(e) = trace_utils::send(serialized_agent_payload).await {
-            error!("Error sending trace: {:?}", e);
+        match trace_utils::send(serialized_agent_payload).await {
+            Ok(_) => info!("Successfully flushed traces"),
+            Err(e) => {
+                error!("Error sending trace: {:?}", e)
+                // TODO: Retries
+            }
         }
     }
 }
