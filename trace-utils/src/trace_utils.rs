@@ -105,6 +105,7 @@ pub fn construct_agent_payload(tracer_payloads: Vec<pb::TracerPayload>) -> pb::A
         target_tps: 60.0,
         tags: HashMap::new(),
         tracer_payloads,
+        rare_sampler_enabled: false,
     }
 }
 

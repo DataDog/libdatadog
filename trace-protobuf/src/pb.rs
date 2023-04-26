@@ -150,6 +150,9 @@ pub struct AgentPayload {
     /// errorTPS holds `ErrorTPS` value in AgentConfig.
     #[prost(double, tag = "9")]
     pub error_tps: f64,
+    /// rareSamplerEnabled holds `RareSamplerEnabled` value in AgentConfig
+    #[prost(bool, tag = "10")]
+    pub rare_sampler_enabled: bool,
 }
 /// StatsPayload is the payload used to send stats from the agent to the backend.
 #[derive(Deserialize, Serialize)]
