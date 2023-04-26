@@ -1,0 +1,31 @@
+name: Test
+on: [push]
+
+jobs:
+  verify-proto-files:
+    name: "verify protobuf files are the same as those present in datadog-agent"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v3
+      - name: diff agent_payload.proto
+        working-directory: trace-protobuf/src/pb
+        run: |
+          GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/master/pkg/trace/pb/agent_payload.proto")
+          GO_AGENT_PROTO_FIXED=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
+
+          echo "$GO_AGENT_PROTO_FIXED" | diff agent_payload.proto -
+      - name: diff stats.proto
+        working-directory: trace-protobuf/src/pb
+        run: |
+          GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/master/pkg/trace/pb/stats.proto")
+          GO_AGENT_PROTO_FIXED=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
+
+          echo "$GO_AGENT_PROTO_FIXED" | diff stats.proto -
+      - name: diff span.proto
+        working-directory: trace-protobuf/src/pb
+        run: |
+          GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/master/pkg/trace/pb/span.proto")
+          GO_AGENT_PROTO_FIXED=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
+
+          echo "$GO_AGENT_PROTO_FIXED" | diff span.proto -
