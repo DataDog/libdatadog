@@ -12,7 +12,7 @@ jobs:
         working-directory: trace-protobuf/src/pb
         run: |
           GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/master/pkg/trace/pb/agent_payload.proto")
-          GO_AGENT_PROTO_FIXED=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
+          GO_AGENT_PROTO_FIXED=$(echo "$GO_AGENT_PROTO" | sed -e '1,2d')
 
           echo "$GO_AGENT_PROTO_FIXED" | diff agent_payload.proto -
       - name: diff stats.proto
