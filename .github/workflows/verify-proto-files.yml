@@ -3,7 +3,7 @@ on: [push]
 
 jobs:
   verify-proto-files:
-    name: "Verify protobuf files are the same as in datadog-agent"
+    name: "Verify trace-protobuf .proto files are in sync with datadog-agent"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
