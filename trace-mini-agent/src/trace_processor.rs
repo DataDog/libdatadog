@@ -174,7 +174,6 @@ mod tests {
         };
         if is_top_level {
             span.metrics.insert("_top_level".to_string(), 1.0);
-            span.meta.insert("functionname".to_string(), "".to_string());
             span.meta
                 .insert("_dd.origin".to_string(), "gcp_function".to_string());
             span.r#type = "serverless".to_string();
