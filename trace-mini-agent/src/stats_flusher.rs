@@ -57,7 +57,7 @@ impl StatsFlusher for ServerlessStatsFlusher {
 
         let stats_payload = stats_utils::construct_stats_payload(stats);
 
-        debug!("Stats payload to be sent: {:?}", stats_payload);
+        debug!("Stats payload to be sent: {stats_payload:?}");
 
         let serialized_stats_payload = match stats_utils::serialize_stats_payload(stats_payload) {
             Ok(res) => res,
@@ -70,7 +70,7 @@ impl StatsFlusher for ServerlessStatsFlusher {
         match stats_utils::send_stats_payload(serialized_stats_payload).await {
             Ok(_) => info!("Successfully flushed stats"),
             Err(e) => {
-                error!("Error sending stats: {:?}", e)
+                error!("Error sending stats: {e:?}")
             }
         }
     }

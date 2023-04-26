@@ -168,7 +168,7 @@ pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
             if response.status() != StatusCode::ACCEPTED {
                 let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
                 let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                anyhow::bail!("Server did not accept traces: {}", response_body);
+                anyhow::bail!("Server did not accept traces: {response_body}");
             }
             Ok(())
         }
@@ -265,10 +265,16 @@ pub fn set_serverless_root_span_tags(span: &mut pb::Span) {
     span.r#type = "serverless".to_string();
     span.meta
         .insert("_dd.origin".to_string(), "gcp_function".to_string());
-    span.meta.insert(
-        "functionname".to_string(),
-        env::var("K_SERVICE").unwrap_or_default(),
-    );
+
+    // Google cloud functions automatically sets either K_SERVICE or FUNCTION_NAME
+    // env vars to denote the cloud function name.
+    // K_SERVICE is set on newer runtimes, while FUNCTION_NAME is set on older deprecated runtimes.
+    if let Ok(function_name) = env::var("K_SERVICE") {
+        span.meta.insert("functionname".to_string(), function_name);
+    }
+    if let Ok(function_name) = env::var("FUNCTION_NAME") {
+        span.meta.insert("functionname".to_string(), function_name);
+    }
 }
 
 pub fn update_tracer_top_level(span: &mut pb::Span) {

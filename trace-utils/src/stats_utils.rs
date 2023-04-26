@@ -17,7 +17,7 @@ pub async fn get_stats_from_request_body(body: Body) -> anyhow::Result<pb::Clien
     let client_stats_payload: pb::ClientStatsPayload = match rmp_serde::from_read(buffer.reader()) {
         Ok(res) => res,
         Err(err) => {
-            anyhow::bail!("Error deserializing stats from request body: {}", err)
+            anyhow::bail!("Error deserializing stats from request body: {err}")
         }
     };
 
@@ -44,7 +44,7 @@ pub fn serialize_stats_payload(payload: pb::StatsPayload) -> anyhow::Result<Vec<
     encoder.write_all(&msgpack)?;
     match encoder.finish() {
         Ok(res) => Ok(res),
-        Err(e) => anyhow::bail!("Error serializing stats payload: {}", e),
+        Err(e) => anyhow::bail!("Error serializing stats payload: {e}"),
     }
 }
 
@@ -73,10 +73,10 @@ pub async fn send_stats_payload(data: Vec<u8>) -> anyhow::Result<()> {
             if response.status() != StatusCode::ACCEPTED {
                 let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
                 let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                anyhow::bail!("Server did not accept trace stats: {}", response_body);
+                anyhow::bail!("Server did not accept trace stats: {response_body}");
             }
             Ok(())
         }
-        Err(e) => anyhow::bail!("Failed to send trace stats: {}", e),
+        Err(e) => anyhow::bail!("Failed to send trace stats: {e}"),
     }
 }
