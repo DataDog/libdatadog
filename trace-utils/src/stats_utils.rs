@@ -5,7 +5,7 @@ use flate2::{write::GzEncoder, Compression};
 use hyper::{body::Buf, Body, Client, Method, Request, StatusCode};
 use hyper_rustls::HttpsConnectorBuilder;
 use log::debug;
-use std::{env, io::Write};
+use std::io::Write;
 
 use datadog_trace_protobuf::pb;
 
@@ -48,18 +48,13 @@ pub fn serialize_stats_payload(payload: pb::StatsPayload) -> anyhow::Result<Vec<
     }
 }
 
-pub async fn send_stats_payload(data: Vec<u8>) -> anyhow::Result<()> {
-    let api_key = match env::var("DD_API_KEY") {
-        Ok(key) => key,
-        Err(_) => anyhow::bail!("Sending trace stats failed. Missing DD_API_KEY"),
-    };
-
+pub async fn send_stats_payload(data: Vec<u8>, api_key: &str) -> anyhow::Result<()> {
     let req = Request::builder()
         .method(Method::POST)
         .uri(STATS_INTAKE_URL)
         .header("Content-Type", "application/msgpack")
         .header("Content-Encoding", "gzip")
-        .header("DD-API-KEY", &api_key)
+        .header("DD-API-KEY", api_key)
         .body(Body::from(data.clone()))?;
 
     let https = HttpsConnectorBuilder::new()

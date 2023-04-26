@@ -1,0 +1,29 @@
+use std::env;
+
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub api_key: String,
+    pub gcp_function_name: Option<String>,
+    pub max_request_content_length: usize,
+}
+
+impl Config {
+    pub fn new() -> Result<Config, Box<dyn std::error::Error>> {
+        let api_key = env::var("DD_API_KEY")?;
+        let mut function_name = None;
+
+        // Google cloud functions automatically sets either K_SERVICE or FUNCTION_NAME
+        // env vars to denote the cloud function name.
+        // K_SERVICE is set on newer runtimes, while FUNCTION_NAME is set on older deprecated runtimes.
+        if let Ok(res) = env::var("K_SERVICE") {
+            function_name = Some(res);
+        } else if let Ok(res) = env::var("FUNCTION_NAME") {
+            function_name = Some(res);
+        }
+        Ok(Config {
+            api_key,
+            gcp_function_name: function_name,
+            max_request_content_length: 10 * 1024 * 1024, // 10MB in Bytes
+        })
+    }
+}

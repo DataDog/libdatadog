@@ -1,6 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -11,7 +12,8 @@ use tokio::sync::mpsc::Sender;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::stats_utils;
 
-use crate::http_utils::log_and_create_http_response;
+use crate::config::Config;
+use crate::http_utils::{self, log_and_create_http_response};
 
 #[async_trait]
 pub trait StatsProcessor {
@@ -19,6 +21,7 @@ pub trait StatsProcessor {
     /// the provided tokio mpsc Sender.
     async fn process_stats(
         &self,
+        config: Arc<Config>,
         req: Request<Body>,
         tx: Sender<pb::ClientStatsPayload>,
     ) -> http::Result<Response<Body>>;
@@ -31,10 +34,19 @@ pub struct ServerlessStatsProcessor {}
 impl StatsProcessor for ServerlessStatsProcessor {
     async fn process_stats(
         &self,
+        config: Arc<Config>,
         req: Request<Body>,
         tx: Sender<pb::ClientStatsPayload>,
     ) -> http::Result<Response<Body>> {
-        let body = req.into_body();
+        let (parts, body) = req.into_parts();
+
+        if let Some(response) = http_utils::verify_request_content_length(
+            &parts.headers,
+            config.max_request_content_length,
+            "Error processing trace stats",
+        ) {
+            return response;
+        }
 
         info!("Recieved trace stats to process");
 

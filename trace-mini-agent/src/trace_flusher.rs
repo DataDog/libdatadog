@@ -9,15 +9,17 @@ use tokio::sync::{mpsc::Receiver, Mutex};
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
 
+use crate::config::Config;
+
 const TRACE_FLUSH_INTERVAL_SEC: u64 = 3;
 
 #[async_trait]
 pub trait TraceFlusher {
     /// Starts a trace flusher that listens for trace payloads sent to the tokio mpsc Receiver,
     /// implementing flushing logic that calls flush_traces.
-    async fn start_trace_flusher(&self, mut rx: Receiver<pb::TracerPayload>);
+    async fn start_trace_flusher(&self, config: Arc<Config>, mut rx: Receiver<pb::TracerPayload>);
     /// Flushes traces to the Datadog trace intake.
-    async fn flush_traces(&self, traces: Vec<pb::TracerPayload>);
+    async fn flush_traces(&self, config: Arc<Config>, traces: Vec<pb::TracerPayload>);
 }
 
 #[derive(Clone)]
@@ -25,7 +27,7 @@ pub struct ServerlessTraceFlusher {}
 
 #[async_trait]
 impl TraceFlusher for ServerlessTraceFlusher {
-    async fn start_trace_flusher(&self, mut rx: Receiver<pb::TracerPayload>) {
+    async fn start_trace_flusher(&self, config: Arc<Config>, mut rx: Receiver<pb::TracerPayload>) {
         let buffer: Arc<Mutex<Vec<pb::TracerPayload>>> = Arc::new(Mutex::new(Vec::new()));
 
         let buffer_producer = buffer.clone();
@@ -43,13 +45,13 @@ impl TraceFlusher for ServerlessTraceFlusher {
 
             let mut buffer = buffer_consumer.lock().await;
             if !buffer.is_empty() {
-                self.flush_traces(buffer.to_vec()).await;
+                self.flush_traces(config.clone(), buffer.to_vec()).await;
                 buffer.clear();
             }
         }
     }
 
-    async fn flush_traces(&self, traces: Vec<pb::TracerPayload>) {
+    async fn flush_traces(&self, config: Arc<Config>, traces: Vec<pb::TracerPayload>) {
         if traces.is_empty() {
             return;
         }
@@ -67,7 +69,7 @@ impl TraceFlusher for ServerlessTraceFlusher {
             }
         };
 
-        match trace_utils::send(serialized_agent_payload).await {
+        match trace_utils::send(serialized_agent_payload, &config.api_key).await {
             Ok(_) => info!("Successfully flushed traces"),
             Err(e) => {
                 error!("Error sending trace: {e:?}")

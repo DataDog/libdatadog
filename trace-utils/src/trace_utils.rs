@@ -7,7 +7,7 @@ use hyper_rustls::HttpsConnectorBuilder;
 use log::{error, info};
 use prost::Message;
 use std::collections::HashMap;
-use std::{env, str};
+use std::str;
 
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
@@ -144,17 +144,12 @@ pub fn serialize_agent_payload(payload: pb::AgentPayload) -> anyhow::Result<Vec<
     Ok(buf)
 }
 
-pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
-    let api_key = match env::var("DD_API_KEY") {
-        Ok(key) => key,
-        Err(_) => anyhow::bail!("Sending traces failed. Missing DD_API_KEY"),
-    };
-
+pub async fn send(data: Vec<u8>, api_key: &str) -> anyhow::Result<()> {
     let req = Request::builder()
         .method(Method::POST)
         .uri(TRACE_INTAKE_URL)
         .header("Content-type", "application/x-protobuf")
-        .header("DD-API-KEY", &api_key)
+        .header("DD-API-KEY", api_key)
         .body(Body::from(data))?;
 
     let https = HttpsConnectorBuilder::new()
@@ -261,18 +256,11 @@ fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
     span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
 }
 
-pub fn set_serverless_root_span_tags(span: &mut pb::Span) {
+pub fn set_serverless_root_span_tags(span: &mut pb::Span, gcp_function_name: Option<String>) {
     span.r#type = "serverless".to_string();
     span.meta
         .insert("_dd.origin".to_string(), "gcp_function".to_string());
-
-    // Google cloud functions automatically sets either K_SERVICE or FUNCTION_NAME
-    // env vars to denote the cloud function name.
-    // K_SERVICE is set on newer runtimes, while FUNCTION_NAME is set on older deprecated runtimes.
-    if let Ok(function_name) = env::var("K_SERVICE") {
-        span.meta.insert("functionname".to_string(), function_name);
-    }
-    if let Ok(function_name) = env::var("FUNCTION_NAME") {
+    if let Some(function_name) = gcp_function_name {
         span.meta.insert("functionname".to_string(), function_name);
     }
 }

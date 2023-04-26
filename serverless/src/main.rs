@@ -6,7 +6,7 @@ use log::{error, info};
 use std::sync::Arc;
 
 use datadog_trace_mini_agent::{
-    mini_agent, stats_flusher, stats_processor, trace_flusher, trace_processor,
+    config, mini_agent, stats_flusher, stats_processor, trace_flusher, trace_processor,
 };
 
 pub fn main() {
@@ -21,7 +21,16 @@ pub fn main() {
     let stats_flusher = Arc::new(stats_flusher::ServerlessStatsFlusher {});
     let stats_processor = Arc::new(stats_processor::ServerlessStatsProcessor {});
 
+    let config = match config::Config::new() {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Error when starting serverless trace mini agent: {e}");
+            return;
+        }
+    };
+
     let mini_agent = Box::new(mini_agent::MiniAgent {
+        config: Arc::new(config),
         trace_processor,
         trace_flusher,
         stats_processor,

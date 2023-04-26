@@ -9,15 +9,21 @@ use tokio::sync::{mpsc::Receiver, Mutex};
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::stats_utils;
 
+use crate::config::Config;
+
 const STATS_FLUSH_INTERVAL_SEC: u64 = 3;
 
 #[async_trait]
 pub trait StatsFlusher {
     /// Starts a stats flusher that listens for stats payloads sent to the tokio mpsc Receiver,
     /// implementing flushing logic that calls flush_stats.
-    async fn start_stats_flusher(&self, mut rx: Receiver<pb::ClientStatsPayload>);
+    async fn start_stats_flusher(
+        &self,
+        config: Arc<Config>,
+        mut rx: Receiver<pb::ClientStatsPayload>,
+    );
     /// Flushes stats to the Datadog trace stats intake.
-    async fn flush_stats(&self, traces: Vec<pb::ClientStatsPayload>);
+    async fn flush_stats(&self, config: Arc<Config>, traces: Vec<pb::ClientStatsPayload>);
 }
 
 #[derive(Clone)]
@@ -25,7 +31,11 @@ pub struct ServerlessStatsFlusher {}
 
 #[async_trait]
 impl StatsFlusher for ServerlessStatsFlusher {
-    async fn start_stats_flusher(&self, mut rx: Receiver<pb::ClientStatsPayload>) {
+    async fn start_stats_flusher(
+        &self,
+        config: Arc<Config>,
+        mut rx: Receiver<pb::ClientStatsPayload>,
+    ) {
         let buffer: Arc<Mutex<Vec<pb::ClientStatsPayload>>> = Arc::new(Mutex::new(Vec::new()));
 
         let buffer_producer = buffer.clone();
@@ -43,13 +53,13 @@ impl StatsFlusher for ServerlessStatsFlusher {
 
             let mut buffer = buffer_consumer.lock().await;
             if !buffer.is_empty() {
-                self.flush_stats(buffer.to_vec()).await;
+                self.flush_stats(config.clone(), buffer.to_vec()).await;
                 buffer.clear();
             }
         }
     }
 
-    async fn flush_stats(&self, stats: Vec<pb::ClientStatsPayload>) {
+    async fn flush_stats(&self, config: Arc<Config>, stats: Vec<pb::ClientStatsPayload>) {
         if stats.is_empty() {
             return;
         }
@@ -67,7 +77,7 @@ impl StatsFlusher for ServerlessStatsFlusher {
             }
         };
 
-        match stats_utils::send_stats_payload(serialized_stats_payload).await {
+        match stats_utils::send_stats_payload(serialized_stats_payload, &config.api_key).await {
             Ok(_) => info!("Successfully flushed stats"),
             Err(e) => {
                 error!("Error sending stats: {e:?}")

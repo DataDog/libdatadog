@@ -1,6 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use hyper::{http, Body, Request, Response, StatusCode};
 use log::error;
@@ -10,7 +12,10 @@ use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
 
-use crate::http_utils::log_and_create_http_response;
+use crate::{
+    config::Config,
+    http_utils::{self, log_and_create_http_response},
+};
 
 /// Used to populate root_span_tags fields if they exist in the root span's meta tags
 macro_rules! parse_root_span_tags {
@@ -31,6 +36,7 @@ pub trait TraceProcessor {
     /// Deserializes traces from a hyper request body and sends them through the provided tokio mpsc Sender.
     async fn process_traces(
         &self,
+        config: Arc<Config>,
         req: Request<Body>,
         tx: Sender<pb::TracerPayload>,
     ) -> http::Result<Response<Body>>;
@@ -43,10 +49,19 @@ pub struct ServerlessTraceProcessor {}
 impl TraceProcessor for ServerlessTraceProcessor {
     async fn process_traces(
         &self,
+        config: Arc<Config>,
         req: Request<Body>,
         tx: Sender<pb::TracerPayload>,
     ) -> http::Result<Response<Body>> {
         let (parts, body) = req.into_parts();
+
+        if let Some(response) = http_utils::verify_request_content_length(
+            &parts.headers,
+            config.max_request_content_length,
+            "Error processing traces",
+        ) {
+            return response;
+        }
 
         let tracer_header_tags = trace_utils::get_tracer_header_tags(&parts.headers);
 
@@ -96,7 +111,10 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 trace_utils::compute_top_level_span(&mut chunk.spans);
             }
 
-            trace_utils::set_serverless_root_span_tags(&mut chunk.spans[root_span_index]);
+            trace_utils::set_serverless_root_span_tags(
+                &mut chunk.spans[root_span_index],
+                config.gcp_function_name.clone(),
+            );
 
             trace_chunks.push(chunk);
 
@@ -142,11 +160,15 @@ mod tests {
     use serde_json::json;
     use std::{
         collections::HashMap,
+        sync::Arc,
         time::{SystemTime, UNIX_EPOCH},
     };
     use tokio::sync::mpsc::{self, Receiver, Sender};
 
-    use crate::trace_processor::{self, TraceProcessor};
+    use crate::{
+        config::Config,
+        trace_processor::{self, TraceProcessor},
+    };
     use datadog_trace_protobuf::pb;
 
     fn create_test_span(start: i64, span_id: u64, parent_id: u64, is_top_level: bool) -> pb::Span {
@@ -176,6 +198,10 @@ mod tests {
             span.metrics.insert("_top_level".to_string(), 1.0);
             span.meta
                 .insert("_dd.origin".to_string(), "gcp_function".to_string());
+            span.meta.insert(
+                "functionname".to_string(),
+                "dummy_function_name".to_string(),
+            );
             span.r#type = "serverless".to_string();
         }
         span
@@ -211,6 +237,14 @@ mod tests {
             .as_nanos() as i64
     }
 
+    fn create_test_config() -> Config {
+        Config {
+            api_key: "dummy_api_key".to_string(),
+            gcp_function_name: Some("dummy_function_name".to_string()),
+            max_request_content_length: 10 * 1024 * 1024,
+        }
+    }
+
     #[tokio::test]
     async fn test_process_trace() {
         let (tx, mut rx): (Sender<pb::TracerPayload>, Receiver<pb::TracerPayload>) =
@@ -227,11 +261,14 @@ mod tests {
             .header("datadog-meta-lang-version", "v19.7.0")
             .header("datadog-meta-lang-interpreter", "v8")
             .header("datadog-container-id", "33")
+            .header("content-length", "100")
             .body(hyper::body::Body::from(bytes))
             .unwrap();
 
         let trace_processor = trace_processor::ServerlessTraceProcessor {};
-        let res = trace_processor.process_traces(request, tx).await;
+        let res = trace_processor
+            .process_traces(Arc::new(create_test_config()), request, tx)
+            .await;
         assert!(res.is_ok());
 
         let tracer_payload = rx.recv().await;
@@ -280,11 +317,14 @@ mod tests {
             .header("datadog-meta-lang-version", "v19.7.0")
             .header("datadog-meta-lang-interpreter", "v8")
             .header("datadog-container-id", "33")
+            .header("content-length", "100")
             .body(hyper::body::Body::from(bytes))
             .unwrap();
 
         let trace_processor = trace_processor::ServerlessTraceProcessor {};
-        let res = trace_processor.process_traces(request, tx).await;
+        let res = trace_processor
+            .process_traces(Arc::new(create_test_config()), request, tx)
+            .await;
         assert!(res.is_ok());
 
         let tracer_payload = rx.recv().await;
