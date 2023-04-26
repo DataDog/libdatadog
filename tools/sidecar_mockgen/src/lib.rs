@@ -1,24 +1,27 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use std::collections::HashSet;
 use object::{File, Object, ObjectSymbol, SymbolKind};
-use std::{fs, io};
+use std::collections::HashSet;
 use std::fmt::Write;
 use std::path::Path;
+use std::{fs, io};
 
-fn check_and_parse<'a>(path: &'a Path, bin_data: &'a io::Result<Vec<u8>>) -> Result<File<&'a [u8]>, String> {
+fn check_and_parse<'a>(
+    path: &'a Path,
+    bin_data: &'a io::Result<Vec<u8>>,
+) -> Result<File<'a, &'a [u8]>, String> {
     let bin_data = match bin_data {
         Err(e) => {
             return Err(format!("Could not read {}: {}", path.to_string_lossy(), e));
         }
-        Ok(bin_data) => bin_data
+        Ok(bin_data) => bin_data,
     };
     match File::parse(bin_data.as_slice()) {
         Err(e) => {
             return Err(format!("Could not parse {}: {}", path.to_string_lossy(), e));
         }
-        Ok(parsed) => Ok(parsed)
+        Ok(parsed) => Ok(parsed),
     }
 }
 
@@ -49,8 +52,10 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
                     _ = match sym.kind() {
                         SymbolKind::Text => writeln!(generated, "void {}() {{}}", name),
                         SymbolKind::Data => writeln!(generated, "char {}[{}];", name, sym.size()),
-                        SymbolKind::Tls => writeln!(generated, "__thread char {}[{}];", name, sym.size()),
-                        _ => Ok(())
+                        SymbolKind::Tls => {
+                            writeln!(generated, "__thread char {}[{}];", name, sym.size())
+                        }
+                        _ => Ok(()),
                     };
                 }
             }
