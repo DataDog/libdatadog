@@ -297,4 +297,8 @@ pub struct ClientGroupedStats {
     /// count of top level spans aggregated in the groupedstats
     #[prost(uint64, tag = "13")]
     pub top_level_hits: u64,
+    /// name of the remote service that the `service` communicated with
+    #[prost(string, tag = "14")]
+    #[serde(default)]
+    pub peer_service: ::prost::alloc::string::String,
 }
