@@ -22,6 +22,7 @@ macro_rules! timeit {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    #[cfg(feature="tracing")]
     tracing_subscriber::fmt()
         .with_max_level(Level::DEBUG)
         .init();
