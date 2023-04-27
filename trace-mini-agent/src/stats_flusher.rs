@@ -11,8 +11,6 @@ use datadog_trace_utils::stats_utils;
 
 use crate::config::Config;
 
-const STATS_FLUSH_INTERVAL_SEC: u64 = 3;
-
 #[async_trait]
 pub trait StatsFlusher {
     /// Starts a stats flusher that listens for stats payloads sent to the tokio mpsc Receiver,
@@ -49,7 +47,7 @@ impl StatsFlusher for ServerlessStatsFlusher {
         });
 
         loop {
-            tokio::time::sleep(time::Duration::from_secs(STATS_FLUSH_INTERVAL_SEC)).await;
+            tokio::time::sleep(time::Duration::from_secs(config.stats_flush_interval)).await;
 
             let mut buffer = buffer_consumer.lock().await;
             if !buffer.is_empty() {

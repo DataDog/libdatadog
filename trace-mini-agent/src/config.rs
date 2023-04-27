@@ -8,6 +8,10 @@ pub struct Config {
     pub api_key: String,
     pub gcp_function_name: Option<String>,
     pub max_request_content_length: usize,
+    /// how often to flush traces, in seconds
+    pub trace_flush_interval: u64,
+    /// how often to flush stats, in seconds
+    pub stats_flush_interval: u64,
 }
 
 impl Config {
@@ -27,6 +31,8 @@ impl Config {
             api_key,
             gcp_function_name: function_name,
             max_request_content_length: 10 * 1024 * 1024, // 10MB in Bytes
+            trace_flush_interval: 3,
+            stats_flush_interval: 3,
         })
     }
 }

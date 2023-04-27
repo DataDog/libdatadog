@@ -242,6 +242,8 @@ mod tests {
             api_key: "dummy_api_key".to_string(),
             gcp_function_name: Some("dummy_function_name".to_string()),
             max_request_content_length: 10 * 1024 * 1024,
+            trace_flush_interval: 3,
+            stats_flush_interval: 3,
         }
     }
 
