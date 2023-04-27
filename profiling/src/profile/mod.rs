@@ -1519,7 +1519,7 @@ mod api_test {
 
         let first = serialized_profile.samples.get(0).expect("one sample");
 
-        assert_eq!(first.values, vec![1, 298, 0]);
+        assert_eq!(first.values, vec![1, 298, 29]);
     }
 
     #[test]
