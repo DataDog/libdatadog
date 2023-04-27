@@ -768,7 +768,7 @@ impl Profile {
                 rules.iter().for_each(|rule| {
                     let scale = rule.compute_scale(values);
                     rule.values_offset.iter().for_each(|offset| {
-                        new_values[*offset] = (new_values[*offset] as f64 * scale) as i64
+                        new_values[*offset] = (new_values[*offset] as f64 * scale).round() as i64
                     })
                 })
             });
@@ -1478,7 +1478,7 @@ mod api_test {
 
         profile.add(sample1).expect("add to success");
 
-        let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
+        let upscaling_info = UpscalingInfo::Proportional { scale: 2.7 };
         let values_offset = vec![0];
         profile
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
@@ -1488,7 +1488,38 @@ mod api_test {
 
         let first = serialized_profile.samples.get(0).expect("one sample");
 
-        assert_eq!(first.values, vec![2, 10000, 42]);
+        assert_eq!(first.values, vec![3, 10000, 42]);
+    }
+
+    #[test]
+    fn test_upscaling_by_value_on_one_value_with_poisson() {
+        let sample_types = create_samples_types();
+
+        let mut profile = Profile::builder().sample_types(sample_types).build();
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 16, 29],
+            labels: vec![],
+        };
+
+        profile.add(sample1).expect("add to success");
+
+        let upscaling_info = UpscalingInfo::Poisson {
+            sum_value_offset: 1,
+            count_value_offset: 2,
+            sampling_distance: 10,
+        };
+        let values_offset: Vec<usize> = vec![1];
+        profile
+            .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
+            .expect("Rule added");
+
+        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+
+        let first = serialized_profile.samples.get(0).expect("one sample");
+
+        assert_eq!(first.values, vec![1, 298, 0]);
     }
 
     #[test]
