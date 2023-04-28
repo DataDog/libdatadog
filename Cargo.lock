@@ -516,6 +516,7 @@ dependencies = [
  "prost-build",
  "protobuf-src",
  "serde",
+ "serde_bytes",
 ]
 
 [[package]]
@@ -525,6 +526,7 @@ dependencies = [
  "anyhow",
  "datadog-trace-normalization",
  "datadog-trace-protobuf",
+ "flate2",
  "hyper",
  "hyper-rustls",
  "log",
@@ -1857,6 +1859,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb7d1f0d3021d347a83e556fc4683dea2ea09d87bccdf88ff5c12545d89d5efb"
 dependencies = [
  "serde_derive",
+]
+
+[[package]]
+name = "serde_bytes"
+version = "0.11.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "416bda436f9aab92e02c8e10d49a15ddd339cea90b6e340fe51ed97abb548294"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

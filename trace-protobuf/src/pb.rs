@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Span {
     /// service is the name of the service with which this span is associated.
@@ -61,6 +62,7 @@ pub struct Span {
     >,
 }
 /// TraceChunk represents a list of spans with the same trace ID. In other words, a chunk of a trace.
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TraceChunk {
     /// priority specifies sampling priority of the trace.
@@ -83,6 +85,7 @@ pub struct TraceChunk {
     pub dropped_trace: bool,
 }
 /// TracerPayload represents a payload the trace agent receives from tracers.
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TracerPayload {
     /// containerID specifies the ID of the container where the tracer is running on.
@@ -120,6 +123,7 @@ pub struct TracerPayload {
     pub app_version: ::prost::alloc::string::String,
 }
 /// AgentPayload represents payload the agent sends to the intake.
+#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AgentPayload {
     /// hostName specifies hostname of where the agent is running.
@@ -146,4 +150,155 @@ pub struct AgentPayload {
     /// errorTPS holds `ErrorTPS` value in AgentConfig.
     #[prost(double, tag = "9")]
     pub error_tps: f64,
+    /// rareSamplerEnabled holds `RareSamplerEnabled` value in AgentConfig
+    #[prost(bool, tag = "10")]
+    pub rare_sampler_enabled: bool,
+}
+/// StatsPayload is the payload used to send stats from the agent to the backend.
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct StatsPayload {
+    #[prost(string, tag = "1")]
+    pub agent_hostname: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub agent_env: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "3")]
+    pub stats: ::prost::alloc::vec::Vec<ClientStatsPayload>,
+    #[prost(string, tag = "4")]
+    pub agent_version: ::prost::alloc::string::String,
+    #[prost(bool, tag = "5")]
+    pub client_computed: bool,
+}
+/// ClientStatsPayload is the first layer of span stats aggregation. It is also
+/// the payload sent by tracers to the agent when stats in tracer are enabled.
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ClientStatsPayload {
+    /// Hostname is the tracer hostname. It's extracted from spans with "_dd.hostname" meta
+    /// or set by tracer stats payload when hostname reporting is enabled.
+    #[prost(string, tag = "1")]
+    pub hostname: ::prost::alloc::string::String,
+    /// env tag set on spans or in the tracers, used for aggregation
+    #[prost(string, tag = "2")]
+    #[serde(default)]
+    pub env: ::prost::alloc::string::String,
+    /// version tag set on spans or in the tracers, used for aggregation
+    #[prost(string, tag = "3")]
+    #[serde(default)]
+    pub version: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "4")]
+    pub stats: ::prost::alloc::vec::Vec<ClientStatsBucket>,
+    /// informative field not used for aggregation
+    #[prost(string, tag = "5")]
+    #[serde(default)]
+    pub lang: ::prost::alloc::string::String,
+    /// informative field not used for aggregation
+    #[prost(string, tag = "6")]
+    #[serde(default)]
+    pub tracer_version: ::prost::alloc::string::String,
+    /// used on stats payloads sent by the tracer to identify uniquely a message
+    #[prost(string, tag = "7")]
+    #[serde(default)]
+    #[serde(rename = "RuntimeID")]
+    pub runtime_id: ::prost::alloc::string::String,
+    /// used on stats payloads sent by the tracer to identify uniquely a message
+    #[prost(uint64, tag = "8")]
+    #[serde(default)]
+    pub sequence: u64,
+    /// AgentAggregation is set by the agent on tracer payloads modified by the agent aggregation layer
+    /// characterizes counts only and distributions only payloads
+    #[prost(string, tag = "9")]
+    #[serde(default)]
+    pub agent_aggregation: ::prost::alloc::string::String,
+    /// Service is the main service of the tracer.
+    /// It is part of unified tagging: <https://docs.datadoghq.com/getting_started/tagging/unified_service_tagging>
+    #[prost(string, tag = "10")]
+    #[serde(default)]
+    pub service: ::prost::alloc::string::String,
+    /// ContainerID specifies the origin container ID. It is meant to be populated by the client and may
+    /// be enhanced by the agent to ensure it is unique.
+    #[prost(string, tag = "11")]
+    #[serde(default)]
+    #[serde(rename = "ContainerID")]
+    pub container_id: ::prost::alloc::string::String,
+    /// Tags specifies a set of tags obtained from the orchestrator (where applicable) using the specified containerID.
+    /// This field should be left empty by the client. It only applies to some specific environment.
+    #[prost(string, repeated, tag = "12")]
+    #[serde(default)]
+    pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+/// ClientStatsBucket is a time bucket containing aggregated stats.
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ClientStatsBucket {
+    /// bucket start in nanoseconds
+    #[prost(uint64, tag = "1")]
+    pub start: u64,
+    /// bucket duration in nanoseconds
+    #[prost(uint64, tag = "2")]
+    pub duration: u64,
+    #[prost(message, repeated, tag = "3")]
+    pub stats: ::prost::alloc::vec::Vec<ClientGroupedStats>,
+    /// AgentTimeShift is the shift applied by the agent stats aggregator on bucket start
+    /// when the received bucket start is outside of the agent aggregation window
+    #[prost(int64, tag = "4")]
+    #[serde(default)]
+    pub agent_time_shift: i64,
+}
+/// ClientGroupedStats aggregate stats on spans grouped by service, name, resource, status_code, type
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ClientGroupedStats {
+    #[prost(string, tag = "1")]
+    pub service: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub resource: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "4")]
+    #[serde(rename = "HTTPStatusCode")]
+    pub http_status_code: u32,
+    #[prost(string, tag = "5")]
+    #[serde(default)]
+    pub r#type: ::prost::alloc::string::String,
+    /// db_type might be used in the future to help in the obfuscation step
+    #[prost(string, tag = "6")]
+    #[serde(default)]
+    #[serde(rename = "DBType")]
+    pub db_type: ::prost::alloc::string::String,
+    /// count of all spans aggregated in the groupedstats
+    #[prost(uint64, tag = "7")]
+    pub hits: u64,
+    /// count of error spans aggregated in the groupedstats
+    #[prost(uint64, tag = "8")]
+    pub errors: u64,
+    /// total duration in nanoseconds of spans aggregated in the bucket
+    #[prost(uint64, tag = "9")]
+    pub duration: u64,
+    /// ddsketch summary of ok spans latencies encoded in protobuf
+    #[prost(bytes = "vec", tag = "10")]
+    #[serde(with = "serde_bytes")]
+    pub ok_summary: ::prost::alloc::vec::Vec<u8>,
+    /// ddsketch summary of error spans latencies encoded in protobuf
+    #[prost(bytes = "vec", tag = "11")]
+    #[serde(with = "serde_bytes")]
+    pub error_summary: ::prost::alloc::vec::Vec<u8>,
+    /// set to true on spans generated by synthetics traffic
+    #[prost(bool, tag = "12")]
+    pub synthetics: bool,
+    /// count of top level spans aggregated in the groupedstats
+    #[prost(uint64, tag = "13")]
+    pub top_level_hits: u64,
+    /// name of the remote service that the `service` communicated with
+    #[prost(string, tag = "14")]
+    #[serde(default)]
+    pub peer_service: ::prost::alloc::string::String,
 }

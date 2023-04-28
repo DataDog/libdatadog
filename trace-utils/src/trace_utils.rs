@@ -7,7 +7,7 @@ use hyper_rustls::HttpsConnectorBuilder;
 use log::{error, info};
 use prost::Message;
 use std::collections::HashMap;
-use std::{env, str};
+use std::str;
 
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
@@ -105,6 +105,7 @@ pub fn construct_agent_payload(tracer_payloads: Vec<pb::TracerPayload>) -> pb::A
         target_tps: 60.0,
         tags: HashMap::new(),
         tracer_payloads,
+        rare_sampler_enabled: false,
     }
 }
 
@@ -144,17 +145,12 @@ pub fn serialize_agent_payload(payload: pb::AgentPayload) -> anyhow::Result<Vec<
     Ok(buf)
 }
 
-pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
-    let api_key = match env::var("DD_API_KEY") {
-        Ok(key) => key,
-        Err(_) => anyhow::bail!("oopsy, no DD_API_KEY was provided"),
-    };
-
+pub async fn send(data: Vec<u8>, api_key: &str) -> anyhow::Result<()> {
     let req = Request::builder()
         .method(Method::POST)
         .uri(TRACE_INTAKE_URL)
         .header("Content-type", "application/x-protobuf")
-        .header("DD-API-KEY", &api_key)
+        .header("DD-API-KEY", api_key)
         .body(Body::from(data))?;
 
     let https = HttpsConnectorBuilder::new()
@@ -168,7 +164,7 @@ pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
             if response.status() != StatusCode::ACCEPTED {
                 let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
                 let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                anyhow::bail!("Server did not accept traces: {}", response_body);
+                anyhow::bail!("Server did not accept traces: {response_body}");
             }
             Ok(())
         }
@@ -261,14 +257,13 @@ fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
     span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
 }
 
-pub fn set_serverless_root_span_tags(span: &mut pb::Span) {
+pub fn set_serverless_root_span_tags(span: &mut pb::Span, gcp_function_name: Option<String>) {
     span.r#type = "serverless".to_string();
     span.meta
         .insert("_dd.origin".to_string(), "gcp_function".to_string());
-    span.meta.insert(
-        "functionname".to_string(),
-        env::var("K_SERVICE").unwrap_or_default(),
-    );
+    if let Some(function_name) = gcp_function_name {
+        span.meta.insert("functionname".to_string(), function_name);
+    }
 }
 
 pub fn update_tracer_top_level(span: &mut pb::Span) {
