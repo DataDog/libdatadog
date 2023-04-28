@@ -1991,7 +1991,7 @@ dependencies = [
 [[package]]
 name = "tarpc"
 version = "0.31.0"
-source = "git+https://github.com/pawelchcki/tarpc.git?branch=extend_rpc_with_streaming_msgs#e567304243b9ca2eb4aa03756200a3464dd72838"
+source = "git+https://github.com/pawelchcki/tarpc.git?branch=disable_tracing#e567304243b9ca2eb4aa03756200a3464dd72838"
 dependencies = [
  "anyhow",
  "fnv",
@@ -2014,7 +2014,7 @@ dependencies = [
 [[package]]
 name = "tarpc-plugins"
 version = "0.12.0"
-source = "git+https://github.com/pawelchcki/tarpc.git?branch=extend_rpc_with_streaming_msgs#e567304243b9ca2eb4aa03756200a3464dd72838"
+source = "git+https://github.com/pawelchcki/tarpc.git?branch=disable_tracing#e567304243b9ca2eb4aa03756200a3464dd72838"
 dependencies = [
  "proc-macro2",
  "quote",

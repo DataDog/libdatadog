@@ -3,10 +3,9 @@
 
 use spawn_worker::{entrypoint, getpid, Stdio};
 
-use std::fs::{self, File};
+use std::fs::File;
 use std::os::unix::net::UnixListener as StdUnixListener;
 
-use std::sync::Mutex;
 use std::time::{self, Instant};
 use std::{
     io::{self},
@@ -116,6 +115,7 @@ pub extern "C" fn daemon_entry_point() {
         tracing::error!("Error calling setsid(): {err}")
     }
 
+    #[cfg(feature = "tracing")]
     enable_tracing().ok();
     let now = Instant::now();
 
@@ -187,6 +187,7 @@ pub fn start_or_connect_to_sidecar(cfg: config::Config) -> io::Result<TelemetryT
     Ok(IpcChannel::from(liaison.connect_to_server()?).into())
 }
 
+#[cfg(feature = "tracing")]
 fn enable_tracing() -> anyhow::Result<()> {
     let subscriber = tracing_subscriber::fmt();
 
@@ -194,14 +195,14 @@ fn enable_tracing() -> anyhow::Result<()> {
         config::LogMethod::Stdout => subscriber.with_writer(io::stdout).init(),
         config::LogMethod::Stderr => subscriber.with_writer(io::stderr).init(),
         config::LogMethod::File(path) => {
-            let log_file = fs::File::options()
+            let log_file = std::fs::File::options()
                 .create(true)
                 .truncate(false)
                 .write(true)
                 .append(true)
                 .open(path)?;
             tracing_subscriber::fmt()
-                .with_writer(Mutex::new(log_file))
+                .with_writer(std::sync::Mutex::new(log_file))
                 .init()
         }
         config::LogMethod::Disabled => return Ok(()),
