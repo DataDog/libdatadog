@@ -49,7 +49,14 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
                 if missing_symbols.contains(name) {
                     _ = match sym.kind() {
                         SymbolKind::Text => writeln!(generated, "void {}() {{}}", name),
-                        SymbolKind::Data => writeln!(generated, "char {}[{}];", name, sym.size()),
+                        // Ignore symbols of size 0, like _GLOBAL_OFFSET_TABLE_ on alpine
+                        SymbolKind::Data => {
+                            if sym.size() > 0 {
+                                writeln!(generated, "char {}[{}];", name, sym.size())
+                            } else {
+                                Ok(())
+                            }
+                        }
                         SymbolKind::Tls => {
                             writeln!(generated, "__thread char {}[{}];", name, sym.size())
                         }
