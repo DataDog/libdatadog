@@ -6,7 +6,8 @@ use log::{error, info};
 use std::sync::Arc;
 
 use datadog_trace_mini_agent::{
-    config, env_verifier, mini_agent, stats_flusher, stats_processor, trace_flusher, trace_processor,
+    config, env_verifier, mini_agent, stats_flusher, stats_processor, trace_flusher,
+    trace_processor,
 };
 
 pub fn main() {
