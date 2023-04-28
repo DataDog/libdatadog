@@ -6,7 +6,6 @@ use std::{error::Error, time::Duration};
 use ddcommon::tag::Tag;
 use ddtelemetry::{data, worker};
 use tokio::time::Instant;
-use tracing::Level;
 
 macro_rules! timeit {
     ($op_name:literal, $op:block) => {{
@@ -22,8 +21,9 @@ macro_rules! timeit {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    #[cfg(feature = "tracing")]
     tracing_subscriber::fmt()
-        .with_max_level(Level::DEBUG)
+        .with_max_level(tracing::Level::DEBUG)
         .init();
 
     let handle = worker::TelemetryWorkerBuilder::new(
