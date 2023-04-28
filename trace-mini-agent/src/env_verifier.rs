@@ -30,7 +30,8 @@ pub struct GCPProject {
 
 #[async_trait]
 pub trait EnvVerifier {
-    /// verifies the mini agent is running in the intended environment. if not, exit the process.
+    /// Verifies the mini agent is running in the intended environment. if not, exit the process.
+    /// Returns MiniAgentMetadata, a struct of metadata collected from the environment.
     async fn verify_environment(&self) -> trace_utils::MiniAgentMetadata;
 }
 
@@ -90,7 +91,8 @@ impl GoogleMetadataClient for GoogleMetadataClientWrapper {
 }
 
 /// Checks if we are running in a Google Cloud Function environment.
-/// if not, returns an error with the verification failure reason.
+/// If true, returns Metadata from the Google Cloud environment.
+/// Otherwise, returns an error with the verification failure reason.
 async fn ensure_gcp_function_environment(
     metadata_client: Box<dyn GoogleMetadataClient + Send + Sync>,
 ) -> anyhow::Result<GCPMetadata> {
