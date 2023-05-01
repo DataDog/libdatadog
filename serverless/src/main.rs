@@ -6,7 +6,8 @@ use log::{error, info};
 use std::sync::Arc;
 
 use datadog_trace_mini_agent::{
-    config, mini_agent, stats_flusher, stats_processor, trace_flusher, trace_processor,
+    config, env_verifier, mini_agent, stats_flusher, stats_processor, trace_flusher,
+    trace_processor,
 };
 
 pub fn main() {
@@ -14,6 +15,8 @@ pub fn main() {
     Builder::from_env(env).target(Target::Stdout).init();
 
     info!("Starting serverless trace mini agent");
+
+    let env_verifier = Arc::new(env_verifier::ServerlessEnvVerifier {});
 
     let trace_flusher = Arc::new(trace_flusher::ServerlessTraceFlusher {});
     let trace_processor = Arc::new(trace_processor::ServerlessTraceProcessor {});
@@ -31,6 +34,7 @@ pub fn main() {
 
     let mini_agent = Box::new(mini_agent::MiniAgent {
         config: Arc::new(config),
+        env_verifier,
         trace_processor,
         trace_flusher,
         stats_processor,

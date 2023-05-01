@@ -39,6 +39,7 @@ pub trait TraceProcessor {
         config: Arc<Config>,
         req: Request<Body>,
         tx: Sender<pb::TracerPayload>,
+        mini_agent_metadata: Arc<trace_utils::MiniAgentMetadata>,
     ) -> http::Result<Response<Body>>;
 }
 
@@ -52,6 +53,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
         config: Arc<Config>,
         req: Request<Body>,
         tx: Sender<pb::TracerPayload>,
+        mini_agent_metadata: Arc<trace_utils::MiniAgentMetadata>,
     ) -> http::Result<Response<Body>> {
         let (parts, body) = req.into_parts();
 
@@ -105,6 +107,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 if tracer_header_tags.client_computed_top_level {
                     trace_utils::update_tracer_top_level(span);
                 }
+                trace_utils::enrich_span_with_mini_agent_metadata(span, &mini_agent_metadata);
             }
 
             if !tracer_header_tags.client_computed_top_level {
@@ -170,6 +173,7 @@ mod tests {
         trace_processor::{self, TraceProcessor},
     };
     use datadog_trace_protobuf::pb;
+    use datadog_trace_utils::trace_utils;
 
     fn create_test_span(start: i64, span_id: u64, parent_id: u64, is_top_level: bool) -> pb::Span {
         let mut span = pb::Span {
@@ -197,7 +201,9 @@ mod tests {
         if is_top_level {
             span.metrics.insert("_top_level".to_string(), 1.0);
             span.meta
-                .insert("_dd.origin".to_string(), "gcp_function".to_string());
+                .insert("_dd.origin".to_string(), "cloudfunction".to_string());
+            span.meta
+                .insert("origin".to_string(), "cloudfunction".to_string());
             span.meta.insert(
                 "functionname".to_string(),
                 "dummy_function_name".to_string(),
@@ -244,6 +250,7 @@ mod tests {
             max_request_content_length: 10 * 1024 * 1024,
             trace_flush_interval: 3,
             stats_flush_interval: 3,
+            verify_env_timeout: 100,
         }
     }
 
@@ -269,7 +276,12 @@ mod tests {
 
         let trace_processor = trace_processor::ServerlessTraceProcessor {};
         let res = trace_processor
-            .process_traces(Arc::new(create_test_config()), request, tx)
+            .process_traces(
+                Arc::new(create_test_config()),
+                request,
+                tx,
+                Arc::new(trace_utils::MiniAgentMetadata::default()),
+            )
             .await;
         assert!(res.is_ok());
 
@@ -325,7 +337,12 @@ mod tests {
 
         let trace_processor = trace_processor::ServerlessTraceProcessor {};
         let res = trace_processor
-            .process_traces(Arc::new(create_test_config()), request, tx)
+            .process_traces(
+                Arc::new(create_test_config()),
+                request,
+                tx,
+                Arc::new(trace_utils::MiniAgentMetadata::default()),
+            )
             .await;
         assert!(res.is_ok());
 

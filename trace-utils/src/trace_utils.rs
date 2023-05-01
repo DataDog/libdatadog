@@ -260,7 +260,9 @@ fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
 pub fn set_serverless_root_span_tags(span: &mut pb::Span, gcp_function_name: Option<String>) {
     span.r#type = "serverless".to_string();
     span.meta
-        .insert("_dd.origin".to_string(), "gcp_function".to_string());
+        .insert("_dd.origin".to_string(), "cloudfunction".to_string());
+    span.meta
+        .insert("origin".to_string(), "cloudfunction".to_string());
     if let Some(function_name) = gcp_function_name {
         span.meta.insert("functionname".to_string(), function_name);
     }
@@ -269,6 +271,26 @@ pub fn set_serverless_root_span_tags(span: &mut pb::Span, gcp_function_name: Opt
 pub fn update_tracer_top_level(span: &mut pb::Span) {
     if span.metrics.contains_key(TRACER_TOP_LEVEL_KEY) {
         span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
+    }
+}
+
+#[derive(Clone, Default, Debug, Eq, PartialEq)]
+pub struct MiniAgentMetadata {
+    pub gcp_project_id: Option<String>,
+    pub gcp_region: Option<String>,
+}
+
+pub fn enrich_span_with_mini_agent_metadata(
+    span: &mut pb::Span,
+    mini_agent_metadata: &MiniAgentMetadata,
+) {
+    if let Some(gcp_project_id) = &mini_agent_metadata.gcp_project_id {
+        span.meta
+            .insert("project_id".to_string(), gcp_project_id.to_string());
+    }
+    if let Some(gcp_region) = &mini_agent_metadata.gcp_region {
+        span.meta
+            .insert("location".to_string(), gcp_region.to_string());
     }
 }
 

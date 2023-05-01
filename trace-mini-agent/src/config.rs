@@ -12,6 +12,8 @@ pub struct Config {
     pub trace_flush_interval: u64,
     /// how often to flush stats, in seconds
     pub stats_flush_interval: u64,
+    /// timeout for environment verification, in milliseconds
+    pub verify_env_timeout: u64,
 }
 
 impl Config {
@@ -33,6 +35,7 @@ impl Config {
             max_request_content_length: 10 * 1024 * 1024, // 10MB in Bytes
             trace_flush_interval: 3,
             stats_flush_interval: 3,
+            verify_env_timeout: 100,
         })
     }
 }
