@@ -4,7 +4,10 @@ use async_trait::async_trait;
 use hyper::{Body, Client, Method, Request, Response};
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
-use std::{process, time::Duration};
+use std::time::Duration;
+
+#[cfg(not(test))]
+use std::process;
 
 use datadog_trace_utils::trace_utils;
 
@@ -68,7 +71,10 @@ impl EnvVerifier for ServerlessEnvVerifier {
                 }
                 Err(e) => {
                     error!("The Mini Agent cannot be run in a non Google Cloud Function environment. Verification has failed, error: {e}. Shutting down now.");
+                    #[cfg(not(test))]
                     process::exit(1);
+                    #[cfg(test)]
+                    GCPMetadata::default()
                 }
             },
             Err(_) => {
