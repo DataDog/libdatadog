@@ -201,7 +201,9 @@ mod tests {
         if is_top_level {
             span.metrics.insert("_top_level".to_string(), 1.0);
             span.meta
-                .insert("_dd.origin".to_string(), "gcp_function".to_string());
+                .insert("_dd.origin".to_string(), "cloudfunction".to_string());
+            span.meta
+                .insert("origin".to_string(), "cloudfunction".to_string());
             span.meta.insert(
                 "functionname".to_string(),
                 "dummy_function_name".to_string(),
