@@ -3,13 +3,13 @@
 
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{http, Body, Method, Request, Response, Server, StatusCode};
-use log::{error, info};
+use log::{debug, error, info};
 use serde_json::json;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::mpsc::{self, Receiver, Sender};
-use tokio::sync::Mutex;
 
 use crate::http_utils::log_and_create_http_response;
 use crate::{config, env_verifier, stats_flusher, stats_processor, trace_flusher, trace_processor};
@@ -35,20 +35,19 @@ pub struct MiniAgent {
 impl MiniAgent {
     #[tokio::main]
     pub async fn start_mini_agent(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let now = Instant::now();
+
         // verify we are in a google cloud funtion environment. if not, shut down the mini agent.
-        let mini_agent_metadata: Arc<Mutex<trace_utils::MiniAgentMetadata>> =
-            Arc::new(Mutex::new(trace_utils::MiniAgentMetadata::default()));
+        let mini_agent_metadata = Arc::new(
+            self.env_verifier
+                .verify_environment(self.config.verify_env_timeout)
+                .await,
+        );
 
-        let mini_agent_metadata_producer = mini_agent_metadata.clone();
-        let mini_agent_metadata_consumer = mini_agent_metadata.clone();
-        let env_verifier = self.env_verifier.clone();
-        tokio::spawn(async move {
-            let env_verifier = env_verifier.clone();
-            let updated_metadata = env_verifier.verify_environment().await;
-
-            let mut mini_agent_metadata_mutex = mini_agent_metadata_producer.lock().await;
-            *mini_agent_metadata_mutex = updated_metadata;
-        });
+        debug!(
+            "Time taken to fetch Mini Agent metadata: {} ms",
+            now.elapsed().as_millis()
+        );
 
         // setup a channel to send processed traces to our flusher. tx is passed through each endpoint_handler
         // to the trace processor, which uses it to send de-serialized processed trace payloads to our trace flusher.
@@ -94,7 +93,7 @@ impl MiniAgent {
             let stats_tx = stats_tx.clone();
 
             let endpoint_config = endpoint_config.clone();
-            let mini_agent_metadata_consumer = mini_agent_metadata_consumer.clone();
+            let mini_agent_metadata = Arc::clone(&mini_agent_metadata);
 
             let service = service_fn(move |req| {
                 MiniAgent::trace_endpoint_handler(
@@ -104,7 +103,7 @@ impl MiniAgent {
                     trace_tx.clone(),
                     stats_processor.clone(),
                     stats_tx.clone(),
-                    mini_agent_metadata_consumer.clone(),
+                    Arc::clone(&mini_agent_metadata),
                 )
             });
 
@@ -117,6 +116,10 @@ impl MiniAgent {
         let server = server_builder.serve(make_svc);
 
         info!("Mini Agent started: listening on port {MINI_AGENT_PORT}");
+        debug!(
+            "Time taken start the Mini Agent: {} ms",
+            now.elapsed().as_millis()
+        );
 
         // start hyper http server
         if let Err(e) = server.await {
@@ -134,7 +137,7 @@ impl MiniAgent {
         trace_tx: Sender<pb::TracerPayload>,
         stats_processor: Arc<dyn stats_processor::StatsProcessor + Send + Sync>,
         stats_tx: Sender<pb::ClientStatsPayload>,
-        mini_agent_metadata: Arc<Mutex<trace_utils::MiniAgentMetadata>>,
+        mini_agent_metadata: Arc<trace_utils::MiniAgentMetadata>,
     ) -> http::Result<Response<Body>> {
         match (req.method(), req.uri().path()) {
             (&Method::PUT, TRACE_ENDPOINT_PATH) => {
