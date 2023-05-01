@@ -89,14 +89,14 @@ impl EnvVerifier for ServerlessEnvVerifier {
 /// This function extracts just the region (us-east1) from this GCP region string.
 /// If the string does not have 4 parts (separated by "/") or extraction fails, return "unknown"
 fn get_region_from_gcp_region_string(str: String) -> String {
-    let split_str = str.split("/").collect::<Vec<&str>>();
+    let split_str = str.split('/').collect::<Vec<&str>>();
     if split_str.len() != 4 {
         return "unknown".to_string();
     }
     match split_str.last() {
-        Some(res) => return res.to_string(),
-        None => return "unknown".to_string(),
-    };
+        Some(res) => res.to_string(),
+        None => "unknown".to_string(),
+    }
 }
 
 /// GoogleMetadataClient trait is used so we can mock a google metadata server response in unit tests
