@@ -41,7 +41,7 @@ impl Config {
             function_name = Some(res);
         }
 
-        let dd_site = env::var("DD_SITE").unwrap_or("datadoghq.com".to_string());
+        let dd_site = env::var("DD_SITE").unwrap_or_else(|_| "datadoghq.com".to_string());
 
         let trace_intake_url = construct_trace_intake_url(&dd_site, TRACE_INTAKE_ROUTE);
         let trace_stats_intake_url = construct_trace_intake_url(&dd_site, TRACE_STATS_INTAKE_ROUTE);
