@@ -14,7 +14,7 @@ fn main() -> Result<()> {
     {
         // protoc is required to compile proto files. This uses protobuf_src to compile protoc
         // from the source, setting the env var to tell prost_build where to find it.
-        std::env::set_var("PROTOC", protobuf_src::protoc());
+        std::env::set_var("PROTOC", protoc_bin_vendored::protoc_bin_path().unwrap());
 
         // compiles the .proto files into rust structs
         generate_protobuf();
