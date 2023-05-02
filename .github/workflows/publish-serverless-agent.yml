@@ -53,7 +53,7 @@ jobs:
         run: zip -r datadog-serverless-agent.zip *
         working-directory: target/release/binaries
       - name: list binaries for testing
-        run: ls ./
+        run: ls target/release/binaries
       - name: Upload zip
         uses: actions/upload-artifact@v3
         with:
