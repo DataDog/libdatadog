@@ -192,7 +192,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_verify_env_false_if_metadata_server_unreachable() {
-        // unit tests will always run in an environment where http://metadata.google.internal is unreachable
         struct MockGoogleMetadataClient {}
         #[async_trait]
         impl GoogleMetadataClient for MockGoogleMetadataClient {
