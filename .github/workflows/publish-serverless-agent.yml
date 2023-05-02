@@ -49,16 +49,18 @@ jobs:
             chmod +x "$file"
             upx "$file" --ultra-brute
           done
+      - name: Zip binaries
+        run: zip -r datadog-serverless-agent.zip target/release/binaries
       - name: list binaries for testing
-        run: ls target/release/binaries
-      # - name: Upload zip
-      #   uses: actions/upload-artifact@v3
-      #   with:
-      #     name: datadog-serverless-agent
-      #     path: target/release/binaries
+        run: ls ./
+      - name: Upload zip
+        uses: actions/upload-artifact@v3
+        with:
+          name: datadog-serverless-agent
+          path: datadog-serverless-agent.zip
       # - name: Release
       #   uses: softprops/action-gh-release@v1
       #   with:
       #     draft: true
       #     generate_release_notes: true
-      #     files: target/release/binaries/datadog-serverless-agent.zip
+      #     files: datadog-serverless-agent.zip
