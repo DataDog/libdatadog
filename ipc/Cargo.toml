@@ -16,7 +16,7 @@ tokio-serde = { version = "0.8", features = ["json"] }
 tokio-util = { version = "0.6.9", features = ["codec"] }
 
 # tarpc needed extensions to allow 1 way communication and to export some internal structs
-tarpc = { default-features = false, features = ["serde-transport"], git = "https://github.com/pawelchcki/tarpc.git", package = "tarpc", branch = "extend_rpc_with_streaming_msgs"}
+tarpc = { default-features = false, features = ["serde-transport"], git = "https://github.com/pawelchcki/tarpc.git", package = "tarpc", branch = "disable_tracing"}
 
 [dev-dependencies]
 criterion = "0.4"

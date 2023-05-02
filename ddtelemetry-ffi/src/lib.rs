@@ -93,17 +93,19 @@ macro_rules! c_setters {
     };
 }
 
+#[macro_export]
 macro_rules! try_c {
     ($failable:expr) => {
         match $failable {
             Ok(o) => o,
-            Err(e) => return MaybeError::Some(ddcommon_ffi::Vec::from(e.to_string().into_bytes())),
+            Err(e) => {
+                return $crate::MaybeError::Some(ddcommon_ffi::Vec::from(e.to_string().into_bytes()))
+            }
         }
     };
 }
 
 pub(crate) use c_setters;
-pub(crate) use try_c;
 
 pub type MaybeError = ffi::Option<ffi::Vec<u8>>;
 

@@ -1,4 +1,4 @@
-ARG ALPINE_BASE_IMAGE="alpine:3.16"
+ARG ALPINE_BASE_IMAGE="alpine:3.17"
 ARG CARGO_BUILD_INCREMENTAL="true"
 ARG CARGO_NET_RETRY="2"
 ARG BUILDER_IMAGE=debian_builder
@@ -84,12 +84,13 @@ COPY "trace-mini-agent/Cargo.toml" "trace-mini-agent/"
 COPY "trace-utils/Cargo.toml" "trace-utils/"
 COPY "tools/Cargo.toml" "tools/"
 COPY "tools/cc_utils/Cargo.toml" "tools/cc_utils/"
+COPY "tools/sidecar_mockgen/Cargo.toml" "tools/sidecar_mockgen/"
 COPY "spawn_worker/Cargo.toml" "spawn_worker/"
 COPY "serverless/Cargo.toml" "serverless/"
 COPY "tests/spawn_from_lib/Cargo.toml" "tests/spawn_from_lib/"
 COPY "ipc/Cargo.toml" "ipc/"
 RUN find -name "Cargo.toml" | sed -e s#Cargo.toml#src/lib.rs#g | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
-RUN echo trace-obfuscation/benches/replace_trace_tags_bench.rs ipc/benches/ipc.rs trace-obfuscation/benches/credit_cards_bench.rs tools/src/bin/dedup_headers.rs ddtelemetry/examples/tm-worker-test.rs | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
+RUN echo trace-obfuscation/benches/replace_trace_tags_bench.rs ipc/benches/ipc.rs trace-obfuscation/benches/credit_cards_bench.rs tools/src/bin/dedup_headers.rs tools/sidecar_mockgen/src/bin/sidecar_mockgen.rs ddtelemetry/examples/tm-worker-test.rs | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
 
 # cache dependencies
 RUN cargo fetch --locked
