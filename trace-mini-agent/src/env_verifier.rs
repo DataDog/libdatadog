@@ -195,10 +195,11 @@ mod tests {
         // unit tests will always run in an environment where http://metadata.google.internal is unreachable
         let res = ensure_gcp_function_environment(Box::new(GoogleMetadataClientWrapper {})).await;
         assert!(res.is_err());
-        assert!(res
-            .unwrap_err()
-            .to_string()
-            .contains("Can't communicate with Google Metadata Server. error trying to connect:"));
+        let xx = res.unwrap_err().to_string();
+        print!("======================> {}", xx);
+        assert!(
+            xx.contains("Can't communicate with Google Metadata Server. error trying to connect:")
+        );
     }
 
     #[tokio::test]
