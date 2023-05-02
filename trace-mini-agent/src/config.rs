@@ -122,4 +122,26 @@ mod tests {
         env::remove_var("DD_API_KEY");
         env::remove_var("DD_SITE");
     }
+
+    #[duplicate_item(
+        test_name                       dd_site                 expected_url;
+        [test_us1_trace_stats_intake_url]     ["datadoghq.com"]       ["https://trace.agent.datadoghq.com/api/v0.2/stats"];
+        [test_us3_trace_stats_intake_url]     ["us3.datadoghq.com"]   ["https://trace.agent.us3.datadoghq.com/api/v0.2/stats"];
+        [test_us5_trace_stats_intake_url]     ["us5.datadoghq.com"]   ["https://trace.agent.us5.datadoghq.com/api/v0.2/stats"];
+        [test_eu_trace_stats_intake_url]      ["datadoghq.eu"]        ["https://trace.agent.datadoghq.eu/api/v0.2/stats"];
+        [test_ap1_trace_stats_intake_url]     ["ap1.datadoghq.com"]   ["https://trace.agent.ap1.datadoghq.com/api/v0.2/stats"];
+        [test_gov_trace_stats_intake_url]     ["ddog-gov.com"]        ["https://trace.agent.ddog-gov.com/api/v0.2/stats"];
+    )]
+    #[test]
+    #[serial]
+    fn test_name() {
+        env::set_var("DD_API_KEY", "_not_a_real_key_");
+        env::set_var("DD_SITE", dd_site);
+        let config_res = config::Config::new();
+        assert!(config_res.is_ok());
+        let config = config_res.unwrap();
+        assert_eq!(config.trace_stats_intake_url, expected_url);
+        env::remove_var("DD_API_KEY");
+        env::remove_var("DD_SITE");
+    }
 }
