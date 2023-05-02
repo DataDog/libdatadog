@@ -188,17 +188,23 @@ mod tests {
         ensure_gcp_function_environment, get_region_from_gcp_region_string, GoogleMetadataClient,
     };
 
-    use super::{EnvVerifier, GoogleMetadataClientWrapper, ServerlessEnvVerifier};
+    use super::{EnvVerifier, ServerlessEnvVerifier};
 
     #[tokio::test]
     async fn test_verify_env_false_if_metadata_server_unreachable() {
-        // unit tests will always run in an environment where http://metadata.google.internal is unreachable
-        let res = ensure_gcp_function_environment(Box::new(GoogleMetadataClientWrapper {})).await;
+        struct MockGoogleMetadataClient {}
+        #[async_trait]
+        impl GoogleMetadataClient for MockGoogleMetadataClient {
+            async fn get_metadata(&self) -> anyhow::Result<Response<Body>> {
+                anyhow::bail!("Random Error")
+            }
+        }
+        let res = ensure_gcp_function_environment(Box::new(MockGoogleMetadataClient {})).await;
         assert!(res.is_err());
         assert!(res
             .unwrap_err()
             .to_string()
-            .contains("Can't communicate with Google Metadata Server. error trying to connect:"));
+            .contains("Can't communicate with Google Metadata Server"));
     }
 
     #[tokio::test]
