@@ -7,4 +7,14 @@ edition = "2021"
 
 [dependencies]
 datadog-metrics = { path = "../metrics" }
+ddcommon = { version = "2.1.0", path = "../ddcommon" }
+nix = "0.26.2"
+spawn_worker = { version = "0.0.1", path = "../spawn_worker" }
 tokio = { version = "1.27.0", features = ["net", "rt", "rt-multi-thread", "macros"] }
+
+[lib]
+crate-type = ["cdylib"]
+
+[[bin]]
+name = "metrics_agent"
+path = "src/metrics_agent.rs"

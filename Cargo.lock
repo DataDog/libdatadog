@@ -401,7 +401,7 @@ dependencies = [
  "futures",
  "io-lifetimes",
  "libc",
- "nix",
+ "nix 0.24.3",
  "pin-project",
  "pretty_assertions",
  "sendfd",
@@ -589,7 +589,7 @@ dependencies = [
  "io-lifetimes",
  "lazy_static",
  "libc",
- "nix",
+ "nix 0.24.3",
  "pin-project",
  "rand",
  "regex",
@@ -1232,6 +1232,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "nix"
+version = "0.26.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfdda3d196821d6af13126e40375cdf7da646a96114af134d5f417a9a1dc8e1a"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "libc",
+ "memoffset 0.7.1",
+ "pin-utils",
+ "static_assertions",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1815,6 +1829,9 @@ name = "serverless-preload"
 version = "0.0.1"
 dependencies = [
  "datadog-metrics",
+ "ddcommon",
+ "nix 0.26.2",
+ "spawn_worker",
  "tokio",
 ]
 
@@ -1869,7 +1886,7 @@ dependencies = [
  "cc_utils",
  "io-lifetimes",
  "memfd",
- "nix",
+ "nix 0.24.3",
  "rlimit",
  "tempfile",
 ]
