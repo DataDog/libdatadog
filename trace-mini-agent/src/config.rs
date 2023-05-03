@@ -24,12 +24,8 @@ pub struct Config {
 
 impl Config {
     pub fn new() -> Result<Config, Box<dyn std::error::Error>> {
-        let api_key = match env::var("DD_API_KEY") {
-            Ok(res) => res,
-            Err(_) => {
-                return Err(anyhow::anyhow!("DD_API_KEY environment variable is not set").into());
-            }
-        };
+        let api_key = env::var("DD_API_KEY")
+            .map_err(|_| anyhow::anyhow!("DD_API_KEY environment variable is not set"))?;
         let mut function_name = None;
 
         // Google cloud functions automatically sets either K_SERVICE or FUNCTION_NAME
