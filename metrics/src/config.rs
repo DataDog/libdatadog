@@ -3,6 +3,7 @@
 
 #[derive(Debug, Builder)]
 #[builder(build_fn(validate = "Self::validate"))]
+#[builder(setter(strip_option))]
 pub struct Config {
     pub api_key: String,
     #[builder(default = "String::from(\"datadoghq.com\")")]
