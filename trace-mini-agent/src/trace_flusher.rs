@@ -67,7 +67,13 @@ impl TraceFlusher for ServerlessTraceFlusher {
             }
         };
 
-        match trace_utils::send(serialized_agent_payload, &config.api_key).await {
+        match trace_utils::send(
+            serialized_agent_payload,
+            &config.trace_intake_url,
+            &config.api_key,
+        )
+        .await
+        {
             Ok(_) => info!("Successfully flushed traces"),
             Err(e) => {
                 error!("Error sending trace: {e:?}")

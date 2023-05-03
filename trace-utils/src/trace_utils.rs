@@ -12,8 +12,6 @@ use std::str;
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
 
-const TRACE_INTAKE_URL: &str = "https://trace.agent.datadoghq.com/api/v0.2/traces";
-
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
 /// Span metric the tracer sets to denote a top level span
@@ -145,10 +143,10 @@ pub fn serialize_agent_payload(payload: pb::AgentPayload) -> anyhow::Result<Vec<
     Ok(buf)
 }
 
-pub async fn send(data: Vec<u8>, api_key: &str) -> anyhow::Result<()> {
+pub async fn send(data: Vec<u8>, url: &str, api_key: &str) -> anyhow::Result<()> {
     let req = Request::builder()
         .method(Method::POST)
-        .uri(TRACE_INTAKE_URL)
+        .uri(url)
         .header("Content-type", "application/x-protobuf")
         .header("DD-API-KEY", api_key)
         .body(Body::from(data))?;

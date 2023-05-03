@@ -75,7 +75,13 @@ impl StatsFlusher for ServerlessStatsFlusher {
             }
         };
 
-        match stats_utils::send_stats_payload(serialized_stats_payload, &config.api_key).await {
+        match stats_utils::send_stats_payload(
+            serialized_stats_payload,
+            &config.trace_stats_intake_url,
+            &config.api_key,
+        )
+        .await
+        {
             Ok(_) => info!("Successfully flushed stats"),
             Err(e) => {
                 error!("Error sending stats: {e:?}")

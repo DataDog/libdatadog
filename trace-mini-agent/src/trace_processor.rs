@@ -251,6 +251,9 @@ mod tests {
             trace_flush_interval: 3,
             stats_flush_interval: 3,
             verify_env_timeout: 100,
+            trace_intake_url: "trace.agent.notdog.com/traces".to_string(),
+            trace_stats_intake_url: "trace.agent.notdog.com/stats".to_string(),
+            dd_site: "datadoghq.com".to_string(),
         }
     }
 
