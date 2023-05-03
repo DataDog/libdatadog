@@ -1811,6 +1811,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "serverless-preload"
+version = "0.0.1"
+dependencies = [
+ "datadog-metrics",
+ "tokio",
+]
+
+[[package]]
 name = "sharded-slab"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
