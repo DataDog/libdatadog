@@ -278,8 +278,7 @@ impl TelemetryServer {
             },
             Transport::try_from(AsyncChannel::from(socket)).unwrap(),
         );
-
-        server.execute(self.serve()).await
+        datadog_ipc::sequential::execute_sequential(server.requests(), self.serve(), 100).await
     }
 
     fn get_session(&self, session_id: &String) -> SessionInfo {
