@@ -1,0 +1,7 @@
+'area:profiling':
+- profiling/**/*
+- profiling-ffi/**/*
+
+'area:common':
+- ddcommon/**/*
+- ddcommon-ffi/**/*
