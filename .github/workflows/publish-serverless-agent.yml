@@ -1,8 +1,10 @@
 name: Build and Release Serverless Agent
 on:
   push:
-    tags:
-      - 'sls-**'
+    branches:
+      - david.lee/mini-agent-build-workflow-lzma
+    # tags:
+    #   - 'sls-**'
 
 jobs:
   build:
@@ -43,14 +45,19 @@ jobs:
           for file in target/release/binaries/*/*
           do
             chmod +x "$file"
-            upx "$file" --ultra-brute
+            upx "$file" --lzma
           done
       - name: Zip binaries
         run: zip -r datadog-serverless-agent.zip *
         working-directory: target/release/binaries
-      - name: Release
-        uses: softprops/action-gh-release@v1
+      - name: Upload artifacts for testing
+        uses: actions/upload-artifact@v3
         with:
-          draft: true
-          generate_release_notes: true
-          files: target/release/binaries/datadog-serverless-agent.zip
+          name: test
+          path: target/release/binaries/datadog-serverless-agent.zip
+      # - name: Release
+      #   uses: softprops/action-gh-release@v1
+      #   with:
+      #     draft: true
+      #     generate_release_notes: true
+      #     files: target/release/binaries/datadog-serverless-agent.zip
