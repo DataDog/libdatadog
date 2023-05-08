@@ -483,6 +483,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "datadog-trace-normalization",
+ "datadog-trace-obfuscation",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
  "duplicate",

@@ -254,6 +254,7 @@ mod tests {
             trace_intake_url: "trace.agent.notdog.com/traces".to_string(),
             trace_stats_intake_url: "trace.agent.notdog.com/stats".to_string(),
             dd_site: "datadoghq.com".to_string(),
+            tag_replace_rules: None,
         }
     }
 

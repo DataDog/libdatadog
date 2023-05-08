@@ -2,6 +2,9 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use std::env;
+use log::error;
+
+use datadog_trace_obfuscation::replacer::{ReplaceRule, parse_rules_from_string};
 
 const TRACE_INTAKE_ROUTE: &str = "/api/v0.2/traces";
 const TRACE_STATS_INTAKE_ROUTE: &str = "/api/v0.2/stats";
@@ -20,6 +23,7 @@ pub struct Config {
     pub trace_intake_url: String,
     pub trace_stats_intake_url: String,
     pub dd_site: String,
+    pub tag_replace_rules: Option<Vec<ReplaceRule>>,
 }
 
 impl Config {
@@ -42,6 +46,11 @@ impl Config {
         let trace_intake_url = construct_trace_intake_url(&dd_site, TRACE_INTAKE_ROUTE);
         let trace_stats_intake_url = construct_trace_intake_url(&dd_site, TRACE_STATS_INTAKE_ROUTE);
 
+        let tag_replace_rules = match env::var("DD_APM_REPLACE_TAGS") {
+            Ok(res) => Some(get_tag_replace_rules(res)),
+            Err(_) => None,
+        };
+
         Ok(Config {
             api_key,
             gcp_function_name: function_name,
@@ -52,12 +61,38 @@ impl Config {
             dd_site,
             trace_intake_url,
             trace_stats_intake_url,
+            tag_replace_rules,
         })
     }
 }
 
 fn construct_trace_intake_url(prefix: &str, route: &str) -> String {
     format!("https://trace.agent.{prefix}{route}")
+}
+
+fn get_tag_replace_rules(raw_replace_rules: String) -> Vec<ReplaceRule> {
+    let replace_rules_strings: Vec<Vec<String>> = match serde_json::from_str(&raw_replace_rules) {
+        Ok(res) => res,
+        Err(_) => {
+            error!("Invalid DD_APM_REPLACE_TAGS value");
+            return Vec::new();
+        },
+    };
+    let mut parsed_rules: Vec<ReplaceRule> = Vec::new();
+    for rule in replace_rules_strings {
+        if rule.len() != 3 {
+            error!("Invalid DD_APM_REPLACE_TAGS value");
+            return Vec::new();
+        }
+        let parsed_rule = match parse_rules_from_string([&rule[0], &rule[1], &rule[2]]) {
+            Ok(res) => Some(res),
+            Err(_) => None
+        };
+        if let Some(parsed_rule) = parsed_rule {
+            parsed_rules.push(parsed_rule);
+        }
+    }
+    parsed_rules
 }
 
 #[cfg(test)]

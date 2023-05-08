@@ -6,37 +6,37 @@
 use datadog_trace_protobuf::pb;
 use regex::Regex;
 
-#[derive(Debug)]
-pub struct ReplaceRule<'a> {
+#[derive(Clone, Debug)]
+pub struct ReplaceRule {
     // name specifies the name of the tag that the replace rule addresses. However,
     // some exceptions apply such as:
     // * "resource.name" will target the resource
     // * "*" will target all tags and the resource
-    name: &'a str,
+    name: String,
 
     // re holds the regex pattern for matching.
     re: regex::Regex,
 
     // repl specifies the replacement string to be used when Pattern matches.
-    repl: &'a str,
+    repl: String,
 }
 
 /// replace_trace_tags replaces the tag values of all spans within a trace with a given set of rules.
 pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
     for rule in rules {
         for span in trace.iter_mut() {
-            match rule.name {
+            match rule.name.as_str() {
                 "*" => {
                     for (_, val) in span.meta.iter_mut() {
-                        *val = rule.re.replace_all(val, rule.repl).to_string();
+                        *val = rule.re.replace_all(val, &rule.repl).to_string();
                     }
                 }
                 "resource.name" => {
-                    span.resource = rule.re.replace_all(&span.resource, rule.repl).to_string();
+                    span.resource = rule.re.replace_all(&span.resource, &rule.repl).to_string();
                 }
                 _ => {
-                    if let Some(val) = span.meta.get_mut(rule.name) {
-                        let replaced_tag = rule.re.replace_all(val, rule.repl).to_string();
+                    if let Some(val) = span.meta.get_mut(&rule.name) {
+                        let replaced_tag = rule.re.replace_all(val, &rule.repl).to_string();
                         *val = replaced_tag;
                     }
                 }
@@ -49,24 +49,20 @@ pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
 /// holding the tag name, regex pattern, and replacement string as strings.
 /// * returns a vec of ReplaceRules
 pub fn parse_rules_from_string<'a>(
-    rules: &'a [[&'a str; 3]],
-) -> anyhow::Result<Vec<ReplaceRule<'a>>> {
-    let mut vec: Vec<ReplaceRule> = Vec::with_capacity(rules.len());
-
-    for [name, pattern, repl] in rules {
-        let compiled_regex = match Regex::new(pattern) {
-            Ok(res) => res,
-            Err(err) => {
-                anyhow::bail!("Obfuscator Error: Error while parsing rule: {}", err)
-            }
-        };
-        vec.push(ReplaceRule {
-            name,
-            re: compiled_regex,
-            repl,
-        });
-    }
-    Ok(vec)
+    rule: [&'a str; 3],
+) -> anyhow::Result<ReplaceRule> {
+    let [name, pattern, repl] = rule;
+    let compiled_regex = match Regex::new(pattern) {
+        Ok(res) => res,
+        Err(err) => {
+            anyhow::bail!("Obfuscator Error: Error while parsing rule: {}", err)
+        }
+    };
+    Ok(ReplaceRule {
+        name: name.to_string(),
+        re: compiled_regex,
+        repl: repl.to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -76,6 +72,8 @@ mod tests {
     use datadog_trace_protobuf::pb;
     use duplicate::duplicate_item;
     use std::collections::HashMap;
+
+    use super::ReplaceRule;
 
     fn new_test_span_with_tags(tags: HashMap<&str, &str>) -> pb::Span {
         let mut span = pb::Span {
@@ -156,12 +154,15 @@ mod tests {
     )]
     #[test]
     fn test_name() {
-        let parsed_rules = replacer::parse_rules_from_string(rules);
+        let mut parsed_rules: Vec<ReplaceRule> = Vec::new();
+        for rule in rules {
+            parsed_rules.push(replacer::parse_rules_from_string(*rule).unwrap());
+        }
         let root_span = new_test_span_with_tags(input);
         let child_span = new_test_span_with_tags(input);
         let mut trace = [root_span, child_span];
 
-        replacer::replace_trace_tags(&mut trace, &parsed_rules.unwrap());
+        replacer::replace_trace_tags(&mut trace, &parsed_rules);
 
         for (key, val) in expected {
             match key {
@@ -179,7 +180,7 @@ mod tests {
 
     #[test]
     fn test_parse_rules_invalid_regex() {
-        let result = replacer::parse_rules_from_string(&[["http.url", ")", "${1}?"]]);
+        let result = replacer::parse_rules_from_string(["http.url", ")", "${1}?"]);
         assert!(result.is_err());
     }
 }
