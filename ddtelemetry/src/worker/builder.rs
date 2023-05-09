@@ -3,7 +3,7 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use crate::Config;
+use crate::config::Config;
 use ddcommon::Endpoint;
 
 #[derive(Default, Debug)]
