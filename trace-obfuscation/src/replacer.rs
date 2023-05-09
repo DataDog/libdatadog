@@ -61,9 +61,6 @@ pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
     }
 }
 
-/// parse_rules_from_string takes an array of rules, represented as an array of length 3 arrays
-/// holding the tag name, regex pattern, and replacement string as strings.
-/// * returns a vec of ReplaceRules
 pub fn parse_raw_rules(raw_rules: Vec<RawReplaceRule>) -> anyhow::Result<Vec<ReplaceRule>> {
     let mut replace_rules = Vec::new();
     for raw_rule in raw_rules {
@@ -203,5 +200,9 @@ mod tests {
             repl: "${1}?".to_string(),
         }]);
         assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "regex parse error:\n    )\n    ^\nerror: unopened group"
+        );
     }
 }
