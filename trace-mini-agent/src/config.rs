@@ -69,11 +69,13 @@ fn construct_trace_intake_url(prefix: &str, route: &str) -> String {
 }
 
 fn get_tag_replace_rules(env_var_value: String) -> Vec<ReplaceRule> {
-    let replace_rules_strings: Vec<RawReplaceRule> = serde_json::from_str(&env_var_value)
-        .unwrap_or_else(|_| {
+    let replace_rules_strings: Vec<RawReplaceRule> = match serde_json::from_str(&env_var_value) {
+        Ok(res) => res,
+        Err(_) => {
             error!("Invalid DD_APM_REPLACE_TAGS value: Not valid Replace Tags JSON");
-            Vec::new()
-        });
+            return Vec::new();
+        }
+    };
     match parse_raw_rules(replace_rules_strings) {
         Ok(res) => {
             debug!("Successfully parsed DD_APM_REPLACE_TAGS value");
