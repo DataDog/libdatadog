@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use datadog_trace_obfuscation::replacer;
 use hyper::{http, Body, Request, Response, StatusCode};
 use log::error;
 use tokio::sync::mpsc::Sender;
@@ -119,6 +120,10 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 config.gcp_function_name.clone(),
             );
 
+            if let Some(replace_rules) = &config.tag_replace_rules {
+                replacer::replace_trace_tags(&mut chunk.spans, replace_rules);
+            }
+
             trace_chunks.push(chunk);
 
             if !gathered_root_span_tags {
@@ -159,7 +164,9 @@ impl TraceProcessor for ServerlessTraceProcessor {
 
 #[cfg(test)]
 mod tests {
+    use datadog_trace_obfuscation::replacer::ReplaceRule;
     use hyper::Request;
+    use regex::Regex;
     use serde_json::json;
     use std::{
         collections::HashMap,
@@ -368,6 +375,74 @@ mod tests {
                     create_test_span(start, 222, 0, true),
                     create_test_span(start, 444, 333, false),
                 ],
+                tags: HashMap::new(),
+                dropped_trace: false,
+            }],
+            tags: HashMap::new(),
+            env: "test-env".to_string(),
+            hostname: "".to_string(),
+            app_version: "".to_string(),
+        };
+
+        assert_eq!(expected_tracer_payload, tracer_payload.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_process_trace_replace_tags() {
+        let (tx, mut rx): (Sender<pb::TracerPayload>, Receiver<pb::TracerPayload>) =
+            mpsc::channel(1);
+
+        let start = get_current_timestamp_nanos();
+
+        let json_trace = vec![create_test_json_span(start, 333, 222)];
+
+        let bytes = rmp_serde::to_vec(&vec![json_trace]).unwrap();
+        let request = Request::builder()
+            .header("datadog-meta-tracer-version", "4.0.0")
+            .header("datadog-meta-lang", "nodejs")
+            .header("datadog-meta-lang-version", "v19.7.0")
+            .header("datadog-meta-lang-interpreter", "v8")
+            .header("datadog-container-id", "33")
+            .header("content-length", "100")
+            .body(hyper::body::Body::from(bytes))
+            .unwrap();
+
+        let trace_processor = trace_processor::ServerlessTraceProcessor {};
+        let mut config = create_test_config();
+        config.tag_replace_rules = Some(vec![ReplaceRule {
+            name: "service".to_string(),
+            re: Regex::new("test").unwrap(),
+            repl: "testytest".to_string(),
+        }]);
+        let res = trace_processor
+            .process_traces(
+                Arc::new(config),
+                request,
+                tx,
+                Arc::new(trace_utils::MiniAgentMetadata::default()),
+            )
+            .await;
+        assert!(res.is_ok());
+
+        let tracer_payload = rx.recv().await;
+
+        assert!(tracer_payload.is_some());
+
+        let mut expected_test_span = create_test_span(start, 333, 222, true);
+        expected_test_span
+            .meta
+            .insert("service".to_string(), "testytest-service".to_string());
+
+        let expected_tracer_payload = pb::TracerPayload {
+            container_id: "33".to_string(),
+            language_name: "nodejs".to_string(),
+            language_version: "v19.7.0".to_string(),
+            tracer_version: "4.0.0".to_string(),
+            runtime_id: "afjksdljfkllksdj-28934889".to_string(),
+            chunks: vec![pb::TraceChunk {
+                priority: i8::MIN as i32,
+                origin: "".to_string(),
+                spans: vec![expected_test_span],
                 tags: HashMap::new(),
                 dropped_trace: false,
             }],

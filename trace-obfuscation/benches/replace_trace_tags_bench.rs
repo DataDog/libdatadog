@@ -6,10 +6,10 @@
 use std::collections::HashMap;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use datadog_trace_obfuscation::replacer::{self, ReplaceRule};
+use datadog_trace_obfuscation::replacer::{self, RawReplaceRule};
 use datadog_trace_protobuf::pb;
 
-fn criterion_benchmark(c: &mut Criterion) {
+fn replace_trace_tags_bench(c: &mut Criterion) {
     let rules = [
         ["http.url", "(token/)([^/]*)", "${1}?"],
         ["http.url", "guid", "[REDACTED]"],
@@ -18,11 +18,17 @@ fn criterion_benchmark(c: &mut Criterion) {
         ["custom.tag", "(/foo/bar/).*", "${1}extra"],
         ["resource.name", "prod", "stage"],
     ];
-    
-    let mut parsed_rules: Vec<ReplaceRule> = Vec::new();
-    for rule in rules {
-        parsed_rules.push(replacer::parse_rules_from_string(rule).unwrap());
+
+    let mut raw_rules = Vec::new();
+    for [name, pattern, repl] in rules {
+        raw_rules.push(RawReplaceRule {
+            name: name.to_string(),
+            pattern: pattern.to_string(),
+            repl: repl.to_string(),
+        })
     }
+
+    let parsed_rules = replacer::parse_raw_rules(raw_rules).unwrap();
 
     let span_1 = pb::Span {
         duration: 10000000,
@@ -59,5 +65,5 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, criterion_benchmark);
+criterion_group!(benches, replace_trace_tags_bench);
 criterion_main!(benches);

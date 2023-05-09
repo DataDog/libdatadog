@@ -1,10 +1,10 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
+use log::{debug, error};
 use std::env;
-use log::error;
 
-use datadog_trace_obfuscation::replacer::{ReplaceRule, parse_rules_from_string};
+use datadog_trace_obfuscation::replacer::{parse_raw_rules, RawReplaceRule, ReplaceRule};
 
 const TRACE_INTAKE_ROUTE: &str = "/api/v0.2/traces";
 const TRACE_STATS_INTAKE_ROUTE: &str = "/api/v0.2/stats";
@@ -70,38 +70,37 @@ fn construct_trace_intake_url(prefix: &str, route: &str) -> String {
     format!("https://trace.agent.{prefix}{route}")
 }
 
-fn get_tag_replace_rules(raw_replace_rules: String) -> Vec<ReplaceRule> {
-    let replace_rules_strings: Vec<Vec<String>> = match serde_json::from_str(&raw_replace_rules) {
+fn get_tag_replace_rules(env_var_value: String) -> Vec<ReplaceRule> {
+    let replace_rules_strings: Vec<RawReplaceRule> = match serde_json::from_str(&env_var_value) {
         Ok(res) => res,
-        Err(_) => {
-            error!("Invalid DD_APM_REPLACE_TAGS value");
-            return Vec::new();
-        },
-    };
-    let mut parsed_rules: Vec<ReplaceRule> = Vec::new();
-    for rule in replace_rules_strings {
-        if rule.len() != 3 {
-            error!("Invalid DD_APM_REPLACE_TAGS value");
+        Err(e) => {
+            error!("Invalid DD_APM_REPLACE_TAGS value: Not valid Replace Tags JSON");
+            println!("ERROR: {e}");
             return Vec::new();
         }
-        let parsed_rule = match parse_rules_from_string([&rule[0], &rule[1], &rule[2]]) {
-            Ok(res) => Some(res),
-            Err(_) => None
-        };
-        if let Some(parsed_rule) = parsed_rule {
-            parsed_rules.push(parsed_rule);
+    };
+    match parse_raw_rules(replace_rules_strings) {
+        Ok(res) => {
+            debug!("Successfully parsed DD_APM_REPLACE_TAGS value");
+            res
+        }
+        Err(e) => {
+            error!("Failed to parse DD_APM_REPLACE_TAGS: {e}");
+            Vec::new()
         }
     }
-    parsed_rules
 }
 
 #[cfg(test)]
 mod tests {
+    use datadog_trace_obfuscation::replacer::ReplaceRule;
     use duplicate::duplicate_item;
+    use log::Level;
+    use regex::Regex;
     use serial_test::serial;
     use std::env;
 
-    use crate::config;
+    use crate::config::{self, get_tag_replace_rules};
 
     #[test]
     #[serial]
@@ -174,5 +173,39 @@ mod tests {
         assert_eq!(config.trace_stats_intake_url, expected_url);
         env::remove_var("DD_API_KEY");
         env::remove_var("DD_SITE");
+    }
+
+    #[test]
+    #[serial]
+    fn test_get_tag_replace_rules_invalid_json() {
+        testing_logger::setup();
+        let invalid_json = "{".to_string();
+        let res = get_tag_replace_rules(invalid_json);
+        assert!(res.is_empty());
+        testing_logger::validate(|captured_logs| {
+            assert_eq!(captured_logs.len(), 1);
+            assert_eq!(
+                captured_logs[0].body,
+                "Invalid DD_APM_REPLACE_TAGS value: Not valid Replace Tags JSON"
+            );
+            assert_eq!(captured_logs[0].level, Level::Error);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_get_tag_replace_rules_valid_json() {
+        let invalid_regex =
+            "[{\"name\": \"*\", \"pattern\": \"api_key\", \"repl\": \"REDACTED\"}]".to_string();
+        let res = get_tag_replace_rules(invalid_regex);
+        assert_eq!(res.len(), 1);
+        assert_eq!(
+            res,
+            vec!(ReplaceRule {
+                name: "*".to_string(),
+                re: Regex::new("api_key").unwrap(),
+                repl: "REDACTED".to_string()
+            })
+        )
     }
 }

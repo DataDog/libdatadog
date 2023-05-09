@@ -5,6 +5,14 @@
 
 use datadog_trace_protobuf::pb;
 use regex::Regex;
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+pub struct RawReplaceRule {
+    pub name: String,
+    pub pattern: String,
+    pub repl: String,
+}
 
 #[derive(Clone, Debug)]
 pub struct ReplaceRule {
@@ -12,13 +20,21 @@ pub struct ReplaceRule {
     // some exceptions apply such as:
     // * "resource.name" will target the resource
     // * "*" will target all tags and the resource
-    name: String,
+    pub name: String,
 
     // re holds the regex pattern for matching.
-    re: regex::Regex,
+    pub re: regex::Regex,
 
     // repl specifies the replacement string to be used when Pattern matches.
-    repl: String,
+    pub repl: String,
+}
+
+impl PartialEq for ReplaceRule {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.re.to_string() == other.re.to_string()
+            && self.repl == other.repl
+    }
 }
 
 /// replace_trace_tags replaces the tag values of all spans within a trace with a given set of rules.
@@ -48,21 +64,17 @@ pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
 /// parse_rules_from_string takes an array of rules, represented as an array of length 3 arrays
 /// holding the tag name, regex pattern, and replacement string as strings.
 /// * returns a vec of ReplaceRules
-pub fn parse_rules_from_string<'a>(
-    rule: [&'a str; 3],
-) -> anyhow::Result<ReplaceRule> {
-    let [name, pattern, repl] = rule;
-    let compiled_regex = match Regex::new(pattern) {
-        Ok(res) => res,
-        Err(err) => {
-            anyhow::bail!("Obfuscator Error: Error while parsing rule: {}", err)
-        }
-    };
-    Ok(ReplaceRule {
-        name: name.to_string(),
-        re: compiled_regex,
-        repl: repl.to_string(),
-    })
+pub fn parse_raw_rules(raw_rules: Vec<RawReplaceRule>) -> anyhow::Result<Vec<ReplaceRule>> {
+    let mut replace_rules = Vec::new();
+    for raw_rule in raw_rules {
+        let compiled_regex = Regex::new(&raw_rule.pattern)?;
+        replace_rules.push(ReplaceRule {
+            name: raw_rule.name,
+            re: compiled_regex,
+            repl: raw_rule.repl,
+        })
+    }
+    Ok(replace_rules)
 }
 
 #[cfg(test)]
@@ -73,7 +85,7 @@ mod tests {
     use duplicate::duplicate_item;
     use std::collections::HashMap;
 
-    use super::ReplaceRule;
+    use super::RawReplaceRule;
 
     fn new_test_span_with_tags(tags: HashMap<&str, &str>) -> pb::Span {
         let mut span = pb::Span {
@@ -154,10 +166,15 @@ mod tests {
     )]
     #[test]
     fn test_name() {
-        let mut parsed_rules: Vec<ReplaceRule> = Vec::new();
-        for rule in rules {
-            parsed_rules.push(replacer::parse_rules_from_string(*rule).unwrap());
+        let mut raw_rules = Vec::new();
+        for [name, pattern, repl] in rules {
+            raw_rules.push(RawReplaceRule {
+                name: name.to_string(),
+                pattern: pattern.to_string(),
+                repl: repl.to_string(),
+            })
         }
+        let parsed_rules = replacer::parse_raw_rules(raw_rules).unwrap();
         let root_span = new_test_span_with_tags(input);
         let child_span = new_test_span_with_tags(input);
         let mut trace = [root_span, child_span];
@@ -180,7 +197,11 @@ mod tests {
 
     #[test]
     fn test_parse_rules_invalid_regex() {
-        let result = replacer::parse_rules_from_string(["http.url", ")", "${1}?"]);
+        let result = replacer::parse_raw_rules(vec![RawReplaceRule {
+            name: "http.url".to_string(),
+            pattern: ")".to_string(),
+            repl: "${1}?".to_string(),
+        }]);
         assert!(result.is_err());
     }
 }
