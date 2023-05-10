@@ -5,7 +5,6 @@
 
 use ddcommon::container_id;
 
-use self::config::Config;
 pub mod config;
 pub mod data;
 pub mod info;

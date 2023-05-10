@@ -7,11 +7,10 @@ mod scheduler;
 pub(crate) mod store;
 
 use crate::{
-    config::{self},
+    config::{self, Config},
     data::{self, Application, Dependency, Host, Integration, Log, Payload, Telemetry},
     metrics::{ContextKey, MetricBuckets, MetricContexts},
     worker::builder::ConfigBuilder,
-    Config,
 };
 use ddcommon::tag::Tag;
 
