@@ -173,7 +173,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_get_tag_replace_rules_invalid_json() {
         testing_logger::setup();
         let invalid_json = "{".to_string();
@@ -190,7 +189,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_get_tag_replace_rules_valid_json() {
         let invalid_regex =
             "[{\"name\": \"*\", \"pattern\": \"api_key\", \"repl\": \"REDACTED\"}]".to_string();
