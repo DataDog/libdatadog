@@ -47,7 +47,7 @@ impl Config {
         let trace_stats_intake_url = construct_trace_intake_url(&dd_site, TRACE_STATS_INTAKE_ROUTE);
 
         let tag_replace_rules =
-            env::var("DD_APM_REPLACE_TAGS").map_or(None, |v| Some(get_tag_replace_rules(v)));
+            env::var("DD_APM_REPLACE_TAGS").map_or(None, get_tag_replace_rules);
 
         Ok(Config {
             api_key,
@@ -68,22 +68,22 @@ fn construct_trace_intake_url(prefix: &str, route: &str) -> String {
     format!("https://trace.agent.{prefix}{route}")
 }
 
-fn get_tag_replace_rules(env_var_value: String) -> Vec<ReplaceRule> {
+fn get_tag_replace_rules(env_var_value: String) -> Option<Vec<ReplaceRule>> {
     let replace_rules_strings: Vec<RawReplaceRule> = match serde_json::from_str(&env_var_value) {
         Ok(res) => res,
         Err(_) => {
             error!("Invalid DD_APM_REPLACE_TAGS value: Not valid Replace Tags JSON");
-            return Vec::new();
+            return None;
         }
     };
     match parse_raw_rules(replace_rules_strings) {
         Ok(res) => {
             debug!("Successfully parsed DD_APM_REPLACE_TAGS value");
-            res
+            Some(res)
         }
         Err(e) => {
             error!("Failed to parse DD_APM_REPLACE_TAGS: {e}");
-            Vec::new()
+            None
         }
     }
 }
@@ -177,7 +177,7 @@ mod tests {
         testing_logger::setup();
         let invalid_json = "{".to_string();
         let res = get_tag_replace_rules(invalid_json);
-        assert!(res.is_empty());
+        assert!(res.is_none());
         testing_logger::validate(|captured_logs| {
             assert_eq!(captured_logs.len(), 1);
             assert_eq!(
@@ -191,16 +191,40 @@ mod tests {
     #[test]
     fn test_get_tag_replace_rules_valid_json() {
         let invalid_regex =
-            "[{\"name\": \"*\", \"pattern\": \"api_key\", \"repl\": \"REDACTED\"}]".to_string();
-        let res = get_tag_replace_rules(invalid_regex);
-        assert_eq!(res.len(), 1);
+            "[{\"name\": \"*\", \"pattern\": \"api_key\", \"repl\": \"REDACTED\"},{\"name\": \"test_name\", \"pattern\": \"asdf\", \"repl\": \"*\"}]".to_string();
+        let res = get_tag_replace_rules(invalid_regex).unwrap();
+        assert_eq!(res.len(), 2);
         assert_eq!(
             res,
-            vec!(ReplaceRule {
-                name: "*".to_string(),
-                re: Regex::new("api_key").unwrap(),
-                repl: "REDACTED".to_string()
-            })
+            vec!(
+                ReplaceRule {
+                    name: "*".to_string(),
+                    re: Regex::new("api_key").unwrap(),
+                    repl: "REDACTED".to_string()
+                },
+                ReplaceRule {
+                    name: "test_name".to_string(),
+                    re: Regex::new("asdf").unwrap(),
+                    repl: "*".to_string()
+                }
+            )
         )
+    }
+
+    #[test]
+    fn test_get_tag_replace_rules_invalid_regex() {
+        testing_logger::setup();
+        let invalid_regex =
+            "[{\"name\": \"*\", \"pattern\": \")\", \"repl\": \"REDACTED\"}]".to_string();
+        let res = get_tag_replace_rules(invalid_regex);
+        assert!(res.is_none());
+        testing_logger::validate(|captured_logs| {
+            assert_eq!(captured_logs.len(), 1);
+            assert_eq!(
+                captured_logs[0].body,
+                "Failed to parse DD_APM_REPLACE_TAGS: regex parse error:\n    )\n    ^\nerror: unopened group"
+            );
+            assert_eq!(captured_logs[0].level, Level::Error);
+        });
     }
 }
