@@ -374,10 +374,12 @@ impl SpawnWorker {
         };
 
         // build and allocate final exec fn and its dependencies
+        let mut skip_close_fd = 0;
         let spawn: Box<dyn Fn()> = match spawn_method {
             #[cfg(target_os = "linux")]
             SpawnMethod::FdExec => {
                 let fd = linux::write_trampoline()?;
+                skip_close_fd = fd.as_raw_fd();
                 Box::new(move || {
                     // not using nix crate here, as it would allocate args after fork, which will lead to crashes on systems
                     // where allocator is not fork+thread safe
@@ -462,7 +464,7 @@ impl SpawnWorker {
             3..=i32::MAX
         };
 
-        if let Err(e) = close_fd_range(close_range) {
+        if let Err(e) = close_fd_range(close_range, skip_close_fd) {
             // What do we do here?
             // /proc might not be mounted?
         }
@@ -521,9 +523,9 @@ fn list_open_fds() -> io::Result<impl Iterator<Item = i32>> {
 }
 
 // https://man7.org/linux/man-pages/man2/close_range.2.html is too recent sadly :_()
-fn close_fd_range(range: RangeInclusive<i32>) -> std::io::Result<()> {
+fn close_fd_range(range: RangeInclusive<i32>, skip_close_fd: i32) -> std::io::Result<()> {
     for fd in list_open_fds()? {
-        if range.contains(&fd) {
+        if fd != skip_close_fd && range.contains(&fd) {
             nix::unistd::close(fd)?;
         }
     }
