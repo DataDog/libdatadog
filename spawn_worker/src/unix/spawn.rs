@@ -18,8 +18,11 @@ mod linux {
         Ok(mfd)
     }
 }
+
 use std::fs::File;
 
+use std::io;
+use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::{
     env,
@@ -341,24 +344,13 @@ impl SpawnWorker {
             }
         }
 
-        // setup arbitrary fd passing
-        let _shorter_lived_fd = if let Some(src_fd) = &self.fd_to_pass {
-            // we're stripping the close on exec flag from the FD
-            // to ensure we will not modify original fd, whose expected lifetime is unknown
-            // we should clone the FD that needs passing to the subprocess, keeping its lifetime
-            // as short as possible
+        let fd_to_pass = if let Some(src_fd) = &self.fd_to_pass {
+            // FD to pass is always 4
+            envp.push(CString::new(format!("{}={}", crate::ENV_PASS_FD_KEY, 3))?);
 
-            // rationale: some FDs are more important than others
-            //      e.g. listening socket fd must not be accidentally leaked to a subprocess
-            //      this would cause hard to debug bugs where random process could block the address
-            //  TODO: this method is not perfect, ideally we should create an anonymous socket pair
-            //        then send any FDs through that socket pair. Ensuring no random spawned processes could leak
             let fd = src_fd.try_clone()?;
-            envp.push(CString::new(format!(
-                "{}={}",
-                crate::ENV_PASS_FD_KEY,
-                fd.as_raw_fd()
-            ))?);
+
+            // Strip any close on exec flag on this fd
             let flags = nix::fcntl::fcntl(fd.as_raw_fd(), nix::fcntl::F_GETFD)?;
             unsafe {
                 libc::fcntl(
@@ -371,6 +363,8 @@ impl SpawnWorker {
         } else {
             None
         };
+        // make sure the fd_to_pass is not dropped until the end of the function
+        let fd_to_pass = fd_to_pass.as_ref();
 
         // setup final spawn
 
@@ -461,6 +455,18 @@ impl SpawnWorker {
             unsafe { libc::dup2(fd, libc::STDERR_FILENO) };
         }
 
+        let close_range = if let Some(fd) = fd_to_pass {
+            unsafe { libc::dup2(fd.as_raw_fd(), 3) };
+            4..=i32::MAX
+        } else {
+            3..=i32::MAX
+        };
+
+        if let Err(e) = close_fd_range(close_range) {
+            // What do we do here?
+            // /proc might not be mounted?
+        }
+
         spawn();
         std::process::exit(1);
     }
@@ -480,4 +486,46 @@ impl Child {
 
         Ok(nix::sys::wait::waitpid(Some(pid), None)?)
     }
+}
+
+#[cfg(target_os = "macos")]
+const SELF_FD_DIR: &str = "/dev/fd";
+
+#[cfg(target_os = "linux")]
+const SELF_FD_DIR: &str = "/proc/self/fd";
+
+fn list_open_fds() -> io::Result<impl Iterator<Item = i32>> {
+    let dir = nix::dir::Dir::open(
+        SELF_FD_DIR,
+        nix::fcntl::OFlag::O_DIRECTORY | nix::fcntl::OFlag::O_RDONLY,
+        nix::sys::stat::Mode::empty(),
+    )?;
+    let dir_fd = dir.as_raw_fd();
+    Ok(dir.into_iter().filter_map(move |fd_path| {
+        let fd_path = match fd_path {
+            Err(_) => return None,
+            Ok(p) => p,
+        };
+        if fd_path.file_name().to_bytes() == b"." || fd_path.file_name().to_bytes() == b".." {
+            return None;
+        }
+        let fd: i32 = std::str::from_utf8(fd_path.file_name().to_bytes())
+            .unwrap()
+            .parse()
+            .unwrap();
+        if fd == dir_fd {
+            return None;
+        }
+        Some(fd)
+    }))
+}
+
+// https://man7.org/linux/man-pages/man2/close_range.2.html is too recent sadly :_()
+fn close_fd_range(range: RangeInclusive<i32>) -> std::io::Result<()> {
+    for fd in list_open_fds()? {
+        if range.contains(&fd) {
+            nix::unistd::close(fd)?;
+        }
+    }
+    Ok(())
 }
