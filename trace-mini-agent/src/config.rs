@@ -46,8 +46,7 @@ impl Config {
         let trace_intake_url = construct_trace_intake_url(&dd_site, TRACE_INTAKE_ROUTE);
         let trace_stats_intake_url = construct_trace_intake_url(&dd_site, TRACE_STATS_INTAKE_ROUTE);
 
-        let tag_replace_rules =
-            env::var("DD_APM_REPLACE_TAGS").map_or(None, get_tag_replace_rules);
+        let tag_replace_rules = env::var("DD_APM_REPLACE_TAGS").map_or(None, get_tag_replace_rules);
 
         Ok(Config {
             api_key,
