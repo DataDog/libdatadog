@@ -4,34 +4,51 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #ifndef _WIN32
 #include <dlfcn.h>
+#include <unistd.h>
 #endif
 
 int main(int argc, char *argv[]) {
-  if (argc > 2) {
-    const char *library_path = argv[1];
+  if (argc > 3) {
+    // remove the temp file of this trampoline
+    if (*argv[1]) {
+      unlink(argv[1]);
+    }
+
+    const char *library_path = argv[2];
 
     // Last entry is always the symbol name
-    const char *symbol_name = argv[argc-1];
+    const char *symbol_name = argv[argc - 1];
 
     if (strcmp("__dummy_mirror_test", library_path) == 0) {
       printf("%s %s", library_path, symbol_name);
       return 0;
     }
 #ifndef _WIN32
-    int additional_shared_libraries_cnt = argc - 3;
+    int additional_shared_libraries_args = argc - 4;
     void **handles = NULL;
 
-    if (additional_shared_libraries_cnt > 0) {
-      handles = calloc(additional_shared_libraries_cnt, sizeof(void *));
+    if (additional_shared_libraries_args > 0) {
+      handles = calloc(additional_shared_libraries_args, sizeof(void *));
     }
 
-    for (int i = 0; i < additional_shared_libraries_cnt; i++) {
-      handles[i] = dlopen(argv[2 + i], RTLD_LAZY | RTLD_GLOBAL);
-      if (!handles[i]) {
-        fputs(dlerror(), stderr);
-        return 9;
+    int additional_shared_libraries_count = 0;
+    bool unlink_next = false;
+    for (int i = 0; i < additional_shared_libraries_args; i++) {
+      const char *lib_path = argv[3 + i];
+      if (*lib_path == '-' && !lib_path[1]) {
+          unlink_next = true;
+          continue;
+      }
+      if (!(handles[additional_shared_libraries_count++] = dlopen(lib_path, RTLD_LAZY | RTLD_GLOBAL))) {
+          fputs(dlerror(), stderr);
+          return 9;
+      }
+      if (unlink_next) {
+        unlink(lib_path);
+        unlink_next = false;
       }
     }
 
@@ -52,7 +69,7 @@ int main(int argc, char *argv[]) {
     dlclose(handle);
 
     if (handles != NULL) {
-      for (int i = 0; i < additional_shared_libraries_cnt; i++) {
+      for (int i = 0; i < additional_shared_libraries_count; i++) {
         dlclose(handles[i]);
       }
       free(handles);

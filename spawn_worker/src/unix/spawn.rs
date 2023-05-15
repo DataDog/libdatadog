@@ -197,6 +197,12 @@ impl From<File> for Stdio {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum LibDependency {
+    Path(PathBuf),
+    Binary(&'static [u8]),
+}
+
 pub struct SpawnWorker {
     stdin: Stdio,
     stderr: Stdio,
@@ -205,7 +211,7 @@ pub struct SpawnWorker {
     spawn_method: Option<SpawnMethod>,
     fd_to_pass: Option<OwnedFd>,
     target: Target,
-    shared_lib_dependencies: Vec<PathBuf>,
+    shared_lib_dependencies: Vec<LibDependency>,
     env: Vec<(ffi::OsString, ffi::OsString)>,
     process_name: Option<String>,
 }
@@ -240,7 +246,7 @@ impl SpawnWorker {
         self
     }
 
-    pub fn shared_lib_dependencies(&mut self, deps: Vec<PathBuf>) -> &mut Self {
+    pub fn shared_lib_dependencies(&mut self, deps: Vec<LibDependency>) -> &mut Self {
         self.shared_lib_dependencies = deps;
         self
     }
@@ -300,7 +306,9 @@ impl SpawnWorker {
         // set argv[0] and process name shown eg in `ps`
         let process_name = CString::new(self.process_name.as_deref().unwrap_or("spawned_worker"))?;
         argv.push(process_name);
+        argv.push(CString::new("")?);
 
+        let entrypoint_symbol_name;
         match &self.target {
             Target::Entrypoint(entrypoint) => {
                 let path = match unsafe {
@@ -311,21 +319,11 @@ impl SpawnWorker {
                 };
 
                 argv.push(path);
-                for dep in &self.shared_lib_dependencies {
-                    if let Ok(s) = CString::new(dep.to_string_lossy().to_string()) {
-                        argv.push(s)
-                    }
-                }
-                argv.push(entrypoint.symbol_name.clone());
+                entrypoint_symbol_name = entrypoint.symbol_name.clone();
             }
             Target::Manual(path, symbol_name) => {
                 argv.push(path.clone());
-                for dep in &self.shared_lib_dependencies {
-                    if let Ok(s) = CString::new(dep.to_string_lossy().to_string()) {
-                        argv.push(s)
-                    }
-                }
-                argv.push(symbol_name.clone());
+                entrypoint_symbol_name = symbol_name.clone();
             }
             Target::Noop => return Ok(None),
         };
@@ -373,6 +371,28 @@ impl SpawnWorker {
             None => self.target.detect_spawn_method()?,
         };
 
+        let mut temp_files = vec![];
+        for dep in &self.shared_lib_dependencies {
+            match dep {
+                LibDependency::Path(path) => argv.push(CString::new(path.to_string_lossy().to_string())?),
+                LibDependency::Binary(bin) => {
+                    let path = CString::new(
+                        write_to_tmp_file(bin)?
+                            .into_temp_path()
+                            .keep()? // ensure the file is not auto cleaned in parent process
+                            .as_os_str()
+                            .to_str()
+                            .ok_or_else(|| anyhow::format_err!("can't convert tmp file path"))?,
+                    )?;
+                    temp_files.push(path.clone());
+                    argv.push(CString::new("-")?);
+                    argv.push(path);
+                }
+            }
+        }
+
+        argv.push(entrypoint_symbol_name);
+
         // build and allocate final exec fn and its dependencies
         let mut skip_close_fd = 0;
         let spawn: Box<dyn Fn()> = match spawn_method {
@@ -395,6 +415,8 @@ impl SpawnWorker {
                     .keep()?;
                 let env_prefix = "LD_PRELOAD=";
 
+                temp_files.push(CString::new(lib_path.to_str().unwrap())?);
+
                 let mut ld_env =
                     OsString::with_capacity(env_prefix.len() + lib_path.as_os_str().len() + 1);
 
@@ -406,9 +428,15 @@ impl SpawnWorker {
                     anyhow::format_err!("can't convert current executable file to correct path")
                 })?)?;
 
+                argv.items[1] = path.clone();
+
+                let ref_temp_files = &temp_files;
                 Box::new(move || unsafe {
                     libc::execve(path.as_ptr(), argv.as_ptr(), envp.as_ptr());
                     // if we're here then exec has failed
+                    for temp_file in ref_temp_files {
+                        libc::unlink(temp_file.as_ptr());
+                    }
                     panic!("{}", std::io::Error::last_os_error());
                 })
             }
@@ -422,10 +450,17 @@ impl SpawnWorker {
                         .ok_or_else(|| anyhow::format_err!("can't convert tmp file path"))?,
                 )?;
 
-                Box::new(move || {
+                temp_files.push(path.clone());
+                argv.items[1] = path.clone();
+
+                let ref_temp_files = &temp_files;
+                Box::new(move || unsafe {
                     // not using nix crate here, to avoid allocations post fork
-                    unsafe { libc::execve(path.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
+                    libc::execve(path.as_ptr(), argv.as_ptr(), envp.as_ptr());
                     // if we're here then exec has failed
+                    for temp_file in ref_temp_files {
+                        libc::unlink(temp_file.as_ptr());
+                    }
                     panic!("{}", std::io::Error::last_os_error());
                 })
             }
@@ -434,13 +469,26 @@ impl SpawnWorker {
         let stdout = self.stdout.as_child_stdio()?;
         let stderr = self.stderr.as_child_stdio()?;
 
+        let ref_temp_files = &temp_files;
+        let do_fork = || unsafe {
+            match fork() {
+                Ok(fork) => Ok(fork),
+                Err(e) => {
+                    for temp_file in ref_temp_files {
+                        libc::unlink(temp_file.as_ptr());
+                    }
+                    return Err(e);
+                }
+            }
+        };
+
         // no allocations in the child process should happen by this point for maximum safety
-        if let Fork::Parent(child_pid) = unsafe { fork()? } {
+        if let Fork::Parent(child_pid) = do_fork()? {
             return Ok(Some(child_pid));
         }
 
         if self.daemonize {
-            if let Fork::Parent(_) = unsafe { fork()? } {
+            if let Fork::Parent(_) = do_fork()? {
                 std::process::exit(0);
             }
         }

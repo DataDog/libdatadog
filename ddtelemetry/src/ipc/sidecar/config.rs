@@ -4,6 +4,7 @@
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use ddcommon::parse_uri;
+use spawn_worker::LibDependency;
 
 const ENV_SIDECAR_IPC_MODE: &str = "_DD_DEBUG_SIDECAR_IPC_MODE";
 const SIDECAR_IPC_MODE_SHARED: &str = "shared";
@@ -50,7 +51,7 @@ pub struct Config {
     pub ipc_mode: IpcMode,
     pub log_method: LogMethod,
     pub idle_linger_time: Duration,
-    pub library_dependencies: Vec<PathBuf>,
+    pub library_dependencies: Vec<LibDependency>,
     pub child_env: HashMap<std::ffi::OsString, std::ffi::OsString>,
 }
 
