@@ -489,6 +489,8 @@ impl SpawnWorker {
 
         if self.daemonize {
             if let Fork::Parent(_) = do_fork()? {
+                // silence lsan and such things
+                unsafe { libc::close(2); }
                 std::process::exit(0);
             }
         }
