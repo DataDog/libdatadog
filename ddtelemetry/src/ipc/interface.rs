@@ -368,10 +368,11 @@ impl TelemetryServer {
     }
 }
 
-type NoResponse = Pending<()>;
+type NoResponse = Ready<()>;
 
 fn no_response() -> NoResponse {
-    future::pending()
+    Context::current().discard_response = true;
+    future::ready(())
 }
 
 impl TelemetryInterface for TelemetryServer {
