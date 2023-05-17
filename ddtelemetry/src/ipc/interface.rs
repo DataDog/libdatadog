@@ -482,7 +482,10 @@ impl TelemetryInterface for TelemetryServer {
             cfg.set_url(&agent_url).ok();
         });
 
-        Box::pin(async move { session.shutdown_running_instances().await })
+        Box::pin(async move {
+            session.shutdown_running_instances().await;
+            no_response().await
+        })
     }
 }
 
@@ -555,17 +558,10 @@ pub mod blocking {
         session_id: String,
         agent_url: String,
     ) -> io::Result<()> {
-        let res = transport.call(TelemetryInterfaceRequest::SetSessionAgentUrl {
+        transport.send(TelemetryInterfaceRequest::SetSessionAgentUrl {
             session_id,
             agent_url,
-        })?;
-        match res {
-            TelemetryInterfaceResponse::SetSessionAgentUrl(_) => Ok(()),
-            _ => Err(io::Error::new(
-                io::ErrorKind::Other,
-                "wrong response type when setting session agent url",
-            )),
-        }
+        })
     }
 
     pub fn ping(transport: &mut TelemetryTransport) -> io::Result<Duration> {
