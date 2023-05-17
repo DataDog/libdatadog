@@ -17,7 +17,7 @@ trigger_internal_build:
 
 # Following jobs are required otherwise gitsync will not report downstream pipeline failure to github
 
-# This job is used to determine is downstream pipeline has succeeded
+# This job is used to determine if downstream pipeline has succeeded
 report_failure:
   tags: ["arch:amd64"]
   when: on_failure
