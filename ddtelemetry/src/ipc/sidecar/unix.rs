@@ -3,10 +3,9 @@
 
 use spawn_worker::{entrypoint, getpid, Stdio};
 
-use std::fs::{self, File};
+use std::fs::File;
 use std::os::unix::net::UnixListener as StdUnixListener;
 
-use std::sync::Mutex;
 use std::time::{self, Instant};
 use std::{
     io::{self},
@@ -116,6 +115,7 @@ pub extern "C" fn daemon_entry_point() {
         tracing::error!("Error calling setsid(): {err}")
     }
 
+    #[cfg(feature = "tracing")]
     enable_tracing().ok();
     let now = Instant::now();
 
@@ -134,15 +134,15 @@ pub extern "C" fn daemon_entry_point() {
     )
 }
 
-fn daemonize(listener: StdUnixListener) -> io::Result<()> {
+fn daemonize(listener: StdUnixListener, cfg: Config) -> io::Result<()> {
     // TODO: allow passing presaved environment
     let mut spawn_cfg = unsafe { spawn_worker::SpawnWorker::new() };
     spawn_cfg
         .pass_fd(listener)
         .stdin(Stdio::Null)
         .daemonize(true)
+        .shared_lib_dependencies(cfg.library_dependencies.clone())
         .target(entrypoint!(daemon_entry_point));
-    let cfg = Config::get();
     match cfg.log_method {
         config::LogMethod::File(path) => {
             let file = File::options()
@@ -172,16 +172,14 @@ fn daemonize(listener: StdUnixListener) -> io::Result<()> {
     Ok(())
 }
 
-pub fn start_or_connect_to_sidecar() -> io::Result<TelemetryTransport> {
-    let cfg = config::Config::get();
-
+pub fn start_or_connect_to_sidecar(cfg: config::Config) -> io::Result<TelemetryTransport> {
     let liaison = match cfg.ipc_mode {
         config::IpcMode::Shared => setup::DefaultLiason::ipc_shared(),
         config::IpcMode::InstancePerProcess => setup::DefaultLiason::ipc_per_process(),
     };
 
     match liaison.attempt_listen() {
-        Ok(Some(listener)) => daemonize(listener)?,
+        Ok(Some(listener)) => daemonize(listener, cfg)?,
         Ok(None) => {}
         Err(err) => tracing::error!("Error starting sidecar {}", err),
     }
@@ -189,6 +187,7 @@ pub fn start_or_connect_to_sidecar() -> io::Result<TelemetryTransport> {
     Ok(IpcChannel::from(liaison.connect_to_server()?).into())
 }
 
+#[cfg(feature = "tracing")]
 fn enable_tracing() -> anyhow::Result<()> {
     let subscriber = tracing_subscriber::fmt();
 
@@ -196,14 +195,14 @@ fn enable_tracing() -> anyhow::Result<()> {
         config::LogMethod::Stdout => subscriber.with_writer(io::stdout).init(),
         config::LogMethod::Stderr => subscriber.with_writer(io::stderr).init(),
         config::LogMethod::File(path) => {
-            let log_file = fs::File::options()
+            let log_file = std::fs::File::options()
                 .create(true)
                 .truncate(false)
                 .write(true)
                 .append(true)
                 .open(path)?;
             tracing_subscriber::fmt()
-                .with_writer(Mutex::new(log_file))
+                .with_writer(std::sync::Mutex::new(log_file))
                 .init()
         }
         config::LogMethod::Disabled => return Ok(()),

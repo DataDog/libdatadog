@@ -12,6 +12,7 @@ members = [
   "tools",
   "ipc",
   "tools/cc_utils",
+  "tools/sidecar_mockgen",
   "trace-normalization",
   "trace-obfuscation",
   "trace-utils",

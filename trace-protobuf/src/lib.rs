@@ -3,8 +3,5 @@
 // developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
 // Datadog, Inc.
 
-#![deny(clippy::all)]
-
-pub mod pb {
-    include!("./pb/pb.rs");
-}
+#[rustfmt::skip]
+pub mod pb;

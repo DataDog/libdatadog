@@ -1,0 +1,56 @@
+name: Build and Release Serverless Agent
+on:
+  push:
+    tags:
+      - 'sls-**'
+
+jobs:
+  build:
+    name: Build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            executable_name: datadog-serverless-trace-mini-agent
+            asset_name: datadog-serverless-agent-linux-amd64
+          - os: windows-latest
+            executable_name: datadog-serverless-trace-mini-agent.exe
+            asset_name: datadog-serverless-agent-windows-amd64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Build project
+        run: cargo build --release -p datadog-serverless-trace-mini-agent
+      - name: Upload artifacts for release step
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.asset_name }}
+          path: target/release/${{ matrix.executable_name }}
+  release:
+    name: Zip and Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Download artifacts from build step
+        uses: actions/download-artifact@v3
+        with:
+          path: target/release/binaries
+      - name: UPX compress binaries
+        run: |
+          for file in target/release/binaries/*/*
+          do
+            chmod +x "$file"
+            upx "$file" --lzma
+          done
+      - name: Zip binaries
+        run: zip -r datadog-serverless-agent.zip *
+        working-directory: target/release/binaries
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: true
+          generate_release_notes: true
+          files: target/release/binaries/datadog-serverless-agent.zip

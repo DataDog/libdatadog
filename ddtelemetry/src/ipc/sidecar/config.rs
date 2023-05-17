@@ -1,7 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use std::{path::PathBuf, time::Duration};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use ddcommon::parse_uri;
 
@@ -50,6 +50,8 @@ pub struct Config {
     pub ipc_mode: IpcMode,
     pub log_method: LogMethod,
     pub idle_linger_time: Duration,
+    pub library_dependencies: Vec<PathBuf>,
+    pub child_env: HashMap<std::ffi::OsString, std::ffi::OsString>,
 }
 
 impl Config {
@@ -113,6 +115,8 @@ impl FromEnv {
             ipc_mode: Self::ipc_mode(),
             log_method: Self::log_method(),
             idle_linger_time: Self::idle_linger_time(),
+            library_dependencies: vec![],
+            child_env: std::env::vars_os().collect(),
         }
     }
 }

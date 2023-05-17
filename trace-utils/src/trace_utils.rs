@@ -2,19 +2,20 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use hyper::http::HeaderValue;
-use hyper::HeaderMap;
-use hyper::{body::Buf, Body, Client, Method, Request};
+use hyper::{body::Buf, Body, Client, HeaderMap, Method, Request, StatusCode};
 use hyper_rustls::HttpsConnectorBuilder;
 use log::{error, info};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::{env, str};
-
 use prost::Message;
+use std::collections::HashMap;
+use std::str;
 
+use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
 
-const TRACE_INTAKE_URL: &str = "https://trace.agent.datadoghq.com/api/v0.2/traces";
+/// Span metric the mini agent must set for the backend to recognize top level span
+const TOP_LEVEL_KEY: &str = "_top_level";
+/// Span metric the tracer sets to denote a top level span
+const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 
 macro_rules! parse_string_header {
     (
@@ -31,63 +32,21 @@ macro_rules! parse_string_header {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
-pub struct Span {
-    service: Option<String>,
-    name: String,
-    resource: String,
-    trace_id: u64,
-    span_id: u64,
-    parent_id: Option<u64>,
-    start: i64,
-    duration: i64,
-    error: Option<i32>,
-    meta: HashMap<String, String>,
-    metrics: Option<HashMap<String, f64>>,
-}
-
 pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<Vec<Vec<pb::Span>>> {
-    let buffer = hyper::body::aggregate(body).await.unwrap();
+    let buffer = hyper::body::aggregate(body).await?;
 
-    let traces: Vec<Vec<Span>> = match rmp_serde::from_read(buffer.reader()) {
+    let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_read(buffer.reader()) {
         Ok(res) => res,
         Err(err) => {
-            anyhow::bail!("Error deserializing trace from request body: {}", err)
+            anyhow::bail!("Error deserializing trace from request body: {err}")
         }
     };
 
-    let mut pb_traces = Vec::<Vec<pb::Span>>::new();
-    for trace in traces {
-        let mut pb_spans = Vec::<pb::Span>::new();
-        for span in trace {
-            let span = pb::Span {
-                service: span.service.unwrap_or_default(),
-                name: span.name,
-                resource: span.resource,
-                trace_id: span.trace_id,
-                span_id: span.span_id,
-                parent_id: span.parent_id.unwrap_or_default(),
-                start: span.start,
-                duration: span.duration,
-                error: span.error.unwrap_or(0),
-                meta: span.meta,
-                meta_struct: HashMap::new(),
-                metrics: span.metrics.unwrap_or_default(),
-                r#type: "custom".to_string(),
-            };
-
-            pb_spans.push(span);
-        }
-        if !pb_spans.is_empty() {
-            pb_traces.push(pb_spans);
-        }
-    }
-
-    if pb_traces.is_empty() {
+    if traces.is_empty() {
         anyhow::bail!("No traces deserialized from the request body.")
     }
 
-    Ok(pb_traces)
+    Ok(traces)
 }
 
 #[derive(Default)]
@@ -137,19 +96,20 @@ pub fn get_tracer_header_tags(headers: &HeaderMap<HeaderValue>) -> TracerHeaderT
 
 pub fn construct_agent_payload(tracer_payloads: Vec<pb::TracerPayload>) -> pb::AgentPayload {
     pb::AgentPayload {
-        host_name: "ffi-test-hostname".to_string(),
-        env: "ffi-test-env".to_string(),
-        agent_version: "ffi-agent-version".to_string(),
+        host_name: "".to_string(),
+        env: "".to_string(),
+        agent_version: "".to_string(),
         error_tps: 60.0,
         target_tps: 60.0,
         tags: HashMap::new(),
         tracer_payloads,
+        rare_sampler_enabled: false,
     }
 }
 
 pub fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
     pb::TraceChunk {
-        priority: 1,
+        priority: normalizer::SamplerPriority::None as i32,
         origin: "".to_string(),
         spans: trace,
         tags: HashMap::new(),
@@ -176,26 +136,19 @@ pub fn construct_tracer_payload(
     }
 }
 
-pub fn serialize_agent_payload(payload: pb::AgentPayload) -> Vec<u8> {
+pub fn serialize_agent_payload(payload: pb::AgentPayload) -> anyhow::Result<Vec<u8>> {
     let mut buf = Vec::new();
     buf.reserve(payload.encoded_len());
-    payload.encode(&mut buf).unwrap();
-    buf
+    payload.encode(&mut buf)?;
+    Ok(buf)
 }
 
-pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
-    let api_key = match env::var("DD_API_KEY") {
-        Ok(key) => key,
-        Err(_) => anyhow::bail!("oopsy, no DD_API_KEY was provided"),
-    };
-
+pub async fn send(data: Vec<u8>, url: &str, api_key: &str) -> anyhow::Result<()> {
     let req = Request::builder()
         .method(Method::POST)
-        .uri(TRACE_INTAKE_URL)
-        .header("User-agent", "ffi-test")
+        .uri(url)
         .header("Content-type", "application/x-protobuf")
-        .header("DD-API-KEY", &api_key)
-        .header("X-Datadog-Reported-Languages", "nodejs")
+        .header("DD-API-KEY", api_key)
         .body(Body::from(data))?;
 
     let https = HttpsConnectorBuilder::new()
@@ -205,12 +158,16 @@ pub async fn send(data: Vec<u8>) -> anyhow::Result<()> {
         .build();
     let client: Client<_, hyper::Body> = Client::builder().build(https);
     match client.request(req).await {
-        Ok(_) => {
-            info!("Successfully sent traces");
+        Ok(response) => {
+            if response.status() != StatusCode::ACCEPTED {
+                let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+                let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
+                anyhow::bail!("Server did not accept traces: {response_body}");
+            }
+            Ok(())
         }
-        Err(e) => error!("Failed to send traces: {}", e),
+        Err(e) => anyhow::bail!("Failed to send traces: {e}"),
     }
-    Ok(())
 }
 
 pub fn get_root_span_index(trace: &Vec<pb::Span>) -> anyhow::Result<usize> {
@@ -290,12 +247,49 @@ pub fn compute_top_level_span(trace: &mut [pb::Span]) {
 
 fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
     if !is_top_level {
-        if span.metrics.contains_key("_top_level") {
-            span.metrics.remove("_top_level");
+        if span.metrics.contains_key(TOP_LEVEL_KEY) {
+            span.metrics.remove(TOP_LEVEL_KEY);
         }
         return;
     }
-    span.metrics.insert("_top_level".to_string(), 1.0);
+    span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
+}
+
+pub fn set_serverless_root_span_tags(span: &mut pb::Span, gcp_function_name: Option<String>) {
+    span.r#type = "serverless".to_string();
+    span.meta
+        .insert("_dd.origin".to_string(), "cloudfunction".to_string());
+    span.meta
+        .insert("origin".to_string(), "cloudfunction".to_string());
+    if let Some(function_name) = gcp_function_name {
+        span.meta.insert("functionname".to_string(), function_name);
+    }
+}
+
+pub fn update_tracer_top_level(span: &mut pb::Span) {
+    if span.metrics.contains_key(TRACER_TOP_LEVEL_KEY) {
+        span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
+    }
+}
+
+#[derive(Clone, Default, Debug, Eq, PartialEq)]
+pub struct MiniAgentMetadata {
+    pub gcp_project_id: Option<String>,
+    pub gcp_region: Option<String>,
+}
+
+pub fn enrich_span_with_mini_agent_metadata(
+    span: &mut pb::Span,
+    mini_agent_metadata: &MiniAgentMetadata,
+) {
+    if let Some(gcp_project_id) = &mini_agent_metadata.gcp_project_id {
+        span.meta
+            .insert("project_id".to_string(), gcp_project_id.to_string());
+    }
+    if let Some(gcp_region) = &mini_agent_metadata.gcp_region {
+        span.meta
+            .insert("location".to_string(), gcp_region.to_string());
+    }
 }
 
 #[cfg(test)]
@@ -338,7 +332,7 @@ mod tests {
                     meta: HashMap::new(),
                     metrics: HashMap::new(),
                     meta_struct: HashMap::new(),
-                    r#type: "custom".to_string(),
+                    r#type: "".to_string(),
                 }]],
             ),
             (
@@ -364,7 +358,7 @@ mod tests {
                     meta: HashMap::new(),
                     metrics: HashMap::new(),
                     meta_struct: HashMap::new(),
-                    r#type: "custom".to_string(),
+                    r#type: "".to_string(),
                 }]],
             ),
         ];

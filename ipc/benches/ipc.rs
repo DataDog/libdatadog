@@ -1,15 +1,21 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+
+#[cfg(not(windows))]
 use criterion::{criterion_group, criterion_main, Criterion};
+#[cfg(not(windows))]
 use datadog_ipc::example_interface::{
     ExampleInterfaceRequest, ExampleInterfaceResponse, ExampleServer, ExampleTransport,
 };
+#[cfg(not(windows))]
 use std::{
     os::unix::net::UnixStream as StdUnixStream,
     thread::{self},
 };
+#[cfg(not(windows))]
 use tokio::{net::UnixStream, runtime};
 
+#[cfg(not(windows))]
 fn criterion_benchmark(c: &mut Criterion) {
     let (sock_a, sock_b) = StdUnixStream::pair().unwrap();
 
@@ -48,5 +54,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     worker.join().unwrap();
 }
 
+#[cfg(not(windows))]
 criterion_group!(benches, criterion_benchmark);
+
+#[cfg(not(windows))]
 criterion_main!(benches);
+
+#[cfg(windows)]
+fn main() {
+    println!("IPC benches not implemented for Windows")
+}

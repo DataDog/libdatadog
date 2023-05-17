@@ -5,7 +5,6 @@
 
 use ddcommon::container_id;
 
-use self::config::Config;
 pub mod config;
 pub mod data;
 pub mod info;
@@ -14,8 +13,6 @@ pub mod info;
 pub mod ipc;
 pub mod metrics;
 pub mod worker;
-
-const DEFAULT_API_VERSION: data::ApiVersion = data::ApiVersion::V1;
 
 pub fn build_host() -> data::Host {
     data::Host {
