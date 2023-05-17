@@ -16,7 +16,7 @@ impl Points {
     }
 }
 
-#[derive(PartialEq, Debug, Serialize, Clone)]
+#[derive(PartialEq, Eq, Debug, Serialize, Clone)]
 pub enum MetricType {
     Distribution,
 }
