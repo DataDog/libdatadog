@@ -194,7 +194,8 @@ impl Config {
             self.endpoint = Some(Endpoint {
                 url: url_with_telemetry_path(url)?,
                 api_key,
-            })
+            });
+            self.mock_client_file = None;
         }
         Ok(())
     }
