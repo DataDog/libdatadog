@@ -487,14 +487,6 @@ impl SpawnWorker {
             return Ok(Some(child_pid));
         }
 
-        if self.daemonize {
-            if let Fork::Parent(_) = do_fork()? {
-                // silence lsan and such things
-                unsafe { libc::close(2); }
-                std::process::exit(0);
-            }
-        }
-
         if let Some(fd) = stdin.as_fd() {
             unsafe { libc::dup2(fd, libc::STDIN_FILENO) };
         }
@@ -517,6 +509,18 @@ impl SpawnWorker {
         if let Err(e) = close_fd_range(close_range, skip_close_fd) {
             // What do we do here?
             // /proc might not be mounted?
+        }
+
+        if self.daemonize {
+            if let Fork::Parent(_) = do_fork()? {
+                // musl will try to "correct" offsets in an atexit handler (lseek a FILE* to the "true" position)
+                // Ensure all fds are closed so that musl cannot have side-effects
+                for i in 0..4 {
+                    unsafe { libc::close(i); }
+                }
+                unsafe { libc::close(skip_close_fd); }
+                std::process::exit(0);
+            }
         }
 
         spawn();
