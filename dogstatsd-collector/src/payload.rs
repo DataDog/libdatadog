@@ -18,11 +18,6 @@ struct MetricPayload {
     tags: Vec<Tag>,
 }
 
-#[derive(Serialize)]
-pub struct DistributionPayloadBuf {
-    series: Vec<Metric>,
-}
-
 // construct_datadog_payload takes a vector of metrics and constructs the payload
 // for the submit distribution metrics payload.
 // docs: https://docs.datadoghq.com/api/latest/metrics/?code-lang=curl#submit-distribution-points

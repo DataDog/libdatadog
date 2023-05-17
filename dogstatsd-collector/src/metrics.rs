@@ -21,14 +21,12 @@ pub enum MetricType {
     Distribution,
 }
 
-#[derive(PartialEq, Debug, Serialize, Clone)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct Metric {
     pub metric: String,
     pub points: Points,
     pub tags: Vec<Tag>,
-    #[serde(skip)]
     metric_type: MetricType,
-    #[serde(skip)]
     sample_rate: f64,
 }
 
@@ -41,13 +39,9 @@ impl Metric {
             return None;
         }
 
-        let tokens: Vec<&str> = parts.split('|').collect();
-        if tokens.len() < 2 {
-            return None;
-        }
+        let mut tokens = parts.split('|');
 
-        let values_str = tokens[0];
-        let type_str = tokens[1];
+        let (values_str, type_str) = (tokens.next()?, tokens.next()?);
 
         let points = Points::new(
             values_str
@@ -68,7 +62,7 @@ impl Metric {
 
         // The first 2 tokens are metric name and values, which we have parsed above
         // The next 2 tokens are optional, and are a combination of sampling_rate and tags
-        for token in &tokens[2..] {
+        for token in tokens {
             let identifier = token.chars().next()?;
             match identifier {
                 '@' => sample_rate = token[1..].parse::<f64>().unwrap_or(1.0),

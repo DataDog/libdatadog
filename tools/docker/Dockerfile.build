@@ -21,16 +21,16 @@ WORKDIR /build
 
 RUN apk update \
   && apk add --no-cache \
-    build-base \
-    cargo \
-    curl \
-    git \
-    make \
-    patchelf \
-    protoc \
-    pkgconf \
-    unzip \
-    bash \
+  build-base \
+  cargo \
+  curl \
+  git \
+  make \
+  patchelf \
+  protoc \
+  pkgconf \
+  unzip \
+  bash \
   && mkdir /usr/local/src
 
 # Tell docker to use bash as the default
@@ -43,12 +43,12 @@ SHELL ["/bin/bash", "-c"]
 
 FROM alpine_base as alpine_aws_cli
 RUN apk add --no-cache \
-    python3 \
-    py3-pip \
-    groff \
+  python3 \
+  py3-pip \
+  groff \
   && pip3 install --upgrade pip \
   && pip3 install --no-cache-dir \
-    awscli \
+  awscli \
   && rm -rf /var/cache/apk/*
 
 RUN aws --version   # Just to make sure its installed alright
@@ -75,7 +75,7 @@ COPY "ddcommon/Cargo.toml" "ddcommon/"
 COPY "ddcommon-ffi/Cargo.toml" "ddcommon-ffi/" 
 COPY "ddtelemetry/Cargo.toml" "ddtelemetry/"
 COPY "ddtelemetry-ffi/Cargo.toml" "ddtelemetry-ffi/"
-COPY "metrics/Cargo.toml" "metrics/"
+COPY "dogstatsd-collector/Cargo.toml" "dogstatsd-collector/"
 COPY "profiling/Cargo.toml" "profiling/"
 COPY "profiling-ffi/Cargo.toml" "profiling-ffi/"
 COPY "trace-normalization/Cargo.toml" "trace-normalization/"
