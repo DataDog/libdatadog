@@ -12,6 +12,9 @@ use tarpc::{
     server::{Channel, InFlightRequest, Requests, Serve},
 };
 
+#[allow(type_alias_bounds)]
+type Request<S, C: Channel> = (S, InFlightRequest<C::Req, C::Resp>);
+
 /// Replaces tarpc::server::Channel::execute which spawns one task per message with an executor
 /// that spawns a single worker and queues requests for this task.
 ///
@@ -28,8 +31,7 @@ where
     C::Resp: Send + 'static,
     S::Fut: Send,
 {
-    let (tx, mut rx) =
-        tokio::sync::mpsc::channel::<(S, InFlightRequest<C::Req, C::Resp>)>(max_requests);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Request<S, C>>(max_requests);
 
     tokio::spawn(async move {
         loop {
@@ -55,7 +57,7 @@ where
     #[pin]
     inner: Requests<C>,
     serve: S,
-    tx: tokio::sync::mpsc::Sender<(S, InFlightRequest<C::Req, C::Resp>)>,
+    tx: tokio::sync::mpsc::Sender<Request<S, C>>,
 }
 
 impl<C, S> Future for SequentialExecutor<C, S>
@@ -73,11 +75,11 @@ where
             match response_handler {
                 Ok(resp) => {
                     let server = self.serve.clone();
-                    if let Err(err) = self.as_ref().tx.try_send((server, resp)) {
+                    if let Err(_err) = self.as_ref().tx.try_send((server, resp)) {
                         // TODO: should we log something in case we drop the request on the floor?
                     }
                 }
-                Err(e) => {
+                Err(_e) => {
                     // TODO: should we log something in case we drop the request on the floor?
                     break;
                 }

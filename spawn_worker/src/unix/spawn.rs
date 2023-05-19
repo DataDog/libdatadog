@@ -308,8 +308,7 @@ impl SpawnWorker {
         argv.push(process_name);
         argv.push(CString::new("")?);
 
-        let entrypoint_symbol_name;
-        match &self.target {
+        let entrypoint_symbol_name = match &self.target {
             Target::Entrypoint(entrypoint) => {
                 let path = match unsafe {
                     crate::get_dl_path_raw(entrypoint.ptr as *const libc::c_void)
@@ -319,11 +318,11 @@ impl SpawnWorker {
                 };
 
                 argv.push(path);
-                entrypoint_symbol_name = entrypoint.symbol_name.clone();
+                entrypoint.symbol_name.clone()
             }
             Target::Manual(path, symbol_name) => {
                 argv.push(path.clone());
-                entrypoint_symbol_name = symbol_name.clone();
+                symbol_name.clone()
             }
             Target::Noop => return Ok(None),
         };
@@ -374,7 +373,9 @@ impl SpawnWorker {
         let mut temp_files = vec![];
         for dep in &self.shared_lib_dependencies {
             match dep {
-                LibDependency::Path(path) => argv.push(CString::new(path.to_string_lossy().to_string())?),
+                LibDependency::Path(path) => {
+                    argv.push(CString::new(path.to_string_lossy().to_string())?)
+                }
                 LibDependency::Binary(bin) => {
                     let path = CString::new(
                         write_to_tmp_file(bin)?
@@ -477,7 +478,7 @@ impl SpawnWorker {
                     for temp_file in ref_temp_files {
                         libc::unlink(temp_file.as_ptr());
                     }
-                    return Err(e);
+                    Err(e)
                 }
             }
         };
@@ -506,7 +507,7 @@ impl SpawnWorker {
             3..=i32::MAX
         };
 
-        if let Err(e) = close_fd_range(close_range, skip_close_fd) {
+        if let Err(_e) = close_fd_range(close_range, skip_close_fd) {
             // What do we do here?
             // /proc might not be mounted?
         }
@@ -516,9 +517,13 @@ impl SpawnWorker {
                 // musl will try to "correct" offsets in an atexit handler (lseek a FILE* to the "true" position)
                 // Ensure all fds are closed so that musl cannot have side-effects
                 for i in 0..4 {
-                    unsafe { libc::close(i); }
+                    unsafe {
+                        libc::close(i);
+                    }
                 }
-                unsafe { libc::close(skip_close_fd); }
+                unsafe {
+                    libc::close(skip_close_fd);
+                }
                 std::process::exit(0);
             }
         }

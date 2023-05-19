@@ -12,7 +12,10 @@ use std::{
 use anyhow::Result;
 
 use datadog_ipc::{platform::AsyncChannel, transport::Transport};
-use futures::{future::{self, BoxFuture, Ready, Shared}, FutureExt};
+use futures::{
+    future::{self, BoxFuture, Ready, Shared},
+    FutureExt,
+};
 use manual_future::ManualFuture;
 
 use datadog_ipc::tarpc::{context::Context, server::Channel};
@@ -183,6 +186,7 @@ impl SessionInfo {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 enum AppOrQueue {
     App(Shared<ManualFuture<String>>),
     Queue(EnqueuedData),
@@ -427,7 +431,7 @@ impl TelemetryInterface for TelemetryServer {
             match maybe_data {
                 AppOrQueue::Queue(data) => {
                     data.process(actions);
-                },
+                }
                 AppOrQueue::App(service_future) => {
                     let apps = rt_info.apps.clone();
                     let service_future = service_future.clone();
@@ -436,10 +440,13 @@ impl TelemetryInterface for TelemetryServer {
                         let app = apps.lock().unwrap().get_mut(&service).unwrap().clone();
                         app.telemetry.send_msgs(actions).await.ok();
                     });
-                },
+                }
             }
         } else {
-            queue.insert(queue_id, AppOrQueue::Queue(EnqueuedData::processed(actions)));
+            queue.insert(
+                queue_id,
+                AppOrQueue::Queue(EnqueuedData::processed(actions)),
+            );
         }
 
         no_response()
@@ -479,7 +486,8 @@ impl TelemetryInterface for TelemetryServer {
                         .unwrap()
                         .insert(queue_id, AppOrQueue::App(future.shared()));
                     if let Some(AppOrQueue::Queue(mut enqueued_data)) = app_or_queue {
-                        let mut actions: Vec<TelemetryActions> = std::mem::take(&mut enqueued_data.actions);
+                        let mut actions: Vec<TelemetryActions> =
+                            std::mem::take(&mut enqueued_data.actions);
                         enqueued_data.extract_telemetry_actions(&mut actions);
                         app.telemetry.send_msgs(actions).await.ok();
                     }

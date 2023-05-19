@@ -8,6 +8,8 @@
 #ifndef _WIN32
 #include <dlfcn.h>
 #include <unistd.h>
+#else
+#define unlink _unlink
 #endif
 
 int main(int argc, char *argv[]) {
