@@ -21,13 +21,13 @@ use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::ipc::interface::blocking::TelemetryTransport;
-use crate::ipc::interface::TelemetryServer;
+use crate::interface::blocking::TelemetryTransport;
+use crate::interface::TelemetryServer;
 use datadog_ipc::platform::Channel as IpcChannel;
 
-use crate::ipc::setup::{self, Liaison};
+use crate::setup::{self, Liaison};
 
-use super::config::{self, Config};
+use crate::config::{self, Config};
 
 async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
     let counter = Arc::new(AtomicI32::new(0));
@@ -110,7 +110,7 @@ fn enter_listener_loop(listener: StdUnixListener) -> anyhow::Result<()> {
 }
 
 #[no_mangle]
-pub extern "C" fn daemon_entry_point() {
+pub extern "C" fn ddog_daemon_entry_point() {
     if let Err(err) = nix::unistd::setsid() {
         tracing::error!("Error calling setsid(): {err}")
     }
@@ -142,7 +142,7 @@ fn daemonize(listener: StdUnixListener, cfg: Config) -> io::Result<()> {
         .stdin(Stdio::Null)
         .daemonize(true)
         .shared_lib_dependencies(cfg.library_dependencies.clone())
-        .target(entrypoint!(daemon_entry_point));
+        .target(entrypoint!(ddog_daemon_entry_point));
     match cfg.log_method {
         config::LogMethod::File(path) => {
             let file = File::options()

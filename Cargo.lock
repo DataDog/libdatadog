@@ -477,6 +477,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-sidecar"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "datadog-ipc",
+ "datadog-trace-normalization",
+ "datadog-trace-protobuf",
+ "datadog-trace-utils",
+ "ddcommon",
+ "ddtelemetry",
+ "futures",
+ "hashbrown",
+ "http",
+ "hyper",
+ "io-lifetimes",
+ "lazy_static",
+ "libc",
+ "manual_future",
+ "nix",
+ "pin-project",
+ "rand",
+ "regex",
+ "sendfd",
+ "serde",
+ "serde_json",
+ "spawn_worker",
+ "sys-info",
+ "tempfile",
+ "tokio",
+ "tokio-util 0.7.4",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "datadog-sidecar-ffi"
+version = "0.0.1"
+dependencies = [
+ "datadog-ipc",
+ "datadog-sidecar",
+ "ddcommon-ffi",
+ "ddtelemetry",
+ "ddtelemetry-ffi",
+ "libc",
+ "paste",
+ "tempfile",
+]
+
+[[package]]
 name = "datadog-trace-mini-agent"
 version = "0.1.0"
 dependencies = [
@@ -582,7 +632,6 @@ name = "ddtelemetry"
 version = "2.2.0"
 dependencies = [
  "anyhow",
- "datadog-ipc",
  "ddcommon",
  "futures",
  "hashbrown",
@@ -590,18 +639,11 @@ dependencies = [
  "hyper",
  "io-lifetimes",
  "lazy_static",
- "libc",
- "manual_future",
- "nix",
  "pin-project",
- "rand",
  "regex",
- "sendfd",
  "serde",
  "serde_json",
- "spawn_worker",
  "sys-info",
- "tempfile",
  "tokio",
  "tokio-util 0.7.4",
  "tracing",
@@ -613,7 +655,6 @@ dependencies = [
 name = "ddtelemetry-ffi"
 version = "2.2.0"
 dependencies = [
- "datadog-ipc",
  "ddcommon-ffi",
  "ddtelemetry",
  "libc",

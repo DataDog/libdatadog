@@ -4,7 +4,7 @@
 mod builder;
 pub mod http_client;
 mod scheduler;
-pub(crate) mod store;
+pub mod store;
 
 use crate::{
     config::{self, Config},
