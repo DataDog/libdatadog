@@ -12,6 +12,7 @@ tracing = ["tracing/std", "tracing-subscriber"]
 anyhow = { version = "1.0" }
 ddcommon = { path = "../ddcommon" }
 futures = { version = "0.3", default-features = false }
+manual_future = "0.1.1"
 http = "0.2"
 hyper = { version = "0.14", features = ["client"], default-features = false }
 lazy_static = "1.4"

@@ -13,9 +13,10 @@ use anyhow::Result;
 
 use datadog_ipc::{platform::AsyncChannel, transport::Transport};
 use futures::{
-    future::{self, BoxFuture, Pending, Ready, Shared},
+    future::{self, BoxFuture, Ready, Shared},
     FutureExt,
 };
+use manual_future::ManualFuture;
 
 use datadog_ipc::tarpc::{context::Context, server::Channel};
 use rand::Rng;
@@ -185,10 +186,16 @@ impl SessionInfo {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
+enum AppOrQueue {
+    App(Shared<ManualFuture<String>>),
+    Queue(EnqueuedData),
+}
+
 #[derive(Clone, Default)]
 struct RuntimeInfo {
     apps: Arc<Mutex<HashMap<String, AppInstance>>>,
-    enqueued_actions: Arc<Mutex<HashMap<QueueId, EnqueuedData>>>,
+    app_or_actions: Arc<Mutex<HashMap<QueueId, AppOrQueue>>>,
 }
 
 impl RuntimeInfo {
@@ -263,6 +270,18 @@ impl EnqueuedData {
         data.process(action);
         data
     }
+
+    fn extract_telemetry_actions(&mut self, actions: &mut Vec<TelemetryActions>) {
+        for d in self.dependencies.unflushed() {
+            actions.push(TelemetryActions::AddDependecy(d.clone()));
+        }
+        for c in self.configurations.unflushed() {
+            actions.push(TelemetryActions::AddConfig(c.clone()));
+        }
+        for i in self.integrations.unflushed() {
+            actions.push(TelemetryActions::AddIntegration(i.clone()));
+        }
+    }
 }
 
 #[derive(Default, Clone)]
@@ -278,8 +297,7 @@ impl TelemetryServer {
             },
             Transport::try_from(AsyncChannel::from(socket)).unwrap(),
         );
-
-        server.execute(self.serve()).await
+        datadog_ipc::sequential::execute_sequential(server.requests(), self.serve(), 100).await
     }
 
     fn get_session(&self, session_id: &String) -> SessionInfo {
@@ -369,10 +387,11 @@ impl TelemetryServer {
     }
 }
 
-type NoResponse = Pending<()>;
+type NoResponse = Ready<()>;
 
 fn no_response() -> NoResponse {
-    future::pending()
+    Context::current().discard_response = true;
+    future::ready(())
 }
 
 impl TelemetryInterface for TelemetryServer {
@@ -407,13 +426,28 @@ impl TelemetryInterface for TelemetryServer {
         actions: Vec<TelemetryActions>,
     ) -> Self::EqueueActionsFut {
         let rt_info = self.get_runtime(&instance_id);
-        let mut queue = rt_info.enqueued_actions.lock().unwrap();
-        match queue.get_mut(&queue_id) {
-            Some(data) => data.process(actions),
-            None => {
-                queue.insert(queue_id, EnqueuedData::processed(actions));
+        let mut queue = rt_info.app_or_actions.lock().unwrap();
+        if let Some(maybe_data) = queue.get_mut(&queue_id) {
+            match maybe_data {
+                AppOrQueue::Queue(data) => {
+                    data.process(actions);
+                }
+                AppOrQueue::App(service_future) => {
+                    let apps = rt_info.apps.clone();
+                    let service_future = service_future.clone();
+                    tokio::spawn(async move {
+                        let service = service_future.await;
+                        let app = apps.lock().unwrap().get_mut(&service).unwrap().clone();
+                        app.telemetry.send_msgs(actions).await.ok();
+                    });
+                }
             }
-        };
+        } else {
+            queue.insert(
+                queue_id,
+                AppOrQueue::Queue(EnqueuedData::processed(actions)),
+            );
+        }
 
         no_response()
     }
@@ -428,43 +462,40 @@ impl TelemetryInterface for TelemetryServer {
         runtime_meta: RuntimeMeta,
         service_name: String,
     ) -> Self::RegisterServiceAndFlushQueuedActionsFut {
-        tokio::spawn(async move {
-            let actions = self
-                .get_runtime(&instance_id)
-                .enqueued_actions
-                .lock()
-                .unwrap()
-                .get_mut(&queue_id)
-                .map(|data| {
-                    let mut actions: Vec<TelemetryActions> = vec![];
-                    for d in data.dependencies.unflushed() {
-                        actions.push(TelemetryActions::AddDependecy(d.clone()));
-                    }
-                    for c in data.configurations.unflushed() {
-                        actions.push(TelemetryActions::AddConfig(c.clone()));
-                    }
-                    for i in data.integrations.unflushed() {
-                        actions.push(TelemetryActions::AddIntegration(i.clone()));
-                    }
-                    actions
-                })
-                .unwrap_or_default();
+        let mut actions: Vec<TelemetryActions> = vec![];
+        if let Some(AppOrQueue::Queue(ref mut enqueued_data)) = self
+            .get_runtime(&instance_id)
+            .app_or_actions
+            .lock()
+            .unwrap()
+            .get_mut(&queue_id)
+        {
+            enqueued_data.extract_telemetry_actions(&mut actions);
 
-            if let Some(app) = self
-                .get_app(&instance_id, &runtime_meta, &service_name, actions)
-                .await
-            {
-                let actions = self
-                    .get_runtime(&instance_id)
-                    .enqueued_actions
-                    .lock()
-                    .unwrap()
-                    .get_mut(&queue_id)
-                    .map(|data| std::mem::take(&mut data.actions))
-                    .unwrap_or_default();
-                app.telemetry.send_msgs(actions).await.ok();
-            }
-        });
+            tokio::spawn(async move {
+                if let Some(app) = self
+                    .get_app(&instance_id, &runtime_meta, &service_name, actions)
+                    .await
+                {
+                    // We need a channel to have enqueuing code await
+                    let (future, completer) = ManualFuture::new();
+                    let app_or_queue = self
+                        .get_runtime(&instance_id)
+                        .app_or_actions
+                        .lock()
+                        .unwrap()
+                        .insert(queue_id, AppOrQueue::App(future.shared()));
+                    if let Some(AppOrQueue::Queue(mut enqueued_data)) = app_or_queue {
+                        let mut actions: Vec<TelemetryActions> =
+                            std::mem::take(&mut enqueued_data.actions);
+                        enqueued_data.extract_telemetry_actions(&mut actions);
+                        app.telemetry.send_msgs(actions).await.ok();
+                    }
+                    // Ok, we dequeued all messages, now new enqueue_actions calls can handle it
+                    completer.complete(service_name).await;
+                }
+            });
+        }
 
         no_response()
     }
@@ -482,7 +513,10 @@ impl TelemetryInterface for TelemetryServer {
             cfg.set_url(&agent_url).ok();
         });
 
-        Box::pin(async move { session.shutdown_running_instances().await })
+        Box::pin(async move {
+            session.shutdown_running_instances().await;
+            no_response().await
+        })
     }
 }
 
@@ -555,17 +589,10 @@ pub mod blocking {
         session_id: String,
         agent_url: String,
     ) -> io::Result<()> {
-        let res = transport.call(TelemetryInterfaceRequest::SetSessionAgentUrl {
+        transport.send(TelemetryInterfaceRequest::SetSessionAgentUrl {
             session_id,
             agent_url,
-        })?;
-        match res {
-            TelemetryInterfaceResponse::SetSessionAgentUrl(_) => Ok(()),
-            _ => Err(io::Error::new(
-                io::ErrorKind::Other,
-                "wrong response type when setting session agent url",
-            )),
-        }
+        })
     }
 
     pub fn ping(transport: &mut TelemetryTransport) -> io::Result<Duration> {

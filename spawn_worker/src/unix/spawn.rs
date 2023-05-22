@@ -18,8 +18,11 @@ mod linux {
         Ok(mfd)
     }
 }
+
 use std::fs::File;
 
+use std::io;
+use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::{
     env,
@@ -194,6 +197,12 @@ impl From<File> for Stdio {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum LibDependency {
+    Path(PathBuf),
+    Binary(&'static [u8]),
+}
+
 pub struct SpawnWorker {
     stdin: Stdio,
     stderr: Stdio,
@@ -202,7 +211,7 @@ pub struct SpawnWorker {
     spawn_method: Option<SpawnMethod>,
     fd_to_pass: Option<OwnedFd>,
     target: Target,
-    shared_lib_dependencies: Vec<PathBuf>,
+    shared_lib_dependencies: Vec<LibDependency>,
     env: Vec<(ffi::OsString, ffi::OsString)>,
     process_name: Option<String>,
 }
@@ -237,7 +246,7 @@ impl SpawnWorker {
         self
     }
 
-    pub fn shared_lib_dependencies(&mut self, deps: Vec<PathBuf>) -> &mut Self {
+    pub fn shared_lib_dependencies(&mut self, deps: Vec<LibDependency>) -> &mut Self {
         self.shared_lib_dependencies = deps;
         self
     }
@@ -297,8 +306,9 @@ impl SpawnWorker {
         // set argv[0] and process name shown eg in `ps`
         let process_name = CString::new(self.process_name.as_deref().unwrap_or("spawned_worker"))?;
         argv.push(process_name);
+        argv.push(CString::new("")?);
 
-        match &self.target {
+        let entrypoint_symbol_name = match &self.target {
             Target::Entrypoint(entrypoint) => {
                 let path = match unsafe {
                     crate::get_dl_path_raw(entrypoint.ptr as *const libc::c_void)
@@ -308,21 +318,11 @@ impl SpawnWorker {
                 };
 
                 argv.push(path);
-                for dep in &self.shared_lib_dependencies {
-                    if let Ok(s) = CString::new(dep.to_string_lossy().to_string()) {
-                        argv.push(s)
-                    }
-                }
-                argv.push(entrypoint.symbol_name.clone());
+                entrypoint.symbol_name.clone()
             }
             Target::Manual(path, symbol_name) => {
                 argv.push(path.clone());
-                for dep in &self.shared_lib_dependencies {
-                    if let Ok(s) = CString::new(dep.to_string_lossy().to_string()) {
-                        argv.push(s)
-                    }
-                }
-                argv.push(symbol_name.clone());
+                symbol_name.clone()
             }
             Target::Noop => return Ok(None),
         };
@@ -341,24 +341,13 @@ impl SpawnWorker {
             }
         }
 
-        // setup arbitrary fd passing
-        let _shorter_lived_fd = if let Some(src_fd) = &self.fd_to_pass {
-            // we're stripping the close on exec flag from the FD
-            // to ensure we will not modify original fd, whose expected lifetime is unknown
-            // we should clone the FD that needs passing to the subprocess, keeping its lifetime
-            // as short as possible
+        let fd_to_pass = if let Some(src_fd) = &self.fd_to_pass {
+            // FD to pass is always 4
+            envp.push(CString::new(format!("{}={}", crate::ENV_PASS_FD_KEY, 3))?);
 
-            // rationale: some FDs are more important than others
-            //      e.g. listening socket fd must not be accidentally leaked to a subprocess
-            //      this would cause hard to debug bugs where random process could block the address
-            //  TODO: this method is not perfect, ideally we should create an anonymous socket pair
-            //        then send any FDs through that socket pair. Ensuring no random spawned processes could leak
             let fd = src_fd.try_clone()?;
-            envp.push(CString::new(format!(
-                "{}={}",
-                crate::ENV_PASS_FD_KEY,
-                fd.as_raw_fd()
-            ))?);
+
+            // Strip any close on exec flag on this fd
             let flags = nix::fcntl::fcntl(fd.as_raw_fd(), nix::fcntl::F_GETFD)?;
             unsafe {
                 libc::fcntl(
@@ -371,6 +360,8 @@ impl SpawnWorker {
         } else {
             None
         };
+        // make sure the fd_to_pass is not dropped until the end of the function
+        let fd_to_pass = fd_to_pass.as_ref();
 
         // setup final spawn
 
@@ -379,11 +370,37 @@ impl SpawnWorker {
             None => self.target.detect_spawn_method()?,
         };
 
+        let mut temp_files = vec![];
+        for dep in &self.shared_lib_dependencies {
+            match dep {
+                LibDependency::Path(path) => {
+                    argv.push(CString::new(path.to_string_lossy().to_string())?)
+                }
+                LibDependency::Binary(bin) => {
+                    let path = CString::new(
+                        write_to_tmp_file(bin)?
+                            .into_temp_path()
+                            .keep()? // ensure the file is not auto cleaned in parent process
+                            .as_os_str()
+                            .to_str()
+                            .ok_or_else(|| anyhow::format_err!("can't convert tmp file path"))?,
+                    )?;
+                    temp_files.push(path.clone());
+                    argv.push(CString::new("-")?);
+                    argv.push(path);
+                }
+            }
+        }
+
+        argv.push(entrypoint_symbol_name);
+
         // build and allocate final exec fn and its dependencies
+        let mut skip_close_fd = 0;
         let spawn: Box<dyn Fn()> = match spawn_method {
             #[cfg(target_os = "linux")]
             SpawnMethod::FdExec => {
                 let fd = linux::write_trampoline()?;
+                skip_close_fd = fd.as_raw_fd();
                 Box::new(move || {
                     // not using nix crate here, as it would allocate args after fork, which will lead to crashes on systems
                     // where allocator is not fork+thread safe
@@ -399,6 +416,8 @@ impl SpawnWorker {
                     .keep()?;
                 let env_prefix = "LD_PRELOAD=";
 
+                temp_files.push(CString::new(lib_path.to_str().unwrap())?);
+
                 let mut ld_env =
                     OsString::with_capacity(env_prefix.len() + lib_path.as_os_str().len() + 1);
 
@@ -410,9 +429,15 @@ impl SpawnWorker {
                     anyhow::format_err!("can't convert current executable file to correct path")
                 })?)?;
 
+                argv.items[1] = path.clone();
+
+                let ref_temp_files = &temp_files;
                 Box::new(move || unsafe {
                     libc::execve(path.as_ptr(), argv.as_ptr(), envp.as_ptr());
                     // if we're here then exec has failed
+                    for temp_file in ref_temp_files {
+                        libc::unlink(temp_file.as_ptr());
+                    }
                     panic!("{}", std::io::Error::last_os_error());
                 })
             }
@@ -426,10 +451,17 @@ impl SpawnWorker {
                         .ok_or_else(|| anyhow::format_err!("can't convert tmp file path"))?,
                 )?;
 
-                Box::new(move || {
+                temp_files.push(path.clone());
+                argv.items[1] = path.clone();
+
+                let ref_temp_files = &temp_files;
+                Box::new(move || unsafe {
                     // not using nix crate here, to avoid allocations post fork
-                    unsafe { libc::execve(path.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
+                    libc::execve(path.as_ptr(), argv.as_ptr(), envp.as_ptr());
                     // if we're here then exec has failed
+                    for temp_file in ref_temp_files {
+                        libc::unlink(temp_file.as_ptr());
+                    }
                     panic!("{}", std::io::Error::last_os_error());
                 })
             }
@@ -438,15 +470,22 @@ impl SpawnWorker {
         let stdout = self.stdout.as_child_stdio()?;
         let stderr = self.stderr.as_child_stdio()?;
 
-        // no allocations in the child process should happen by this point for maximum safety
-        if let Fork::Parent(child_pid) = unsafe { fork()? } {
-            return Ok(Some(child_pid));
-        }
-
-        if self.daemonize {
-            if let Fork::Parent(_) = unsafe { fork()? } {
-                std::process::exit(0);
+        let ref_temp_files = &temp_files;
+        let do_fork = || unsafe {
+            match fork() {
+                Ok(fork) => Ok(fork),
+                Err(e) => {
+                    for temp_file in ref_temp_files {
+                        libc::unlink(temp_file.as_ptr());
+                    }
+                    Err(e)
+                }
             }
+        };
+
+        // no allocations in the child process should happen by this point for maximum safety
+        if let Fork::Parent(child_pid) = do_fork()? {
+            return Ok(Some(child_pid));
         }
 
         if let Some(fd) = stdin.as_fd() {
@@ -459,6 +498,34 @@ impl SpawnWorker {
 
         if let Some(fd) = stderr.as_fd() {
             unsafe { libc::dup2(fd, libc::STDERR_FILENO) };
+        }
+
+        let close_range = if let Some(fd) = fd_to_pass {
+            unsafe { libc::dup2(fd.as_raw_fd(), 3) };
+            4..=i32::MAX
+        } else {
+            3..=i32::MAX
+        };
+
+        if let Err(_e) = close_fd_range(close_range, skip_close_fd) {
+            // What do we do here?
+            // /proc might not be mounted?
+        }
+
+        if self.daemonize {
+            if let Fork::Parent(_) = do_fork()? {
+                // musl will try to "correct" offsets in an atexit handler (lseek a FILE* to the "true" position)
+                // Ensure all fds are closed so that musl cannot have side-effects
+                for i in 0..4 {
+                    unsafe {
+                        libc::close(i);
+                    }
+                }
+                unsafe {
+                    libc::close(skip_close_fd);
+                }
+                std::process::exit(0);
+            }
         }
 
         spawn();
@@ -480,4 +547,46 @@ impl Child {
 
         Ok(nix::sys::wait::waitpid(Some(pid), None)?)
     }
+}
+
+#[cfg(target_os = "macos")]
+const SELF_FD_DIR: &str = "/dev/fd";
+
+#[cfg(target_os = "linux")]
+const SELF_FD_DIR: &str = "/proc/self/fd";
+
+fn list_open_fds() -> io::Result<impl Iterator<Item = i32>> {
+    let dir = nix::dir::Dir::open(
+        SELF_FD_DIR,
+        nix::fcntl::OFlag::O_DIRECTORY | nix::fcntl::OFlag::O_RDONLY,
+        nix::sys::stat::Mode::empty(),
+    )?;
+    let dir_fd = dir.as_raw_fd();
+    Ok(dir.into_iter().filter_map(move |fd_path| {
+        let fd_path = match fd_path {
+            Err(_) => return None,
+            Ok(p) => p,
+        };
+        if fd_path.file_name().to_bytes() == b"." || fd_path.file_name().to_bytes() == b".." {
+            return None;
+        }
+        let fd: i32 = std::str::from_utf8(fd_path.file_name().to_bytes())
+            .unwrap()
+            .parse()
+            .unwrap();
+        if fd == dir_fd {
+            return None;
+        }
+        Some(fd)
+    }))
+}
+
+// https://man7.org/linux/man-pages/man2/close_range.2.html is too recent sadly :_()
+fn close_fd_range(range: RangeInclusive<i32>, skip_close_fd: i32) -> std::io::Result<()> {
+    for fd in list_open_fds()? {
+        if fd != skip_close_fd && range.contains(&fd) {
+            nix::unistd::close(fd)?;
+        }
+    }
+    Ok(())
 }

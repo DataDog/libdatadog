@@ -595,6 +595,7 @@ dependencies = [
  "io-lifetimes",
  "lazy_static",
  "libc",
+ "manual_future",
  "nix",
  "pin-project",
  "rand",
@@ -1148,6 +1149,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a8cbbb2831780bc3b9c15a41f5b49222ef756b6730a95f3decfdd15903eb5a3"
 dependencies = [
  "twox-hash",
+]
+
+[[package]]
+name = "manual_future"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "943968aefb9b0fdf36cccc03f6cd9d6698b23574ab49eccc185ae6c5cb6ad43e"
+dependencies = [
+ "futures",
 ]
 
 [[package]]
