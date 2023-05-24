@@ -1,7 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 #![cfg(unix)]
-use ddtelemetry_ffi::sidecar::unix::*;
+use datadog_sidecar_ffi::unix::*;
 
 macro_rules! assert_maybe_no_error {
     ($maybe_erroring:expr) => {

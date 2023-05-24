@@ -2,8 +2,8 @@
 # This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 [package]
-name = "ddtelemetry-ffi"
-version = "2.2.0"
+name = "datadog-sidecar-ffi"
+version = "0.0.1"
 edition = "2021"
 
 [lib]
@@ -11,7 +11,10 @@ crate-type = ["lib", "staticlib", "cdylib"]
 
 [dependencies]
 ddtelemetry = { path = "../ddtelemetry" }
+datadog-sidecar = { path = "../sidecar" }
+datadog-ipc = { path = "../ipc" }
 ddcommon-ffi = { path = "../ddcommon-ffi" }
+ddtelemetry-ffi = { path = "../ddtelemetry-ffi" }
 paste = "1"
 libc = "0.2"
 

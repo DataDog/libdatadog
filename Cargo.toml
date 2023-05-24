@@ -11,6 +11,8 @@ members = [
   "ddtelemetry-ffi",
   "tools",
   "ipc",
+  "sidecar",
+  "sidecar-ffi",
   "tools/cc_utils",
   "tools/sidecar_mockgen",
   "trace-normalization",

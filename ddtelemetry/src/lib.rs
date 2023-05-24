@@ -8,9 +8,6 @@ use ddcommon::container_id;
 pub mod config;
 pub mod data;
 pub mod info;
-// For now the IPC interface only works on unix systems
-#[cfg(not(windows))]
-pub mod ipc;
 pub mod metrics;
 pub mod worker;
 
