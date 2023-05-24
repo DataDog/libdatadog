@@ -22,3 +22,6 @@ mini-agent:
 telemetry:
 - ddtelemetry/**/*
 - ddtelemetry-ffi/**/*
+
+dogstatsd:
+- dogstatsd-collector/**/*
