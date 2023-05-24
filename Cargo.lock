@@ -482,9 +482,6 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "datadog-ipc",
- "datadog-trace-normalization",
- "datadog-trace-protobuf",
- "datadog-trace-utils",
  "ddcommon",
  "ddtelemetry",
  "futures",
