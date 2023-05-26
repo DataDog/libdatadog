@@ -3,6 +3,7 @@
 
 mod error;
 
+pub mod container_id;
 pub mod option;
 pub mod slice;
 pub mod tags;

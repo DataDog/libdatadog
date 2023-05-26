@@ -18,7 +18,7 @@ pub mod worker;
 pub fn build_host() -> data::Host {
     data::Host {
         hostname: info::os::real_hostname().unwrap_or_else(|_| String::from("unknown_hostname")),
-        container_id: container_id::get_container_id().map(|f| f.to_string()),
+        container_id: container_id::get_self_container_id().map(|f| f.to_string()),
         os: Some(String::from(info::os::os_name())),
         os_version: info::os::os_version().ok(),
         kernel_name: None,

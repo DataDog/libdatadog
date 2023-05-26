@@ -85,7 +85,7 @@ impl Endpoint {
             builder = builder.header(header::DATADOG_API_KEY, HeaderValue::from_str(api_key)?);
         }
 
-        if let Some(container_id) = container_id::get_container_id() {
+        if let Some(container_id) = container_id::get_self_container_id() {
             builder = builder.header(header::DATADOG_CONTAINER_ID, container_id);
         }
 
