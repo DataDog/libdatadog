@@ -1,0 +1,48 @@
+name: Serverless Integration Test
+
+on:
+  push:
+    paths:
+      - serverless/**
+      - trace-mini-agent/**
+      - trace-normalization/**
+      - trace-obfuscation/**
+      - trace-protobuf/**
+      - trace-utils/**
+      - '.github/workflows/serverless-integration-test.yml'
+
+jobs:
+  integration-node:
+    # Google Auth permissions
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    strategy:
+      matrix:
+        include:
+          - runtime_version: nodejs18
+            project_path: serverless/integration-tests/cloud-function-node
+            handler_name: helloGET
+          - runtime_version: nodejs16
+            project_path: serverless/integration-tests/cloud-function-node
+            handler_name: helloGET
+          - runtime_version: python311
+            project_path: serverless/integration-tests/cloud-function-python
+            handler_name: hello_get
+          - runtime_version: python39
+            project_path: serverless/integration-tests/cloud-function-python
+            handler_name: hello_get
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Authenticate to Google Cloud
+        uses: 'google-github-actions/auth@v1'
+        with:
+          service_account: ${{ secrets.SERVERLESS_GCP_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ secrets.SERVERLESS_GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      - name: Setup Google Cloud SDK
+        uses: 'google-github-actions/setup-gcloud@v1'
+      - name: Build Serverless Trace Mini Agent & Copy into Project Folder
+        run: cargo build --release -p datadog-serverless-trace-mini-agent && cp target/release/datadog-serverless-trace-mini-agent ${{ matrix.project_path }}/datadog-serverless-trace-mini-agent
+      - name: Run serverless integration test
+        run: serverless/integration-tests/test-cloud-functions-node.sh ${{ matrix.runtime_version }} ${{ matrix.project_path }} ${{ matrix.handler_name }}
