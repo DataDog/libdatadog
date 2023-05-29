@@ -80,96 +80,6 @@ impl EnvVerifier for ServerlessEnvVerifier {
     }
 }
 
-async fn verify_azure_environment(verify_env_timeout: u64) -> trace_utils::MiniAgentMetadata {
-    let azure_local_function_url_request =
-        ensure_azure_function_environment(Box::new(AzureVerificationClientWrapper {}));
-    match tokio::time::timeout(
-        Duration::from_millis(verify_env_timeout),
-        azure_local_function_url_request,
-    )
-    .await
-    {
-        Ok(result) => match result {
-            Ok(res) => {
-                debug!("Successfully verified Azure Function Environment.");
-                res
-            }
-            Err(e) => {
-                error!("The Mini Agent can only be run in Google Cloud Functions & Azure Functions. Verification has failed, shutting down now. Error: {e}");
-                #[cfg(not(test))]
-                process::exit(1);
-                #[cfg(test)]
-                trace_utils::MiniAgentMetadata {
-                    gcp_project_id: None,
-                    gcp_region: None,
-                }
-            }
-        },
-        Err(_) => {
-            error!("Local Azure Function URL request timeout of {verify_env_timeout} ms exceeded. Using default values.");
-            trace_utils::MiniAgentMetadata {
-                gcp_project_id: None,
-                gcp_region: None,
-            }
-        }
-    };
-    trace_utils::MiniAgentMetadata {
-        gcp_project_id: None,
-        gcp_region: None,
-    }
-}
-
-/// AzureVerificationClient trait is used so we can mock the azure function local url response in unit tests
-#[async_trait]
-trait AzureVerificationClient {
-    async fn get_metadata(&self, local_function_url: String) -> anyhow::Result<Response<Body>>;
-}
-struct AzureVerificationClientWrapper {}
-
-#[async_trait]
-impl AzureVerificationClient for AzureVerificationClientWrapper {
-    async fn get_metadata(&self, local_function_url: String) -> anyhow::Result<Response<Body>> {
-        let req = Request::builder()
-            .method(Method::GET)
-            .uri(local_function_url)
-            .body(Body::empty())
-            .map_err(|err| anyhow::anyhow!(err.to_string()))?;
-
-        let client = Client::new();
-        match client.request(req).await {
-            Ok(res) => Ok(res),
-            Err(err) => anyhow::bail!(err.to_string()),
-        }
-    }
-}
-
-/// Checks if we are running in an Azure Function environment.
-/// If true, returns MiniAgentMetadata default.
-/// Otherwise, returns an error with the verification failure reason.
-async fn ensure_azure_function_environment(
-    metadata_client: Box<dyn AzureVerificationClient + Send + Sync>,
-) -> anyhow::Result<trace_utils::MiniAgentMetadata> {
-    let url = env::var(AZURE_FUNCTION_LOCAL_URL_ENV_VAR)
-        .map_err(|_| anyhow::anyhow!("Azure local function url env var not found."))?;
-    let response = metadata_client.get_metadata(url).await.map_err(|err| {
-        anyhow::anyhow!("Can't communicate with local Azure Function URL. Error: {err}")
-    })?;
-
-    let body = response.into_body();
-
-    let bytes = hyper::body::to_bytes(body).await?;
-    let body_str = String::from_utf8(bytes.to_vec())?;
-
-    if !body_str.contains(EXPECTED_AZURE_FUNCTION_LOCAL_URL_RESPONSE) {
-        anyhow::bail!("Incorrect response from Azure Function URL.")
-    }
-
-    Ok(trace_utils::MiniAgentMetadata {
-        gcp_project_id: None,
-        gcp_region: None,
-    })
-}
-
 async fn verify_gcp_environment(verify_env_timeout: u64) -> trace_utils::MiniAgentMetadata {
     let gcp_metadata_request =
         ensure_gcp_function_environment(Box::new(GoogleMetadataClientWrapper {}));
@@ -283,6 +193,96 @@ async fn get_gcp_metadata_from_body(body: hyper::Body) -> anyhow::Result<GCPMeta
     let body_str = String::from_utf8(bytes.to_vec())?;
     let gcp_metadata: GCPMetadata = serde_json::from_str(&body_str)?;
     Ok(gcp_metadata)
+}
+
+async fn verify_azure_environment(verify_env_timeout: u64) -> trace_utils::MiniAgentMetadata {
+    let azure_local_function_url_request =
+        ensure_azure_function_environment(Box::new(AzureVerificationClientWrapper {}));
+    match tokio::time::timeout(
+        Duration::from_millis(verify_env_timeout),
+        azure_local_function_url_request,
+    )
+    .await
+    {
+        Ok(result) => match result {
+            Ok(res) => {
+                debug!("Successfully verified Azure Function Environment.");
+                res
+            }
+            Err(e) => {
+                error!("The Mini Agent can only be run in Google Cloud Functions & Azure Functions. Verification has failed, shutting down now. Error: {e}");
+                #[cfg(not(test))]
+                process::exit(1);
+                #[cfg(test)]
+                trace_utils::MiniAgentMetadata {
+                    gcp_project_id: None,
+                    gcp_region: None,
+                }
+            }
+        },
+        Err(_) => {
+            error!("Local Azure Function URL request timeout of {verify_env_timeout} ms exceeded. Using default values.");
+            trace_utils::MiniAgentMetadata {
+                gcp_project_id: None,
+                gcp_region: None,
+            }
+        }
+    };
+    trace_utils::MiniAgentMetadata {
+        gcp_project_id: None,
+        gcp_region: None,
+    }
+}
+
+/// AzureVerificationClient trait is used so we can mock the azure function local url response in unit tests
+#[async_trait]
+trait AzureVerificationClient {
+    async fn get_metadata(&self, local_function_url: String) -> anyhow::Result<Response<Body>>;
+}
+struct AzureVerificationClientWrapper {}
+
+#[async_trait]
+impl AzureVerificationClient for AzureVerificationClientWrapper {
+    async fn get_metadata(&self, local_function_url: String) -> anyhow::Result<Response<Body>> {
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(local_function_url)
+            .body(Body::empty())
+            .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+
+        let client = Client::new();
+        match client.request(req).await {
+            Ok(res) => Ok(res),
+            Err(err) => anyhow::bail!(err.to_string()),
+        }
+    }
+}
+
+/// Checks if we are running in an Azure Function environment.
+/// If true, returns MiniAgentMetadata default.
+/// Otherwise, returns an error with the verification failure reason.
+async fn ensure_azure_function_environment(
+    metadata_client: Box<dyn AzureVerificationClient + Send + Sync>,
+) -> anyhow::Result<trace_utils::MiniAgentMetadata> {
+    let url = env::var(AZURE_FUNCTION_LOCAL_URL_ENV_VAR)
+        .map_err(|_| anyhow::anyhow!("Azure local function url env var not found."))?;
+    let response = metadata_client.get_metadata(url).await.map_err(|err| {
+        anyhow::anyhow!("Can't communicate with local Azure Function URL. Error: {err}")
+    })?;
+
+    let body = response.into_body();
+
+    let bytes = hyper::body::to_bytes(body).await?;
+    let body_str = String::from_utf8(bytes.to_vec())?;
+
+    if !body_str.contains(EXPECTED_AZURE_FUNCTION_LOCAL_URL_RESPONSE) {
+        anyhow::bail!("Incorrect response from Azure Function URL.")
+    }
+
+    Ok(trace_utils::MiniAgentMetadata {
+        gcp_project_id: None,
+        gcp_region: None,
+    })
 }
 
 #[cfg(test)]
