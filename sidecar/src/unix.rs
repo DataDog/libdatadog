@@ -141,6 +141,7 @@ fn daemonize(listener: StdUnixListener, cfg: Config) -> io::Result<()> {
         .pass_fd(listener)
         .stdin(Stdio::Null)
         .daemonize(true)
+        .process_name("datadog-ipc-helper")
         .shared_lib_dependencies(cfg.library_dependencies.clone())
         .target(entrypoint!(ddog_daemon_entry_point));
     match cfg.log_method {
