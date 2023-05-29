@@ -1,3 +1,5 @@
+// protoc -I. -I$GOPATH/src --gogofaster_out=. span.proto tracer_payload.proto agent_payload.proto
+
 syntax = "proto3";
 
 package pb;
