@@ -3,7 +3,11 @@
 
 use std::env;
 
+#[cfg(not(test))]
+use std::process;
+
 use datadog_trace_utils::trace_utils;
+use log::error;
 
 const TRACE_INTAKE_ROUTE: &str = "/api/v0.2/traces";
 const TRACE_STATS_INTAKE_ROUTE: &str = "/api/v0.2/stats";
@@ -31,20 +35,31 @@ impl Config {
             .map_err(|_| anyhow::anyhow!("DD_API_KEY environment variable is not set"))?;
         let mut function_name = None;
 
-        let mut env_type = trace_utils::EnvironmentType::Unknown;
+        let mut maybe_env_type = None;
         if let Ok(res) = env::var("K_SERVICE") {
             // Set by Google Cloud Functions for newer runtimes
             function_name = Some(res);
-            env_type = trace_utils::EnvironmentType::CloudFunction;
+            maybe_env_type = Some(trace_utils::EnvironmentType::CloudFunction);
         } else if let Ok(res) = env::var("FUNCTION_NAME") {
             // Set by Google Cloud Functions for older runtimes
             function_name = Some(res);
-            env_type = trace_utils::EnvironmentType::CloudFunction;
+            maybe_env_type = Some(trace_utils::EnvironmentType::CloudFunction);
         } else if let Ok(res) = env::var("WEBSITE_SITE_NAME") {
             // Set by Azure Functions
             function_name = Some(res);
-            env_type = trace_utils::EnvironmentType::AzureFunction;
+            maybe_env_type = Some(trace_utils::EnvironmentType::AzureFunction);
         }
+
+        let env_type = match maybe_env_type {
+            Some(res) => res,
+            None => {
+                error!("Unable to identify environment. Shutting down Mini Agent.");
+                #[cfg(not(test))]
+                process::exit(1);
+                #[cfg(test)]
+                trace_utils::EnvironmentType::CloudFunction
+            }
+        };
 
         let dd_site = env::var("DD_SITE").unwrap_or_else(|_| "datadoghq.com".to_string());
 

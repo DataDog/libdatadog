@@ -76,9 +76,6 @@ impl EnvVerifier for ServerlessEnvVerifier {
             trace_utils::EnvironmentType::CloudFunction => {
                 return verify_gcp_environment(verify_env_timeout).await;
             }
-            trace_utils::EnvironmentType::Unknown => {
-                return verify_gcp_environment(verify_env_timeout).await; // TODO
-            }
         }
     }
 }
@@ -132,16 +129,12 @@ struct AzureVerificationClientWrapper {}
 #[async_trait]
 impl AzureVerificationClient for AzureVerificationClientWrapper {
     async fn get_metadata(&self, local_function_url: String) -> anyhow::Result<Response<Body>> {
-        let req = match Request::builder()
+        let req = Request::builder()
             .method(Method::GET)
             .uri(local_function_url)
             .body(Body::empty())
-        {
-            Ok(res) => res,
-            Err(err) => {
-                anyhow::bail!(err.to_string())
-            }
-        };
+            .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+
         let client = Client::new();
         match client.request(req).await {
             Ok(res) => Ok(res),
@@ -156,18 +149,12 @@ impl AzureVerificationClient for AzureVerificationClientWrapper {
 async fn ensure_azure_function_environment(
     metadata_client: Box<dyn AzureVerificationClient + Send + Sync>,
 ) -> anyhow::Result<trace_utils::MiniAgentMetadata> {
-    let url = match env::var(AZURE_FUNCTION_LOCAL_URL_ENV_VAR) {
-        Ok(res) => res,
-        Err(_) => {
-            anyhow::bail!("Azure local function url env var not found.")
-        }
-    };
-    let response = match metadata_client.get_metadata(url).await {
-        Ok(res) => res,
-        Err(e) => {
-            anyhow::bail!("Can't communicate with local Azure Function URL. Error: {e}")
-        }
-    };
+    let url = env::var(AZURE_FUNCTION_LOCAL_URL_ENV_VAR)
+        .map_err(|_| anyhow::anyhow!("Azure local function url env var not found."))?;
+    let response = metadata_client.get_metadata(url).await.map_err(|err| {
+        anyhow::anyhow!("Can't communicate with local Azure Function URL. Error: {err}")
+    })?;
+
     let body = response.into_body();
 
     let bytes = hyper::body::to_bytes(body).await?;
@@ -242,17 +229,13 @@ struct GoogleMetadataClientWrapper {}
 #[async_trait]
 impl GoogleMetadataClient for GoogleMetadataClientWrapper {
     async fn get_metadata(&self) -> anyhow::Result<Response<Body>> {
-        let req = match Request::builder()
+        let req = Request::builder()
             .method(Method::POST)
             .uri(GCP_METADATA_URL)
             .header("Metadata-Flavor", "Google")
             .body(Body::empty())
-        {
-            Ok(res) => res,
-            Err(err) => {
-                anyhow::bail!(err.to_string())
-            }
-        };
+            .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+
         let client = Client::new();
         match client.request(req).await {
             Ok(res) => Ok(res),
@@ -267,12 +250,10 @@ impl GoogleMetadataClient for GoogleMetadataClientWrapper {
 async fn ensure_gcp_function_environment(
     metadata_client: Box<dyn GoogleMetadataClient + Send + Sync>,
 ) -> anyhow::Result<GCPMetadata> {
-    let response = match metadata_client.get_metadata().await {
-        Ok(res) => res,
-        Err(e) => {
-            anyhow::bail!("Can't communicate with Google Metadata Server. Error: {e}")
-        }
-    };
+    let response = metadata_client.get_metadata().await.map_err(|err| {
+        anyhow::anyhow!("Can't communicate with Google Metadata Server. Error: {err}")
+    })?;
+
     let (parts, body) = response.into_parts();
     let headers = parts.headers;
     match headers.get("Server") {

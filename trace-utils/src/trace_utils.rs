@@ -287,7 +287,6 @@ pub fn update_tracer_top_level(span: &mut pb::Span) {
 pub enum EnvironmentType {
     CloudFunction,
     AzureFunction,
-    Unknown,
 }
 
 #[derive(Clone, Default, Debug, Eq, PartialEq)]
