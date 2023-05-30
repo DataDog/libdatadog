@@ -510,9 +510,10 @@ mod tests {
     async fn test_azure_verify_environment_timeout_exceeded_gives_unknown_values() {
         env::set_var(AZURE_FUNCTION_LOCAL_URL_ENV_VAR, "http://localhost:9091");
         let env_verifier = ServerlessEnvVerifier {};
+        // set the verify_env_timeout to timeout immediately
         let res = env_verifier
             .verify_environment(0, &trace_utils::EnvironmentType::AzureFunction)
-            .await; // set the verify_env_timeout to timeout immediately
+            .await;
         assert_eq!(res, trace_utils::MiniAgentMetadata::default());
         env::remove_var(AZURE_FUNCTION_LOCAL_URL_ENV_VAR);
     }
