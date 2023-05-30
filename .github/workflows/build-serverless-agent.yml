@@ -1,4 +1,4 @@
-name: Build and Release Serverless Agent
+name: Build Serverless Agent
 on: [workflow_dispatch, push]
 
 jobs:
