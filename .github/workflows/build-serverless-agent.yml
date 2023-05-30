@@ -16,7 +16,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: datadog-serverless-agent-linux-amd64
-          path: target/x86_64-unknown-linux-musl/datadog-serverless-trace-mini-agent
+          path: target/x86_64-unknown-linux-musl/release/datadog-serverless-trace-mini-agent
   build-windows:
     name: Build Windows
     runs-on: windows-latest
