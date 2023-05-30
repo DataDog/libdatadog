@@ -1,8 +1,8 @@
 name: Build and Release Serverless Agent
-on: push
-  # push:
-    # tags:
-    #   - 'sls-**'
+on:
+  push:
+    tags:
+      - 'sls-**'
 
 jobs:
   build-linux-musl:
@@ -54,14 +54,9 @@ jobs:
       - name: Zip binaries
         run: zip -r datadog-serverless-agent.zip *
         working-directory: target/release/binaries
-      # - name: Release
-      #   uses: softprops/action-gh-release@v1
-      #   with:
-      #     draft: true
-      #     generate_release_notes: true
-      #     files: target/release/binaries/datadog-serverless-agent.zip
-      - name: Upload binaries
-        uses: actions/upload-artifact@v3
+      - name: Release
+        uses: softprops/action-gh-release@v1
         with:
-          name: Binaries
-          path: target/release/binaries
+          draft: true
+          generate_release_notes: true
+          files: target/release/binaries/datadog-serverless-agent.zip
