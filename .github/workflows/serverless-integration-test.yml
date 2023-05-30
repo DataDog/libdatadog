@@ -44,5 +44,5 @@ jobs:
         uses: 'google-github-actions/setup-gcloud@v1'
       - name: Build Serverless Trace Mini Agent & Copy into Project Folder
         run: cargo build --release -p datadog-serverless-trace-mini-agent && cp target/release/datadog-serverless-trace-mini-agent ${{ matrix.project_path }}/datadog-serverless-trace-mini-agent
-      - name: Run serverless integration test
-        run: serverless/integration-tests/test-cloud-functions-node.sh ${{ matrix.runtime_version }} ${{ matrix.project_path }} ${{ matrix.handler_name }}
+      - name: Deploy & Test Functions w/ Serverless Trace Mini Agent
+        run: serverless/integration-tests/test-cloud-functions.sh ${{ matrix.runtime_version }} ${{ matrix.project_path }} ${{ matrix.handler_name }}
