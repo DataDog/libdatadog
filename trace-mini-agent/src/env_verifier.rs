@@ -16,13 +16,13 @@ const AZURE_FUNCTION_LOCAL_URL_ENV_VAR: &str = "ASPNETCORE_URLS";
 const EXPECTED_AZURE_FUNCTION_LOCAL_URL_RESPONSE: &str =
     "Your Azure Function App is up and running.";
 
-#[derive(Default, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Default, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct GCPMetadata {
     pub instance: GCPInstance,
     pub project: GCPProject,
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct GCPInstance {
     pub region: String,
 }
@@ -34,7 +34,7 @@ impl Default for GCPInstance {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GCPProject {
     pub project_id: String,
