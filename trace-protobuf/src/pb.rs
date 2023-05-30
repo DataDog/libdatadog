@@ -10,50 +10,63 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Span {
     /// service is the name of the service with which this span is associated.
+    /// @gotags: json:"service" msg:"service"
     #[prost(string, tag = "1")]
     #[serde(default)]
     pub service: ::prost::alloc::string::String,
     /// name is the operation name of this span.
+    /// @gotags: json:"name" msg:"name"
     #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
     /// resource is the resource name of this span, also sometimes called the endpoint (for web spans).
+    /// @gotags: json:"resource" msg:"resource"
     #[prost(string, tag = "3")]
     pub resource: ::prost::alloc::string::String,
     /// traceID is the ID of the trace to which this span belongs.
+    /// @gotags: json:"trace_id" msg:"trace_id"
     #[prost(uint64, tag = "4")]
     pub trace_id: u64,
     /// spanID is the ID of this span.
+    /// @gotags: json:"span_id" msg:"span_id"
     #[prost(uint64, tag = "5")]
     pub span_id: u64,
     /// parentID is the ID of this span's parent, or zero if this span has no parent.
+    /// @gotags: json:"parent_id" msg:"parent_id"
     #[prost(uint64, tag = "6")]
     #[serde(default)]
     pub parent_id: u64,
     /// start is the number of nanoseconds between the Unix epoch and the beginning of this span.
+    /// @gotags: json:"start" msg:"start"
     #[prost(int64, tag = "7")]
     pub start: i64,
     /// duration is the time length of this span in nanoseconds.
+    /// @gotags: json:"duration" msg:"duration"
     #[prost(int64, tag = "8")]
     pub duration: i64,
     /// error is 1 if there is an error associated with this span, or 0 if there is not.
+    /// @gotags: json:"error" msg:"error"
     #[prost(int32, tag = "9")]
     #[serde(default)]
     pub error: i32,
     /// meta is a mapping from tag name to tag value for string-valued tags.
+    /// @gotags: json:"meta" msg:"meta"
     #[prost(map = "string, string", tag = "10")]
     pub meta: ::std::collections::HashMap<
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
     >,
     /// metrics is a mapping from tag name to tag value for numeric-valued tags.
+    /// @gotags: json:"metrics" msg:"metrics"
     #[prost(map = "string, double", tag = "11")]
     #[serde(default)]
     pub metrics: ::std::collections::HashMap<::prost::alloc::string::String, f64>,
     /// type is the type of the service with which this span is associated.  Example values: web, db, lambda.
+    /// @gotags: json:"type" msg:"type"
     #[prost(string, tag = "12")]
     #[serde(default)]
     pub r#type: ::prost::alloc::string::String,
     /// meta_struct is a registry of structured "other" data used by, e.g., AppSec.
+    /// @gotags: json:"meta_struct,omitempty" msg:"meta_struct"
     #[prost(map = "string, bytes", tag = "13")]
     #[serde(default)]
     pub meta_struct: ::std::collections::HashMap<
@@ -66,21 +79,26 @@ pub struct Span {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TraceChunk {
     /// priority specifies sampling priority of the trace.
+    /// @gotags: json:"priority" msg:"priority"
     #[prost(int32, tag = "1")]
     pub priority: i32,
     /// origin specifies origin product ("lambda", "rum", etc.) of the trace.
+    /// @gotags: json:"origin" msg:"origin"
     #[prost(string, tag = "2")]
     pub origin: ::prost::alloc::string::String,
     /// spans specifies list of containing spans.
+    /// @gotags: json:"spans" msg:"spans"
     #[prost(message, repeated, tag = "3")]
     pub spans: ::prost::alloc::vec::Vec<Span>,
     /// tags specifies tags common in all `spans`.
+    /// @gotags: json:"tags" msg:"tags"
     #[prost(map = "string, string", tag = "4")]
     pub tags: ::std::collections::HashMap<
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
     >,
     /// droppedTrace specifies whether the trace was dropped by samplers or not.
+    /// @gotags: json:"dropped_trace" msg:"dropped_trace"
     #[prost(bool, tag = "5")]
     pub dropped_trace: bool,
 }
@@ -89,36 +107,46 @@ pub struct TraceChunk {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TracerPayload {
     /// containerID specifies the ID of the container where the tracer is running on.
+    /// @gotags: json:"container_id" msg:"container_id"
     #[prost(string, tag = "1")]
     pub container_id: ::prost::alloc::string::String,
     /// languageName specifies language of the tracer.
+    /// @gotags: json:"language_name" msg:"language_name"
     #[prost(string, tag = "2")]
     pub language_name: ::prost::alloc::string::String,
     /// languageVersion specifies language version of the tracer.
+    /// @gotags: json:"language_version" msg:"language_version"
     #[prost(string, tag = "3")]
     pub language_version: ::prost::alloc::string::String,
     /// tracerVersion specifies version of the tracer.
+    /// @gotags: json:"tracer_version" msg:"tracer_version"
     #[prost(string, tag = "4")]
     pub tracer_version: ::prost::alloc::string::String,
     /// runtimeID specifies V4 UUID representation of a tracer session.
+    /// @gotags: json:"runtime_id" msg:"runtime_id"
     #[prost(string, tag = "5")]
     pub runtime_id: ::prost::alloc::string::String,
     /// chunks specifies list of containing trace chunks.
+    /// @gotags: json:"chunks" msg:"chunks"
     #[prost(message, repeated, tag = "6")]
     pub chunks: ::prost::alloc::vec::Vec<TraceChunk>,
     /// tags specifies tags common in all `chunks`.
+    /// @gotags: json:"tags" msg:"tags"
     #[prost(map = "string, string", tag = "7")]
     pub tags: ::std::collections::HashMap<
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
     >,
     /// env specifies `env` tag that set with the tracer.
+    /// @gotags: json:"env" msg:"env"
     #[prost(string, tag = "8")]
     pub env: ::prost::alloc::string::String,
     /// hostname specifies hostname of where the tracer is running.
+    /// @gotags: json:"hostname" msg:"hostname"
     #[prost(string, tag = "9")]
     pub hostname: ::prost::alloc::string::String,
     /// version specifies `version` tag that set with the tracer.
+    /// @gotags: json:"app_version" msg:"app_version"
     #[prost(string, tag = "10")]
     pub app_version: ::prost::alloc::string::String,
 }

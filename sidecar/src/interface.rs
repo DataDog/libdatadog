@@ -23,7 +23,8 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tokio::net::UnixStream;
 
-use crate::{
+use datadog_ipc::tarpc;
+use ddtelemetry::{
     config::Config,
     data,
     worker::{
@@ -31,7 +32,6 @@ use crate::{
         TelemetryWorkerHandle, MAX_ITEMS,
     },
 };
-use datadog_ipc::tarpc;
 
 #[tarpc::service]
 pub trait TelemetryInterface {
@@ -529,7 +529,7 @@ pub mod blocking {
 
     use datadog_ipc::transport::blocking::BlockingTransport;
 
-    use crate::worker::TelemetryActions;
+    use ddtelemetry::worker::TelemetryActions;
 
     use super::{
         InstanceId, QueueId, RuntimeMeta, TelemetryInterfaceRequest, TelemetryInterfaceResponse,

@@ -5,20 +5,17 @@ use datadog_ipc::platform::PlatformHandle;
 use ddcommon_ffi as ffi;
 use std::{fs::File, os::unix::prelude::FromRawFd};
 
+use datadog_sidecar::interface::{
+    blocking::{self, TelemetryTransport},
+    InstanceId, QueueId, RuntimeMeta,
+};
 use ddtelemetry::{
     data::{self, Dependency, Integration},
-    ipc::{
-        interface::{
-            blocking::{self, TelemetryTransport},
-            InstanceId, QueueId, RuntimeMeta,
-        },
-        sidecar,
-    },
     worker::{LifecycleAction, TelemetryActions},
 };
 use ffi::slice::AsBytes;
 
-use crate::{try_c, MaybeError};
+use ddtelemetry_ffi::{try_c, MaybeError};
 
 #[repr(C)]
 pub struct NativeFile {
@@ -69,9 +66,9 @@ pub extern "C" fn ddog_sidecar_transport_clone(
 /// Caller must ensure the process is safe to fork, at the time when this method is called
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut TelemetryTransport) -> MaybeError {
-    let cfg = sidecar::config::Config::get();
+    let cfg = datadog_sidecar::config::Config::get();
 
-    let stream = Box::new(try_c!(sidecar::start_or_connect_to_sidecar(cfg)));
+    let stream = Box::new(try_c!(datadog_sidecar::start_or_connect_to_sidecar(cfg)));
     *connection = Box::into_raw(stream);
 
     MaybeError::None

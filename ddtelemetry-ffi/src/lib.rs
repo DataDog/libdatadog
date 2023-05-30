@@ -4,7 +4,6 @@
 use ddcommon_ffi as ffi;
 
 pub mod builder;
-pub mod sidecar;
 pub mod worker_handle;
 
 macro_rules! c_setters {
