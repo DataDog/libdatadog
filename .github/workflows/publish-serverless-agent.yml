@@ -5,31 +5,37 @@ on:
       - 'sls-**'
 
 jobs:
-  build:
-    name: Build
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            executable_name: datadog-serverless-trace-mini-agent
-            asset_name: datadog-serverless-agent-linux-amd64
-          - os: windows-latest
-            executable_name: datadog-serverless-trace-mini-agent.exe
-            asset_name: datadog-serverless-agent-windows-amd64
+  build-linux-musl:
+    name: Build Linux Musl
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-      - name: Build project
+      - name: Install musl dependencies
+        run: rustup target add x86_64-unknown-linux-musl && sudo apt-get install musl-tools
+      - name: Build project Linux musl
+        run: cargo build --release -p datadog-serverless-trace-mini-agent --target x86_64-unknown-linux-musl
+      - name: Upload artifacts for release step
+        uses: actions/upload-artifact@v3
+        with:
+          name: datadog-serverless-agent-linux-amd64
+          path: target/x86_64-unknown-linux-musl/release/datadog-serverless-trace-mini-agent
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Build project Windows
         run: cargo build --release -p datadog-serverless-trace-mini-agent
       - name: Upload artifacts for release step
         uses: actions/upload-artifact@v3
         with:
-          name: ${{ matrix.asset_name }}
-          path: target/release/${{ matrix.executable_name }}
+          name: datadog-serverless-agent-windows-amd64
+          path: target/release/datadog-serverless-trace-mini-agent.exe
   release:
     name: Zip and Release
-    needs: build
+    needs: [build-windows, build-linux-musl]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
