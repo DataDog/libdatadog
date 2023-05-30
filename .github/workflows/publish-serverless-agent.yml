@@ -1,8 +1,8 @@
 name: Build and Release Serverless Agent
-on:
-  push:
-    tags:
-      - 'sls-**'
+on: push
+  # push:
+    # tags:
+    #   - 'sls-**'
 
 jobs:
   build-linux-musl:
@@ -13,7 +13,7 @@ jobs:
         uses: actions/checkout@v3
       - name: Install musl dependencies
         run: rustup target add x86_64-unknown-linux-musl && sudo apt-get install musl-tools
-      - name: Build project Linux musl
+      - name: Build project
         run: cargo build --release -p datadog-serverless-trace-mini-agent --target x86_64-unknown-linux-musl
       - name: Upload artifacts for release step
         uses: actions/upload-artifact@v3
@@ -26,7 +26,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-      - name: Build project Windows
+      - name: Build project
         run: cargo build --release -p datadog-serverless-trace-mini-agent
       - name: Upload artifacts for release step
         uses: actions/upload-artifact@v3
@@ -54,9 +54,14 @@ jobs:
       - name: Zip binaries
         run: zip -r datadog-serverless-agent.zip *
         working-directory: target/release/binaries
-      - name: Release
-        uses: softprops/action-gh-release@v1
+      # - name: Release
+      #   uses: softprops/action-gh-release@v1
+      #   with:
+      #     draft: true
+      #     generate_release_notes: true
+      #     files: target/release/binaries/datadog-serverless-agent.zip
+      - name: Upload binaries
+        uses: actions/upload-artifact@v3
         with:
-          draft: true
-          generate_release_notes: true
-          files: target/release/binaries/datadog-serverless-agent.zip
+          name: Binaries
+          path: target/release/binaries
