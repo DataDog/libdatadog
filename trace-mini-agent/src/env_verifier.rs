@@ -13,17 +13,16 @@ use datadog_trace_utils::trace_utils;
 
 const GCP_METADATA_URL: &str = "http://metadata.google.internal/computeMetadata/v1/?recursive=true";
 const AZURE_FUNCTION_LOCAL_URL_ENV_VAR: &str = "ASPNETCORE_URLS";
-
 const EXPECTED_AZURE_FUNCTION_LOCAL_URL_RESPONSE: &str =
     "Your Azure Function App is up and running.";
 
-#[derive(Default, Debug, Deserialize, Serialize)]
+#[derive(Default, Debug, Deserialize, Serialize, PartialEq)]
 pub struct GCPMetadata {
     pub instance: GCPInstance,
     pub project: GCPProject,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct GCPInstance {
     pub region: String,
 }
@@ -35,7 +34,7 @@ impl Default for GCPInstance {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GCPProject {
     pub project_id: String,
@@ -69,18 +68,17 @@ impl EnvVerifier for ServerlessEnvVerifier {
         env_type: &trace_utils::EnvironmentType,
     ) -> trace_utils::MiniAgentMetadata {
         match env_type {
-            // this environment variable is set by Azure Functions
             trace_utils::EnvironmentType::AzureFunction => {
-                return verify_azure_environment(verify_env_timeout).await;
+                return verify_azure_environment_or_exit(verify_env_timeout).await;
             }
             trace_utils::EnvironmentType::CloudFunction => {
-                return verify_gcp_environment(verify_env_timeout).await;
+                return verify_gcp_environment_or_exit(verify_env_timeout).await;
             }
         }
     }
 }
 
-async fn verify_gcp_environment(verify_env_timeout: u64) -> trace_utils::MiniAgentMetadata {
+async fn verify_gcp_environment_or_exit(verify_env_timeout: u64) -> trace_utils::MiniAgentMetadata {
     let gcp_metadata_request =
         ensure_gcp_function_environment(Box::new(GoogleMetadataClientWrapper {}));
     let gcp_metadata = match tokio::time::timeout(
@@ -90,12 +88,12 @@ async fn verify_gcp_environment(verify_env_timeout: u64) -> trace_utils::MiniAge
     .await
     {
         Ok(result) => match result {
-            Ok(res) => {
+            Ok(metadata) => {
                 debug!("Successfully fetched Google Metadata.");
-                res
+                metadata
             }
-            Err(e) => {
-                error!("The Mini Agent can only be run in Google Cloud Functions & Azure Functions. Verification has failed, shutting down now. Error: {e}");
+            Err(err) => {
+                error!("The Mini Agent can only be run in Google Cloud Functions & Azure Functions. Verification has failed, shutting down now. Error: {err}");
                 #[cfg(not(test))]
                 process::exit(1);
                 #[cfg(test)]
@@ -195,7 +193,9 @@ async fn get_gcp_metadata_from_body(body: hyper::Body) -> anyhow::Result<GCPMeta
     Ok(gcp_metadata)
 }
 
-async fn verify_azure_environment(verify_env_timeout: u64) -> trace_utils::MiniAgentMetadata {
+async fn verify_azure_environment_or_exit(
+    verify_env_timeout: u64,
+) -> trace_utils::MiniAgentMetadata {
     let azure_local_function_url_request =
         ensure_azure_function_environment(Box::new(AzureVerificationClientWrapper {}));
     match tokio::time::timeout(
@@ -205,33 +205,24 @@ async fn verify_azure_environment(verify_env_timeout: u64) -> trace_utils::MiniA
     .await
     {
         Ok(result) => match result {
-            Ok(res) => {
+            Ok(metadata) => {
                 debug!("Successfully verified Azure Function Environment.");
-                res
+                metadata
             }
             Err(e) => {
                 error!("The Mini Agent can only be run in Google Cloud Functions & Azure Functions. Verification has failed, shutting down now. Error: {e}");
                 #[cfg(not(test))]
                 process::exit(1);
                 #[cfg(test)]
-                trace_utils::MiniAgentMetadata {
-                    gcp_project_id: None,
-                    gcp_region: None,
-                }
+                trace_utils::MiniAgentMetadata::default()
             }
         },
         Err(_) => {
             error!("Local Azure Function URL request timeout of {verify_env_timeout} ms exceeded. Using default values.");
-            trace_utils::MiniAgentMetadata {
-                gcp_project_id: None,
-                gcp_region: None,
-            }
+            trace_utils::MiniAgentMetadata::default()
         }
     };
-    trace_utils::MiniAgentMetadata {
-        gcp_project_id: None,
-        gcp_region: None,
-    }
+    trace_utils::MiniAgentMetadata::default()
 }
 
 /// AzureVerificationClient trait is used so we can mock the azure function local url response in unit tests
@@ -279,10 +270,7 @@ async fn ensure_azure_function_environment(
         anyhow::bail!("Incorrect response from Azure Function URL.")
     }
 
-    Ok(trace_utils::MiniAgentMetadata {
-        gcp_project_id: None,
-        gcp_region: None,
-    })
+    Ok(trace_utils::MiniAgentMetadata::default())
 }
 
 #[cfg(test)]
@@ -290,14 +278,16 @@ mod tests {
     use std::env;
 
     use async_trait::async_trait;
-    use datadog_trace_utils::trace_utils::{self, MiniAgentMetadata};
+    use datadog_trace_utils::trace_utils;
     use hyper::{Body, Response, StatusCode};
+    use serde_json::json;
     use serial_test::serial;
 
     use crate::env_verifier::{
         ensure_azure_function_environment, ensure_gcp_function_environment,
-        get_region_from_gcp_region_string, AzureVerificationClient, GoogleMetadataClient,
-        AZURE_FUNCTION_LOCAL_URL_ENV_VAR, EXPECTED_AZURE_FUNCTION_LOCAL_URL_RESPONSE,
+        get_region_from_gcp_region_string, AzureVerificationClient, GCPInstance, GCPMetadata,
+        GCPProject, GoogleMetadataClient, AZURE_FUNCTION_LOCAL_URL_ENV_VAR,
+        EXPECTED_AZURE_FUNCTION_LOCAL_URL_RESPONSE,
     };
 
     use super::{EnvVerifier, ServerlessEnvVerifier};
@@ -369,12 +359,33 @@ mod tests {
                 Ok(Response::builder()
                     .status(StatusCode::OK)
                     .header("Server", "Metadata Server for Serverless")
-                    .body(Body::empty())
+                    .body(Body::from(
+                        json!({
+                            "instance": {
+                                "region": "projects/123123/regions/us-east1",
+                            },
+                            "project": {
+                                "projectId": "my-project"
+                            }
+                        })
+                        .to_string(),
+                    ))
                     .unwrap())
             }
         }
         let res = ensure_gcp_function_environment(Box::new(MockGoogleMetadataClient {})).await;
         assert!(res.is_ok());
+        assert_eq!(
+            res.unwrap(),
+            GCPMetadata {
+                instance: GCPInstance {
+                    region: "projects/123123/regions/us-east1".to_string()
+                },
+                project: GCPProject {
+                    project_id: "my-project".to_string()
+                }
+            }
+        )
     }
 
     #[tokio::test]
@@ -385,7 +396,7 @@ mod tests {
             .await; // set the verify_env_timeout to timeout immediately
         assert_eq!(
             res,
-            MiniAgentMetadata {
+            trace_utils::MiniAgentMetadata {
                 gcp_project_id: Some("unknown".to_string()),
                 gcp_region: Some("unknown".to_string()),
             }
@@ -502,13 +513,7 @@ mod tests {
         let res = env_verifier
             .verify_environment(0, &trace_utils::EnvironmentType::AzureFunction)
             .await; // set the verify_env_timeout to timeout immediately
-        assert_eq!(
-            res,
-            MiniAgentMetadata {
-                gcp_project_id: None,
-                gcp_region: None,
-            }
-        );
+        assert_eq!(res, trace_utils::MiniAgentMetadata::default());
         env::remove_var(AZURE_FUNCTION_LOCAL_URL_ENV_VAR);
     }
 }
