@@ -9,8 +9,6 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::path::PathBuf;
-use std::collections::HashMap;
-use std::sync::Mutex;
 
 /* Extract container id from /proc/self/group
 
@@ -111,7 +109,6 @@ fn get_cgroup_path(pid: Option<u32>) -> PathBuf {
 
 pub fn get_self_container_id() -> Option<&'static str> {
     // cache container id in a static to avoid recomputing it at each call
-
     lazy_static! {
         static ref CONTAINER_ID: Option<String> =
             extract_container_id(get_cgroup_path(None).as_path()).ok();
@@ -119,30 +116,13 @@ pub fn get_self_container_id() -> Option<&'static str> {
     CONTAINER_ID.as_deref()
 }
 
-// todo: giving a handle to the user would better
-lazy_static! {
-    static ref CGROUP_PATH_CACHE: Mutex<HashMap<Option<u32>, PathBuf>> = Mutex::new(HashMap::new());
-    static ref CONTAINER_ID_CACHE: Mutex<HashMap<PathBuf, String>> = Mutex::new(HashMap::new());
-}
-
 pub fn get_container_id(pid: Option<u32>) -> Option<String> {
-    let mut cgroup_path_cache = CGROUP_PATH_CACHE.lock().unwrap();
-
     // lookup cgroup path (for this pid)
-    let cgroup_path = cgroup_path_cache
-        .entry(pid)
-        .or_insert_with(|| get_cgroup_path(pid));
-
-    let mut container_id_cache = CONTAINER_ID_CACHE.lock().unwrap();
-    if let Some(container_id) = container_id_cache.get(cgroup_path) {
-        return Some(container_id.clone());
-    }
+    let cgroup_path = get_cgroup_path(pid);
 
     if let Ok(container_id) = extract_container_id(&cgroup_path) {
-        container_id_cache.insert(cgroup_path.clone(), container_id.clone());
         return Some(container_id);
     }
-
     None
 }
 
