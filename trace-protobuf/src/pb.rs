@@ -3,7 +3,16 @@
 // developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
 // Datadog, Inc.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+fn deserialize_null_into_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Default + Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    let opt = Option::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
+}
 
 #[derive(Deserialize, Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -13,66 +22,82 @@ pub struct Span {
     /// @gotags: json:"service" msg:"service"
     #[prost(string, tag = "1")]
     #[serde(default)]
+    #[serde(deserialize_with = "deserialize_null_into_default")]
     pub service: ::prost::alloc::string::String,
     /// name is the operation name of this span.
     /// @gotags: json:"name" msg:"name"
     #[prost(string, tag = "2")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_null_into_default")]
     pub name: ::prost::alloc::string::String,
     /// resource is the resource name of this span, also sometimes called the endpoint (for web spans).
     /// @gotags: json:"resource" msg:"resource"
     #[prost(string, tag = "3")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_null_into_default")]
     pub resource: ::prost::alloc::string::String,
     /// traceID is the ID of the trace to which this span belongs.
     /// @gotags: json:"trace_id" msg:"trace_id"
     #[prost(uint64, tag = "4")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_null_into_default")]
     pub trace_id: u64,
     /// spanID is the ID of this span.
     /// @gotags: json:"span_id" msg:"span_id"
     #[prost(uint64, tag = "5")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_null_into_default")]
     pub span_id: u64,
     /// parentID is the ID of this span's parent, or zero if this span has no parent.
     /// @gotags: json:"parent_id" msg:"parent_id"
     #[prost(uint64, tag = "6")]
     #[serde(default)]
+    #[serde(deserialize_with = "deserialize_null_into_default")]
     pub parent_id: u64,
     /// start is the number of nanoseconds between the Unix epoch and the beginning of this span.
     /// @gotags: json:"start" msg:"start"
     #[prost(int64, tag = "7")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_null_into_default")]
     pub start: i64,
     /// duration is the time length of this span in nanoseconds.
     /// @gotags: json:"duration" msg:"duration"
     #[prost(int64, tag = "8")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_null_into_default")]
     pub duration: i64,
     /// error is 1 if there is an error associated with this span, or 0 if there is not.
     /// @gotags: json:"error" msg:"error"
     #[prost(int32, tag = "9")]
     #[serde(default)]
+    #[serde(deserialize_with = "deserialize_null_into_default")]
     pub error: i32,
     /// meta is a mapping from tag name to tag value for string-valued tags.
     /// @gotags: json:"meta" msg:"meta"
     #[prost(map = "string, string", tag = "10")]
-    pub meta: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_null_into_default")]
+    pub meta:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     /// metrics is a mapping from tag name to tag value for numeric-valued tags.
     /// @gotags: json:"metrics" msg:"metrics"
     #[prost(map = "string, double", tag = "11")]
     #[serde(default)]
+    #[serde(deserialize_with = "deserialize_null_into_default")]
     pub metrics: ::std::collections::HashMap<::prost::alloc::string::String, f64>,
     /// type is the type of the service with which this span is associated.  Example values: web, db, lambda.
     /// @gotags: json:"type" msg:"type"
     #[prost(string, tag = "12")]
     #[serde(default)]
+    #[serde(deserialize_with = "deserialize_null_into_default")]
     pub r#type: ::prost::alloc::string::String,
     /// meta_struct is a registry of structured "other" data used by, e.g., AppSec.
     /// @gotags: json:"meta_struct,omitempty" msg:"meta_struct"
     #[prost(map = "string, bytes", tag = "13")]
     #[serde(default)]
-    pub meta_struct: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::vec::Vec<u8>,
-    >,
+    #[serde(deserialize_with = "deserialize_null_into_default")]
+    pub meta_struct:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::vec::Vec<u8>>,
 }
 /// TraceChunk represents a list of spans with the same trace ID. In other words, a chunk of a trace.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -93,10 +118,8 @@ pub struct TraceChunk {
     /// tags specifies tags common in all `spans`.
     /// @gotags: json:"tags" msg:"tags"
     #[prost(map = "string, string", tag = "4")]
-    pub tags: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub tags:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     /// droppedTrace specifies whether the trace was dropped by samplers or not.
     /// @gotags: json:"dropped_trace" msg:"dropped_trace"
     #[prost(bool, tag = "5")]
@@ -133,10 +156,8 @@ pub struct TracerPayload {
     /// tags specifies tags common in all `chunks`.
     /// @gotags: json:"tags" msg:"tags"
     #[prost(map = "string, string", tag = "7")]
-    pub tags: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub tags:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     /// env specifies `env` tag that set with the tracer.
     /// @gotags: json:"env" msg:"env"
     #[prost(string, tag = "8")]
@@ -165,10 +186,8 @@ pub struct AgentPayload {
     pub tracer_payloads: ::prost::alloc::vec::Vec<TracerPayload>,
     /// tags specifies tags common in all `tracerPayloads`.
     #[prost(map = "string, string", tag = "6")]
-    pub tags: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub tags:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     /// agentVersion specifies version of the agent.
     #[prost(string, tag = "7")]
     pub agent_version: ::prost::alloc::string::String,
@@ -209,6 +228,7 @@ pub struct ClientStatsPayload {
     /// Hostname is the tracer hostname. It's extracted from spans with "_dd.hostname" meta
     /// or set by tracer stats payload when hostname reporting is enabled.
     #[prost(string, tag = "1")]
+    #[serde(default)]
     pub hostname: ::prost::alloc::string::String,
     /// env tag set on spans or in the tracers, used for aggregation
     #[prost(string, tag = "2")]
@@ -219,6 +239,7 @@ pub struct ClientStatsPayload {
     #[serde(default)]
     pub version: ::prost::alloc::string::String,
     #[prost(message, repeated, tag = "4")]
+    #[serde(default)]
     pub stats: ::prost::alloc::vec::Vec<ClientStatsBucket>,
     /// informative field not used for aggregation
     #[prost(string, tag = "5")]
