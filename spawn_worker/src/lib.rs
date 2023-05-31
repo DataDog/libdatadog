@@ -17,6 +17,12 @@ mod unix;
 #[cfg(target_family = "unix")]
 pub use unix::*;
 
+#[cfg(target_os = "windows")]
+mod win32;
+
+#[cfg(target_os = "windows")]
+pub use win32::*;
+
 use std::ffi::CString;
 pub struct Entrypoint {
     pub ptr: extern "C" fn(),

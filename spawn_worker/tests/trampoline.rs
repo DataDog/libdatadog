@@ -2,14 +2,14 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 use std::{fs::File, process::Stdio};
 
-use spawn_worker::{SpawnCfg, Target};
+use spawn_worker::{SpawnWorker, Target};
 
 #[test]
 fn test_spawning_trampoline_worker() {
     let stdout = tempfile::NamedTempFile::new().unwrap().into_temp_path();
     let stderr = tempfile::NamedTempFile::new().unwrap().into_temp_path();
 
-    let child = SpawnCfg::new()
+    let child = SpawnWorker::new()
         .target(Target::ManualTrampoline(
             String::from("__dummy_mirror_test"),
             String::from("symbol_name"),

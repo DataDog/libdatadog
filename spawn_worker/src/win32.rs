@@ -20,7 +20,7 @@ pub(crate) fn write_trampoline() -> anyhow::Result<tempfile::NamedTempFile> {
 use windows::{
     core::{PCSTR, PCWSTR},
     Win32::{
-        Foundation::{GetLastError, HINSTANCE},
+        Foundation::{GetLastError, HMODULE},
         System::{
             Diagnostics::Debug::{
                 SymFromAddrW, SymInitializeW, MAX_SYM_NAME, SYMBOL_INFOW, SYMBOL_INFO_PACKAGEW,
@@ -34,15 +34,13 @@ use windows::{
     },
 };
 
-use crate::TrampolineFn;
-
 pub enum Target {
-    Trampoline(TrampolineFn),
+    Entrypoint(crate::Entrypoint),
     ManualTrampoline(String, String),
     Noop,
 }
 
-pub struct SpawnCfg {
+pub struct SpawnWorker {
     stdin: Option<Stdio>,
     stderr: Option<Stdio>,
     stdout: Option<Stdio>,
@@ -50,13 +48,13 @@ pub struct SpawnCfg {
     env_clear: bool,
 }
 
-impl Default for SpawnCfg {
+impl Default for SpawnWorker {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl SpawnCfg {
+impl SpawnWorker {
     pub fn new() -> Self {
         Self {
             stdin: None,
@@ -69,11 +67,6 @@ impl SpawnCfg {
 
     pub fn target<T: Into<Target>>(&mut self, target: T) -> &mut Self {
         self.target = target.into();
-        self
-    }
-
-    pub fn target_fn(&mut self, target: extern "system" fn()) -> &mut Self {
-        self.target = Target::Trampoline(target);
         self
     }
 
@@ -118,8 +111,8 @@ impl SpawnCfg {
         // }
 
         match &self.target {
-            Target::Trampoline(f) => {
-                let (path, symbol_name) = get_trampoline_target_data(*f as *const u8)?;
+            Target::Entrypoint(f) => {
+                let (path, symbol_name) = get_trampoline_target_data(f.symbol_name.as_ptr() as *const u8)?;
                 cmd.args([path, symbol_name])
             }
             Target::ManualTrampoline(path, symbol_name) => cmd.args([path, symbol_name]),
@@ -130,7 +123,7 @@ impl SpawnCfg {
     }
 }
 
-fn get_module_file_name(h: HINSTANCE) -> anyhow::Result<String> {
+fn get_module_file_name(h: HMODULE) -> anyhow::Result<String> {
     let mut buf = Vec::new();
     buf.resize(2000, 0);
     loop {
@@ -172,13 +165,13 @@ fn get_sym_name(f: *const u8) -> anyhow::Result<String> {
 }
 
 pub fn get_trampoline_target_data(f: *const u8) -> anyhow::Result<(String, String)> {
-    let mut h = HINSTANCE::default();
+    let mut h = HMODULE::default();
 
     unsafe {
         GetModuleHandleExA(
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
             PCSTR::from_raw(f),
-            &mut h as *mut HINSTANCE,
+            &mut h as *mut HMODULE,
         )
         .ok()?
     };
