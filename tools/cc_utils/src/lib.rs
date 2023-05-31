@@ -23,10 +23,17 @@ pub enum Linkable {
 }
 
 #[derive(Clone, Debug)]
-pub struct BinaryBuild {
+enum OutputType {
+    Executable,
+    Shared,
+}
+
+#[derive(Clone, Debug)]
+pub struct ImprovedBuild {
     files: Vec<PathBuf>,
     linkables: Vec<Linkable>,
     cc_build: cc::Build,
+    emit_rerun_if_env_changed: bool,
 }
 
 impl Linkable {
@@ -66,7 +73,7 @@ impl Linkable {
     }
 }
 
-impl BinaryBuild {
+impl ImprovedBuild {
     pub fn file<P: AsRef<Path>>(&mut self, p: P) -> &mut Self {
         self.files.push(p.as_ref().to_path_buf());
         self
@@ -95,22 +102,19 @@ impl BinaryBuild {
         self
     }
 
-    pub fn emit_rerun_if_env_changed(&self) {
-        for file in self.files.iter() {
-            println!(
-                "cargo:rerun-if-changed={}",
-                file.as_path().to_string_lossy()
-            );
-        }
+    pub fn emit_rerun_if_env_changed(&mut self, emit: bool) -> &mut Self {
+        self.emit_rerun_if_env_changed = emit;
+        self
     }
 
     pub fn new() -> Self {
         let cc_build = cc::Build::new();
 
-        BinaryBuild {
+        ImprovedBuild {
             files: Default::default(),
             linkables: Default::default(),
             cc_build,
+            emit_rerun_if_env_changed: false,
         }
     }
 
@@ -123,6 +127,11 @@ impl BinaryBuild {
     // cc::Build shadow
     pub fn define<'a, V: Into<Option<&'a str>>>(&mut self, var: &str, val: V) -> &mut Self {
         self.cc_build.define(var, val);
+        self
+    }
+
+    pub fn flag(&mut self, flag: &str) -> &mut Self {
+        self.cc_build.flag(flag);
         self
     }
 
@@ -150,14 +159,41 @@ impl BinaryBuild {
         self
     }
 
-    pub fn try_compile(&self, output: &str) -> anyhow::Result<()> {
-        self.emit_rerun_if_env_changed();
+    pub fn try_compile_executable(&self, output: &str) -> anyhow::Result<()> {
+        self.try_compile_any(output, OutputType::Executable)
+    }
+
+    pub fn try_compile_shared_lib(&self, output: &str) -> anyhow::Result<()> {
+        self.try_compile_any(output, OutputType::Shared)
+    }
+
+    fn try_compile_any(&self, output: &str, output_type: OutputType) -> anyhow::Result<()> {
+        if self.emit_rerun_if_env_changed {
+            for file in self.files.iter() {
+                println!(
+                    "cargo:rerun-if-changed={}",
+                    file.as_path().to_string_lossy()
+                );
+            }
+        }
+
         let compiler = self.cc_build.try_get_compiler()?;
         let output_path = self.get_out_dir()?.join(output);
 
         let mut cmd = compiler.to_command();
 
-        cmd.args(["-o".into(), output_path.as_os_str().to_owned()]);
+        match output_type {
+            OutputType::Executable => {
+                cmd.args(["-o".into(), output_path.as_os_str().to_owned()]);
+            }
+            OutputType::Shared => {
+                cmd.args([
+                    "-shared".into(),
+                    "-o".into(),
+                    output_path.as_os_str().to_owned(),
+                ]);
+            }
+        }
 
         for file in &self.files {
             cmd.arg(file.as_os_str());
@@ -177,7 +213,7 @@ impl BinaryBuild {
     }
 }
 
-impl Default for BinaryBuild {
+impl Default for ImprovedBuild {
     fn default() -> Self {
         Self::new()
     }

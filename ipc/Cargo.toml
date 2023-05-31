@@ -1,0 +1,44 @@
+[package]
+edition = "2021"
+name = "datadog-ipc"
+version = "0.1.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bytes = { version = "1.4" }
+futures = { version = "0.3", default-features = false }
+io-lifetimes = { version = "1.0" }
+pin-project = { version = "1" }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+tokio = { version = "1.23", features = ["sync", "io-util", "signal"] }
+tokio-serde = { version = "0.8", features = ["json"] }
+tokio-util = { version = "0.6.9", features = ["codec"] }
+
+# tarpc needed extensions to allow 1 way communication and to export some internal structs
+tarpc = { default-features = false, features = ["serde-transport"], git = "https://github.com/pawelchcki/tarpc.git", package = "tarpc", branch = "disable_tracing"}
+
+[dev-dependencies]
+criterion = "0.4"
+pretty_assertions = "1.3"
+tempfile = { version = "3.3" }
+tokio = { version = "1.23", features = [
+    "macros",
+    "rt-multi-thread",
+    "rt",
+    "tracing",
+    "fs",
+    "io-util",
+] }
+tracing = { version = "0.1" }
+tracing-subscriber = { version = "0.3.11" }
+spawn_worker = { path = "../spawn_worker" }
+
+[target.'cfg(not(windows))'.dependencies]
+libc = { version = "0.2" }
+nix = { version = "0.24", features = ["fs", "socket"] }
+sendfd = { version = "0.4", features = ["tokio"] }
+
+[[bench]]
+harness = false
+name = "ipc"

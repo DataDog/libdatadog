@@ -1,0 +1,31 @@
+profiling:
+- profiling/**/*
+- profiling-ffi/**/*
+
+common:
+- ddcommon/**/*
+- ddcommon-ffi/**/*
+
+ci-build:
+- .github/**/*
+- .gitlab-ci.yml
+- windows/**/*
+- build-*
+
+mini-agent:
+- trace-mini-agent/**/*
+- serverless/**/*
+- trace-normalization/**/*
+- trace-obfuscaiton/**/*
+- trace-utils/**/*
+
+telemetry:
+- ddtelemetry/**/*
+- ddtelemetry-ffi/**/*
+
+dogstatsd:
+- dogstatsd-collector/**/*
+
+sidecar:
+- sidecar/**/*
+- sidecar-ffi/**/*

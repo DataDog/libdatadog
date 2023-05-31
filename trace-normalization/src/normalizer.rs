@@ -4,7 +4,7 @@
 // Datadog, Inc.
 
 use crate::normalize_utils;
-use crate::pb;
+use datadog_trace_protobuf::pb;
 use std::time::SystemTime;
 
 const MAX_TYPE_LEN: usize = 100;
@@ -20,8 +20,8 @@ const TAG_SAMPLING_PRIORITY: &str = "_sampling_priority_v1";
 const TAG_ORIGIN: &str = "_dd.origin";
 
 #[allow(dead_code)]
-#[derive(Debug, PartialEq)]
-enum SamplerPriority {
+#[derive(Debug, Eq, PartialEq)]
+pub enum SamplerPriority {
     AutoDrop = 0,
     AutoKeep = 1,
     UserKeep = 2,
@@ -177,7 +177,7 @@ mod tests {
     use crate::normalize_utils;
     use crate::normalizer;
     use crate::normalizer::DEFAULT_SPAN_NAME;
-    use crate::pb;
+    use datadog_trace_protobuf::pb;
     use rand::Rng;
     use std::collections::HashMap;
     use std::time::SystemTime;

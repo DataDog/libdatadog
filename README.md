@@ -18,11 +18,13 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ### Building
 
-Build `libdatadog` as usual with `cargo build`. To package a release with the generated ffi header and CMake module,
-use the `ffi-build.sh` helper script. To stick the output in `/opt/libdatadog`, you would do:
+Build `libdatadog` as usual with `cargo build`.
+
+To package a release with the generated ffi header and CMake module, use the `build-profiling-ffi.sh` / `build-telemetry-ffi.sh` helper scripts.
+Here's an example of using on of these scripts, placing the output inside `/opt/libdatadog`:
 
 ```bash
-bash ffi-build.sh /opt/libdatadog
+bash build-profiling-ffi.sh /opt/libdatadog
 ```
 
 #### Build Dependencies

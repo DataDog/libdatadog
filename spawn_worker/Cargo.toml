@@ -4,12 +4,11 @@ name = "spawn_worker"
 version = "0.0.1"
 
 [dependencies]
-anyhow = {version = "1.0"}
-io-lifetimes = {version = "1.0"}
-libc = {version = "0.2"}
-memfd = {version = "0.6"}
-nix = {version = "0.26"}
-tempfile = {version = "3"}
+anyhow = { version = "1.0" }
+memfd = { version = "0.6" }
+nix = { version = "0.24" }
+tempfile = { version = "3.3" }
+io-lifetimes = { version = "1.0" }
 
 [build-dependencies]
 cc_utils = {path = "../tools/cc_utils"}
@@ -25,4 +24,7 @@ features = [
   "Win32_System_Diagnostics_Debug",
   "Win32_System_Kernel",
 ]
-version = "0.44"
+version = "0.48"
+
+[target.'cfg(not(windows))'.dev-dependencies]
+rlimit = {version = "0.9"}

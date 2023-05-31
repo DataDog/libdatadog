@@ -16,8 +16,5 @@ prefer-dynamic = []
 libc = { version = "0.2" }
 anyhow = { version = "1.0" }
 spawn_worker = { path = "../../spawn_worker" }
-
-[dev-dependencies]
 tempfile = { version = "3.3" }
 io-lifetimes = { version = "1.0" }
-
