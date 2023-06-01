@@ -39,8 +39,17 @@ impl Config {
 
         let dd_site = env::var("DD_SITE").unwrap_or_else(|_| "datadoghq.com".to_string());
 
-        let trace_intake_url = construct_trace_intake_url(&dd_site, TRACE_INTAKE_ROUTE);
-        let trace_stats_intake_url = construct_trace_intake_url(&dd_site, TRACE_STATS_INTAKE_ROUTE);
+        // construct the trace & trace stats intake urls based on DD_SITE env var (to flush traces & trace stats to)
+        let mut trace_intake_url = format!("https://trace.agent.{dd_site}{TRACE_INTAKE_ROUTE}");
+        let mut trace_stats_intake_url =
+            format!("https://trace.agent.{dd_site}{TRACE_STATS_INTAKE_ROUTE}");
+
+        // DD_APM_DD_URL env var will primarily be used for integration tests
+        // overrides the entire trace/trace stats intake url prefix
+        if let Ok(endpoint_prefix) = env::var("DD_APM_DD_URL") {
+            trace_intake_url = format!("{endpoint_prefix}{TRACE_INTAKE_ROUTE}");
+            trace_stats_intake_url = format!("{endpoint_prefix}{TRACE_STATS_INTAKE_ROUTE}");
+        };
 
         Ok(Config {
             api_key,
@@ -54,10 +63,6 @@ impl Config {
             trace_stats_intake_url,
         })
     }
-}
-
-fn construct_trace_intake_url(prefix: &str, route: &str) -> String {
-    format!("https://trace.agent.{prefix}{route}")
 }
 
 #[cfg(test)]
@@ -139,5 +144,25 @@ mod tests {
         assert_eq!(config.trace_stats_intake_url, expected_url);
         env::remove_var("DD_API_KEY");
         env::remove_var("DD_SITE");
+    }
+
+    #[test]
+    #[serial]
+    fn test_set_custom_trace_and_trace_stats_intake_url() {
+        env::set_var("DD_API_KEY", "_not_a_real_key_");
+        env::set_var("DD_APM_DD_URL", "http://127.0.0.1:3333");
+        let config_res = config::Config::new();
+        assert!(config_res.is_ok());
+        let config = config_res.unwrap();
+        assert_eq!(
+            config.trace_intake_url,
+            "http://127.0.0.1:3333/api/v0.2/traces"
+        );
+        assert_eq!(
+            config.trace_stats_intake_url,
+            "http://127.0.0.1:3333/api/v0.2/stats"
+        );
+        env::remove_var("DD_API_KEY");
+        env::remove_var("DD_APM_DD_URL");
     }
 }
