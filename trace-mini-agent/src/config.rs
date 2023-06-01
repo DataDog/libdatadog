@@ -160,7 +160,7 @@ mod tests {
         let config = config_res.unwrap();
         assert_eq!(
             config.trace_intake_url,
-            "notdatadoghq.com/not/api/v0.2/trace"
+            "notdatadoghq.com/not/api/v0.2/traces"
         );
         assert_eq!(
             config.trace_stats_intake_url,
