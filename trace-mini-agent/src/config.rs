@@ -39,8 +39,10 @@ impl Config {
 
         let dd_site = env::var("DD_SITE").unwrap_or_else(|_| "datadoghq.com".to_string());
 
-        let trace_intake_url = construct_trace_intake_url(&dd_site, TRACE_INTAKE_ROUTE);
-        let trace_stats_intake_url = construct_trace_intake_url(&dd_site, TRACE_STATS_INTAKE_ROUTE);
+        let trace_intake_url = env::var("DD_TRACE_INTAKE_URL")
+            .unwrap_or_else(|_| construct_trace_intake_url(&dd_site, TRACE_INTAKE_ROUTE));
+        let trace_stats_intake_url = env::var("DD_TRACE_STATS_INTAKE_URL")
+            .unwrap_or_else(|_| construct_trace_intake_url(&dd_site, TRACE_STATS_INTAKE_ROUTE));
 
         Ok(Config {
             api_key,
@@ -139,5 +141,33 @@ mod tests {
         assert_eq!(config.trace_stats_intake_url, expected_url);
         env::remove_var("DD_API_KEY");
         env::remove_var("DD_SITE");
+    }
+
+    #[test]
+    #[serial]
+    fn test_set_custom_trace_and_trace_stats_intake_url() {
+        env::set_var("DD_API_KEY", "_not_a_real_key_");
+        env::set_var(
+            "DD_TRACE_INTAKE_URL",
+            "notdatadoghq.com/not/api/v0.2/traces",
+        );
+        env::set_var(
+            "DD_TRACE_STATS_INTAKE_URL",
+            "notdatadoghq.com/not/api/v0.2/stats",
+        );
+        let config_res = config::Config::new();
+        assert!(config_res.is_ok());
+        let config = config_res.unwrap();
+        assert_eq!(
+            config.trace_intake_url,
+            "notdatadoghq.com/not/api/v0.2/trace"
+        );
+        assert_eq!(
+            config.trace_stats_intake_url,
+            "notdatadoghq.com/not/api/v0.2/stats"
+        );
+        env::remove_var("DD_API_KEY");
+        env::remove_var("DD_TRACE_INTAKE_URL");
+        env::remove_var("DD_TRACE_STATS_INTAKE_URL");
     }
 }
