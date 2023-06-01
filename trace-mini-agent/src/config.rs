@@ -150,14 +150,17 @@ mod tests {
     #[serial]
     fn test_set_custom_trace_and_trace_stats_intake_url() {
         env::set_var("DD_API_KEY", "_not_a_real_key_");
-        env::set_var("DD_APM_DD_URL", "notdatadoghq.com");
+        env::set_var("DD_APM_DD_URL", "http://127.0.0.1:3333");
         let config_res = config::Config::new();
         assert!(config_res.is_ok());
         let config = config_res.unwrap();
-        assert_eq!(config.trace_intake_url, "notdatadoghq.com/api/v0.2/traces");
+        assert_eq!(
+            config.trace_intake_url,
+            "http://127.0.0.1:3333/api/v0.2/traces"
+        );
         assert_eq!(
             config.trace_stats_intake_url,
-            "notdatadoghq.com/api/v0.2/stats"
+            "http://127.0.0.1:3333/api/v0.2/stats"
         );
         env::remove_var("DD_API_KEY");
         env::remove_var("DD_APM_DD_URL");
