@@ -38,6 +38,7 @@ impl StatsProcessor for ServerlessStatsProcessor {
         req: Request<Body>,
         tx: Sender<pb::ClientStatsPayload>,
     ) -> http::Result<Response<Body>> {
+        info!("Recieved trace stats to process");
         let (parts, body) = req.into_parts();
 
         if let Some(response) = http_utils::verify_request_content_length(
@@ -47,8 +48,6 @@ impl StatsProcessor for ServerlessStatsProcessor {
         ) {
             return response;
         }
-
-        info!("Recieved trace stats to process");
 
         // deserialize trace stats from the request body, convert to protobuf structs (see trace-protobuf crate)
         let mut stats: pb::ClientStatsPayload =

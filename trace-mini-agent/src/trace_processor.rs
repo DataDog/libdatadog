@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use hyper::{http, Body, Request, Response, StatusCode};
-use log::error;
+use log::{error, info};
 use tokio::sync::mpsc::Sender;
 
 use datadog_trace_normalization::normalizer;
@@ -55,6 +55,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
         tx: Sender<pb::TracerPayload>,
         mini_agent_metadata: Arc<trace_utils::MiniAgentMetadata>,
     ) -> http::Result<Response<Body>> {
+        info!("Recieved traces to process");
         let (parts, body) = req.into_parts();
 
         if let Some(response) = http_utils::verify_request_content_length(

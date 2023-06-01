@@ -156,7 +156,7 @@ impl MiniAgent {
                     ),
                 }
             }
-            (&Method::PUT, STATS_ENDPOINT_PATH) => {
+            (&Method::PUT | &Method::POST, STATS_ENDPOINT_PATH) => {
                 match stats_processor.process_stats(config, req, stats_tx).await {
                     Ok(res) => Ok(res),
                     Err(err) => log_and_create_http_response(
