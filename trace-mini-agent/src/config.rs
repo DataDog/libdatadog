@@ -50,16 +50,13 @@ impl Config {
             maybe_env_type = Some(trace_utils::EnvironmentType::AzureFunction);
         }
 
-        let env_type = match maybe_env_type {
-            Some(res) => res,
-            None => {
-                error!("Unable to identify environment. Shutting down Mini Agent.");
-                #[cfg(not(test))]
-                process::exit(1);
-                #[cfg(test)]
-                trace_utils::EnvironmentType::CloudFunction
-            }
-        };
+        let env_type = maybe_env_type.unwrap_or_else(|| {
+            error!("Unable to identify environment. Shutting down Mini Agent.");
+            #[cfg(not(test))]
+            process::exit(1);
+            #[cfg(test)]
+            trace_utils::EnvironmentType::CloudFunction
+        });
 
         let dd_site = env::var("DD_SITE").unwrap_or_else(|_| "datadoghq.com".to_string());
 
