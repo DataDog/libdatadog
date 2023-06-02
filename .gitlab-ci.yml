@@ -14,3 +14,26 @@ trigger_internal_build:
     project: DataDog/apm-reliability/libddprof-build
     strategy: depend
     branch: $DOWNSTREAM_BRANCH
+
+# Following jobs are required otherwise gitsync will not report downstream pipeline failure to github
+
+# This job is used to determine if downstream pipeline has succeeded
+report_failure:
+  tags: ["arch:amd64"]
+  when: on_failure
+  needs: [trigger_internal_build]
+  # allow_failure: true prevents the job from showing up in github statuses (because it's filtered by gitsync)
+  allow_failure: true
+  script:
+    - echo "STATUS=1" >> .env
+  artifacts:
+    reports:
+      dotenv: .env
+
+# Final job that will show in github statuses
+report_gitlab_CI_status:
+  tags: ["arch:amd64"]
+  when: always
+  stage: .post
+  script:
+    - exit ${STATUS}
