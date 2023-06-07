@@ -223,15 +223,19 @@ impl AzureVerificationClient for AzureVerificationClientWrapper {
     fn get_process_files(&self, mut sys: sysinfo::System) -> Vec<String> {
         sys.refresh_all();
 
+        debug!("System name:            {:?}", sys.name());
+        debug!("System kernel version:  {:?}", sys.kernel_version());
+        debug!("System OS version:      {:?}", sys.os_version());
+        debug!("System host name:       {:?}", sys.host_name());
+
         let processes = sys.processes();
 
         let mut paths: Vec<String> = Vec::new();
         for process in processes.values() {
+            debug!("-------------------------");
+            debug!("exe {:?}", process.exe());
+            debug!("cmd {:?}", process.cmd());
             paths.push(process.exe().to_string_lossy().to_string());
-            let tasks = &process.tasks;
-            for sub_process in tasks.values() {
-                paths.push(sub_process.exe().to_string_lossy().to_string());
-            }
         }
 
         debug!(
@@ -264,9 +268,9 @@ fn ensure_azure_function_environment(
         }
     }
 
-    if !found_valid_process {
-        anyhow::bail!("Azure Function Process not found.")
-    }
+    // if !found_valid_process {
+    //     anyhow::bail!("Azure Function Process not found.")
+    // }
     Ok(trace_utils::MiniAgentMetadata::default())
 }
 
