@@ -3,8 +3,10 @@
 use async_trait::async_trait;
 use hyper::{Body, Client, Method, Request, Response};
 use log::{debug, error};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::{env, time::Duration};
+use std::time::Duration;
+use sysinfo::{ProcessExt, System, SystemExt};
 
 #[cfg(not(test))]
 use std::process;
@@ -12,9 +14,9 @@ use std::process;
 use datadog_trace_utils::trace_utils;
 
 const GCP_METADATA_URL: &str = "http://metadata.google.internal/computeMetadata/v1/?recursive=true";
-const AZURE_FUNCTION_LOCAL_URL_ENV_VAR: &str = "ASPNETCORE_URLS";
-const EXPECTED_AZURE_FUNCTION_LOCAL_URL_RESPONSE: &str =
-    "Your Azure Function App is up and running.";
+const AZURE_LINUX_PROCESS_EXE_NAME: &str =
+    "/azure-functions-host/Microsoft.Azure.WebJobs.Script.WebHost";
+const AZURE_WINDOWS_PROCESS_EXE_NAME_REGEX_PATTERN: &str = r#"C:\\Program Files \(x86\)\\SiteExtensions\\Functions\\.+\\.+\\Microsoft\.Azure\.WebJobs\.Script\.dll"#;
 
 #[derive(Default, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct GCPMetadata {
@@ -69,7 +71,7 @@ impl EnvVerifier for ServerlessEnvVerifier {
     ) -> trace_utils::MiniAgentMetadata {
         match env_type {
             trace_utils::EnvironmentType::AzureFunction => {
-                return verify_azure_environment_or_exit(verify_env_timeout).await;
+                return verify_azure_environment_or_exit();
             }
             trace_utils::EnvironmentType::CloudFunction => {
                 return verify_gcp_environment_or_exit(verify_env_timeout).await;
@@ -193,101 +195,92 @@ async fn get_gcp_metadata_from_body(body: hyper::Body) -> anyhow::Result<GCPMeta
     Ok(gcp_metadata)
 }
 
-async fn verify_azure_environment_or_exit(
-    verify_env_timeout: u64,
-) -> trace_utils::MiniAgentMetadata {
-    let azure_local_function_url_request =
-        ensure_azure_function_environment(Box::new(AzureVerificationClientWrapper {}));
-    match tokio::time::timeout(
-        Duration::from_millis(verify_env_timeout),
-        azure_local_function_url_request,
-    )
-    .await
-    {
-        Ok(result) => match result {
-            Ok(metadata) => {
-                debug!("Successfully verified Azure Function Environment.");
-                metadata
-            }
-            Err(e) => {
-                error!("The Mini Agent can only be run in Google Cloud Functions & Azure Functions. Verification has failed, shutting down now. Error: {e}");
-                #[cfg(not(test))]
-                process::exit(1);
-                #[cfg(test)]
-                trace_utils::MiniAgentMetadata::default()
-            }
-        },
-        Err(_) => {
-            error!("Local Azure Function URL request timeout of {verify_env_timeout} ms exceeded. Using default values.");
+fn verify_azure_environment_or_exit() -> trace_utils::MiniAgentMetadata {
+    match ensure_azure_function_environment(Box::new(AzureVerificationClientWrapper {})) {
+        Ok(metadata) => {
+            debug!("Successfully verified Azure Function Environment.");
+            metadata
+        }
+        Err(e) => {
+            error!("The Mini Agent can only be run in Google Cloud Functions & Azure Functions. Verification has failed, shutting down now. Error: {e}");
+            #[cfg(not(test))]
+            process::exit(1);
+            #[cfg(test)]
             trace_utils::MiniAgentMetadata::default()
         }
-    };
-    trace_utils::MiniAgentMetadata::default()
+    }
 }
 
 /// AzureVerificationClient trait is used so we can mock the azure function local url response in unit tests
 #[async_trait]
 trait AzureVerificationClient {
-    async fn get_metadata(&self, local_function_url: String) -> anyhow::Result<Response<Body>>;
+    fn get_process_files(&self, sys: sysinfo::System) -> Vec<String>;
 }
 struct AzureVerificationClientWrapper {}
 
 #[async_trait]
 impl AzureVerificationClient for AzureVerificationClientWrapper {
-    async fn get_metadata(&self, local_function_url: String) -> anyhow::Result<Response<Body>> {
-        let req = Request::builder()
-            .method(Method::GET)
-            .uri(local_function_url)
-            .body(Body::empty())
-            .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+    fn get_process_files(&self, mut sys: sysinfo::System) -> Vec<String> {
+        sys.refresh_all();
 
-        let client = Client::new();
-        match client.request(req).await {
-            Ok(res) => Ok(res),
-            Err(err) => anyhow::bail!(err.to_string()),
+        let processes = sys.processes();
+
+        let mut paths: Vec<String> = Vec::new();
+        for process in processes.values() {
+            paths.push(process.exe().to_string_lossy().to_string());
+            for sub_process in process.tasks.values() {
+                paths.push(sub_process.exe().to_string_lossy().to_string());
+            }
         }
+
+        debug!(
+            "Environment process exe paths used for Azure env verification: {:?}",
+            paths
+        );
+
+        paths
     }
 }
 
 /// Checks if we are running in an Azure Function environment.
 /// If true, returns MiniAgentMetadata default.
 /// Otherwise, returns an error with the verification failure reason.
-async fn ensure_azure_function_environment(
-    metadata_client: Box<dyn AzureVerificationClient + Send + Sync>,
+fn ensure_azure_function_environment(
+    verification_client: Box<dyn AzureVerificationClient + Send + Sync>,
 ) -> anyhow::Result<trace_utils::MiniAgentMetadata> {
-    let url = env::var(AZURE_FUNCTION_LOCAL_URL_ENV_VAR)
-        .map_err(|_| anyhow::anyhow!("Azure local function url env var not found."))?;
-    let response = metadata_client.get_metadata(url).await.map_err(|err| {
-        anyhow::anyhow!("Can't communicate with local Azure Function URL. Error: {err}")
-    })?;
+    let sys = System::new_all();
 
-    let body = response.into_body();
+    let paths = verification_client.get_process_files(sys);
+    println!("paths: {paths:?}");
 
-    let bytes = hyper::body::to_bytes(body).await?;
-    let body_str = String::from_utf8(bytes.to_vec())?;
+    let azure_windows_process_exe_regex = Regex::new(AZURE_WINDOWS_PROCESS_EXE_NAME_REGEX_PATTERN)
+        .map_err(|_| anyhow::anyhow!("Error Parsing Azure Windows EXE Regex"))?;
 
-    if !body_str.contains(EXPECTED_AZURE_FUNCTION_LOCAL_URL_RESPONSE) {
-        anyhow::bail!("Incorrect response from Azure Function URL.")
+    let mut found_valid_process: bool = false;
+    for path in paths {
+        if path == AZURE_LINUX_PROCESS_EXE_NAME || azure_windows_process_exe_regex.is_match(&path) {
+            found_valid_process = true;
+        }
     }
 
+    if !found_valid_process {
+        anyhow::bail!("Azure Function Process not found.")
+    }
     Ok(trace_utils::MiniAgentMetadata::default())
 }
 
 #[cfg(test)]
 mod tests {
-    use std::env;
-
     use async_trait::async_trait;
     use datadog_trace_utils::trace_utils;
+    use duplicate::duplicate_item;
     use hyper::{Body, Response, StatusCode};
     use serde_json::json;
-    use serial_test::serial;
 
     use crate::env_verifier::{
         ensure_azure_function_environment, ensure_gcp_function_environment,
         get_region_from_gcp_region_string, AzureVerificationClient, GCPInstance, GCPMetadata,
-        GCPProject, GoogleMetadataClient, AZURE_FUNCTION_LOCAL_URL_ENV_VAR,
-        EXPECTED_AZURE_FUNCTION_LOCAL_URL_RESPONSE,
+        GCPProject, GoogleMetadataClient, AZURE_LINUX_PROCESS_EXE_NAME,
     };
 
     use super::{EnvVerifier, ServerlessEnvVerifier};
@@ -421,101 +414,37 @@ mod tests {
         assert_eq!(res, "unknown");
     }
 
-    #[tokio::test]
-    #[serial]
-    async fn test_ensure_azure_env_false_if_local_url_env_var_missing() {
+    #[test]
+    fn test_ensure_azure_env_true_if_linux_function_env() {
         struct MockAzureVerificationClient {}
         #[async_trait]
         impl AzureVerificationClient for MockAzureVerificationClient {
-            async fn get_metadata(&self, _: String) -> anyhow::Result<Response<Body>> {
-                Ok(Response::builder()
-                    .status(StatusCode::OK)
-                    .body(Body::from("Wrong Response"))
-                    .unwrap())
+            fn get_process_files(&self, sys: sysinfo::System) -> Vec<String> {
+                vec![AZURE_LINUX_PROCESS_EXE_NAME.to_string()]
             }
         }
-        let res = ensure_azure_function_environment(Box::new(MockAzureVerificationClient {})).await;
-        assert!(res.is_err());
-        assert_eq!(
-            res.unwrap_err().to_string(),
-            "Azure local function url env var not found."
-        );
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_ensure_azure_env_false_if_local_url_wrong_response() {
-        env::set_var(AZURE_FUNCTION_LOCAL_URL_ENV_VAR, "http://localhost:9091");
-        struct MockAzureVerificationClient {}
-        #[async_trait]
-        impl AzureVerificationClient for MockAzureVerificationClient {
-            async fn get_metadata(&self, _: String) -> anyhow::Result<Response<Body>> {
-                Ok(Response::builder()
-                    .status(StatusCode::OK)
-                    .body(Body::from("Wrong Response"))
-                    .unwrap())
-            }
-        }
-        let res = ensure_azure_function_environment(Box::new(MockAzureVerificationClient {})).await;
-        assert!(res.is_err());
-        assert_eq!(
-            res.unwrap_err().to_string(),
-            "Incorrect response from Azure Function URL."
-        );
-        env::remove_var(AZURE_FUNCTION_LOCAL_URL_ENV_VAR);
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_ensure_azure_env_false_if_local_url_unreachable() {
-        env::set_var(AZURE_FUNCTION_LOCAL_URL_ENV_VAR, "http://localhost:9091");
-        struct MockAzureVerificationClient {}
-        #[async_trait]
-        impl AzureVerificationClient for MockAzureVerificationClient {
-            async fn get_metadata(&self, _: String) -> anyhow::Result<Response<Body>> {
-                anyhow::bail!("Random Error")
-            }
-        }
-        let res = ensure_azure_function_environment(Box::new(MockAzureVerificationClient {})).await;
-        assert!(res.is_err());
-
-        assert_eq!(
-            res.unwrap_err().to_string(),
-            "Can't communicate with local Azure Function URL. Error: Random Error"
-        );
-        env::remove_var(AZURE_FUNCTION_LOCAL_URL_ENV_VAR);
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_ensure_azure_env_true_if_azure_function_env() {
-        env::set_var(AZURE_FUNCTION_LOCAL_URL_ENV_VAR, "http://localhost:9091");
-        struct MockAzureVerificationClient {}
-        #[async_trait]
-        impl AzureVerificationClient for MockAzureVerificationClient {
-            async fn get_metadata(&self, _: String) -> anyhow::Result<Response<Body>> {
-                Ok(Response::builder()
-                    .status(StatusCode::OK)
-                    .body(Body::from(EXPECTED_AZURE_FUNCTION_LOCAL_URL_RESPONSE))
-                    .unwrap())
-            }
-        }
-        let res = ensure_azure_function_environment(Box::new(MockAzureVerificationClient {})).await;
+        let res = ensure_azure_function_environment(Box::new(MockAzureVerificationClient {}));
         assert!(res.is_ok());
         assert_eq!(res.unwrap(), trace_utils::MiniAgentMetadata::default());
-        env::remove_var(AZURE_FUNCTION_LOCAL_URL_ENV_VAR);
     }
 
-    #[tokio::test]
-    #[serial]
-    async fn test_azure_verify_environment_timeout_exceeded_gives_default_values() {
-        env::set_var(AZURE_FUNCTION_LOCAL_URL_ENV_VAR, "http://localhost:9091");
-        let env_verifier = ServerlessEnvVerifier {};
-        // set the verify_env_timeout to timeout immediately
-        let res = env_verifier
-            .verify_environment(0, &trace_utils::EnvironmentType::AzureFunction)
-            .await;
-        assert_eq!(res, trace_utils::MiniAgentMetadata::default());
-        env::remove_var(AZURE_FUNCTION_LOCAL_URL_ENV_VAR);
+    #[duplicate_item(
+        test_name                                                               path_version    bitness;
+        [test_ensure_azure_env_true_if_windows_function_env_32bit]              ["4.21.3"]      ["32bit"];
+        [test_ensure_azure_env_true_if_windows_function_env_64bit]              ["4.21.3"]      ["64bit"];
+        [test_ensure_azure_env_true_if_windows_function_env_random_path_ver]    ["5.5555"]      ["32bit"];
+    )]
+    #[test]
+    fn test_name() {
+        struct MockAzureVerificationClient {}
+        #[async_trait]
+        impl AzureVerificationClient for MockAzureVerificationClient {
+            fn get_process_files(&self, sys: sysinfo::System) -> Vec<String> {
+                vec![format!("C:\\Program Files (x86)\\SiteExtensions\\Functions\\{}\\{}\\Microsoft.Azure.WebJobs.Script.dll", path_version, bitness).to_string()]
+            }
+        }
+        let res = ensure_azure_function_environment(Box::new(MockAzureVerificationClient {}));
+        // assert!(res.is_ok());
+        assert_eq!(res.unwrap(), trace_utils::MiniAgentMetadata::default());
     }
 }
