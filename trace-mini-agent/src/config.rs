@@ -17,6 +17,7 @@ pub struct Config {
     pub api_key: String,
     pub function_name: Option<String>,
     pub env_type: trace_utils::EnvironmentType,
+    pub os: String,
     pub max_request_content_length: usize,
     /// how often to flush traces, in seconds
     pub trace_flush_interval: u64,
@@ -76,6 +77,7 @@ impl Config {
             api_key,
             function_name,
             env_type,
+            os: env::consts::OS.to_string(),
             max_request_content_length: 10 * 1024 * 1024, // 10MB in Bytes
             trace_flush_interval: 3,
             stats_flush_interval: 3,

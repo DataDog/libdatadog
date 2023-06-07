@@ -535,10 +535,12 @@ dependencies = [
  "duplicate",
  "hyper",
  "log",
+ "regex",
  "rmp-serde",
  "serde",
  "serde_json",
  "serial_test",
+ "sysinfo",
  "tokio",
 ]
 
@@ -1132,9 +1134,9 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libc"
-version = "0.2.141"
+version = "0.2.146"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3304a64d199bb964be99741b7a14d26972741915b3649639149b2479bb46f4b5"
+checksum = "f92be4933c13fd498862a9e02a3055f8a8d9c039ce33db97306fd5a6caa7f29b"
 
 [[package]]
 name = "link-cplusplus"
@@ -1286,6 +1288,15 @@ dependencies = [
  "cfg-if",
  "libc",
  "memoffset 0.6.5",
+]
+
+[[package]]
+name = "ntapi"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8a3895c6391c39d7fe7ebc444a87eb2991b2a0bc718fdabd071eec617fc68e4"
+dependencies = [
+ "winapi",
 ]
 
 [[package]]
@@ -2152,6 +2163,21 @@ checksum = "0b3a0d0aba8bf96a0e1ddfdc352fc53b3df7f39318c71854910c3c4b024ae52c"
 dependencies = [
  "cc",
  "libc",
+]
+
+[[package]]
+name = "sysinfo"
+version = "0.29.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c72130613601f6aad275f8bb9a1d4bf953df8e9c7891029f30e5fdc405ad07c4"
+dependencies = [
+ "cfg-if",
+ "core-foundation-sys",
+ "libc",
+ "ntapi",
+ "once_cell",
+ "rayon",
+ "winapi",
 ]
 
 [[package]]

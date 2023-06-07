@@ -256,6 +256,7 @@ mod tests {
             trace_stats_intake_url: "trace.agent.notdog.com/stats".to_string(),
             dd_site: "datadoghq.com".to_string(),
             env_type: trace_utils::EnvironmentType::CloudFunction,
+            os: "linux".to_string(),
         }
     }
 
