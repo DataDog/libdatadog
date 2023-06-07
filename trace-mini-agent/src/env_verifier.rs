@@ -269,13 +269,6 @@ impl AzureVerificationClient for AzureVerificationClientWrapper {
         for process in processes.values() {
             paths.push(process.exe().to_string_lossy().to_string());
         }
-
-        debug!(
-            "Environment process exe paths used for Azure env verification: {:?}",
-            paths
-        );
-
-        paths
     }
 }
 
@@ -333,11 +326,13 @@ async fn ensure_azure_function_environment(
 
 #[cfg(test)]
 mod tests {
+    use std::env;
+
     use async_trait::async_trait;
     use datadog_trace_utils::trace_utils;
-    use duplicate::duplicate_item;
     use hyper::{Body, Response, StatusCode};
     use serde_json::json;
+    use serial_test::serial;
 
     use crate::env_verifier::{
         ensure_azure_function_environment, ensure_gcp_function_environment,
