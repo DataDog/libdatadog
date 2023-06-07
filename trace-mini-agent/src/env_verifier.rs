@@ -228,7 +228,8 @@ impl AzureVerificationClient for AzureVerificationClientWrapper {
         let mut paths: Vec<String> = Vec::new();
         for process in processes.values() {
             paths.push(process.exe().to_string_lossy().to_string());
-            for sub_process in process.tasks.values() {
+            let tasks = &process.tasks;
+            for sub_process in tasks.values() {
                 paths.push(sub_process.exe().to_string_lossy().to_string());
             }
         }
@@ -419,7 +420,7 @@ mod tests {
         struct MockAzureVerificationClient {}
         #[async_trait]
         impl AzureVerificationClient for MockAzureVerificationClient {
-            fn get_process_files(&self, sys: sysinfo::System) -> Vec<String> {
+            fn get_process_files(&self, _sys: sysinfo::System) -> Vec<String> {
                 vec![AZURE_LINUX_PROCESS_EXE_NAME.to_string()]
             }
         }
@@ -440,7 +441,7 @@ mod tests {
         #[async_trait]
         impl AzureVerificationClient for MockAzureVerificationClient {
             fn get_process_files(&self, sys: sysinfo::System) -> Vec<String> {
-                vec![format!("C:\\Program Files (x86)\\SiteExtensions\\Functions\\{}\\{}\\Microsoft.Azure.WebJobs.Script.dll", path_version, bitness).to_string()]
+                vec![format!("C:\\Program Files (x86)\\SiteExtensions\\Functions\\{}\\{}\\Microsoft.Azure.WebJobs.Script.dll", path_version, bitness)]
             }
         }
         let res = ensure_azure_function_environment(Box::new(MockAzureVerificationClient {}));
