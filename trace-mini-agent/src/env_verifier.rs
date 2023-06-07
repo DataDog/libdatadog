@@ -335,6 +335,7 @@ async fn ensure_azure_function_environment(
 mod tests {
     use async_trait::async_trait;
     use datadog_trace_utils::trace_utils;
+    use duplicate::duplicate_item;
     use hyper::{Body, Response, StatusCode};
     use serde_json::json;
 
