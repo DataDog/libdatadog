@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use hyper::{Body, Client, Method, Request, Response};
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 use std::time::Duration;
+use std::{env, process::Command};
 use sysinfo::{ProcessExt, System, SystemExt};
 
 #[cfg(not(test))]
@@ -17,6 +17,7 @@ const GCP_METADATA_URL: &str = "http://metadata.google.internal/computeMetadata/
 const AZURE_LINUX_PROCESS_EXE_NAME: &str =
     "/azure-functions-host/Microsoft.Azure.WebJobs.Script.WebHost";
 const AZURE_WINDOWS_FUNCTION_DLL_NAME: &str = "azure_windows_function.dll";
+const WINDOWS_PROCESS_BITNESS_ENV_VAR: &str = "PROCESSOR_ARCHITECTURE";
 
 #[derive(Default, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct GCPMetadata {
@@ -228,21 +229,29 @@ struct AzureVerificationClientWrapper {}
 #[async_trait]
 impl AzureVerificationClient for AzureVerificationClientWrapper {
     fn get_w3wp_dlls_windows(&self) -> anyhow::Result<Vec<String>> {
-        let output_bytes =
-            match Command::new("C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe") // we need to launch 32bit powershell to fetch 32bit handles
-                .args([
-                    "Get-Process",
-                    "w3wp",
-                    "-module",
-                    "|",
-                    "select",
-                    "ModuleName",
-                ])
-                .output()
-            {
-                Ok(res) => res,
-                Err(_) => anyhow::bail!("Failed to get windows verification data."),
-            };
+        let process_bitness =
+            env::var(WINDOWS_PROCESS_BITNESS_ENV_VAR).unwrap_or("AMD64".to_string());
+
+        // Azure functions default to having a 32 bit worker process on a 64 bit system.
+        // In this case we need to launch 32bit powershell to fetch 32bit handles loaded by the worker process.
+        let powershell_path = match process_bitness.as_str() {
+            "x86" => "C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe",
+            _ => "powershell",
+        };
+        let output_bytes = match Command::new(powershell_path)
+            .args([
+                "Get-Process",
+                "w3wp",
+                "-module",
+                "|",
+                "select",
+                "ModuleName",
+            ])
+            .output()
+        {
+            Ok(res) => res,
+            Err(_) => anyhow::bail!("Failed to get windows verification data."),
+        };
         let output_string = match String::from_utf8(output_bytes.stdout) {
             Ok(res) => res,
             Err(_) => anyhow::bail!("Failed to process windows environment verification output."),
