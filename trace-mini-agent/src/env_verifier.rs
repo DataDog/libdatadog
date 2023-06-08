@@ -227,25 +227,24 @@ struct AzureVerificationClientWrapper {}
 #[async_trait]
 impl AzureVerificationClient for AzureVerificationClientWrapper {
     fn get_w3wp_dlls_windows(&self) -> Vec<String> {
-        thread::sleep(time::Duration::from_millis(500));
         let output_bytes = Command::new("powershell")
             .args([
-                "Get-Process",
-                "w3wp*",
-                "-Module",
-                "|",
-                "select",
-                "ModuleName", // "|",
-                              // "select",
-                              // "-ExpandProperty",
-                              // "modules",
-                              // "|",
-                              // "group",
-                              // "-Property",
-                              // "FileName",
-                              // "|",
-                              // "select",
-                              // "name",
+                "ps", // "Get-Process",
+                     // "w3wp*",
+                     // "-Module",
+                     // "|",
+                     // "select",
+                     // "ModuleName", // "|",
+                     // "select",
+                     // "-ExpandProperty",
+                     // "modules",
+                     // "|",
+                     // "group",
+                     // "-Property",
+                     // "FileName",
+                     // "|",
+                     // "select",
+                     // "name",
             ])
             .output()
             .expect("failed to execute process");
