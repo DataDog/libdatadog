@@ -18,6 +18,8 @@ use datadog_trace_utils::trace_utils;
 const GCP_METADATA_URL: &str = "http://metadata.google.internal/computeMetadata/v1/?recursive=true";
 const AZURE_LINUX_PROCESS_EXE_NAME: &str =
     "/azure-functions-host/Microsoft.Azure.WebJobs.Script.WebHost";
+
+// C:\Program Files (x86)\SiteExtensions\Functions\4.21.3\32bit\Microsoft.Azure.WebJobs.Script.dll
 const AZURE_WINDOWS_DLL_PATH_REGEX_PATTERN: &str = r#"C:\\Program Files \(x86\)\\SiteExtensions\\Functions\\.+\\.+\\Microsoft\.Azure\.WebJobs\.Script\.dll"#;
 
 #[derive(Default, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -248,6 +250,7 @@ impl AzureVerificationClient for AzureVerificationClientWrapper {
             error!("Failed to process windows environment verification output.");
             String::new()
         });
+        debug!("output string: {output_string:?}");
         output_string
             .split_whitespace()
             .map(str::to_string)
