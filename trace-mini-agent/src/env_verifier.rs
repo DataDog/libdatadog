@@ -3,12 +3,9 @@
 use async_trait::async_trait;
 use hyper::{Body, Client, Method, Request, Response};
 use log::{debug, error};
-use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::process::Command;
 use std::time::Duration;
-use std::{thread, time};
 use sysinfo::{ProcessExt, System, SystemExt};
 
 #[cfg(not(test))]
@@ -62,6 +59,7 @@ pub trait EnvVerifier {
         &self,
         verify_env_timeout: u64,
         env_type: &trace_utils::EnvironmentType,
+        os: &str,
     ) -> trace_utils::MiniAgentMetadata;
 }
 
@@ -73,10 +71,11 @@ impl EnvVerifier for ServerlessEnvVerifier {
         &self,
         verify_env_timeout: u64,
         env_type: &trace_utils::EnvironmentType,
+        os: &str,
     ) -> trace_utils::MiniAgentMetadata {
         match env_type {
             trace_utils::EnvironmentType::AzureFunction => {
-                return verify_azure_environment_or_exit();
+                return verify_azure_environment_or_exit(os);
             }
             trace_utils::EnvironmentType::CloudFunction => {
                 return verify_gcp_environment_or_exit(verify_env_timeout).await;
@@ -200,8 +199,8 @@ async fn get_gcp_metadata_from_body(body: hyper::Body) -> anyhow::Result<GCPMeta
     Ok(gcp_metadata)
 }
 
-fn verify_azure_environment_or_exit() -> trace_utils::MiniAgentMetadata {
-    match ensure_azure_function_environment(Box::new(AzureVerificationClientWrapper {})) {
+fn verify_azure_environment_or_exit(os: &str) -> trace_utils::MiniAgentMetadata {
+    match ensure_azure_function_environment(Box::new(AzureVerificationClientWrapper {}), os) {
         Ok(metadata) => {
             debug!("Successfully verified Azure Function Environment.");
             metadata
@@ -228,10 +227,10 @@ struct AzureVerificationClientWrapper {}
 impl AzureVerificationClient for AzureVerificationClientWrapper {
     fn get_w3wp_dlls_windows(&self) -> anyhow::Result<Vec<String>> {
         let output_bytes =
-            match Command::new("C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe")
+            match Command::new("C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe") // we need to launch 32bit powershell to fetch 32bit handles
                 .args([
                     "Get-Process",
-                    "w3wp*",
+                    "w3wp",
                     "-module",
                     "|",
                     "select",
@@ -283,8 +282,9 @@ impl AzureVerificationClient for AzureVerificationClientWrapper {
 /// Otherwise, returns an error with the verification failure reason.
 fn ensure_azure_function_environment(
     verification_client: Box<dyn AzureVerificationClient + Send + Sync>,
+    os: &str,
 ) -> anyhow::Result<trace_utils::MiniAgentMetadata> {
-    match env::consts::OS {
+    match os {
         "linux" => {
             let paths = verification_client.get_process_files_linux();
             println!("paths: {paths:?}");
@@ -318,7 +318,6 @@ fn ensure_azure_function_environment(
 mod tests {
     use async_trait::async_trait;
     use datadog_trace_utils::trace_utils;
-    use duplicate::duplicate_item;
     use hyper::{Body, Response, StatusCode};
     use serde_json::json;
 
@@ -326,6 +325,7 @@ mod tests {
         ensure_azure_function_environment, ensure_gcp_function_environment,
         get_region_from_gcp_region_string, AzureVerificationClient, GCPInstance, GCPMetadata,
         GCPProject, GoogleMetadataClient, AZURE_LINUX_PROCESS_EXE_NAME,
+        AZURE_WINDOWS_FUNCTION_DLL_NAME,
     };
 
     use super::{EnvVerifier, ServerlessEnvVerifier};
@@ -430,7 +430,7 @@ mod tests {
     async fn test_gcp_verify_environment_timeout_exceeded_gives_unknown_values() {
         let env_verifier = ServerlessEnvVerifier {};
         let res = env_verifier
-            .verify_environment(0, &trace_utils::EnvironmentType::CloudFunction)
+            .verify_environment(0, &trace_utils::EnvironmentType::CloudFunction, "linux")
             .await; // set the verify_env_timeout to timeout immediately
         assert_eq!(
             res,
@@ -464,32 +464,76 @@ mod tests {
         struct MockAzureVerificationClient {}
         #[async_trait]
         impl AzureVerificationClient for MockAzureVerificationClient {
-            fn get_process_files(&self, _sys: sysinfo::System) -> Vec<String> {
+            fn get_process_files_linux(&self) -> Vec<String> {
                 vec![AZURE_LINUX_PROCESS_EXE_NAME.to_string()]
             }
+            fn get_w3wp_dlls_windows(&self) -> anyhow::Result<Vec<String>> {
+                Ok(Vec::new())
+            }
         }
-        let res = ensure_azure_function_environment(Box::new(MockAzureVerificationClient {}));
+        let res =
+            ensure_azure_function_environment(Box::new(MockAzureVerificationClient {}), "linux");
         assert!(res.is_ok());
         assert_eq!(res.unwrap(), trace_utils::MiniAgentMetadata::default());
     }
 
-    #[duplicate_item(
-        test_name                                                               path_version    bitness;
-        [test_ensure_azure_env_true_if_windows_function_env_32bit]              ["4.21.3"]      ["32bit"];
-        [test_ensure_azure_env_true_if_windows_function_env_64bit]              ["4.21.3"]      ["64bit"];
-        [test_ensure_azure_env_true_if_windows_function_env_random_path_ver]    ["5.5555"]      ["32bit"];
-    )]
     #[test]
-    fn test_name() {
+    fn test_ensure_azure_env_false_if_not_linux_function_env() {
         struct MockAzureVerificationClient {}
         #[async_trait]
         impl AzureVerificationClient for MockAzureVerificationClient {
-            fn get_process_files(&self, sys: sysinfo::System) -> Vec<String> {
-                vec![format!("C:\\Program Files (x86)\\SiteExtensions\\Functions\\{}\\{}\\Microsoft.Azure.WebJobs.Script.dll", path_version, bitness)]
+            fn get_process_files_linux(&self) -> Vec<String> {
+                vec!["random.exe".to_string()]
+            }
+            fn get_w3wp_dlls_windows(&self) -> anyhow::Result<Vec<String>> {
+                Ok(Vec::new())
             }
         }
-        let res = ensure_azure_function_environment(Box::new(MockAzureVerificationClient {}));
-        // assert!(res.is_ok());
+        let res =
+            ensure_azure_function_environment(Box::new(MockAzureVerificationClient {}), "linux");
+        assert!(res.is_err());
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            "Unable to find Azure Function process."
+        );
+    }
+
+    #[test]
+    fn test_ensure_azure_env_true_if_windows_function_env() {
+        struct MockAzureVerificationClient {}
+        #[async_trait]
+        impl AzureVerificationClient for MockAzureVerificationClient {
+            fn get_process_files_linux(&self) -> Vec<String> {
+                Vec::new()
+            }
+            fn get_w3wp_dlls_windows(&self) -> anyhow::Result<Vec<String>> {
+                Ok(vec![AZURE_WINDOWS_FUNCTION_DLL_NAME.to_string()])
+            }
+        }
+        let res =
+            ensure_azure_function_environment(Box::new(MockAzureVerificationClient {}), "windows");
+        assert!(res.is_ok());
         assert_eq!(res.unwrap(), trace_utils::MiniAgentMetadata::default());
+    }
+
+    #[test]
+    fn test_ensure_azure_env_false_if_not_windows_function_env() {
+        struct MockAzureVerificationClient {}
+        #[async_trait]
+        impl AzureVerificationClient for MockAzureVerificationClient {
+            fn get_process_files_linux(&self) -> Vec<String> {
+                Vec::new()
+            }
+            fn get_w3wp_dlls_windows(&self) -> anyhow::Result<Vec<String>> {
+                Ok(vec!["random.dll".to_string()])
+            }
+        }
+        let res =
+            ensure_azure_function_environment(Box::new(MockAzureVerificationClient {}), "windows");
+        assert!(res.is_err());
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            "Unable to find open Azure Function dll."
+        );
     }
 }
