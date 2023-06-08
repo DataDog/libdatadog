@@ -227,28 +227,29 @@ struct AzureVerificationClientWrapper {}
 #[async_trait]
 impl AzureVerificationClient for AzureVerificationClientWrapper {
     fn get_w3wp_dlls_windows(&self) -> Vec<String> {
-        let output_bytes = Command::new("powershell")
-            .args([
-                "Get-Process",
-                "w3wp*",
-                "|",
-                "select",
-                "-expand",
-                "modules", // "select",
-                           // "ModuleName", // "|",
-                           // "select",
-                           // "-ExpandProperty",
-                           // "modules",
-                           // "|",
-                           // "group",
-                           // "-Property",
-                           // "FileName",
-                           // "|",
-                           // "select",
-                           // "name",
-            ])
-            .output()
-            .expect("failed to execute process");
+        let output_bytes =
+            Command::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")
+                .args([
+                    "Get-Process",
+                    "w3wp*",
+                    "|",
+                    "select",
+                    "-expand",
+                    "modules", // "select",
+                               // "ModuleName", // "|",
+                               // "select",
+                               // "-ExpandProperty",
+                               // "modules",
+                               // "|",
+                               // "group",
+                               // "-Property",
+                               // "FileName",
+                               // "|",
+                               // "select",
+                               // "name",
+                ])
+                .output()
+                .expect("failed to execute process");
         let output_string = String::from_utf8(output_bytes.stdout).unwrap_or_else(|_| {
             error!("Failed to process windows environment verification output.");
             String::new()
