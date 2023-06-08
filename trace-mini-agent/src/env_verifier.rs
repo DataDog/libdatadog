@@ -73,7 +73,8 @@ impl EnvVerifier for ServerlessEnvVerifier {
     ) -> trace_utils::MiniAgentMetadata {
         match env_type {
             trace_utils::EnvironmentType::AzureFunction => {
-                return verify_azure_environment_or_exit(os);
+                verify_azure_environment_or_exit(os);
+                trace_utils::MiniAgentMetadata::default()
             }
             trace_utils::EnvironmentType::CloudFunction => {
                 return verify_gcp_environment_or_exit(verify_env_timeout).await;
@@ -197,20 +198,23 @@ async fn get_gcp_metadata_from_body(body: hyper::Body) -> anyhow::Result<GCPMeta
     Ok(gcp_metadata)
 }
 
-fn verify_azure_environment_or_exit(os: &str) -> trace_utils::MiniAgentMetadata {
-    match ensure_azure_function_environment(Box::new(AzureVerificationClientWrapper {}), os) {
-        Ok(metadata) => {
-            debug!("Successfully verified Azure Function Environment.");
-            metadata
+fn verify_azure_environment_or_exit(os: &str) {
+    let os_owned = os.to_string();
+    tokio::spawn(async move {
+        match ensure_azure_function_environment(
+            Box::new(AzureVerificationClientWrapper {}),
+            &os_owned.clone(),
+        ) {
+            Ok(_) => {
+                debug!("Successfully verified Azure Function Environment.");
+            }
+            Err(e) => {
+                error!("The Mini Agent can only be run in Google Cloud Functions & Azure Functions. Verification has failed, shutting down now. Error: {e}");
+                #[cfg(not(test))]
+                process::exit(1);
+            }
         }
-        Err(e) => {
-            error!("The Mini Agent can only be run in Google Cloud Functions & Azure Functions. Verification has failed, shutting down now. Error: {e}");
-            #[cfg(not(test))]
-            process::exit(1);
-            #[cfg(test)]
-            trace_utils::MiniAgentMetadata::default()
-        }
-    }
+    });
 }
 
 /// AzureVerificationClient trait is used so we can mock the azure function local url response in unit tests
@@ -275,7 +279,7 @@ impl AzureVerificationClient for AzureVerificationClientWrapper {
 fn ensure_azure_function_environment(
     verification_client: Box<dyn AzureVerificationClient + Send + Sync>,
     os: &str,
-) -> anyhow::Result<trace_utils::MiniAgentMetadata> {
+) -> anyhow::Result<()> {
     match os {
         "linux" => {
             let paths = verification_client.get_process_files_linux();
@@ -283,7 +287,7 @@ fn ensure_azure_function_environment(
 
             for path in paths {
                 if path == AZURE_LINUX_PROCESS_EXE_NAME {
-                    return Ok(trace_utils::MiniAgentMetadata::default());
+                    return Ok(());
                 }
             }
             anyhow::bail!("Unable to find Azure Function process.");
@@ -294,7 +298,7 @@ fn ensure_azure_function_environment(
 
             for dll in open_dlls {
                 if dll == AZURE_WINDOWS_FUNCTION_DLL_NAME {
-                    return Ok(trace_utils::MiniAgentMetadata::default());
+                    return Ok(());
                 }
             }
             anyhow::bail!("Unable to find open Azure Function dll.");
@@ -465,7 +469,6 @@ mod tests {
         let res =
             ensure_azure_function_environment(Box::new(MockAzureVerificationClient {}), "linux");
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), trace_utils::MiniAgentMetadata::default());
     }
 
     #[test]
@@ -504,7 +507,6 @@ mod tests {
         let res =
             ensure_azure_function_environment(Box::new(MockAzureVerificationClient {}), "windows");
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), trace_utils::MiniAgentMetadata::default());
     }
 
     #[test]
