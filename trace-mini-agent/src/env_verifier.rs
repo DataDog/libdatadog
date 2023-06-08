@@ -231,18 +231,21 @@ impl AzureVerificationClient for AzureVerificationClientWrapper {
         let output_bytes = Command::new("powershell")
             .args([
                 "Get-Process",
-                "w3wp",
+                "w3wp*",
+                "-Module",
                 "|",
                 "select",
-                "-ExpandProperty",
-                "modules",
-                "|",
-                "group",
-                "-Property",
-                "FileName",
-                "|",
-                "select",
-                "name",
+                "ModuleName", // "|",
+                              // "select",
+                              // "-ExpandProperty",
+                              // "modules",
+                              // "|",
+                              // "group",
+                              // "-Property",
+                              // "FileName",
+                              // "|",
+                              // "select",
+                              // "name",
             ])
             .output()
             .expect("failed to execute process");
