@@ -306,6 +306,8 @@ fn ensure_azure_function_environment(
         "windows" => {
             let open_dlls = verification_client.get_w3wp_dlls_windows();
 
+            debug!("open dlls: {open_dlls:?}");
+
             let azure_windows_process_exe_regex = Regex::new(AZURE_WINDOWS_DLL_PATH_REGEX_PATTERN)
                 .map_err(|_| anyhow::anyhow!("Error Parsing Azure Windows EXE Regex"))?;
 
