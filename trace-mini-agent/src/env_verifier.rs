@@ -21,7 +21,7 @@ const AZURE_LINUX_PROCESS_EXE_NAME: &str =
     "/azure-functions-host/Microsoft.Azure.WebJobs.Script.WebHost";
 
 // C:\Program Files (x86)\SiteExtensions\Functions\4.21.3\32bit\Microsoft.Azure.WebJobs.Script.dll
-const AZURE_WINDOWS_DLL_PATH_REGEX_PATTERN: &str = r#"C:\\Program Files \(x86\)\\SiteExtensions\\Functions\\.+\\.+\\Microsoft\.Azure\.WebJobs\.Script\.dll"#;
+const AZURE_WINDOWS_FUNCTION_DLL_NAME: &str = "azure_windows_function.dll";
 
 #[derive(Default, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct GCPMetadata {
@@ -220,18 +220,15 @@ fn verify_azure_environment_or_exit() -> trace_utils::MiniAgentMetadata {
 #[async_trait]
 trait AzureVerificationClient {
     fn get_process_files_linux(&self) -> Vec<String>;
-    fn get_w3wp_dlls_windows(&self) -> Vec<String>;
+    fn get_w3wp_dlls_windows(&self) -> anyhow::Result<Vec<String>>;
 }
 struct AzureVerificationClientWrapper {}
 
 #[async_trait]
 impl AzureVerificationClient for AzureVerificationClientWrapper {
-    fn get_w3wp_dlls_windows(&self) -> Vec<String> {
-        debug_log_bitness_of_process(
-            "C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe",
-        );
+    fn get_w3wp_dlls_windows(&self) -> anyhow::Result<Vec<String>> {
         let output_bytes =
-            Command::new("C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe")
+            match Command::new("C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe")
                 .args([
                     "Get-Process",
                     "w3wp*",
@@ -241,16 +238,18 @@ impl AzureVerificationClient for AzureVerificationClientWrapper {
                     "ModuleName",
                 ])
                 .output()
-                .expect("failed to execute process");
-        let output_string = String::from_utf8(output_bytes.stdout).unwrap_or_else(|_| {
-            error!("Failed to process windows environment verification output.");
-            String::new()
-        });
-        debug!("output string: {output_string:?}");
-        output_string
+            {
+                Ok(res) => res,
+                Err(_) => anyhow::bail!("Failed to get windows verification data."),
+            };
+        let output_string = match String::from_utf8(output_bytes.stdout) {
+            Ok(res) => res,
+            Err(_) => anyhow::bail!("Failed to process windows environment verification output."),
+        };
+        Ok(output_string
             .split_whitespace()
             .map(str::to_string)
-            .collect()
+            .collect())
     }
 
     fn get_process_files_linux(&self) -> Vec<String> {
@@ -279,15 +278,6 @@ impl AzureVerificationClient for AzureVerificationClientWrapper {
     }
 }
 
-fn debug_log_bitness_of_process(shell: &str) {
-    let output_bytes = Command::new(shell)
-        .args(["[Environment]::Is64BitProcess"])
-        .output()
-        .expect("failed to execute process");
-    let output_string = String::from_utf8(output_bytes.stdout).unwrap();
-    debug!("is 64 bit process?: {output_string:?}");
-}
-
 /// Checks if we are running in an Azure Function environment.
 /// If true, returns MiniAgentMetadata default.
 /// Otherwise, returns an error with the verification failure reason.
@@ -307,15 +297,12 @@ fn ensure_azure_function_environment(
             anyhow::bail!("Unable to find Azure Function process.");
         }
         "windows" => {
-            let open_dlls = verification_client.get_w3wp_dlls_windows();
+            let open_dlls = verification_client.get_w3wp_dlls_windows()?;
 
             debug!("open dlls: {open_dlls:?}");
 
-            let azure_windows_process_exe_regex = Regex::new(AZURE_WINDOWS_DLL_PATH_REGEX_PATTERN)
-                .map_err(|_| anyhow::anyhow!("Error Parsing Azure Windows EXE Regex"))?;
-
             for dll in open_dlls {
-                if azure_windows_process_exe_regex.is_match(&dll) {
+                if dll == AZURE_WINDOWS_FUNCTION_DLL_NAME {
                     return Ok(trace_utils::MiniAgentMetadata::default());
                 }
             }
