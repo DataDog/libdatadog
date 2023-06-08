@@ -16,8 +16,6 @@ use datadog_trace_utils::trace_utils;
 const GCP_METADATA_URL: &str = "http://metadata.google.internal/computeMetadata/v1/?recursive=true";
 const AZURE_LINUX_PROCESS_EXE_NAME: &str =
     "/azure-functions-host/Microsoft.Azure.WebJobs.Script.WebHost";
-
-// C:\Program Files (x86)\SiteExtensions\Functions\4.21.3\32bit\Microsoft.Azure.WebJobs.Script.dll
 const AZURE_WINDOWS_FUNCTION_DLL_NAME: &str = "azure_windows_function.dll";
 
 #[derive(Default, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -259,12 +257,6 @@ impl AzureVerificationClient for AzureVerificationClientWrapper {
 
         let mut paths: Vec<String> = Vec::new();
         for process in processes.values() {
-            debug!(
-                "exe | {:?} | cmd | {:?} | root | {:?} | ",
-                process.exe(),
-                process.cmd(),
-                process.root()
-            );
             paths.push(process.exe().to_string_lossy().to_string());
         }
 
@@ -287,7 +279,7 @@ fn ensure_azure_function_environment(
     match os {
         "linux" => {
             let paths = verification_client.get_process_files_linux();
-            println!("paths: {paths:?}");
+            debug!("paths: {paths:?}");
 
             for path in paths {
                 if path == AZURE_LINUX_PROCESS_EXE_NAME {
@@ -298,7 +290,6 @@ fn ensure_azure_function_environment(
         }
         "windows" => {
             let open_dlls = verification_client.get_w3wp_dlls_windows()?;
-
             debug!("open dlls: {open_dlls:?}");
 
             for dll in open_dlls {

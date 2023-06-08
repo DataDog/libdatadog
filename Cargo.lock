@@ -535,7 +535,6 @@ dependencies = [
  "duplicate",
  "hyper",
  "log",
- "regex",
  "rmp-serde",
  "serde",
  "serde_json",
