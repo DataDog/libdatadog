@@ -227,29 +227,21 @@ struct AzureVerificationClientWrapper {}
 #[async_trait]
 impl AzureVerificationClient for AzureVerificationClientWrapper {
     fn get_w3wp_dlls_windows(&self) -> Vec<String> {
-        let output_bytes = Command::new("powershell")
-            .args([
-                "[Environment]::Is64BitProcess", // "Get-Process",
-                                                 // "w3wp*",
-                                                 // "|",
-                                                 // "select",
-                                                 // "-expand",
-                                                 // "modules",
-                                                 // "select",
-                                                 // "ModuleName", // "|",
-                                                 // "select",
-                                                 // "-ExpandProperty",
-                                                 // "modules",
-                                                 // "|",
-                                                 // "group",
-                                                 // "-Property",
-                                                 // "FileName",
-                                                 // "|",
-                                                 // "select",
-                                                 // "name",
-            ])
-            .output()
-            .expect("failed to execute process");
+        debug_log_bitness_of_process(
+            "C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe",
+        );
+        let output_bytes =
+            Command::new("C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe")
+                .args([
+                    "Get-Process",
+                    "w3wp*",
+                    "-module",
+                    "|",
+                    "select",
+                    "ModuleName",
+                ])
+                .output()
+                .expect("failed to execute process");
         let output_string = String::from_utf8(output_bytes.stdout).unwrap_or_else(|_| {
             error!("Failed to process windows environment verification output.");
             String::new()
@@ -285,6 +277,15 @@ impl AzureVerificationClient for AzureVerificationClientWrapper {
 
         paths
     }
+}
+
+fn debug_log_bitness_of_process(shell: &str) {
+    let output_bytes = Command::new(shell)
+        .args(["[Environment]::Is64BitProcess"])
+        .output()
+        .expect("failed to execute process");
+    let output_string = String::from_utf8(output_bytes.stdout).unwrap();
+    debug!("is 64 bit process?: {output_string:?}");
 }
 
 /// Checks if we are running in an Azure Function environment.
