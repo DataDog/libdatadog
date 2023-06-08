@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::process::Command;
 use std::time::Duration;
+use std::{thread, time};
 use sysinfo::{ProcessExt, System, SystemExt};
 
 #[cfg(not(test))]
@@ -225,9 +226,8 @@ struct AzureVerificationClientWrapper {}
 
 #[async_trait]
 impl AzureVerificationClient for AzureVerificationClientWrapper {
-    // Get-Process w3wp | select -ExpandProperty modules | group -Property FileName | select name
-
     fn get_w3wp_dlls_windows(&self) -> Vec<String> {
+        thread::sleep(time::Duration::from_millis(500));
         let output_bytes = Command::new("powershell")
             .args([
                 "Get-Process",
@@ -260,11 +260,6 @@ impl AzureVerificationClient for AzureVerificationClientWrapper {
     fn get_process_files_linux(&self) -> Vec<String> {
         let mut sys = System::new_all();
         sys.refresh_all();
-
-        debug!("System name:            {:?}", sys.name());
-        debug!("System kernel version:  {:?}", sys.kernel_version());
-        debug!("System OS version:      {:?}", sys.os_version());
-        debug!("System host name:       {:?}", sys.host_name());
 
         let processes = sys.processes();
 
