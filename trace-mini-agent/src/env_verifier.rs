@@ -5,6 +5,8 @@ use hyper::{Body, Client, Method, Request, Response};
 use log::{debug, error};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::env;
+use std::process::Command;
 use std::time::Duration;
 use sysinfo::{ProcessExt, System, SystemExt};
 
@@ -16,7 +18,7 @@ use datadog_trace_utils::trace_utils;
 const GCP_METADATA_URL: &str = "http://metadata.google.internal/computeMetadata/v1/?recursive=true";
 const AZURE_LINUX_PROCESS_EXE_NAME: &str =
     "/azure-functions-host/Microsoft.Azure.WebJobs.Script.WebHost";
-const AZURE_WINDOWS_PROCESS_EXE_NAME_REGEX_PATTERN: &str = r#"C:\\Program Files \(x86\)\\SiteExtensions\\Functions\\.+\\.+\\Microsoft\.Azure\.WebJobs\.Script\.dll"#;
+const AZURE_WINDOWS_DLL_PATH_REGEX_PATTERN: &str = r#"C:\\Program Files \(x86\)\\SiteExtensions\\Functions\\.+\\.+\\Microsoft\.Azure\.WebJobs\.Script\.dll"#;
 
 #[derive(Default, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct GCPMetadata {
@@ -214,13 +216,46 @@ fn verify_azure_environment_or_exit() -> trace_utils::MiniAgentMetadata {
 /// AzureVerificationClient trait is used so we can mock the azure function local url response in unit tests
 #[async_trait]
 trait AzureVerificationClient {
-    fn get_process_files(&self, sys: sysinfo::System) -> Vec<String>;
+    fn get_process_files_linux(&self) -> Vec<String>;
+    fn get_w3wp_dlls_windows(&self) -> Vec<String>;
 }
 struct AzureVerificationClientWrapper {}
 
 #[async_trait]
 impl AzureVerificationClient for AzureVerificationClientWrapper {
-    fn get_process_files(&self, mut sys: sysinfo::System) -> Vec<String> {
+    // Get-Process w3wp | select -ExpandProperty modules | group -Property FileName | select name
+
+    fn get_w3wp_dlls_windows(&self) -> Vec<String> {
+        let output_bytes = Command::new("powershell")
+            .args([
+                "Get-Process",
+                "w3wp",
+                "|",
+                "select",
+                "-ExpandProperty",
+                "modules",
+                "|",
+                "group",
+                "-Property",
+                "FileName",
+                "|",
+                "select",
+                "name",
+            ])
+            .output()
+            .expect("failed to execute process");
+        let output_string = String::from_utf8(output_bytes.stdout).unwrap_or_else(|_| {
+            error!("Failed to process windows environment verification output.");
+            String::new()
+        });
+        output_string
+            .split_whitespace()
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn get_process_files_linux(&self) -> Vec<String> {
+        let mut sys = System::new_all();
         sys.refresh_all();
 
         debug!("System name:            {:?}", sys.name());
@@ -232,9 +267,12 @@ impl AzureVerificationClient for AzureVerificationClientWrapper {
 
         let mut paths: Vec<String> = Vec::new();
         for process in processes.values() {
-            debug!("-------------------------");
-            debug!("exe {:?}", process.exe());
-            debug!("cmd {:?}", process.cmd());
+            debug!(
+                "exe | {:?} | cmd | {:?} | root | {:?} | ",
+                process.exe(),
+                process.cmd(),
+                process.root()
+            );
             paths.push(process.exe().to_string_lossy().to_string());
         }
 
@@ -253,25 +291,35 @@ impl AzureVerificationClient for AzureVerificationClientWrapper {
 fn ensure_azure_function_environment(
     verification_client: Box<dyn AzureVerificationClient + Send + Sync>,
 ) -> anyhow::Result<trace_utils::MiniAgentMetadata> {
-    let sys = System::new_all();
+    match env::consts::OS {
+        "linux" => {
+            let paths = verification_client.get_process_files_linux();
+            println!("paths: {paths:?}");
 
-    let paths = verification_client.get_process_files(sys);
-    println!("paths: {paths:?}");
+            for path in paths {
+                if path == AZURE_LINUX_PROCESS_EXE_NAME {
+                    return Ok(trace_utils::MiniAgentMetadata::default());
+                }
+            }
+            anyhow::bail!("Unable to find Azure Function process.");
+        }
+        "windows" => {
+            let open_dlls = verification_client.get_w3wp_dlls_windows();
 
-    let azure_windows_process_exe_regex = Regex::new(AZURE_WINDOWS_PROCESS_EXE_NAME_REGEX_PATTERN)
-        .map_err(|_| anyhow::anyhow!("Error Parsing Azure Windows EXE Regex"))?;
+            let azure_windows_process_exe_regex = Regex::new(AZURE_WINDOWS_DLL_PATH_REGEX_PATTERN)
+                .map_err(|_| anyhow::anyhow!("Error Parsing Azure Windows EXE Regex"))?;
 
-    let mut found_valid_process: bool = false;
-    for path in paths {
-        if path == AZURE_LINUX_PROCESS_EXE_NAME || azure_windows_process_exe_regex.is_match(&path) {
-            found_valid_process = true;
+            for dll in open_dlls {
+                if azure_windows_process_exe_regex.is_match(&dll) {
+                    return Ok(trace_utils::MiniAgentMetadata::default());
+                }
+            }
+            anyhow::bail!("Unable to find open Azure Function dll.");
+        }
+        _ => {
+            anyhow::bail!("The Serverless Mini Agent does not support this platform.");
         }
     }
-
-    // if !found_valid_process {
-    //     anyhow::bail!("Azure Function Process not found.")
-    // }
-    Ok(trace_utils::MiniAgentMetadata::default())
 }
 
 #[cfg(test)]
