@@ -17,6 +17,7 @@ const GCP_METADATA_URL: &str = "http://metadata.google.internal/computeMetadata/
 const AZURE_LINUX_PROCESS_EXE_NAME: &str =
     "/azure-functions-host/Microsoft.Azure.WebJobs.Script.WebHost";
 const AZURE_WINDOWS_FUNCTION_DLL_NAME: &str = "azure_windows_function.dll";
+const WINDOWS_PROCESS_BITNESS_ENV_VAR: &str = "PROCESSOR_ARCHITECTURE";
 
 #[derive(Default, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct GCPMetadata {
@@ -73,7 +74,7 @@ impl EnvVerifier for ServerlessEnvVerifier {
     ) -> trace_utils::MiniAgentMetadata {
         match env_type {
             trace_utils::EnvironmentType::AzureFunction => {
-                verify_azure_environment_or_exit(os).await;
+                verify_azure_environment_or_exit(os);
                 trace_utils::MiniAgentMetadata::default()
             }
             trace_utils::EnvironmentType::CloudFunction => {
@@ -198,16 +199,13 @@ async fn get_gcp_metadata_from_body(body: hyper::Body) -> anyhow::Result<GCPMeta
     Ok(gcp_metadata)
 }
 
-async fn verify_azure_environment_or_exit(os: &str) {
+fn verify_azure_environment_or_exit(os: &str) {
     let os_owned = os.to_string();
     tokio::spawn(async move {
-        let now = Instant::now();
         match ensure_azure_function_environment(
             Box::new(AzureVerificationClientWrapper {}),
             &os_owned.clone(),
-        )
-        .await
-        {
+        ) {
             Ok(_) => {
                 debug!("Successfully verified Azure Function Environment.");
             }
@@ -217,10 +215,6 @@ async fn verify_azure_environment_or_exit(os: &str) {
                 process::exit(1);
             }
         }
-        debug!(
-            "Time taken to verify Azure Functions env: {} ms",
-            now.elapsed().as_millis()
-        );
     });
 }
 
@@ -228,13 +222,23 @@ async fn verify_azure_environment_or_exit(os: &str) {
 #[async_trait]
 trait AzureVerificationClient {
     fn get_process_files_linux(&self) -> Vec<String>;
-    async fn get_w3wp_dlls_windows(&self, powershell_path: &str) -> anyhow::Result<Vec<String>>;
+    fn get_w3wp_dlls_windows(&self) -> anyhow::Result<Vec<String>>;
 }
 struct AzureVerificationClientWrapper {}
 
 #[async_trait]
 impl AzureVerificationClient for AzureVerificationClientWrapper {
-    async fn get_w3wp_dlls_windows(&self, powershell_path: &str) -> anyhow::Result<Vec<String>> {
+    fn get_w3wp_dlls_windows(&self) -> anyhow::Result<Vec<String>> {
+        // Azure functions default to having a 32 bit worker process on a 64 bit system.
+        // In this case we need to launch 32bit powershell to fetch 32bit handles loaded by the worker process.
+        // the presence of PROCESSOR_ARCHITEW6432=x86 indicates a 32 bit process running on 64 bit windows.
+        let process_bitness =
+            env::var(WINDOWS_PROCESS_BITNESS_ENV_VAR).unwrap_or("AMD64".to_string());
+
+        let powershell_path = match process_bitness.as_str() {
+            "x86" => "C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe",
+            _ => "C:\\Windows\\System32\\WindowsPowershell\\v1.0\\powershell.exe",
+        };
         let output_bytes = match Command::new(powershell_path)
             .args([
                 "Get-Process",
@@ -282,7 +286,7 @@ impl AzureVerificationClient for AzureVerificationClientWrapper {
 /// Checks if we are running in an Azure Function environment.
 /// If true, returns MiniAgentMetadata default.
 /// Otherwise, returns an error with the verification failure reason.
-async fn ensure_azure_function_environment(
+fn ensure_azure_function_environment(
     verification_client: Box<dyn AzureVerificationClient + Send + Sync>,
     os: &str,
 ) -> anyhow::Result<()> {
@@ -299,23 +303,7 @@ async fn ensure_azure_function_environment(
             anyhow::bail!("Unable to find Azure Function process.");
         }
         "windows" => {
-            // Azure functions default to having a 32 bit worker process on a 64 bit system.
-            // In this case we need to launch 32bit powershell to fetch 32bit handles loaded by the worker process.
-            // We can't rely on the presence of PROCESSOR_ARCHITECTURE env var
-
-            let mut open_dlls = verification_client
-                .get_w3wp_dlls_windows(
-                    "C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe",
-                )
-                .await?;
-            open_dlls.extend(
-                verification_client
-                    .get_w3wp_dlls_windows(
-                        "C:\\Windows\\System32\\WindowsPowershell\\v1.0\\powershell.exe",
-                    )
-                    .await?,
-            );
-
+            let open_dlls = verification_client.get_w3wp_dlls_windows()?;
             debug!("open dlls: {open_dlls:?}");
 
             for dll in open_dlls {
