@@ -270,11 +270,6 @@ impl AzureVerificationClient for AzureVerificationClientWrapper {
             paths.push(process.exe().to_string_lossy().to_string());
         }
 
-        debug!(
-            "Environment process exe paths used for Azure env verification: {:?}",
-            paths
-        );
-
         paths
     }
 }
@@ -289,7 +284,6 @@ async fn ensure_azure_function_environment(
     match os {
         "linux" => {
             let paths = verification_client.get_process_files_linux();
-            debug!("paths: {paths:?}");
 
             for path in paths {
                 if path == AZURE_LINUX_PROCESS_EXE_NAME {
@@ -315,8 +309,6 @@ async fn ensure_azure_function_environment(
                     )
                     .await?,
             );
-
-            debug!("open dlls: {open_dlls:?}");
 
             for dll in open_dlls {
                 if dll == AZURE_WINDOWS_FUNCTION_DLL_NAME {
