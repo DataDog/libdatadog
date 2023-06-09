@@ -229,14 +229,15 @@ struct AzureVerificationClientWrapper {}
 #[async_trait]
 impl AzureVerificationClient for AzureVerificationClientWrapper {
     fn get_w3wp_dlls_windows(&self) -> anyhow::Result<Vec<String>> {
+        // Azure functions default to having a 32 bit worker process on a 64 bit system.
+        // In this case we need to launch 32bit powershell to fetch 32bit handles loaded by the worker process.
+        // the presence of PROCESSOR_ARCHITEW6432=x86 indicates a 32 bit process running on 64 bit windows.
         let process_bitness =
             env::var(WINDOWS_PROCESS_BITNESS_ENV_VAR).unwrap_or("AMD64".to_string());
 
-        // Azure functions default to having a 32 bit worker process on a 64 bit system.
-        // In this case we need to launch 32bit powershell to fetch 32bit handles loaded by the worker process.
         let powershell_path = match process_bitness.as_str() {
             "x86" => "C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe",
-            _ => "powershell",
+            _ => "C:\\Windows\\System32\\WindowsPowershell\\v1.0\\powershell.exe",
         };
         let output_bytes = match Command::new(powershell_path)
             .args([
