@@ -255,13 +255,22 @@ fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
     span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
 }
 
-pub fn set_serverless_root_span_tags(span: &mut pb::Span, gcp_function_name: Option<String>) {
+pub fn set_serverless_root_span_tags(
+    span: &mut pb::Span,
+    function_name: Option<String>,
+    env_type: &EnvironmentType,
+) {
     span.r#type = "serverless".to_string();
+    let origin_tag = match env_type {
+        EnvironmentType::CloudFunction => "cloudfunction",
+        EnvironmentType::AzureFunction => "azurefunction",
+    };
     span.meta
-        .insert("_dd.origin".to_string(), "cloudfunction".to_string());
+        .insert("_dd.origin".to_string(), origin_tag.to_string());
     span.meta
-        .insert("origin".to_string(), "cloudfunction".to_string());
-    if let Some(function_name) = gcp_function_name {
+        .insert("origin".to_string(), origin_tag.to_string());
+
+    if let Some(function_name) = function_name {
         span.meta.insert("functionname".to_string(), function_name);
     }
 }
@@ -270,6 +279,12 @@ pub fn update_tracer_top_level(span: &mut pb::Span) {
     if span.metrics.contains_key(TRACER_TOP_LEVEL_KEY) {
         span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EnvironmentType {
+    CloudFunction,
+    AzureFunction,
 }
 
 #[derive(Clone, Default, Debug, Eq, PartialEq)]
@@ -298,7 +313,7 @@ mod tests {
     use serde_json::json;
     use std::collections::HashMap;
 
-    use super::get_root_span_index;
+    use super::{get_root_span_index, set_serverless_root_span_tags};
     use crate::trace_utils;
     use datadog_trace_protobuf::pb;
 
@@ -416,5 +431,43 @@ mod tests {
         let root_span_index = get_root_span_index(&trace);
         assert!(root_span_index.is_ok());
         assert_eq!(root_span_index.unwrap(), 1);
+    }
+
+    #[test]
+    fn test_set_serverless_root_span_tags_azure_function() {
+        let mut span = create_test_span(1234, 12342, 12341);
+        set_serverless_root_span_tags(
+            &mut span,
+            Some("test_function".to_string()),
+            &trace_utils::EnvironmentType::AzureFunction,
+        );
+        assert_eq!(
+            span.meta,
+            HashMap::from([
+                ("_dd.origin".to_string(), "azurefunction".to_string()),
+                ("origin".to_string(), "azurefunction".to_string()),
+                ("functionname".to_string(), "test_function".to_string())
+            ]),
+        );
+        assert_eq!(span.r#type, "serverless".to_string())
+    }
+
+    #[test]
+    fn test_set_serverless_root_span_tags_cloud_function() {
+        let mut span = create_test_span(1234, 12342, 12341);
+        set_serverless_root_span_tags(
+            &mut span,
+            Some("test_function".to_string()),
+            &trace_utils::EnvironmentType::CloudFunction,
+        );
+        assert_eq!(
+            span.meta,
+            HashMap::from([
+                ("_dd.origin".to_string(), "cloudfunction".to_string()),
+                ("origin".to_string(), "cloudfunction".to_string()),
+                ("functionname".to_string(), "test_function".to_string())
+            ]),
+        );
+        assert_eq!(span.r#type, "serverless".to_string())
     }
 }

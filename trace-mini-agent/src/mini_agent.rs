@@ -40,7 +40,11 @@ impl MiniAgent {
         // verify we are in a google cloud funtion environment. if not, shut down the mini agent.
         let mini_agent_metadata = Arc::new(
             self.env_verifier
-                .verify_environment(self.config.verify_env_timeout)
+                .verify_environment(
+                    self.config.verify_env_timeout,
+                    &self.config.env_type,
+                    &self.config.os,
+                )
                 .await,
         );
 

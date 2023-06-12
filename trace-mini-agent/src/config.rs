@@ -3,13 +3,21 @@
 
 use std::env;
 
+#[cfg(not(test))]
+use std::process;
+
+use datadog_trace_utils::trace_utils;
+use log::error;
+
 const TRACE_INTAKE_ROUTE: &str = "/api/v0.2/traces";
 const TRACE_STATS_INTAKE_ROUTE: &str = "/api/v0.2/stats";
 
 #[derive(Debug, Clone)]
 pub struct Config {
     pub api_key: String,
-    pub gcp_function_name: Option<String>,
+    pub function_name: Option<String>,
+    pub env_type: trace_utils::EnvironmentType,
+    pub os: String,
     pub max_request_content_length: usize,
     /// how often to flush traces, in seconds
     pub trace_flush_interval: u64,
@@ -28,14 +36,28 @@ impl Config {
             .map_err(|_| anyhow::anyhow!("DD_API_KEY environment variable is not set"))?;
         let mut function_name = None;
 
-        // Google cloud functions automatically sets either K_SERVICE or FUNCTION_NAME
-        // env vars to denote the cloud function name.
-        // K_SERVICE is set on newer runtimes, while FUNCTION_NAME is set on older deprecated runtimes.
+        let mut maybe_env_type = None;
         if let Ok(res) = env::var("K_SERVICE") {
+            // Set by Google Cloud Functions for newer runtimes
             function_name = Some(res);
+            maybe_env_type = Some(trace_utils::EnvironmentType::CloudFunction);
         } else if let Ok(res) = env::var("FUNCTION_NAME") {
+            // Set by Google Cloud Functions for older runtimes
             function_name = Some(res);
+            maybe_env_type = Some(trace_utils::EnvironmentType::CloudFunction);
+        } else if let Ok(res) = env::var("WEBSITE_SITE_NAME") {
+            // Set by Azure Functions
+            function_name = Some(res);
+            maybe_env_type = Some(trace_utils::EnvironmentType::AzureFunction);
         }
+
+        let env_type = maybe_env_type.unwrap_or_else(|| {
+            error!("Unable to identify environment. Shutting down Mini Agent.");
+            #[cfg(not(test))]
+            process::exit(1);
+            #[cfg(test)]
+            trace_utils::EnvironmentType::CloudFunction
+        });
 
         let dd_site = env::var("DD_SITE").unwrap_or_else(|_| "datadoghq.com".to_string());
 
@@ -53,7 +75,9 @@ impl Config {
 
         Ok(Config {
             api_key,
-            gcp_function_name: function_name,
+            function_name,
+            env_type,
+            os: env::consts::OS.to_string(),
             max_request_content_length: 10 * 1024 * 1024, // 10MB in Bytes
             trace_flush_interval: 3,
             stats_flush_interval: 3,
