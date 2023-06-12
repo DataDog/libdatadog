@@ -10,7 +10,7 @@ regex = "1"
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 
 [dev-dependencies]
-duplicate = "1.0.0"
+duplicate = "0.4.1"
 criterion = "0.4"
 
 [[bench]]
