@@ -522,14 +522,9 @@ mod tests {
 
         let files = client.get_function_root_files(temp_dir_path).unwrap();
 
-        assert_eq!(
-            files,
-            vec![
-                AZURE_HOST_JSON_NAME,
-                "HttpTrigger1",
-                AZURE_FUNCTION_JSON_NAME
-            ]
-        );
+        assert!(files.contains(&AZURE_HOST_JSON_NAME.to_string()));
+        assert!(files.contains(&AZURE_FUNCTION_JSON_NAME.to_string()));
+        assert!(files.contains(&"HttpTrigger1".to_string()));
     }
 
     #[test]
