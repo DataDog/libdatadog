@@ -532,7 +532,7 @@ dependencies = [
  "datadog-trace-normalization",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
- "duplicate 1.0.0",
+ "duplicate",
  "hyper",
  "log",
  "rmp-serde",
@@ -549,7 +549,7 @@ version = "2.1.0"
 dependencies = [
  "anyhow",
  "datadog-trace-protobuf",
- "duplicate 0.4.1",
+ "duplicate",
  "rand",
 ]
 
@@ -560,7 +560,7 @@ dependencies = [
  "anyhow",
  "criterion",
  "datadog-trace-protobuf",
- "duplicate 0.4.1",
+ "duplicate",
  "regex",
 ]
 
@@ -676,16 +676,6 @@ name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
-
-[[package]]
-name = "duplicate"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0a4be4cd710e92098de6ad258e6e7c24af11c29c5142f3c6f2a545652480ff8"
-dependencies = [
- "heck",
- "proc-macro-error",
-]
 
 [[package]]
 name = "duplicate"
