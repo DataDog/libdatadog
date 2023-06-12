@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use hyper::{Body, Client, Method, Request, Response};
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
-use std::process::Command;
+use std::fs;
+use std::path::Path;
 use std::time::{Duration, Instant};
-use sysinfo::{ProcessExt, System, SystemExt};
 
 #[cfg(not(test))]
 use std::process;
@@ -14,9 +14,10 @@ use std::process;
 use datadog_trace_utils::trace_utils;
 
 const GCP_METADATA_URL: &str = "http://metadata.google.internal/computeMetadata/v1/?recursive=true";
-const AZURE_LINUX_PROCESS_EXE_NAME: &str =
-    "/azure-functions-host/Microsoft.Azure.WebJobs.Script.WebHost";
-const AZURE_WINDOWS_FUNCTION_DLL_NAME: &str = "azure_windows_function.dll";
+const AZURE_LINUX_FUNCTION_ROOT_PATH_STR: &str = "/home/site/wwwroot";
+const AZURE_WINDOWS_FUNCTION_ROOT_PATH_STR: &str = "C:\\home\\site\\wwwroot";
+const AZURE_HOST_JSON_NAME: &str = "host.json";
+const AZURE_FUNCTION_JSON_NAME: &str = "function.json";
 
 #[derive(Default, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct GCPMetadata {
@@ -199,78 +200,53 @@ async fn get_gcp_metadata_from_body(body: hyper::Body) -> anyhow::Result<GCPMeta
 }
 
 async fn verify_azure_environment_or_exit(os: &str) {
-    let os_owned = os.to_string();
-    tokio::spawn(async move {
-        let now = Instant::now();
-        match ensure_azure_function_environment(
-            Box::new(AzureVerificationClientWrapper {}),
-            &os_owned.clone(),
-        )
-        .await
-        {
-            Ok(_) => {
-                debug!("Successfully verified Azure Function Environment.");
-            }
-            Err(e) => {
-                error!("The Mini Agent can only be run in Google Cloud Functions & Azure Functions. Verification has failed, shutting down now. Error: {e}");
-                #[cfg(not(test))]
-                process::exit(1);
-            }
+    let now = Instant::now();
+    match ensure_azure_function_environment(Box::new(AzureVerificationClientWrapper {}), os).await {
+        Ok(_) => {
+            debug!("Successfully verified Azure Function Environment.");
         }
-        debug!(
-            "Time taken to verify Azure Functions env: {} ms",
-            now.elapsed().as_millis()
-        );
-    });
+        Err(e) => {
+            error!("The Mini Agent can only be run in Google Cloud Functions & Azure Functions. Verification has failed, shutting down now. Error: {e}");
+            #[cfg(not(test))]
+            process::exit(1);
+        }
+    }
+    debug!(
+        "Time taken to verify Azure Functions env: {} ms",
+        now.elapsed().as_millis()
+    );
 }
 
 /// AzureVerificationClient trait is used so we can mock the azure function local url response in unit tests
-#[async_trait]
 trait AzureVerificationClient {
-    fn get_process_files_linux(&self) -> Vec<String>;
-    async fn get_w3wp_dlls_windows(&self, powershell_path: &str) -> anyhow::Result<Vec<String>>;
+    fn get_function_root_files(&self, path: &Path) -> anyhow::Result<Vec<String>>;
 }
 struct AzureVerificationClientWrapper {}
 
-#[async_trait]
 impl AzureVerificationClient for AzureVerificationClientWrapper {
-    async fn get_w3wp_dlls_windows(&self, powershell_path: &str) -> anyhow::Result<Vec<String>> {
-        let output_bytes = match Command::new(powershell_path)
-            .args([
-                "Get-Process",
-                "w3wp",
-                "-module",
-                "|",
-                "select",
-                "ModuleName",
-            ])
-            .output()
-        {
-            Ok(res) => res,
-            Err(_) => anyhow::bail!("Failed to get windows verification data."),
-        };
-        let output_string = match String::from_utf8(output_bytes.stdout) {
-            Ok(res) => res,
-            Err(_) => anyhow::bail!("Failed to process windows environment verification output."),
-        };
-        Ok(output_string
-            .split_whitespace()
-            .map(str::to_string)
-            .collect())
-    }
+    fn get_function_root_files(&self, path: &Path) -> anyhow::Result<Vec<String>> {
+        let mut file_names: Vec<String> = Vec::new();
 
-    fn get_process_files_linux(&self) -> Vec<String> {
-        let mut sys = System::new_all();
-        sys.refresh_all();
+        let entries = fs::read_dir(path)?;
+        for entry in entries {
+            let entry = entry.map_err(|e| anyhow::anyhow!(e))?;
+            let entry_name = entry.file_name();
+            if entry_name == "node_modules" {
+                continue;
+            }
 
-        let processes = sys.processes();
+            file_names.push(entry_name.to_string_lossy().to_string());
 
-        let mut paths: Vec<String> = Vec::new();
-        for process in processes.values() {
-            paths.push(process.exe().to_string_lossy().to_string());
+            if entry.file_type()?.is_dir() {
+                let sub_entries = fs::read_dir(entry.path())?;
+                for sub_entry in sub_entries {
+                    let sub_entry = sub_entry.map_err(|e| anyhow::anyhow!(e))?;
+                    let sub_entry_name = sub_entry.file_name();
+                    file_names.push(sub_entry_name.to_string_lossy().to_string());
+                }
+            }
         }
-
-        paths
+        Ok(file_names)
     }
 }
 
@@ -281,46 +257,33 @@ async fn ensure_azure_function_environment(
     verification_client: Box<dyn AzureVerificationClient + Send + Sync>,
     os: &str,
 ) -> anyhow::Result<()> {
-    match os {
-        "linux" => {
-            let paths = verification_client.get_process_files_linux();
-
-            for path in paths {
-                if path == AZURE_LINUX_PROCESS_EXE_NAME {
-                    return Ok(());
-                }
-            }
-            anyhow::bail!("Unable to find Azure Function process.");
-        }
-        "windows" => {
-            // Azure functions default to having a 32 bit worker process on a 64 bit system.
-            // In this case we need to launch 32bit powershell to fetch 32bit handles loaded by the worker process.
-            // We can't rely on the presence of PROCESSOR_ARCHITECTURE env var
-
-            let mut open_dlls = verification_client
-                .get_w3wp_dlls_windows(
-                    "C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe",
-                )
-                .await?;
-            open_dlls.extend(
-                verification_client
-                    .get_w3wp_dlls_windows(
-                        "C:\\Windows\\System32\\WindowsPowershell\\v1.0\\powershell.exe",
-                    )
-                    .await?,
-            );
-
-            for dll in open_dlls {
-                if dll == AZURE_WINDOWS_FUNCTION_DLL_NAME {
-                    return Ok(());
-                }
-            }
-            anyhow::bail!("Unable to find open Azure Function dll.");
-        }
+    let azure_linux_function_root_path = Path::new(AZURE_LINUX_FUNCTION_ROOT_PATH_STR);
+    let azure_windows_function_root_path = Path::new(AZURE_WINDOWS_FUNCTION_ROOT_PATH_STR);
+    let function_files = match os {
+        "linux" => verification_client.get_function_root_files(azure_linux_function_root_path),
+        "windows" => verification_client.get_function_root_files(azure_windows_function_root_path),
         _ => {
-            anyhow::bail!("The Serverless Mini Agent does not support this platform.");
+            anyhow::bail!("The Serverless Mini Agent does not support this platform.")
+        }
+    };
+
+    let function_files = function_files.map_err(|e| anyhow::anyhow!(e))?;
+
+    let mut host_json_exists = false;
+    let mut function_json_exists = false;
+    for file in function_files {
+        if file == AZURE_HOST_JSON_NAME {
+            host_json_exists = true;
+        }
+        if file == AZURE_FUNCTION_JSON_NAME {
+            function_json_exists = true;
         }
     }
+
+    if !host_json_exists && !function_json_exists {
+        anyhow::bail!("Failed to validate an Azure Function directory system.");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -329,12 +292,14 @@ mod tests {
     use datadog_trace_utils::trace_utils;
     use hyper::{Body, Response, StatusCode};
     use serde_json::json;
+    use serial_test::serial;
+    use std::{fs, path::Path};
 
     use crate::env_verifier::{
         ensure_azure_function_environment, ensure_gcp_function_environment,
-        get_region_from_gcp_region_string, AzureVerificationClient, GCPInstance, GCPMetadata,
-        GCPProject, GoogleMetadataClient, AZURE_LINUX_PROCESS_EXE_NAME,
-        AZURE_WINDOWS_FUNCTION_DLL_NAME,
+        get_region_from_gcp_region_string, AzureVerificationClient, AzureVerificationClientWrapper,
+        GCPInstance, GCPMetadata, GCPProject, GoogleMetadataClient, AZURE_FUNCTION_JSON_NAME,
+        AZURE_HOST_JSON_NAME,
     };
 
     use super::{EnvVerifier, ServerlessEnvVerifier};
@@ -469,64 +434,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ensure_azure_env_true_if_linux_function_env() {
+    async fn test_ensure_azure_env_windows_true() {
         struct MockAzureVerificationClient {}
         #[async_trait]
         impl AzureVerificationClient for MockAzureVerificationClient {
-            fn get_process_files_linux(&self) -> Vec<String> {
-                vec![AZURE_LINUX_PROCESS_EXE_NAME.to_string()]
-            }
-            async fn get_w3wp_dlls_windows(
-                &self,
-                _powershell_path: &str,
-            ) -> anyhow::Result<Vec<String>> {
-                Ok(Vec::new())
-            }
-        }
-        let res =
-            ensure_azure_function_environment(Box::new(MockAzureVerificationClient {}), "linux")
-                .await;
-        assert!(res.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_ensure_azure_env_false_if_not_linux_function_env() {
-        struct MockAzureVerificationClient {}
-        #[async_trait]
-        impl AzureVerificationClient for MockAzureVerificationClient {
-            fn get_process_files_linux(&self) -> Vec<String> {
-                vec!["random.exe".to_string()]
-            }
-            async fn get_w3wp_dlls_windows(
-                &self,
-                _powershell_path: &str,
-            ) -> anyhow::Result<Vec<String>> {
-                Ok(Vec::new())
-            }
-        }
-        let res =
-            ensure_azure_function_environment(Box::new(MockAzureVerificationClient {}), "linux")
-                .await;
-        assert!(res.is_err());
-        assert_eq!(
-            res.unwrap_err().to_string(),
-            "Unable to find Azure Function process."
-        );
-    }
-
-    #[tokio::test]
-    async fn test_ensure_azure_env_true_if_windows_function_env() {
-        struct MockAzureVerificationClient {}
-        #[async_trait]
-        impl AzureVerificationClient for MockAzureVerificationClient {
-            fn get_process_files_linux(&self) -> Vec<String> {
-                Vec::new()
-            }
-            async fn get_w3wp_dlls_windows(
-                &self,
-                _powershell_path: &str,
-            ) -> anyhow::Result<Vec<String>> {
-                Ok(vec![AZURE_WINDOWS_FUNCTION_DLL_NAME.to_string()])
+            fn get_function_root_files(&self, _path: &Path) -> anyhow::Result<Vec<String>> {
+                Ok(vec!["host.json".to_string(), "function.json".to_string()])
             }
         }
         let res =
@@ -536,18 +449,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ensure_azure_env_false_if_not_windows_function_env() {
+    async fn test_ensure_azure_env_windows_false() {
         struct MockAzureVerificationClient {}
         #[async_trait]
         impl AzureVerificationClient for MockAzureVerificationClient {
-            fn get_process_files_linux(&self) -> Vec<String> {
-                Vec::new()
-            }
-            async fn get_w3wp_dlls_windows(
-                &self,
-                _powershell_path: &str,
-            ) -> anyhow::Result<Vec<String>> {
-                Ok(vec!["random.dll".to_string()])
+            fn get_function_root_files(&self, _path: &Path) -> anyhow::Result<Vec<String>> {
+                Ok(vec![
+                    "random_file.json".to_string(),
+                    "random_file_1.json".to_string(),
+                ])
             }
         }
         let res =
@@ -556,7 +466,86 @@ mod tests {
         assert!(res.is_err());
         assert_eq!(
             res.unwrap_err().to_string(),
-            "Unable to find open Azure Function dll."
+            "Failed to validate an Azure Function directory system."
         );
+    }
+
+    #[tokio::test]
+    async fn test_ensure_azure_env_linux_true() {
+        struct MockAzureVerificationClient {}
+        #[async_trait]
+        impl AzureVerificationClient for MockAzureVerificationClient {
+            fn get_function_root_files(&self, _path: &Path) -> anyhow::Result<Vec<String>> {
+                Ok(vec!["host.json".to_string(), "function.json".to_string()])
+            }
+        }
+        let res =
+            ensure_azure_function_environment(Box::new(MockAzureVerificationClient {}), "linux")
+                .await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_azure_env_linux_false() {
+        struct MockAzureVerificationClient {}
+        #[async_trait]
+        impl AzureVerificationClient for MockAzureVerificationClient {
+            fn get_function_root_files(&self, _path: &Path) -> anyhow::Result<Vec<String>> {
+                Ok(vec![
+                    "random_file.json".to_string(),
+                    "random_file_1.json".to_string(),
+                ])
+            }
+        }
+        let res =
+            ensure_azure_function_environment(Box::new(MockAzureVerificationClient {}), "linux")
+                .await;
+        assert!(res.is_err());
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            "Failed to validate an Azure Function directory system."
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_get_function_root_files_returns_correct_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_path = temp_dir.path();
+
+        fs::File::create(temp_dir_path.join(AZURE_HOST_JSON_NAME)).unwrap();
+        fs::create_dir(temp_dir_path.join("HttpTrigger1")).unwrap();
+        fs::File::create(temp_dir_path.join(format!("HttpTrigger1/{AZURE_FUNCTION_JSON_NAME}")))
+            .unwrap();
+
+        let client = AzureVerificationClientWrapper {};
+
+        let files = client.get_function_root_files(temp_dir_path).unwrap();
+
+        assert_eq!(
+            files,
+            vec![
+                AZURE_HOST_JSON_NAME,
+                "HttpTrigger1",
+                AZURE_FUNCTION_JSON_NAME
+            ]
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_get_function_root_files_ignores_node_modules() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_path = temp_dir.path();
+
+        fs::File::create(temp_dir_path.join(AZURE_HOST_JSON_NAME)).unwrap();
+        fs::create_dir(temp_dir_path.join("node_modules")).unwrap();
+        fs::File::create(temp_dir_path.join("node_modules/random.txt")).unwrap();
+
+        let client = AzureVerificationClientWrapper {};
+
+        let files = client.get_function_root_files(temp_dir_path).unwrap();
+
+        assert_eq!(files, vec![AZURE_HOST_JSON_NAME]);
     }
 }
