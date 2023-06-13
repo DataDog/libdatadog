@@ -140,7 +140,7 @@ impl MiniAgent {
         mini_agent_metadata: Arc<trace_utils::MiniAgentMetadata>,
     ) -> http::Result<Response<Body>> {
         match (req.method(), req.uri().path()) {
-            (&Method::PUT, TRACE_ENDPOINT_PATH) => {
+            (&Method::PUT | &Method::POST, TRACE_ENDPOINT_PATH) => {
                 match trace_processor
                     .process_traces(config, req, trace_tx, mini_agent_metadata)
                     .await
@@ -152,7 +152,7 @@ impl MiniAgent {
                     ),
                 }
             }
-            (&Method::PUT, STATS_ENDPOINT_PATH) => {
+            (&Method::PUT | &Method::POST, STATS_ENDPOINT_PATH) => {
                 match stats_processor.process_stats(config, req, stats_tx).await {
                     Ok(res) => Ok(res),
                     Err(err) => log_and_create_http_response(
