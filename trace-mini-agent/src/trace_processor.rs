@@ -116,7 +116,8 @@ impl TraceProcessor for ServerlessTraceProcessor {
 
             trace_utils::set_serverless_root_span_tags(
                 &mut chunk.spans[root_span_index],
-                config.gcp_function_name.clone(),
+                config.function_name.clone(),
+                &config.env_type,
             );
 
             trace_chunks.push(chunk);
@@ -246,7 +247,7 @@ mod tests {
     fn create_test_config() -> Config {
         Config {
             api_key: "dummy_api_key".to_string(),
-            gcp_function_name: Some("dummy_function_name".to_string()),
+            function_name: Some("dummy_function_name".to_string()),
             max_request_content_length: 10 * 1024 * 1024,
             trace_flush_interval: 3,
             stats_flush_interval: 3,
@@ -254,6 +255,8 @@ mod tests {
             trace_intake_url: "trace.agent.notdog.com/traces".to_string(),
             trace_stats_intake_url: "trace.agent.notdog.com/stats".to_string(),
             dd_site: "datadoghq.com".to_string(),
+            env_type: trace_utils::EnvironmentType::CloudFunction,
+            os: "linux".to_string(),
         }
     }
 

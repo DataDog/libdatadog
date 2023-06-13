@@ -19,3 +19,4 @@ datadog-trace-normalization = { path = "../trace-normalization" }
 rmp-serde = "1.1.1"
 serial_test = "2.0.0"
 duplicate = "0.4.1"
+tempfile = "3.3.0"

@@ -3,13 +3,17 @@
 
 use std::env;
 
+use datadog_trace_utils::trace_utils;
+
 const TRACE_INTAKE_ROUTE: &str = "/api/v0.2/traces";
 const TRACE_STATS_INTAKE_ROUTE: &str = "/api/v0.2/stats";
 
 #[derive(Debug, Clone)]
 pub struct Config {
     pub api_key: String,
-    pub gcp_function_name: Option<String>,
+    pub function_name: Option<String>,
+    pub env_type: trace_utils::EnvironmentType,
+    pub os: String,
     pub max_request_content_length: usize,
     /// how often to flush traces, in seconds
     pub trace_flush_interval: u64,
@@ -28,14 +32,24 @@ impl Config {
             .map_err(|_| anyhow::anyhow!("DD_API_KEY environment variable is not set"))?;
         let mut function_name = None;
 
-        // Google cloud functions automatically sets either K_SERVICE or FUNCTION_NAME
-        // env vars to denote the cloud function name.
-        // K_SERVICE is set on newer runtimes, while FUNCTION_NAME is set on older deprecated runtimes.
+        let mut maybe_env_type = None;
         if let Ok(res) = env::var("K_SERVICE") {
+            // Set by Google Cloud Functions for newer runtimes
             function_name = Some(res);
+            maybe_env_type = Some(trace_utils::EnvironmentType::CloudFunction);
         } else if let Ok(res) = env::var("FUNCTION_NAME") {
+            // Set by Google Cloud Functions for older runtimes
             function_name = Some(res);
+            maybe_env_type = Some(trace_utils::EnvironmentType::CloudFunction);
+        } else if let Ok(res) = env::var("WEBSITE_SITE_NAME") {
+            // Set by Azure Functions
+            function_name = Some(res);
+            maybe_env_type = Some(trace_utils::EnvironmentType::AzureFunction);
         }
+
+        let env_type = maybe_env_type.ok_or_else(|| {
+            anyhow::anyhow!("Unable to identify environment. Shutting down Mini Agent.")
+        })?;
 
         let dd_site = env::var("DD_SITE").unwrap_or_else(|_| "datadoghq.com".to_string());
 
@@ -53,7 +67,9 @@ impl Config {
 
         Ok(Config {
             api_key,
-            gcp_function_name: function_name,
+            function_name,
+            env_type,
+            os: env::consts::OS.to_string(),
             max_request_content_length: 10 * 1024 * 1024, // 10MB in Bytes
             trace_flush_interval: 3,
             stats_flush_interval: 3,
@@ -75,6 +91,20 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_error_if_unable_to_identify_env() {
+        env::set_var("DD_API_KEY", "_not_a_real_key_");
+
+        let config = config::Config::new();
+        assert!(config.is_err());
+        assert_eq!(
+            config.unwrap_err().to_string(),
+            "Unable to identify environment. Shutting down Mini Agent."
+        );
+        env::remove_var("DD_API_KEY");
+    }
+
+    #[test]
+    #[serial]
     fn test_error_if_no_api_key_env_var() {
         let config = config::Config::new();
         assert!(config.is_err());
@@ -88,6 +118,7 @@ mod tests {
     #[serial]
     fn test_default_trace_and_trace_stats_urls() {
         env::set_var("DD_API_KEY", "_not_a_real_key_");
+        env::set_var("K_SERVICE", "function_name");
         let config_res = config::Config::new();
         assert!(config_res.is_ok());
         let config = config_res.unwrap();
@@ -100,6 +131,7 @@ mod tests {
             "https://trace.agent.datadoghq.com/api/v0.2/stats"
         );
         env::remove_var("DD_API_KEY");
+        env::remove_var("K_SERVICE");
     }
 
     #[duplicate_item(
@@ -115,6 +147,7 @@ mod tests {
     #[serial]
     fn test_name() {
         env::set_var("DD_API_KEY", "_not_a_real_key_");
+        env::set_var("K_SERVICE", "function_name");
         env::set_var("DD_SITE", dd_site);
         let config_res = config::Config::new();
         assert!(config_res.is_ok());
@@ -122,6 +155,7 @@ mod tests {
         assert_eq!(config.trace_intake_url, expected_url);
         env::remove_var("DD_API_KEY");
         env::remove_var("DD_SITE");
+        env::remove_var("K_SERVICE");
     }
 
     #[duplicate_item(
@@ -137,6 +171,7 @@ mod tests {
     #[serial]
     fn test_name() {
         env::set_var("DD_API_KEY", "_not_a_real_key_");
+        env::set_var("K_SERVICE", "function_name");
         env::set_var("DD_SITE", dd_site);
         let config_res = config::Config::new();
         assert!(config_res.is_ok());
@@ -144,12 +179,14 @@ mod tests {
         assert_eq!(config.trace_stats_intake_url, expected_url);
         env::remove_var("DD_API_KEY");
         env::remove_var("DD_SITE");
+        env::remove_var("K_SERVICE");
     }
 
     #[test]
     #[serial]
     fn test_set_custom_trace_and_trace_stats_intake_url() {
         env::set_var("DD_API_KEY", "_not_a_real_key_");
+        env::set_var("K_SERVICE", "function_name");
         env::set_var("DD_APM_DD_URL", "http://127.0.0.1:3333");
         let config_res = config::Config::new();
         assert!(config_res.is_ok());
@@ -164,5 +201,6 @@ mod tests {
         );
         env::remove_var("DD_API_KEY");
         env::remove_var("DD_APM_DD_URL");
+        env::remove_var("K_SERVICE");
     }
 }
