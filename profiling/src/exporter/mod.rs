@@ -271,7 +271,7 @@ impl Exporter {
         // Set idle to 0, which prevents the pipe being broken every 2nd request
         let client = hyper::Client::builder()
             .pool_max_idle_per_host(0)
-            .build(connector::Connector::new());
+            .build(connector::Connector::default());
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
