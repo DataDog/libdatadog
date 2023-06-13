@@ -15,6 +15,10 @@ fn main() {
 
     if !cfg!(target_os = "windows") {
         builder.link_dynamically("dl");
+        if cfg!(target_os = "linux") {
+            builder.flag("-Wl,--no-as-needed");
+        }
+        builder.link_dynamically("m"); // rust code generally requires libm. Just link against it.
     }
 
     builder.try_compile_executable("trampoline.bin").unwrap();
