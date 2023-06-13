@@ -6,10 +6,8 @@ use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use std::time::{Duration, Instant};
-
-#[cfg(not(test))]
 use std::process;
+use std::time::{Duration, Instant};
 
 use datadog_trace_utils::trace_utils;
 
@@ -100,10 +98,7 @@ async fn verify_gcp_environment_or_exit(verify_env_timeout: u64) -> trace_utils:
             }
             Err(err) => {
                 error!("The Mini Agent can only be run in Google Cloud Functions & Azure Functions. Verification has failed, shutting down now. Error: {err}");
-                #[cfg(not(test))]
                 process::exit(1);
-                #[cfg(test)]
-                GCPMetadata::default()
             }
         },
         Err(_) => {
@@ -207,7 +202,6 @@ async fn verify_azure_environment_or_exit(os: &str) {
         }
         Err(e) => {
             error!("The Mini Agent can only be run in Google Cloud Functions & Azure Functions. Verification has failed, shutting down now. Error: {e}");
-            #[cfg(not(test))]
             process::exit(1);
         }
     }
