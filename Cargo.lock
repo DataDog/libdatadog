@@ -541,6 +541,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
+ "tempfile",
  "testing_logger",
  "tokio",
 ]
