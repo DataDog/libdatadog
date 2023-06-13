@@ -43,10 +43,10 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
     }
 
     let mut generated = String::new();
-    for sym in so_file.symbols() {
+    for sym in so_file.symbols().chain(so_file.dynamic_symbols()) {
         if sym.is_definition() {
             if let Ok(name) = sym.name() {
-                if missing_symbols.contains(name) {
+                if missing_symbols.remove(name) {
                     _ = match sym.kind() {
                         SymbolKind::Text => writeln!(generated, "void {}() {{}}", name),
                         // Ignore symbols of size 0, like _GLOBAL_OFFSET_TABLE_ on alpine

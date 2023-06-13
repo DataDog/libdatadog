@@ -5,6 +5,7 @@ use futures::future::BoxFuture;
 use futures::{future, FutureExt};
 use hyper::client::HttpConnector;
 
+use lazy_static::lazy_static;
 use rustls::ClientConfig;
 use std::future::Future;
 use std::pin::Pin;
@@ -27,9 +28,13 @@ pub enum Connector {
     Https(hyper_rustls::HttpsConnector<hyper::client::HttpConnector>),
 }
 
+lazy_static! {
+    static ref DEFAULT_CONNECTOR: Connector = Connector::new();
+}
+
 impl Default for Connector {
     fn default() -> Self {
-        Self::new()
+        DEFAULT_CONNECTOR.clone()
     }
 }
 
