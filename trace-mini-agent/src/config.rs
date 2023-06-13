@@ -3,11 +3,7 @@
 
 use std::env;
 
-#[cfg(not(test))]
-use std::process;
-
 use datadog_trace_utils::trace_utils;
-use log::error;
 
 const TRACE_INTAKE_ROUTE: &str = "/api/v0.2/traces";
 const TRACE_STATS_INTAKE_ROUTE: &str = "/api/v0.2/stats";
@@ -51,9 +47,9 @@ impl Config {
             maybe_env_type = Some(trace_utils::EnvironmentType::AzureFunction);
         }
 
-        let env_type = maybe_env_type.ok_or(anyhow::anyhow!(
-            "Unable to identify environment. Shutting down Mini Agent."
-        ))?;
+        let env_type = maybe_env_type.ok_or_else(|| {
+            anyhow::anyhow!("Unable to identify environment. Shutting down Mini Agent.")
+        })?;
 
         let dd_site = env::var("DD_SITE").unwrap_or_else(|_| "datadoghq.com".to_string());
 
