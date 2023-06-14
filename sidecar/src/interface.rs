@@ -12,11 +12,12 @@ use std::{
 use anyhow::Result;
 
 use datadog_ipc::{platform::AsyncChannel, transport::Transport};
+use futures::future::join_all;
 use futures::{
     future::{self, BoxFuture, Ready, Shared},
     FutureExt,
 };
-use manual_future::ManualFuture;
+use manual_future::{ManualFuture, ManualFutureCompleter};
 
 use datadog_ipc::tarpc::{context::Context, server::Channel};
 use rand::Rng;
@@ -192,36 +193,54 @@ enum AppOrQueue {
     Queue(EnqueuedData),
 }
 
+#[allow(clippy::type_complexity)]
 #[derive(Clone, Default)]
 struct RuntimeInfo {
-    apps: Arc<Mutex<HashMap<String, AppInstance>>>,
+    apps: Arc<Mutex<HashMap<String, Shared<ManualFuture<Option<AppInstance>>>>>>,
     app_or_actions: Arc<Mutex<HashMap<QueueId, AppOrQueue>>>,
 }
 
 impl RuntimeInfo {
-    fn get_app(&self, service_name: &String) -> Option<AppInstance> {
-        let apps = self.apps.lock().unwrap();
-        apps.get(service_name).map(Clone::clone)
+    #[allow(clippy::type_complexity)]
+    fn get_app(
+        &self,
+        service_name: &String,
+    ) -> (
+        Shared<ManualFuture<Option<AppInstance>>>,
+        Option<ManualFutureCompleter<Option<AppInstance>>>,
+    ) {
+        let mut apps = self.apps.lock().unwrap();
+        if let Some(found) = apps.get(service_name) {
+            (found.clone(), None)
+        } else {
+            let (future, completer) = ManualFuture::new();
+            let shared = future.shared();
+            apps.insert(service_name.clone(), shared.clone());
+            (shared, Some(completer))
+        }
     }
 
     async fn shutdown(self) {
-        let instances: Vec<AppInstance> = self
+        let instance_futures: Vec<_> = self
             .apps
             .lock()
             .unwrap()
             .drain()
             .map(|(_, instance)| instance)
             .collect();
+        let instances: Vec<_> = join_all(instance_futures).await;
         let instances_shutting_down: Vec<_> = instances
             .into_iter()
             .map(|instance| {
                 tokio::spawn(async move {
-                    instance
-                        .telemetry
-                        .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop))
-                        .await
-                        .ok();
-                    instance.telemetry_worker_shutdown.await;
+                    if let Some(instance) = instance {
+                        instance
+                            .telemetry
+                            .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop))
+                            .await
+                            .ok();
+                        instance.telemetry_worker_shutdown.await;
+                    }
                 })
             })
             .collect();
@@ -335,8 +354,9 @@ impl TelemetryServer {
     ) -> Option<AppInstance> {
         let rt_info = self.get_runtime(instance_id);
 
-        if let Some(app) = rt_info.get_app(service_name) {
-            return Some(app);
+        let (app_future, completer) = rt_info.get_app(service_name);
+        if completer.is_none() {
+            return app_future.await;
         }
 
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
@@ -356,34 +376,32 @@ impl TelemetryServer {
             .unwrap_or_else(Config::from_env);
 
         // TODO: log errors
-        if let Ok((handle, worker_join)) = builder.spawn_with_config(config.clone()).await {
-            tracing::info!("spawning worker {config:?}");
+        let instance_option =
+            if let Ok((handle, worker_join)) = builder.spawn_with_config(config.clone()).await {
+                tracing::info!("spawning worker {config:?}");
 
-            let instance = AppInstance {
-                telemetry: handle,
-                telemetry_worker_shutdown: worker_join.map(Result::ok).boxed().shared(),
+                let instance = AppInstance {
+                    telemetry: handle,
+                    telemetry_worker_shutdown: worker_join.map(Result::ok).boxed().shared(),
+                };
+
+                instance
+                    .telemetry
+                    .send_msgs(inital_actions.into_iter())
+                    .await
+                    .ok();
+
+                instance
+                    .telemetry
+                    .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
+                    .await
+                    .ok();
+                Some(instance)
+            } else {
+                None
             };
-            rt_info
-                .apps
-                .lock()
-                .unwrap()
-                .insert(service_name.clone(), instance.clone());
-
-            instance
-                .telemetry
-                .send_msgs(inital_actions.into_iter())
-                .await
-                .ok();
-
-            instance
-                .telemetry
-                .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                .await
-                .ok();
-            Some(instance)
-        } else {
-            None
-        }
+        completer.unwrap().complete(instance_option).await;
+        app_future.await
     }
 }
 
@@ -437,8 +455,10 @@ impl TelemetryInterface for TelemetryServer {
                     let service_future = service_future.clone();
                     tokio::spawn(async move {
                         let service = service_future.await;
-                        let app = apps.lock().unwrap().get_mut(&service).unwrap().clone();
-                        app.telemetry.send_msgs(actions).await.ok();
+                        let app_future = apps.lock().unwrap().get_mut(&service).unwrap().clone();
+                        if let Some(app) = app_future.await {
+                            app.telemetry.send_msgs(actions).await.ok();
+                        }
                     });
                 }
             }
@@ -462,14 +482,20 @@ impl TelemetryInterface for TelemetryServer {
         runtime_meta: RuntimeMeta,
         service_name: String,
     ) -> Self::RegisterServiceAndFlushQueuedActionsFut {
-        let mut actions: Vec<TelemetryActions> = vec![];
-        if let Some(AppOrQueue::Queue(ref mut enqueued_data)) = self
-            .get_runtime(&instance_id)
-            .app_or_actions
-            .lock()
-            .unwrap()
-            .get_mut(&queue_id)
-        {
+        let (future, completer) = ManualFuture::new();
+        let app_or_queue = {
+            let rt_info = self.get_runtime(&instance_id);
+            let mut app_or_actions = rt_info.app_or_actions.lock().unwrap();
+            match app_or_actions.get(&queue_id) {
+                Some(AppOrQueue::Queue(_)) => {
+                    app_or_actions.insert(queue_id, AppOrQueue::App(future.shared()))
+                }
+                None => Some(AppOrQueue::Queue(EnqueuedData::default())),
+                _ => None,
+            }
+        };
+        if let Some(AppOrQueue::Queue(mut enqueued_data)) = app_or_queue {
+            let mut actions: Vec<TelemetryActions> = vec![];
             enqueued_data.extract_telemetry_actions(&mut actions);
 
             tokio::spawn(async move {
@@ -478,19 +504,8 @@ impl TelemetryInterface for TelemetryServer {
                     .await
                 {
                     // We need a channel to have enqueuing code await
-                    let (future, completer) = ManualFuture::new();
-                    let app_or_queue = self
-                        .get_runtime(&instance_id)
-                        .app_or_actions
-                        .lock()
-                        .unwrap()
-                        .insert(queue_id, AppOrQueue::App(future.shared()));
-                    if let Some(AppOrQueue::Queue(mut enqueued_data)) = app_or_queue {
-                        let mut actions: Vec<TelemetryActions> =
-                            std::mem::take(&mut enqueued_data.actions);
-                        enqueued_data.extract_telemetry_actions(&mut actions);
-                        app.telemetry.send_msgs(actions).await.ok();
-                    }
+                    let actions: Vec<_> = std::mem::take(&mut enqueued_data.actions);
+                    app.telemetry.send_msgs(actions).await.ok();
                     // Ok, we dequeued all messages, now new enqueue_actions calls can handle it
                     completer.complete(service_name).await;
                 }

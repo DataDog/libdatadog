@@ -42,3 +42,4 @@ sendfd = { version = "0.4", features = ["tokio"] }
 [[bench]]
 harness = false
 name = "ipc"
+path = "benches/ipc.rs"
