@@ -515,6 +515,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "datadog-ipc",
+ "datadog-sidecar-macros",
  "ddcommon",
  "ddtelemetry",
  "futures",
@@ -554,6 +555,14 @@ dependencies = [
  "libc",
  "paste",
  "tempfile",
+]
+
+[[package]]
+name = "datadog-sidecar-macros"
+version = "0.0.1"
+dependencies = [
+ "quote",
+ "syn 2.0.11",
 ]
 
 [[package]]

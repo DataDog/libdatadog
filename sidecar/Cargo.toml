@@ -11,6 +11,7 @@ tracing = ["tracing/std", "tracing-subscriber"]
 [dependencies]
 anyhow = { version = "1.0" }
 ddcommon = { path = "../ddcommon" }
+datadog-sidecar-macros = { path = "macros" }
 
 ddtelemetry = { path = "../ddtelemetry" }
 futures = { version = "0.3", default-features = false }

@@ -3,6 +3,8 @@
 
 // Lint removed from stable clippy after rust 1.60 - this allow can be removed once we update rust version
 #![allow(clippy::needless_collect)]
+use std::collections::hash_map::Entry;
+use std::collections::HashSet;
 use std::{
     collections::HashMap,
     pin::Pin,
@@ -34,6 +36,7 @@ use ddtelemetry::{
     },
 };
 
+#[datadog_sidecar_macros::extract_request_id]
 #[tarpc::service]
 pub trait TelemetryInterface {
     async fn equeue_actions(
@@ -51,6 +54,16 @@ pub trait TelemetryInterface {
     async fn shutdown_runtime(instance_id: InstanceId);
     async fn shutdown_session(session_id: String);
     async fn ping();
+}
+
+pub trait RequestIdentification {
+    fn extract_identifier(&self) -> RequestIdentifier;
+}
+
+pub enum RequestIdentifier {
+    InstanceId(InstanceId),
+    SessionId(String),
+    None,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
@@ -73,7 +86,7 @@ impl RuntimeMeta {
     }
 }
 
-#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+#[derive(Default, Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct InstanceId {
     session_id: String,
     runtime_id: String,
@@ -91,7 +104,7 @@ impl InstanceId {
     }
 }
 
-#[derive(Default, Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Default, Copy, Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[repr(transparent)]
 pub struct QueueId {
     inner: u64,
@@ -306,6 +319,7 @@ impl EnqueuedData {
 #[derive(Default, Clone)]
 pub struct TelemetryServer {
     sessions: Arc<Mutex<HashMap<String, SessionInfo>>>,
+    session_counter: Arc<Mutex<HashMap<String, u32>>>,
 }
 
 impl TelemetryServer {
@@ -316,7 +330,77 @@ impl TelemetryServer {
             },
             Transport::try_from(AsyncChannel::from(socket)).unwrap(),
         );
-        datadog_ipc::sequential::execute_sequential(server.requests(), self.serve(), 100).await
+
+        let mut executor = datadog_ipc::sequential::execute_sequential(
+            server.requests(),
+            self.clone().serve(),
+            100,
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<_>(100);
+        let tx = executor.swap_sender(tx);
+
+        let session_counter = self.session_counter.clone();
+        let session_interceptor = tokio::spawn(async move {
+            let mut sessions = HashSet::new();
+            let mut instances = HashSet::new();
+            loop {
+                let (serve, req) = match rx.recv().await {
+                    None => return (sessions, instances),
+                    Some(s) => s,
+                };
+                let instance: RequestIdentifier = req.get().extract_identifier();
+                if let Ok(_) = tx.send((serve, req)).await {
+                    if let RequestIdentifier::InstanceId(ref instance_id) = instance {
+                        instances.insert(instance_id.clone());
+                    }
+                    if let RequestIdentifier::SessionId(session)
+                    | RequestIdentifier::InstanceId(InstanceId {
+                        session_id: session,
+                        ..
+                    }) = instance
+                    {
+                        if sessions.insert(session.clone()) {
+                            match session_counter.lock().unwrap().entry(session) {
+                                Entry::Occupied(mut entry) => entry.insert(entry.get() + 1),
+                                Entry::Vacant(entry) => *entry.insert(1),
+                            };
+                        }
+                    }
+                }
+            }
+        });
+
+        executor.await;
+        if let Ok((sessions, instances)) = session_interceptor.await {
+            for session in sessions {
+                let stop = {
+                    let mut counter = self.session_counter.lock().unwrap();
+                    if let Entry::Occupied(mut entry) = counter.entry(session.clone()) {
+                        if entry.insert(entry.get() - 1) == 0 {
+                            entry.remove();
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                };
+                if stop {
+                    self.stop_session(&session).await;
+                }
+            }
+            for instance_id in instances {
+                let maybe_session = self
+                    .sessions
+                    .lock()
+                    .unwrap()
+                    .remove(&instance_id.session_id);
+                if let Some(session) = maybe_session {
+                    session.shutdown_runtime(&instance_id.runtime_id).await;
+                }
+            }
+        }
     }
 
     fn get_session(&self, session_id: &String) -> SessionInfo {
@@ -336,7 +420,7 @@ impl TelemetryServer {
         session.get_runtime(&instance_id.runtime_id)
     }
 
-    async fn shutdown_session(&self, session_id: &String) {
+    async fn stop_session(&self, session_id: &String) {
         let session = match self.sessions.lock().unwrap().remove(session_id) {
             Some(session) => session,
             None => return,
@@ -408,7 +492,6 @@ impl TelemetryServer {
 type NoResponse = Ready<()>;
 
 fn no_response() -> NoResponse {
-    Context::current().discard_response = true;
     future::ready(())
 }
 
@@ -430,7 +513,7 @@ impl TelemetryInterface for TelemetryServer {
     type ShutdownSessionFut = NoResponse;
 
     fn shutdown_session(self, _: Context, session_id: String) -> Self::ShutdownSessionFut {
-        tokio::spawn(async move { TelemetryServer::shutdown_session(&self, &session_id).await });
+        tokio::spawn(async move { TelemetryServer::stop_session(&self, &session_id).await });
         no_response()
     }
 
@@ -445,14 +528,20 @@ impl TelemetryInterface for TelemetryServer {
     ) -> Self::EqueueActionsFut {
         let rt_info = self.get_runtime(&instance_id);
         let mut queue = rt_info.app_or_actions.lock().unwrap();
-        if let Some(maybe_data) = queue.get_mut(&queue_id) {
-            match maybe_data {
-                AppOrQueue::Queue(data) => {
+        match queue.entry(queue_id) {
+            Entry::Occupied(mut entry) => match entry.get_mut() {
+                AppOrQueue::Queue(ref mut data) => {
                     data.process(actions);
                 }
                 AppOrQueue::App(service_future) => {
-                    let apps = rt_info.apps.clone();
                     let service_future = service_future.clone();
+                    // drop on stop
+                    if actions.iter().any(|action| {
+                        matches!(action, TelemetryActions::Lifecycle(LifecycleAction::Stop))
+                    }) {
+                        entry.remove();
+                    }
+                    let apps = rt_info.apps.clone();
                     tokio::spawn(async move {
                         let service = service_future.await;
                         let app_future = apps.lock().unwrap().get_mut(&service).unwrap().clone();
@@ -461,12 +550,10 @@ impl TelemetryInterface for TelemetryServer {
                         }
                     });
                 }
+            },
+            Entry::Vacant(entry) => {
+                entry.insert(AppOrQueue::Queue(EnqueuedData::processed(actions)));
             }
-        } else {
-            queue.insert(
-                queue_id,
-                AppOrQueue::Queue(EnqueuedData::processed(actions)),
-            );
         }
 
         no_response()
@@ -482,6 +569,7 @@ impl TelemetryInterface for TelemetryServer {
         runtime_meta: RuntimeMeta,
         service_name: String,
     ) -> Self::RegisterServiceAndFlushQueuedActionsFut {
+        // We need a channel to have enqueuing code await
         let (future, completer) = ManualFuture::new();
         let app_or_queue = {
             let rt_info = self.get_runtime(&instance_id);
@@ -503,8 +591,18 @@ impl TelemetryInterface for TelemetryServer {
                     .get_app(&instance_id, &runtime_meta, &service_name, actions)
                     .await
                 {
-                    // We need a channel to have enqueuing code await
                     let actions: Vec<_> = std::mem::take(&mut enqueued_data.actions);
+                    // drop on stop
+                    if actions.iter().any(|action| {
+                        matches!(action, TelemetryActions::Lifecycle(LifecycleAction::Stop))
+                    }) {
+                        self.get_runtime(&instance_id)
+                            .app_or_actions
+                            .lock()
+                            .unwrap()
+                            .remove(&queue_id);
+                    }
+
                     app.telemetry.send_msgs(actions).await.ok();
                     // Ok, we dequeued all messages, now new enqueue_actions calls can handle it
                     completer.complete(service_name).await;
