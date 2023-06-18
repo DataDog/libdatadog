@@ -544,7 +544,11 @@ impl TelemetryInterface for TelemetryServer {
                     let apps = rt_info.apps.clone();
                     tokio::spawn(async move {
                         let service = service_future.await;
-                        let app_future = apps.lock().unwrap().get_mut(&service).unwrap().clone();
+                        let app_future = if let Some(fut) = apps.lock().unwrap().get(&service) {
+                            fut.clone()
+                        } else {
+                            return;
+                        };
                         if let Some(app) = app_future.await {
                             app.telemetry.send_msgs(actions).await.ok();
                         }
