@@ -1,8 +1,8 @@
 use proc_macro::TokenStream;
-use quote::{format_ident, quote, ToTokens};
+use quote::{format_ident, quote};
 use syn::FnArg::Typed;
 use syn::__private::Span;
-use syn::{parse_quote, Arm, Ident, ImplItem, ItemImpl, ItemTrait, Pat, PatWild, TraitItem};
+use syn::{parse_quote, Arm, Ident, ItemTrait, Pat, TraitItem};
 
 fn snake_to_camel(ident_str: &str) -> String {
     let mut camel_ty = String::with_capacity(ident_str.len());
@@ -24,35 +24,32 @@ fn snake_to_camel(ident_str: &str) -> String {
 }
 
 #[proc_macro_attribute]
-pub fn extract_request_id(attr: TokenStream, mut input: TokenStream) -> TokenStream {
+pub fn extract_request_id(_attr: TokenStream, mut input: TokenStream) -> TokenStream {
     let item: ItemTrait = syn::parse(input.clone()).unwrap();
     let name = &format_ident!("{}Request", item.ident);
     let mut arms: Vec<Arm> = vec![];
     for inner in item.items {
-        match inner {
-            TraitItem::Fn(func) => {
-                for anyArg in func.sig.inputs {
-                    if let Typed(arg) = anyArg {
-                        if let Pat::Ident(ident) = *arg.pat {
-                            let matched_enum_type = match ident.ident.to_string().as_str() {
-                                "session_id" => Some(format_ident!("SessionId")),
-                                "instance_id" => Some(format_ident!("InstanceId")),
-                                _ => None,
-                            };
-                            if let Some(enum_type) = matched_enum_type {
-                                let method = Ident::new(
-                                    &snake_to_camel(&func.sig.ident.to_string()),
-                                    Span::mixed_site(),
-                                );
-                                arms.push(parse_quote! {
-                                    #name::#method { #ident, .. } => RequestIdentifier::#enum_type(#ident.clone())
-                                });
-                            }
+        if let TraitItem::Fn(func) = inner {
+            for any_arg in func.sig.inputs {
+                if let Typed(arg) = any_arg {
+                    if let Pat::Ident(ident) = *arg.pat {
+                        let matched_enum_type = match ident.ident.to_string().as_str() {
+                            "session_id" => Some(format_ident!("SessionId")),
+                            "instance_id" => Some(format_ident!("InstanceId")),
+                            _ => None,
+                        };
+                        if let Some(enum_type) = matched_enum_type {
+                            let method = Ident::new(
+                                &snake_to_camel(&func.sig.ident.to_string()),
+                                Span::mixed_site(),
+                            );
+                            arms.push(parse_quote! {
+                                #name::#method { #ident, .. } => RequestIdentifier::#enum_type(#ident.clone())
+                            });
                         }
                     }
                 }
             }
-            _ => {}
         }
     }
     let q = quote! {
