@@ -11,6 +11,7 @@ use crate::{
 use futures::{prelude::*, ready, task::*};
 use pin_project::pin_project;
 use std::{io, pin::Pin};
+use crate::server::RequestResponse;
 
 /// A [`Channel`] that limits the number of concurrent requests by throttling.
 ///
@@ -65,13 +66,13 @@ where
                         "ThrottleRequest",
                     );
 
-                    self.as_mut().start_send(Response {
+                    self.as_mut().start_send(RequestResponse::Response(Response {
                         request_id: r.request.id,
                         message: Err(ServerError {
                             kind: io::ErrorKind::WouldBlock,
                             detail: "server throttled the request.".into(),
                         }),
-                    })?;
+                    }))?;
                 }
                 None => return Poll::Ready(None),
             }
@@ -80,7 +81,7 @@ where
     }
 }
 
-impl<C> Sink<Response<<C as Channel>::Resp>> for MaxRequests<C>
+impl<C> Sink<RequestResponse<<C as Channel>::Resp>> for MaxRequests<C>
 where
     C: Channel,
 {
@@ -92,7 +93,7 @@ where
 
     fn start_send(
         self: Pin<&mut Self>,
-        item: Response<<C as Channel>::Resp>,
+        item: RequestResponse<<C as Channel>::Resp>,
     ) -> Result<(), Self::Error> {
         self.project().inner.start_send(item)
     }
@@ -178,10 +179,7 @@ where
 mod tests {
     use super::*;
 
-    use crate::server::{
-        testing::{self, FakeChannel, PollExt},
-        TrackedRequest,
-    };
+    use crate::server::{RequestResponse, testing::{self, FakeChannel, PollExt}, TrackedRequest};
     use pin_utils::pin_mut;
     use std::{
         marker::PhantomData,
@@ -272,7 +270,7 @@ mod tests {
         }
         impl PendingSink<(), ()> {
             pub fn default<Req, Resp>(
-            ) -> PendingSink<io::Result<TrackedRequest<Req>>, Response<Resp>> {
+            ) -> PendingSink<io::Result<TrackedRequest<Req>>, RequestResponse<Resp>> {
                 PendingSink { ghost: PhantomData }
             }
         }
@@ -297,7 +295,7 @@ mod tests {
                 Poll::Pending
             }
         }
-        impl<Req, Resp> Channel for PendingSink<io::Result<TrackedRequest<Req>>, Response<Resp>> {
+        impl<Req, Resp> Channel for PendingSink<io::Result<TrackedRequest<Req>>, RequestResponse<Resp>> {
             type Req = Req;
             type Resp = Resp;
             type Transport = ();
@@ -332,10 +330,10 @@ mod tests {
             .unwrap();
         throttler
             .as_mut()
-            .start_send(Response {
+            .start_send(RequestResponse::Response(Response {
                 request_id: 0,
                 message: Ok(1),
-            })
+            }))
             .unwrap();
         assert_eq!(throttler.inner.in_flight_requests.len(), 0);
         assert_eq!(
