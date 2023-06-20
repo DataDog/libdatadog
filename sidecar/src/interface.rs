@@ -376,7 +376,7 @@ impl TelemetryServer {
                 let stop = {
                     let mut counter = self.session_counter.lock().unwrap();
                     if let Entry::Occupied(mut entry) = counter.entry(session.clone()) {
-                        if entry.insert(entry.get() - 1) == 0 {
+                        if entry.insert(entry.get() - 1) == 1 {
                             entry.remove();
                             true
                         } else {
@@ -395,7 +395,8 @@ impl TelemetryServer {
                     .sessions
                     .lock()
                     .unwrap()
-                    .remove(&instance_id.session_id);
+                    .get(&instance_id.session_id)
+                    .cloned();
                 if let Some(session) = maybe_session {
                     session.shutdown_runtime(&instance_id.runtime_id).await;
                 }
