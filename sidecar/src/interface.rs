@@ -349,7 +349,7 @@ impl TelemetryServer {
                     Some(s) => s,
                 };
                 let instance: RequestIdentifier = req.get().extract_identifier();
-                if let Ok(_) = tx.send((serve, req)).await {
+                if tx.send((serve, req)).await.is_ok() {
                     if let RequestIdentifier::InstanceId(ref instance_id) = instance {
                         instances.insert(instance_id.clone());
                     }
@@ -680,7 +680,7 @@ pub mod blocking {
     ) -> io::Result<()> {
         transport.send(TelemetryInterfaceRequest::EqueueActions {
             instance_id: instance_id.clone(),
-            queue_id: queue_id.clone(),
+            queue_id: *queue_id,
             actions,
         })
     }
@@ -695,7 +695,7 @@ pub mod blocking {
         transport.send(
             TelemetryInterfaceRequest::RegisterServiceAndFlushQueuedActions {
                 instance_id: instance_id.clone(),
-                queue_id: queue_id.clone(),
+                queue_id: *queue_id,
                 meta: runtime_metadata.clone(),
                 service_name: service_name.into_owned(),
             },

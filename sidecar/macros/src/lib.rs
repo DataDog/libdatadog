@@ -1,3 +1,6 @@
+// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::FnArg::Typed;
@@ -52,7 +55,7 @@ pub fn extract_request_id(_attr: TokenStream, mut input: TokenStream) -> TokenSt
             }
         }
     }
-    let q = quote! {
+    input.extend(TokenStream::from(quote! {
         impl RequestIdentification for tarpc::Request<#name> {
             fn extract_identifier(&self) -> RequestIdentifier {
                 match &self.message {
@@ -63,8 +66,6 @@ pub fn extract_request_id(_attr: TokenStream, mut input: TokenStream) -> TokenSt
                 }
             }
         }
-    };
-    //panic!("{}", q);
-    input.extend(TokenStream::from(q));
+    }));
     input
 }
