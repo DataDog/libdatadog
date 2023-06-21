@@ -493,8 +493,10 @@ dependencies = [
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
+ "futures",
  "hyper",
  "libc",
+ "serde_json",
  "tokio-util 0.7.4",
 ]
 

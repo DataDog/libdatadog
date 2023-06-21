@@ -203,8 +203,10 @@ impl From<RequestBuildResult> for Result<Box<Request>, String> {
 /// profile data supplied. If unsuccessful, it returns an error message.
 ///
 /// # Safety
-/// The `exporter`, `additional_stats`, and `endpoint_stats` args should be
-/// valid objects created by this module, except NULL is allowed.
+/// The `exporter`, `optional_additional_stats`, and `optional_endpoint_stats` args should be
+/// valid objects created by this module.
+/// NULL is allowed for `optional_additional_tags`, `optional_endpoints_stats` and
+/// `optional_internal_metadata_json`.
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
@@ -212,8 +214,9 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     start: Timespec,
     end: Timespec,
     files: Slice<File>,
-    additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoints_stats: Option<&profiled_endpoints::ProfiledEndpointsStats>,
+    optional_additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
+    optional_endpoints_stats: Option<&profiled_endpoints::ProfiledEndpointsStats>,
+    optional_internal_metadata_json: Option<&CharSlice>,
     timeout_ms: u64,
 ) -> RequestBuildResult {
     match exporter {
@@ -221,20 +224,45 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
         Some(exporter) => {
             let timeout = std::time::Duration::from_millis(timeout_ms);
             let converted_files = into_vec_files(files);
-            let tags = additional_tags.map(|tags| tags.iter().cloned().collect());
+            let tags = optional_additional_tags.map(|tags| tags.iter().cloned().collect());
+
+            let internal_metadata = match parse_internal_metadata_json(optional_internal_metadata_json) {
+                Ok(parsed) => parsed,
+                Err(err) => return RequestBuildResult::Err(err.into()),
+            };
 
             match exporter.build(
                 start.into(),
                 end.into(),
                 converted_files.as_slice(),
                 tags.as_ref(),
-                endpoints_stats,
+                optional_endpoints_stats,
+                internal_metadata,
                 timeout,
             ) {
                 Ok(request) => {
                     RequestBuildResult::Ok(NonNull::new_unchecked(Box::into_raw(Box::new(request))))
                 }
                 Err(err) => RequestBuildResult::Err(err.into()),
+            }
+        }
+    }
+}
+
+unsafe fn parse_internal_metadata_json(
+    internal_metadata_json: Option<&CharSlice>,
+) -> anyhow::Result<Option<serde_json::Value>> {
+    match internal_metadata_json {
+        None => Ok(None),
+        Some(internal_metadata_json) => {
+            let json = internal_metadata_json.try_to_utf8()?;
+            match serde_json::from_str(json) {
+                Ok(parsed) => Ok(Some(parsed)),
+                Err(error) => Err(anyhow::anyhow!(
+                    "Failed to parse contents of internal_metadata json string (`{}`): {}.",
+                    json,
+                    error
+                )),
             }
         }
     }
@@ -390,6 +418,7 @@ pub unsafe extern "C" fn ddog_CancellationToken_drop(token: Option<&mut Cancella
 mod test {
     use super::*;
     use ddcommon_ffi::Slice;
+    use serde_json::json;
 
     fn profiling_library_name() -> CharSlice<'static> {
         CharSlice::from("dd-trace-foo")
@@ -409,6 +438,26 @@ mod test {
 
     fn endpoint() -> CharSlice<'static> {
         CharSlice::from(base_url())
+    }
+
+    fn parsed_event_json(request: RequestBuildResult) -> serde_json::Value {
+        let request = Result::from(request).unwrap();
+
+        // Really hacky way of getting the event.json file contents, because I didn't want to implement a full multipart parser
+        // and didn't find a particularly good alternative.
+        // If you do figure out a better way, there's another copy of this code in the profiling tests, please update there too :)
+        let body = request.body();
+        let body_bytes: String = String::from_utf8_lossy(
+            &futures::executor::block_on(hyper::body::to_bytes(body)).unwrap(),
+        )
+        .to_string();
+        let event_json = body_bytes
+            .lines()
+            .skip_while(|line| !line.contains(r#"filename="event.json""#))
+            .nth(2)
+            .unwrap();
+
+        serde_json::from_str(event_json).unwrap()
     }
 
     #[test]
@@ -478,17 +527,151 @@ mod test {
                 Slice::from(files),
                 None,
                 None,
+                None,
                 timeout_milliseconds,
             )
         };
 
-        let build_result = Result::from(build_result);
-        build_result.unwrap();
+        let parsed_event_json = parsed_event_json(build_result);
 
-        // TODO: Currently, we're only testing that a request was built (building did not fail), but
-        //     we have no coverage for the request actually being correct.
-        //     It'd be nice to actually perform the request, capture its contents, and assert that
-        //     they are as expected.
+        assert_eq!(parsed_event_json["attachments"], json!(["foo.pprof"]));
+        assert_eq!(parsed_event_json["endpoint_counts"], json!(null));
+        assert_eq!(
+            parsed_event_json["start"],
+            json!("1970-01-01T00:00:12.000000034Z")
+        );
+        assert_eq!(
+            parsed_event_json["end"],
+            json!("1970-01-01T00:00:56.000000078Z")
+        );
+        assert_eq!(parsed_event_json["family"], json!("native"));
+        assert_eq!(parsed_event_json["internal"], json!({}));
+        assert_eq!(parsed_event_json["tags_profiler"], json!(""));
+        assert_eq!(parsed_event_json["version"], json!("4"));
+
+        // TODO: Assert on contents of attachments, as well as on the headers/configuration for the exporter
+    }
+
+    #[test]
+    fn test_build_with_internal_metadata() {
+        let exporter_result = unsafe {
+            ddog_prof_Exporter_new(
+                profiling_library_name(),
+                profiling_library_version(),
+                family(),
+                None,
+                endpoint_agent(endpoint()),
+            )
+        };
+
+        let mut exporter = match exporter_result {
+            ExporterNewResult::Ok(e) => e,
+            ExporterNewResult::Err(_) => panic!("Should not occur!"),
+        };
+
+        let files: &[File] = &[File {
+            name: CharSlice::from("foo.pprof"),
+            file: ByteSlice::from(b"dummy contents" as &[u8]),
+        }];
+
+        let start = Timespec {
+            seconds: 12,
+            nanoseconds: 34,
+        };
+        let finish = Timespec {
+            seconds: 56,
+            nanoseconds: 78,
+        };
+        let timeout_milliseconds = 90;
+
+        let raw_internal_metadata = CharSlice::from(
+            r#"
+            {
+                "no_signals_workaround_enabled": "true",
+                "execution_trace_enabled": "false",
+                "extra object": {"key": [1, 2, true]}
+            }
+        "#,
+        );
+
+        let build_result = unsafe {
+            ddog_prof_Exporter_Request_build(
+                Some(exporter.as_mut()),
+                start,
+                finish,
+                Slice::from(files),
+                None,
+                None,
+                Some(&raw_internal_metadata),
+                timeout_milliseconds,
+            )
+        };
+
+        let parsed_event_json = parsed_event_json(build_result);
+
+        assert_eq!(
+            parsed_event_json["internal"],
+            json!({
+                "no_signals_workaround_enabled": "true",
+                "execution_trace_enabled": "false",
+                "extra object": {"key": [1, 2, true]}
+            })
+        );
+    }
+
+    #[test]
+    fn test_build_with_invalid_internal_metadata() {
+        let exporter_result = unsafe {
+            ddog_prof_Exporter_new(
+                profiling_library_name(),
+                profiling_library_version(),
+                family(),
+                None,
+                endpoint_agent(endpoint()),
+            )
+        };
+
+        let mut exporter = match exporter_result {
+            ExporterNewResult::Ok(e) => e,
+            ExporterNewResult::Err(_) => panic!("Should not occur!"),
+        };
+
+        let files: &[File] = &[File {
+            name: CharSlice::from("foo.pprof"),
+            file: ByteSlice::from(b"dummy contents" as &[u8]),
+        }];
+
+        let start = Timespec {
+            seconds: 12,
+            nanoseconds: 34,
+        };
+        let finish = Timespec {
+            seconds: 56,
+            nanoseconds: 78,
+        };
+        let timeout_milliseconds = 90;
+
+        let raw_internal_metadata = CharSlice::from("this is not a valid json string");
+
+        let build_result = unsafe {
+            ddog_prof_Exporter_Request_build(
+                Some(exporter.as_mut()),
+                start,
+                finish,
+                Slice::from(files),
+                None,
+                None,
+                Some(&raw_internal_metadata),
+                timeout_milliseconds,
+            )
+        };
+
+        match build_result {
+            RequestBuildResult::Ok(_) => panic!("Should not happen!"),
+            RequestBuildResult::Err(message) => assert!(String::from(message).starts_with(
+                r#"Failed to parse contents of internal_metadata json string (`this is not a valid json string`)"#
+            )),
+        }
     }
 
     #[test]
@@ -509,6 +692,7 @@ mod test {
                 start,
                 finish,
                 Slice::default(),
+                None,
                 None,
                 None,
                 timeout_milliseconds,

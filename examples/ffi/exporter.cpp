@@ -131,6 +131,8 @@ int main(int argc, char *argv[]) {
   }};
 
   ddog_prof_Exporter_Slice_File files = {.ptr = files_, .len = sizeof files_ / sizeof *files_};
+  ddog_CharSlice internal_metadata_example =
+    DDOG_CHARSLICE_C("{\"no_signals_workaround_enabled\": \"true\", \"execution_trace_enabled\": \"false\"}");
 
   ddog_prof_Exporter_Request_BuildResult build_result = ddog_prof_Exporter_Request_build(
     exporter,
@@ -139,6 +141,7 @@ int main(int argc, char *argv[]) {
     files,
     nullptr,
     nullptr,
+    &internal_metadata_example,
     30000
   );
   ddog_prof_EncodedProfile_drop(encoded_profile);
