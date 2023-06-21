@@ -115,6 +115,8 @@ pub extern "C" fn ddog_daemon_entry_point() {
         tracing::error!("Error calling setsid(): {err}")
     }
 
+    let _ = prctl::set_name("dd-ipc-helper");
+
     #[cfg(feature = "tracing")]
     enable_tracing().ok();
     let now = Instant::now();
