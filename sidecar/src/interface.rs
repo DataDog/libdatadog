@@ -10,6 +10,7 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex, MutexGuard},
 };
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 
@@ -320,6 +321,8 @@ impl EnqueuedData {
 pub struct TelemetryServer {
     sessions: Arc<Mutex<HashMap<String, SessionInfo>>>,
     session_counter: Arc<Mutex<HashMap<String, u32>>>,
+    pub self_telemetry_config: Arc<Mutex<Option<ManualFutureCompleter<Config>>>>,
+    pub submitted_payloads: Arc<AtomicU64>,
 }
 
 impl TelemetryServer {
@@ -340,6 +343,7 @@ impl TelemetryServer {
         let tx = executor.swap_sender(tx);
 
         let session_counter = self.session_counter.clone();
+        let submitted_payloads = self.submitted_payloads.clone();
         let session_interceptor = tokio::spawn(async move {
             let mut sessions = HashSet::new();
             let mut instances = HashSet::new();
@@ -348,6 +352,9 @@ impl TelemetryServer {
                     None => return (sessions, instances),
                     Some(s) => s,
                 };
+
+                submitted_payloads.fetch_add(1, Ordering::SeqCst);
+
                 let instance: RequestIdentifier = req.get().extract_identifier();
                 if tx.send((serve, req)).await.is_ok() {
                     if let RequestIdentifier::InstanceId(ref instance_id) = instance {
@@ -402,6 +409,10 @@ impl TelemetryServer {
                 }
             }
         }
+    }
+
+    pub fn active_session_count(&self) -> usize {
+        self.session_counter.lock().unwrap().len()
     }
 
     fn get_session(&self, session_id: &String) -> SessionInfo {
@@ -630,6 +641,13 @@ impl TelemetryInterface for TelemetryServer {
         session.modify_config(|cfg| {
             cfg.set_url(&agent_url).ok();
         });
+
+        if let Some(completer) = self.self_telemetry_config.lock().unwrap().take() {
+            let config = session.session_config.lock().unwrap().as_ref().unwrap().clone();
+            tokio::spawn(async move {
+                completer.complete(config).await;
+            });
+        }
 
         Box::pin(async move {
             session.shutdown_running_instances().await;

@@ -15,19 +15,79 @@ use std::{
     },
     time::Duration,
 };
+use futures::future;
+use manual_future::ManualFuture;
 use tokio::select;
 
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::Receiver;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::interface::blocking::TelemetryTransport;
 use crate::interface::TelemetryServer;
 use datadog_ipc::platform::Channel as IpcChannel;
+use ddtelemetry::data::metrics::{MetricNamespace, MetricType};
+use ddtelemetry::metrics::ContextKey;
+use ddtelemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle};
 
 use crate::setup::{self, Liaison};
 
 use crate::config::{self, Config};
+
+struct MetricData<'a> {
+    worker: &'a TelemetryWorkerHandle,
+    server: &'a TelemetryServer,
+    submitted_payloads: ContextKey,
+    active_sessions: ContextKey,
+}
+impl<'a> MetricData<'a> {
+    async fn send(&self, key: ContextKey, value: f64) {
+        let _ = self.worker.send_msg(TelemetryActions::AddPoint((value, key, vec![]))).await;
+    }
+
+    async fn collect_and_send(&self) {
+        future::join_all(vec![
+            self.send(self.submitted_payloads, self.server.submitted_payloads.swap(0, Ordering::SeqCst) as f64),
+            self.send(self.active_sessions, self.server.active_session_count() as f64),
+        ]).await;
+    }
+}
+
+fn self_telemetry(server: TelemetryServer, mut shutdown_receiver: Receiver<()>) -> JoinHandle<()> {
+    let (future, completer) = ManualFuture::new();
+    server.self_telemetry_config.lock().unwrap().replace(completer);
+    tokio::spawn(async move {
+        if let Ok((worker, join_handle)) = TelemetryWorkerBuilder::new_fetch_host("datadog-ipc-helper".to_string(), "php".to_string(), "".to_string(), "".to_string()).spawn_with_config(future.await).await {
+            let metrics = MetricData {
+                worker: &worker,
+                server: &server,
+                submitted_payloads: worker.register_metric_context("sidecar.submitted_payloads".to_string(), vec![], MetricType::Count, true, MetricNamespace::Trace),
+                active_sessions: worker.register_metric_context("sidecar.active_sessions".to_string(), vec![], MetricType::Gauge, true, MetricNamespace::Trace),
+            };
+
+            let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start)).await;
+            loop {
+                select! {
+                    _ = tokio::time::sleep(Duration::from_secs(3)) => { // TODO: increase to 60 sec
+                        metrics.collect_and_send().await;
+                        let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushMetricAggr)).await;
+                        let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData)).await;
+                    },
+                    _ = shutdown_receiver.recv() => {
+                        metrics.collect_and_send().await;
+                        let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop)).await;
+                        let _ = join_handle.await;
+                        return
+                    },
+                }
+            }
+        } else {
+            shutdown_receiver.recv().await;
+        }
+    })
+}
 
 async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
     let counter = Arc::new(AtomicI32::new(0));
@@ -64,7 +124,8 @@ async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
     });
 
     let server = TelemetryServer::default();
-    let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel::<()>(1);
+    let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
+    let telemetry_handle = self_telemetry(server.clone(), shutdown_complete_rx);
 
     loop {
         let (socket, _) = select! {
@@ -93,7 +154,7 @@ async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
     }
     // Shutdown final sender so the receiver can complete
     drop(shutdown_complete_tx);
-    let _ = shutdown_complete_rx.recv().await;
+    let _ = telemetry_handle.await;
     Ok(())
 }
 
