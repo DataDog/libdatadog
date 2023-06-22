@@ -88,3 +88,16 @@ where
         Poll::Ready(())
     }
 }
+
+impl<C, S> SequentialExecutor<C, S>
+where
+    C: Channel + 'static,
+{
+    pub fn swap_sender(
+        &mut self,
+        mut sender: tokio::sync::mpsc::Sender<Request<S, C>>,
+    ) -> tokio::sync::mpsc::Sender<Request<S, C>> {
+        std::mem::swap(&mut self.tx, &mut sender);
+        sender
+    }
+}

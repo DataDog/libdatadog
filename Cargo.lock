@@ -515,6 +515,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "datadog-ipc",
+ "datadog-sidecar-macros",
  "ddcommon",
  "ddtelemetry",
  "futures",
@@ -527,6 +528,7 @@ dependencies = [
  "manual_future",
  "nix",
  "pin-project",
+ "prctl",
  "rand",
  "regex",
  "sendfd",
@@ -554,6 +556,14 @@ dependencies = [
  "libc",
  "paste",
  "tempfile",
+]
+
+[[package]]
+name = "datadog-sidecar-macros"
+version = "0.0.1"
+dependencies = [
+ "quote",
+ "syn 2.0.11",
 ]
 
 [[package]]
@@ -1624,6 +1634,16 @@ name = "ppv-lite86"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
+
+[[package]]
+name = "prctl"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "059a34f111a9dee2ce1ac2826a68b24601c4298cfeb1a587c3cb493d5ab46f52"
+dependencies = [
+ "libc",
+ "nix",
+]
 
 [[package]]
 name = "pretty_assertions"
