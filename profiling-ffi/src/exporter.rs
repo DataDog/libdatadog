@@ -226,10 +226,11 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
             let converted_files = into_vec_files(files);
             let tags = optional_additional_tags.map(|tags| tags.iter().cloned().collect());
 
-            let internal_metadata = match parse_internal_metadata_json(optional_internal_metadata_json) {
-                Ok(parsed) => parsed,
-                Err(err) => return RequestBuildResult::Err(err.into()),
-            };
+            let internal_metadata =
+                match parse_internal_metadata_json(optional_internal_metadata_json) {
+                    Ok(parsed) => parsed,
+                    Err(err) => return RequestBuildResult::Err(err.into()),
+                };
 
             match exporter.build(
                 start.into(),

@@ -6,13 +6,13 @@
 
 //! Provides a server that concurrently handles many connections sending multiplexed requests.
 
+#[cfg(feature = "opentelemetry")]
+use crate::context::SpanExt;
 use crate::{
     cancellations::{cancellations, CanceledRequests, RequestCancellation},
     context::{self},
     trace, ClientMessage, Request, Response, Transport,
 };
-#[cfg(feature = "opentelemetry")]
-use crate::context::SpanExt;
 use ::tokio::sync::mpsc;
 use futures::{
     future::{AbortRegistration, Abortable},
