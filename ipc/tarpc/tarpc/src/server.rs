@@ -6,13 +6,9 @@
 
 //! Provides a server that concurrently handles many connections sending multiplexed requests.
 
+use crate::{cancellations::{cancellations, CanceledRequests, RequestCancellation}, context::{self}, trace, ClientMessage, Request, Response, Transport};
 #[cfg(feature = "opentelemetry")]
 use crate::context::SpanExt;
-use crate::{
-    cancellations::{cancellations, CanceledRequests, RequestCancellation},
-    context::{self},
-    trace, ClientMessage, Request, Response, Transport,
-};
 use ::tokio::sync::mpsc;
 use futures::{
     future::{AbortRegistration, Abortable},
@@ -226,6 +222,18 @@ impl<Req, Resp, T> fmt::Debug for BaseChannel<Req, Resp, T> {
     }
 }
 
+/// A request response which may be discarded.
+#[derive(Debug)]
+pub enum RequestResponse<T> {
+    /// Indicates nothing is going to be sent back to the sender.
+    Discarded {
+        /// The id of the request to discard.
+        request_id: u64,
+    },
+    /// The response to be sent back to the sender.
+    Response(Response<T>),
+}
+
 /// A request tracked by a [`Channel`].
 #[derive(Debug)]
 pub struct TrackedRequest<Req> {
@@ -267,7 +275,7 @@ pub struct TrackedRequest<Req> {
 /// created by [`BaseChannel`].
 pub trait Channel
 where
-    Self: Transport<Response<<Self as Channel>::Resp>, TrackedRequest<<Self as Channel>::Req>>,
+    Self: Transport<RequestResponse<<Self as Channel>::Resp>, TrackedRequest<<Self as Channel>::Req>>,
 {
     /// Type of request item.
     type Req;
@@ -459,7 +467,7 @@ where
     }
 }
 
-impl<Req, Resp, T> Sink<Response<Resp>> for BaseChannel<Req, Resp, T>
+impl<Req, Resp, T> Sink<RequestResponse<Resp>> for BaseChannel<Req, Resp, T>
 where
     T: Transport<Response<Resp>, ClientMessage<Req>>,
     T::Error: Error,
@@ -473,20 +481,28 @@ where
             .map_err(ChannelError::Transport)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, response: Response<Resp>) -> Result<(), Self::Error> {
-        if let Some(span) = self
-            .in_flight_requests_mut()
-            .remove_request(response.request_id)
-        {
-            let _entered = span.enter();
-            tracing::info!("SendResponse");
-            self.project()
-                .transport
-                .start_send(response)
-                .map_err(ChannelError::Transport)
-        } else {
-            // If the request isn't tracked anymore, there's no need to send the response.
-            Ok(())
+    fn start_send(mut self: Pin<&mut Self>, response: RequestResponse<Resp>) -> Result<(), Self::Error> {
+        match response {
+            RequestResponse::Response(response) => {
+                if let Some(span) = self
+                    .in_flight_requests_mut()
+                    .remove_request(response.request_id)
+                {
+                    let _entered = span.enter();
+                    tracing::info!("SendResponse");
+                    self.project()
+                        .transport
+                        .start_send(response)
+                        .map_err(ChannelError::Transport)
+                } else {
+                    // If the request isn't tracked anymore, there's no need to send the response.
+                    Ok(())
+                }
+            },
+            RequestResponse::Discarded { request_id } => {
+                self.in_flight_requests_mut().remove_request(request_id);
+                Ok(())
+            },
         }
     }
 
@@ -543,9 +559,9 @@ where
     #[pin]
     channel: C,
     /// Responses waiting to be written to the wire.
-    pending_responses: mpsc::Receiver<Response<C::Resp>>,
+    pending_responses: mpsc::Receiver<RequestResponse<C::Resp>>,
     /// Handed out to request handlers to fan in responses.
-    responses_tx: mpsc::Sender<Response<C::Resp>>,
+    responses_tx: mpsc::Sender<RequestResponse<C::Resp>>,
 }
 
 impl<C> Requests<C>
@@ -565,7 +581,7 @@ where
     /// Returns the inner channel over which messages are sent and received.
     pub fn pending_responses_mut<'a>(
         self: &'a mut Pin<&mut Self>,
-    ) -> &'a mut mpsc::Receiver<Response<C::Resp>> {
+    ) -> &'a mut mpsc::Receiver<RequestResponse<C::Resp>> {
         self.as_mut().project().pending_responses
     }
 
@@ -633,7 +649,7 @@ where
     fn poll_next_response(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Response<C::Resp>, C::Error>>> {
+    ) -> Poll<Option<Result<RequestResponse<C::Resp>, C::Error>>> {
         ready!(self.ensure_writeable(cx)?);
 
         match ready!(self.pending_responses_mut().poll_recv(cx)) {
@@ -694,7 +710,7 @@ pub struct InFlightRequest<Req, Res> {
     abort_registration: AbortRegistration,
     response_guard: ResponseGuard,
     span: Span,
-    response_tx: mpsc::Sender<Response<Res>>,
+    response_tx: mpsc::Sender<RequestResponse<Res>>,
 }
 
 impl<Req, Res> InFlightRequest<Req, Res> {
@@ -745,12 +761,16 @@ impl<Req, Res> InFlightRequest<Req, Res> {
 
                 tracing::info!("CompleteRequest");
                 if context.discard_response {
+                    let response = RequestResponse::Discarded {
+                        request_id,
+                    };
+                    let _ = response_tx.send(response).await;
                     tracing::info!("DiscardingResponse");
                 } else {
-                    let response = Response {
+                    let response = RequestResponse::Response(Response {
                         request_id,
                         message: Ok(response),
-                    };
+                    });
                     let _ = response_tx.send(response).await;
                     tracing::info!("BufferResponse");
                 }
@@ -808,6 +828,7 @@ mod tests {
     };
     use futures_test::task::noop_context;
     use std::{pin::Pin, task::Poll};
+    use crate::server::RequestResponse;
 
     fn test_channel<Req, Resp>() -> (
         Pin<Box<BaseChannel<Req, Resp, UnboundedChannel<ClientMessage<Req>, Response<Resp>>>>>,
@@ -1031,10 +1052,10 @@ mod tests {
         assert_eq!(channel.in_flight_requests(), 1);
         channel
             .as_mut()
-            .start_send(Response {
+            .start_send(RequestResponse::Response(Response {
                 request_id: 0,
                 message: Ok(()),
-            })
+            }))
             .unwrap();
         assert_eq!(channel.in_flight_requests(), 0);
     }
@@ -1094,10 +1115,10 @@ mod tests {
         requests
             .as_mut()
             .channel_pin_mut()
-            .start_send(Response {
+            .start_send(RequestResponse::Response(Response {
                 request_id: 0,
                 message: Ok(()),
-            })
+            }))
             .unwrap();
 
         // Response waiting to be written.
@@ -1105,10 +1126,10 @@ mod tests {
             .as_mut()
             .project()
             .responses_tx
-            .send(Response {
+            .send(RequestResponse::Response(Response {
                 request_id: 1,
                 message: Ok(()),
-            })
+            }))
             .await
             .unwrap();
 
@@ -1145,10 +1166,10 @@ mod tests {
         requests
             .as_mut()
             .channel_pin_mut()
-            .start_send(Response {
+            .start_send(RequestResponse::Response(Response {
                 request_id: 0,
                 message: Ok(()),
-            })
+            }))
             .unwrap();
 
         // Response waiting to be written.
@@ -1165,10 +1186,10 @@ mod tests {
             .as_mut()
             .project()
             .responses_tx
-            .send(Response {
+            .send(RequestResponse::Response(Response {
                 request_id: 1,
                 message: Ok(()),
-            })
+            }))
             .await
             .unwrap();
 

@@ -12,6 +12,7 @@ members = [
   "tools",
   "ipc",
   "sidecar",
+  "sidecar/macros",
   "sidecar-ffi",
   "tools/cc_utils",
   "tools/sidecar_mockgen",
