@@ -154,6 +154,11 @@ impl ProfileExporter {
 
     #[allow(clippy::too_many_arguments)]
     /// Build a Request object representing the profile information provided.
+    ///
+    /// For details on the `optional_internal_metadata_json`, please reference the Datadog-internal
+    /// "RFC: Attaching internal metadata to pprof profiles".
+    /// If you use this parameter, please update the RFC with your use-case, so we can keep track of how this
+    /// is getting used.
     pub fn build(
         &self,
         start: DateTime<Utc>,
@@ -161,7 +166,6 @@ impl ProfileExporter {
         files: &[File],
         additional_tags: Option<&Vec<Tag>>,
         endpoint_counts: Option<&ProfiledEndpointsStats>,
-        // See Datadog-internal "RFC: Attaching internal metadata to pprof profiles" for details
         internal_metadata: Option<serde_json::Value>,
         timeout: std::time::Duration,
     ) -> anyhow::Result<Request> {

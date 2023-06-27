@@ -202,6 +202,11 @@ impl From<RequestBuildResult> for Result<Box<Request>, String> {
 /// If successful, builds a `ddog_prof_Exporter_Request` object based on the
 /// profile data supplied. If unsuccessful, it returns an error message.
 ///
+/// For details on the `optional_internal_metadata_json`, please reference the Datadog-internal
+/// "RFC: Attaching internal metadata to pprof profiles".
+/// If you use this parameter, please update the RFC with your use-case, so we can keep track of how this
+/// is getting used.
+///
 /// # Safety
 /// The `exporter`, `optional_additional_stats`, and `optional_endpoint_stats` args should be
 /// valid objects created by this module.
