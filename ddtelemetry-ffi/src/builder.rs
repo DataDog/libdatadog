@@ -1,7 +1,6 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
-use std::path::{Path, PathBuf};
-
+use ddcommon::Endpoint;
 use ddcommon_ffi as ffi;
 use ddtelemetry::{
     data,
@@ -97,12 +96,12 @@ crate::c_setters!(
 crate::c_setters!(
     object_name => builder,
     object_type => TelemetryWorkerBuilder,
-    property_type => ffi::CharSlice,
-    property_type_name_snakecase => path,
-    property_type_name_camel_case => Path,
-    convert_fn => (|p: ffi::CharSlice| -> Result<PathBuf, String> { Ok(Path::new(p.to_utf8_lossy().as_ref()).to_path_buf()) }),
+    property_type => &Endpoint,
+    property_type_name_snakecase => endpoint,
+    property_type_name_camel_case => Endpoint,
+    convert_fn => (|e: &Endpoint| -> Result<_, String> { Ok(e.clone()) }),
     SETTERS {
-        config.mock_client_file,
+        config.endpoint,
     }
 );
 

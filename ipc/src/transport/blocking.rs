@@ -193,6 +193,10 @@ where
         self.transport.channel.set_write_timeout(timeout)
     }
 
+    pub fn is_closed(&self) -> bool {
+        self.transport.channel.probe_readable()
+    }
+
     pub fn send(&mut self, item: OutgoingItem) -> io::Result<()> {
         let mut ctx = Context::current();
         ctx.discard_response = true;

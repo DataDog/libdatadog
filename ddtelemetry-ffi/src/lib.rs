@@ -115,30 +115,7 @@ pub extern "C" fn ddog_MaybeError_drop(_: MaybeError) {}
 mod test_c_ffi {
     use super::*;
     use crate::{builder::*, worker_handle::*};
-
-    #[test]
-    fn test_set_builder_mock_client_config() {
-        unsafe {
-            let mut builder = std::ptr::null_mut();
-            ddog_builder_instantiate(
-                &mut builder,
-                ffi::CharSlice::from("service_name"),
-                ffi::CharSlice::from("language_name"),
-                ffi::CharSlice::from("language_version"),
-                ffi::CharSlice::from("tracer_version"),
-            );
-            let mut builder = Box::from_raw(builder);
-            ddog_builder_with_path_config_mock_client_file(
-                &mut builder,
-                ffi::CharSlice::from("/dev/null"),
-            );
-
-            assert_eq!(
-                builder.config.mock_client_file.as_deref(),
-                Some("/dev/null".as_ref())
-            );
-        }
-    }
+    use ddcommon::{parse_uri, Endpoint};
 
     #[test]
     fn test_set_builder_str_param() {
@@ -263,9 +240,16 @@ mod test_c_ffi {
             let mut builder = Box::from_raw(builder);
 
             let f = tempfile::NamedTempFile::new().unwrap();
-            ddog_builder_with_path_config_mock_client_file(
+            ddog_builder_with_endpoint_config_endpoint(
                 &mut builder,
-                ffi::CharSlice::from(f.path().as_os_str().to_str().unwrap()),
+                &Endpoint {
+                    api_key: None,
+                    url: parse_uri(&format!(
+                        "file://{}",
+                        f.path().as_os_str().to_str().unwrap()
+                    ))
+                    .unwrap(),
+                },
             );
             ddog_builder_with_bool_config_telemetry_debug_logging_enabled(&mut builder, true);
 

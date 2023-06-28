@@ -12,11 +12,14 @@ crate-type = ["lib", "staticlib", "cdylib"]
 [dependencies]
 ddtelemetry = { path = "../ddtelemetry" }
 datadog-sidecar = { path = "../sidecar" }
+datadog-trace-utils = { path = "../trace-utils" }
 datadog-ipc = { path = "../ipc" }
+ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi" }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi" }
 paste = "1"
 libc = "0.2"
 
 [dev-dependencies]
+hyper = { version = "0.14", default-features = false }
 tempfile = {version = "3.3"}

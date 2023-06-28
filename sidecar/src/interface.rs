@@ -4,8 +4,12 @@
 // Lint removed from stable clippy after rust 1.60 - this allow can be removed once we update rust version
 #![allow(clippy::needless_collect)]
 use std::collections::hash_map::Entry;
-use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::{BTreeMap, HashSet};
+use std::iter::zip;
+use std::ops::DerefMut;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::time;
+use std::time::{Duration, Instant};
 use std::{
     collections::HashMap,
     pin::Pin,
@@ -15,21 +19,29 @@ use std::{
 use anyhow::Result;
 
 use datadog_ipc::{platform::AsyncChannel, transport::Transport};
-use futures::future::join_all;
 use futures::{
-    future::{self, BoxFuture, Ready, Shared},
+    future::{self, join_all, BoxFuture, Ready, Shared},
     FutureExt,
 };
 use manual_future::{ManualFuture, ManualFutureCompleter};
 
+use datadog_ipc::platform::{FileBackedHandle, NamedShmHandle, ShmHandle};
 use datadog_ipc::tarpc::{context::Context, server::Channel};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tokio::net::UnixStream;
+use tokio::select;
+use tokio::task::{JoinError, JoinHandle};
+use tracing::{error, info};
 
+use crate::agent_remote_config::AgentRemoteConfigWriter;
+use crate::config::get_product_endpoint;
 use datadog_ipc::tarpc;
+use datadog_trace_protobuf::pb;
+use datadog_trace_utils::trace_utils;
+use datadog_trace_utils::trace_utils::{SendData, TracerHeaderTags};
+use ddcommon::Endpoint;
 use ddtelemetry::{
-    config::Config,
     data,
     worker::{
         store::Store, LifecycleAction, TelemetryActions, TelemetryWorkerBuilder,
@@ -37,9 +49,12 @@ use ddtelemetry::{
     },
 };
 
+use crate::tracer;
+
 #[datadog_sidecar_macros::extract_request_id]
+#[datadog_ipc_macros::impl_transfer_handles]
 #[tarpc::service]
-pub trait TelemetryInterface {
+pub trait SidecarInterface {
     async fn equeue_actions(
         instance_id: InstanceId,
         queue_id: QueueId,
@@ -51,9 +66,19 @@ pub trait TelemetryInterface {
         meta: RuntimeMeta,
         service_name: String,
     );
-    async fn set_session_agent_url(session_id: String, agent_url: String);
+    async fn set_session_config(session_id: String, config: SessionConfig);
     async fn shutdown_runtime(instance_id: InstanceId);
     async fn shutdown_session(session_id: String);
+    async fn send_trace_v04_shm(
+        instance_id: InstanceId,
+        #[SerializedHandle] handle: ShmHandle,
+        headers: SerializedTracerHeaderTags,
+    );
+    async fn send_trace_v04_bytes(
+        instance_id: InstanceId,
+        data: Vec<u8>,
+        headers: SerializedTracerHeaderTags,
+    );
     async fn ping();
 }
 
@@ -65,6 +90,25 @@ pub enum RequestIdentifier {
     InstanceId(InstanceId),
     SessionId(String),
     None,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SerializedTracerHeaderTags {
+    data: String,
+}
+
+impl<'a> From<&'a SerializedTracerHeaderTags> for TracerHeaderTags<'a> {
+    fn from(serialized: &'a SerializedTracerHeaderTags) -> Self {
+        serde_json::from_str(&serialized.data).unwrap()
+    }
+}
+
+impl<'a> From<TracerHeaderTags<'a>> for SerializedTracerHeaderTags {
+    fn from(value: TracerHeaderTags<'a>) -> Self {
+        SerializedTracerHeaderTags {
+            data: serde_json::to_string(&value).unwrap(),
+        }
+    }
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
@@ -122,7 +166,8 @@ impl QueueId {
 #[derive(Default, Clone)]
 struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
-    session_config: Arc<Mutex<Option<Config>>>,
+    session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
+    tracer_config: Arc<Mutex<tracer::Config>>,
 }
 
 impl SessionInfo {
@@ -181,30 +226,41 @@ impl SessionInfo {
         runtime.shutdown().await
     }
 
-    fn get_config(&self) -> MutexGuard<Option<Config>> {
+    fn get_telemetry_config(&self) -> MutexGuard<Option<ddtelemetry::config::Config>> {
         let mut cfg = self.session_config.lock().unwrap();
 
         if (*cfg).is_none() {
-            *cfg = Some(Config::from_env())
+            *cfg = Some(ddtelemetry::config::Config::from_env())
         }
 
         cfg
     }
 
-    fn modify_config<F>(&self, mut f: F)
+    fn modify_telemetry_config<F>(&self, mut f: F)
     where
-        F: FnMut(&mut Config),
+        F: FnMut(&mut ddtelemetry::config::Config),
     {
-        if let Some(cfg) = &mut *self.get_config() {
+        if let Some(cfg) = &mut *self.get_telemetry_config() {
             f(cfg)
         }
+    }
+
+    fn get_trace_config(&self) -> MutexGuard<tracer::Config> {
+        self.tracer_config.lock().unwrap()
+    }
+
+    fn modify_trace_config<F>(&self, mut f: F)
+    where
+        F: FnMut(&mut tracer::Config),
+    {
+        f(&mut self.get_trace_config());
     }
 }
 
 #[allow(clippy::large_enum_variant)]
 enum AppOrQueue {
     App(Shared<ManualFuture<String>>),
-    Queue(EnqueuedData),
+    Queue(EnqueuedTelemetryData),
 }
 
 #[allow(clippy::type_complexity)]
@@ -268,14 +324,14 @@ struct AppInstance {
     telemetry_worker_shutdown: Shared<BoxFuture<'static, Option<()>>>,
 }
 
-struct EnqueuedData {
+struct EnqueuedTelemetryData {
     dependencies: Store<data::Dependency>,
     configurations: Store<data::Configuration>,
     integrations: Store<data::Integration>,
     actions: Vec<TelemetryActions>,
 }
 
-impl Default for EnqueuedData {
+impl Default for EnqueuedTelemetryData {
     fn default() -> Self {
         Self {
             dependencies: Store::new(MAX_ITEMS),
@@ -286,7 +342,7 @@ impl Default for EnqueuedData {
     }
 }
 
-impl EnqueuedData {
+impl EnqueuedTelemetryData {
     pub fn process(&mut self, actions: Vec<TelemetryActions>) {
         for action in actions {
             match action {
@@ -317,15 +373,199 @@ impl EnqueuedData {
     }
 }
 
+#[derive(Default)]
+struct TraceSendData {
+    pub send_data: Vec<SendData>,
+    pub send_data_size: usize,
+    pub force_flush: Option<ManualFutureCompleter<()>>,
+}
+
+impl TraceSendData {
+    pub fn flush(&mut self) {
+        if let Some(force_flush) = self.force_flush.take() {
+            tokio::spawn(async move {
+                force_flush.complete(()).await;
+            });
+        }
+    }
+}
+
+#[derive(Default)]
+struct TraceFlusherData {
+    pub traces: TraceSendData,
+    pub flusher: Option<JoinHandle<()>>,
+}
+
+struct AgentRemoteConfig {
+    pub writer: AgentRemoteConfigWriter<NamedShmHandle>,
+    pub last_write: Instant,
+}
+
+#[derive(Default)]
+struct AgentRemoteConfigs {
+    pub writers: HashMap<Endpoint, AgentRemoteConfig>,
+    pub last_used: BTreeMap<Instant, Endpoint>,
+}
+
+#[derive(Default)]
+pub struct TraceFlusher {
+    inner: Mutex<TraceFlusherData>,
+    pub interval: AtomicU64,
+    pub min_force_flush_size: AtomicU32,
+    pub min_force_drop_size: AtomicU32, // put a limit on memory usage
+    remote_config: Mutex<AgentRemoteConfigs>,
+}
+
+impl TraceFlusher {
+    fn write_remote_configs(&self, endpoint: Endpoint, contents: Vec<u8>) {
+        let configs = &mut *self.remote_config.lock().unwrap();
+
+        let mut entry = configs.writers.entry(endpoint.clone());
+        let writer = match entry {
+            Entry::Occupied(ref mut entry) => entry.get_mut(),
+            Entry::Vacant(entry) => {
+                if let Ok(writer) = crate::agent_remote_config::new_writer(&endpoint) {
+                    entry.insert(AgentRemoteConfig {
+                        writer,
+                        last_write: Instant::now(),
+                    })
+                } else {
+                    return;
+                }
+            }
+        };
+        writer.writer.write(contents.as_slice());
+
+        let now = Instant::now();
+        let last = writer.last_write;
+        writer.last_write = now;
+
+        configs.last_used.remove(&last);
+        configs.last_used.insert(now, endpoint);
+
+        while let Some((&time, _)) = configs.last_used.iter().next() {
+            if time + Duration::new(50, 0) > Instant::now() {
+                break;
+            }
+            configs
+                .writers
+                .remove(&configs.last_used.remove(&time).unwrap());
+        }
+    }
+
+    fn start_trace_flusher(self: Arc<Self>, mut force_flush: ManualFuture<()>) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            loop {
+                select! {
+                    _ = tokio::time::sleep(time::Duration::from_millis(
+                        self.interval.load(Ordering::Relaxed),
+                    )) => {},
+                    _ = force_flush => {},
+                }
+
+                let (new_force_flush, completer) = ManualFuture::new();
+                force_flush = new_force_flush;
+
+                let trace_buffer = std::mem::replace(
+                    &mut self.inner.lock().unwrap().traces,
+                    TraceSendData {
+                        send_data: vec![],
+                        send_data_size: 0,
+                        force_flush: Some(completer),
+                    },
+                )
+                .send_data;
+                let mut futures: Vec<_> = Vec::new();
+                let mut intake_target: Vec<_> = Vec::new();
+                for send_data in trace_utils::coalesce_send_data(trace_buffer).into_iter() {
+                    intake_target.push(send_data.target.clone());
+                    futures.push(send_data.send());
+                }
+                for (endpoint, response) in zip(intake_target, join_all(futures).await) {
+                    match response {
+                        Ok(response) => {
+                            if endpoint.api_key.is_none() {
+                                // not when intake
+                                match hyper::body::to_bytes(response.into_body()).await {
+                                    Ok(body_bytes) => self.write_remote_configs(
+                                        endpoint.clone(),
+                                        body_bytes.to_vec(),
+                                    ),
+                                    Err(e) => error!("Error receiving agent configuration: {e:?}"),
+                                }
+                            }
+                            info!("Successfully flushed traces to {}", endpoint.url);
+                        }
+                        Err(e) => {
+                            error!("Error sending trace: {e:?}");
+                            if endpoint.api_key.is_some() {
+                                // TODO: Retries when sending to intake
+                            }
+                        }
+                    }
+                }
+
+                let mut data = self.inner.lock().unwrap();
+                let data = data.deref_mut();
+                if data.traces.send_data.is_empty() {
+                    data.flusher = None;
+                    break;
+                }
+            }
+        })
+    }
+
+    pub fn enqueue(self: &Arc<Self>, data: SendData) {
+        let mut flush_data = self.inner.lock().unwrap();
+        let flush_data = flush_data.deref_mut();
+
+        flush_data.traces.send_data_size += data.size();
+
+        if flush_data.traces.send_data_size
+            > self.min_force_drop_size.load(Ordering::Relaxed) as usize
+        {
+            return;
+        }
+
+        flush_data.traces.send_data.push(data);
+        if flush_data.flusher.is_none() {
+            let (force_flush, completer) = ManualFuture::new();
+            flush_data.flusher = Some(self.clone().start_trace_flusher(force_flush));
+            flush_data.traces.force_flush = Some(completer);
+        }
+        if flush_data.traces.send_data_size
+            > self.min_force_flush_size.load(Ordering::Relaxed) as usize
+        {
+            flush_data.traces.flush();
+        }
+    }
+
+    pub async fn join(&self) -> Result<(), JoinError> {
+        let flusher = {
+            let mut flush_data = self.inner.lock().unwrap();
+            self.interval.store(0, Ordering::SeqCst);
+            flush_data.traces.flush();
+            flush_data.deref_mut().flusher.take()
+        };
+        if let Some(flusher) = flusher {
+            flusher.await
+        } else {
+            Ok(())
+        }
+    }
+}
+
 #[derive(Default, Clone)]
-pub struct TelemetryServer {
+pub struct SidecarServer {
+    pub trace_flusher: Arc<TraceFlusher>,
     sessions: Arc<Mutex<HashMap<String, SessionInfo>>>,
     session_counter: Arc<Mutex<HashMap<String, u32>>>,
-    pub self_telemetry_config: Arc<Mutex<Option<ManualFutureCompleter<Config>>>>,
+    pub self_telemetry_config:
+        Arc<Mutex<Option<ManualFutureCompleter<ddtelemetry::config::Config>>>>,
     pub submitted_payloads: Arc<AtomicU64>,
 }
 
-impl TelemetryServer {
+impl SidecarServer {
     pub async fn accept_connection(self, socket: UnixStream) {
         let server = datadog_ipc::tarpc::server::BaseChannel::new(
             datadog_ipc::tarpc::server::Config {
@@ -469,7 +709,7 @@ impl TelemetryServer {
             .lock()
             .unwrap()
             .clone()
-            .unwrap_or_else(Config::from_env);
+            .unwrap_or_else(ddtelemetry::config::Config::from_env);
 
         // TODO: log errors
         let instance_option =
@@ -499,6 +739,31 @@ impl TelemetryServer {
         completer.unwrap().complete(instance_option).await;
         app_future.await
     }
+
+    fn send_trace_v04(&self, headers: &SerializedTracerHeaderTags, data: &[u8], target: &Endpoint) {
+        let headers: TracerHeaderTags = headers.into();
+
+        let size = data.len();
+        let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_slice(data) {
+            Ok(res) => res,
+            Err(err) => {
+                error!("Error deserializing trace from request body: {err}");
+                return;
+            }
+        };
+
+        if traces.is_empty() {
+            error!("No traces deserialized from the request body.");
+            return;
+        }
+
+        let payload =
+            trace_utils::collect_trace_chunks(traces, &headers, |_chunk, _root_span_index| {});
+
+        // send trace payload to our trace flusher
+        let data = SendData::new(size, payload, headers, target);
+        self.trace_flusher.enqueue(data);
+    }
 }
 
 type NoResponse = Ready<()>;
@@ -507,7 +772,15 @@ fn no_response() -> NoResponse {
     future::ready(())
 }
 
-impl TelemetryInterface for TelemetryServer {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionConfig {
+    pub endpoint: Endpoint,
+    pub flush_interval: Duration,
+    pub force_flush_size: usize,
+    pub force_drop_size: usize,
+}
+
+impl SidecarInterface for SidecarServer {
     type PingFut = Ready<()>;
 
     fn ping(self, _: Context) -> Self::PingFut {
@@ -525,7 +798,7 @@ impl TelemetryInterface for TelemetryServer {
     type ShutdownSessionFut = NoResponse;
 
     fn shutdown_session(self, _: Context, session_id: String) -> Self::ShutdownSessionFut {
-        tokio::spawn(async move { TelemetryServer::stop_session(&self, &session_id).await });
+        tokio::spawn(async move { SidecarServer::stop_session(&self, &session_id).await });
         no_response()
     }
 
@@ -568,7 +841,7 @@ impl TelemetryInterface for TelemetryServer {
                 }
             },
             Entry::Vacant(entry) => {
-                entry.insert(AppOrQueue::Queue(EnqueuedData::processed(actions)));
+                entry.insert(AppOrQueue::Queue(EnqueuedTelemetryData::processed(actions)));
             }
         }
 
@@ -594,7 +867,7 @@ impl TelemetryInterface for TelemetryServer {
                 Some(AppOrQueue::Queue(_)) => {
                     app_or_actions.insert(queue_id, AppOrQueue::App(future.shared()))
                 }
-                None => Some(AppOrQueue::Queue(EnqueuedData::default())),
+                None => Some(AppOrQueue::Queue(EnqueuedTelemetryData::default())),
                 _ => None,
             }
         };
@@ -629,18 +902,36 @@ impl TelemetryInterface for TelemetryServer {
         no_response()
     }
 
-    type SetSessionAgentUrlFut = Pin<Box<dyn Send + futures::Future<Output = ()>>>;
+    type SetSessionConfigFut = Pin<Box<dyn Send + futures::Future<Output = ()>>>;
 
-    fn set_session_agent_url(
+    fn set_session_config(
         self,
         _: Context,
         session_id: String,
-        agent_url: String,
-    ) -> Self::SetSessionAgentUrlFut {
+        config: SessionConfig,
+    ) -> Self::SetSessionConfigFut {
         let session = self.get_session(&session_id);
-        session.modify_config(|cfg| {
-            cfg.set_url(&agent_url).ok();
+        session.modify_telemetry_config(|cfg| {
+            let endpoint =
+                get_product_endpoint(ddtelemetry::config::PROD_INTAKE_SUBDOMAIN, &config.endpoint);
+            cfg.set_endpoint(endpoint).ok();
         });
+        session.modify_trace_config(|cfg| {
+            let endpoint = get_product_endpoint(
+                datadog_trace_utils::config_utils::PROD_INTAKE_SUBDOMAIN,
+                &config.endpoint,
+            );
+            cfg.set_endpoint(endpoint).ok();
+        });
+        self.trace_flusher
+            .interval
+            .store(config.flush_interval.as_millis() as u64, Ordering::Relaxed);
+        self.trace_flusher
+            .min_force_flush_size
+            .store(config.force_flush_size as u32, Ordering::Relaxed);
+        self.trace_flusher
+            .min_force_drop_size
+            .store(config.force_drop_size as u32, Ordering::Relaxed);
 
         if let Some(completer) = self.self_telemetry_config.lock().unwrap().take() {
             let config = session
@@ -660,9 +951,61 @@ impl TelemetryInterface for TelemetryServer {
             no_response().await
         })
     }
+
+    type SendTraceV04ShmFut = NoResponse;
+
+    fn send_trace_v04_shm(
+        self,
+        _: Context,
+        instance_id: InstanceId,
+        handle: ShmHandle,
+        headers: SerializedTracerHeaderTags,
+    ) -> Self::SendTraceV04ShmFut {
+        if let Some(endpoint) = self
+            .get_session(&instance_id.session_id)
+            .get_trace_config()
+            .endpoint
+            .clone()
+        {
+            tokio::spawn(async move {
+                match handle.map() {
+                    Ok(mapped) => {
+                        self.send_trace_v04(&headers, mapped.as_slice(), &endpoint);
+                    }
+                    Err(e) => error!("Failed mapping shared trace data memory: {}", e),
+                }
+            });
+        }
+
+        no_response()
+    }
+
+    type SendTraceV04BytesFut = NoResponse;
+
+    fn send_trace_v04_bytes(
+        self,
+        _: Context,
+        instance_id: InstanceId,
+        data: Vec<u8>,
+        headers: SerializedTracerHeaderTags,
+    ) -> Self::SendTraceV04BytesFut {
+        if let Some(endpoint) = self
+            .get_session(&instance_id.session_id)
+            .get_trace_config()
+            .endpoint
+            .clone()
+        {
+            tokio::spawn(async move {
+                self.send_trace_v04(&headers, data.as_slice(), &endpoint);
+            });
+        }
+
+        no_response()
+    }
 }
 
 pub mod blocking {
+    use datadog_ipc::platform::ShmHandle;
     use std::{
         borrow::Cow,
         io,
@@ -671,38 +1014,39 @@ pub mod blocking {
 
     use datadog_ipc::transport::blocking::BlockingTransport;
 
+    use crate::interface::{SerializedTracerHeaderTags, SessionConfig};
     use ddtelemetry::worker::TelemetryActions;
 
     use super::{
-        InstanceId, QueueId, RuntimeMeta, TelemetryInterfaceRequest, TelemetryInterfaceResponse,
+        InstanceId, QueueId, RuntimeMeta, SidecarInterfaceRequest, SidecarInterfaceResponse,
     };
 
-    pub type TelemetryTransport =
-        BlockingTransport<TelemetryInterfaceResponse, TelemetryInterfaceRequest>;
+    pub type SidecarTransport =
+        BlockingTransport<SidecarInterfaceResponse, SidecarInterfaceRequest>;
 
     pub fn shutdown_runtime(
-        transport: &mut TelemetryTransport,
+        transport: &mut SidecarTransport,
         instance_id: &InstanceId,
     ) -> io::Result<()> {
-        transport.send(TelemetryInterfaceRequest::ShutdownRuntime {
+        transport.send(SidecarInterfaceRequest::ShutdownRuntime {
             instance_id: instance_id.clone(),
         })
     }
 
     pub fn shutdown_session(
-        transport: &mut TelemetryTransport,
+        transport: &mut SidecarTransport,
         session_id: String,
     ) -> io::Result<()> {
-        transport.send(TelemetryInterfaceRequest::ShutdownSession { session_id })
+        transport.send(SidecarInterfaceRequest::ShutdownSession { session_id })
     }
 
     pub fn enqueue_actions(
-        transport: &mut TelemetryTransport,
+        transport: &mut SidecarTransport,
         instance_id: &InstanceId,
         queue_id: &QueueId,
         actions: Vec<TelemetryActions>,
     ) -> io::Result<()> {
-        transport.send(TelemetryInterfaceRequest::EqueueActions {
+        transport.send(SidecarInterfaceRequest::EqueueActions {
             instance_id: instance_id.clone(),
             queue_id: *queue_id,
             actions,
@@ -710,14 +1054,14 @@ pub mod blocking {
     }
 
     pub fn register_service_and_flush_queued_actions(
-        transport: &mut TelemetryTransport,
+        transport: &mut SidecarTransport,
         instance_id: &InstanceId,
         queue_id: &QueueId,
         runtime_metadata: &RuntimeMeta,
         service_name: Cow<str>,
     ) -> io::Result<()> {
         transport.send(
-            TelemetryInterfaceRequest::RegisterServiceAndFlushQueuedActions {
+            SidecarInterfaceRequest::RegisterServiceAndFlushQueuedActions {
                 instance_id: instance_id.clone(),
                 queue_id: *queue_id,
                 meta: runtime_metadata.clone(),
@@ -726,62 +1070,49 @@ pub mod blocking {
         )
     }
 
-    pub fn set_session_agent_url(
-        transport: &mut TelemetryTransport,
+    pub fn set_session_config(
+        transport: &mut SidecarTransport,
         session_id: String,
-        agent_url: String,
+        config: &SessionConfig,
     ) -> io::Result<()> {
-        transport.send(TelemetryInterfaceRequest::SetSessionAgentUrl {
+        transport.send(SidecarInterfaceRequest::SetSessionConfig {
             session_id,
-            agent_url,
+            config: config.clone(),
         })
     }
 
-    pub fn ping(transport: &mut TelemetryTransport) -> io::Result<Duration> {
+    pub fn send_trace_v04_bytes(
+        transport: &mut SidecarTransport,
+        instance_id: &InstanceId,
+        data: Vec<u8>,
+        headers: SerializedTracerHeaderTags,
+    ) -> io::Result<()> {
+        transport.send(SidecarInterfaceRequest::SendTraceV04Bytes {
+            instance_id: instance_id.clone(),
+            data,
+            headers,
+        })
+    }
+
+    pub fn send_trace_v04_shm(
+        transport: &mut SidecarTransport,
+        instance_id: &InstanceId,
+        handle: ShmHandle,
+        headers: SerializedTracerHeaderTags,
+    ) -> io::Result<()> {
+        transport.send(SidecarInterfaceRequest::SendTraceV04Shm {
+            instance_id: instance_id.clone(),
+            handle,
+            headers,
+        })
+    }
+
+    pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
         let start = Instant::now();
-        transport.call(TelemetryInterfaceRequest::Ping {})?;
+        transport.call(SidecarInterfaceRequest::Ping {})?;
 
         Ok(Instant::now()
             .checked_duration_since(start)
             .unwrap_or_default())
-    }
-}
-
-mod transfer_handles_impl {
-
-    use datadog_ipc::handles::{HandlesTransport, TransferHandles};
-
-    use super::{TelemetryInterfaceRequest, TelemetryInterfaceResponse};
-
-    impl TransferHandles for TelemetryInterfaceResponse {
-        fn move_handles<Transport: HandlesTransport>(
-            &self,
-            _transport: Transport,
-        ) -> Result<(), Transport::Error> {
-            Ok(())
-        }
-
-        fn receive_handles<Transport: HandlesTransport>(
-            &mut self,
-            _transport: Transport,
-        ) -> Result<(), Transport::Error> {
-            Ok(())
-        }
-    }
-
-    impl TransferHandles for TelemetryInterfaceRequest {
-        fn move_handles<Transport: HandlesTransport>(
-            &self,
-            _transport: Transport,
-        ) -> Result<(), Transport::Error> {
-            Ok(())
-        }
-
-        fn receive_handles<Transport: HandlesTransport>(
-            &mut self,
-            _transport: Transport,
-        ) -> Result<(), Transport::Error> {
-            Ok(())
-        }
     }
 }

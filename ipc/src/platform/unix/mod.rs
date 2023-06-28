@@ -4,6 +4,9 @@
 mod platform_handle;
 pub use platform_handle::*;
 
+mod mem_handle;
+pub use mem_handle::*;
+
 mod channel;
 pub use async_channel::*;
 pub use channel::*;
@@ -12,6 +15,7 @@ pub mod locks;
 pub mod sockets;
 
 mod message;
+
 pub use message::*;
 
 #[cfg(test)]
