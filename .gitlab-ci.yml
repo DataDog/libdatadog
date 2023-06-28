@@ -36,5 +36,5 @@ report_gitlab_CI_status:
   when: always
   stage: .post
   script:
-    - echo "TIP: If you see this failing, it's because something else in the GitLab pipeline failed. Follow the link to the pipeline and check for other things that failed prior to this step."
+    - "echo TIP: If you see this failing, something else in the GitLab pipeline failed. Follow the link to the pipeline and check for other things that failed prior to this step."
     - exit ${STATUS}
