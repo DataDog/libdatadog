@@ -136,7 +136,7 @@ impl Context {
             trace_context: trace::Context::try_from(&span)
                 .unwrap_or_else(|_| trace::Context::default()),
             discard_response: false,
-            deadline: Deadline::default().0
+            deadline: Deadline::default().0,
         }
     }
 
