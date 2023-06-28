@@ -155,7 +155,7 @@ impl ProfileExporter {
     #[allow(clippy::too_many_arguments)]
     /// Build a Request object representing the profile information provided.
     ///
-    /// For details on the `optional_internal_metadata_json`, please reference the Datadog-internal
+    /// For details on the `internal_metadata_json`, please reference the Datadog-internal
     /// "RFC: Attaching internal metadata to pprof profiles".
     /// If you use this parameter, please update the RFC with your use-case, so we can keep track of how this
     /// is getting used.
