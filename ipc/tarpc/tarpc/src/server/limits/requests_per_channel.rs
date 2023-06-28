@@ -4,6 +4,7 @@
 // license that can be found in the LICENSE file or at
 // https://opensource.org/licenses/MIT.
 
+use crate::server::RequestResponse;
 use crate::{
     server::{Channel, Config},
     Response, ServerError,
@@ -11,7 +12,6 @@ use crate::{
 use futures::{prelude::*, ready, task::*};
 use pin_project::pin_project;
 use std::{io, pin::Pin};
-use crate::server::RequestResponse;
 
 /// A [`Channel`] that limits the number of concurrent requests by throttling.
 ///
@@ -66,13 +66,14 @@ where
                         "ThrottleRequest",
                     );
 
-                    self.as_mut().start_send(RequestResponse::Response(Response {
-                        request_id: r.request.id,
-                        message: Err(ServerError {
-                            kind: io::ErrorKind::WouldBlock,
-                            detail: "server throttled the request.".into(),
-                        }),
-                    }))?;
+                    self.as_mut()
+                        .start_send(RequestResponse::Response(Response {
+                            request_id: r.request.id,
+                            message: Err(ServerError {
+                                kind: io::ErrorKind::WouldBlock,
+                                detail: "server throttled the request.".into(),
+                            }),
+                        }))?;
                 }
                 None => return Poll::Ready(None),
             }
@@ -179,7 +180,10 @@ where
 mod tests {
     use super::*;
 
-    use crate::server::{RequestResponse, testing::{self, FakeChannel, PollExt}, TrackedRequest};
+    use crate::server::{
+        testing::{self, FakeChannel, PollExt},
+        RequestResponse, TrackedRequest,
+    };
     use pin_utils::pin_mut;
     use std::{
         marker::PhantomData,
@@ -255,7 +259,7 @@ mod tests {
             RequestResponse::Response(resp) => {
                 assert_eq!(resp.request_id, 1);
                 assert!(resp.message.is_err());
-            },
+            }
             _ => unimplemented!(),
         }
     }
@@ -342,11 +346,14 @@ mod tests {
         assert_eq!(throttler.inner.in_flight_requests.len(), 0);
         match throttler.inner.sink.get(0).unwrap() {
             RequestResponse::Response(resp) => {
-                assert_eq!(resp, &Response {
-                    request_id: 0,
-                    message: Ok(1),
-                });
-            },
+                assert_eq!(
+                    resp,
+                    &Response {
+                        request_id: 0,
+                        message: Ok(1),
+                    }
+                );
+            }
             _ => unimplemented!(),
         }
     }

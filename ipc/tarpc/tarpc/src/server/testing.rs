@@ -8,7 +8,7 @@ use crate::{
     cancellations::{cancellations, CanceledRequests, RequestCancellation},
     context,
     server::{Channel, Config, RequestResponse, ResponseGuard, TrackedRequest},
-    Request
+    Request,
 };
 use futures::{task::*, Sink, Stream};
 use pin_project::pin_project;
@@ -45,7 +45,10 @@ impl<In, Resp> Sink<RequestResponse<Resp>> for FakeChannel<In, RequestResponse<R
         self.project().sink.poll_ready(cx).map_err(|e| match e {})
     }
 
-    fn start_send(mut self: Pin<&mut Self>, response: RequestResponse<Resp>) -> Result<(), Self::Error> {
+    fn start_send(
+        mut self: Pin<&mut Self>,
+        response: RequestResponse<Resp>,
+    ) -> Result<(), Self::Error> {
         if let RequestResponse::Response(ref response) = response {
             self.as_mut()
                 .project()
@@ -114,7 +117,8 @@ impl<Req, Resp> FakeChannel<io::Result<TrackedRequest<Req>>, RequestResponse<Res
 }
 
 impl FakeChannel<(), ()> {
-    pub fn default<Req, Resp>() -> FakeChannel<io::Result<TrackedRequest<Req>>, RequestResponse<Resp>> {
+    pub fn default<Req, Resp>(
+    ) -> FakeChannel<io::Result<TrackedRequest<Req>>, RequestResponse<Resp>> {
         let (request_cancellation, canceled_requests) = cancellations();
         FakeChannel {
             stream: Default::default(),
