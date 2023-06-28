@@ -6,9 +6,13 @@
 
 //! Provides a server that concurrently handles many connections sending multiplexed requests.
 
-use crate::{cancellations::{cancellations, CanceledRequests, RequestCancellation}, context::{self}, trace, ClientMessage, Request, Response, Transport};
 #[cfg(feature = "opentelemetry")]
 use crate::context::SpanExt;
+use crate::{
+    cancellations::{cancellations, CanceledRequests, RequestCancellation},
+    context::{self},
+    trace, ClientMessage, Request, Response, Transport,
+};
 use ::tokio::sync::mpsc;
 use futures::{
     future::{AbortRegistration, Abortable},
@@ -275,7 +279,8 @@ pub struct TrackedRequest<Req> {
 /// created by [`BaseChannel`].
 pub trait Channel
 where
-    Self: Transport<RequestResponse<<Self as Channel>::Resp>, TrackedRequest<<Self as Channel>::Req>>,
+    Self:
+        Transport<RequestResponse<<Self as Channel>::Resp>, TrackedRequest<<Self as Channel>::Req>>,
 {
     /// Type of request item.
     type Req;
@@ -481,7 +486,10 @@ where
             .map_err(ChannelError::Transport)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, response: RequestResponse<Resp>) -> Result<(), Self::Error> {
+    fn start_send(
+        mut self: Pin<&mut Self>,
+        response: RequestResponse<Resp>,
+    ) -> Result<(), Self::Error> {
         match response {
             RequestResponse::Response(response) => {
                 if let Some(span) = self
@@ -498,11 +506,11 @@ where
                     // If the request isn't tracked anymore, there's no need to send the response.
                     Ok(())
                 }
-            },
+            }
             RequestResponse::Discarded { request_id } => {
                 self.in_flight_requests_mut().remove_request(request_id);
                 Ok(())
-            },
+            }
         }
     }
 
@@ -761,9 +769,7 @@ impl<Req, Res> InFlightRequest<Req, Res> {
 
                 tracing::info!("CompleteRequest");
                 if context.discard_response {
-                    let response = RequestResponse::Discarded {
-                        request_id,
-                    };
+                    let response = RequestResponse::Discarded { request_id };
                     let _ = response_tx.send(response).await;
                     tracing::info!("DiscardingResponse");
                 } else {
@@ -815,6 +821,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{in_flight_requests::AlreadyExistsError, BaseChannel, Channel, Config, Requests};
+    use crate::server::RequestResponse;
     use crate::{
         context, trace,
         transport::channel::{self, UnboundedChannel},
@@ -828,7 +835,6 @@ mod tests {
     };
     use futures_test::task::noop_context;
     use std::{pin::Pin, task::Poll};
-    use crate::server::RequestResponse;
 
     fn test_channel<Req, Resp>() -> (
         Pin<Box<BaseChannel<Req, Resp, UnboundedChannel<ClientMessage<Req>, Response<Resp>>>>>,
