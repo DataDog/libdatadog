@@ -5,12 +5,12 @@
 #![allow(clippy::needless_collect)]
 use std::collections::hash_map::Entry;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{
     collections::HashMap,
     pin::Pin,
     sync::{Arc, Mutex, MutexGuard},
 };
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 
@@ -643,7 +643,13 @@ impl TelemetryInterface for TelemetryServer {
         });
 
         if let Some(completer) = self.self_telemetry_config.lock().unwrap().take() {
-            let config = session.session_config.lock().unwrap().as_ref().unwrap().clone();
+            let config = session
+                .session_config
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .clone();
             tokio::spawn(async move {
                 completer.complete(config).await;
             });

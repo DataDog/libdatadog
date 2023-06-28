@@ -6,6 +6,8 @@ use spawn_worker::{entrypoint, getpid, Stdio};
 use std::fs::File;
 use std::os::unix::net::UnixListener as StdUnixListener;
 
+use futures::future;
+use manual_future::ManualFuture;
 use std::time::{self, Instant};
 use std::{
     io::{self},
@@ -15,8 +17,6 @@ use std::{
     },
     time::Duration,
 };
-use futures::future;
-use manual_future::ManualFuture;
 use tokio::select;
 
 use tokio::net::UnixListener;
@@ -30,7 +30,9 @@ use crate::interface::TelemetryServer;
 use datadog_ipc::platform::Channel as IpcChannel;
 use ddtelemetry::data::metrics::{MetricNamespace, MetricType};
 use ddtelemetry::metrics::ContextKey;
-use ddtelemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle};
+use ddtelemetry::worker::{
+    LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle,
+};
 
 use crate::setup::{self, Liaison};
 
@@ -44,30 +46,66 @@ struct MetricData<'a> {
 }
 impl<'a> MetricData<'a> {
     async fn send(&self, key: ContextKey, value: f64) {
-        let _ = self.worker.send_msg(TelemetryActions::AddPoint((value, key, vec![]))).await;
+        let _ = self
+            .worker
+            .send_msg(TelemetryActions::AddPoint((value, key, vec![])))
+            .await;
     }
 
     async fn collect_and_send(&self) {
         future::join_all(vec![
-            self.send(self.submitted_payloads, self.server.submitted_payloads.swap(0, Ordering::SeqCst) as f64),
-            self.send(self.active_sessions, self.server.active_session_count() as f64),
-        ]).await;
+            self.send(
+                self.submitted_payloads,
+                self.server.submitted_payloads.swap(0, Ordering::SeqCst) as f64,
+            ),
+            self.send(
+                self.active_sessions,
+                self.server.active_session_count() as f64,
+            ),
+        ])
+        .await;
     }
 }
 
 fn self_telemetry(server: TelemetryServer, mut shutdown_receiver: Receiver<()>) -> JoinHandle<()> {
     let (future, completer) = ManualFuture::new();
-    server.self_telemetry_config.lock().unwrap().replace(completer);
+    server
+        .self_telemetry_config
+        .lock()
+        .unwrap()
+        .replace(completer);
     tokio::spawn(async move {
-        if let Ok((worker, join_handle)) = TelemetryWorkerBuilder::new_fetch_host("datadog-ipc-helper".to_string(), "php".to_string(), "".to_string(), "".to_string()).spawn_with_config(future.await).await {
+        if let Ok((worker, join_handle)) = TelemetryWorkerBuilder::new_fetch_host(
+            "datadog-ipc-helper".to_string(),
+            "php".to_string(),
+            "".to_string(),
+            "".to_string(),
+        )
+        .spawn_with_config(future.await)
+        .await
+        {
             let metrics = MetricData {
                 worker: &worker,
                 server: &server,
-                submitted_payloads: worker.register_metric_context("sidecar.submitted_payloads".to_string(), vec![], MetricType::Count, true, MetricNamespace::Trace),
-                active_sessions: worker.register_metric_context("sidecar.active_sessions".to_string(), vec![], MetricType::Gauge, true, MetricNamespace::Trace),
+                submitted_payloads: worker.register_metric_context(
+                    "sidecar.submitted_payloads".to_string(),
+                    vec![],
+                    MetricType::Count,
+                    true,
+                    MetricNamespace::Trace,
+                ),
+                active_sessions: worker.register_metric_context(
+                    "sidecar.active_sessions".to_string(),
+                    vec![],
+                    MetricType::Gauge,
+                    true,
+                    MetricNamespace::Trace,
+                ),
             };
 
-            let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start)).await;
+            let _ = worker
+                .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
+                .await;
             loop {
                 select! {
                     _ = tokio::time::sleep(Duration::from_secs(3)) => { // TODO: increase to 60 sec
