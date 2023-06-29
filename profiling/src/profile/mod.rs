@@ -462,8 +462,8 @@ impl Profile {
         anyhow::ensure!(
             sample.values.len() == self.sample_types.len(),
             "expected {} sample types, but sample had {} sample types",
-            sample.values.len(),
             self.sample_types.len(),
+            sample.values.len(),
         );
 
         let values = sample.values.clone();
