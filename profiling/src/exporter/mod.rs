@@ -91,6 +91,10 @@ impl Request {
         self.req.headers()
     }
 
+    pub fn body(self) -> hyper::Body {
+        self.req.into_body()
+    }
+
     async fn send(
         self,
         client: &HttpClient,
@@ -148,7 +152,13 @@ impl ProfileExporter {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     /// Build a Request object representing the profile information provided.
+    ///
+    /// For details on the `internal_metadata_json`, please reference the Datadog-internal
+    /// "RFC: Attaching internal metadata to pprof profiles".
+    /// If you use this parameter, please update the RFC with your use-case, so we can keep track of how this
+    /// is getting used.
     pub fn build(
         &self,
         start: DateTime<Utc>,
@@ -156,6 +166,7 @@ impl ProfileExporter {
         files: &[File],
         additional_tags: Option<&Vec<Tag>>,
         endpoint_counts: Option<&ProfiledEndpointsStats>,
+        internal_metadata: Option<serde_json::Value>,
         timeout: std::time::Duration,
     ) -> anyhow::Result<Request> {
         let mut form = multipart::Form::default();
@@ -213,6 +224,7 @@ impl ProfileExporter {
             "family": self.family.as_ref(),
             "version": "4",
             "endpoint_counts" : endpoint_counts,
+            "internal": internal_metadata.unwrap_or_else(|| json!({})),
         })
         .to_string();
 
