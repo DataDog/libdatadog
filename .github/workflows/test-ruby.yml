@@ -10,7 +10,28 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        ruby: [2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, '3.0', 3.1, head]
+        ruby: [2.1, 2.3, 2.4, 2.5, 2.6, 2.7, '3.0', 3.1, head]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v2
+    - uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ matrix.ruby }}
+        bundler-cache: true # runs 'bundle install' and caches installed gems automatically
+        working-directory: ruby/
+    - run: cd ruby && bundle exec rake
+  # Workaround for broken issue
+  # ```
+  # ERROR:  While executing gem ... (RuntimeError)
+  # Marshal.load reentered at marshal_load
+  # ```
+  # suggested in https://github.com/ruby/setup-ruby/issues/496 (use ubuntu 20.04 instead of a later version)
+  test-legacy-workaround:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-20.04]
+        ruby: [2.2]
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v2
