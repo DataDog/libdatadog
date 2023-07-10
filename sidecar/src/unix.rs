@@ -56,7 +56,7 @@ impl<'a> MetricData<'a> {
         future::join_all(vec![
             self.send(
                 self.submitted_payloads,
-                self.server.submitted_payloads.swap(0, Ordering::SeqCst) as f64,
+                self.server.submitted_payloads.swap(0, Ordering::Relaxed) as f64,
             ),
             self.send(
                 self.active_sessions,
@@ -78,8 +78,8 @@ fn self_telemetry(server: TelemetryServer, mut shutdown_receiver: Receiver<()>) 
         if let Ok((worker, join_handle)) = TelemetryWorkerBuilder::new_fetch_host(
             "datadog-ipc-helper".to_string(),
             "php".to_string(),
-            "".to_string(),
-            "".to_string(),
+            "SIDECAR".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
         )
         .spawn_with_config(future.await)
         .await

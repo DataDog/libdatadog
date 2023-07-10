@@ -353,7 +353,7 @@ impl TelemetryServer {
                     Some(s) => s,
                 };
 
-                submitted_payloads.fetch_add(1, Ordering::SeqCst);
+                submitted_payloads.fetch_add(1, Ordering::Relaxed);
 
                 let instance: RequestIdentifier = req.get().extract_identifier();
                 if tx.send((serve, req)).await.is_ok() {
