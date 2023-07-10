@@ -108,7 +108,7 @@ fn self_telemetry(server: TelemetryServer, mut shutdown_receiver: Receiver<()>) 
                 .await;
             loop {
                 select! {
-                    _ = tokio::time::sleep(Duration::from_secs(3)) => { // TODO: increase to 60 sec
+                    _ = tokio::time::sleep(Duration::from_secs(60)) => {
                         metrics.collect_and_send().await;
                         let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushMetricAggr)).await;
                         let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData)).await;
