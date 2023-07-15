@@ -51,7 +51,7 @@ impl<T> From<alloc::vec::Vec<T>> for Vec<T> {
             ptr: v.as_mut_ptr(),
             len: v.len(),
             capacity: v.capacity(),
-            _marker: PhantomData::default(),
+            _marker: PhantomData,
         }
     }
 }
