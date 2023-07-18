@@ -10,14 +10,13 @@ use datadog_trace_obfuscation::replacer;
 use datadog_trace_protobuf::pb;
 
 fn criterion_benchmark(c: &mut Criterion) {
-    let rules: &[replacer::ReplaceRule] = &replacer::parse_rules_from_string(&[
-        ["http.url", "(token/)([^/]*)", "${1}?"],
-        ["http.url", "guid", "[REDACTED]"],
-        ["*", "(token/)([^/]*)", "${1}?"],
-        ["*", "this", "that"],
-        ["custom.tag", "(/foo/bar/).*", "${1}extra"],
-        ["resource.name", "prod", "stage"],
-    ])
+    let rules: &[replacer::ReplaceRule] = &replacer::parse_rules_from_string(r#"[
+        {"name": "*", "pattern": "(token/)([^/]*)", "repl": "${1}?"},
+        {"name": "*", "pattern": "this", "repl": "that"},
+        {"name": "http.url", "pattern": "guid", "repl": "[REDACTED]"},
+        {"name": "custom.tag", "pattern": "(/foo/bar/).*", "repl": "${1}extra"},
+        {"name": "resource.name", "pattern": "prod", "repl": "stage"}
+    ]"#)
     .unwrap();
 
     let span_1 = pb::Span {
