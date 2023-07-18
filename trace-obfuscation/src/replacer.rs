@@ -62,8 +62,6 @@ pub fn parse_rules_from_string(
 ) -> anyhow::Result<Vec<ReplaceRule>> {
     let raw_rules = serde_json::from_str::<Vec<RawReplaceRule>>(rules)?;
 
-    println!("raw rules: {:?}", raw_rules);
-
     let mut vec: Vec<ReplaceRule> = Vec::with_capacity(rules.len());
 
     // for [name, pattern, repl] in rules {
@@ -171,8 +169,6 @@ mod tests {
     #[test]
     fn test_name() {
         let parsed_rules = replacer::parse_rules_from_string(rules);
-
-        println!("parsed rules: {:?}", parsed_rules);
 
         let root_span = new_test_span_with_tags(input);
         let child_span = new_test_span_with_tags(input);
