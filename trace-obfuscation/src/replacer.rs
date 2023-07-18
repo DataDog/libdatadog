@@ -7,7 +7,7 @@ use datadog_trace_protobuf::pb;
 use regex::Regex;
 use serde::Deserialize;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize)]
 struct RawReplaceRule {
     name: String,
     pattern: String,
