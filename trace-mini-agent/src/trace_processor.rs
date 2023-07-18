@@ -123,7 +123,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
             );
 
             if let Some(rules) = &config.tag_replace_rules {
-                replacer::replace_trace_tags(&mut chunk.spans, &rules)
+                replacer::replace_trace_tags(&mut chunk.spans, rules)
             }
 
             trace_chunks.push(chunk);
@@ -263,7 +263,7 @@ mod tests {
             dd_site: "datadoghq.com".to_string(),
             env_type: trace_utils::EnvironmentType::CloudFunction,
             os: "linux".to_string(),
-            tag_replace_rules: None
+            tag_replace_rules: None,
         }
     }
 
