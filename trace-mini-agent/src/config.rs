@@ -4,7 +4,7 @@
 use log::error;
 use std::env;
 
-use datadog_trace_obfuscation::replacer::{ReplaceRule, self};
+use datadog_trace_obfuscation::replacer::{self, ReplaceRule};
 use datadog_trace_utils::trace_utils;
 
 const TRACE_INTAKE_ROUTE: &str = "/api/v0.2/traces";
@@ -69,18 +69,14 @@ impl Config {
         };
 
         let tag_replace_rules: Option<Vec<ReplaceRule>> = match env::var("DD_APM_REPLACE_TAGS") {
-            Ok(replace_rules_str) => {
-                match replacer::parse_rules_from_string(&replace_rules_str) {
-                    Ok(res) => Some(res),
-                    Err(e) => {
-                        error!("Failed to parse DD_APM_REPLACE_TAGS: {}", e);
-                        None
-                    }
+            Ok(replace_rules_str) => match replacer::parse_rules_from_string(&replace_rules_str) {
+                Ok(res) => Some(res),
+                Err(e) => {
+                    error!("Failed to parse DD_APM_REPLACE_TAGS: {}", e);
+                    None
                 }
             },
-            Err(_) => {
-                None
-            }
+            Err(_) => None,
         };
 
         Ok(Config {
@@ -95,7 +91,7 @@ impl Config {
             dd_site,
             trace_intake_url,
             trace_stats_intake_url,
-            tag_replace_rules
+            tag_replace_rules,
         })
     }
 }
