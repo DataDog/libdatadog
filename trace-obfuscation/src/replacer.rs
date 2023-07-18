@@ -56,7 +56,7 @@ pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
 /// parse_rules_from_string takes an array of rules, represented as an array of length 3 arrays
 /// holding the tag name, regex pattern, and replacement string as strings.
 /// * returns a vec of ReplaceRules
-pub fn parse_rules_from_string<'a>(
+pub fn parse_rules_from_string(
     // rules: &'a [[&'a str; 3]],
     rules: &str
 ) -> anyhow::Result<Vec<ReplaceRule>> {
