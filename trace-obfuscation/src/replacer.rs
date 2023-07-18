@@ -58,9 +58,8 @@ pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
 /// * returns a vec of ReplaceRules
 pub fn parse_rules_from_string(
     // rules: &'a [[&'a str; 3]],
-    rules: &str
+    rules: &str,
 ) -> anyhow::Result<Vec<ReplaceRule>> {
-
     let raw_rules = serde_json::from_str::<Vec<RawReplaceRule>>(rules)?;
 
     println!("raw rules: {:?}", raw_rules);
