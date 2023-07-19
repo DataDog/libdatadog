@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use datadog_trace_obfuscation::replacer;
 use hyper::{http, Body, Request, Response, StatusCode};
 use log::{error, info};
 use tokio::sync::mpsc::Sender;
@@ -120,6 +121,10 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 config.function_name.clone(),
                 &config.env_type,
             );
+
+            if let Some(rules) = &config.tag_replace_rules {
+                replacer::replace_trace_tags(&mut chunk.spans, rules)
+            }
 
             trace_chunks.push(chunk);
 
@@ -258,6 +263,7 @@ mod tests {
             dd_site: "datadoghq.com".to_string(),
             env_type: trace_utils::EnvironmentType::CloudFunction,
             os: "linux".to_string(),
+            tag_replace_rules: None,
         }
     }
 

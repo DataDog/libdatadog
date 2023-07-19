@@ -5,38 +5,46 @@
 
 use datadog_trace_protobuf::pb;
 use regex::Regex;
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct RawReplaceRule {
+    name: String,
+    pattern: String,
+    repl: String,
+}
 
 #[derive(Debug)]
-pub struct ReplaceRule<'a> {
+pub struct ReplaceRule {
     // name specifies the name of the tag that the replace rule addresses. However,
     // some exceptions apply such as:
     // * "resource.name" will target the resource
     // * "*" will target all tags and the resource
-    name: &'a str,
+    name: String,
 
     // re holds the regex pattern for matching.
     re: regex::Regex,
 
     // repl specifies the replacement string to be used when Pattern matches.
-    repl: &'a str,
+    repl: String,
 }
 
 /// replace_trace_tags replaces the tag values of all spans within a trace with a given set of rules.
 pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
     for rule in rules {
         for span in trace.iter_mut() {
-            match rule.name {
+            match rule.name.as_ref() {
                 "*" => {
                     for (_, val) in span.meta.iter_mut() {
-                        *val = rule.re.replace_all(val, rule.repl).to_string();
+                        *val = rule.re.replace_all(val, &rule.repl).to_string();
                     }
                 }
                 "resource.name" => {
-                    span.resource = rule.re.replace_all(&span.resource, rule.repl).to_string();
+                    span.resource = rule.re.replace_all(&span.resource, &rule.repl).to_string();
                 }
                 _ => {
-                    if let Some(val) = span.meta.get_mut(rule.name) {
-                        let replaced_tag = rule.re.replace_all(val, rule.repl).to_string();
+                    if let Some(val) = span.meta.get_mut(&rule.name) {
+                        let replaced_tag = rule.re.replace_all(val, &rule.repl).to_string();
                         *val = replaced_tag;
                     }
                 }
@@ -48,22 +56,26 @@ pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
 /// parse_rules_from_string takes an array of rules, represented as an array of length 3 arrays
 /// holding the tag name, regex pattern, and replacement string as strings.
 /// * returns a vec of ReplaceRules
-pub fn parse_rules_from_string<'a>(
-    rules: &'a [[&'a str; 3]],
-) -> anyhow::Result<Vec<ReplaceRule<'a>>> {
+pub fn parse_rules_from_string(
+    // rules: &'a [[&'a str; 3]],
+    rules: &str,
+) -> anyhow::Result<Vec<ReplaceRule>> {
+    let raw_rules = serde_json::from_str::<Vec<RawReplaceRule>>(rules)?;
+
     let mut vec: Vec<ReplaceRule> = Vec::with_capacity(rules.len());
 
-    for [name, pattern, repl] in rules {
-        let compiled_regex = match Regex::new(pattern) {
+    // for [name, pattern, repl] in rules {
+    for raw_rule in raw_rules {
+        let compiled_regex = match Regex::new(&raw_rule.pattern) {
             Ok(res) => res,
             Err(err) => {
                 anyhow::bail!("Obfuscator Error: Error while parsing rule: {}", err)
             }
         };
         vec.push(ReplaceRule {
-            name,
+            name: raw_rule.name,
             re: compiled_regex,
-            repl,
+            repl: raw_rule.repl,
         });
     }
     Ok(vec)
@@ -109,11 +121,11 @@ mod tests {
     #[duplicate_item(
         [
         test_name   [test_replace_tags]
-        rules       [&[
-                        ["http.url", "(token/)([^/]*)", "${1}?"],
-                        ["http.url", "guid", "[REDACTED]"],
-                        ["custom.tag", "(/foo/bar/).*", "${1}extra"],
-                    ]]
+        rules       [r#"[
+                        {"name": "http.url", "pattern": "(token/)([^/]*)", "repl": "${1}?"},
+                        {"name": "http.url", "pattern": "guid", "repl": "[REDACTED]"},
+                        {"name": "custom.tag", "pattern": "(/foo/bar/).*", "repl": "${1}extra"}
+                    ]"#]
         input       [
                         HashMap::from([
                             ("http.url", "some/guid/token/abcdef/abc"),
@@ -129,13 +141,13 @@ mod tests {
         ]
         [
         test_name   [test_replace_tags_with_exceptions]
-        rules       [&[
-                        ["*", "(token/)([^/]*)", "${1}?"],
-                        ["*", "this", "that"],
-                        ["http.url", "guid", "[REDACTED]"],
-                        ["custom.tag", "(/foo/bar/).*", "${1}extra"],
-                        ["resource.name", "prod", "stage"],
-                    ]]
+        rules       [r#"[
+                        {"name": "*", "pattern": "(token/)([^/]*)", "repl": "${1}?"},
+                        {"name": "*", "pattern": "this", "repl": "that"},
+                        {"name": "http.url", "pattern": "guid", "repl": "[REDACTED]"},
+                        {"name": "custom.tag", "pattern": "(/foo/bar/).*", "repl": "${1}extra"},
+                        {"name": "resource.name", "pattern": "prod", "repl": "stage"}
+                    ]"#]
         input       [
                         HashMap::from([
                             ("resource.name", "this is prod"),
@@ -157,6 +169,7 @@ mod tests {
     #[test]
     fn test_name() {
         let parsed_rules = replacer::parse_rules_from_string(rules);
+
         let root_span = new_test_span_with_tags(input);
         let child_span = new_test_span_with_tags(input);
         let mut trace = [root_span, child_span];
@@ -179,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_parse_rules_invalid_regex() {
-        let result = replacer::parse_rules_from_string(&[["http.url", ")", "${1}?"]]);
+        let result = replacer::parse_rules_from_string(r#"[{"http.url", ")", "${1}?"}]"#);
         assert!(result.is_err());
     }
 }

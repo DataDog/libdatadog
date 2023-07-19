@@ -1,14 +1,16 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
+use log::{debug, error};
 use std::env;
 
+use datadog_trace_obfuscation::replacer::{self, ReplaceRule};
 use datadog_trace_utils::trace_utils;
 
 const TRACE_INTAKE_ROUTE: &str = "/api/v0.2/traces";
 const TRACE_STATS_INTAKE_ROUTE: &str = "/api/v0.2/stats";
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Config {
     pub api_key: String,
     pub function_name: Option<String>,
@@ -24,6 +26,7 @@ pub struct Config {
     pub trace_intake_url: String,
     pub trace_stats_intake_url: String,
     pub dd_site: String,
+    pub tag_replace_rules: Option<Vec<ReplaceRule>>,
 }
 
 impl Config {
@@ -65,6 +68,20 @@ impl Config {
             trace_stats_intake_url = format!("{endpoint_prefix}{TRACE_STATS_INTAKE_ROUTE}");
         };
 
+        let tag_replace_rules: Option<Vec<ReplaceRule>> = match env::var("DD_APM_REPLACE_TAGS") {
+            Ok(replace_rules_str) => match replacer::parse_rules_from_string(&replace_rules_str) {
+                Ok(res) => {
+                    debug!("Successfully parsed DD_APM_REPLACE_TAGS: {res:?}");
+                    Some(res)
+                }
+                Err(e) => {
+                    error!("Failed to parse DD_APM_REPLACE_TAGS: {e}");
+                    None
+                }
+            },
+            Err(_) => None,
+        };
+
         Ok(Config {
             api_key,
             function_name,
@@ -77,6 +94,7 @@ impl Config {
             dd_site,
             trace_intake_url,
             trace_stats_intake_url,
+            tag_replace_rules,
         })
     }
 }

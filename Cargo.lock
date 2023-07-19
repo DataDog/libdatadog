@@ -574,6 +574,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "datadog-trace-normalization",
+ "datadog-trace-obfuscation",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
  "duplicate",
@@ -606,6 +607,8 @@ dependencies = [
  "datadog-trace-protobuf",
  "duplicate",
  "regex",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
