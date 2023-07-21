@@ -33,6 +33,10 @@ mod queuehasmpap {
             self.items.len()
         }
 
+        pub fn is_empty(&self) -> bool {
+            self.items.is_empty()
+        }
+
         pub fn pop_front(&mut self) -> Option<(K, V)> {
             let (k, v) = self.items.pop_front()?;
             let hash = make_hash(&self.hash_buidler, &k);

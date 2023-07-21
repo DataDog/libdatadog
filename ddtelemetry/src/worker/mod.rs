@@ -4,7 +4,7 @@
 mod builder;
 pub mod http_client;
 mod scheduler;
-pub(crate) mod store;
+pub mod store;
 
 use crate::{
     config::{self, Config},
@@ -231,7 +231,7 @@ impl TelemetryWorker {
                 if !self.data.started {
                     return CONTINUE;
                 }
-                let mut batch = self.build_message_batch();
+                let mut batch = self.build_app_events_batch();
                 let payload = if batch.is_empty() {
                     data::Payload::AppHeartbeat(())
                 } else {
@@ -291,14 +291,26 @@ impl TelemetryWorker {
                 }
                 self.data.metric_buckets.flush_agregates();
 
-                let mut batch = self.build_message_batch();
-                batch.push(data::Payload::AppClosing(()));
+                let mut app_events = self.build_app_events_batch();
+                app_events.push(data::Payload::AppClosing(()));
+
+                let obsevability_events = self.build_observability_batch();
 
                 future::join_all(
                     [
-                        self.build_request(&data::Payload::MessageBatch(batch)), // TODO logs and metrics
+                        Some(self.build_request(&data::Payload::MessageBatch(app_events))),
+                        if obsevability_events.is_empty() {
+                            None
+                        } else {
+                            Some(
+                                self.build_request(&data::Payload::MessageBatch(
+                                    obsevability_events,
+                                )),
+                            )
+                        },
                     ]
                     .into_iter()
+                    .flatten()
                     .filter_map(|r| match r {
                         Ok(r) => Some(r),
                         Err(e) => {
@@ -321,7 +333,7 @@ impl TelemetryWorker {
         CONTINUE
     }
 
-    fn build_message_batch(&self) -> Vec<Payload> {
+    fn build_app_events_batch(&self) -> Vec<Payload> {
         let mut payloads = Vec::new();
 
         if self.data.dependencies.flush_not_empty() {
@@ -344,6 +356,20 @@ impl TelemetryWorker {
                     configuration: self.data.configurations.unflushed().cloned().collect(),
                 },
             ))
+        }
+        payloads
+    }
+
+    fn build_observability_batch(&mut self) -> Vec<Payload> {
+        let mut payloads = Vec::new();
+
+        let logs = self.build_logs();
+        if !logs.is_empty() {
+            payloads.push(data::Payload::Logs(logs));
+        }
+        let metrics = self.build_metrics_series();
+        if !metrics.series.is_empty() {
+            payloads.push(data::Payload::GenerateMetrics(metrics))
         }
         payloads
     }

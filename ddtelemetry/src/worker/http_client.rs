@@ -50,7 +50,7 @@ pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
         Box::new(HyperClient {
             inner: hyper::Client::builder()
                 .pool_idle_timeout(std::time::Duration::from_secs(30))
-                .build(ddcommon::connector::Connector::new()),
+                .build(ddcommon::connector::Connector::default()),
         })
     }
 }

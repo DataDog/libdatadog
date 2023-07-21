@@ -45,12 +45,10 @@ fn generate_protobuf() {
     //   example: the trace intake expects the name ContainerID rather than the PascalCase ContainerId
 
     config.type_attribute("Span", "#[derive(Deserialize, Serialize)]");
-    config.field_attribute("Span.service", "#[serde(default)]");
-    config.field_attribute("Span.parentID", "#[serde(default)]");
-    config.field_attribute("Span.error", "#[serde(default)]");
-    config.field_attribute("Span.metrics", "#[serde(default)]");
-    config.field_attribute("Span.meta_struct", "#[serde(default)]");
-    config.field_attribute("Span.type", "#[serde(default)]");
+    config.field_attribute(
+        ".pb.Span",
+        "#[serde(default)] #[serde(deserialize_with = \"deserialize_null_into_default\")]",
+    );
 
     config.type_attribute("StatsPayload", "#[derive(Deserialize, Serialize)]");
     config.type_attribute("StatsPayload", "#[serde(rename_all = \"PascalCase\")]");
@@ -68,16 +66,7 @@ fn generate_protobuf() {
         "#[serde(rename_all = \"PascalCase\")]",
     );
 
-    config.field_attribute("ClientStatsPayload.agentAggregation", "#[serde(default)]");
-    config.field_attribute("ClientStatsPayload.env", "#[serde(default)]");
-    config.field_attribute("ClientStatsPayload.service", "#[serde(default)]");
-    config.field_attribute("ClientStatsPayload.containerID", "#[serde(default)]");
-    config.field_attribute("ClientStatsPayload.tags", "#[serde(default)]");
-    config.field_attribute("ClientStatsPayload.version", "#[serde(default)]");
-    config.field_attribute("ClientStatsPayload.lang", "#[serde(default)]");
-    config.field_attribute("ClientStatsPayload.tracerVersion", "#[serde(default)]");
-    config.field_attribute("ClientStatsPayload.runtimeID", "#[serde(default)]");
-    config.field_attribute("ClientStatsPayload.sequence", "#[serde(default)]");
+    config.field_attribute(".pb.ClientStatsPayload", "#[serde(default)]");
     config.field_attribute("ClientStatsBucket.agentTimeShift", "#[serde(default)]");
     config.field_attribute("ClientGroupedStats.DB_type", "#[serde(default)]");
     config.field_attribute("ClientGroupedStats.type", "#[serde(default)]");
@@ -121,18 +110,28 @@ fn generate_protobuf() {
         )
         .unwrap();
 
-    // add license & serde imports to the top of the protobuf rust structs file
-    let license = "// Unless explicitly stated otherwise all files in this repository are licensed
+    // add license, serde imports, custom deserializer code to the top of the protobuf rust structs file
+    let add_to_top =
+        "// Unless explicitly stated otherwise all files in this repository are licensed
 // under the Apache License Version 2.0. This product includes software
 // developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
 // Datadog, Inc.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+fn deserialize_null_into_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Default + Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    let opt = Option::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
+}
 
 "
-    .as_bytes();
+        .as_bytes();
 
-    prepend_to_file(license, &output_path.join("pb.rs"));
+    prepend_to_file(add_to_top, &output_path.join("pb.rs"));
 }
 
 #[cfg(feature = "generate-protobuf")]
