@@ -94,23 +94,36 @@ pub unsafe fn set_cgroup_file(file: String) {
     TESTING_CGROUP_PATH = Some(file)
 }
 
-fn get_cgroup_path() -> PathBuf {
+fn get_cgroup_path(pid: Option<u32>) -> PathBuf {
     // Safety: we assume set_cgroup_file is not called when it shouldn't
     if let Some(path) = unsafe { TESTING_CGROUP_PATH.as_ref() } {
         Path::new(path.as_str()).into()
     } else {
-        Path::new(DEFAULT_CGROUP_PATH).into()
+        let cgroup_path = match pid {
+            Some(pid) => format!("/proc/{}/cgroup", pid),
+            None => DEFAULT_CGROUP_PATH.to_string(),
+        };
+        Path::new(&cgroup_path).into()
     }
 }
 
-pub fn get_container_id() -> Option<&'static str> {
+pub fn get_self_container_id() -> Option<&'static str> {
     // cache container id in a static to avoid recomputing it at each call
-
     lazy_static! {
         static ref CONTAINER_ID: Option<String> =
-            extract_container_id(get_cgroup_path().as_path()).ok();
+            extract_container_id(get_cgroup_path(None).as_path()).ok();
     }
     CONTAINER_ID.as_deref()
+}
+
+pub fn get_container_id(pid: Option<u32>) -> Option<String> {
+    // lookup cgroup path (for this pid)
+    let cgroup_path = get_cgroup_path(pid);
+
+    if let Ok(container_id) = extract_container_id(&cgroup_path) {
+        return Some(container_id);
+    }
+    None
 }
 
 #[cfg(test)]
