@@ -88,11 +88,7 @@ pub enum SpawnMethod {
     Exec,
 }
 
-pub enum Target {
-    Entrypoint(crate::Entrypoint),
-    Manual(CString, CString),
-    Noop,
-}
+use crate::Target;
 
 impl Target {
     /// TODO: ld_preload type trampoline is not yet supported on osx

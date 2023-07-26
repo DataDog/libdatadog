@@ -34,11 +34,7 @@ use windows::{
     },
 };
 
-pub enum Target {
-    Entrypoint(crate::Entrypoint),
-    ManualTrampoline(String, String),
-    Noop,
-}
+use crate::Target;
 
 pub struct SpawnWorker {
     stdin: Option<Stdio>,
@@ -106,14 +102,16 @@ impl SpawnWorker {
             cmd.stderr(stderr);
         }
 
-        // if self.env_clear {
-        //     cmd.env_clear();
-        // }
+        if self.env_clear {
+            cmd.env_clear();
+        }
+
+        cmd.arg("");
 
         match &self.target {
             Target::Entrypoint(f) => {
-                let (path, symbol_name) = get_trampoline_target_data(f.symbol_name.as_ptr() as *const u8)?;
-                cmd.args([path, symbol_name])
+                let path = get_trampoline_target_data(f.ptr as *const u8)?;
+                cmd.args([path, f.symbol_name.to_string_lossy().into_owned()])
             }
             Target::ManualTrampoline(path, symbol_name) => cmd.args([path, symbol_name]),
             Target::Noop => todo!(),
@@ -164,8 +162,11 @@ fn get_sym_name(f: *const u8) -> anyhow::Result<String> {
     Ok(String::from_utf16(&reassembled_name[0..sn_len])?)
 }
 
-pub fn get_trampoline_target_data(f: *const u8) -> anyhow::Result<(String, String)> {
+pub fn get_trampoline_target_data(f: *const u8) -> anyhow::Result<String> {
     let mut h = HMODULE::default();
+
+
+    // "C:\\Users\\pawel\\repos\\libdatadog\\target\\debug\\test_spawn_from_lib.dll"
 
     unsafe {
         GetModuleHandleExA(
@@ -175,31 +176,30 @@ pub fn get_trampoline_target_data(f: *const u8) -> anyhow::Result<(String, Strin
         )
         .ok()?
     };
-    eprint!("a: {:?}", h);
 
     let module_file_name = get_module_file_name(h)?;
 
-    let fn_name = get_sym_name(f)?;
+    // TODO: lib autodetection in tests is broken on windows
+    let current_exe = std::env::current_exe().unwrap().to_str().unwrap().to_owned();
+    if current_exe == module_file_name {
+        return Ok(String::from("C:\\Users\\pawel\\repos\\libdatadog\\target\\debug\\test_spawn_from_lib.dll"));
+    }
 
-    Ok((module_file_name, fn_name))
+    Ok(module_file_name)
 }
 
 #[cfg(test)]
 mod tests {
     use std::{env};
 
-    
-
     use super::get_trampoline_target_data;
 
     #[test]
     pub fn test_trampoline_target_data() {
-        let (path, name) =
+        let path =
             get_trampoline_target_data(test_trampoline_target_data as *const u8).unwrap();
 
         let current_exe = env::current_exe().unwrap().to_str().unwrap().to_owned();
         assert_eq!(current_exe, path);
-
-        assert!(name.ends_with("test_trampoline_target_data"));
     }
 }

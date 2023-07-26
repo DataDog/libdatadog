@@ -78,15 +78,14 @@ int main(int argc, char *argv[]) {
       free(handles);
     }
 #else
-    // HINSTANCE handle = LoadLibrary("C:\\Users\\pawel\\repos\\libdatadog\\target\\ihh\\debug\\test_spawn_from_lib.dll");
     HINSTANCE handle = LoadLibrary(library_path);
-
     if (!handle) {
-        fprintf(stderr, "not found #todo use getLastError\n");
+        DWORD res = GetLastError();
+        fprintf(stderr, "error: %i, could not load shared library\n", res);
         return 10;
     } 
 
-    void (*fn)() = GetProcAddress(handle, "exported_entrypoint");
+    void (*fn)() = GetProcAddress(handle, symbol_name);
 
     if (!fn) {
         DWORD res = GetLastError();

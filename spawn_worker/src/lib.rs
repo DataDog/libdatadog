@@ -28,6 +28,17 @@ pub struct Entrypoint {
     pub ptr: extern "C" fn(),
     pub symbol_name: CString,
 }
+pub enum Target {
+    Entrypoint(crate::Entrypoint),
+    ManualTrampoline(String, String),
+    Noop,
+}
+
+impl From<Entrypoint> for Target {
+    fn from(entrypoint: Entrypoint) -> Self {
+        Target::Entrypoint(entrypoint)
+    }
+}
 
 #[macro_export]
 macro_rules! entrypoint {

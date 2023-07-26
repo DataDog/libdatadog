@@ -3,28 +3,42 @@
 // #![cfg(feature = "prefer-dynamic")]
 // use test_spawn_from_lib::spawn_self;
 
+use std::{process::Stdio, io::{Seek, Read}};
+
+fn rewind_and_read(file: &mut std::fs::File) -> anyhow::Result<String> {
+    file.rewind()?;
+    let mut buf = String::new();
+    file.read_to_string(&mut buf).unwrap();
+
+    Ok(buf)
+}
+
 /// run with: RUSTFLAGS="-C prefer-dynamic" cargo test --package test_spawn_from_lib --features prefer-dynamic -- --ignored
 #[test]
 #[ignore = "requires -C prefer-dynamic"]
 fn test_spawning_trampoline_worker() {
-    // TODO:
-    // let child = spawn_self().unwrap();
+    let mut stdout = tempfile::tempfile().unwrap();
+    let mut stderr = tempfile::tempfile().unwrap();
 
-    // let output = child.wait_with_output().unwrap();
+    let child = test_spawn_from_lib::build()
+        .stdin(Stdio::null())
+        .stdout(stdout.try_clone().unwrap())
+        .stderr(stderr.try_clone().unwrap())
+        .spawn()
+        .unwrap();
+    
+    let output = child.wait_with_output().unwrap();
 
-    // if !output.status.success() {
-    //     eprintln!("{}", String::from_utf8(output.stderr.to_vec()).unwrap());
-    // }
+    if !output.status.success() {
+        eprintln!("{}", String::from_utf8_lossy(output.stderr.as_slice()));
+        panic!("unexpected exit status = {:?}", output.status)
+    }
 
-    // assert_eq!(Some(0), output.status.code());
+    let stderr = rewind_and_read(&mut stderr).unwrap();
+    let stdout = rewind_and_read(&mut stdout).unwrap();
 
-    // assert_eq!(
-    //     "stdout_works_as_expected",
-    //     String::from_utf8(output.stdout).unwrap()
-    // );
+    assert_eq!(Some(0), output.status.code());
 
-    // assert_eq!(
-    //     "stderr_works_as_expected",
-    //     String::from_utf8(output.stderr).unwrap()
-    // );
+    assert_eq!("stderr_works_as_expected", stderr.trim());
+    assert_eq!("stdout_works_as_expected", stdout.trim());
 }

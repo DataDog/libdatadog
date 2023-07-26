@@ -59,12 +59,6 @@ pub fn getpid() -> libc::pid_t {
     unsafe { libc::getpid() }
 }
 
-impl From<Entrypoint> for spawn::Target {
-    fn from(entrypoint: Entrypoint) -> Self {
-        spawn::Target::Entrypoint(entrypoint)
-    }
-}
-
 impl Entrypoint {
     pub fn get_fs_path(&self) -> Option<PathBuf> {
         let (path, _) = unsafe { get_dl_path_raw(self.ptr as *const libc::c_void) };
