@@ -4,8 +4,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use datadog_trace_obfuscation::replacer;
 use hyper::{http, Body, Request, Response, StatusCode};
-use log::error;
+use log::{error, info};
 use tokio::sync::mpsc::Sender;
 
 use datadog_trace_normalization::normalizer;
@@ -55,6 +56,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
         tx: Sender<pb::TracerPayload>,
         mini_agent_metadata: Arc<trace_utils::MiniAgentMetadata>,
     ) -> http::Result<Response<Body>> {
+        info!("Recieved traces to process");
         let (parts, body) = req.into_parts();
 
         if let Some(response) = http_utils::verify_request_content_length(
@@ -116,8 +118,13 @@ impl TraceProcessor for ServerlessTraceProcessor {
 
             trace_utils::set_serverless_root_span_tags(
                 &mut chunk.spans[root_span_index],
-                config.gcp_function_name.clone(),
+                config.function_name.clone(),
+                &config.env_type,
             );
+
+            if let Some(rules) = &config.tag_replace_rules {
+                replacer::replace_trace_tags(&mut chunk.spans, rules)
+            }
 
             trace_chunks.push(chunk);
 
@@ -246,7 +253,7 @@ mod tests {
     fn create_test_config() -> Config {
         Config {
             api_key: "dummy_api_key".to_string(),
-            gcp_function_name: Some("dummy_function_name".to_string()),
+            function_name: Some("dummy_function_name".to_string()),
             max_request_content_length: 10 * 1024 * 1024,
             trace_flush_interval: 3,
             stats_flush_interval: 3,
@@ -254,6 +261,9 @@ mod tests {
             trace_intake_url: "trace.agent.notdog.com/traces".to_string(),
             trace_stats_intake_url: "trace.agent.notdog.com/stats".to_string(),
             dd_site: "datadoghq.com".to_string(),
+            env_type: trace_utils::EnvironmentType::CloudFunction,
+            os: "linux".to_string(),
+            tag_replace_rules: None,
         }
     }
 
