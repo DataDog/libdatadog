@@ -2,10 +2,8 @@
 
 syntax = "proto3";
 
-package pb;
-option go_package = "github.com/DataDog/datadog-agent/pkg/trace/pb";
-
-import "tracer_payload.proto";
+package datadog.trace;
+option go_package = "pkg/proto/pbgo/trace"; // golang
 
 // AgentPayload represents payload the agent sends to the intake.
 message AgentPayload {
