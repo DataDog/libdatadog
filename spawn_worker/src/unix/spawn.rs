@@ -395,7 +395,11 @@ impl SpawnWorker {
         argv.push(entrypoint_symbol_name);
 
         // build and allocate final exec fn and its dependencies
+        #[cfg(target_os = "linux")]
         let mut skip_close_fd = 0;
+        #[cfg(not(target_os = "linux"))]
+        let skip_close_fd = 0;
+
         let spawn: Box<dyn Fn()> = match spawn_method {
             #[cfg(target_os = "linux")]
             SpawnMethod::FdExec => {
