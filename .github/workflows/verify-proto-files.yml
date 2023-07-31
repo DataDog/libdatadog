@@ -11,20 +11,20 @@ jobs:
       - name: diff agent_payload.proto
         working-directory: trace-protobuf/src/pb
         run: |
-          GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/master/pkg/trace/pb/agent_payload.proto")
+          GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/master/pkg/trace/agent_payload.proto")
 
           echo "$GO_AGENT_PROTO" | diff agent_payload.proto -
       - name: diff stats.proto
         working-directory: trace-protobuf/src/pb
         run: |
-          GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/master/pkg/trace/pb/stats.proto")
+          GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/master/pkg/trace/stats.proto")
           GO_AGENT_PROTO_FIXED=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
 
           echo "$GO_AGENT_PROTO_FIXED" | diff stats.proto -
       - name: diff span.proto
         working-directory: trace-protobuf/src/pb
         run: |
-          GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/master/pkg/trace/pb/span.proto")
+          GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/master/pkg/trace/span.proto")
           GO_AGENT_PROTO_FIXED=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
 
           echo "$GO_AGENT_PROTO_FIXED" | diff span.proto -
