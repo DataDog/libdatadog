@@ -29,7 +29,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let socket = UnixStream::from_std(sock_a).unwrap();
         let server = ExampleServer::default();
 
-        rt.block_on(server.accept_connection(socket));
+        rt.block_on(server.accept_connection(AsyncChannel::from(socket)));
     });
 
     let mut transport = ExampleTransport::from(sock_b);

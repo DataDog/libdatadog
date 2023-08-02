@@ -567,12 +567,12 @@ pub struct SidecarServer {
 }
 
 impl SidecarServer {
-    pub async fn accept_connection(self, socket: UnixStream) {
+    pub async fn accept_connection(self, async_channel: AsyncChannel) {
         let server = datadog_ipc::tarpc::server::BaseChannel::new(
             datadog_ipc::tarpc::server::Config {
                 pending_response_buffer: 10000,
             },
-            Transport::try_from(AsyncChannel::from(socket)).unwrap(),
+            Transport::try_from(async_channel).unwrap(),
         );
 
         let mut executor = datadog_ipc::sequential::execute_sequential(

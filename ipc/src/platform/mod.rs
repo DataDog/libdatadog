@@ -3,6 +3,22 @@
 
 #[cfg(unix)]
 mod unix;
+#[cfg(windows)]
+mod windows;
+
+mod mem_handle;
+pub use mem_handle::*;
+mod platform_handle;
+pub use platform_handle::*;
+
+mod channel;
+mod message;
+pub use message::*;
+
+pub use async_channel::*;
+pub use channel::*;
 
 #[cfg(unix)]
 pub use unix::*;
+#[cfg(windows)]
+pub use windows::*;

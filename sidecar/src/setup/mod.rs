@@ -6,3 +6,20 @@ mod unix;
 
 #[cfg(unix)]
 pub use unix::*;
+
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+pub use windows::*;
+
+use std::io;
+
+/// Implementations of this interface must provide behavior repeatable across processes with the same version
+/// of library.
+/// Allowing all instances of the same version of the library to establish a shared connection
+pub trait Liaison: Sized {
+    fn connect_to_server(&self) -> io::Result<IpcClient>;
+    fn attempt_listen(&self) -> io::Result<Option<IpcServer>>;
+    fn ipc_shared() -> Self;
+    fn ipc_per_process() -> Self;
+}

@@ -4,7 +4,6 @@
 use std::{
     io::{self, Read, Write},
     mem::MaybeUninit,
-    os::unix::net::UnixStream,
     pin::Pin,
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
@@ -26,11 +25,13 @@ use crate::{
 use super::DefaultCodec;
 
 pub struct BlockingTransport<IncomingItem, OutgoingItem> {
+    #[cfg(unix)]
     pid: libc::pid_t,
     requests_id: Arc<AtomicU64>,
     transport: FramedBlocking<Response<IncomingItem>, ClientMessage<OutgoingItem>>,
 }
 
+/*
 impl<IncomingItem, OutgoingItem> Clone for BlockingTransport<IncomingItem, OutgoingItem> {
     fn clone(&self) -> Self {
         Self {
@@ -40,19 +41,21 @@ impl<IncomingItem, OutgoingItem> Clone for BlockingTransport<IncomingItem, Outgo
         }
     }
 }
+ */
 
 impl<IncomingItem, OutgoingItem> From<Channel> for BlockingTransport<IncomingItem, OutgoingItem> {
     fn from(c: Channel) -> Self {
-        let pid = unsafe { libc::getpid() };
         BlockingTransport {
-            pid,
+            #[cfg(unix)]
+            pid: unsafe { libc::getpid() },
             requests_id: Arc::from(AtomicU64::new(0)),
             transport: c.into(),
         }
     }
 }
 
-impl<IncomingItem, OutgoingItem> From<UnixStream>
+#[cfg(unix)]
+impl<IncomingItem, OutgoingItem> From<std::os::unix::net::UnixStream>
     for BlockingTransport<IncomingItem, OutgoingItem>
 {
     fn from(s: UnixStream) -> Self {
@@ -100,7 +103,7 @@ where
                         // benchmark unfilled_mut vs initialize_unfilled - and if the difference is negligible - then lets switch to
                         // implementation that doesn't use UB.
                         let b = &mut *(buf_window.unfilled_mut()
-                            as *mut [std::mem::MaybeUninit<u8>]
+                            as *mut [MaybeUninit<u8>]
                             as *mut [u8]);
 
                         let n = self.channel.read(b)?;
@@ -125,7 +128,7 @@ where
     }
 
     fn do_send(&mut self, req: OutgoingItem) -> Result<(), io::Error> {
-        let msg = self.channel.metadata.create_message(req)?;
+        let msg = self.channel.create_message(req)?;
 
         let mut buf = BytesMut::new();
         let data = self.serde_codec.as_mut().serialize(&msg)?;
@@ -146,6 +149,7 @@ impl<IncomingItem, OutgoingItem> From<Channel> for FramedBlocking<IncomingItem, 
     }
 }
 
+/*
 impl<IncomingItem, OutgoingItem> Clone for FramedBlocking<IncomingItem, OutgoingItem> {
     fn clone(&self) -> Self {
         Self {
@@ -156,6 +160,7 @@ impl<IncomingItem, OutgoingItem> Clone for FramedBlocking<IncomingItem, Outgoing
         }
     }
 }
+ */
 
 impl<IncomingItem, OutgoingItem> BlockingTransport<IncomingItem, OutgoingItem>
 where

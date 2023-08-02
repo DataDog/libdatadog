@@ -11,16 +11,10 @@ use std::{
 };
 
 use datadog_ipc::platform::{self, locks::FLock};
+use crate::setup::Liaison;
 
-/// Implementations of this interface must provide behavior repeatable across processes with the same version
-/// of library.
-/// Allowing all instances of the same version of the library to establish a shared connection
-pub trait Liaison: Sized {
-    fn connect_to_server(&self) -> io::Result<UnixStream>;
-    fn attempt_listen(&self) -> io::Result<Option<UnixListener>>;
-    fn ipc_shared() -> Self;
-    fn ipc_per_process() -> Self;
-}
+pub type IpcClient = UnixStream;
+pub type IpcServer = UnixListener;
 
 fn ensure_dir_world_writable<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let mut perm = path.as_ref().metadata()?.permissions();
@@ -75,12 +69,12 @@ impl Liaison for SharedDirLiaison {
     }
 
     fn ipc_shared() -> Self {
-        Self::new_tmp_dir()
+        Self::new_default_location()
     }
 
     fn ipc_per_process() -> Self {
         //TODO: implement per pid handling
-        Self::new_tmp_dir()
+        Self::new_default_location()
     }
 }
 
@@ -101,7 +95,7 @@ impl SharedDirLiaison {
         }
     }
 
-    pub fn new_tmp_dir() -> Self {
+    pub fn new_default_location() -> Self {
         Self::new(env::temp_dir().join("libdatadog"))
     }
 }

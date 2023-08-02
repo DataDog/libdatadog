@@ -11,6 +11,8 @@ use std::{
     },
     time::Duration,
 };
+use crate::handles::TransferHandles;
+use crate::platform::Message;
 
 pub mod async_channel;
 pub mod metadata;
@@ -59,6 +61,13 @@ impl Channel {
         nix::sys::select::select(None, Some(&mut fds), None, None, Some(&mut TimeVal::zero()))
             .is_err()
             || fds.contains(raw_fd)
+    }
+
+    pub fn create_message<T>(&mut self, item: T) -> Result<Message<T>, io::Error>
+        where
+            T: TransferHandles,
+    {
+        self.metadata.create_message(item)
     }
 }
 

@@ -1,11 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-mod platform_handle;
 pub use platform_handle::*;
-
-mod mem_handle;
-pub use mem_handle::*;
 
 mod channel;
 pub use async_channel::*;
@@ -15,8 +11,10 @@ pub mod locks;
 pub mod sockets;
 
 mod message;
-
 pub use message::*;
+
+mod mem_handle;
+pub use mem_handle::*;
 
 #[no_mangle]
 #[cfg(polyfill_glibc_memfd)]
