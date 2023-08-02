@@ -1,7 +1,6 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-#[cfg(not(target_os = "windows"))]
 pub(crate) const TRAMPOLINE_BIN: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/trampoline.bin"));
 
@@ -18,10 +17,27 @@ mod unix;
 #[cfg(target_family = "unix")]
 pub use unix::*;
 
+#[cfg(target_os = "windows")]
+mod win32;
+
+#[cfg(target_os = "windows")]
+pub use win32::*;
+
 use std::ffi::CString;
 pub struct Entrypoint {
     pub ptr: extern "C" fn(),
     pub symbol_name: CString,
+}
+pub enum Target {
+    Entrypoint(crate::Entrypoint),
+    ManualTrampoline(String, String),
+    Noop,
+}
+
+impl From<Entrypoint> for Target {
+    fn from(entrypoint: Entrypoint) -> Self {
+        Target::Entrypoint(entrypoint)
+    }
 }
 
 #[macro_export]
