@@ -35,9 +35,9 @@ impl Default for IpcMode {
     }
 }
 
-impl From<IpcMode> for String {
-    fn from(value: IpcMode) -> Self {
-        match value {
+impl ToString for IpcMode {
+    fn to_string(&self) -> String {
+        match self {
             IpcMode::Shared => SIDECAR_IPC_MODE_SHARED,
             IpcMode::InstancePerProcess => SIDECAR_IPC_MODE_PER_PROCESS,
         }
@@ -59,9 +59,9 @@ impl Default for LogMethod {
     }
 }
 
-impl From<LogMethod> for String {
-    fn from(value: LogMethod) -> Self {
-        match value {
+impl ToString for LogMethod {
+    fn to_string(&self) -> String {
+        match self {
             LogMethod::Disabled => SIDECAR_LOG_METHOD_DISABLED.into(),
             LogMethod::Stdout => SIDECAR_LOG_METHOD_STDOUT.into(),
             LogMethod::Stderr => SIDECAR_LOG_METHOD_STDERR.into(),
@@ -87,8 +87,8 @@ impl Config {
 
     pub fn to_env(&self) -> HashMap<&'static str, String> {
         HashMap::from([
-            (ENV_SIDECAR_IPC_MODE, self.ipc_mode.into()),
-            (ENV_SIDECAR_LOG_METHOD, self.log_method.clone().into()),
+            (ENV_SIDECAR_IPC_MODE, self.ipc_mode.to_string()),
+            (ENV_SIDECAR_LOG_METHOD, self.log_method.to_string()),
             (
                 ENV_IDLE_LINGER_TIME_SECS,
                 self.idle_linger_time.as_secs().to_string(),
@@ -150,10 +150,8 @@ impl FromEnv {
 
     fn self_telemetry() -> bool {
         matches!(
-            std::env::var(ENV_SIDECAR_SELF_TELEMETRY)
-                .unwrap_or_default()
-                .as_str(),
-            "true" | "1"
+            std::env::var(ENV_SIDECAR_SELF_TELEMETRY).as_deref(),
+            Ok("true" | "1")
         )
     }
 

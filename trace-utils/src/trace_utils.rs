@@ -1,6 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
+use anyhow::Context;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hyper::http::HeaderValue;
@@ -12,7 +13,7 @@ use std::collections::HashMap;
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
 use datadog_trace_protobuf::pb::TraceChunk;
-use ddcommon::{connector, header, Endpoint, HttpRequestBuilder};
+use ddcommon::{connector, Endpoint, HttpRequestBuilder};
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
@@ -34,6 +35,7 @@ macro_rules! parse_string_header {
     }
 }
 
+/// First value of returned tuple is the payload size
 pub async fn get_traces_from_request_body(
     body: Body,
 ) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
@@ -164,9 +166,9 @@ pub fn construct_tracer_payload(
     }
 }
 
-pub fn serialize_proto_payload<T>(payload: T) -> anyhow::Result<Vec<u8>>
+pub fn serialize_proto_payload<T>(payload: &T) -> anyhow::Result<Vec<u8>>
 where
-    T: ::prost::Message,
+    T: prost::Message,
 {
     let mut buf = Vec::new();
     buf.reserve(payload.encoded_len());
@@ -247,20 +249,12 @@ impl SendData {
             }
         }
 
-        if let Some(api_key) = &target.api_key {
-            req = req
-                .header(header::DATADOG_API_KEY, HeaderValue::from_str(api_key)?)
-                .header("Content-type", "application/x-protobuf");
+        if target.api_key.is_some() {
+            req = req.header("Content-type", "application/x-protobuf");
 
             let agent_payload = construct_agent_payload(self.tracer_payloads);
-            let serialized_trace_payload = match serialize_proto_payload(agent_payload) {
-                Ok(res) => res,
-                Err(err) => {
-                    anyhow::bail!(
-                        "Failed to serialize trace agent payload, dropping traces: {err}"
-                    );
-                }
-            };
+            let serialized_trace_payload = serialize_proto_payload(&agent_payload)
+                .context("Failed to serialize trace agent payload, dropping traces")?;
 
             send_request(req, serialized_trace_payload, StatusCode::ACCEPTED).await
         } else {

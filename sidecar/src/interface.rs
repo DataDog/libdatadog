@@ -99,6 +99,7 @@ pub struct SerializedTracerHeaderTags {
 
 impl<'a> From<&'a SerializedTracerHeaderTags> for TracerHeaderTags<'a> {
     fn from(serialized: &'a SerializedTracerHeaderTags) -> Self {
+        // Panics if deserialization fails due (e.g. input containing double quote or backslash)
         serde_json::from_str(&serialized.data).unwrap()
     }
 }

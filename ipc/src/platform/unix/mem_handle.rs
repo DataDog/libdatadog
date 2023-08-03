@@ -12,6 +12,7 @@ use nix::unistd::ftruncate;
 #[cfg(not(target_os = "linux"))]
 use nix::unistd::getpid;
 use serde::{Deserialize, Serialize};
+use std::ffi::CString;
 use std::fs::File;
 use std::io;
 use std::num::NonZeroUsize;
@@ -38,7 +39,7 @@ where
 }
 
 struct ShmPath {
-    name: String,
+    name: CString,
 }
 
 pub struct NamedShmHandle {
@@ -47,17 +48,18 @@ pub struct NamedShmHandle {
 }
 
 impl NamedShmHandle {
-    pub fn get_path(&self) -> &str {
+    pub fn get_path(&self) -> &[u8] {
         if let Some(ref shm_path) = &self.path {
-            shm_path.name.as_str()
+            shm_path.name.as_bytes()
         } else {
-            ""
+            b""
         }
     }
 }
 
 fn page_aligned_size(size: usize) -> usize {
     let page_size = page_size::get();
+    // round up to nearest page
     ((size - 1) & !(page_size - 1)) + page_size
 }
 
@@ -73,29 +75,32 @@ impl MemoryHandle for AnonHandle {
 
 impl<T> MemoryHandle for T
 where
-    T: FileBackedHandle<T>,
+    T: FileBackedHandle,
 {
     fn get_size(&self) -> usize {
         self.get_shm().size
     }
 }
 
-pub trait FileBackedHandle<T>
+pub trait FileBackedHandle
 where
-    T: FileBackedHandle<T>,
+    Self: Sized,
 {
-    fn map(self) -> io::Result<MappedMem<T>>;
+    fn map(self) -> io::Result<MappedMem<Self>>;
     fn get_shm(&self) -> &ShmHandle;
     fn get_shm_mut(&mut self) -> &mut ShmHandle;
     fn resize(&mut self, size: usize) -> anyhow::Result<()> {
-        self.set_mapping_size(size)?;
+        unsafe {
+            self.set_mapping_size(size)?;
+        }
         ftruncate(
             self.get_shm().handle.as_raw_fd(),
             self.get_shm().size as off_t,
         )?;
         Ok(())
     }
-    fn set_mapping_size(&mut self, size: usize) -> anyhow::Result<()> {
+    /// Safety: Calling function needs to ensure it's appropriately resized
+    unsafe fn set_mapping_size(&mut self, size: usize) -> anyhow::Result<()> {
         if size == 0 {
             anyhow::bail!("Cannot allocate mapping of size zero");
         }
@@ -105,7 +110,7 @@ where
     }
 }
 
-fn mmap_handle<T: FileBackedHandle<T>>(handle: T) -> io::Result<MappedMem<T>> {
+fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMem<T>> {
     let fd: RawFd = handle.get_shm().handle.as_raw_fd();
     Ok(MappedMem {
         ptr: unsafe {
@@ -122,7 +127,7 @@ fn mmap_handle<T: FileBackedHandle<T>>(handle: T) -> io::Result<MappedMem<T>> {
     })
 }
 
-impl FileBackedHandle<ShmHandle> for ShmHandle {
+impl FileBackedHandle for ShmHandle {
     fn map(self) -> io::Result<MappedMem<ShmHandle>> {
         mmap_handle(self)
     }
@@ -135,7 +140,7 @@ impl FileBackedHandle<ShmHandle> for ShmHandle {
     }
 }
 
-impl FileBackedHandle<NamedShmHandle> for NamedShmHandle {
+impl FileBackedHandle for NamedShmHandle {
     fn map(self) -> io::Result<MappedMem<NamedShmHandle>> {
         mmap_handle(self)
     }
@@ -177,9 +182,9 @@ impl ShmHandle {
 }
 
 impl NamedShmHandle {
-    pub fn create(path: String, size: usize) -> io::Result<NamedShmHandle> {
+    pub fn create(path: CString, size: usize) -> io::Result<NamedShmHandle> {
         let fd = shm_open(
-            path.as_str(),
+            path.as_bytes(),
             OFlag::O_CREAT | OFlag::O_RDWR,
             Mode::S_IWUSR
                 | Mode::S_IRUSR
@@ -192,14 +197,14 @@ impl NamedShmHandle {
         Self::new(fd, path, size)
     }
 
-    pub fn open(path: String) -> io::Result<NamedShmHandle> {
-        let fd = shm_open(path.as_str(), OFlag::O_RDWR, Mode::empty())?;
+    pub fn open(path: CString) -> io::Result<NamedShmHandle> {
+        let fd = shm_open(path.as_bytes(), OFlag::O_RDWR, Mode::empty())?;
         let file: File = unsafe { OwnedFd::from_raw_fd(fd) }.into();
         let size = file.metadata()?.size() as usize;
         Self::new(file.into_raw_fd(), path, size)
     }
 
-    fn new(fd: RawFd, path: String, size: usize) -> io::Result<NamedShmHandle> {
+    fn new(fd: RawFd, path: CString, size: usize) -> io::Result<NamedShmHandle> {
         Ok(NamedShmHandle {
             inner: ShmHandle {
                 handle: unsafe { PlatformHandle::from_raw_fd(fd) },
@@ -224,7 +229,7 @@ impl<T: MemoryHandle> MappedMem<T> {
     }
 }
 
-impl<T: FileBackedHandle<T> + From<MappedMem<T>>> MappedMem<T> {
+impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
     pub fn ensure_space(self, expected_size: usize) -> MappedMem<T> {
         if expected_size <= self.mem.get_shm().size {
             return self;
@@ -237,12 +242,12 @@ impl<T: FileBackedHandle<T> + From<MappedMem<T>>> MappedMem<T> {
 }
 
 impl MappedMem<NamedShmHandle> {
-    pub fn get_path(&self) -> &str {
+    pub fn get_path(&self) -> &[u8] {
         self.mem.get_path()
     }
 }
 
-impl<T: FileBackedHandle<T>> From<MappedMem<T>> for ShmHandle {
+impl<T: FileBackedHandle> From<MappedMem<T>> for ShmHandle {
     fn from(handle: MappedMem<T>) -> ShmHandle {
         ShmHandle {
             handle: handle.mem.get_shm().handle.clone(),
@@ -273,7 +278,7 @@ where
 
 impl Drop for ShmPath {
     fn drop(&mut self) {
-        _ = shm_unlink(self.name.as_str());
+        _ = shm_unlink(self.name.as_bytes());
     }
 }
 
@@ -299,5 +304,5 @@ impl From<ShmHandle> for PlatformHandle<OwnedFd> {
     }
 }
 
-unsafe impl<T> Sync for MappedMem<T> where T: FileBackedHandle<T> {}
-unsafe impl<T> Send for MappedMem<T> where T: FileBackedHandle<T> {}
+unsafe impl<T> Sync for MappedMem<T> where T: FileBackedHandle {}
+unsafe impl<T> Send for MappedMem<T> where T: FileBackedHandle {}

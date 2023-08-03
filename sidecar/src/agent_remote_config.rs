@@ -3,33 +3,33 @@
 
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
 use ddcommon::Endpoint;
+use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::io;
-use std::io::Write;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use zwohash::ZwoHasher;
 
 pub struct AgentRemoteConfigWriter<T>
 where
-    T: FileBackedHandle<T> + From<MappedMem<T>>,
+    T: FileBackedHandle + From<MappedMem<T>>,
 {
     handle: Mutex<Option<MappedMem<T>>>,
 }
 
 pub struct AgentRemoteConfigReader<T>
 where
-    T: FileBackedHandle<T> + From<MappedMem<T>>,
+    T: FileBackedHandle + From<MappedMem<T>>,
 {
     handle: Option<MappedMem<T>>,
     endpoint: Option<Endpoint>,
-    current_config: Option<Vec<u8>>,
+    current_config: Option<Vec<u64>>,
 }
 
 #[repr(C)]
 #[derive(Debug)]
 struct RawMetaData {
-    generation: u64,
+    generation: AtomicU64,
     size: usize,
     writing: AtomicBool,
 }
@@ -53,17 +53,25 @@ impl RawData {
     }
 }
 
-impl From<&[u8]> for &RawData {
-    fn from(value: &[u8]) -> Self {
+impl From<&[u64]> for &RawData {
+    fn from(value: &[u64]) -> Self {
         // Safety: MappedMem is supposed to be big enough
-        unsafe { &*(value as *const [u8] as *const RawData) }
+        // Safety: u64 is aligned
+        unsafe { &*(value as *const [u64] as *const RawData) }
     }
 }
 
-fn path_for_endpoint(endpoint: &Endpoint) -> String {
+// Safety: Caller needs to ensure the u8 is 8 byte aligned
+unsafe fn reinterpret_u8_as_u64_slice(slice: &[u8]) -> &[u64] {
+    // Safety: integer division, so the u8 will always fit into u64
+    std::slice::from_raw_parts(slice.as_ptr() as *const u64, slice.len() / 8)
+}
+
+fn path_for_endpoint(endpoint: &Endpoint) -> CString {
+    // We need a stable hash so that the outcome is independent of the process
     let mut hasher = ZwoHasher::default();
     endpoint.url.authority().unwrap().hash(&mut hasher);
-    format!("/libdatadog-agent-config-{}", hasher.finish())
+    CString::new(format!("/libdatadog-agent-config-{}", hasher.finish())).unwrap()
 }
 
 pub fn create_anon_pair() -> anyhow::Result<(AgentRemoteConfigWriter<ShmHandle>, ShmHandle)> {
@@ -102,7 +110,7 @@ pub fn new_writer(endpoint: &Endpoint) -> io::Result<AgentRemoteConfigWriter<Nam
 
 pub trait ReaderOpener<T>
 where
-    T: FileBackedHandle<T>,
+    T: FileBackedHandle,
 {
     fn open(endpoint: &Endpoint) -> Option<MappedMem<T>>;
 }
@@ -123,15 +131,16 @@ impl ReaderOpener<ShmHandle> for AgentRemoteConfigReader<ShmHandle> {
     }
 }
 
-impl<T: FileBackedHandle<T> + From<MappedMem<T>>> AgentRemoteConfigReader<T>
+impl<T: FileBackedHandle + From<MappedMem<T>>> AgentRemoteConfigReader<T>
 where
     AgentRemoteConfigReader<T>: ReaderOpener<T>,
 {
     // bool is true when it changed
     pub fn read<'a>(&'a mut self) -> (bool, &[u8]) {
         if let Some(ref handle) = self.handle {
-            let source_data: &RawData = handle.as_slice().into();
-            let new_generation = source_data.meta.generation;
+            let source_data: &RawData =
+                unsafe { reinterpret_u8_as_u64_slice(handle.as_slice()) }.into();
+            let new_generation = source_data.meta.generation.load(Ordering::Acquire);
 
             let fetch_data = |reader: &'a mut AgentRemoteConfigReader<T>| {
                 let size = std::mem::size_of::<RawMetaData>() + source_data.meta.size;
@@ -140,19 +149,22 @@ where
                 reader.handle.replace(handle);
                 let handle = reader.handle.as_ref().unwrap();
 
-                let mut new_mem = Vec::with_capacity(size);
-                new_mem.extend_from_slice(&handle.as_slice()[0..size]);
+                let mut new_mem = Vec::<u64>::with_capacity(size / 8);
+                new_mem.extend_from_slice(unsafe {
+                    reinterpret_u8_as_u64_slice(&handle.as_slice()[0..size])
+                });
 
                 // refetch, might have been resized
-                let new_data: &RawData = handle.as_slice().into();
+                let new_data: &RawData =
+                    unsafe { reinterpret_u8_as_u64_slice(handle.as_slice()) }.into();
                 let copied_data: &RawData = new_mem.as_slice().into();
 
                 // Ensure the next write hasn't started yet *and* the data is from the expected generation
                 if !new_data.meta.writing.load(Ordering::SeqCst)
-                    && new_generation == copied_data.meta.generation
+                    && new_generation == copied_data.meta.generation.load(Ordering::Acquire)
                 {
                     reader.current_config.replace(new_mem);
-                    return Some((true, new_data.as_slice()));
+                    return Some((true, copied_data.as_slice()));
                 }
                 None
             };
@@ -161,7 +173,7 @@ where
                 let cur_data: &RawData = cur_mem.as_slice().into();
                 // Ensure nothing is copied during a write
                 if !source_data.meta.writing.load(Ordering::SeqCst)
-                    && new_generation > cur_data.meta.generation
+                    && new_generation > cur_data.meta.generation.load(Ordering::Acquire)
                 {
                     if let Some(success) = fetch_data(self) {
                         return success;
@@ -189,7 +201,7 @@ where
     }
 }
 
-impl<T: FileBackedHandle<T> + From<MappedMem<T>>> AgentRemoteConfigWriter<T> {
+impl<T: FileBackedHandle + From<MappedMem<T>>> AgentRemoteConfigWriter<T> {
     pub fn write(&self, contents: &[u8]) {
         let mut handle = self.handle.lock().unwrap();
         let mut mapped = handle.take().unwrap();
@@ -202,9 +214,9 @@ impl<T: FileBackedHandle<T> + From<MappedMem<T>>> AgentRemoteConfigWriter<T> {
         data.meta.writing.store(true, Ordering::SeqCst);
         data.meta.size = contents.len();
 
-        _ = data.as_slice_mut().write(contents);
+        data.as_slice_mut()[0..contents.len()].copy_from_slice(contents);
 
-        data.meta.generation += 1;
+        data.meta.generation.fetch_add(1, Ordering::SeqCst);
         data.meta.writing.store(false, Ordering::SeqCst);
 
         handle.replace(mapped);

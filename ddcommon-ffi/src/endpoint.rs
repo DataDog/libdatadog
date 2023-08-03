@@ -2,6 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use crate::slice::AsBytes;
+use crate::Error;
 use ddcommon::{parse_uri, Endpoint};
 use hyper::http::uri::{Authority, Parts};
 use std::str::FromStr;
@@ -19,7 +20,7 @@ pub extern "C" fn ddog_endpoint_from_url(url: crate::CharSlice) -> Option<Box<En
 #[must_use]
 pub extern "C" fn ddog_endpoint_from_api_key(api_key: crate::CharSlice) -> Box<Endpoint> {
     let mut parts = Parts::default();
-    parts.authority = Authority::from_str("datadoghq.com").ok();
+    parts.authority = Some(Authority::from_static("datadoghq.com"));
     Box::new(Endpoint {
         url: hyper::Uri::from_parts(parts).unwrap(),
         api_key: Some(unsafe { api_key.to_utf8_lossy().to_string().into() }),
@@ -32,13 +33,20 @@ pub extern "C" fn ddog_endpoint_from_api_key(api_key: crate::CharSlice) -> Box<E
 pub extern "C" fn ddog_endpoint_from_api_key_and_site(
     api_key: crate::CharSlice,
     site: crate::CharSlice,
-) -> Box<Endpoint> {
+    endpoint: &mut *mut Endpoint,
+) -> Option<Box<Error>> {
     let mut parts = Parts::default();
-    parts.authority = Authority::from_str(&unsafe { site.to_utf8_lossy() }).ok();
-    Box::new(Endpoint {
+    parts.authority = Some(
+        match Authority::from_str(&unsafe { site.to_utf8_lossy() }) {
+            Ok(s) => s,
+            Err(e) => return Some(Box::new(Error::from(e.to_string()))),
+        },
+    );
+    *endpoint = Box::into_raw(Box::new(Endpoint {
         url: hyper::Uri::from_parts(parts).unwrap(),
         api_key: Some(unsafe { api_key.to_utf8_lossy().to_string().into() }),
-    })
+    }));
+    None
 }
 
 #[no_mangle]

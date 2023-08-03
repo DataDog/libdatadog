@@ -144,12 +144,12 @@ fn ddog_agent_remote_config_read_generic<'a, T>(
     data: &mut ffi::CharSlice<'a>,
 ) -> bool
 where
-    T: FileBackedHandle<T> + From<MappedMem<T>>,
+    T: FileBackedHandle + From<MappedMem<T>>,
     datadog_sidecar::agent_remote_config::AgentRemoteConfigReader<T>: ReaderOpener<T>,
 {
     let (new, contents) = reader.read();
     // c_char may be u8 or i8 depending on target... convert it.
-    let contents: &[c_char] = unsafe { std::mem::transmute(contents) };
+    let contents: &[c_char] = unsafe { std::mem::transmute::<&[u8], &[c_char]>(contents) };
     *data = contents.into();
     new
 }
@@ -177,9 +177,7 @@ pub extern "C" fn ddog_agent_remote_config_writer_drop(_: Box<AgentRemoteConfigW
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_sidecar_transport_drop(t: Box<SidecarTransport>) {
-    drop(t)
-}
+pub extern "C" fn ddog_sidecar_transport_drop(_: Box<SidecarTransport>) {}
 
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_transport_clone(
