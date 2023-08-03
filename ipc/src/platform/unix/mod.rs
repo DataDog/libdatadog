@@ -18,6 +18,14 @@ mod message;
 
 pub use message::*;
 
+#[no_mangle]
+#[cfg(polyfill_glibc_memfd)]
+/// # Safety
+/// Emulating memfd create, has the same safety level than libc::memfd_create
+pub unsafe extern "C" fn memfd_create(name: libc::c_void, flags: libc::c_uint) -> libc::c_int {
+    libc::syscall(libc::SYS_memfd_create, name, flags) as libc::c_int
+}
+
 #[cfg(test)]
 mod tests {
     use io_lifetimes::OwnedFd;

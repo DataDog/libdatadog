@@ -99,7 +99,8 @@ where
         )?;
         Ok(())
     }
-    /// Safety: Calling function needs to ensure it's appropriately resized
+    /// # Safety
+    /// Calling function needs to ensure it's appropriately resized
     unsafe fn set_mapping_size(&mut self, size: usize) -> anyhow::Result<()> {
         if size == 0 {
             anyhow::bail!("Cannot allocate mapping of size zero");

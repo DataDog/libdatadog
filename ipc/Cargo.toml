@@ -41,8 +41,11 @@ spawn_worker = { path = "../spawn_worker" }
 
 [target.'cfg(not(windows))'.dependencies]
 libc = { version = "0.2" }
-nix = { version = "0.26.2", features = ["fs", "socket", "mman"] }
+nix = { version = "0.26.2", features = ["socket", "mman"] }
 sendfd = { version = "0.4", features = ["tokio"] }
+
+[target.'cfg(target_env = "gnu")'.build-dependencies]
+glibc_version = "0.1.2"
 
 [[bench]]
 harness = false
