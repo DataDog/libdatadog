@@ -8,9 +8,6 @@
 #include <stdint.h>
 #include <stdio.h>
 
-/* Creates a profile with one sample type "wall-time" with period of "wall-time"
- * with unit 60 "nanoseconds". Adds one sample with a string label "language".
- */
 int main(void) {
   const ddog_prof_ValueType wall_time = {
       .type_ = DDOG_CHARSLICE_C("wall-time"),
@@ -36,9 +33,9 @@ int main(void) {
       .lines = (ddog_prof_Slice_Line) {&root_line, 1},
   };
   int64_t value = 10;
-  const ddog_prof_Label label = {
-      .key = DDOG_CHARSLICE_C("language"),
-      .str = DDOG_CHARSLICE_C("php"),
+  ddog_prof_Label label = {
+      .key = DDOG_CHARSLICE_C("unique_counter"),
+      .num = 0,
   };
   const ddog_prof_Sample sample = {
       .locations = {&root_location, 1},
@@ -46,14 +43,25 @@ int main(void) {
       .labels = {&label, 1},
   };
 
-  ddog_prof_Profile_AddResult add_result = ddog_prof_Profile_add(profile, sample);
-  if (add_result.tag != DDOG_PROF_PROFILE_ADD_RESULT_OK) {
-    ddog_CharSlice message = ddog_Error_message(&add_result.err);
-    fprintf(stderr, "%*s", (int)message.len, message.ptr);
-    ddog_Error_drop(&add_result.err);
-  }
+  for (int i = 0; i < 10000000; i++) {
+      label.num = i;
 
+      ddog_prof_Profile_AddResult add_result = ddog_prof_Profile_add(profile, sample);
+      if (add_result.tag != DDOG_PROF_PROFILE_ADD_RESULT_OK) {
+        ddog_CharSlice message = ddog_Error_message(&add_result.err);
+        fprintf(stderr, "%*s", (int)message.len, message.ptr);
+        ddog_Error_drop(&add_result.err);
+      }
+ }
 
-  ddog_prof_Profile_drop(profile);
+//   printf("Press any key to reset and drop...");
+//   getchar();
+
+//   ddog_prof_Profile_reset(profile, NULL);
+//   ddog_prof_Profile_drop(profile);
+
+  printf("Press any key to exit...");
+  getchar();
+
   return 0;
 }
