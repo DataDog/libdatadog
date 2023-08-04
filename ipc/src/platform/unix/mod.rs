@@ -4,6 +4,9 @@
 mod platform_handle;
 pub use platform_handle::*;
 
+mod mem_handle;
+pub use mem_handle::*;
+
 mod channel;
 pub use async_channel::*;
 pub use channel::*;
@@ -12,7 +15,16 @@ pub mod locks;
 pub mod sockets;
 
 mod message;
+
 pub use message::*;
+
+#[no_mangle]
+#[cfg(polyfill_glibc_memfd)]
+/// # Safety
+/// Emulating memfd create, has the same safety level than libc::memfd_create
+pub unsafe extern "C" fn memfd_create(name: libc::c_void, flags: libc::c_uint) -> libc::c_int {
+    libc::syscall(libc::SYS_memfd_create, name, flags) as libc::c_int
+}
 
 #[cfg(test)]
 mod tests {

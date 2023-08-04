@@ -77,8 +77,8 @@ impl StatsFlusher for ServerlessStatsFlusher {
 
         match stats_utils::send_stats_payload(
             serialized_stats_payload,
-            &config.trace_stats_intake_url,
-            &config.api_key,
+            &config.trace_stats_intake,
+            config.trace_stats_intake.api_key.as_ref().unwrap(),
         )
         .await
         {

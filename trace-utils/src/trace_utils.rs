@@ -1,16 +1,19 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
+use anyhow::Context;
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
 use hyper::http::HeaderValue;
-use hyper::{body::Buf, Body, Client, HeaderMap, Method, Request, StatusCode};
-use hyper_rustls::HttpsConnectorBuilder;
+use hyper::{body::Buf, Body, Client, HeaderMap, Method, Response, StatusCode};
 use log::{error, info};
-use prost::Message;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::str;
 
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
+use datadog_trace_protobuf::pb::TraceChunk;
+use ddcommon::{connector, Endpoint, HttpRequestBuilder};
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
@@ -32,8 +35,12 @@ macro_rules! parse_string_header {
     }
 }
 
-pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<Vec<Vec<pb::Span>>> {
+/// First value of returned tuple is the payload size
+pub async fn get_traces_from_request_body(
+    body: Body,
+) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
     let buffer = hyper::body::aggregate(body).await?;
+    let size = buffer.remaining();
 
     let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_read(buffer.reader()) {
         Ok(res) => res,
@@ -46,10 +53,10 @@ pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<Vec<Vec<
         anyhow::bail!("No traces deserialized from the request body.")
     }
 
-    Ok(traces)
+    Ok((size, traces))
 }
 
-#[derive(Default)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 pub struct TracerHeaderTags<'a> {
     pub lang: &'a str,
     pub lang_version: &'a str,
@@ -63,6 +70,51 @@ pub struct TracerHeaderTags<'a> {
     pub client_computed_stats: bool,
 }
 
+impl<'a> From<TracerHeaderTags<'a>> for HashMap<&'static str, String> {
+    fn from(tags: TracerHeaderTags<'a>) -> HashMap<&'static str, String> {
+        let mut headers = HashMap::from([
+            ("datadog-meta-lang", tags.lang.to_string()),
+            ("datadog-meta-lang-version", tags.lang_version.to_string()),
+            (
+                "datadog-meta-lang-interpreter",
+                tags.lang_interpreter.to_string(),
+            ),
+            ("datadog-meta-lang-vendor", tags.lang_vendor.to_string()),
+            (
+                "datadog-meta-tracer-version",
+                tags.tracer_version.to_string(),
+            ),
+            ("datadog-container-id", tags.container_id.to_string()),
+        ]);
+        headers.retain(|_, v| !v.is_empty());
+        headers
+    }
+}
+
+impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
+    fn from(headers: &'a HeaderMap<HeaderValue>) -> Self {
+        let mut tags = TracerHeaderTags::default();
+        parse_string_header!(
+            headers,
+            {
+                "datadog-meta-lang" => tags.lang,
+                "datadog-meta-lang-version" => tags.lang_version,
+                "datadog-meta-lang-interpreter" => tags.lang_interpreter,
+                "datadog-meta-lang-vendor" => tags.lang_vendor,
+                "datadog-meta-tracer-version" => tags.tracer_version,
+                "datadog-container-id" => tags.container_id,
+            }
+        );
+        if headers.get("datadog-client-computed-top-level").is_some() {
+            tags.client_computed_top_level = true;
+        }
+        if headers.get("datadog-client-computed-stats").is_some() {
+            tags.client_computed_stats = true;
+        }
+        tags
+    }
+}
+
 // Tags gathered from a trace's root span
 #[derive(Default)]
 pub struct RootSpanTags<'a> {
@@ -70,28 +122,6 @@ pub struct RootSpanTags<'a> {
     pub app_version: &'a str,
     pub hostname: &'a str,
     pub runtime_id: &'a str,
-}
-
-pub fn get_tracer_header_tags(headers: &HeaderMap<HeaderValue>) -> TracerHeaderTags {
-    let mut tags = TracerHeaderTags::default();
-    parse_string_header!(
-        headers,
-        {
-            "datadog-meta-lang" => tags.lang,
-            "datadog-meta-lang-version" => tags.lang_version,
-            "datadog-meta-lang-interpreter" => tags.lang_interpreter,
-            "datadog-meta-lang-vendor" => tags.lang_vendor,
-            "datadog-meta-tracer-version" => tags.tracer_version,
-            "datadog-container-id" => tags.container_id,
-        }
-    );
-    if headers.get("datadog-client-computed-top-level").is_some() {
-        tags.client_computed_top_level = true;
-    }
-    if headers.get("datadog-client-computed-stats").is_some() {
-        tags.client_computed_stats = true;
-    }
-    tags
 }
 
 pub fn construct_agent_payload(tracer_payloads: Vec<pb::TracerPayload>) -> pb::AgentPayload {
@@ -119,7 +149,7 @@ pub fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
 
 pub fn construct_tracer_payload(
     chunks: Vec<pb::TraceChunk>,
-    tracer_tags: TracerHeaderTags,
+    tracer_tags: &TracerHeaderTags,
     root_span_tags: RootSpanTags,
 ) -> pb::TracerPayload {
     pb::TracerPayload {
@@ -136,38 +166,155 @@ pub fn construct_tracer_payload(
     }
 }
 
-pub fn serialize_agent_payload(payload: pb::AgentPayload) -> anyhow::Result<Vec<u8>> {
+pub fn serialize_proto_payload<T>(payload: &T) -> anyhow::Result<Vec<u8>>
+where
+    T: prost::Message,
+{
     let mut buf = Vec::new();
     buf.reserve(payload.encoded_len());
     payload.encode(&mut buf)?;
     Ok(buf)
 }
 
-pub async fn send(data: Vec<u8>, url: &str, api_key: &str) -> anyhow::Result<()> {
-    let req = Request::builder()
-        .method(Method::POST)
-        .uri(url)
-        .header("Content-type", "application/x-protobuf")
-        .header("DD-API-KEY", api_key)
-        .body(Body::from(data))?;
+#[derive(Debug, Clone)]
+pub struct SendData {
+    tracer_payloads: Vec<pb::TracerPayload>,
+    size: usize, // have a rough size estimate to force flushing if it's large
+    pub target: Endpoint,
+    headers: HashMap<&'static str, String>,
+}
 
-    let https = HttpsConnectorBuilder::new()
-        .with_native_roots()
-        .https_only()
-        .enable_http1()
-        .build();
-    let client: Client<_, hyper::Body> = Client::builder().build(https);
-    match client.request(req).await {
-        Ok(response) => {
-            if response.status() != StatusCode::ACCEPTED {
-                let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
-                let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                anyhow::bail!("Server did not accept traces: {response_body}");
-            }
-            Ok(())
+impl SendData {
+    pub fn new(
+        size: usize,
+        tracer_payload: pb::TracerPayload,
+        tracer_header_tags: TracerHeaderTags,
+        target: &Endpoint,
+    ) -> SendData {
+        let headers = if let Some(api_key) = &target.api_key {
+            HashMap::from([("DD-API-KEY", api_key.as_ref().to_string())])
+        } else {
+            tracer_header_tags.into()
+        };
+
+        SendData {
+            tracer_payloads: vec![tracer_payload],
+            size,
+            target: target.clone(),
+            headers,
         }
-        Err(e) => anyhow::bail!("Failed to send traces: {e}"),
     }
+
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    pub async fn send<'a>(self) -> anyhow::Result<Response<Body>> {
+        let target = &self.target;
+
+        let mut req = hyper::Request::builder()
+            .uri(target.url.clone())
+            .header(
+                hyper::header::USER_AGENT,
+                concat!("Tracer/", env!("CARGO_PKG_VERSION")),
+            )
+            .method(Method::POST);
+
+        for (key, value) in &self.headers {
+            req = req.header(*key, value);
+        }
+
+        async fn send_request(
+            req: HttpRequestBuilder,
+            payload: Vec<u8>,
+            expected_status: StatusCode,
+        ) -> anyhow::Result<Response<Body>> {
+            let req = req.body(Body::from(payload))?;
+
+            match Client::builder()
+                .build(connector::Connector::default())
+                .request(req)
+                .await
+            {
+                Ok(response) => {
+                    if response.status() != expected_status {
+                        let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+                        let response_body =
+                            String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
+                        anyhow::bail!("Server did not accept traces: {response_body}");
+                    }
+                    Ok(response)
+                }
+                Err(e) => anyhow::bail!("Failed to send traces: {e}"),
+            }
+        }
+
+        if target.api_key.is_some() {
+            req = req.header("Content-type", "application/x-protobuf");
+
+            let agent_payload = construct_agent_payload(self.tracer_payloads);
+            let serialized_trace_payload = serialize_proto_payload(&agent_payload)
+                .context("Failed to serialize trace agent payload, dropping traces")?;
+
+            send_request(req, serialized_trace_payload, StatusCode::ACCEPTED).await
+        } else {
+            req = req.header("Content-type", "application/msgpack");
+
+            let (template, _) = req.body(()).unwrap().into_parts();
+
+            let mut futures = FuturesUnordered::new();
+            for tracer_payload in self.tracer_payloads.into_iter() {
+                let mut builder = HttpRequestBuilder::new()
+                    .method(template.method.clone())
+                    .uri(template.uri.clone())
+                    .version(template.version)
+                    .header(
+                        "X-Datadog-Trace-Count",
+                        tracer_payload.chunks.len().to_string(),
+                    );
+                builder
+                    .headers_mut()
+                    .unwrap()
+                    .extend(template.headers.clone());
+
+                futures.push(send_request(
+                    builder,
+                    rmp_serde::to_vec_named(&tracer_payload)?,
+                    StatusCode::OK,
+                ));
+            }
+            let mut last_response = Err(anyhow::format_err!("No futures completed...?!"));
+            loop {
+                match futures.next().await {
+                    Some(response) => match response {
+                        Ok(response) => last_response = Ok(response),
+                        Err(e) => return Err(e),
+                    },
+                    None => return last_response,
+                }
+            }
+        }
+    }
+
+    // For testing
+    pub fn get_payloads(&self) -> &Vec<pb::TracerPayload> {
+        &self.tracer_payloads
+    }
+}
+
+pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
+    // TODO trace payloads with identical data except for chunk could be merged?
+
+    data.sort_unstable_by(|a, b| a.target.url.to_string().cmp(&b.target.url.to_string()));
+    data.dedup_by(|a, b| {
+        if a.target.url == b.target.url {
+            a.tracer_payloads.append(&mut b.tracer_payloads);
+            a.size += b.size;
+            return true;
+        }
+        false
+    });
+    data
 }
 
 pub fn get_root_span_index(trace: &Vec<pb::Span>) -> anyhow::Result<usize> {
@@ -307,6 +454,82 @@ pub fn enrich_span_with_mini_agent_metadata(
     }
 }
 
+/// Used to populate root_span_tags fields if they exist in the root span's meta tags
+macro_rules! parse_root_span_tags {
+    (
+        $root_span_meta_map:ident,
+        { $($tag:literal => $($root_span_tags_struct_field:ident).+ ,)+ }
+    ) => {
+        $(
+            if let Some(root_span_tag_value) = $root_span_meta_map.get($tag) {
+                $($root_span_tags_struct_field).+ = root_span_tag_value;
+            }
+        )+
+    }
+}
+
+pub fn collect_trace_chunks(
+    mut traces: Vec<Vec<pb::Span>>,
+    tracer_header_tags: &TracerHeaderTags,
+    process_chunk: impl Fn(&mut TraceChunk, usize),
+) -> pb::TracerPayload {
+    let mut trace_chunks: Vec<pb::TraceChunk> = Vec::new();
+
+    let mut gathered_root_span_tags = false;
+    let mut root_span_tags = RootSpanTags::default();
+
+    for trace in traces.iter_mut() {
+        if let Err(e) = normalizer::normalize_trace(trace) {
+            error!("Error normalizing trace: {e}");
+        }
+
+        let mut chunk = construct_trace_chunk(trace.to_vec());
+
+        let root_span_index = match get_root_span_index(trace) {
+            Ok(res) => res,
+            Err(e) => {
+                error!("Error getting the root span index of a trace, skipping. {e}");
+                continue;
+            }
+        };
+
+        if let Err(e) = normalizer::normalize_chunk(&mut chunk, root_span_index) {
+            error!("Error normalizing trace chunk: {e}");
+        }
+
+        for span in chunk.spans.iter_mut() {
+            // TODO: obfuscate & truncate spans
+            if tracer_header_tags.client_computed_top_level {
+                update_tracer_top_level(span);
+            }
+        }
+
+        if !tracer_header_tags.client_computed_top_level {
+            compute_top_level_span(&mut chunk.spans);
+        }
+
+        process_chunk(&mut chunk, root_span_index);
+
+        trace_chunks.push(chunk);
+
+        if !gathered_root_span_tags {
+            gathered_root_span_tags = true;
+            let meta_map = &trace[root_span_index].meta;
+            parse_root_span_tags!(
+                meta_map,
+                {
+                    "env" => root_span_tags.env,
+                    "version" => root_span_tags.app_version,
+                    "_dd.hostname" => root_span_tags.hostname,
+                    "runtime-id" => root_span_tags.runtime_id,
+                }
+            );
+        }
+    }
+
+    construct_tracer_payload(trace_chunks, tracer_header_tags, root_span_tags)
+}
+
 #[cfg(test)]
 mod tests {
     use hyper::Request;
@@ -385,7 +608,7 @@ mod tests {
                 .unwrap();
             let res = trace_utils::get_traces_from_request_body(request.into_body()).await;
             assert!(res.is_ok());
-            assert_eq!(res.unwrap(), output);
+            assert_eq!(res.unwrap().1, output);
         }
     }
 

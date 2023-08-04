@@ -1,9 +1,10 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use http::uri::{PathAndQuery, Scheme};
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
-use ddcommon::parse_uri;
+use ddcommon::{parse_uri, Endpoint};
 use spawn_worker::LibDependency;
 
 const ENV_SIDECAR_IPC_MODE: &str = "_DD_DEBUG_SIDECAR_IPC_MODE";
@@ -20,7 +21,9 @@ const SIDECAR_HELP: &str = "help";
 const ENV_IDLE_LINGER_TIME_SECS: &str = "_DD_DEBUG_SIDECAR_IDLE_LINGER_TIME_SECS";
 const DEFAULT_IDLE_LINGER_TIME: Duration = Duration::from_secs(60);
 
-#[derive(Debug)]
+const ENV_SIDECAR_SELF_TELEMETRY: &str = "_DD_SIDECAR_SELF_TELEMETRY";
+
+#[derive(Debug, Copy, Clone)]
 pub enum IpcMode {
     Shared,
     InstancePerProcess,
@@ -32,7 +35,17 @@ impl Default for IpcMode {
     }
 }
 
-#[derive(Debug)]
+impl ToString for IpcMode {
+    fn to_string(&self) -> String {
+        match self {
+            IpcMode::Shared => SIDECAR_IPC_MODE_SHARED,
+            IpcMode::InstancePerProcess => SIDECAR_IPC_MODE_PER_PROCESS,
+        }
+        .into()
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum LogMethod {
     Stdout,
     Stderr,
@@ -46,11 +59,23 @@ impl Default for LogMethod {
     }
 }
 
+impl ToString for LogMethod {
+    fn to_string(&self) -> String {
+        match self {
+            LogMethod::Disabled => SIDECAR_LOG_METHOD_DISABLED.into(),
+            LogMethod::Stdout => SIDECAR_LOG_METHOD_STDOUT.into(),
+            LogMethod::Stderr => SIDECAR_LOG_METHOD_STDERR.into(),
+            LogMethod::File(path) => format!("file://{}", path.to_string_lossy()),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Config {
     pub ipc_mode: IpcMode,
     pub log_method: LogMethod,
     pub idle_linger_time: Duration,
+    pub self_telemetry: bool,
     pub library_dependencies: Vec<LibDependency>,
     pub child_env: HashMap<std::ffi::OsString, std::ffi::OsString>,
 }
@@ -58,6 +83,18 @@ pub struct Config {
 impl Config {
     pub fn get() -> Self {
         FromEnv::config()
+    }
+
+    pub fn to_env(&self) -> HashMap<&'static str, String> {
+        HashMap::from([
+            (ENV_SIDECAR_IPC_MODE, self.ipc_mode.to_string()),
+            (ENV_SIDECAR_LOG_METHOD, self.log_method.to_string()),
+            (
+                ENV_IDLE_LINGER_TIME_SECS,
+                self.idle_linger_time.as_secs().to_string(),
+            ),
+            (ENV_SIDECAR_SELF_TELEMETRY, self.self_telemetry.to_string()),
+        ])
     }
 }
 
@@ -111,13 +148,42 @@ impl FromEnv {
             .unwrap_or(DEFAULT_IDLE_LINGER_TIME)
     }
 
+    fn self_telemetry() -> bool {
+        matches!(
+            std::env::var(ENV_SIDECAR_SELF_TELEMETRY).as_deref(),
+            Ok("true" | "1")
+        )
+    }
+
     pub fn config() -> Config {
         Config {
             ipc_mode: Self::ipc_mode(),
             log_method: Self::log_method(),
             idle_linger_time: Self::idle_linger_time(),
+            self_telemetry: Self::self_telemetry(),
             library_dependencies: vec![],
             child_env: std::env::vars_os().collect(),
         }
+    }
+}
+
+pub fn get_product_endpoint(subdomain: &str, endpoint: &Endpoint) -> Endpoint {
+    if let Some(ref api_key) = endpoint.api_key {
+        let mut parts = endpoint.url.clone().into_parts();
+        if parts.scheme.is_none() {
+            parts.scheme = Some(Scheme::HTTPS);
+            parts.authority = Some(
+                format!("{}.{}", subdomain, parts.authority.unwrap())
+                    .parse()
+                    .unwrap(),
+            );
+        }
+        parts.path_and_query = Some(PathAndQuery::from_static("/"));
+        Endpoint {
+            url: hyper::Uri::from_parts(parts).unwrap(),
+            api_key: Some(api_key.clone()),
+        }
+    } else {
+        endpoint.clone()
     }
 }

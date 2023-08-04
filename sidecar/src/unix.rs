@@ -8,6 +8,9 @@ use std::os::unix::net::UnixListener as StdUnixListener;
 
 use futures::future;
 use manual_future::ManualFuture;
+use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
+use nix::sys::socket::{shutdown, Shutdown};
+use std::os::unix::prelude::AsRawFd;
 use std::time::{self, Instant};
 use std::{
     io::{self},
@@ -20,13 +23,11 @@ use std::{
 use tokio::select;
 
 use tokio::net::UnixListener;
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{self, Receiver};
 use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
 
-use crate::interface::blocking::TelemetryTransport;
-use crate::interface::TelemetryServer;
+use crate::interface::blocking::SidecarTransport;
+use crate::interface::SidecarServer;
 use datadog_ipc::platform::Channel as IpcChannel;
 use ddtelemetry::data::metrics::{MetricNamespace, MetricType};
 use ddtelemetry::metrics::ContextKey;
@@ -40,7 +41,7 @@ use crate::config::{self, Config};
 
 struct MetricData<'a> {
     worker: &'a TelemetryWorkerHandle,
-    server: &'a TelemetryServer,
+    server: &'a SidecarServer,
     submitted_payloads: ContextKey,
     active_sessions: ContextKey,
 }
@@ -67,7 +68,13 @@ impl<'a> MetricData<'a> {
     }
 }
 
-fn self_telemetry(server: TelemetryServer, mut shutdown_receiver: Receiver<()>) -> JoinHandle<()> {
+fn self_telemetry(server: SidecarServer, mut shutdown_receiver: Receiver<()>) -> JoinHandle<()> {
+    if !Config::get().self_telemetry {
+        return tokio::spawn(async move {
+            shutdown_receiver.recv().await;
+        });
+    }
+
     let (future, completer) = ManualFuture::new();
     server
         .self_telemetry_config
@@ -75,63 +82,77 @@ fn self_telemetry(server: TelemetryServer, mut shutdown_receiver: Receiver<()>) 
         .unwrap()
         .replace(completer);
     tokio::spawn(async move {
-        if let Ok((worker, join_handle)) = TelemetryWorkerBuilder::new_fetch_host(
-            "datadog-ipc-helper".to_string(),
-            "php".to_string(),
-            "SIDECAR".to_string(),
-            env!("CARGO_PKG_VERSION").to_string(),
-        )
-        .spawn_with_config(future.await)
-        .await
-        {
-            let metrics = MetricData {
-                worker: &worker,
-                server: &server,
-                submitted_payloads: worker.register_metric_context(
-                    "sidecar.submitted_payloads".to_string(),
-                    vec![],
-                    MetricType::Count,
-                    true,
-                    MetricNamespace::Trace,
-                ),
-                active_sessions: worker.register_metric_context(
-                    "sidecar.active_sessions".to_string(),
-                    vec![],
-                    MetricType::Gauge,
-                    true,
-                    MetricNamespace::Trace,
-                ),
-            };
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
 
-            let _ = worker
-                .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                .await;
-            loop {
-                select! {
-                    _ = tokio::time::sleep(Duration::from_secs(60)) => {
-                        metrics.collect_and_send().await;
-                        let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushMetricAggr)).await;
-                        let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData)).await;
-                    },
-                    _ = shutdown_receiver.recv() => {
-                        metrics.collect_and_send().await;
-                        let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop)).await;
-                        let _ = join_handle.await;
-                        return
-                    },
+        select! {
+            _ = shutdown_receiver.recv() => { },
+            config = future => {
+                if let Ok((worker, join_handle)) = TelemetryWorkerBuilder::new_fetch_host(
+                    "datadog-ipc-helper".to_string(),
+                    "php".to_string(),
+                    "SIDECAR".to_string(),
+                    env!("CARGO_PKG_VERSION").to_string(),
+                )
+                .spawn_with_config(config)
+                .await
+                {
+                    let metrics = MetricData {
+                        worker: &worker,
+                        server: &server,
+                        submitted_payloads: worker.register_metric_context(
+                            "sidecar.submitted_payloads".to_string(),
+                            vec![],
+                            MetricType::Count,
+                            true,
+                            MetricNamespace::Trace,
+                        ),
+                        active_sessions: worker.register_metric_context(
+                            "sidecar.active_sessions".to_string(),
+                            vec![],
+                            MetricType::Gauge,
+                            true,
+                            MetricNamespace::Trace,
+                        ),
+                    };
+
+                    let _ = worker
+                        .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
+                        .await;
+                    loop {
+                        select! {
+                            _ = interval.tick() => {
+                                metrics.collect_and_send().await;
+                                let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushMetricAggr)).await;
+                                let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData)).await;
+                            },
+                            _ = shutdown_receiver.recv() => {
+                                metrics.collect_and_send().await;
+                                let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop)).await;
+                                let _ = join_handle.await;
+                                return
+                            },
+                        }
+                    }
+                } else {
+                    shutdown_receiver.recv().await;
                 }
-            }
-        } else {
-            shutdown_receiver.recv().await;
+            },
         }
     })
 }
 
 async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
     let counter = Arc::new(AtomicI32::new(0));
-    let token = CancellationToken::new();
     let cloned_counter = Arc::clone(&counter);
-    let cloned_token = token.clone();
+
+    // shutdown to gracefully dequeue, and immediately relinquish ownership of the socket while shutting down
+    let listener_fd = listener.as_raw_fd();
+    let cancel = move || {
+        // We need to drop O_NONBLOCK, as accept() on a shutdown socket will just give EAGAIN instead of EINVAL
+        let flags = OFlag::from_bits_truncate(fcntl(listener_fd, F_GETFL).ok().unwrap());
+        _ = fcntl(listener_fd, F_SETFL(flags & !OFlag::O_NONBLOCK));
+        _ = shutdown(listener_fd, Shutdown::Both);
+    };
 
     tokio::spawn(async move {
         let mut last_seen_connection_time = time::Instant::now();
@@ -145,36 +166,26 @@ async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
             }
 
             if last_seen_connection_time.elapsed() > max_idle_linger_time {
-                cloned_token.cancel();
+                cancel();
                 tracing::info!("No active connections - shutting down");
                 break;
             }
         }
     });
 
-    let cloned_token = token.clone();
     tokio::spawn(async move {
         if let Err(err) = tokio::signal::ctrl_c().await {
             tracing::error!("Error setting up signal handler {}", err);
         }
         tracing::info!("Received Ctrl-C Signal, shutting down");
-        cloned_token.cancel();
+        cancel();
     });
 
-    let server = TelemetryServer::default();
+    let server = SidecarServer::default();
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
     let telemetry_handle = self_telemetry(server.clone(), shutdown_complete_rx);
 
-    loop {
-        let (socket, _) = select! {
-            res = listener.accept() => {
-                res?
-            },
-            _ = token.cancelled() => {
-                break
-            },
-        };
-
+    while let Ok((socket, _)) = listener.accept().await {
         tracing::info!("connection accepted");
         counter.fetch_add(1, Ordering::AcqRel);
 
@@ -193,10 +204,14 @@ async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
     // Shutdown final sender so the receiver can complete
     drop(shutdown_complete_tx);
     let _ = telemetry_handle.await;
+    _ = server.trace_flusher.join().await;
     Ok(())
 }
 
 fn enter_listener_loop(listener: StdUnixListener) -> anyhow::Result<()> {
+    #[cfg(feature = "tokio-console")]
+    console_subscriber::init();
+
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
@@ -237,7 +252,6 @@ pub extern "C" fn ddog_daemon_entry_point() {
 }
 
 fn daemonize(listener: StdUnixListener, cfg: Config) -> io::Result<()> {
-    // TODO: allow passing presaved environment
     let mut spawn_cfg = unsafe { spawn_worker::SpawnWorker::new() };
     spawn_cfg
         .pass_fd(listener)
@@ -246,6 +260,9 @@ fn daemonize(listener: StdUnixListener, cfg: Config) -> io::Result<()> {
         .process_name("datadog-ipc-helper")
         .shared_lib_dependencies(cfg.library_dependencies.clone())
         .target(entrypoint!(ddog_daemon_entry_point));
+    for (env, val) in cfg.to_env().into_iter() {
+        spawn_cfg.append_env(env, val);
+    }
     match cfg.log_method {
         config::LogMethod::File(path) => {
             let file = File::options()
@@ -275,7 +292,7 @@ fn daemonize(listener: StdUnixListener, cfg: Config) -> io::Result<()> {
     Ok(())
 }
 
-pub fn start_or_connect_to_sidecar(cfg: config::Config) -> io::Result<TelemetryTransport> {
+pub fn start_or_connect_to_sidecar(cfg: config::Config) -> io::Result<SidecarTransport> {
     let liaison = match cfg.ipc_mode {
         config::IpcMode::Shared => setup::DefaultLiason::ipc_shared(),
         config::IpcMode::InstancePerProcess => setup::DefaultLiason::ipc_per_process(),

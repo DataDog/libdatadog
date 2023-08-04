@@ -18,13 +18,17 @@ use super::{
     transport::{blocking::BlockingTransport, Transport},
 };
 
+extern crate self as datadog_ipc;
+
+#[datadog_ipc_macros::impl_transfer_handles]
 #[tarpc::service]
 pub trait ExampleInterface {
     async fn notify() -> ();
     async fn ping() -> ();
     async fn time_now() -> Duration;
     async fn req_cnt() -> u32;
-    async fn store_file(file: PlatformHandle<File>) -> ();
+    async fn store_file(#[SerializedHandle] file: PlatformHandle<File>) -> ();
+    #[SerializedHandle]
     async fn retrieve_file() -> Option<PlatformHandle<File>>;
 }
 
@@ -89,55 +93,5 @@ impl ExampleInterface for ExampleServer {
     fn retrieve_file(self, _: Context) -> Self::RetrieveFileFut {
         self.req_cnt.fetch_add(1, Ordering::AcqRel);
         ready(self.stored_files.lock().unwrap().pop())
-    }
-}
-
-mod handles_impl {
-    use crate::handles::{HandlesTransport, TransferHandles};
-
-    use super::{ExampleInterfaceRequest, ExampleInterfaceResponse};
-
-    impl TransferHandles for ExampleInterfaceRequest {
-        fn move_handles<Transport: HandlesTransport>(
-            &self,
-            t: Transport,
-        ) -> Result<(), Transport::Error> {
-            match self {
-                ExampleInterfaceRequest::StoreFile { file } => t.move_handle(file.clone()),
-                _ => Ok(()),
-            }
-        }
-
-        fn receive_handles<Transport: HandlesTransport>(
-            &mut self,
-            t: Transport,
-        ) -> Result<(), Transport::Error> {
-            match self {
-                ExampleInterfaceRequest::StoreFile { file } => file.receive_handles(t),
-                _ => Ok(()),
-            }
-        }
-    }
-
-    impl TransferHandles for ExampleInterfaceResponse {
-        fn move_handles<Transport: HandlesTransport>(
-            &self,
-            t: Transport,
-        ) -> Result<(), Transport::Error> {
-            match self {
-                ExampleInterfaceResponse::RetrieveFile(f) => f.move_handles(t),
-                _ => Ok(()),
-            }
-        }
-
-        fn receive_handles<Transport: HandlesTransport>(
-            &mut self,
-            t: Transport,
-        ) -> Result<(), Transport::Error> {
-            match self {
-                ExampleInterfaceResponse::RetrieveFile(f) => f.receive_handles(t),
-                _ => Ok(()),
-            }
-        }
     }
 }
