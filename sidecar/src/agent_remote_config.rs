@@ -161,7 +161,7 @@ where
 
                 // Ensure the next write hasn't started yet *and* the data is from the expected generation
                 if !new_data.meta.writing.load(Ordering::SeqCst)
-                    && new_generation == copied_data.meta.generation.load(Ordering::Acquire)
+                    && new_generation == new_data.meta.generation.load(Ordering::Acquire)
                 {
                     reader.current_config.replace(new_mem);
                     return Some((true, copied_data.as_slice()));

@@ -279,7 +279,7 @@ where
 
 impl Drop for ShmPath {
     fn drop(&mut self) {
-        _ = shm_unlink(self.name.as_bytes());
+        _ = shm_unlink(self.name.as_c_str());
     }
 }
 
