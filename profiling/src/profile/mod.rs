@@ -23,6 +23,10 @@ pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::Fx
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
+pub struct StackTraceId(usize);
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[repr(transparent)]
 pub struct PProfId(usize);
 
 impl From<&PProfId> for u64 {
@@ -70,10 +74,15 @@ struct Mapping {
 }
 
 #[derive(Eq, PartialEq, Hash)]
-struct Sample {
+struct StackTrace {
     /// The ids recorded here correspond to a Profile.location.id.
     /// The leaf is at location_id[0].
     pub locations: Vec<PProfId>,
+}
+
+#[derive(Eq, PartialEq, Hash)]
+struct Sample {
+    pub stacktrace: StackTraceId,
 
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
@@ -116,6 +125,7 @@ pub struct Profile {
     mappings: FxIndexSet<Mapping>,
     locations: FxIndexSet<Location>,
     functions: FxIndexSet<Function>,
+    stack_traces: FxIndexSet<StackTrace>,
     strings: FxIndexSet<String>,
     start_time: SystemTime,
     period: Option<(i64, ValueType)>,
@@ -385,6 +395,7 @@ impl Profile {
             locations: Default::default(),
             functions: Default::default(),
             strings: Default::default(),
+            stack_traces: Default::default(),
             start_time,
             period: None,
             endpoints: Default::default(),
@@ -437,6 +448,15 @@ impl Profile {
          * one in there with all "zero" data either, so we shift the ids.
          */
         Ok(PProfId(index + 1))
+    }
+
+    fn add_stacktrace(&mut self, locations: Vec<PProfId>) -> StackTraceId {
+        let index = self.stack_traces.dedup(StackTrace { locations });
+        StackTraceId(index)
+    }
+
+    fn get_stacktrace(&self, st: StackTraceId) -> &StackTrace {
+        self.stack_traces.get_index(st.0).unwrap()
     }
 
     fn add_function(&mut self, function: &api::Function) -> PProfId {
@@ -498,9 +518,9 @@ impl Profile {
              */
             locations.push(PProfId(index + 1))
         }
-
+        let stacktrace = self.add_stacktrace(locations);
         let s = Sample {
-            locations,
+            stacktrace,
             labels,
             local_root_span_id_label_offset,
         };
@@ -810,9 +830,10 @@ impl TryFrom<&Profile> for pprof::Profile {
                 }
 
                 let new_values = profile.upscale_values(values.as_ref(), labels.as_ref())?;
+                let stacktrace = profile.get_stacktrace(sample.stacktrace);
 
                 Ok(pprof::Sample {
-                    location_ids: sample.locations.iter().map(Into::into).collect(),
+                    location_ids: stacktrace.locations.iter().map(Into::into).collect(),
                     values: new_values,
                     labels,
                 })
