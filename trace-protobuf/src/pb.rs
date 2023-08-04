@@ -77,8 +77,10 @@ pub struct Span {
     #[prost(map = "string, string", tag = "10")]
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
-    pub meta:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    pub meta: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
     /// metrics is a mapping from tag name to tag value for numeric-valued tags.
     /// @gotags: json:"metrics" msg:"metrics"
     #[prost(map = "string, double", tag = "11")]
@@ -96,10 +98,13 @@ pub struct Span {
     #[prost(map = "string, bytes", tag = "13")]
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
-    pub meta_struct:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::vec::Vec<u8>>,
+    pub meta_struct: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::vec::Vec<u8>,
+    >,
 }
 /// TraceChunk represents a list of spans with the same trace ID. In other words, a chunk of a trace.
+#[derive(Deserialize, Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TraceChunk {
@@ -118,14 +123,17 @@ pub struct TraceChunk {
     /// tags specifies tags common in all `spans`.
     /// @gotags: json:"tags" msg:"tags"
     #[prost(map = "string, string", tag = "4")]
-    pub tags:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    pub tags: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
     /// droppedTrace specifies whether the trace was dropped by samplers or not.
     /// @gotags: json:"dropped_trace" msg:"dropped_trace"
     #[prost(bool, tag = "5")]
     pub dropped_trace: bool,
 }
 /// TracerPayload represents a payload the trace agent receives from tracers.
+#[derive(Deserialize, Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TracerPayload {
@@ -156,8 +164,10 @@ pub struct TracerPayload {
     /// tags specifies tags common in all `chunks`.
     /// @gotags: json:"tags" msg:"tags"
     #[prost(map = "string, string", tag = "7")]
-    pub tags:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    pub tags: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
     /// env specifies `env` tag that set with the tracer.
     /// @gotags: json:"env" msg:"env"
     #[prost(string, tag = "8")]
@@ -186,8 +196,10 @@ pub struct AgentPayload {
     pub tracer_payloads: ::prost::alloc::vec::Vec<TracerPayload>,
     /// tags specifies tags common in all `tracerPayloads`.
     #[prost(map = "string, string", tag = "6")]
-    pub tags:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    pub tags: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
     /// agentVersion specifies version of the agent.
     #[prost(string, tag = "7")]
     pub agent_version: ::prost::alloc::string::String,

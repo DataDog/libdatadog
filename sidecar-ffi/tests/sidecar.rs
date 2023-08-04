@@ -20,6 +20,7 @@ macro_rules! assert_maybe_no_error {
     };
 }
 
+use ddcommon::Endpoint;
 use std::{
     ffi::CString,
     fs::File,
@@ -79,10 +80,16 @@ fn test_ddog_sidecar_register_app() {
         .unwrap();
 
     unsafe {
-        ddog_sidecar_session_config_setAgentUrl(
+        ddog_sidecar_session_set_config(
             &mut transport,
             "session_id".into(),
-            "http://localhost:8082/".into(),
+            &Endpoint {
+                api_key: None,
+                url: hyper::Uri::from_static("http://localhost:8082/"),
+            },
+            1000,
+            1000000,
+            10000000,
         );
 
         let meta = ddog_sidecar_runtimeMeta_build(
@@ -113,7 +120,17 @@ fn test_ddog_sidecar_register_app() {
             "service_name".into()
         ));
         // reset session config - and cause shutdown of all existing instances
-        ddog_sidecar_session_config_setAgentUrl(&mut transport, "session_id".into(), "".into());
+        ddog_sidecar_session_set_config(
+            &mut transport,
+            "session_id".into(),
+            &Endpoint {
+                api_key: None,
+                url: hyper::Uri::from_static("http://localhost:8083/"),
+            },
+            1000,
+            1000000,
+            10000000,
+        );
 
         //TODO: Shutdown the service
         // enough case: have C api that shutsdown telemetry worker

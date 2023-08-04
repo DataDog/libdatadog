@@ -12,3 +12,5 @@ license = "Apache-2.0"
 [dependencies]
 ddcommon = { path = "../ddcommon" }
 anyhow = "1.0"
+hyper = {version = "0.14", default-features = false}
+

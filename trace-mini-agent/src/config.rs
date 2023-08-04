@@ -1,18 +1,21 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
+use ddcommon::Endpoint;
 use log::{debug, error};
+use std::borrow::Cow;
 use std::env;
+use std::str::FromStr;
 
 use datadog_trace_obfuscation::replacer::{self, ReplaceRule};
+use datadog_trace_utils::config_utils::{
+    read_cloud_env, trace_intake_url, trace_intake_url_prefixed, trace_stats_url,
+    trace_stats_url_prefixed,
+};
 use datadog_trace_utils::trace_utils;
-
-const TRACE_INTAKE_ROUTE: &str = "/api/v0.2/traces";
-const TRACE_STATS_INTAKE_ROUTE: &str = "/api/v0.2/stats";
 
 #[derive(Debug)]
 pub struct Config {
-    pub api_key: String,
     pub function_name: Option<String>,
     pub env_type: trace_utils::EnvironmentType,
     pub os: String,
@@ -23,49 +26,33 @@ pub struct Config {
     pub stats_flush_interval: u64,
     /// timeout for environment verification, in milliseconds
     pub verify_env_timeout: u64,
-    pub trace_intake_url: String,
-    pub trace_stats_intake_url: String,
+    pub trace_intake: Endpoint,
+    pub trace_stats_intake: Endpoint,
     pub dd_site: String,
     pub tag_replace_rules: Option<Vec<ReplaceRule>>,
 }
 
 impl Config {
     pub fn new() -> Result<Config, Box<dyn std::error::Error>> {
-        let api_key = env::var("DD_API_KEY")
-            .map_err(|_| anyhow::anyhow!("DD_API_KEY environment variable is not set"))?;
-        let mut function_name = None;
+        let api_key: Cow<str> = env::var("DD_API_KEY")
+            .map_err(|_| anyhow::anyhow!("DD_API_KEY environment variable is not set"))?
+            .into();
 
-        let mut maybe_env_type = None;
-        if let Ok(res) = env::var("K_SERVICE") {
-            // Set by Google Cloud Functions for newer runtimes
-            function_name = Some(res);
-            maybe_env_type = Some(trace_utils::EnvironmentType::CloudFunction);
-        } else if let Ok(res) = env::var("FUNCTION_NAME") {
-            // Set by Google Cloud Functions for older runtimes
-            function_name = Some(res);
-            maybe_env_type = Some(trace_utils::EnvironmentType::CloudFunction);
-        } else if let Ok(res) = env::var("WEBSITE_SITE_NAME") {
-            // Set by Azure Functions
-            function_name = Some(res);
-            maybe_env_type = Some(trace_utils::EnvironmentType::AzureFunction);
-        }
-
-        let env_type = maybe_env_type.ok_or_else(|| {
+        let (function_name, env_type) = read_cloud_env().ok_or_else(|| {
             anyhow::anyhow!("Unable to identify environment. Shutting down Mini Agent.")
         })?;
 
         let dd_site = env::var("DD_SITE").unwrap_or_else(|_| "datadoghq.com".to_string());
 
         // construct the trace & trace stats intake urls based on DD_SITE env var (to flush traces & trace stats to)
-        let mut trace_intake_url = format!("https://trace.agent.{dd_site}{TRACE_INTAKE_ROUTE}");
-        let mut trace_stats_intake_url =
-            format!("https://trace.agent.{dd_site}{TRACE_STATS_INTAKE_ROUTE}");
+        let mut trace_intake_url = trace_intake_url(&dd_site);
+        let mut trace_stats_intake_url = trace_stats_url(&dd_site);
 
         // DD_APM_DD_URL env var will primarily be used for integration tests
         // overrides the entire trace/trace stats intake url prefix
         if let Ok(endpoint_prefix) = env::var("DD_APM_DD_URL") {
-            trace_intake_url = format!("{endpoint_prefix}{TRACE_INTAKE_ROUTE}");
-            trace_stats_intake_url = format!("{endpoint_prefix}{TRACE_STATS_INTAKE_ROUTE}");
+            trace_intake_url = trace_intake_url_prefixed(&endpoint_prefix);
+            trace_stats_intake_url = trace_stats_url_prefixed(&endpoint_prefix);
         };
 
         let tag_replace_rules: Option<Vec<ReplaceRule>> = match env::var("DD_APM_REPLACE_TAGS") {
@@ -83,8 +70,7 @@ impl Config {
         };
 
         Ok(Config {
-            api_key,
-            function_name,
+            function_name: Some(function_name),
             env_type,
             os: env::consts::OS.to_string(),
             max_request_content_length: 10 * 1024 * 1024, // 10MB in Bytes
@@ -92,8 +78,14 @@ impl Config {
             stats_flush_interval: 3,
             verify_env_timeout: 100,
             dd_site,
-            trace_intake_url,
-            trace_stats_intake_url,
+            trace_intake: Endpoint {
+                url: hyper::Uri::from_str(&trace_intake_url).unwrap(),
+                api_key: Some(api_key.clone()),
+            },
+            trace_stats_intake: Endpoint {
+                url: hyper::Uri::from_str(&trace_stats_intake_url).unwrap(),
+                api_key: Some(api_key),
+            },
             tag_replace_rules,
         })
     }
@@ -141,11 +133,11 @@ mod tests {
         assert!(config_res.is_ok());
         let config = config_res.unwrap();
         assert_eq!(
-            config.trace_intake_url,
+            config.trace_intake.url,
             "https://trace.agent.datadoghq.com/api/v0.2/traces"
         );
         assert_eq!(
-            config.trace_stats_intake_url,
+            config.trace_stats_intake.url,
             "https://trace.agent.datadoghq.com/api/v0.2/stats"
         );
         env::remove_var("DD_API_KEY");
@@ -170,7 +162,7 @@ mod tests {
         let config_res = config::Config::new();
         assert!(config_res.is_ok());
         let config = config_res.unwrap();
-        assert_eq!(config.trace_intake_url, expected_url);
+        assert_eq!(config.trace_intake.url, expected_url);
         env::remove_var("DD_API_KEY");
         env::remove_var("DD_SITE");
         env::remove_var("K_SERVICE");
@@ -194,7 +186,7 @@ mod tests {
         let config_res = config::Config::new();
         assert!(config_res.is_ok());
         let config = config_res.unwrap();
-        assert_eq!(config.trace_stats_intake_url, expected_url);
+        assert_eq!(config.trace_stats_intake.url, expected_url);
         env::remove_var("DD_API_KEY");
         env::remove_var("DD_SITE");
         env::remove_var("K_SERVICE");
@@ -210,11 +202,11 @@ mod tests {
         assert!(config_res.is_ok());
         let config = config_res.unwrap();
         assert_eq!(
-            config.trace_intake_url,
+            config.trace_intake.url,
             "http://127.0.0.1:3333/api/v0.2/traces"
         );
         assert_eq!(
-            config.trace_stats_intake_url,
+            config.trace_stats_intake.url,
             "http://127.0.0.1:3333/api/v0.2/stats"
         );
         env::remove_var("DD_API_KEY");

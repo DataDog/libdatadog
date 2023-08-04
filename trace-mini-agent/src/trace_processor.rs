@@ -4,33 +4,18 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use datadog_trace_obfuscation::replacer;
 use hyper::{http, Body, Request, Response, StatusCode};
-use log::{error, info};
+use log::info;
 use tokio::sync::mpsc::Sender;
 
-use datadog_trace_normalization::normalizer;
-use datadog_trace_protobuf::pb;
+use datadog_trace_obfuscation::replacer;
 use datadog_trace_utils::trace_utils;
+use datadog_trace_utils::trace_utils::SendData;
 
 use crate::{
     config::Config,
     http_utils::{self, log_and_create_http_response},
 };
-
-/// Used to populate root_span_tags fields if they exist in the root span's meta tags
-macro_rules! parse_root_span_tags {
-    (
-        $root_span_meta_map:ident,
-        { $($tag:literal => $($root_span_tags_struct_field:ident).+ ,)+ }
-    ) => {
-        $(
-            if let Some(root_span_tag_value) = $root_span_meta_map.get($tag) {
-                $($root_span_tags_struct_field).+ = root_span_tag_value;
-            }
-        )+
-    }
-}
 
 #[async_trait]
 pub trait TraceProcessor {
@@ -39,7 +24,7 @@ pub trait TraceProcessor {
         &self,
         config: Arc<Config>,
         req: Request<Body>,
-        tx: Sender<pb::TracerPayload>,
+        tx: Sender<trace_utils::SendData>,
         mini_agent_metadata: Arc<trace_utils::MiniAgentMetadata>,
     ) -> http::Result<Response<Body>>;
 }
@@ -53,7 +38,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
         &self,
         config: Arc<Config>,
         req: Request<Body>,
-        tx: Sender<pb::TracerPayload>,
+        tx: Sender<trace_utils::SendData>,
         mini_agent_metadata: Arc<trace_utils::MiniAgentMetadata>,
     ) -> http::Result<Response<Body>> {
         info!("Recieved traces to process");
@@ -67,10 +52,10 @@ impl TraceProcessor for ServerlessTraceProcessor {
             return response;
         }
 
-        let tracer_header_tags = trace_utils::get_tracer_header_tags(&parts.headers);
+        let tracer_header_tags = (&parts.headers).into();
 
         // deserialize traces from the request body, convert to protobuf structs (see trace-protobuf crate)
-        let mut traces = match trace_utils::get_traces_from_request_body(body).await {
+        let (body_size, traces) = match trace_utils::get_traces_from_request_body(body).await {
             Ok(res) => res,
             Err(err) => {
                 return log_and_create_http_response(
@@ -80,74 +65,29 @@ impl TraceProcessor for ServerlessTraceProcessor {
             }
         };
 
-        let mut trace_chunks: Vec<pb::TraceChunk> = Vec::new();
-
-        let mut gathered_root_span_tags = false;
-        let mut root_span_tags = trace_utils::RootSpanTags::default();
-
-        for trace in traces.iter_mut() {
-            if let Err(e) = normalizer::normalize_trace(trace) {
-                error!("Error normalizing trace: {e}");
-            }
-
-            let mut chunk = trace_utils::construct_trace_chunk(trace.to_vec());
-
-            let root_span_index = match trace_utils::get_root_span_index(trace) {
-                Ok(res) => res,
-                Err(e) => {
-                    error!("Error getting the root span index of a trace, skipping. {e}");
-                    continue;
-                }
-            };
-
-            if let Err(e) = normalizer::normalize_chunk(&mut chunk, root_span_index) {
-                error!("Error normalizing trace chunk: {e}");
-            }
-
-            for span in chunk.spans.iter_mut() {
-                // TODO: obfuscate & truncate spans
-                if tracer_header_tags.client_computed_top_level {
-                    trace_utils::update_tracer_top_level(span);
-                }
-                trace_utils::enrich_span_with_mini_agent_metadata(span, &mini_agent_metadata);
-            }
-
-            if !tracer_header_tags.client_computed_top_level {
-                trace_utils::compute_top_level_span(&mut chunk.spans);
-            }
-
-            trace_utils::set_serverless_root_span_tags(
-                &mut chunk.spans[root_span_index],
-                config.function_name.clone(),
-                &config.env_type,
-            );
-
-            if let Some(rules) = &config.tag_replace_rules {
-                replacer::replace_trace_tags(&mut chunk.spans, rules)
-            }
-
-            trace_chunks.push(chunk);
-
-            if !gathered_root_span_tags {
-                gathered_root_span_tags = true;
-                let meta_map = &trace[root_span_index].meta;
-                parse_root_span_tags!(
-                    meta_map,
-                    {
-                        "env" => root_span_tags.env,
-                        "version" => root_span_tags.app_version,
-                        "_dd.hostname" => root_span_tags.hostname,
-                        "runtime-id" => root_span_tags.runtime_id,
-                    }
+        let payload = trace_utils::collect_trace_chunks(
+            traces,
+            &tracer_header_tags,
+            |chunk, root_span_index| {
+                trace_utils::set_serverless_root_span_tags(
+                    &mut chunk.spans[root_span_index],
+                    config.function_name.clone(),
+                    &config.env_type,
                 );
-            }
-        }
+                for span in chunk.spans.iter_mut() {
+                    trace_utils::enrich_span_with_mini_agent_metadata(span, &mini_agent_metadata);
+                }
 
-        let tracer_payload =
-            trace_utils::construct_tracer_payload(trace_chunks, tracer_header_tags, root_span_tags);
+                if let Some(rules) = &config.tag_replace_rules {
+                    replacer::replace_trace_tags(&mut chunk.spans, rules)
+                }
+            },
+        );
+
+        let send_data = SendData::new(body_size, payload, tracer_header_tags, &config.trace_intake);
 
         // send trace payload to our trace flusher
-        match tx.send(tracer_payload).await {
+        match tx.send(send_data).await {
             Ok(_) => {
                 return log_and_create_http_response(
                     "Successfully buffered traces to be flushed.",
@@ -181,6 +121,7 @@ mod tests {
     };
     use datadog_trace_protobuf::pb;
     use datadog_trace_utils::trace_utils;
+    use ddcommon::Endpoint;
 
     fn create_test_span(start: i64, span_id: u64, parent_id: u64, is_top_level: bool) -> pb::Span {
         let mut span = pb::Span {
@@ -252,14 +193,19 @@ mod tests {
 
     fn create_test_config() -> Config {
         Config {
-            api_key: "dummy_api_key".to_string(),
             function_name: Some("dummy_function_name".to_string()),
             max_request_content_length: 10 * 1024 * 1024,
             trace_flush_interval: 3,
             stats_flush_interval: 3,
             verify_env_timeout: 100,
-            trace_intake_url: "trace.agent.notdog.com/traces".to_string(),
-            trace_stats_intake_url: "trace.agent.notdog.com/stats".to_string(),
+            trace_intake: Endpoint {
+                url: hyper::Uri::from_static("https://trace.agent.notdog.com/traces"),
+                api_key: Some("dummy_api_key".into()),
+            },
+            trace_stats_intake: Endpoint {
+                url: hyper::Uri::from_static("https://trace.agent.notdog.com/stats"),
+                api_key: Some("dummy_api_key".into()),
+            },
             dd_site: "datadoghq.com".to_string(),
             env_type: trace_utils::EnvironmentType::CloudFunction,
             os: "linux".to_string(),
@@ -269,8 +215,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_trace() {
-        let (tx, mut rx): (Sender<pb::TracerPayload>, Receiver<pb::TracerPayload>) =
-            mpsc::channel(1);
+        let (tx, mut rx): (
+            Sender<trace_utils::SendData>,
+            Receiver<trace_utils::SendData>,
+        ) = mpsc::channel(1);
 
         let start = get_current_timestamp_nanos();
 
@@ -321,13 +269,18 @@ mod tests {
             app_version: "".to_string(),
         };
 
-        assert_eq!(expected_tracer_payload, tracer_payload.unwrap());
+        assert_eq!(
+            expected_tracer_payload,
+            tracer_payload.unwrap().get_payloads()[0]
+        );
     }
 
     #[tokio::test]
     async fn test_process_trace_top_level_span_set() {
-        let (tx, mut rx): (Sender<pb::TracerPayload>, Receiver<pb::TracerPayload>) =
-            mpsc::channel(1);
+        let (tx, mut rx): (
+            Sender<trace_utils::SendData>,
+            Receiver<trace_utils::SendData>,
+        ) = mpsc::channel(1);
 
         let start = get_current_timestamp_nanos();
 
@@ -386,6 +339,9 @@ mod tests {
             app_version: "".to_string(),
         };
 
-        assert_eq!(expected_tracer_payload, tracer_payload.unwrap());
+        assert_eq!(
+            expected_tracer_payload,
+            tracer_payload.unwrap().get_payloads()[0]
+        );
     }
 }

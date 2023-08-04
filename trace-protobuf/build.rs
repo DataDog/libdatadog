@@ -44,6 +44,9 @@ fn generate_protobuf() {
     // - handle edge case struct field names that the trace stats intake expects.
     //   example: the trace intake expects the name ContainerID rather than the PascalCase ContainerId
 
+    config.type_attribute("TracerPayload", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("TraceChunk", "#[derive(Deserialize, Serialize)]");
+
     config.type_attribute("Span", "#[derive(Deserialize, Serialize)]");
     config.field_attribute(
         ".pb.Span",

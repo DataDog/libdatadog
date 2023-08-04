@@ -15,6 +15,7 @@ use crate::http_utils::log_and_create_http_response;
 use crate::{config, env_verifier, stats_flusher, stats_processor, trace_flusher, trace_processor};
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
+use datadog_trace_utils::trace_utils::SendData;
 
 const MINI_AGENT_PORT: usize = 8126;
 const TRACE_ENDPOINT_PATH: &str = "/v0.4/traces";
@@ -55,7 +56,7 @@ impl MiniAgent {
 
         // setup a channel to send processed traces to our flusher. tx is passed through each endpoint_handler
         // to the trace processor, which uses it to send de-serialized processed trace payloads to our trace flusher.
-        let (trace_tx, trace_rx): (Sender<pb::TracerPayload>, Receiver<pb::TracerPayload>) =
+        let (trace_tx, trace_rx): (Sender<SendData>, Receiver<SendData>) =
             mpsc::channel(TRACER_PAYLOAD_CHANNEL_BUFFER_SIZE);
 
         // start our trace flusher. receives trace payloads and handles buffering + deciding when to flush to backend.
@@ -138,7 +139,7 @@ impl MiniAgent {
         config: Arc<config::Config>,
         req: Request<Body>,
         trace_processor: Arc<dyn trace_processor::TraceProcessor + Send + Sync>,
-        trace_tx: Sender<pb::TracerPayload>,
+        trace_tx: Sender<SendData>,
         stats_processor: Arc<dyn stats_processor::StatsProcessor + Send + Sync>,
         stats_tx: Sender<pb::ClientStatsPayload>,
         mini_agent_metadata: Arc<trace_utils::MiniAgentMetadata>,

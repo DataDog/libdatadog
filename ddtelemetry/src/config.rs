@@ -2,13 +2,13 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use ddcommon::{parse_uri, Endpoint};
-use std::{borrow::Cow, path::PathBuf, time::Duration};
+use std::{borrow::Cow, time::Duration};
 
 use http::{uri::PathAndQuery, Uri};
 use lazy_static::lazy_static;
 
 pub const DEFAULT_DD_SITE: &str = "datadoghq.com";
-pub const PROD_INTAKE_FORMAT_PREFIX: &str = "https://instrumentation-telemetry-intake";
+pub const PROD_INTAKE_SUBDOMAIN: &str = "instrumentation-telemetry-intake";
 
 const DIRECT_TELEMETRY_URL_PATH: &str = "/api/v2/apmtelemetry";
 const AGENT_TELEMETRY_URL_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
@@ -20,18 +20,23 @@ const DEFAULT_AGENT_PORT: u16 = 8126;
 pub struct Config {
     /// Endpoint to send the data to
     pub endpoint: Option<Endpoint>,
-    /// Path to a file where the data is written instead of sent to the intake
-    pub mock_client_file: Option<PathBuf>,
     /// Enables debug logging
     pub telemetry_debug_logging_enabled: bool,
     pub telemetry_hearbeat_interval: Duration,
 }
 
-fn url_with_telemetry_path(agent_url: &str) -> anyhow::Result<Uri> {
-    let mut agent_uri_parts = parse_uri(agent_url)?.into_parts();
-    agent_uri_parts.path_and_query = Some(PathAndQuery::from_static(AGENT_TELEMETRY_URL_PATH));
+fn endpoint_with_telemetry_path(mut endpoint: Endpoint) -> anyhow::Result<Endpoint> {
+    let mut uri_parts = endpoint.url.into_parts();
+    if uri_parts.scheme.is_some() && uri_parts.scheme.as_ref().unwrap().as_str() != "file" {
+        uri_parts.path_and_query = Some(PathAndQuery::from_static(if endpoint.api_key.is_some() {
+            DIRECT_TELEMETRY_URL_PATH
+        } else {
+            AGENT_TELEMETRY_URL_PATH
+        }));
+    }
 
-    Ok(Uri::from_parts(agent_uri_parts)?)
+    endpoint.url = Uri::from_parts(uri_parts)?;
+    Ok(endpoint)
 }
 
 mod parse_env {
@@ -142,7 +147,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             endpoint: None,
-            mock_client_file: None,
             telemetry_debug_logging_enabled: false,
             telemetry_hearbeat_interval: Duration::from_secs(60),
         }
@@ -157,8 +161,8 @@ impl Config {
             }
             settings.telemetry_dd_url.clone().or_else(|| {
                 Some(format!(
-                    "{}.{}{}",
-                    PROD_INTAKE_FORMAT_PREFIX,
+                    "https://{}.{}{}",
+                    PROD_INTAKE_SUBDOMAIN,
                     settings.site.as_ref()?,
                     DIRECT_TELEMETRY_URL_PATH
                 ))
@@ -179,24 +183,8 @@ impl Config {
         settings.api_key.clone().map(Cow::Owned)
     }
 
-    fn set_endpoint(
-        &mut self,
-        url: &str,
-        api_key: Option<Cow<'static, str>>,
-    ) -> anyhow::Result<()> {
-        if let Some(path) = url.strip_prefix("file://") {
-            self.endpoint = Some(Endpoint {
-                url: Uri::from_static("http://datadoghq.invalid/"),
-                api_key,
-            });
-            self.mock_client_file = Some(path.into());
-        } else {
-            self.endpoint = Some(Endpoint {
-                url: url_with_telemetry_path(url)?,
-                api_key,
-            });
-            self.mock_client_file = None;
-        }
+    pub fn set_endpoint(&mut self, endpoint: Endpoint) -> anyhow::Result<()> {
+        self.endpoint = Some(endpoint_with_telemetry_path(endpoint)?);
         Ok(())
     }
 
@@ -206,11 +194,12 @@ impl Config {
 
         let mut this = Self {
             endpoint: None,
-            mock_client_file: None,
             telemetry_debug_logging_enabled: settings.shared_lib_debug,
             telemetry_hearbeat_interval: settings.telemetry_heartbeat_interval,
         };
-        let _res = this.set_endpoint(&url, api_key);
+        if let Ok(url) = parse_uri(&url) {
+            let _res = this.set_endpoint(Endpoint { url, api_key });
+        }
 
         this
     }
@@ -229,7 +218,10 @@ impl Config {
 
     pub fn set_url(&mut self, url: &str) -> anyhow::Result<()> {
         let api_key = self.endpoint.take().and_then(|e| e.api_key);
-        self.set_endpoint(url, api_key)
+        self.set_endpoint(Endpoint {
+            url: parse_uri(url)?,
+            api_key,
+        })
     }
 }
 
@@ -254,24 +246,51 @@ mod test {
         cfg.set_url("file:///absolute/path").unwrap();
 
         assert_eq!(
-            "http://datadoghq.invalid/",
-            cfg.clone().endpoint.unwrap().url.to_string()
+            "file",
+            cfg.clone()
+                .endpoint
+                .unwrap()
+                .url
+                .scheme()
+                .unwrap()
+                .to_string()
         );
         assert_eq!(
             "/absolute/path",
-            cfg.clone().mock_client_file.unwrap().to_string_lossy()
+            cfg.clone()
+                .endpoint
+                .unwrap()
+                .url
+                .into_parts()
+                .path_and_query
+                .unwrap()
+                .as_str()
         );
 
         cfg.set_url("file://./relative/path").unwrap();
         assert_eq!(
             "./relative/path",
-            cfg.clone().mock_client_file.unwrap().to_string_lossy()
+            cfg.clone()
+                .endpoint
+                .unwrap()
+                .url
+                .into_parts()
+                .path_and_query
+                .unwrap()
+                .as_str()
         );
 
         cfg.set_url("file://relative/path").unwrap();
         assert_eq!(
             "relative/path",
-            cfg.clone().mock_client_file.unwrap().to_string_lossy()
+            cfg.clone()
+                .endpoint
+                .unwrap()
+                .url
+                .into_parts()
+                .path_and_query
+                .unwrap()
+                .as_str()
         );
 
         cfg.set_url("unix:///compatiliby/path").unwrap();
