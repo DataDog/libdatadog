@@ -838,8 +838,21 @@ impl Profile {
         &self,
         sample: &Sample,
         ts_val_map: &HashMap<Option<Timestamp>, Vec<i64>>,
-        labels: &Vec<Label>,
     ) -> anyhow::Result<Vec<pprof::Sample>> {
+                        // Clone the labels, but enrich them with endpoint profiling.
+                        let mut labels = sample.labels.clone();
+                        if let Some(offset) = sample.local_root_span_id_label_offset {
+                            // Safety: this offset was created internally and isn't be mutated.
+                            let lrsi_label = unsafe { sample.labels.get_unchecked(offset) };
+                            if let Some(endpoint_value_id) = profile.get_endpoint_for_label(lrsi_label)? {
+                                labels.push(Label {
+                                    key: profile.endpoints.endpoint_label,
+                                    str: endpoint_value_id,
+                                    num: 0,
+                                    num_unit: 0,
+                                });
+                            }
+                        }
         let stacktrace = self.get_stacktrace(sample.stacktrace);
 
         ts_val_map
@@ -883,20 +896,7 @@ impl TryFrom<&Profile> for pprof::Profile {
             .samples
             .iter()
             .map(|(sample, ts_val_map)| {
-                // Clone the labels, but enrich them with endpoint profiling.
-                let mut labels = sample.labels.clone();
-                if let Some(offset) = sample.local_root_span_id_label_offset {
-                    // Safety: this offset was created internally and isn't be mutated.
-                    let lrsi_label = unsafe { sample.labels.get_unchecked(offset) };
-                    if let Some(endpoint_value_id) = profile.get_endpoint_for_label(lrsi_label)? {
-                        labels.push(Label {
-                            key: profile.endpoints.endpoint_label,
-                            str: endpoint_value_id,
-                            num: 0,
-                            num_unit: 0,
-                        });
-                    }
-                }
+
 
                 profile.expand_sample(sample, ts_val_map, &labels)
             })
