@@ -558,8 +558,7 @@ impl Profile {
     }
 
     /// Validates labels and converts them to the internal representation.
-    /// Also tracks the index of the label with key "local root span id".
-    ///     /// Validates labels and converts them to the internal representation.
+    /// Extracts out the timestamp label, if it exists.
     /// Also tracks the index of the label with key "local root span id".
     fn extract_sample_labels(
         &mut self,
@@ -908,7 +907,7 @@ impl TryFrom<&Profile> for pprof::Profile {
 
         Ok(pprof::Profile {
             sample_types: profile.sample_types.clone(),
-            samples, // DSN
+            samples,
             mappings: profile
                 .mappings
                 .iter()
