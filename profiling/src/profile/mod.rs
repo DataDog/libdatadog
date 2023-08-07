@@ -7,8 +7,10 @@ pub mod profiled_endpoints;
 
 use core::fmt;
 use std::borrow::{Borrow, Cow};
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::hash::{BuildHasherDefault, Hash};
+use std::num::NonZeroI64;
 use std::ops::AddAssign;
 use std::time::{Duration, SystemTime};
 
@@ -24,6 +26,8 @@ pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::Fx
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
 pub struct StackTraceId(usize);
+
+pub type Timestamp = NonZeroI64;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
@@ -121,7 +125,7 @@ impl UpscalingRule {
 
 pub struct Profile {
     sample_types: Vec<ValueType>,
-    samples: FxIndexMap<Sample, Vec<i64>>,
+    samples: FxIndexMap<Sample, std::collections::HashMap<Option<Timestamp>, Vec<i64>>>,
     mappings: FxIndexSet<Mapping>,
     locations: FxIndexSet<Location>,
     functions: FxIndexSet<Function>,
@@ -131,6 +135,7 @@ pub struct Profile {
     period: Option<(i64, ValueType)>,
     endpoints: Endpoints,
     upscaling_rules: UpscalingRules,
+    timestamp_key: i64,
 }
 
 pub struct Endpoints {
@@ -400,11 +405,13 @@ impl Profile {
             period: None,
             endpoints: Default::default(),
             upscaling_rules: Default::default(),
+            timestamp_key: Default::default(),
         };
 
         profile.intern("");
         profile.endpoints.local_root_span_id_label = profile.intern("local root span id");
         profile.endpoints.endpoint_label = profile.intern("trace endpoint");
+        profile.timestamp_key = profile.intern("end_timestamp_ns");
         profile
     }
 
@@ -487,7 +494,8 @@ impl Profile {
         );
 
         let values = sample.values.clone();
-        let (labels, local_root_span_id_label_offset) = self.extract_sample_labels(&sample)?;
+        let (labels, local_root_span_id_label_offset, timestamp) =
+            self.extract_sample_labels(&sample)?;
 
         let mut locations: Vec<PProfId> = Vec::with_capacity(sample.locations.len());
         for location in sample.locations.iter() {
@@ -527,15 +535,21 @@ impl Profile {
 
         let id = match self.samples.get_index_of(&s) {
             None => {
-                self.samples.insert(s, values);
+                let ts_map = HashMap::from([(timestamp, values)]);
+                self.samples.insert(s, ts_map);
                 PProfId(self.samples.len())
             }
             Some(index) => {
                 let (_, existing_values) =
                     self.samples.get_index_mut(index).expect("index to exist");
-                for (a, b) in existing_values.iter_mut().zip(values) {
-                    a.add_assign(b)
+                if let Some(existing_values) = existing_values.get_mut(&timestamp) {
+                    for (a, b) in existing_values.iter_mut().zip(values) {
+                        a.add_assign(b)
+                    }
+                } else {
+                    existing_values.insert(timestamp, values);
                 }
+
                 PProfId(index + 1)
             }
         };
@@ -545,16 +559,39 @@ impl Profile {
 
     /// Validates labels and converts them to the internal representation.
     /// Also tracks the index of the label with key "local root span id".
+    ///     /// Validates labels and converts them to the internal representation.
+    /// Also tracks the index of the label with key "local root span id".
     fn extract_sample_labels(
         &mut self,
         sample: &api::Sample,
-    ) -> anyhow::Result<(Vec<Label>, Option<usize>)> {
+    ) -> anyhow::Result<(Vec<Label>, Option<usize>, Option<Timestamp>)> {
         let mut labels: Vec<Label> = Vec::with_capacity(sample.labels.len());
         let mut local_root_span_id_label_offset: Option<usize> = None;
+        let mut timestamp: Option<Timestamp> = None;
+
         for label in sample.labels.iter() {
             let key = self.intern(label.key);
             let str = label.str.map(|s| self.intern(s)).unwrap_or(0);
             let num_unit = label.num_unit.map(|s| self.intern(s)).unwrap_or(0);
+
+            if key == self.timestamp_key {
+                anyhow::ensure!(
+                    str == 0,
+                    "the label \"{}\" must be sent as a number, not string {}",
+                    label.str.unwrap(),
+                    self.get_string(self.timestamp_key).unwrap()
+                );
+                anyhow::ensure!(
+                    label.num != 0,
+                    "the label \"{}\" must not be 0",
+                    self.get_string(self.timestamp_key).unwrap()
+                );
+                //TODO what should I ensure the units are?
+
+                timestamp = Some(NonZeroI64::new(label.num).unwrap());
+                // Don't put the timestamp into the labels
+                continue;
+            }
 
             if key == self.endpoints.local_root_span_id_label {
                 // Panic: if the label.str isn't 0, then str must have been provided.
@@ -583,7 +620,7 @@ impl Profile {
                 num_unit,
             });
         }
-        Ok((labels, local_root_span_id_label_offset))
+        Ok((labels, local_root_span_id_label_offset, timestamp))
     }
 
     fn extract_api_sample_types(&self) -> Option<Vec<api::ValueType>> {
@@ -796,6 +833,38 @@ impl Profile {
 
         Ok(new_values)
     }
+
+    fn expand_sample(
+        &self,
+        sample: &Sample,
+        ts_val_map: &HashMap<Option<Timestamp>, Vec<i64>>,
+        labels: &Vec<Label>,
+    ) -> anyhow::Result<Vec<pprof::Sample>> {
+        let stacktrace = self.get_stacktrace(sample.stacktrace);
+
+        ts_val_map
+            .iter()
+            .map(|(timestamp, values)| {
+                let new_values = self.upscale_values(values.as_ref(), labels.as_ref())?;
+                let mut labels = labels.clone();
+
+                if let Some(ts) = timestamp {
+                    labels.push(Label {
+                        key: self.timestamp_key,
+                        str: 0,
+                        num: ts.get(),
+                        num_unit: 0, // DSN CHECK THIS
+                    })
+                }
+
+                Ok(pprof::Sample {
+                    location_ids: stacktrace.locations.iter().map(Into::into).collect(),
+                    values: new_values,
+                    labels,
+                })
+            })
+            .collect()
+    }
 }
 
 impl TryFrom<&Profile> for pprof::Profile {
@@ -810,10 +879,10 @@ impl TryFrom<&Profile> for pprof::Profile {
         /* Rust pattern: inverting Vec<Result<T,E>> into Result<Vec<T>, E> error with .collect:
          * https://doc.rust-lang.org/rust-by-example/error/iter_result.html#fail-the-entire-operation-with-collect
          */
-        let samples: anyhow::Result<Vec<pprof::Sample>> = profile
+        let samples: anyhow::Result<Vec<Vec<pprof::Sample>>> = profile
             .samples
             .iter()
-            .map(|(sample, values)| {
+            .map(|(sample, ts_val_map)| {
                 // Clone the labels, but enrich them with endpoint profiling.
                 let mut labels = sample.labels.clone();
                 if let Some(offset) = sample.local_root_span_id_label_offset {
@@ -829,20 +898,16 @@ impl TryFrom<&Profile> for pprof::Profile {
                     }
                 }
 
-                let new_values = profile.upscale_values(values.as_ref(), labels.as_ref())?;
-                let stacktrace = profile.get_stacktrace(sample.stacktrace);
-
-                Ok(pprof::Sample {
-                    location_ids: stacktrace.locations.iter().map(Into::into).collect(),
-                    values: new_values,
-                    labels,
-                })
+                profile.expand_sample(sample, ts_val_map, &labels)
             })
             .collect();
 
+        let samples = samples?;
+        let samples: Vec<pprof::Sample> = samples.into_iter().flatten().collect();
+
         Ok(pprof::Profile {
             sample_types: profile.sample_types.clone(),
-            samples: samples?,
+            samples: samples, // DSN
             mappings: profile
                 .mappings
                 .iter()
