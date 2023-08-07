@@ -834,33 +834,38 @@ impl Profile {
         Ok(new_values)
     }
 
+    /// Given a sample, and a set of observations at different timestamps,
+    /// expand to one Sample for each timestamp.
     fn expand_sample(
         &self,
         sample: &Sample,
         ts_val_map: &HashMap<Option<Timestamp>, Vec<i64>>,
     ) -> anyhow::Result<Vec<pprof::Sample>> {
-                        // Clone the labels, but enrich them with endpoint profiling.
-                        let mut labels = sample.labels.clone();
-                        if let Some(offset) = sample.local_root_span_id_label_offset {
-                            // Safety: this offset was created internally and isn't be mutated.
-                            let lrsi_label = unsafe { sample.labels.get_unchecked(offset) };
-                            if let Some(endpoint_value_id) = profile.get_endpoint_for_label(lrsi_label)? {
-                                labels.push(Label {
-                                    key: profile.endpoints.endpoint_label,
-                                    str: endpoint_value_id,
-                                    num: 0,
-                                    num_unit: 0,
-                                });
-                            }
-                        }
+        // Clone the labels, but enrich them with endpoint profiling.
+        let mut labels = sample.labels.clone();
+        if let Some(offset) = sample.local_root_span_id_label_offset {
+            // Safety: this offset was created internally and isn't be mutated.
+            let lrsi_label = unsafe { sample.labels.get_unchecked(offset) };
+            if let Some(endpoint_value_id) = self.get_endpoint_for_label(lrsi_label)? {
+                labels.push(Label {
+                    key: self.endpoints.endpoint_label,
+                    str: endpoint_value_id,
+                    num: 0,
+                    num_unit: 0,
+                });
+            }
+        }
         let stacktrace = self.get_stacktrace(sample.stacktrace);
 
+        // For now, pprof requires a separate Sample for each timestamp
+        // So expand it out.
         ts_val_map
             .iter()
             .map(|(timestamp, values)| {
                 let new_values = self.upscale_values(values.as_ref(), labels.as_ref())?;
                 let mut labels = labels.clone();
 
+                // pprof uses a label to store the timestamp so put it there
                 if let Some(ts) = timestamp {
                     labels.push(Label {
                         key: self.timestamp_key,
@@ -895,11 +900,7 @@ impl TryFrom<&Profile> for pprof::Profile {
         let samples: anyhow::Result<Vec<Vec<pprof::Sample>>> = profile
             .samples
             .iter()
-            .map(|(sample, ts_val_map)| {
-
-
-                profile.expand_sample(sample, ts_val_map, &labels)
-            })
+            .map(|(sample, ts_val_map)| profile.expand_sample(sample, ts_val_map))
             .collect();
 
         let samples = samples?;
