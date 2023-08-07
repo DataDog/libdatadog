@@ -908,7 +908,7 @@ impl TryFrom<&Profile> for pprof::Profile {
 
         Ok(pprof::Profile {
             sample_types: profile.sample_types.clone(),
-            samples: samples, // DSN
+            samples, // DSN
             mappings: profile
                 .mappings
                 .iter()
