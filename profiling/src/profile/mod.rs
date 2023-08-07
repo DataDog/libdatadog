@@ -125,7 +125,7 @@ impl UpscalingRule {
 
 pub struct Profile {
     sample_types: Vec<ValueType>,
-    samples: FxIndexMap<Sample, std::collections::HashMap<Option<Timestamp>, Vec<i64>>>,
+    samples: FxIndexMap<Sample, HashMap<Option<Timestamp>, Vec<i64>>>,
     mappings: FxIndexSet<Mapping>,
     locations: FxIndexSet<Location>,
     functions: FxIndexSet<Function>,
