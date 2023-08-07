@@ -7,6 +7,8 @@ pub mod config;
 #[cfg(not(windows))]
 pub mod interface;
 #[cfg(not(windows))]
+pub mod one_way_shared_memory;
+#[cfg(not(windows))]
 pub mod setup;
 #[cfg(not(windows))]
 mod tracer;
