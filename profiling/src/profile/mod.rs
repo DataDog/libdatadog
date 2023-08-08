@@ -7,7 +7,6 @@ pub mod profiled_endpoints;
 
 use core::fmt;
 use std::borrow::{Borrow, Cow};
-use std::collections::HashMap;
 use std::convert::TryInto;
 use std::hash::{BuildHasherDefault, Hash};
 use std::num::NonZeroI64;
@@ -123,9 +122,14 @@ impl UpscalingRule {
     }
 }
 
+pub struct Observations {
+    no_timestamp: Option<Vec<i64>>,
+    timestamp_series: Vec<(Timestamp, Vec<i64>)>,
+}
+
 pub struct Profile {
     sample_types: Vec<ValueType>,
-    samples: FxIndexMap<Sample, HashMap<Option<Timestamp>, Vec<i64>>>,
+    samples: FxIndexMap<Sample, Observations>,
     mappings: FxIndexSet<Mapping>,
     locations: FxIndexSet<Location>,
     functions: FxIndexSet<Function>,
@@ -535,19 +539,45 @@ impl Profile {
 
         let id = match self.samples.get_index_of(&s) {
             None => {
-                let ts_map = HashMap::from([(timestamp, values)]);
-                self.samples.insert(s, ts_map);
+                // If there were no existing observations, then its easy: just put the data into the table
+                let observation = if let Some(ts) = timestamp {
+                    Observations {
+                        no_timestamp: None,
+                        timestamp_series: vec![(ts, values)],
+                    }
+                } else {
+                    Observations {
+                        no_timestamp: Some(values),
+                        timestamp_series: vec![],
+                    }
+                };
+                self.samples.insert(s, observation);
                 PProfId(self.samples.len())
             }
             Some(index) => {
+                // If there were existing observations, now we need to integrate the new observations.
+                // For data with no timestamps, we merge the existing and new values
+                // For data with a timestamp, we put it on a list of timestamped values.
+                // We assert that timestamps must be monotonically increasing.
                 let (_, existing_values) =
                     self.samples.get_index_mut(index).expect("index to exist");
-                if let Some(existing_values) = existing_values.get_mut(&timestamp) {
+                if let Some(ts) = timestamp {
+                    if !existing_values.timestamp_series.is_empty() {
+                        let last_ts = existing_values.timestamp_series.last().unwrap().0;
+                        anyhow::ensure!(
+                            ts > last_ts,
+                            "Timestamps should be monotically increasing, but instead saw {} {}",
+                            last_ts,
+                            ts
+                        );
+                    }
+                    existing_values.timestamp_series.push((ts, values));
+                } else if let Some(existing_values) = &mut existing_values.no_timestamp {
                     for (a, b) in existing_values.iter_mut().zip(values) {
                         a.add_assign(b)
                     }
                 } else {
-                    existing_values.insert(timestamp, values);
+                    existing_values.no_timestamp = Some(values)
                 }
 
                 PProfId(index + 1)
@@ -838,7 +868,7 @@ impl Profile {
     fn expand_sample(
         &self,
         sample: &Sample,
-        ts_val_map: &HashMap<Option<Timestamp>, Vec<i64>>,
+        observations: &Observations,
     ) -> anyhow::Result<Vec<pprof::Sample>> {
         // Clone the labels, but enrich them with endpoint profiling.
         let mut labels = sample.labels.clone();
@@ -858,21 +888,20 @@ impl Profile {
 
         // For now, pprof requires a separate Sample for each timestamp
         // So expand it out.
-        ts_val_map
+        let expanded_samples: anyhow::Result<Vec<pprof::Sample>> = observations
+            .timestamp_series
             .iter()
             .map(|(timestamp, values)| {
-                let new_values = self.upscale_values(values.as_ref(), labels.as_ref())?;
+                let new_values: Vec<i64> = self.upscale_values(values.as_ref(), labels.as_ref())?;
                 let mut labels = labels.clone();
 
                 // pprof uses a label to store the timestamp so put it there
-                if let Some(ts) = timestamp {
-                    labels.push(Label {
-                        key: self.timestamp_key,
-                        str: 0,
-                        num: ts.get(),
-                        num_unit: 0, // DSN CHECK THIS
-                    })
-                }
+                labels.push(Label {
+                    key: self.timestamp_key,
+                    str: 0,
+                    num: timestamp.get(),
+                    num_unit: 0, // DSN CHECK THIS
+                });
 
                 Ok(pprof::Sample {
                     location_ids: stacktrace.locations.iter().map(Into::into).collect(),
@@ -880,7 +909,18 @@ impl Profile {
                     labels,
                 })
             })
-            .collect()
+            .collect();
+        let mut expanded_samples = expanded_samples?;
+
+        if let Some(values) = &observations.no_timestamp {
+            let new_values = self.upscale_values(values.as_ref(), labels.as_ref())?;
+            expanded_samples.push(pprof::Sample {
+                location_ids: stacktrace.locations.iter().map(Into::into).collect(),
+                values: new_values,
+                labels,
+            })
+        }
+        Ok(expanded_samples)
     }
 }
 
@@ -899,7 +939,7 @@ impl TryFrom<&Profile> for pprof::Profile {
         let samples: anyhow::Result<Vec<Vec<pprof::Sample>>> = profile
             .samples
             .iter()
-            .map(|(sample, ts_val_map)| profile.expand_sample(sample, ts_val_map))
+            .map(|(sample, observations)| profile.expand_sample(sample, observations))
             .collect();
 
         let samples = samples?;
