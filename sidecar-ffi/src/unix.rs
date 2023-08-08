@@ -5,7 +5,7 @@ use datadog_ipc::platform::{
     FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle,
 };
 use datadog_sidecar::agent_remote_config::{
-    new_reader, reader_from_shm, AgentRemoteConfigWriter, ReaderOpener,
+    new_reader, reader_from_shm, AgentRemoteConfigEndpoint, AgentRemoteConfigWriter,
 };
 use ddcommon_ffi as ffi;
 use libc::c_char;
@@ -17,6 +17,7 @@ use datadog_sidecar::interface::{
     blocking::{self, SidecarTransport},
     InstanceId, QueueId, RuntimeMeta, SerializedTracerHeaderTags, SessionConfig,
 };
+use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
 use ddcommon::Endpoint;
 use ddtelemetry::{
     data::{self, Dependency, Integration},
@@ -145,7 +146,7 @@ fn ddog_agent_remote_config_read_generic<'a, T>(
 ) -> bool
 where
     T: FileBackedHandle + From<MappedMem<T>>,
-    datadog_sidecar::agent_remote_config::AgentRemoteConfigReader<T>: ReaderOpener<T>,
+    OneWayShmReader<T, Option<AgentRemoteConfigEndpoint>>: ReaderOpener<T>,
 {
     let (new, contents) = reader.read();
     // c_char may be u8 or i8 depending on target... convert it.
