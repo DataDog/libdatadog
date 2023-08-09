@@ -4,7 +4,6 @@
 pub mod api;
 pub mod pprof;
 pub mod profiled_endpoints;
-
 use core::fmt;
 use std::borrow::{Borrow, Cow};
 use std::convert::TryInto;
@@ -57,6 +56,38 @@ impl From<&SampleId> for u64 {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
 pub struct StackTraceId(usize);
+
+#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Hash)]
+#[repr(transparent)]
+pub struct LocationId(u32);
+
+impl LocationId {
+    pub fn new<T>(v: T) -> Self
+    where
+        T: TryInto<u32>,
+        T::Error: Debug,
+    {
+        let index = v
+            .try_into()
+            .expect("the machine to run out of memory far before this happens");
+
+        // PProf reserves location 0.
+        // Both this, and the serialization of the table, add 1 to avoid the 0 element
+        Self(index + 1)
+    }
+}
+
+impl From<LocationId> for u64 {
+    fn from(s: LocationId) -> Self {
+        s.0.try_into().unwrap()
+    }
+}
+
+impl From<&LocationId> for u64 {
+    fn from(s: &LocationId) -> Self {
+        s.0.try_into().unwrap()
+    }
+}
 
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
@@ -141,7 +172,7 @@ struct Mapping {
 struct StackTrace {
     /// The ids recorded here correspond to a Profile.location.id.
     /// The leaf is at location_id[0].
-    pub locations: Vec<PProfId>,
+    pub locations: Vec<LocationId>,
 }
 
 #[derive(Eq, PartialEq, Hash)]
@@ -511,7 +542,7 @@ impl Profile {
         Ok(PProfId(index + 1))
     }
 
-    fn add_stacktrace(&mut self, locations: Vec<PProfId>) -> StackTraceId {
+    fn add_stacktrace(&mut self, locations: Vec<LocationId>) -> StackTraceId {
         let index = self.stack_traces.dedup(StackTrace { locations });
         StackTraceId(index)
     }
@@ -550,7 +581,7 @@ impl Profile {
         let values = sample.values.clone();
         let (labels, local_root_span_id_label_offset) = self.extract_sample_labels(&sample)?;
 
-        let mut locations: Vec<PProfId> = Vec::with_capacity(sample.locations.len());
+        let mut locations = Vec::with_capacity(sample.locations.len());
         for location in sample.locations.iter() {
             let mapping_id = self.add_mapping(&location.mapping)?;
             let lines: Vec<Line> = location
@@ -573,11 +604,7 @@ impl Profile {
                 is_folded: location.is_folded,
             });
 
-            /* PProf reserves location 0. Based on this pattern in other
-             * situations, this would be "no location", but I'm not sure how
-             * this is logical?
-             */
-            locations.push(PProfId(index + 1))
+            locations.push(LocationId::new(index))
         }
         let stacktrace = self.add_stacktrace(locations);
         let s = Sample {
