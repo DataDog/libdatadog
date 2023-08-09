@@ -24,6 +24,38 @@ pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::Fx
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
+pub struct FunctionId(NonZeroU32);
+
+impl FunctionId {
+    pub fn new<T>(v: T) -> Self
+    where
+        T: TryInto<u32>,
+        T::Error: Debug,
+    {
+        let index: u32 = v.try_into().expect("FunctionId to fit into a u32");
+
+        // PProf reserves location 0.
+        // Both this, and the serialization of the table, add 1 to avoid the 0 element
+        let index = index.checked_add(1).expect("FunctionId to fit into a u32");
+        let index = NonZeroU32::new(index).unwrap();
+        Self(index)
+    }
+}
+
+impl From<FunctionId> for u64 {
+    fn from(s: FunctionId) -> Self {
+        Self::from(&s)
+    }
+}
+
+impl From<&FunctionId> for u64 {
+    fn from(s: &FunctionId) -> Self {
+        s.0.get().into()
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[repr(transparent)]
 pub struct MappingId(NonZeroU32);
 
 impl MappingId {
@@ -589,7 +621,7 @@ impl Profile {
         self.stack_traces.get_index(st.0).unwrap()
     }
 
-    fn add_function(&mut self, function: &api::Function) -> PProfId {
+    fn add_function(&mut self, function: &api::Function) -> FunctionId {
         let name = self.intern(function.name).into();
         let system_name = self.intern(function.system_name).into();
         let filename = self.intern(function.filename).into();
@@ -605,7 +637,7 @@ impl Profile {
         /* PProf reserves function 0 for "no function", and it won't let you put
          * one in there with all "zero" data either, so we shift the ids.
          */
-        PProfId(index + 1)
+        FunctionId::new(index)
     }
 
     pub fn add(&mut self, sample: api::Sample) -> anyhow::Result<SampleId> {
@@ -628,7 +660,7 @@ impl Profile {
                 .map(|line| {
                     let function_id = self.add_function(&line.function);
                     Line {
-                        function_id: function_id.0 as u64,
+                        function_id: function_id.into(),
                         line: line.line,
                     }
                 })
