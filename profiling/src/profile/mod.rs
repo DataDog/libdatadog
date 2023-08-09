@@ -22,6 +22,38 @@ use self::api::UpscalingInfo;
 pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<rustc_hash::FxHasher>>;
 pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::FxHasher>>;
 
+#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Hash)]
+#[repr(transparent)]
+pub struct SampleId(u32);
+
+impl SampleId {
+    pub fn new<T>(v: T) -> Self
+    where
+        T: TryInto<u32>,
+        T::Error: Debug,
+    {
+        let index = v
+            .try_into()
+            .expect("the machine to run out of memory far before this happens");
+
+        // PProf reserves location 0.
+        // Both this, and the serialization of the table, add 1 to avoid the 0 element
+        Self(index + 1)
+    }
+}
+
+impl From<SampleId> for u64 {
+    fn from(s: SampleId) -> Self {
+        s.0.try_into().unwrap()
+    }
+}
+
+impl From<&SampleId> for u64 {
+    fn from(s: &SampleId) -> Self {
+        s.0.try_into().unwrap()
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
 pub struct StackTraceId(usize);
@@ -507,7 +539,7 @@ impl Profile {
         PProfId(index + 1)
     }
 
-    pub fn add(&mut self, sample: api::Sample) -> anyhow::Result<PProfId> {
+    pub fn add(&mut self, sample: api::Sample) -> anyhow::Result<SampleId> {
         anyhow::ensure!(
             sample.values.len() == self.sample_types.len(),
             "expected {} sample types, but sample had {} sample types",
@@ -557,7 +589,7 @@ impl Profile {
         let id = match self.samples.get_index_of(&s) {
             None => {
                 self.samples.insert(s, values);
-                PProfId(self.samples.len())
+                SampleId::new(self.samples.len() - 1)
             }
             Some(index) => {
                 let (_, existing_values) =
@@ -565,7 +597,7 @@ impl Profile {
                 for (a, b) in existing_values.iter_mut().zip(values) {
                     a.add_assign(b)
                 }
-                PProfId(index + 1)
+                SampleId::new(index)
             }
         };
 
@@ -1014,7 +1046,7 @@ mod api_test {
             })
             .expect("add to succeed");
 
-        assert_eq!(sample_id, PProfId(1));
+        assert_eq!(sample_id, SampleId::new(0));
     }
 
     fn provide_distinct_locations() -> Profile {
@@ -1080,10 +1112,10 @@ mod api_test {
         let mut profile = Profile::builder().sample_types(sample_types).build();
 
         let sample_id1 = profile.add(main_sample).expect("profile to not be full");
-        assert_eq!(sample_id1, PProfId(1));
+        assert_eq!(sample_id1, SampleId::new(0));
 
         let sample_id2 = profile.add(test_sample).expect("profile to not be full");
-        assert_eq!(sample_id2, PProfId(2));
+        assert_eq!(sample_id2, SampleId::new(1));
 
         profile
     }
