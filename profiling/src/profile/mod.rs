@@ -190,34 +190,6 @@ impl From<&StringId> for i64 {
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[repr(transparent)]
-pub struct PProfId(usize);
-
-impl From<&PProfId> for u64 {
-    fn from(id: &PProfId) -> Self {
-        id.0 as u64
-    }
-}
-
-impl From<PProfId> for u64 {
-    fn from(id: PProfId) -> Self {
-        id.0.try_into().unwrap_or(0)
-    }
-}
-
-impl From<&PProfId> for i64 {
-    fn from(value: &PProfId) -> Self {
-        value.0.try_into().unwrap_or(0)
-    }
-}
-
-impl From<PProfId> for i64 {
-    fn from(value: PProfId) -> Self {
-        value.0.try_into().unwrap_or(0)
-    }
-}
-
 #[derive(Eq, PartialEq, Hash)]
 struct Mapping {
     /// Address at which the binary (or DLL) is loaded into memory.
