@@ -22,9 +22,9 @@ use self::api::UpscalingInfo;
 pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<rustc_hash::FxHasher>>;
 pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::FxHasher>>;
 
-#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
-pub struct SampleId(u32);
+pub struct SampleId(NonZeroU32);
 
 impl SampleId {
     pub fn new<T>(v: T) -> Self
@@ -32,25 +32,25 @@ impl SampleId {
         T: TryInto<u32>,
         T::Error: Debug,
     {
-        let index = v
-            .try_into()
-            .expect("the machine to run out of memory far before this happens");
+        let index: u32 = v.try_into().expect("SampleId to fit into a u32");
 
         // PProf reserves location 0.
         // Both this, and the serialization of the table, add 1 to avoid the 0 element
-        Self(index + 1)
+        let index = index.checked_add(1).expect("SampleId to fit into a u32");
+        let index = NonZeroU32::new(index).unwrap();
+        Self(index)
     }
 }
 
 impl From<SampleId> for u64 {
     fn from(s: SampleId) -> Self {
-        s.0.try_into().unwrap()
+        Self::from(&s)
     }
 }
 
 impl From<&SampleId> for u64 {
     fn from(s: &SampleId) -> Self {
-        s.0.try_into().unwrap()
+        s.0.get().into()
     }
 }
 
