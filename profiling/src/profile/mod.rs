@@ -24,6 +24,38 @@ pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::Fx
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
+pub struct MappingId(NonZeroU32);
+
+impl MappingId {
+    pub fn new<T>(v: T) -> Self
+    where
+        T: TryInto<u32>,
+        T::Error: Debug,
+    {
+        let index: u32 = v.try_into().expect("MappingId to fit into a u32");
+
+        // PProf reserves location 0.
+        // Both this, and the serialization of the table, add 1 to avoid the 0 element
+        let index = index.checked_add(1).expect("MappingId to fit into a u32");
+        let index = NonZeroU32::new(index).unwrap();
+        Self(index)
+    }
+}
+
+impl From<MappingId> for u64 {
+    fn from(s: MappingId) -> Self {
+        Self::from(&s)
+    }
+}
+
+impl From<&MappingId> for u64 {
+    fn from(s: &MappingId) -> Self {
+        s.0.get().into()
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[repr(transparent)]
 pub struct SampleId(NonZeroU32);
 
 impl SampleId {
@@ -525,7 +557,7 @@ impl Profile {
         ProfileBuilder::new()
     }
 
-    fn add_mapping(&mut self, mapping: &api::Mapping) -> Result<PProfId, FullError> {
+    fn add_mapping(&mut self, mapping: &api::Mapping) -> Result<MappingId, FullError> {
         // todo: do full checks as part of intern/dedup
         if self.strings.len() >= CONTAINER_MAX || self.mappings.len() >= CONTAINER_MAX {
             return Err(FullError);
@@ -545,7 +577,7 @@ impl Profile {
         /* PProf reserves mapping 0 for "no mapping", and it won't let you put
          * one in there with all "zero" data either, so we shift the ids.
          */
-        Ok(PProfId(index + 1))
+        Ok(MappingId::new(index))
     }
 
     fn add_stacktrace(&mut self, locations: Vec<LocationId>) -> StackTraceId {
