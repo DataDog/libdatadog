@@ -9,6 +9,7 @@ use std::borrow::{Borrow, Cow};
 use std::convert::TryInto;
 use std::fmt::Debug;
 use std::hash::{BuildHasherDefault, Hash};
+use std::num::NonZeroU32;
 use std::ops::AddAssign;
 use std::time::{Duration, SystemTime};
 
@@ -57,9 +58,9 @@ impl From<&SampleId> for u64 {
 #[repr(transparent)]
 pub struct StackTraceId(usize);
 
-#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
-pub struct LocationId(u32);
+pub struct LocationId(NonZeroU32);
 
 impl LocationId {
     pub fn new<T>(v: T) -> Self
@@ -67,25 +68,25 @@ impl LocationId {
         T: TryInto<u32>,
         T::Error: Debug,
     {
-        let index = v
-            .try_into()
-            .expect("the machine to run out of memory far before this happens");
+        let index: u32 = v.try_into().expect("LocationId to fit into a u32");
 
         // PProf reserves location 0.
         // Both this, and the serialization of the table, add 1 to avoid the 0 element
-        Self(index + 1)
+        let index = index.checked_add(1).expect("LocationId to fit into a u32");
+        let index = NonZeroU32::new(index).unwrap();
+        Self(index)
     }
 }
 
 impl From<LocationId> for u64 {
     fn from(s: LocationId) -> Self {
-        s.0.try_into().unwrap()
+        Self::from(&s)
     }
 }
 
 impl From<&LocationId> for u64 {
     fn from(s: &LocationId) -> Self {
-        s.0.try_into().unwrap()
+        s.0.get().into()
     }
 }
 
@@ -94,7 +95,8 @@ impl From<&LocationId> for u64 {
 pub struct StringId(u32);
 
 impl StringId {
-    pub fn zero() -> Self {
+    #[inline]
+    pub const fn zero() -> Self {
         Self(0)
     }
 
@@ -103,12 +105,10 @@ impl StringId {
         T: TryInto<u32>,
         T::Error: Debug,
     {
-        Self(
-            v.try_into()
-                .expect("the machine to run out of memory far before this happens"),
-        )
+        Self(v.try_into().expect("StringId to fit into a u32"))
     }
 
+    #[inline]
     pub fn is_zero(&self) -> bool {
         self.0 == 0
     }
@@ -116,7 +116,13 @@ impl StringId {
 
 impl From<StringId> for i64 {
     fn from(s: StringId) -> Self {
-        s.0.try_into().unwrap()
+        Self::from(&s)
+    }
+}
+
+impl From<&StringId> for i64 {
+    fn from(s: &StringId) -> Self {
+        s.0.into()
     }
 }
 
