@@ -263,9 +263,9 @@ impl UpscalingRule {
     }
 }
 
-pub struct Observations {
-    no_timestamp: Option<Vec<i64>>,
-    timestamp_series: Vec<(Timestamp, Vec<i64>)>,
+pub enum Observations {
+    Timestamped(Vec<(Timestamp, Vec<i64>)>),
+    Aggregated(Vec<i64>),
 }
 
 pub struct Profile {
@@ -675,15 +675,9 @@ impl Profile {
             None => {
                 // If there were no existing observations, then its easy: just put the data into the table
                 let observation = if let Some(ts) = timestamp {
-                    Observations {
-                        no_timestamp: None,
-                        timestamp_series: vec![(ts, values)],
-                    }
+                    Observations::Timestamped(vec![(ts, values)])
                 } else {
-                    Observations {
-                        no_timestamp: Some(values),
-                        timestamp_series: vec![],
-                    }
+                    Observations::Aggregated(values)
                 };
                 let (idx, _) = self.samples.insert_full(s, observation);
                 SampleId::new(idx)
@@ -695,23 +689,24 @@ impl Profile {
                 // We assert that timestamps must be monotonically increasing.
                 let (_, existing_values) =
                     self.samples.get_index_mut(index).expect("index to exist");
-                if let Some(ts) = timestamp {
-                    if !existing_values.timestamp_series.is_empty() {
-                        let last_ts = existing_values.timestamp_series.last().unwrap().0;
+                match existing_values {
+                    Observations::Timestamped(series) => {
+                        anyhow::ensure!(timestamp.is_some(), "Expected Timestamp for {:?}", sample);
+                        let ts = timestamp.unwrap();
+                        let last_ts = series.last().unwrap().0;
                         anyhow::ensure!(
                             ts > last_ts,
-                            "Timestamps should be monotically increasing, but instead saw {} {}",
+                            "Timestamps should be monotonically increasing, but instead saw {} {}",
                             last_ts,
                             ts
                         );
+                        series.push((ts, values));
                     }
-                    existing_values.timestamp_series.push((ts, values));
-                } else if let Some(existing_values) = &mut existing_values.no_timestamp {
-                    for (a, b) in existing_values.iter_mut().zip(values) {
-                        a.add_assign(b)
+                    Observations::Aggregated(v) => {
+                        for (a, b) in v.iter_mut().zip(values) {
+                            a.add_assign(b)
+                        }
                     }
-                } else {
-                    existing_values.no_timestamp = Some(values)
                 }
 
                 SampleId::new(index)
@@ -1022,41 +1017,42 @@ impl Profile {
         }
         let stacktrace = self.get_stacktrace(sample.stacktrace);
 
-        // For now, pprof requires a separate Sample for each timestamp
-        // So expand it out.
-        let expanded_samples: anyhow::Result<Vec<pprof::Sample>> = observations
-            .timestamp_series
-            .iter()
-            .map(|(timestamp, values)| {
+        match observations {
+            Observations::Aggregated(values) => {
                 let new_values: Vec<i64> = self.upscale_values(values.as_ref(), labels.as_ref())?;
-                let mut labels = labels.clone();
-
-                // pprof uses a label to store the timestamp so put it there
-                labels.push(Label {
-                    key: self.timestamp_key.into(),
-                    str: 0,
-                    num: timestamp.get(),
-                    num_unit: 0, // DSN CHECK THIS
-                });
-
-                Ok(pprof::Sample {
+                Ok(vec![pprof::Sample {
                     location_ids: stacktrace.locations.iter().map(Into::into).collect(),
                     values: new_values,
                     labels,
-                })
-            })
-            .collect();
-        let mut expanded_samples = expanded_samples?;
+                }])
+            }
+            Observations::Timestamped(series) => {
+                // For now, pprof requires a separate Sample for each timestamp
+                // So expand it out.
+                series
+                    .iter()
+                    .map(|(timestamp, values)| {
+                        let new_values: Vec<i64> =
+                            self.upscale_values(values.as_ref(), labels.as_ref())?;
+                        let mut labels = labels.clone();
 
-        if let Some(values) = &observations.no_timestamp {
-            let new_values = self.upscale_values(values.as_ref(), labels.as_ref())?;
-            expanded_samples.push(pprof::Sample {
-                location_ids: stacktrace.locations.iter().map(Into::into).collect(),
-                values: new_values,
-                labels,
-            })
+                        // pprof uses a label to store the timestamp so put it there
+                        labels.push(Label {
+                            key: self.timestamp_key.into(),
+                            str: 0,
+                            num: timestamp.get(),
+                            num_unit: 0, // DSN CHECK THIS
+                        });
+
+                        Ok(pprof::Sample {
+                            location_ids: stacktrace.locations.iter().map(Into::into).collect(),
+                            values: new_values,
+                            labels,
+                        })
+                    })
+                    .collect()
+            }
         }
-        Ok(expanded_samples)
     }
 }
 
