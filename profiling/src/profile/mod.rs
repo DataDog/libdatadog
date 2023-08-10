@@ -4,12 +4,12 @@
 pub mod api;
 pub mod pprof;
 pub mod profiled_endpoints;
-
 use core::fmt;
 use std::borrow::{Borrow, Cow};
 use std::convert::TryInto;
 use std::fmt::Debug;
 use std::hash::{BuildHasherDefault, Hash};
+use std::num::NonZeroU32;
 use std::ops::AddAssign;
 use std::time::{Duration, SystemTime};
 
@@ -22,9 +22,75 @@ use self::api::UpscalingInfo;
 pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<rustc_hash::FxHasher>>;
 pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::FxHasher>>;
 
-#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
-pub struct SampleId(u32);
+pub struct FunctionId(NonZeroU32);
+
+impl FunctionId {
+    pub fn new<T>(v: T) -> Self
+    where
+        T: TryInto<u32>,
+        T::Error: Debug,
+    {
+        let index: u32 = v.try_into().expect("FunctionId to fit into a u32");
+
+        // PProf reserves location 0.
+        // Both this, and the serialization of the table, add 1 to avoid the 0 element
+        let index = index.checked_add(1).expect("FunctionId to fit into a u32");
+        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
+        let index = unsafe { NonZeroU32::new_unchecked(index) };
+        Self(index)
+    }
+}
+
+impl From<FunctionId> for u64 {
+    fn from(s: FunctionId) -> Self {
+        Self::from(&s)
+    }
+}
+
+impl From<&FunctionId> for u64 {
+    fn from(s: &FunctionId) -> Self {
+        s.0.get().into()
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[repr(transparent)]
+pub struct MappingId(NonZeroU32);
+
+impl MappingId {
+    pub fn new<T>(v: T) -> Self
+    where
+        T: TryInto<u32>,
+        T::Error: Debug,
+    {
+        let index: u32 = v.try_into().expect("MappingId to fit into a u32");
+
+        // PProf reserves location 0.
+        // Both this, and the serialization of the table, add 1 to avoid the 0 element
+        let index = index.checked_add(1).expect("MappingId to fit into a u32");
+        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
+        let index = unsafe { NonZeroU32::new_unchecked(index) };
+        Self(index)
+    }
+}
+
+impl From<MappingId> for u64 {
+    fn from(s: MappingId) -> Self {
+        Self::from(&s)
+    }
+}
+
+impl From<&MappingId> for u64 {
+    fn from(s: &MappingId) -> Self {
+        s.0.get().into()
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[repr(transparent)]
+pub struct SampleId(NonZeroU32);
 
 impl SampleId {
     pub fn new<T>(v: T) -> Self
@@ -32,25 +98,26 @@ impl SampleId {
         T: TryInto<u32>,
         T::Error: Debug,
     {
-        let index = v
-            .try_into()
-            .expect("the machine to run out of memory far before this happens");
+        let index: u32 = v.try_into().expect("SampleId to fit into a u32");
 
         // PProf reserves location 0.
         // Both this, and the serialization of the table, add 1 to avoid the 0 element
-        Self(index + 1)
+        let index = index.checked_add(1).expect("SampleId to fit into a u32");
+        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
+        let index = unsafe { NonZeroU32::new_unchecked(index) };
+        Self(index)
     }
 }
 
 impl From<SampleId> for u64 {
     fn from(s: SampleId) -> Self {
-        s.0.try_into().unwrap()
+        Self::from(&s)
     }
 }
 
 impl From<&SampleId> for u64 {
     fn from(s: &SampleId) -> Self {
-        s.0.try_into().unwrap()
+        s.0.get().into()
     }
 }
 
@@ -58,12 +125,46 @@ impl From<&SampleId> for u64 {
 #[repr(transparent)]
 pub struct StackTraceId(usize);
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[repr(transparent)]
+pub struct LocationId(NonZeroU32);
+
+impl LocationId {
+    pub fn new<T>(v: T) -> Self
+    where
+        T: TryInto<u32>,
+        T::Error: Debug,
+    {
+        let index: u32 = v.try_into().expect("LocationId to fit into a u32");
+
+        // PProf reserves location 0.
+        // Both this, and the serialization of the table, add 1 to avoid the 0 element
+        let index = index.checked_add(1).expect("LocationId to fit into a u32");
+        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
+        let index = unsafe { NonZeroU32::new_unchecked(index) };
+        Self(index)
+    }
+}
+
+impl From<LocationId> for u64 {
+    fn from(s: LocationId) -> Self {
+        Self::from(&s)
+    }
+}
+
+impl From<&LocationId> for u64 {
+    fn from(s: &LocationId) -> Self {
+        s.0.get().into()
+    }
+}
+
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
 pub struct StringId(u32);
 
 impl StringId {
-    pub fn zero() -> Self {
+    #[inline]
+    pub const fn zero() -> Self {
         Self(0)
     }
 
@@ -72,48 +173,24 @@ impl StringId {
         T: TryInto<u32>,
         T::Error: Debug,
     {
-        Self(
-            v.try_into()
-                .expect("the machine to run out of memory far before this happens"),
-        )
+        Self(v.try_into().expect("StringId to fit into a u32"))
     }
 
-    pub fn is_zero(&self) -> bool {
+    #[inline]
+    pub const fn is_zero(&self) -> bool {
         self.0 == 0
     }
 }
 
 impl From<StringId> for i64 {
     fn from(s: StringId) -> Self {
-        s.0.try_into().unwrap()
+        Self::from(&s)
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[repr(transparent)]
-pub struct PProfId(usize);
-
-impl From<&PProfId> for u64 {
-    fn from(id: &PProfId) -> Self {
-        id.0 as u64
-    }
-}
-
-impl From<PProfId> for u64 {
-    fn from(id: PProfId) -> Self {
-        id.0.try_into().unwrap_or(0)
-    }
-}
-
-impl From<&PProfId> for i64 {
-    fn from(value: &PProfId) -> Self {
-        value.0.try_into().unwrap_or(0)
-    }
-}
-
-impl From<PProfId> for i64 {
-    fn from(value: PProfId) -> Self {
-        value.0.try_into().unwrap_or(0)
+impl From<&StringId> for i64 {
+    fn from(s: &StringId) -> Self {
+        s.0.into()
     }
 }
 
@@ -141,7 +218,7 @@ struct Mapping {
 struct StackTrace {
     /// The ids recorded here correspond to a Profile.location.id.
     /// The leaf is at location_id[0].
-    pub locations: Vec<PProfId>,
+    pub locations: Vec<LocationId>,
 }
 
 #[derive(Eq, PartialEq, Hash)]
@@ -488,7 +565,7 @@ impl Profile {
         ProfileBuilder::new()
     }
 
-    fn add_mapping(&mut self, mapping: &api::Mapping) -> Result<PProfId, FullError> {
+    fn add_mapping(&mut self, mapping: &api::Mapping) -> Result<MappingId, FullError> {
         // todo: do full checks as part of intern/dedup
         if self.strings.len() >= CONTAINER_MAX || self.mappings.len() >= CONTAINER_MAX {
             return Err(FullError);
@@ -508,10 +585,10 @@ impl Profile {
         /* PProf reserves mapping 0 for "no mapping", and it won't let you put
          * one in there with all "zero" data either, so we shift the ids.
          */
-        Ok(PProfId(index + 1))
+        Ok(MappingId::new(index))
     }
 
-    fn add_stacktrace(&mut self, locations: Vec<PProfId>) -> StackTraceId {
+    fn add_stacktrace(&mut self, locations: Vec<LocationId>) -> StackTraceId {
         let index = self.stack_traces.dedup(StackTrace { locations });
         StackTraceId(index)
     }
@@ -520,7 +597,7 @@ impl Profile {
         self.stack_traces.get_index(st.0).unwrap()
     }
 
-    fn add_function(&mut self, function: &api::Function) -> PProfId {
+    fn add_function(&mut self, function: &api::Function) -> FunctionId {
         let name = self.intern(function.name).into();
         let system_name = self.intern(function.system_name).into();
         let filename = self.intern(function.filename).into();
@@ -536,7 +613,7 @@ impl Profile {
         /* PProf reserves function 0 for "no function", and it won't let you put
          * one in there with all "zero" data either, so we shift the ids.
          */
-        PProfId(index + 1)
+        FunctionId::new(index)
     }
 
     pub fn add(&mut self, sample: api::Sample) -> anyhow::Result<SampleId> {
@@ -550,7 +627,7 @@ impl Profile {
         let values = sample.values.clone();
         let (labels, local_root_span_id_label_offset) = self.extract_sample_labels(&sample)?;
 
-        let mut locations: Vec<PProfId> = Vec::with_capacity(sample.locations.len());
+        let mut locations = Vec::with_capacity(sample.locations.len());
         for location in sample.locations.iter() {
             let mapping_id = self.add_mapping(&location.mapping)?;
             let lines: Vec<Line> = location
@@ -559,7 +636,7 @@ impl Profile {
                 .map(|line| {
                     let function_id = self.add_function(&line.function);
                     Line {
-                        function_id: function_id.0 as u64,
+                        function_id: function_id.into(),
                         line: line.line,
                     }
                 })
@@ -573,11 +650,7 @@ impl Profile {
                 is_folded: location.is_folded,
             });
 
-            /* PProf reserves location 0. Based on this pattern in other
-             * situations, this would be "no location", but I'm not sure how
-             * this is logical?
-             */
-            locations.push(PProfId(index + 1))
+            locations.push(LocationId::new(index))
         }
         let stacktrace = self.add_stacktrace(locations);
         let s = Sample {
