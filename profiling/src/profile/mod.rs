@@ -37,7 +37,8 @@ impl FunctionId {
         // PProf reserves location 0.
         // Both this, and the serialization of the table, add 1 to avoid the 0 element
         let index = index.checked_add(1).expect("FunctionId to fit into a u32");
-        let index = NonZeroU32::new(index).unwrap();
+        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
+        let index = unsafe { NonZeroU32::new_unchecked(index) };
         Self(index)
     }
 }
@@ -69,7 +70,8 @@ impl MappingId {
         // PProf reserves location 0.
         // Both this, and the serialization of the table, add 1 to avoid the 0 element
         let index = index.checked_add(1).expect("MappingId to fit into a u32");
-        let index = NonZeroU32::new(index).unwrap();
+        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
+        let index = unsafe { NonZeroU32::new_unchecked(index) };
         Self(index)
     }
 }
@@ -101,7 +103,8 @@ impl SampleId {
         // PProf reserves location 0.
         // Both this, and the serialization of the table, add 1 to avoid the 0 element
         let index = index.checked_add(1).expect("SampleId to fit into a u32");
-        let index = NonZeroU32::new(index).unwrap();
+        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
+        let index = unsafe { NonZeroU32::new_unchecked(index) };
         Self(index)
     }
 }
@@ -137,7 +140,8 @@ impl LocationId {
         // PProf reserves location 0.
         // Both this, and the serialization of the table, add 1 to avoid the 0 element
         let index = index.checked_add(1).expect("LocationId to fit into a u32");
-        let index = NonZeroU32::new(index).unwrap();
+        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
+        let index = unsafe { NonZeroU32::new_unchecked(index) };
         Self(index)
     }
 }
