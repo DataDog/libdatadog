@@ -15,9 +15,9 @@ use std::num::NonZeroU32;
 use std::ops::AddAssign;
 use std::time::{Duration, SystemTime};
 
-use internal::ValueType;
+use internal::{Label, LabelValue, ValueType};
 
-use pprof::{Function, Label, Line, Location};
+use pprof::{Function, Line, Location};
 use profiled_endpoints::ProfiledEndpointsStats;
 use prost::{EncodeError, Message};
 
@@ -162,7 +162,7 @@ impl From<&LocationId> for u64 {
     }
 }
 
-#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct StringId(u32);
 
@@ -690,20 +690,22 @@ impl Profile {
         let mut labels: Vec<Label> = Vec::with_capacity(sample.labels.len());
         let mut local_root_span_id_label_offset: Option<usize> = None;
         for label in sample.labels.iter() {
+            anyhow::ensure!(
+                label.str.is_none() || label.num == 0,
+                "Invalid label: {:?}",
+                label
+            );
+            anyhow::ensure!(
+                label.num_unit.is_none() || label.str.is_none(),
+                "Invalid label: {:?}",
+                label
+            );
             let key = self.intern(label.key);
-            let str = label
-                .str
-                .map(|s| self.intern(s))
-                .unwrap_or(StringId::zero());
-            let num_unit = label
-                .num_unit
-                .map(|s| self.intern(s))
-                .unwrap_or(StringId::zero());
 
             if key == self.endpoints.local_root_span_id_label {
                 // Panic: if the label.str isn't 0, then str must have been provided.
                 anyhow::ensure!(
-                    str.is_zero(),
+                    label.str.is_none(),
                     "the label \"local root span id\" must be sent as a number, not string {}",
                     label.str.unwrap()
                 );
@@ -713,19 +715,23 @@ impl Profile {
                 );
                 anyhow::ensure!(
                     local_root_span_id_label_offset.is_none(),
-                    "only one label per sample can have the key \"local root span id\", found two: {}, {}",
-                    labels[local_root_span_id_label_offset.unwrap()].num, label.num
+                    "only one label per sample can have the key \"local root span id\", found two: {:?}, {}",
+                    labels[local_root_span_id_label_offset.unwrap()], label.num
                 );
                 local_root_span_id_label_offset = Some(labels.len());
             }
 
+            let internal_label = if let Some(s) = label.str {
+                let str = self.intern(s);
+                Label::str(key, str)
+            } else {
+                let num = label.num;
+                let num_unit = label.num_unit.map(|s| self.intern(s));
+                Label::num(key, num, num_unit)
+            };
+
             // If you refactor this push, ensure the local_root_span_id_label_offset is correct.
-            labels.push(Label {
-                key: key.into(),
-                str: str.into(),
-                num: label.num,
-                num_unit: num_unit.into(),
-            });
+            labels.push(internal_label);
         }
         Ok((labels, local_root_span_id_label_offset))
     }
@@ -877,21 +883,25 @@ impl Profile {
     /// Hence, the return type of Result<Option<_>, _>.
     fn get_endpoint_for_label(&self, label: &Label) -> anyhow::Result<Option<StringId>> {
         anyhow::ensure!(
-            StringId::new(label.key) == self.endpoints.local_root_span_id_label,
+            label.get_key() == self.endpoints.local_root_span_id_label,
             "bug: get_endpoint_for_label should only be called on labels with the key \"local root span id\", called on label with key \"{}\"",
-            &self.strings[label.key as usize]
+            self.get_string(label.get_key())
         );
 
         anyhow::ensure!(
-            label.str == 0,
-            "the local root span id label value must be sent as a number, not a string, given string id {}",
-            label.str
+            label.has_num_value(),
+            "the local root span id label value must be sent as a number, not a string, given {:?}",
+            label
         );
 
-        /* Safety: the value is a u64, but pprof only has signed values, so we
-         * transmute it; the backend does the same.
-         */
-        let local_root_span_id: u64 = unsafe { std::intrinsics::transmute(label.num) };
+        let local_root_span_id: u64 = if let LabelValue::Num { num, .. } = label.get_value() {
+            // Safety: the value is a u64, but pprof only has signed values, so we
+            // transmute it; the backend does the same.
+            unsafe { std::intrinsics::transmute(*num) }
+        } else {
+            return Err(anyhow::format_err!("the local root span id label value must be sent as a number, not a string, given {:?}",
+            label));
+        };
 
         Ok(self
             .endpoints
@@ -900,7 +910,8 @@ impl Profile {
             .map(StringId::clone))
     }
 
-    fn upscale_values(&self, values: &[i64], labels: &[Label]) -> anyhow::Result<Vec<i64>> {
+    // TODO: Consider whether to use the internal Label here instead
+    fn upscale_values(&self, values: &[i64], labels: &[pprof::Label]) -> anyhow::Result<Vec<i64>> {
         let mut new_values = values.to_vec();
 
         if !self.upscaling_rules.is_empty() {
@@ -968,12 +979,13 @@ impl TryFrom<&Profile> for pprof::Profile {
             .iter()
             .map(|(sample, values)| {
                 // Clone the labels, but enrich them with endpoint profiling.
-                let mut labels = sample.labels.clone();
+                let mut labels: Vec<pprof::Label> =
+                    sample.labels.iter().map(pprof::Label::from).collect();
                 if let Some(offset) = sample.local_root_span_id_label_offset {
                     // Safety: this offset was created internally and isn't be mutated.
                     let lrsi_label = unsafe { sample.labels.get_unchecked(offset) };
                     if let Some(endpoint_value_id) = profile.get_endpoint_for_label(lrsi_label)? {
-                        labels.push(Label {
+                        labels.push(pprof::Label {
                             key: profile.endpoints.endpoint_label.into(),
                             str: endpoint_value_id.into(),
                             num: 0,
@@ -982,7 +994,7 @@ impl TryFrom<&Profile> for pprof::Profile {
                     }
                 }
 
-                let new_values = profile.upscale_values(values.as_ref(), labels.as_ref())?;
+                let new_values = profile.upscale_values(values.as_ref(), &labels)?;
                 let stacktrace = profile.get_stacktrace(sample.stacktrace);
 
                 Ok(pprof::Sample {
@@ -2097,7 +2109,7 @@ mod api_test {
         let id_label2 = api::Label {
             key: "my other label",
             str: Some("foobar"),
-            num: 10,
+            num: 0,
             num_unit: None,
         };
 
