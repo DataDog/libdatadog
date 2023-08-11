@@ -15,9 +15,7 @@ use std::num::NonZeroU32;
 use std::ops::AddAssign;
 use std::time::{Duration, SystemTime};
 
-use internal::{Label, LabelValue, Line, Location, LocationId, ValueType};
-
-use pprof::Function;
+use internal::{Function, FunctionId, Label, LabelValue, Line, Location, LocationId, ValueType};
 use profiled_endpoints::ProfiledEndpointsStats;
 use prost::{EncodeError, Message};
 
@@ -25,39 +23,6 @@ use self::api::UpscalingInfo;
 
 pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<rustc_hash::FxHasher>>;
 pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::FxHasher>>;
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
-#[repr(transparent)]
-pub struct FunctionId(NonZeroU32);
-
-impl FunctionId {
-    pub fn new<T>(v: T) -> Self
-    where
-        T: TryInto<u32>,
-        T::Error: Debug,
-    {
-        let index: u32 = v.try_into().expect("FunctionId to fit into a u32");
-
-        // PProf reserves location 0.
-        // Both this, and the serialization of the table, add 1 to avoid the 0 element
-        let index = index.checked_add(1).expect("FunctionId to fit into a u32");
-        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
-        let index = unsafe { NonZeroU32::new_unchecked(index) };
-        Self(index)
-    }
-}
-
-impl From<FunctionId> for u64 {
-    fn from(s: FunctionId) -> Self {
-        Self::from(&s)
-    }
-}
-
-impl From<&FunctionId> for u64 {
-    fn from(s: &FunctionId) -> Self {
-        s.0.get().into()
-    }
-}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
@@ -573,13 +538,12 @@ impl Profile {
         let system_name = self.intern(function.system_name).into();
         let filename = self.intern(function.filename).into();
 
-        let index = self.functions.dedup(Function {
-            id: 0,
+        let index = self.functions.dedup(Function::new(
             name,
             system_name,
             filename,
-            start_line: function.start_line,
-        });
+            function.start_line,
+        ));
 
         /* PProf reserves function 0 for "no function", and it won't let you put
          * one in there with all "zero" data either, so we shift the ids.
@@ -999,11 +963,7 @@ impl TryFrom<&Profile> for pprof::Profile {
                 .functions
                 .iter()
                 .enumerate()
-                .map(|(index, function)| {
-                    let mut function = *function;
-                    function.id = (index + 1) as u64;
-                    function
-                })
+                .map(|(index, function)| function.to_pprof(index as u64 + 1))
                 .collect(),
             string_table: profile.strings.iter().map(Into::into).collect(),
             time_nanos: profile
