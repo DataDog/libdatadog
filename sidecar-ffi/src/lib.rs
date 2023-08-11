@@ -33,7 +33,12 @@ use std::os::unix::prelude::FromRawFd;
 #[cfg(windows)]
 use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::slice;
+use std::sync::Arc;
 use std::time::Duration;
+use datadog_live_debugger::debugger_defs::DebuggerPayload;
+use datadog_remote_config::fetch::ConfigInvariants;
+use datadog_remote_config::Target;
+use datadog_sidecar::shm_remote_config::RemoteConfigReader;
 
 #[repr(C)]
 pub struct NativeFile {
@@ -188,6 +193,42 @@ pub extern "C" fn ddog_agent_remote_config_reader_drop(_: Box<AgentRemoteConfigR
 #[no_mangle]
 pub extern "C" fn ddog_agent_remote_config_writer_drop(_: Box<AgentRemoteConfigWriter<ShmHandle>>) {
 }
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
+    language: &ffi::CharSlice<'a>,
+    tracer_version: &ffi::CharSlice<'a>,
+    endpoint: &Endpoint,
+    service_name: ffi::CharSlice,
+    env_name: ffi::CharSlice,
+    app_version: ffi::CharSlice,
+) -> Box<RemoteConfigReader> {
+    Box::new(RemoteConfigReader::new(&ConfigInvariants {
+        language: language.to_utf8_lossy().into(),
+        tracer_version: tracer_version.to_utf8_lossy().into(),
+        endpoint: endpoint.clone(),
+    }, &Arc::new(Target {
+        service: service_name.to_utf8_lossy().into(),
+        env: env_name.to_utf8_lossy().into(),
+        app_version: app_version.to_utf8_lossy().into(),
+    })))
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_remote_config_read<'a>(
+    reader: &'a mut RemoteConfigReader,
+    data: &mut ffi::CharSlice<'a>,
+) -> bool {
+    let (new, contents) = reader.read();
+    // c_char may be u8 or i8 depending on target... convert it.
+    let contents: &[c_char] = unsafe { std::mem::transmute::<&[u8], &[c_char]>(contents) };
+    *data = contents.into();
+    new
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_remote_config_reader_drop(_: Box<RemoteConfigReader>) {}
 
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_transport_drop(_: Box<SidecarTransport>) {}
@@ -375,7 +416,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
 /// Enqueues a list of actions to be performed.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_telemetry_end(
+pub unsafe extern "C" fn ddog_sidecar_lifecycle_end(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
     queue_id: &QueueId,
@@ -429,7 +470,9 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     session_id: ffi::CharSlice,
     agent_endpoint: &Endpoint,
     dogstatsd_endpoint: &Endpoint,
-    flush_interval_milliseconds: u64,
+    language: ffi::CharSlice,
+    tracer_version: ffi::CharSlice,
+    flush_interval_milliseconds: u32,
     force_flush_size: usize,
     force_drop_size: usize,
     log_level: ffi::CharSlice,
@@ -437,11 +480,14 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
 ) -> MaybeError {
     try_c!(blocking::set_session_config(
         transport,
+        libc::getpid(),
         session_id.to_utf8_lossy().into(),
         &SessionConfig {
             endpoint: agent_endpoint.clone(),
             dogstatsd_endpoint: dogstatsd_endpoint.clone(),
-            flush_interval: Duration::from_millis(flush_interval_milliseconds),
+            language: language.to_utf8_lossy().into(),
+            tracer_version: tracer_version.to_utf8_lossy().into(),
+            flush_interval: Duration::from_millis(flush_interval_milliseconds as u64),
             force_flush_size,
             force_drop_size,
             log_level: log_level.to_utf8_lossy().into(),
@@ -449,7 +495,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
                 config::FromEnv::log_method()
             } else {
                 LogMethod::File(String::from(log_path.to_utf8_lossy()).into())
-            }
+            },
         },
     ));
 
@@ -531,6 +577,49 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
         instance_id,
         data.as_bytes().to_vec(),
         tracer_header_tags,
+    ));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+#[allow(improper_ctypes_definitions)] // DebuggerPayload is just a pointer, we hide its internals
+pub unsafe extern "C" fn ddog_sidecar_send_debugger_data(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    payloads: Vec<DebuggerPayload<ffi::CharSlice>>
+) -> MaybeError {
+    if payloads.is_empty() {
+        return MaybeError::None;
+    }
+
+    try_c!(blocking::send_debugger_data_shm_vec(
+        transport,
+        instance_id,
+        payloads,
+    ));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_set_remote_config_data(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    queue_id: &QueueId,
+    service_name: ffi::CharSlice,
+    env_name: ffi::CharSlice,
+    app_version: ffi::CharSlice,
+) -> MaybeError {
+    try_c!(blocking::set_remote_config_data(
+        transport,
+        instance_id,
+        queue_id,
+        service_name.to_utf8_lossy().into(),
+        env_name.to_utf8_lossy().into(),
+        app_version.to_utf8_lossy().into(),
     ));
 
     MaybeError::None

@@ -53,8 +53,13 @@ pub trait SidecarInterface {
     /// # Arguments
     ///
     /// * `session_id` - The ID of the session.
+    /// * `pid` - The pid of the sidecar client.
     /// * `config` - The configuration to be set.
-    async fn set_session_config(session_id: String, config: SessionConfig);
+    async fn set_session_config(
+        session_id: String,
+        pid: libc::pid_t,
+        config: SessionConfig
+    );
 
     /// Shuts down a runtime.
     ///
@@ -96,6 +101,32 @@ pub trait SidecarInterface {
         instance_id: InstanceId,
         data: Vec<u8>,
         headers: SerializedTracerHeaderTags,
+    );
+
+    /// Transfers raw data to a live-debugger endpoint.
+    ///
+    /// # Arguments
+    /// * `instance_id` - The ID of the instance.
+    /// * `handle` - The data to send.
+    async fn send_debugger_data_shm(
+        instance_id: InstanceId,
+        #[SerializedHandle] handle: ShmHandle,
+    );
+
+    /// Sets contextual data for the remote config client.
+    ///
+    /// # Arguments
+    /// * `instance_id` - The ID of the instance.
+    /// * `queue_id` - The unique identifier for the trace context.
+    /// * `service_name` - The name of the service.
+    /// * `env_name` - The name of the environment.
+    /// * `app_version` - The application version.
+    async fn set_remote_config_data(
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        service_name: String,
+        env_name: String,
+        app_version: String,
     );
 
     /// Sends DogStatsD actions.

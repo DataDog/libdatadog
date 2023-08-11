@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::service::{
+    remote_configs::RemoteConfigsGuard,
     telemetry::{AppInstance, AppOrQueue},
     InstanceId, QueueId,
 };
@@ -34,6 +35,7 @@ pub(crate) struct RuntimeInfo {
     pub(crate) apps: Arc<Mutex<AppMap>>,
     app_or_actions: Arc<Mutex<HashMap<QueueId, AppOrQueue>>>,
     #[cfg(feature = "tracing")]
+    remote_config_guards: Arc<Mutex<HashMap<QueueId, RemoteConfigsGuard>>>,
     pub(crate) instance_id: InstanceId,
 }
 
@@ -121,6 +123,16 @@ impl RuntimeInfo {
     ///   map.
     pub(crate) fn lock_app_or_actions(&self) -> MutexGuard<HashMap<QueueId, AppOrQueue>> {
         self.app_or_actions.lock().unwrap()
+    }
+
+    /// Locks the remote config guards map and returns a mutable reference to it.
+    ///
+    /// # Returns
+    ///
+    /// * `MutexGuard<HashMap<QueueId, RemoteConfigsGuard>>` - A mutable reference to the remote
+    ///   config guards map.
+    pub(crate) fn lock_remote_config_guards(&self) -> MutexGuard<HashMap<QueueId, RemoteConfigsGuard>> {
+        self.remote_config_guards.lock().unwrap()
     }
 }
 
