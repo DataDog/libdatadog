@@ -2,8 +2,10 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 pub mod api;
+pub mod internal;
 pub mod pprof;
 pub mod profiled_endpoints;
+
 use core::fmt;
 use std::borrow::{Borrow, Cow};
 use std::convert::TryInto;
@@ -13,7 +15,9 @@ use std::num::NonZeroU32;
 use std::ops::AddAssign;
 use std::time::{Duration, SystemTime};
 
-use pprof::{Function, Label, Line, Location, ValueType};
+use internal::ValueType;
+
+use pprof::{Function, Label, Line, Location};
 use profiled_endpoints::ProfiledEndpointsStats;
 use prost::{EncodeError, Message};
 
@@ -419,8 +423,8 @@ impl<'a> ProfileBuilder<'a> {
             .sample_types
             .iter()
             .map(|vt| ValueType {
-                r#type: profile.intern(vt.r#type).into(),
-                unit: profile.intern(vt.unit).into(),
+                r#type: profile.intern(vt.r#type),
+                unit: profile.intern(vt.unit),
             })
             .collect();
 
@@ -428,8 +432,8 @@ impl<'a> ProfileBuilder<'a> {
             profile.period = Some((
                 period.value,
                 ValueType {
-                    r#type: profile.intern(period.r#type.r#type).into(),
-                    unit: profile.intern(period.r#type.unit).into(),
+                    r#type: profile.intern(period.r#type.r#type),
+                    unit: profile.intern(period.r#type.unit),
                 },
             ));
         };
@@ -730,8 +734,8 @@ impl Profile {
         let mut sample_types: Vec<api::ValueType> = Vec::with_capacity(self.sample_types.len());
         for sample_type in self.sample_types.iter() {
             sample_types.push(api::ValueType {
-                r#type: self.get_string(sample_type.r#type)?.as_str(),
-                unit: self.get_string(sample_type.unit)?.as_str(),
+                r#type: self.get_string(sample_type.r#type),
+                unit: self.get_string(sample_type.unit),
             })
         }
         Some(sample_types)
@@ -746,16 +750,13 @@ impl Profile {
          */
         let sample_types: Vec<api::ValueType> = self.extract_api_sample_types()?;
 
-        let period = match &self.period {
-            Some(t) => Some(api::Period {
-                r#type: api::ValueType {
-                    r#type: self.get_string(t.1.r#type)?.as_str(),
-                    unit: self.get_string(t.1.unit)?.as_str(),
-                },
-                value: t.0,
-            }),
-            None => None,
-        };
+        let period = self.period.map(|t| api::Period {
+            r#type: api::ValueType {
+                r#type: self.get_string(t.1.r#type),
+                unit: self.get_string(t.1.unit),
+            },
+            value: t.0,
+        });
 
         let mut profile = ProfileBuilder::new()
             .sample_types(sample_types)
@@ -861,8 +862,14 @@ impl Profile {
         })
     }
 
-    pub fn get_string(&self, id: i64) -> Option<&String> {
+    pub fn get_string_unsafe(&self, id: i64) -> Option<&String> {
         self.strings.get_index(id as usize)
+    }
+
+    pub fn get_string(&self, id: StringId) -> &str {
+        self.strings
+            .get_index(id.0 as usize)
+            .expect("StringId to have a valid interned index")
     }
 
     /// Fetches the endpoint information for the label. There may be errors,
@@ -987,7 +994,11 @@ impl TryFrom<&Profile> for pprof::Profile {
             .collect();
 
         Ok(pprof::Profile {
-            sample_types: profile.sample_types.clone(),
+            sample_types: profile
+                .sample_types
+                .iter()
+                .map(pprof::ValueType::from)
+                .collect(),
             samples: samples?,
             mappings: profile
                 .mappings
@@ -1033,7 +1044,7 @@ impl TryFrom<&Profile> for pprof::Profile {
                     duration.as_nanos().min(i64::MAX as u128) as i64
                 }),
             period,
-            period_type,
+            period_type: period_type.map(pprof::ValueType::from),
             ..Default::default()
         })
     }
@@ -1268,7 +1279,10 @@ mod api_test {
         // The string table should have at least the empty string:
         assert!(!profile.strings.is_empty());
         // The empty string should be at position 0
-        assert_eq!(profile.get_string(0).expect("index 0 to be found"), "");
+        assert_eq!(
+            profile.get_string_unsafe(0).expect("index 0 to be found"),
+            ""
+        );
     }
 
     #[test]
@@ -1294,18 +1308,8 @@ mod api_test {
         // table offsets may not match).
         let (value, period_type) = profile.period.expect("profile to have a period");
         assert_eq!(value, period.unwrap().0);
-        assert_eq!(
-            profile
-                .get_string(period_type.r#type)
-                .expect("string to be found"),
-            "wall-time"
-        );
-        assert_eq!(
-            profile
-                .get_string(period_type.unit)
-                .expect("string to be found"),
-            "nanoseconds"
-        );
+        assert_eq!(profile.get_string(period_type.r#type), "wall-time");
+        assert_eq!(profile.get_string(period_type.unit), "nanoseconds");
     }
 
     #[test]
