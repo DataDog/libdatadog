@@ -15,9 +15,9 @@ use std::num::NonZeroU32;
 use std::ops::AddAssign;
 use std::time::{Duration, SystemTime};
 
-use internal::{Label, LabelValue, ValueType};
+use internal::{Label, LabelValue, Line, Location, LocationId, ValueType};
 
-use pprof::{Function, Line, Location};
+use pprof::Function;
 use profiled_endpoints::ProfiledEndpointsStats;
 use prost::{EncodeError, Message};
 
@@ -26,7 +26,7 @@ use self::api::UpscalingInfo;
 pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<rustc_hash::FxHasher>>;
 pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::FxHasher>>;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct FunctionId(NonZeroU32);
 
@@ -59,7 +59,7 @@ impl From<&FunctionId> for u64 {
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct MappingId(NonZeroU32);
 
@@ -128,39 +128,6 @@ impl From<&SampleId> for u64 {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
 pub struct StackTraceId(usize);
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[repr(transparent)]
-pub struct LocationId(NonZeroU32);
-
-impl LocationId {
-    pub fn new<T>(v: T) -> Self
-    where
-        T: TryInto<u32>,
-        T::Error: Debug,
-    {
-        let index: u32 = v.try_into().expect("LocationId to fit into a u32");
-
-        // PProf reserves location 0.
-        // Both this, and the serialization of the table, add 1 to avoid the 0 element
-        let index = index.checked_add(1).expect("LocationId to fit into a u32");
-        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
-        let index = unsafe { NonZeroU32::new_unchecked(index) };
-        Self(index)
-    }
-}
-
-impl From<LocationId> for u64 {
-    fn from(s: LocationId) -> Self {
-        Self::from(&s)
-    }
-}
-
-impl From<&LocationId> for u64 {
-    fn from(s: &LocationId) -> Self {
-        s.0.get().into()
-    }
-}
 
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
@@ -639,16 +606,12 @@ impl Profile {
                 .iter()
                 .map(|line| {
                     let function_id = self.add_function(&line.function);
-                    Line {
-                        function_id: function_id.into(),
-                        line: line.line,
-                    }
+                    Line::new(function_id, line.line)
                 })
                 .collect();
 
             let index = self.locations.dedup(Location {
-                id: 0,
-                mapping_id: u64::from(mapping_id),
+                mapping_id,
                 address: location.address,
                 lines,
                 is_folded: location.is_folded,
@@ -1030,13 +993,7 @@ impl TryFrom<&Profile> for pprof::Profile {
                 .locations
                 .iter()
                 .enumerate()
-                .map(|(index, location)| pprof::Location {
-                    id: (index + 1) as u64,
-                    mapping_id: location.mapping_id,
-                    address: location.address,
-                    lines: location.lines.clone(),
-                    is_folded: location.is_folded,
-                })
+                .map(|(index, location)| location.to_pprof(index as u64 + 1))
                 .collect(),
             functions: profile
                 .functions

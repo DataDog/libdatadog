@@ -14,7 +14,7 @@ impl From<ValueType> for pprof::ValueType {
 
 impl From<&ValueType> for pprof::ValueType {
     fn from(vt: &ValueType) -> Self {
-        pprof::ValueType {
+        Self {
             r#type: vt.r#type.into(),
             unit: vt.unit.into(),
         }
