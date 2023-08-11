@@ -29,6 +29,7 @@ use sidecar_interface::{SidecarInterface, SidecarInterfaceRequest, SidecarInterf
 pub mod blocking;
 mod instance_id;
 mod queue_id;
+mod remote_configs;
 mod request_identification;
 mod runtime_info;
 mod runtime_metadata;
@@ -43,6 +44,8 @@ pub(crate) mod tracing;
 pub struct SessionConfig {
     pub endpoint: Endpoint,
     pub dogstatsd_endpoint: Endpoint,
+    pub language: String,
+    pub tracer_version: String,
     pub flush_interval: Duration,
     pub force_flush_size: usize,
     pub force_drop_size: usize,

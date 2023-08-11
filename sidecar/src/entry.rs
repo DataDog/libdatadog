@@ -98,6 +98,7 @@ where
 
     // Await everything else to completion
     _ = telemetry_handle.await;
+    server.shutdown();
     _ = server.trace_flusher.join().await;
 
     Ok(())
