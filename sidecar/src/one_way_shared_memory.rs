@@ -206,4 +206,11 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
 
         handle.replace(mapped);
     }
+
+    pub fn as_slice(&self) -> &[u8] {
+        let handle = self.handle.lock().unwrap();
+        let mapped = handle.as_ref().unwrap();
+        let data = unsafe { &*(mapped.as_slice() as *const [u8] as *const RawData) };
+        data.as_slice()
+    }
 }

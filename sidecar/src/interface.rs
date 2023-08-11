@@ -35,10 +35,11 @@ use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, VecSkipError};
 use tokio::select;
 use tokio::task::{JoinError, JoinHandle};
-use tracing::{debug, enabled, error, info, warn, Level};
+use tracing::{debug, error, info, warn};
 
 use crate::agent_remote_config::AgentRemoteConfigWriter;
 use crate::config::get_product_endpoint;
+use crate::remote_config::{RemoteConfigIdentifier, RemoteConfigs};
 use datadog_ipc::tarpc;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
@@ -83,6 +84,12 @@ pub trait SidecarInterface {
         instance_id: InstanceId,
         data: Vec<u8>,
         headers: SerializedTracerHeaderTags,
+    );
+    async fn set_remote_config_data(
+        instance_id: InstanceId,
+        service: String,
+        env: String,
+        app_version: String,
     );
     async fn ping();
     async fn dump() -> String;
@@ -182,7 +189,6 @@ struct SessionInfo {
     session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
     log_guard: Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
-    #[cfg(feature = "tracing")]
     session_id: String,
 }
 
@@ -194,63 +200,64 @@ impl SessionInfo {
             None => {
                 let mut runtime = RuntimeInfo::default();
                 runtimes.insert(runtime_id.clone(), runtime.clone());
-                #[cfg(feature = "tracing")]
-                if enabled!(Level::INFO) {
-                    runtime.instance_id = InstanceId {
-                        session_id: self.session_id.clone(),
-                        runtime_id: runtime_id.clone(),
-                    };
-                    info!(
-                        "Registering runtime_id {} for session {}",
-                        runtime_id, self.session_id
-                    );
-                }
+                runtime.instance_id = InstanceId {
+                    session_id: self.session_id.clone(),
+                    runtime_id: runtime_id.clone(),
+                };
+                info!(
+                    "Registering runtime_id {} for session {}",
+                    runtime_id, self.session_id
+                );
                 runtime
             }
         }
     }
 
-    async fn shutdown(&self) {
-        let runtimes: Vec<RuntimeInfo> = self
-            .runtimes
-            .lock()
-            .unwrap()
-            .drain()
-            .map(|(_, instance)| instance)
-            .collect();
+    async fn shutdown(&self, remote_configs: Arc<RemoteConfigs>) {
+        let runtimes: Vec<_> = self.runtimes.lock().unwrap().drain().collect();
 
         let runtimes_shutting_down: Vec<_> = runtimes
             .into_iter()
-            .map(|rt| tokio::spawn(async move { rt.shutdown().await }))
+            .map(|(_, rt)| {
+                tokio::spawn({
+                    let remote_configs = remote_configs.clone();
+                    async move { rt.shutdown(remote_configs).await }
+                })
+            })
             .collect();
 
         future::join_all(runtimes_shutting_down).await;
     }
 
-    async fn shutdown_running_instances(&self) {
-        let runtimes: Vec<RuntimeInfo> = self
+    async fn shutdown_running_instances(&self, remote_configs: Arc<RemoteConfigs>) {
+        let runtimes: Vec<_> = self
             .runtimes
             .lock()
             .unwrap()
             .iter()
-            .map(|(_, instance)| instance.clone())
+            .map(|(id, rt)| (id.clone(), rt.clone()))
             .collect();
 
         let instances_shutting_down: Vec<_> = runtimes
             .into_iter()
-            .map(|rt| tokio::spawn(async move { rt.shutdown().await }))
+            .map(|(_, rt)| {
+                tokio::spawn({
+                    let remote_configs = remote_configs.clone();
+                    async move { rt.shutdown(remote_configs).await }
+                })
+            })
             .collect();
 
         future::join_all(instances_shutting_down).await;
     }
 
-    async fn shutdown_runtime(self, runtime_id: &String) {
+    async fn shutdown_runtime(self, runtime_id: &String, remote_configs: Arc<RemoteConfigs>) {
         let runtime = match self.runtimes.lock().unwrap().remove(runtime_id) {
             Some(rt) => rt,
             None => return,
         };
 
-        runtime.shutdown().await
+        runtime.shutdown(remote_configs).await
     }
 
     fn get_telemetry_config(&self) -> MutexGuard<Option<ddtelemetry::config::Config>> {
@@ -295,7 +302,6 @@ enum AppOrQueue {
 struct RuntimeInfo {
     apps: Arc<Mutex<HashMap<(String, String), Shared<ManualFuture<Option<AppInstance>>>>>>,
     app_or_actions: Arc<Mutex<HashMap<QueueId, AppOrQueue>>>,
-    #[cfg(feature = "tracing")]
     instance_id: InstanceId,
 }
 
@@ -321,12 +327,13 @@ impl RuntimeInfo {
         }
     }
 
-    async fn shutdown(self) {
-        #[cfg(feature = "tracing")]
+    async fn shutdown(self, remote_configs: Arc<RemoteConfigs>) {
         info!(
             "Shutting down runtime_id {} for session {}",
             self.instance_id.runtime_id, self.instance_id.session_id
         );
+
+        remote_configs.delete_runtime(self.instance_id.runtime_id.as_str());
 
         let instance_futures: Vec<_> = self
             .apps
@@ -353,7 +360,6 @@ impl RuntimeInfo {
             .collect();
         future::join_all(instances_shutting_down).await;
 
-        #[cfg(feature = "tracing")]
         debug!(
             "Successfully shut down runtime_id {} for session {}",
             self.instance_id.runtime_id, self.instance_id.session_id
@@ -740,6 +746,7 @@ pub struct SidecarServer {
     pub self_telemetry_config:
         Arc<Mutex<Option<ManualFutureCompleter<ddtelemetry::config::Config>>>>,
     pub submitted_payloads: Arc<AtomicU64>,
+    remote_configs: Arc<RemoteConfigs>,
 }
 
 impl SidecarServer {
@@ -814,7 +821,7 @@ impl SidecarServer {
                     }
                 };
                 if stop {
-                    self.stop_session(&session).await;
+                    self.stop_session(&session, self.remote_configs.clone()).await;
                 }
             }
             for instance_id in instances {
@@ -825,7 +832,9 @@ impl SidecarServer {
                     .get(&instance_id.session_id)
                     .cloned();
                 if let Some(session) = maybe_session {
-                    session.shutdown_runtime(&instance_id.runtime_id).await;
+                    session
+                        .shutdown_runtime(&instance_id.runtime_id, self.remote_configs.clone())
+                        .await;
                 }
             }
         }
@@ -841,11 +850,8 @@ impl SidecarServer {
             Some(session) => session.clone(),
             None => {
                 let mut session = SessionInfo::default();
-                #[cfg(feature = "tracing")]
-                if enabled!(Level::INFO) {
-                    session.session_id = session_id.clone();
-                    info!("Initializing new session: {}", session_id);
-                }
+                session.session_id = session_id.clone();
+                info!("Initializing new session: {}", session_id);
                 sessions.insert(session_id.clone(), session.clone());
                 session
             }
@@ -857,14 +863,14 @@ impl SidecarServer {
         session.get_runtime(&instance_id.runtime_id)
     }
 
-    async fn stop_session(&self, session_id: &String) {
+    async fn stop_session(&self, session_id: &String, remote_configs: Arc<RemoteConfigs>) {
         let session = match self.sessions.lock().unwrap().remove(session_id) {
             Some(session) => session,
             None => return,
         };
 
         info!("Shutting down session: {}", session_id);
-        session.shutdown().await;
+        session.shutdown(remote_configs).await;
         debug!("Successfully shut down session: {}", session_id);
     }
 
@@ -962,6 +968,8 @@ fn no_response() -> NoResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionConfig {
     pub endpoint: Endpoint,
+    pub language: String,
+    pub tracer_version: String,
     pub flush_interval: Duration,
     pub force_flush_size: usize,
     pub force_drop_size: usize,
@@ -979,7 +987,14 @@ impl SidecarInterface for SidecarServer {
     type ShutdownRuntimeFut = NoResponse;
     fn shutdown_runtime(self, _: Context, instance_id: InstanceId) -> Self::ShutdownRuntimeFut {
         let session = self.get_session(&instance_id.session_id);
-        tokio::spawn(async move { session.shutdown_runtime(&instance_id.runtime_id).await });
+        tokio::spawn({
+            let remote_configs = self.remote_configs.clone();
+            async move {
+                session
+                    .shutdown_runtime(&instance_id.runtime_id, remote_configs)
+                    .await
+            }
+        });
 
         no_response()
     }
@@ -987,7 +1002,7 @@ impl SidecarInterface for SidecarServer {
     type ShutdownSessionFut = NoResponse;
 
     fn shutdown_session(self, _: Context, session_id: String) -> Self::ShutdownSessionFut {
-        tokio::spawn(async move { SidecarServer::stop_session(&self, &session_id).await });
+        tokio::spawn(async move { SidecarServer::stop_session(&self, &session_id, self.remote_configs.clone()).await });
         no_response()
     }
 
@@ -1119,11 +1134,14 @@ impl SidecarInterface for SidecarServer {
             cfg.set_endpoint(endpoint).ok();
         });
         session.modify_trace_config(|cfg| {
+            cfg.raw_endpoint = Some(config.endpoint.clone());
             let endpoint = get_product_endpoint(
                 datadog_trace_utils::config_utils::PROD_INTAKE_SUBDOMAIN,
                 &config.endpoint,
             );
             cfg.set_endpoint(endpoint).ok();
+            cfg.language = config.language.clone();
+            cfg.tracer_version = config.tracer_version.clone();
         });
         self.trace_flusher
             .interval
@@ -1153,8 +1171,9 @@ impl SidecarInterface for SidecarServer {
             });
         }
 
+        let remote_config = self.remote_configs.clone();
         Box::pin(async move {
-            session.shutdown_running_instances().await;
+            session.shutdown_running_instances(remote_config).await;
             no_response().await
         })
     }
@@ -1206,6 +1225,36 @@ impl SidecarInterface for SidecarServer {
                 self.send_trace_v04(&headers, data.as_slice(), &endpoint);
             });
         }
+
+        no_response()
+    }
+
+    type SetRemoteConfigDataFut = NoResponse;
+
+    fn set_remote_config_data(
+        self,
+        _: Context,
+        instance_id: InstanceId,
+        service: String,
+        env: String,
+        app_version: String,
+    ) -> Self::SetRemoteConfigDataFut {
+        let id = {
+            let session = self.get_session(&instance_id.session_id);
+            let config = session.tracer_config.lock().unwrap();
+            if let Some(endpoint) = &config.raw_endpoint {
+                RemoteConfigIdentifier {
+                    language: config.language.clone(),
+                    tracer_version: config.tracer_version.clone(),
+                    endpoint: endpoint.clone(),
+                }
+            } else {
+                error!("Called set_remote_config_data without registered session");
+                return no_response();
+            }
+        };
+        self.remote_configs
+            .add_runtime(id, instance_id.runtime_id, env, service, app_version);
 
         no_response()
     }
@@ -1318,6 +1367,21 @@ pub mod blocking {
             instance_id: instance_id.clone(),
             handle,
             headers,
+        })
+    }
+
+    pub fn set_remote_config_data(
+        transport: &mut SidecarTransport,
+        instance_id: &InstanceId,
+        service: String,
+        env: String,
+        app_version: String,
+    ) -> io::Result<()> {
+        transport.send(SidecarInterfaceRequest::SetRemoteConfigData {
+            instance_id: instance_id.clone(),
+            service,
+            env,
+            app_version,
         })
     }
 

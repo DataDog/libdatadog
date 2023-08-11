@@ -105,6 +105,37 @@ fn generate_protobuf() {
         "#[serde(rename = \"DBType\")]",
     );
 
+    config.type_attribute("ClientGetConfigsResponse", "#[derive(Deserialize)]");
+    config.type_attribute("File", "#[derive(Deserialize)]");
+    config.type_attribute(
+        "ClientGetConfigsRequest",
+        "#[derive(Deserialize, Serialize)]",
+    );
+    config.type_attribute("Client", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("ClientState", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("ClientTracer", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("ClientAgent", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("ConfigState", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("TargetFileMeta", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("TargetFileHash", "#[derive(Deserialize, Serialize)]");
+
+    config.field_attribute("File.raw", "#[serde(with = \"serde_bytes\")]");
+    config.field_attribute(
+        "ClientGetConfigsResponse.roots",
+        "#[serde(with = \"crate::serde\")]",
+    );
+    config.field_attribute(
+        "ClientGetConfigsResponse.targets",
+        "#[serde(with = \"serde_bytes\")]",
+    );
+    config.field_attribute("ClientGetConfigsResponse.targets", "#[serde(default)]");
+    config.field_attribute("ClientGetConfigsResponse.roots", "#[serde(default)]");
+    config.field_attribute("ClientGetConfigsResponse.target_files", "#[serde(default)]");
+    config.field_attribute(
+        "ClientGetConfigsResponse.client_configs",
+        "#[serde(default)]",
+    );
+
     config
         .compile_protos(
             &[
@@ -112,6 +143,7 @@ fn generate_protobuf() {
                 "src/pb/tracer_payload.proto",
                 "src/pb/span.proto",
                 "src/pb/stats.proto",
+                "src/pb/remoteconfig.proto",
             ],
             &["src/pb/"],
         )
@@ -137,6 +169,7 @@ where
     .as_bytes();
 
     prepend_to_file(add_to_top, &output_path.join("pb.rs"));
+    prepend_to_file(add_to_top, &output_path.join("remoteconfig.rs"));
 }
 
 #[cfg(feature = "generate-protobuf")]

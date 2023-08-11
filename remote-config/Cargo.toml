@@ -1,0 +1,9 @@
+[package]
+edition = "2021"
+license = "Apache 2.0"
+name = "datadog-remote-config"
+version = "0.0.1"
+
+[dependencies]
+datadog-live-debugger = { path = "../live-debugger" }
+

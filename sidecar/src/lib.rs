@@ -9,6 +9,7 @@ pub mod interface;
 pub mod log;
 pub mod one_way_shared_memory;
 mod self_telemetry;
+pub mod remote_config;
 pub mod setup;
 mod tracer;
 mod watchdog;

@@ -25,6 +25,7 @@ use datadog_sidecar::interface::{
     InstanceId, QueueId, RuntimeMeta, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
 use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
+use datadog_sidecar::remote_config::{RemoteConfigIdentifier, RemoteConfigReader};
 use ddcommon::Endpoint;
 use ddtelemetry::{
     data::{self, Dependency, Integration},
@@ -187,6 +188,34 @@ pub extern "C" fn ddog_agent_remote_config_reader_drop(_: Box<AgentRemoteConfigR
 #[no_mangle]
 pub extern "C" fn ddog_agent_remote_config_writer_drop(_: Box<AgentRemoteConfigWriter<ShmHandle>>) {
 }
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
+    language: &ffi::CharSlice<'a>,
+    tracer_version: &ffi::CharSlice<'a>,
+    endpoint: &Endpoint,
+) -> Box<RemoteConfigReader> {
+    Box::new(RemoteConfigReader::new(RemoteConfigIdentifier {
+        language: language.to_utf8_lossy().into(),
+        tracer_version: tracer_version.to_utf8_lossy().into(),
+        endpoint: endpoint.clone(),
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_remote_config_read<'a>(
+    reader: &'a mut RemoteConfigReader,
+    data: &mut ffi::CharSlice<'a>,
+) -> bool {
+    let (new, contents) = reader.read();
+    // c_char may be u8 or i8 depending on target... convert it.
+    let contents: &[c_char] = unsafe { std::mem::transmute::<&[u8], &[c_char]>(contents) };
+    *data = contents.into();
+    new
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_remote_config_reader_drop(_: Box<RemoteConfigReader>) {}
 
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_transport_drop(_: Box<SidecarTransport>) {}
@@ -390,6 +419,8 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     transport: &mut Box<SidecarTransport>,
     session_id: ffi::CharSlice,
     endpoint: &Endpoint,
+    language: ffi::CharSlice,
+    tracer_version: ffi::CharSlice,
     flush_interval_milliseconds: u64,
     force_flush_size: usize,
     force_drop_size: usize,
@@ -401,6 +432,8 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
         session_id.to_utf8_lossy().into(),
         &SessionConfig {
             endpoint: endpoint.clone(),
+            language: language.to_utf8_lossy().into(),
+            tracer_version: tracer_version.to_utf8_lossy().into(),
             flush_interval: Duration::from_millis(flush_interval_milliseconds),
             force_flush_size,
             force_drop_size,
@@ -475,6 +508,26 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
         instance_id,
         data.as_bytes().to_vec(),
         tracer_header_tags.into(),
+    ));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_set_remote_config_data(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    service: ffi::CharSlice,
+    env: ffi::CharSlice,
+    app_version: ffi::CharSlice,
+) -> MaybeError {
+    try_c!(blocking::set_remote_config_data(
+        transport,
+        instance_id,
+        service.to_utf8_lossy().into(),
+        env.to_utf8_lossy().into(),
+        app_version.to_utf8_lossy().into(),
     ));
 
     MaybeError::None
