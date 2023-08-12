@@ -380,9 +380,9 @@ impl Profile {
     }
 
     fn add_function(&mut self, function: &api::Function) -> FunctionId {
-        let name = self.intern(function.name).into();
-        let system_name = self.intern(function.system_name).into();
-        let filename = self.intern(function.filename).into();
+        let name = self.intern(function.name);
+        let system_name = self.intern(function.system_name);
+        let filename = self.intern(function.filename);
 
         let start_line = function.start_line;
         self.functions.dedup(Function {
@@ -1070,8 +1070,8 @@ mod api_test {
         let period = Some((
             10_000_000,
             ValueType {
-                r#type: profile.intern("wall-time").into(),
-                unit: profile.intern("nanoseconds").into(),
+                r#type: profile.intern("wall-time"),
+                unit: profile.intern("nanoseconds"),
             },
         ));
         profile.period = period;
