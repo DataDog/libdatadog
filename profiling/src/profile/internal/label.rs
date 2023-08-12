@@ -1,8 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-pub use super::super::pprof;
-pub use super::super::StringId;
+use super::super::{pprof, Id, StringId};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum LabelValue {
@@ -59,11 +58,11 @@ impl From<Label> for pprof::Label {
 
 impl From<&Label> for pprof::Label {
     fn from(l: &Label) -> pprof::Label {
-        let key = l.key.into();
+        let key = l.key.to_raw_id();
         match l.value {
             LabelValue::Str(str) => Self {
                 key,
-                str: str.into(),
+                str: str.to_raw_id(),
                 num: 0,
                 num_unit: 0,
             },
@@ -71,7 +70,7 @@ impl From<&Label> for pprof::Label {
                 key,
                 str: 0,
                 num,
-                num_unit: num_unit.map(i64::from).unwrap_or(0),
+                num_unit: num_unit.map(StringId::into_raw_id).unwrap_or_default(),
             },
         }
     }

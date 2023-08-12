@@ -1,9 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-pub use super::super::pprof;
-use super::Line;
-use crate::profile::MappingId;
+use super::super::{pprof, MappingId};
+use super::{Id, Item, Line, PprofItem};
 use std::fmt::Debug;
 use std::num::NonZeroU32;
 
@@ -15,11 +14,17 @@ pub struct Location {
     pub is_folded: bool,
 }
 
-impl Location {
-    pub fn to_pprof(&self, id: u64) -> pprof::Location {
+impl Item for Location {
+    type Id = LocationId;
+}
+
+impl PprofItem for Location {
+    type PprofMessage = pprof::Location;
+
+    fn to_pprof(&self, id: Self::Id) -> Self::PprofMessage {
         pprof::Location {
-            id,
-            mapping_id: self.mapping_id.into(),
+            id: id.to_raw_id(),
+            mapping_id: self.mapping_id.to_raw_id(),
             address: self.address,
             lines: self.lines.iter().map(pprof::Line::from).collect(),
             is_folded: self.is_folded,
@@ -31,12 +36,10 @@ impl Location {
 #[repr(transparent)]
 pub struct LocationId(NonZeroU32);
 
-impl LocationId {
-    pub fn new<T>(v: T) -> Self
-    where
-        T: TryInto<u32>,
-        T::Error: Debug,
-    {
+impl Id for LocationId {
+    type RawId = u64;
+
+    fn from_offset(v: usize) -> Self {
         let index: u32 = v.try_into().expect("LocationId to fit into a u32");
 
         // PProf reserves location 0.
@@ -46,16 +49,8 @@ impl LocationId {
         let index = unsafe { NonZeroU32::new_unchecked(index) };
         Self(index)
     }
-}
 
-impl From<LocationId> for u64 {
-    fn from(s: LocationId) -> Self {
-        Self::from(&s)
-    }
-}
-
-impl From<&LocationId> for u64 {
-    fn from(s: &LocationId) -> Self {
-        s.0.get().into()
+    fn to_raw_id(&self) -> Self::RawId {
+        self.0.get() as u64
     }
 }

@@ -1,8 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-pub use super::super::pprof;
-pub use super::super::StringId;
+use super::super::{pprof, StringId};
+use super::{Id, Item, PprofItem};
 use std::fmt::Debug;
 use std::num::NonZeroU32;
 
@@ -11,32 +11,23 @@ pub struct Function {
     pub name: StringId,
     pub system_name: StringId,
     pub filename: StringId,
-    pub start_line: u32,
+    pub start_line: i64,
 }
 
-impl Function {
-    pub fn new<T>(name: StringId, system_name: StringId, filename: StringId, start_line: T) -> Self
-    where
-        T: TryInto<u32>,
-        T::Error: Debug,
-    {
-        let start_line: u32 = start_line
-            .try_into()
-            .expect("file line number to fit into a u32");
-        Self {
-            name,
-            system_name,
-            filename,
-            start_line,
-        }
-    }
-    pub fn to_pprof(&self, id: u64) -> pprof::Function {
+impl Item for Function {
+    type Id = FunctionId;
+}
+
+impl PprofItem for Function {
+    type PprofMessage = pprof::Function;
+
+    fn to_pprof(&self, id: Self::Id) -> Self::PprofMessage {
         pprof::Function {
-            id,
-            name: self.name.into(),
-            system_name: self.system_name.into(),
-            filename: self.filename.into(),
-            start_line: self.start_line.into(),
+            id: id.to_raw_id(),
+            name: self.name.to_raw_id(),
+            system_name: self.system_name.to_raw_id(),
+            filename: self.filename.to_raw_id(),
+            start_line: self.start_line,
         }
     }
 }
@@ -45,31 +36,21 @@ impl Function {
 #[repr(transparent)]
 pub struct FunctionId(NonZeroU32);
 
-impl FunctionId {
-    pub fn new<T>(v: T) -> Self
-    where
-        T: TryInto<u32>,
-        T::Error: Debug,
-    {
+impl Id for FunctionId {
+    type RawId = u64;
+
+    fn from_offset(v: usize) -> Self {
         let index: u32 = v.try_into().expect("FunctionId to fit into a u32");
 
-        // PProf reserves location 0.
+        // PProf reserves function 0.
         // Both this, and the serialization of the table, add 1 to avoid the 0 element
         let index = index.checked_add(1).expect("FunctionId to fit into a u32");
         // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
         let index = unsafe { NonZeroU32::new_unchecked(index) };
         Self(index)
     }
-}
 
-impl From<FunctionId> for u64 {
-    fn from(s: FunctionId) -> Self {
-        Self::from(&s)
-    }
-}
-
-impl From<&FunctionId> for u64 {
-    fn from(s: &FunctionId) -> Self {
-        s.0.get().into()
+    fn to_raw_id(&self) -> Self::RawId {
+        self.0.get().into()
     }
 }
