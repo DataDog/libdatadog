@@ -2,9 +2,11 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 pub mod api;
+pub mod internal;
 pub mod pprof;
 pub mod profiled_endpoints;
 use core::fmt;
+use internal::Observation;
 use std::borrow::{Borrow, Cow};
 use std::convert::TryInto;
 use std::fmt::Debug;
@@ -257,28 +259,6 @@ impl UpscalingRule {
             }
             UpscalingInfo::Proportional { scale } => scale,
         }
-    }
-}
-
-#[repr(transparent)]
-pub struct Observation {
-    data: Box<[i64]>,
-}
-
-impl From<Vec<i64>> for Observation {
-    fn from(v: Vec<i64>) -> Self {
-        let data = v.into_boxed_slice();
-        Self { data }
-    }
-}
-
-impl Observation {
-    fn iter_mut(&mut self) -> core::slice::IterMut<'_, i64> {
-        self.data.iter_mut()
-    }
-
-    fn as_ref(&self) -> &[i64] {
-        &self.data
     }
 }
 
