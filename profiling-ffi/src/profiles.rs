@@ -2,8 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use crate::Timespec;
-use datadog_profiling::profile as profiles;
-use datadog_profiling::profile::{profiled_endpoints, Profile};
+use datadog_profiling::profile::{api, profiled_endpoints, Profile};
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
 use ddcommon_ffi::Error;
 use std::convert::{TryFrom, TryInto};
@@ -103,6 +102,7 @@ pub struct Line<'a> {
 pub struct Location<'a> {
     /// todo: how to handle unknown mapping?
     pub mapping: Mapping<'a>,
+    pub function: Function<'a>,
 
     /// The instruction address for this location, if available.  It
     /// should be within [Mapping.memory_start...Mapping.memory_limit]
@@ -110,22 +110,7 @@ pub struct Location<'a> {
     /// middle of a call instruction. It is up to display tools to find
     /// the beginning of the instruction if necessary.
     pub address: u64,
-
-    /// Multiple line indicates this location has inlined functions,
-    /// where the last entry represents the caller into which the
-    /// preceding entries were inlined.
-    ///
-    /// E.g., if memcpy() is inlined into printf:
-    ///    line[0].function_name == "memcpy"
-    ///    line[1].function_name == "printf"
-    pub lines: Slice<'a, Line<'a>>,
-
-    /// Provides an indication that multiple symbols map to this location's
-    /// address, for example due to identical code folding by the linker. In that
-    /// case the line information above represents one of the multiple
-    /// symbols. This field must be recomputed when the symbolization state of the
-    /// profile changes.
-    pub is_folded: bool,
+    pub line: i64,
 }
 
 #[repr(C)]
@@ -170,7 +155,7 @@ pub struct Sample<'a> {
     pub labels: Slice<'a, Label<'a>>,
 }
 
-impl<'a> TryFrom<&'a Mapping<'a>> for profiles::api::Mapping<'a> {
+impl<'a> TryFrom<&'a Mapping<'a>> for api::Mapping<'a> {
     type Error = Utf8Error;
 
     fn try_from(mapping: &'a Mapping<'a>) -> Result<Self, Self::Error> {
@@ -186,7 +171,7 @@ impl<'a> TryFrom<&'a Mapping<'a>> for profiles::api::Mapping<'a> {
     }
 }
 
-impl<'a> From<&'a ValueType<'a>> for profiles::api::ValueType<'a> {
+impl<'a> From<&'a ValueType<'a>> for api::ValueType<'a> {
     fn from(vt: &'a ValueType<'a>) -> Self {
         unsafe {
             Self {
@@ -197,16 +182,16 @@ impl<'a> From<&'a ValueType<'a>> for profiles::api::ValueType<'a> {
     }
 }
 
-impl<'a> From<&'a Period<'a>> for profiles::api::Period<'a> {
+impl<'a> From<&'a Period<'a>> for api::Period<'a> {
     fn from(period: &'a Period<'a>) -> Self {
         Self {
-            r#type: profiles::api::ValueType::from(&period.type_),
+            r#type: api::ValueType::from(&period.type_),
             value: period.value,
         }
     }
 }
 
-impl<'a> TryFrom<&'a Function<'a>> for profiles::api::Function<'a> {
+impl<'a> TryFrom<&'a Function<'a>> for api::Function<'a> {
     type Error = Utf8Error;
 
     fn try_from(function: &'a Function<'a>) -> Result<Self, Self::Error> {
@@ -224,38 +209,33 @@ impl<'a> TryFrom<&'a Function<'a>> for profiles::api::Function<'a> {
     }
 }
 
-impl<'a> TryFrom<&'a Line<'a>> for profiles::api::Line<'a> {
+impl<'a> TryFrom<&'a Line<'a>> for api::Line<'a> {
     type Error = Utf8Error;
 
     fn try_from(line: &'a Line<'a>) -> Result<Self, Self::Error> {
         Ok(Self {
-            function: profiles::api::Function::try_from(&line.function)?,
+            function: api::Function::try_from(&line.function)?,
             line: line.line,
         })
     }
 }
 
-impl<'a> TryFrom<&'a Location<'a>> for profiles::api::Location<'a> {
+impl<'a> TryFrom<&'a Location<'a>> for api::Location<'a> {
     type Error = Utf8Error;
 
     fn try_from(location: &'a Location<'a>) -> Result<Self, Self::Error> {
-        let mapping = profiles::api::Mapping::try_from(&location.mapping)?;
-        let mut lines: Vec<profiles::api::Line> = Vec::new();
-        unsafe {
-            for line in location.lines.as_slice().iter() {
-                lines.push(line.try_into()?);
-            }
-        }
+        let mapping = api::Mapping::try_from(&location.mapping)?;
+        let function = api::Function::try_from(&location.function)?;
         Ok(Self {
             mapping,
+            function,
             address: location.address,
-            lines,
-            is_folded: location.is_folded,
+            line: location.line,
         })
     }
 }
 
-impl<'a> TryFrom<&'a Label<'a>> for profiles::api::Label<'a> {
+impl<'a> TryFrom<&'a Label<'a>> for api::Label<'a> {
     type Error = Utf8Error;
 
     fn try_from(label: &'a Label<'a>) -> Result<Self, Self::Error> {
@@ -280,12 +260,11 @@ impl<'a> TryFrom<&'a Label<'a>> for profiles::api::Label<'a> {
     }
 }
 
-impl<'a> TryFrom<Sample<'a>> for profiles::api::Sample<'a> {
+impl<'a> TryFrom<Sample<'a>> for api::Sample<'a> {
     type Error = Utf8Error;
 
     fn try_from(sample: Sample<'a>) -> Result<Self, Self::Error> {
-        let mut locations: Vec<profiles::api::Location> =
-            Vec::with_capacity(sample.locations.len());
+        let mut locations: Vec<api::Location> = Vec::with_capacity(sample.locations.len());
         unsafe {
             for location in sample.locations.as_slice().iter() {
                 locations.push(location.try_into()?)
@@ -293,7 +272,7 @@ impl<'a> TryFrom<Sample<'a>> for profiles::api::Sample<'a> {
 
             let values: Vec<i64> = sample.values.into_slice().to_vec();
 
-            let mut labels: Vec<profiles::api::Label> = Vec::with_capacity(sample.labels.len());
+            let mut labels: Vec<api::Label> = Vec::with_capacity(sample.labels.len());
             for label in sample.labels.as_slice().iter() {
                 labels.push(label.try_into()?);
             }
@@ -326,8 +305,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
     period: Option<&Period>,
     start_time: Option<&Timespec>,
 ) -> NonNull<Profile> {
-    let types: Vec<profiles::api::ValueType> =
-        sample_types.into_slice().iter().map(Into::into).collect();
+    let types: Vec<api::ValueType> = sample_types.into_slice().iter().map(Into::into).collect();
 
     let builder = Profile::builder()
         .period(period.map(Into::into))
@@ -478,7 +456,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_poisson(
             "sampling_distance parameter must be greater than 0",
         ));
     }
-    let upscaling_info = profiles::api::UpscalingInfo::Poisson {
+    let upscaling_info = api::UpscalingInfo::Poisson {
         sum_value_offset,
         count_value_offset,
         sampling_distance,
@@ -525,7 +503,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_proportional(
         ));
     }
 
-    let upscaling_info = profiles::api::UpscalingInfo::Proportional {
+    let upscaling_info = api::UpscalingInfo::Proportional {
         scale: total_real as f64 / total_sampled as f64,
     };
     add_upscaling_rule(
@@ -542,7 +520,7 @@ unsafe fn add_upscaling_rule(
     offset_values: Slice<usize>,
     label_name: CharSlice,
     label_value: CharSlice,
-    upscaling_info: profiles::api::UpscalingInfo,
+    upscaling_info: api::UpscalingInfo,
 ) -> UpscalingRuleAddResult {
     let label_name_n = label_name.to_utf8_lossy();
     let label_value_n = label_value.to_utf8_lossy();
@@ -661,8 +639,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_reset(
 
 #[cfg(test)]
 mod test {
-    use crate::profiles::*;
-    use ddcommon_ffi::Slice;
+    use super::*;
 
     #[test]
     fn ctor_and_dtor() {
@@ -699,16 +676,6 @@ mod test {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
             let mut profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
 
-            let lines = &vec![Line {
-                function: Function {
-                    name: "{main}".into(),
-                    system_name: "{main}".into(),
-                    filename: "index.php".into(),
-                    start_line: 0,
-                },
-                line: 0,
-            }];
-
             let mapping = Mapping {
                 filename: "php".into(),
                 ..Default::default()
@@ -716,7 +683,12 @@ mod test {
 
             let locations = vec![Location {
                 mapping,
-                lines: lines.into(),
+                function: Function {
+                    name: "{main}".into(),
+                    system_name: "{main}".into(),
+                    filename: "index.php".into(),
+                    start_line: 0,
+                },
                 ..Default::default()
             }];
             let values: Vec<i64> = vec![1];
@@ -748,26 +720,6 @@ mod test {
         let sample_type: *const ValueType = &ValueType::new("samples", "count");
         let mut profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
 
-        let main_lines = vec![Line {
-            function: Function {
-                name: "{main}".into(),
-                system_name: "{main}".into(),
-                filename: "index.php".into(),
-                start_line: 0,
-            },
-            line: 0,
-        }];
-
-        let test_lines = vec![Line {
-            function: Function {
-                name: "test".into(),
-                system_name: "test".into(),
-                filename: "index.php".into(),
-                start_line: 3,
-            },
-            line: 0,
-        }];
-
         let mapping = Mapping {
             filename: "php".into(),
             ..Default::default()
@@ -775,12 +727,23 @@ mod test {
 
         let main_locations = vec![Location {
             mapping,
-            lines: main_lines.as_slice().into(),
+            function: Function {
+                name: "{main}".into(),
+                system_name: "{main}".into(),
+                filename: "index.php".into(),
+                start_line: 0,
+            },
             ..Default::default()
         }];
         let test_locations = vec![Location {
             mapping,
-            lines: test_lines.as_slice().into(),
+            function: Function {
+                name: "test".into(),
+                system_name: "test".into(),
+                filename: "index.php".into(),
+                start_line: 3,
+            },
+            line: 4,
             ..Default::default()
         }];
         let values: Vec<i64> = vec![1];

@@ -152,7 +152,7 @@ message Mapping {
   // The following fields indicate the resolution of symbolic info.
   bool has_functions = 7;
   bool has_filenames = 8;
-  bool has_line_numbers = 9;
+  bool has_lines = 9;
   bool has_inline_frames = 10;
 }
 

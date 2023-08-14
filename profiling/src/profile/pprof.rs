@@ -117,7 +117,7 @@ pub struct Mapping {
     #[prost(bool, tag = "8")]
     pub has_filenames: bool,
     #[prost(bool, tag = "9")]
-    pub has_line_numbers: bool,
+    pub has_lines: bool,
     #[prost(bool, tag = "10")]
     pub has_inline_frames: bool,
 }

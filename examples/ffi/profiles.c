@@ -18,19 +18,14 @@ int main(void) {
 
   ddog_prof_Profile *profile = ddog_prof_Profile_new(sample_types, &period, NULL);
 
-  ddog_prof_Line root_line = {
+  ddog_prof_Location root_location = {
+      // yes, a zero-initialized mapping is valid
+      .mapping = (ddog_prof_Mapping){0},
       .function =
-          (struct ddog_prof_Function) {
+          (struct ddog_prof_Function){
               .name = DDOG_CHARSLICE_C("{main}"),
               .filename = DDOG_CHARSLICE_C("/srv/example/index.php"),
           },
-      .line = 0,
-  };
-
-  ddog_prof_Location root_location = {
-      // yes, a zero-initialized mapping is valid
-      .mapping = (ddog_prof_Mapping) {0},
-      .lines = (ddog_prof_Slice_Line) {&root_line, 1},
   };
   int64_t value = 10;
   ddog_prof_Label label = {
@@ -44,21 +39,21 @@ int main(void) {
   };
 
   for (int i = 0; i < 10000000; i++) {
-      label.num = i;
+    label.num = i;
 
-      ddog_prof_Profile_AddResult add_result = ddog_prof_Profile_add(profile, sample);
-      if (add_result.tag != DDOG_PROF_PROFILE_ADD_RESULT_OK) {
-        ddog_CharSlice message = ddog_Error_message(&add_result.err);
-        fprintf(stderr, "%*s", (int)message.len, message.ptr);
-        ddog_Error_drop(&add_result.err);
-      }
- }
+    ddog_prof_Profile_AddResult add_result = ddog_prof_Profile_add(profile, sample);
+    if (add_result.tag != DDOG_PROF_PROFILE_ADD_RESULT_OK) {
+      ddog_CharSlice message = ddog_Error_message(&add_result.err);
+      fprintf(stderr, "%*s", (int)message.len, message.ptr);
+      ddog_Error_drop(&add_result.err);
+    }
+  }
 
-//   printf("Press any key to reset and drop...");
-//   getchar();
+  //   printf("Press any key to reset and drop...");
+  //   getchar();
 
-//   ddog_prof_Profile_reset(profile, NULL);
-//   ddog_prof_Profile_drop(profile);
+  //   ddog_prof_Profile_reset(profile, NULL);
+  //   ddog_prof_Profile_drop(profile);
 
   printf("Press any key to exit...");
   getchar();

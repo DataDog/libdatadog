@@ -3,7 +3,6 @@
 
 mod function;
 mod label;
-mod line;
 mod location;
 mod mapping;
 mod stack_trace;
@@ -12,7 +11,6 @@ mod value_type;
 
 pub use function::*;
 pub use label::*;
-pub use line::*;
 pub use location::*;
 pub use mapping::*;
 pub use stack_trace::*;

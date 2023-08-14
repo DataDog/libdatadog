@@ -64,9 +64,10 @@ pub struct Line<'a> {
     pub line: i64,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct Location<'a> {
     pub mapping: Mapping<'a>,
+    pub function: Function<'a>,
 
     /// The instruction address for this location, if available.  It
     /// should be within [Mapping.memory_start...Mapping.memory_limit]
@@ -74,22 +75,7 @@ pub struct Location<'a> {
     /// middle of a call instruction. It is up to display tools to find
     /// the beginning of the instruction if necessary.
     pub address: u64,
-
-    /// Multiple line indicates this location has inlined functions,
-    /// where the last entry represents the caller into which the
-    /// preceding entries were inlined.
-    ///
-    /// E.g., if memcpy() is inlined into printf:
-    ///    line[0].function_name == "memcpy"
-    ///    line[1].function_name == "printf"
-    pub lines: Vec<Line<'a>>,
-
-    /// Provides an indication that multiple symbols map to this location's
-    /// address, for example due to identical code folding by the linker. In that
-    /// case the line information above represents one of the multiple
-    /// symbols. This field must be recomputed when the symbolization state of the
-    /// profile changes.
-    pub is_folded: bool,
+    pub line: i64,
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -240,32 +226,29 @@ fn function_fetch(pprof: &pprof::Profile, id: u64) -> anyhow::Result<Function> {
     }
 }
 
-fn lines_fetch<'a>(
-    pprof: &'a pprof::Profile,
-    lines: &'a [pprof::Line],
-) -> anyhow::Result<Vec<Line<'a>>> {
-    let mut output = Vec::with_capacity(lines.len());
-    for line in lines {
-        output.push(Line {
-            function: function_fetch(pprof, line.function_id)?,
-            line: line.line,
-        });
-    }
-    Ok(output)
-}
-
 fn location_fetch(pprof: &pprof::Profile, id: u64) -> anyhow::Result<Location> {
     if id == 0 {
         return Ok(Location::default());
     }
 
     match pprof.locations.iter().find(|item| item.id == id) {
-        Some(location) => Ok(Location {
-            mapping: mapping_fetch(pprof, location.mapping_id)?,
-            address: location.address,
-            lines: lines_fetch(pprof, &location.lines)?,
-            is_folded: location.is_folded,
-        }),
+        Some(location) => {
+            anyhow::ensure!(!location.is_folded, "expected Location to not be folded");
+            anyhow::ensure!(
+                location.lines.len() == 1,
+                "expected Location to have exactly 1 Line"
+            );
+            // Safety: guarded by len check above.
+            let line = unsafe { location.lines.get_unchecked(0) };
+            let function = function_fetch(pprof, line.function_id)?;
+
+            Ok(Location {
+                mapping: mapping_fetch(pprof, location.mapping_id)?,
+                function,
+                address: location.address,
+                line: line.line,
+            })
+        }
         None => anyhow::bail!("Location {id} was not found."),
     }
 }
