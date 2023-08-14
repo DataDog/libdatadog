@@ -1111,8 +1111,10 @@ mod api_test {
                 ..Default::default()
             },
         ];
-
+        println!("{:?}", Observation::len());
         let mut profile = Profile::builder().sample_types(sample_types).build();
+        println!("{:?}", Observation::len());
+
         let sample_id = profile
             .add(api::Sample {
                 locations,
@@ -1120,6 +1122,7 @@ mod api_test {
                 labels: vec![],
             })
             .expect("add to succeed");
+        println!("{:?}", Observation::len());
 
         assert_eq!(sample_id, SampleId::new(0));
     }
@@ -1240,6 +1243,7 @@ mod api_test {
 
     #[test]
     fn reset() {
+        println!("{:?}", Observation::len());
         let mut profile = provide_distinct_locations();
         /* This set of asserts is to make sure it's a non-empty profile that we
          * are working with so that we can test that reset works.
@@ -1253,7 +1257,9 @@ mod api_test {
         assert!(profile.endpoints.mappings.is_empty());
         assert!(profile.endpoints.stats.is_empty());
 
+        println!("{:?}", Observation::len());
         let prev = profile.reset(None).expect("reset to succeed");
+        println!("{:?}", Observation::len());
 
         // These should all be empty now
         assert!(profile.functions.is_empty());
