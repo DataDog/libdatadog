@@ -260,9 +260,31 @@ impl UpscalingRule {
     }
 }
 
+#[repr(transparent)]
+pub struct Observation {
+    data: Box<[i64]>,
+}
+
+impl From<Vec<i64>> for Observation {
+    fn from(v: Vec<i64>) -> Self {
+        let data = v.into_boxed_slice();
+        Self { data }
+    }
+}
+
+impl Observation {
+    fn iter_mut(&mut self) -> core::slice::IterMut<'_, i64> {
+        self.data.iter_mut()
+    }
+
+    fn as_ref(&self) -> &[i64] {
+        &self.data
+    }
+}
+
 pub struct Profile {
     sample_types: Vec<ValueType>,
-    samples: FxIndexMap<Sample, Vec<i64>>,
+    samples: FxIndexMap<Sample, Observation>,
     mappings: FxIndexSet<Mapping>,
     locations: FxIndexSet<Location>,
     functions: FxIndexSet<Function>,
@@ -661,7 +683,7 @@ impl Profile {
 
         let id = match self.samples.get_index_of(&s) {
             None => {
-                self.samples.insert(s, values);
+                self.samples.insert(s, values.into());
                 SampleId::new(self.samples.len() - 1)
             }
             Some(index) => {
