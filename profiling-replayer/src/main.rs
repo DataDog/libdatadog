@@ -4,12 +4,13 @@
 mod profile_index;
 mod replayer;
 
-use clap::{command, Arg};
+use clap::{command, Arg, ArgAction};
 use datadog_profiling::profile;
 use prost::Message;
 use std::borrow::Cow;
 use std::io::Cursor;
 use std::time::Instant;
+use sysinfo::{Pid, ProcessExt, RefreshKind, System, SystemExt};
 
 pub use replayer::*;
 
@@ -58,6 +59,53 @@ fn quartiles(values: &[usize]) -> Option<[f64; 3]> {
     Some([q1, q2, q3])
 }
 
+struct Sysinfo {
+    pid: sysinfo::Pid,
+    s: System,
+    observations: Vec<(String, u64)>,
+}
+
+impl Sysinfo {
+    pub fn new() -> Self {
+        let pid = Pid::from(std::process::id() as usize);
+        // TODO: only collect the stats we care about
+        //let s = System::new_all();
+        let s = System::new_with_specifics(RefreshKind::new().with_memory());
+        let observations = vec![];
+        Self {
+            pid,
+            s,
+            observations,
+        }
+    }
+
+    pub fn measure_memory(&mut self, label: &str) -> u64 {
+        self.s.refresh_process(self.pid);
+
+        let process = self
+            .s
+            .process(self.pid)
+            .expect("There to be memory info for our process");
+        let m = process.memory();
+        self.observations.push((label.to_string(), m));
+        m
+    }
+
+    pub fn print_observations(&self) {
+        let mut prev = None;
+        println!("Memory usage (kB)");
+        for (label, m) in &self.observations {
+            if let Some(p) = prev {
+                let delta = *m as i64 - p;
+                println!("{}:\t{}\tDelta: {}", label, *m / 1000, delta / 1000);
+            } else {
+                println!("{}:\t{}", label, *m / 1000);
+            }
+            prev = Some(*m as i64);
+        }
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let matches = command!()
         .arg(
@@ -65,6 +113,14 @@ fn main() -> anyhow::Result<()> {
                 .short('i')
                 .help("the pprof to replay")
                 .required(true),
+        )
+        .arg(
+            Arg::new("mem")
+                .short('m')
+                .long("mem")
+                .action(ArgAction::SetTrue)
+                .help("collect memory statistics")
+                .required(false),
         )
         .arg(
             Arg::new("output")
@@ -76,6 +132,12 @@ fn main() -> anyhow::Result<()> {
 
     let input = matches.get_one::<String>("input").unwrap();
     let output = matches.get_one::<String>("output");
+    let collect_memory_stats = matches.get_flag("mem");
+    let mut sysinfo = if collect_memory_stats {
+        Some(Sysinfo::new())
+    } else {
+        None
+    };
 
     let source = {
         println!("Reading in pprof from file '{input}'");
@@ -118,11 +180,20 @@ fn main() -> anyhow::Result<()> {
 
     // When benchmarking, don't count the copying of the stacks, do that before.
     let samples = std::mem::take(&mut replayer.samples);
+
+    if let Some(s) = &mut sysinfo {
+        s.measure_memory("Before adding samples");
+    }
+
     let before = Instant::now();
     for sample in samples {
         outprof.add(sample)?;
     }
     let duration = before.elapsed();
+
+    if let Some(s) = &mut sysinfo {
+        s.measure_memory("After adding samples");
+    }
 
     for (local_root_span_id, endpoint_value) in std::mem::take(&mut replayer.endpoints) {
         outprof.add_endpoint(local_root_span_id, Cow::Borrowed(endpoint_value));
@@ -133,7 +204,15 @@ fn main() -> anyhow::Result<()> {
     if let Some(file) = output {
         println!("Writing out pprof to file {file}");
         let encoded = outprof.serialize(Some(replayer.start_time), Some(replayer.duration))?;
+        if let Some(s) = &mut sysinfo {
+            s.measure_memory("After serializing");
+        }
+
         std::fs::write(file, encoded.buffer)?;
+    }
+
+    if let Some(s) = &mut sysinfo {
+        s.print_observations();
     }
 
     Ok(())
