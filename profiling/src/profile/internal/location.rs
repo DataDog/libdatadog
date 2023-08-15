@@ -41,6 +41,6 @@ impl Id for LocationId {
     }
 
     fn to_raw_id(&self) -> Self::RawId {
-        self.0.get() as u64
+        self.0.get().into()
     }
 }
