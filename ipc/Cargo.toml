@@ -6,10 +6,13 @@ version = "0.1.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = { version = "1.0" }
 bytes = { version = "1.4" }
 futures = { version = "0.3", default-features = false }
 io-lifetimes = { version = "1.0" }
+page_size = "0.5"
 pin-project = { version = "1" }
+memfd = { version = "0.6" }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 tokio = { version = "1.23", features = ["sync", "io-util", "signal"] }
 tokio-serde = { version = "0.8", features = ["json"] }
@@ -17,6 +20,8 @@ tokio-util = { version = "0.6.9", features = ["codec"] }
 
 # tarpc needed extensions to allow 1 way communication and to export some internal structs
 tarpc = { path = "tarpc/tarpc", default-features = false, features = ["serde-transport"], package = "tarpc" }
+
+datadog-ipc-macros = { path = "macros" }
 
 [dev-dependencies]
 criterion = "0.5"
@@ -36,8 +41,11 @@ spawn_worker = { path = "../spawn_worker" }
 
 [target.'cfg(not(windows))'.dependencies]
 libc = { version = "0.2" }
-nix = { version = "0.24", features = ["fs", "socket"] }
+nix = { version = "0.26.2", features = ["socket", "mman"] }
 sendfd = { version = "0.4", features = ["tokio"] }
+
+[target.'cfg(target_env = "gnu")'.build-dependencies]
+glibc_version = "0.1.2"
 
 [[bench]]
 harness = false

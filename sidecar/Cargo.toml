@@ -7,13 +7,19 @@ version = "0.0.1"
 [features]
 default = []
 tracing = ["tracing/std", "tracing-subscriber"]
+tokio-console = ["tokio/full", "tokio/tracing", "console-subscriber"]
 
 [dependencies]
 anyhow = { version = "1.0" }
+bytes = "1.4"
 ddcommon = { path = "../ddcommon" }
 datadog-sidecar-macros = { path = "macros" }
 
 ddtelemetry = { path = "../ddtelemetry" }
+datadog-trace-protobuf = { path = "../trace-protobuf" }
+datadog-trace-utils = { path = "../trace-utils" }
+datadog-trace-normalization = { path = "../trace-normalization" }
+
 futures = { version = "0.3", default-features = false }
 manual_future = "0.1.1"
 http = "0.2"
@@ -22,12 +28,15 @@ lazy_static = "1.4"
 pin-project = "1"
 
 datadog-ipc = { path = "../ipc" }
+datadog-ipc-macros = { path = "../ipc/macros" }
 
 rand = "0.8.3"
 regex = { version = "1" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0" }
+rmp-serde = "1.1.1"
 spawn_worker = { path = "../spawn_worker" }
+zwohash = "0.1.2"
 sys-info = { version = "0.9.0" }
 tokio = { version = "1.23", features = ["sync", "io-util", "signal"] }
 tokio-util = { version = "0.7", features = ["codec"] }
@@ -39,6 +48,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "std",
     "fmt",
 ], optional = true }
+console-subscriber = { version = "0.1", optional = true }
 uuid = { version = "1.3", features = ["v4"] }
 hashbrown = { version = "0.12", features = ["raw"] }
 
@@ -48,5 +58,5 @@ tempfile = { version = "3.3" }
 
 [target.'cfg(not(windows))'.dependencies]
 libc = { version = "0.2" }
-nix = { version = "0.24", features = ["fs", "socket"] }
+nix = { version = "0.26.2", features = ["socket", "mman"] }
 sendfd = { version = "0.4", features = ["tokio"] }

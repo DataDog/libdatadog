@@ -2,12 +2,12 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use async_trait::async_trait;
-use log::{debug, error, info};
+use log::{error, info};
 use std::{sync::Arc, time};
 use tokio::sync::{mpsc::Receiver, Mutex};
 
-use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
+use datadog_trace_utils::trace_utils::SendData;
 
 use crate::config::Config;
 
@@ -15,9 +15,9 @@ use crate::config::Config;
 pub trait TraceFlusher {
     /// Starts a trace flusher that listens for trace payloads sent to the tokio mpsc Receiver,
     /// implementing flushing logic that calls flush_traces.
-    async fn start_trace_flusher(&self, config: Arc<Config>, mut rx: Receiver<pb::TracerPayload>);
+    async fn start_trace_flusher(&self, config: Arc<Config>, mut rx: Receiver<SendData>);
     /// Flushes traces to the Datadog trace intake.
-    async fn flush_traces(&self, config: Arc<Config>, traces: Vec<pb::TracerPayload>);
+    async fn flush_traces(&self, traces: Vec<SendData>);
 }
 
 #[derive(Clone)]
@@ -25,8 +25,8 @@ pub struct ServerlessTraceFlusher {}
 
 #[async_trait]
 impl TraceFlusher for ServerlessTraceFlusher {
-    async fn start_trace_flusher(&self, config: Arc<Config>, mut rx: Receiver<pb::TracerPayload>) {
-        let buffer: Arc<Mutex<Vec<pb::TracerPayload>>> = Arc::new(Mutex::new(Vec::new()));
+    async fn start_trace_flusher(&self, config: Arc<Config>, mut rx: Receiver<SendData>) {
+        let buffer: Arc<Mutex<Vec<SendData>>> = Arc::new(Mutex::new(Vec::new()));
 
         let buffer_producer = buffer.clone();
         let buffer_consumer = buffer.clone();
@@ -43,41 +43,25 @@ impl TraceFlusher for ServerlessTraceFlusher {
 
             let mut buffer = buffer_consumer.lock().await;
             if !buffer.is_empty() {
-                self.flush_traces(config.clone(), buffer.to_vec()).await;
+                self.flush_traces(buffer.to_vec()).await;
                 buffer.clear();
             }
         }
     }
 
-    async fn flush_traces(&self, config: Arc<Config>, traces: Vec<pb::TracerPayload>) {
+    async fn flush_traces(&self, traces: Vec<SendData>) {
         if traces.is_empty() {
             return;
         }
         info!("Flushing {} traces", traces.len());
 
-        let agent_payload = trace_utils::construct_agent_payload(traces);
-
-        debug!("Trace agent payload to be sent: {agent_payload:?}");
-
-        let serialized_agent_payload = match trace_utils::serialize_agent_payload(agent_payload) {
-            Ok(res) => res,
-            Err(err) => {
-                error!("Failed to serialize trace agent payload, dropping traces: {err}");
-                return;
-            }
-        };
-
-        match trace_utils::send(
-            serialized_agent_payload,
-            &config.trace_intake_url,
-            &config.api_key,
-        )
-        .await
-        {
-            Ok(_) => info!("Successfully flushed traces"),
-            Err(e) => {
-                error!("Error sending trace: {e:?}")
-                // TODO: Retries
+        for traces in trace_utils::coalesce_send_data(traces) {
+            match traces.send().await {
+                Ok(_) => info!("Successfully flushed traces"),
+                Err(e) => {
+                    error!("Error sending trace: {e:?}")
+                    // TODO: Retries
+                }
             }
         }
     }

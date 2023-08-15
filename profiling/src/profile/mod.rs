@@ -4,11 +4,12 @@
 pub mod api;
 pub mod pprof;
 pub mod profiled_endpoints;
-
 use core::fmt;
 use std::borrow::{Borrow, Cow};
 use std::convert::TryInto;
+use std::fmt::Debug;
 use std::hash::{BuildHasherDefault, Hash};
+use std::num::NonZeroU32;
 use std::ops::AddAssign;
 use std::time::{Duration, SystemTime};
 
@@ -23,29 +24,173 @@ pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::Fx
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
-pub struct PProfId(usize);
+pub struct FunctionId(NonZeroU32);
 
-impl From<&PProfId> for u64 {
-    fn from(id: &PProfId) -> Self {
-        id.0 as u64
+impl FunctionId {
+    pub fn new<T>(v: T) -> Self
+    where
+        T: TryInto<u32>,
+        T::Error: Debug,
+    {
+        let index: u32 = v.try_into().expect("FunctionId to fit into a u32");
+
+        // PProf reserves location 0.
+        // Both this, and the serialization of the table, add 1 to avoid the 0 element
+        let index = index.checked_add(1).expect("FunctionId to fit into a u32");
+        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
+        let index = unsafe { NonZeroU32::new_unchecked(index) };
+        Self(index)
     }
 }
 
-impl From<PProfId> for u64 {
-    fn from(id: PProfId) -> Self {
-        id.0.try_into().unwrap_or(0)
+impl From<FunctionId> for u64 {
+    fn from(s: FunctionId) -> Self {
+        Self::from(&s)
     }
 }
 
-impl From<&PProfId> for i64 {
-    fn from(value: &PProfId) -> Self {
-        value.0.try_into().unwrap_or(0)
+impl From<&FunctionId> for u64 {
+    fn from(s: &FunctionId) -> Self {
+        s.0.get().into()
     }
 }
 
-impl From<PProfId> for i64 {
-    fn from(value: PProfId) -> Self {
-        value.0.try_into().unwrap_or(0)
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[repr(transparent)]
+pub struct MappingId(NonZeroU32);
+
+impl MappingId {
+    pub fn new<T>(v: T) -> Self
+    where
+        T: TryInto<u32>,
+        T::Error: Debug,
+    {
+        let index: u32 = v.try_into().expect("MappingId to fit into a u32");
+
+        // PProf reserves location 0.
+        // Both this, and the serialization of the table, add 1 to avoid the 0 element
+        let index = index.checked_add(1).expect("MappingId to fit into a u32");
+        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
+        let index = unsafe { NonZeroU32::new_unchecked(index) };
+        Self(index)
+    }
+}
+
+impl From<MappingId> for u64 {
+    fn from(s: MappingId) -> Self {
+        Self::from(&s)
+    }
+}
+
+impl From<&MappingId> for u64 {
+    fn from(s: &MappingId) -> Self {
+        s.0.get().into()
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[repr(transparent)]
+pub struct SampleId(NonZeroU32);
+
+impl SampleId {
+    pub fn new<T>(v: T) -> Self
+    where
+        T: TryInto<u32>,
+        T::Error: Debug,
+    {
+        let index: u32 = v.try_into().expect("SampleId to fit into a u32");
+
+        // PProf reserves location 0.
+        // Both this, and the serialization of the table, add 1 to avoid the 0 element
+        let index = index.checked_add(1).expect("SampleId to fit into a u32");
+        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
+        let index = unsafe { NonZeroU32::new_unchecked(index) };
+        Self(index)
+    }
+}
+
+impl From<SampleId> for u64 {
+    fn from(s: SampleId) -> Self {
+        Self::from(&s)
+    }
+}
+
+impl From<&SampleId> for u64 {
+    fn from(s: &SampleId) -> Self {
+        s.0.get().into()
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[repr(transparent)]
+pub struct StackTraceId(usize);
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[repr(transparent)]
+pub struct LocationId(NonZeroU32);
+
+impl LocationId {
+    pub fn new<T>(v: T) -> Self
+    where
+        T: TryInto<u32>,
+        T::Error: Debug,
+    {
+        let index: u32 = v.try_into().expect("LocationId to fit into a u32");
+
+        // PProf reserves location 0.
+        // Both this, and the serialization of the table, add 1 to avoid the 0 element
+        let index = index.checked_add(1).expect("LocationId to fit into a u32");
+        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
+        let index = unsafe { NonZeroU32::new_unchecked(index) };
+        Self(index)
+    }
+}
+
+impl From<LocationId> for u64 {
+    fn from(s: LocationId) -> Self {
+        Self::from(&s)
+    }
+}
+
+impl From<&LocationId> for u64 {
+    fn from(s: &LocationId) -> Self {
+        s.0.get().into()
+    }
+}
+
+#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Hash)]
+#[repr(transparent)]
+pub struct StringId(u32);
+
+impl StringId {
+    #[inline]
+    pub const fn zero() -> Self {
+        Self(0)
+    }
+
+    pub fn new<T>(v: T) -> Self
+    where
+        T: TryInto<u32>,
+        T::Error: Debug,
+    {
+        Self(v.try_into().expect("StringId to fit into a u32"))
+    }
+
+    #[inline]
+    pub const fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl From<StringId> for i64 {
+    fn from(s: StringId) -> Self {
+        Self::from(&s)
+    }
+}
+
+impl From<&StringId> for i64 {
+    fn from(s: &StringId) -> Self {
+        s.0.into()
     }
 }
 
@@ -61,19 +206,24 @@ struct Mapping {
     /// The object this entry is loaded from.  This can be a filename on
     /// disk for the main binary and shared libraries, or virtual
     /// abstractions like "[vdso]".
-    pub filename: i64,
+    pub filename: StringId,
 
     /// A string that uniquely identifies a particular program version
     /// with high probability. E.g., for binaries generated by GNU tools,
     /// it could be the contents of the .note.gnu.build-id field.
-    pub build_id: i64,
+    pub build_id: StringId,
+}
+
+#[derive(Eq, PartialEq, Hash)]
+struct StackTrace {
+    /// The ids recorded here correspond to a Profile.location.id.
+    /// The leaf is at location_id[0].
+    pub locations: Vec<LocationId>,
 }
 
 #[derive(Eq, PartialEq, Hash)]
 struct Sample {
-    /// The ids recorded here correspond to a Profile.location.id.
-    /// The leaf is at location_id[0].
-    pub locations: Vec<PProfId>,
+    pub stacktrace: StackTraceId,
 
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
@@ -116,6 +266,7 @@ pub struct Profile {
     mappings: FxIndexSet<Mapping>,
     locations: FxIndexSet<Location>,
     functions: FxIndexSet<Function>,
+    stack_traces: FxIndexSet<StackTrace>,
     strings: FxIndexSet<String>,
     start_time: SystemTime,
     period: Option<(i64, ValueType)>,
@@ -124,15 +275,15 @@ pub struct Profile {
 }
 
 pub struct Endpoints {
-    mappings: FxIndexMap<u64, i64>,
-    local_root_span_id_label: i64,
-    endpoint_label: i64,
+    mappings: FxIndexMap<u64, StringId>,
+    local_root_span_id_label: StringId,
+    endpoint_label: StringId,
     stats: ProfiledEndpointsStats,
 }
 
 #[derive(Default)]
 pub struct UpscalingRules {
-    rules: FxIndexMap<(i64, i64), Vec<UpscalingRule>>,
+    rules: FxIndexMap<(StringId, StringId), Vec<UpscalingRule>>,
     // this is just an optimization in the case where we check collisions (when adding
     // a by-value rule) against by-label rules
     // 32 should be enough for the size of the bitmap
@@ -140,9 +291,9 @@ pub struct UpscalingRules {
 }
 
 impl UpscalingRules {
-    pub fn add(&mut self, label_name_id: i64, label_value_id: i64, rule: UpscalingRule) {
+    pub fn add(&mut self, label_name_id: StringId, label_value_id: StringId, rule: UpscalingRule) {
         // fill the bitmap for by-label rules
-        if label_name_id != 0 || label_value_id != 0 {
+        if !label_name_id.is_zero() || !label_value_id.is_zero() {
             rule.values_offset.iter().for_each(|offset| {
                 self.offset_modified_by_bylabel_rule.set(*offset, true);
             })
@@ -162,15 +313,15 @@ impl UpscalingRules {
         }
     }
 
-    pub fn get(&self, k: &(i64, i64)) -> Option<&Vec<UpscalingRule>> {
+    pub fn get(&self, k: &(StringId, StringId)) -> Option<&Vec<UpscalingRule>> {
         self.rules.get(k)
     }
 
     fn check_collisions(
         &self,
         values_offset: &[usize],
-        label_name: (&str, i64),
-        label_value: (&str, i64),
+        label_name: (&str, StringId),
+        label_value: (&str, StringId),
         upscaling_info: &UpscalingInfo,
     ) -> anyhow::Result<()> {
         // Check for duplicates
@@ -201,7 +352,7 @@ impl UpscalingRules {
 
         // if we are adding a by-value rule, we need to check against
         // all by-label rules for collisions
-        if label_name.1 == 0 && label_value.1 == 0 {
+        if label_name.1.is_zero() && label_value.1.is_zero() {
             let collision_offset = values_offset
                 .iter()
                 .find(|offset| self.offset_modified_by_bylabel_rule.get(**offset));
@@ -213,7 +364,7 @@ impl UpscalingRules {
                 collision_offset.unwrap(),
                 vec_to_string(values_offset)
             )
-        } else if let Some(rules) = self.rules.get(&(0, 0)) {
+        } else if let Some(rules) = self.rules.get(&(StringId::zero(), StringId::zero())) {
             let collide_with_byvalue_rule = rules
                 .iter()
                 .find(|rule| is_overlapping(&rule.values_offset, values_offset));
@@ -268,8 +419,8 @@ impl<'a> ProfileBuilder<'a> {
             .sample_types
             .iter()
             .map(|vt| ValueType {
-                r#type: profile.intern(vt.r#type),
-                unit: profile.intern(vt.unit),
+                r#type: profile.intern(vt.r#type).into(),
+                unit: profile.intern(vt.unit).into(),
             })
             .collect();
 
@@ -277,8 +428,8 @@ impl<'a> ProfileBuilder<'a> {
             profile.period = Some((
                 period.value,
                 ValueType {
-                    r#type: profile.intern(period.r#type.r#type),
-                    unit: profile.intern(period.r#type.unit),
+                    r#type: profile.intern(period.r#type.r#type).into(),
+                    unit: profile.intern(period.r#type.unit).into(),
                 },
             ));
         };
@@ -385,6 +536,7 @@ impl Profile {
             locations: Default::default(),
             functions: Default::default(),
             strings: Default::default(),
+            stack_traces: Default::default(),
             start_time,
             period: None,
             endpoints: Default::default(),
@@ -403,20 +555,17 @@ impl Profile {
     }
 
     /// Interns the `str` as a string, returning the id in the string table.
-    fn intern(&mut self, str: &str) -> i64 {
+    fn intern(&mut self, str: &str) -> StringId {
         // strings are special because the empty string is actually allowed at
         // index 0; most other 0's are reserved and cannot exist
-        self.strings
-            .dedup_ref(str)
-            .try_into()
-            .expect("the machine to run out of memory far before this happens")
+        StringId::new(self.strings.dedup_ref(str))
     }
 
     pub fn builder<'a>() -> ProfileBuilder<'a> {
         ProfileBuilder::new()
     }
 
-    fn add_mapping(&mut self, mapping: &api::Mapping) -> Result<PProfId, FullError> {
+    fn add_mapping(&mut self, mapping: &api::Mapping) -> Result<MappingId, FullError> {
         // todo: do full checks as part of intern/dedup
         if self.strings.len() >= CONTAINER_MAX || self.mappings.len() >= CONTAINER_MAX {
             return Err(FullError);
@@ -436,13 +585,22 @@ impl Profile {
         /* PProf reserves mapping 0 for "no mapping", and it won't let you put
          * one in there with all "zero" data either, so we shift the ids.
          */
-        Ok(PProfId(index + 1))
+        Ok(MappingId::new(index))
     }
 
-    fn add_function(&mut self, function: &api::Function) -> PProfId {
-        let name = self.intern(function.name);
-        let system_name = self.intern(function.system_name);
-        let filename = self.intern(function.filename);
+    fn add_stacktrace(&mut self, locations: Vec<LocationId>) -> StackTraceId {
+        let index = self.stack_traces.dedup(StackTrace { locations });
+        StackTraceId(index)
+    }
+
+    fn get_stacktrace(&self, st: StackTraceId) -> &StackTrace {
+        self.stack_traces.get_index(st.0).unwrap()
+    }
+
+    fn add_function(&mut self, function: &api::Function) -> FunctionId {
+        let name = self.intern(function.name).into();
+        let system_name = self.intern(function.system_name).into();
+        let filename = self.intern(function.filename).into();
 
         let index = self.functions.dedup(Function {
             id: 0,
@@ -455,10 +613,10 @@ impl Profile {
         /* PProf reserves function 0 for "no function", and it won't let you put
          * one in there with all "zero" data either, so we shift the ids.
          */
-        PProfId(index + 1)
+        FunctionId::new(index)
     }
 
-    pub fn add(&mut self, sample: api::Sample) -> anyhow::Result<PProfId> {
+    pub fn add(&mut self, sample: api::Sample) -> anyhow::Result<SampleId> {
         anyhow::ensure!(
             sample.values.len() == self.sample_types.len(),
             "expected {} sample types, but sample had {} sample types",
@@ -469,7 +627,7 @@ impl Profile {
         let values = sample.values.clone();
         let (labels, local_root_span_id_label_offset) = self.extract_sample_labels(&sample)?;
 
-        let mut locations: Vec<PProfId> = Vec::with_capacity(sample.locations.len());
+        let mut locations = Vec::with_capacity(sample.locations.len());
         for location in sample.locations.iter() {
             let mapping_id = self.add_mapping(&location.mapping)?;
             let lines: Vec<Line> = location
@@ -478,7 +636,7 @@ impl Profile {
                 .map(|line| {
                     let function_id = self.add_function(&line.function);
                     Line {
-                        function_id: function_id.0 as u64,
+                        function_id: function_id.into(),
                         line: line.line,
                     }
                 })
@@ -492,15 +650,11 @@ impl Profile {
                 is_folded: location.is_folded,
             });
 
-            /* PProf reserves location 0. Based on this pattern in other
-             * situations, this would be "no location", but I'm not sure how
-             * this is logical?
-             */
-            locations.push(PProfId(index + 1))
+            locations.push(LocationId::new(index))
         }
-
+        let stacktrace = self.add_stacktrace(locations);
         let s = Sample {
-            locations,
+            stacktrace,
             labels,
             local_root_span_id_label_offset,
         };
@@ -508,7 +662,7 @@ impl Profile {
         let id = match self.samples.get_index_of(&s) {
             None => {
                 self.samples.insert(s, values);
-                PProfId(self.samples.len())
+                SampleId::new(self.samples.len() - 1)
             }
             Some(index) => {
                 let (_, existing_values) =
@@ -516,7 +670,7 @@ impl Profile {
                 for (a, b) in existing_values.iter_mut().zip(values) {
                     a.add_assign(b)
                 }
-                PProfId(index + 1)
+                SampleId::new(index)
             }
         };
 
@@ -533,13 +687,19 @@ impl Profile {
         let mut local_root_span_id_label_offset: Option<usize> = None;
         for label in sample.labels.iter() {
             let key = self.intern(label.key);
-            let str = label.str.map(|s| self.intern(s)).unwrap_or(0);
-            let num_unit = label.num_unit.map(|s| self.intern(s)).unwrap_or(0);
+            let str = label
+                .str
+                .map(|s| self.intern(s))
+                .unwrap_or(StringId::zero());
+            let num_unit = label
+                .num_unit
+                .map(|s| self.intern(s))
+                .unwrap_or(StringId::zero());
 
             if key == self.endpoints.local_root_span_id_label {
                 // Panic: if the label.str isn't 0, then str must have been provided.
                 anyhow::ensure!(
-                    str == 0,
+                    str.is_zero(),
                     "the label \"local root span id\" must be sent as a number, not string {}",
                     label.str.unwrap()
                 );
@@ -557,10 +717,10 @@ impl Profile {
 
             // If you refactor this push, ensure the local_root_span_id_label_offset is correct.
             labels.push(Label {
-                key,
-                str,
+                key: key.into(),
+                str: str.into(),
                 num: label.num,
-                num_unit,
+                num_unit: num_unit.into(),
             });
         }
         Ok((labels, local_root_span_id_label_offset))
@@ -708,9 +868,9 @@ impl Profile {
     /// Fetches the endpoint information for the label. There may be errors,
     /// but there may also be no endpoint information for a given endpoint.
     /// Hence, the return type of Result<Option<_>, _>.
-    fn get_endpoint_for_label(&self, label: &Label) -> anyhow::Result<Option<i64>> {
+    fn get_endpoint_for_label(&self, label: &Label) -> anyhow::Result<Option<StringId>> {
         anyhow::ensure!(
-            label.key == self.endpoints.local_root_span_id_label,
+            StringId::new(label.key) == self.endpoints.local_root_span_id_label,
             "bug: get_endpoint_for_label should only be called on labels with the key \"local root span id\", called on label with key \"{}\"",
             &self.strings[label.key as usize]
         );
@@ -730,7 +890,7 @@ impl Profile {
             .endpoints
             .mappings
             .get(&local_root_span_id)
-            .map(i64::clone))
+            .map(StringId::clone))
     }
 
     fn upscale_values(&self, values: &[i64], labels: &[Label]) -> anyhow::Result<Vec<i64>> {
@@ -742,11 +902,17 @@ impl Profile {
             // get bylabel rules first (if any)
             let mut group_of_rules = labels
                 .iter()
-                .filter_map(|label| self.upscaling_rules.get(&(label.key, label.str)))
+                .filter_map(|label| {
+                    self.upscaling_rules
+                        .get(&(StringId::new(label.key), StringId::new(label.str)))
+                })
                 .collect::<Vec<&Vec<UpscalingRule>>>();
 
             // get byvalue rules if any
-            if let Some(byvalue_rules) = self.upscaling_rules.get(&(0, 0)) {
+            if let Some(byvalue_rules) = self
+                .upscaling_rules
+                .get(&(StringId::zero(), StringId::zero()))
+            {
                 group_of_rules.push(byvalue_rules);
             }
 
@@ -801,8 +967,8 @@ impl TryFrom<&Profile> for pprof::Profile {
                     let lrsi_label = unsafe { sample.labels.get_unchecked(offset) };
                     if let Some(endpoint_value_id) = profile.get_endpoint_for_label(lrsi_label)? {
                         labels.push(Label {
-                            key: profile.endpoints.endpoint_label,
-                            str: endpoint_value_id,
+                            key: profile.endpoints.endpoint_label.into(),
+                            str: endpoint_value_id.into(),
                             num: 0,
                             num_unit: 0,
                         });
@@ -810,9 +976,10 @@ impl TryFrom<&Profile> for pprof::Profile {
                 }
 
                 let new_values = profile.upscale_values(values.as_ref(), labels.as_ref())?;
+                let stacktrace = profile.get_stacktrace(sample.stacktrace);
 
                 Ok(pprof::Sample {
-                    location_ids: sample.locations.iter().map(Into::into).collect(),
+                    location_ids: stacktrace.locations.iter().map(Into::into).collect(),
                     values: new_values,
                     labels,
                 })
@@ -831,8 +998,8 @@ impl TryFrom<&Profile> for pprof::Profile {
                     memory_start: mapping.memory_start,
                     memory_limit: mapping.memory_limit,
                     file_offset: mapping.file_offset,
-                    filename: mapping.filename,
-                    build_id: mapping.build_id,
+                    filename: mapping.filename.into(),
+                    build_id: mapping.build_id.into(),
                     ..Default::default() // todo: support detailed Mapping info
                 })
                 .collect(),
@@ -886,7 +1053,7 @@ mod api_test {
         }];
         let mut profiles = Profile::builder().sample_types(sample_types).build();
 
-        let expected_id: i64 = profiles.interned_strings_count().try_into().unwrap();
+        let expected_id = StringId::new(profiles.interned_strings_count());
 
         let string = "a";
         let id1 = profiles.intern(string);
@@ -952,7 +1119,7 @@ mod api_test {
             })
             .expect("add to succeed");
 
-        assert_eq!(sample_id, PProfId(1));
+        assert_eq!(sample_id, SampleId::new(0));
     }
 
     fn provide_distinct_locations() -> Profile {
@@ -1018,10 +1185,10 @@ mod api_test {
         let mut profile = Profile::builder().sample_types(sample_types).build();
 
         let sample_id1 = profile.add(main_sample).expect("profile to not be full");
-        assert_eq!(sample_id1, PProfId(1));
+        assert_eq!(sample_id1, SampleId::new(0));
 
         let sample_id2 = profile.add(test_sample).expect("profile to not be full");
-        assert_eq!(sample_id2, PProfId(2));
+        assert_eq!(sample_id2, SampleId::new(1));
 
         profile
     }
@@ -1114,8 +1281,8 @@ mod api_test {
         let period = Some((
             10_000_000,
             ValueType {
-                r#type: profile.intern("wall-time"),
-                unit: profile.intern("nanoseconds"),
+                r#type: profile.intern("wall-time").into(),
+                unit: profile.intern("nanoseconds").into(),
             },
         ));
         profile.period = period;

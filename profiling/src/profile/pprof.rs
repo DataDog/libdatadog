@@ -71,7 +71,6 @@ pub struct ValueType {
     pub unit: i64, // Index into string table
 }
 
-/// Currently, libdatadog only allows string values in labels.
 #[derive(Clone, Eq, PartialEq, Hash, ::prost::Message)]
 pub struct Label {
     #[prost(int64, tag = "1")]

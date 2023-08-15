@@ -1,6 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use nix::sys::select::FdSet;
+use nix::sys::time::{TimeVal, TimeValLike};
 use std::{
     io::{self, ErrorKind, Read, Write},
     os::unix::{
@@ -48,6 +50,15 @@ impl Channel {
     pub fn set_nonblocking(&mut self, nonblocking: bool) -> io::Result<()> {
         let sock = self.inner.as_socketlike_view()?;
         sock.set_nonblocking(nonblocking)
+    }
+
+    pub fn probe_readable(&self) -> bool {
+        let raw_fd = self.inner.as_raw_fd();
+        let mut fds = FdSet::new();
+        fds.insert(raw_fd);
+        nix::sys::select::select(None, Some(&mut fds), None, None, Some(&mut TimeVal::zero()))
+            .is_err()
+            || fds.contains(raw_fd)
     }
 }
 

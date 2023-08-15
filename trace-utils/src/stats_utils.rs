@@ -8,6 +8,7 @@ use log::debug;
 use std::io::Write;
 
 use datadog_trace_protobuf::pb;
+use ddcommon::Endpoint;
 
 pub async fn get_stats_from_request_body(body: Body) -> anyhow::Result<pb::ClientStatsPayload> {
     let buffer = hyper::body::aggregate(body).await?;
@@ -46,10 +47,14 @@ pub fn serialize_stats_payload(payload: pb::StatsPayload) -> anyhow::Result<Vec<
     }
 }
 
-pub async fn send_stats_payload(data: Vec<u8>, url: &str, api_key: &str) -> anyhow::Result<()> {
+pub async fn send_stats_payload(
+    data: Vec<u8>,
+    target: &Endpoint,
+    api_key: &str,
+) -> anyhow::Result<()> {
     let req = Request::builder()
         .method(Method::POST)
-        .uri(url)
+        .uri(target.url.clone())
         .header("Content-Type", "application/msgpack")
         .header("Content-Encoding", "gzip")
         .header("DD-API-KEY", api_key)

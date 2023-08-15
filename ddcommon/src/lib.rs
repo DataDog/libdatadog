@@ -7,6 +7,8 @@ use hyper::{
     header::HeaderValue,
     http::uri::{self},
 };
+use serde::de::Error;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod azure_app_services;
 pub mod connector;
@@ -27,10 +29,26 @@ pub type HttpClient = hyper::Client<connector::Connector, hyper::Body>;
 pub type HttpResponse = hyper::Response<hyper::Body>;
 pub type HttpRequestBuilder = hyper::http::request::Builder;
 
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct Endpoint {
+    #[serde(serialize_with = "serialize_uri", deserialize_with = "deserialize_uri")]
     pub url: hyper::Uri,
     pub api_key: Option<Cow<'static, str>>,
+}
+
+fn serialize_uri<S>(uri: &hyper::Uri, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&uri.to_string())
+}
+
+fn deserialize_uri<'de, D>(deserializer: D) -> Result<hyper::Uri, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let url: String = Deserialize::deserialize(deserializer)?;
+    hyper::Uri::from_str(&url).map_err(Error::custom)
 }
 
 // TODO: we should properly handle malformed urls

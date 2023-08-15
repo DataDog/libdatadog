@@ -11,6 +11,7 @@ members = [
   "ddtelemetry-ffi",
   "tools",
   "ipc",
+  "ipc/macros",
   "sidecar",
   "sidecar/macros",
   "sidecar-ffi",

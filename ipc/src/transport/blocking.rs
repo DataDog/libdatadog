@@ -193,6 +193,12 @@ where
         self.transport.channel.set_write_timeout(timeout)
     }
 
+    pub fn is_closed(&self) -> bool {
+        // The blocking transport is not supposed to be readable on the client side unless it's a response.
+        // So, outside of waiting for a response, it will never be readable unless the server side closed its socket.
+        self.transport.channel.probe_readable()
+    }
+
     pub fn send(&mut self, item: OutgoingItem) -> io::Result<()> {
         let mut ctx = Context::current();
         ctx.discard_response = true;
