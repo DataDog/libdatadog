@@ -199,7 +199,7 @@ impl UpscalingRules {
                 collision_offset.unwrap(),
                 vec_to_string(values_offset)
             )
-        } else if let Some(rules) = self.rules.get(&(StringId::zero(), StringId::zero())) {
+        } else if let Some(rules) = self.rules.get(&(StringId::ZERO, StringId::ZERO)) {
             let collide_with_byvalue_rule = rules
                 .iter()
                 .find(|rule| is_overlapping(&rule.values_offset, values_offset));
@@ -346,7 +346,10 @@ impl Profile {
             upscaling_rules: Default::default(),
         };
 
-        profile.intern("");
+        // Ensure the empty string is the first inserted item and has a 0 id.
+        let _id = profile.intern("");
+        debug_assert!(_id == StringId::ZERO);
+
         profile.endpoints.local_root_span_id_label = profile.intern("local root span id");
         profile.endpoints.endpoint_label = profile.intern("trace endpoint");
         profile
@@ -358,14 +361,18 @@ impl Profile {
     }
 
     /// Interns the `str` as a string, returning the id in the string table.
+    /// The empty string is guaranteed to have an id of [StringId::ZERO].
     fn intern(&mut self, item: &str) -> StringId {
+        // For performance, delay converting the [&str] to a [String] until
+        // after it has been determined to not exist in the set. This avoids
+        // temporary allocations.
         let index = match self.strings.get_index_of(item) {
             Some(index) => index,
             None => {
-                let (index, inserted) = self.strings.insert_full(item.into());
+                let (index, _inserted) = self.strings.insert_full(item.into());
                 // This wouldn't make any sense; the item couldn't be found so
                 // we try to insert it, but suddenly it exists now?
-                debug_assert!(inserted);
+                debug_assert!(_inserted);
                 index
             }
         };
@@ -718,9 +725,7 @@ impl Profile {
                 .collect::<Vec<&Vec<UpscalingRule>>>();
 
             // get byvalue rules if any
-            if let Some(byvalue_rules) = self
-                .upscaling_rules
-                .get(&(StringId::zero(), StringId::zero()))
+            if let Some(byvalue_rules) = self.upscaling_rules.get(&(StringId::ZERO, StringId::ZERO))
             {
                 group_of_rules.push(byvalue_rules);
             }
@@ -1048,7 +1053,7 @@ mod api_test {
 
         // The string table should have at least the empty string.
         assert!(!profile.strings.is_empty());
-        assert_eq!("", profile.get_string(StringId::zero()));
+        assert_eq!("", profile.get_string(StringId::ZERO));
     }
 
     #[test]

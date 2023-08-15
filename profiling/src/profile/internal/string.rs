@@ -8,6 +8,8 @@ use super::Id;
 pub struct StringId(u32);
 
 impl StringId {
+    pub const ZERO: StringId = Self::zero();
+
     #[inline]
     pub const fn zero() -> Self {
         Self(0)

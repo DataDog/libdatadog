@@ -57,10 +57,33 @@ pub trait PprofItem: Item {
     fn to_pprof(&self, id: Self::Id) -> Self::PprofMessage;
 }
 
+/// Creates a non-zero, 32-bit unsigned id from the offset. It's guaranteed to
+/// be the offset + 1, with guards to not overflow the size of u32.
+///
+/// This is useful because many pprof collections do not allow an item with an
+/// id of zero, even if it's the first item in the collection.
 #[inline]
 fn small_non_zero_pprof_id(offset: usize) -> Option<NonZeroU32> {
     let small: u32 = offset.try_into().ok()?;
     let non_zero = small.checked_add(1)?;
     // Safety: the `checked_add(1)?` guards this from ever being zero.
     Some(unsafe { NonZeroU32::new_unchecked(non_zero) })
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_small_non_zero_pprof_id() {
+        assert_eq!(NonZeroU32::new(1), small_non_zero_pprof_id(0));
+        assert_eq!(NonZeroU32::new(2), small_non_zero_pprof_id(1));
+        assert_eq!(
+            NonZeroU32::new(u32::MAX),
+            small_non_zero_pprof_id((u32::MAX - 1) as usize)
+        );
+
+        assert_eq!(None, small_non_zero_pprof_id(u32::MAX as usize));
+        assert_eq!(None, small_non_zero_pprof_id(usize::MAX));
+    }
 }
