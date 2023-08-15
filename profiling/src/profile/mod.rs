@@ -364,9 +364,8 @@ impl Profile {
             None => {
                 let (index, inserted) = self.strings.insert_full(item.into());
                 // This wouldn't make any sense; the item couldn't be found so
-                // it was inserted but then it already existed? Screams race-
-                // -condition to me!
-                assert!(inserted);
+                // we try to insert it, but suddenly it exists now?
+                debug_assert!(inserted);
                 index
             }
         };
