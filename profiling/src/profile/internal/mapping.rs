@@ -1,9 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-use super::{small_non_zero_pprof_id, Id, Item, PprofItem};
-use crate::profile::{pprof, StringId};
-use std::num::NonZeroU32;
+use super::*;
 
 #[derive(Eq, PartialEq, Hash)]
 pub struct Mapping {

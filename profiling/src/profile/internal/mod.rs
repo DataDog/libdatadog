@@ -19,6 +19,7 @@ pub use stack_trace::*;
 pub use string::*;
 pub use value_type::*;
 
+use super::pprof;
 use std::hash::Hash;
 use std::num::NonZeroU32;
 
