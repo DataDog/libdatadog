@@ -2,7 +2,6 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use super::{Id, Item, LocationId};
-use std::fmt::{Display, Formatter};
 
 #[derive(Eq, PartialEq, Hash)]
 pub struct StackTrace {
@@ -18,12 +17,6 @@ impl Item for StackTrace {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
 pub struct StackTraceId(u32);
-
-impl Display for StackTraceId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
 
 impl Id for StackTraceId {
     type RawId = usize;
