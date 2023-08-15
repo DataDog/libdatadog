@@ -3,6 +3,10 @@
 
 use super::*;
 
+/// Represents a [pprof::Location] with some space-saving changes:
+///  - The id is not stored on the struct. It's stored in the container that
+///    holds the struct.
+///  - ids for linked objects use 32-bit numbers instead of 64 bit ones.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct Location {
     pub mapping_id: MappingId,

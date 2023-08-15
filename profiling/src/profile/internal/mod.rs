@@ -54,6 +54,8 @@ pub trait PprofItem: Item {
     /// For example, Function -> pprof::Function.
     type PprofMessage: prost::Message;
 
+    // This function exists because items don't store their own id, so the
+    // items can't do a simple .into() to get a pprof message.
     fn to_pprof(&self, id: Self::Id) -> Self::PprofMessage;
 }
 
