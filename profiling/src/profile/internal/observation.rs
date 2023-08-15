@@ -16,7 +16,6 @@ pub struct Observation {
 
 impl From<Vec<i64>> for Observation {
     fn from(v: Vec<i64>) -> Self {
-        println!("from {:?} {:?}", v, Self::len());
         if let Some(len) = Self::len() {
             assert_eq!(len, v.len(), "Sample observation was the wrong length");
         } else {
