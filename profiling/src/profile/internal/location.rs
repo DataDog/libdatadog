@@ -2,8 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use super::super::{pprof, MappingId};
-use super::{Id, Item, Line, PprofItem};
-use std::fmt::Debug;
+use super::{small_non_zero_pprof_id, Id, Item, Line, PprofItem};
 use std::num::NonZeroU32;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -39,15 +38,8 @@ pub struct LocationId(NonZeroU32);
 impl Id for LocationId {
     type RawId = u64;
 
-    fn from_offset(v: usize) -> Self {
-        let index: u32 = v.try_into().expect("LocationId to fit into a u32");
-
-        // PProf reserves location 0.
-        // Both this, and the serialization of the table, add 1 to avoid the 0 element
-        let index = index.checked_add(1).expect("LocationId to fit into a u32");
-        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
-        let index = unsafe { NonZeroU32::new_unchecked(index) };
-        Self(index)
+    fn from_offset(offset: usize) -> Self {
+        Self(small_non_zero_pprof_id(offset).expect("LocationId to fit into a u32"))
     }
 
     fn to_raw_id(&self) -> Self::RawId {

@@ -20,6 +20,7 @@ pub use string::*;
 pub use value_type::*;
 
 use std::hash::Hash;
+use std::num::NonZeroU32;
 
 pub trait Id: Copy + Eq + Hash {
     type RawId;
@@ -53,4 +54,12 @@ pub trait PprofItem: Item {
     type PprofMessage: prost::Message;
 
     fn to_pprof(&self, id: Self::Id) -> Self::PprofMessage;
+}
+
+#[inline]
+fn small_non_zero_pprof_id(offset: usize) -> Option<NonZeroU32> {
+    let small: u32 = offset.try_into().ok()?;
+    let non_zero = small.checked_add(1)?;
+    // Safety: the `checked_add(1)?` guards this from ever being zero.
+    Some(unsafe { NonZeroU32::new_unchecked(non_zero) })
 }

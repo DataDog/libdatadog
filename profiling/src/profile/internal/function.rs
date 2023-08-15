@@ -2,7 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use super::super::{pprof, StringId};
-use super::{Id, Item, PprofItem};
+use super::{small_non_zero_pprof_id, Id, Item, PprofItem};
 use std::fmt::Debug;
 use std::num::NonZeroU32;
 
@@ -39,15 +39,8 @@ pub struct FunctionId(NonZeroU32);
 impl Id for FunctionId {
     type RawId = u64;
 
-    fn from_offset(v: usize) -> Self {
-        let index: u32 = v.try_into().expect("FunctionId to fit into a u32");
-
-        // PProf reserves function 0.
-        // Both this, and the serialization of the table, add 1 to avoid the 0 element
-        let index = index.checked_add(1).expect("FunctionId to fit into a u32");
-        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
-        let index = unsafe { NonZeroU32::new_unchecked(index) };
-        Self(index)
+    fn from_offset(offset: usize) -> Self {
+        Self(small_non_zero_pprof_id(offset).expect("FunctionId to fit into a u32"))
     }
 
     fn to_raw_id(&self) -> Self::RawId {

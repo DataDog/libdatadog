@@ -1,7 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-use super::{Id, Item, PprofItem};
+use super::{small_non_zero_pprof_id, Id, Item, PprofItem};
 use crate::profile::{pprof, StringId};
 use std::num::NonZeroU32;
 
@@ -52,15 +52,8 @@ pub struct MappingId(NonZeroU32);
 impl Id for MappingId {
     type RawId = u64;
 
-    fn from_offset(v: usize) -> Self {
-        let index: u32 = v.try_into().expect("MappingId to fit into a u32");
-
-        // PProf reserves location 0.
-        // Both this, and the serialization of the table, add 1 to avoid the 0 element
-        let index = index.checked_add(1).expect("MappingId to fit into a u32");
-        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
-        let index = unsafe { NonZeroU32::new_unchecked(index) };
-        Self(index)
+    fn from_offset(offset: usize) -> Self {
+        Self(small_non_zero_pprof_id(offset).expect("MappingId to fit into a u32"))
     }
 
     fn to_raw_id(&self) -> Self::RawId {
