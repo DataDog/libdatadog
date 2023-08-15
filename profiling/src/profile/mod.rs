@@ -447,11 +447,12 @@ impl Profile {
         let values = sample.values.clone();
         let (labels, local_root_span_id_label_offset) = self.extract_sample_labels(&sample)?;
 
-        let mut locations = Vec::with_capacity(sample.locations.len());
-        for location in sample.locations.iter() {
-            let value = self.add_location(location);
-            locations.push(value)
-        }
+        let locations = sample
+            .locations
+            .iter()
+            .map(|l| self.add_location(l))
+            .collect();
+
         let stacktrace = self.add_stacktrace(locations);
         let s = Sample {
             stacktrace,
