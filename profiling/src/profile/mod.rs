@@ -289,6 +289,14 @@ impl<T: Item> Dedup<T> for FxIndexSet<T> {
     }
 }
 
+fn to_pprof_vec<T: PprofItem>(collection: &FxIndexSet<T>) -> Vec<T::PprofMessage> {
+    collection
+        .iter()
+        .enumerate()
+        .map(|(index, item)| item.to_pprof(<T as Item>::Id::from_offset(index)))
+        .collect()
+}
+
 pub struct EncodedProfile {
     pub start: SystemTime,
     pub end: SystemTime,
@@ -797,24 +805,9 @@ impl TryFrom<&Profile> for pprof::Profile {
                 .map(pprof::ValueType::from)
                 .collect(),
             samples: samples?,
-            mappings: profile
-                .mappings
-                .iter()
-                .enumerate()
-                .map(|(index, mapping)| mapping.to_pprof(MappingId::from_offset(index)))
-                .collect(),
-            locations: profile
-                .locations
-                .iter()
-                .enumerate()
-                .map(|(index, location)| location.to_pprof(LocationId::from_offset(index)))
-                .collect(),
-            functions: profile
-                .functions
-                .iter()
-                .enumerate()
-                .map(|(index, function)| function.to_pprof(FunctionId::from_offset(index)))
-                .collect(),
+            mappings: to_pprof_vec(&profile.mappings),
+            locations: to_pprof_vec(&profile.locations),
+            functions: to_pprof_vec(&profile.functions),
             string_table: profile.strings.iter().map(Into::into).collect(),
             time_nanos: profile
                 .start_time
