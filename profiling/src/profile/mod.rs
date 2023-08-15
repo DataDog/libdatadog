@@ -488,15 +488,10 @@ impl Profile {
         let mut local_root_span_id_label_offset: Option<usize> = None;
         for label in sample.labels.iter() {
             anyhow::ensure!(
-                label.str.is_none() || label.num == 0,
-                "Invalid label: {:?}",
-                label
+                label.uses_at_most_one_of_str_and_num(),
+                "Invalid label: used both str and num fields: {label:?}"
             );
-            anyhow::ensure!(
-                label.num_unit.is_none() || label.str.is_none(),
-                "Invalid label: {:?}",
-                label
-            );
+
             let key = self.intern(label.key);
 
             if key == self.endpoints.local_root_span_id_label {

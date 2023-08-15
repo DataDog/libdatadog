@@ -110,6 +110,12 @@ pub struct Label<'a> {
     pub num_unit: Option<&'a str>,
 }
 
+impl<'a> Label<'a> {
+    pub fn uses_at_most_one_of_str_and_num(&self) -> bool {
+        self.str.is_none() || (self.num == 0 && self.num_unit.is_none())
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct Sample<'a> {
     /// The leaf is at locations[0].
@@ -343,5 +349,61 @@ impl<'a> TryFrom<&'a pprof::Profile> for Profile<'a> {
             samples,
             start_time,
         })
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn label_uses_at_most_one_of_str_and_num() {
+        let label = Label {
+            key: "name",
+            str: Some("levi"),
+            num: 0,
+            num_unit: Some("name"), // can't use num_unit with str
+        };
+        assert!(!label.uses_at_most_one_of_str_and_num());
+
+        let label = Label {
+            key: "name",
+            str: Some("levi"),
+            num: 10, // can't use num with str
+            num_unit: None,
+        };
+        assert!(!label.uses_at_most_one_of_str_and_num());
+
+        let label = Label {
+            key: "name",
+            str: Some("levi"),
+            num: 0,
+            num_unit: None,
+        };
+        assert!(label.uses_at_most_one_of_str_and_num());
+
+        let label = Label {
+            key: "process_id",
+            str: None,
+            num: 0,
+            num_unit: None,
+        };
+        assert!(label.uses_at_most_one_of_str_and_num());
+
+        let label = Label {
+            key: "local root span id",
+            str: None,
+            num: 10901,
+            num_unit: None,
+        };
+        assert!(label.uses_at_most_one_of_str_and_num());
+
+        let label = Label {
+            key: "duration",
+            str: None,
+            num: 12345,
+            num_unit: Some("nanoseconds"),
+        };
+        assert!(label.uses_at_most_one_of_str_and_num());
     }
 }
