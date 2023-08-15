@@ -8,23 +8,26 @@ thread_local! {
 }
 
 /// This represents a `Vec<i64>` associated with a sample
+/// Since these vectors are all of the same length, there is no need to store
+/// `len` and `capacity` fields over and over again for each sample.
+/// Instead, just keep the pointer, and recreate the slice as needed.
 ///
+/// # Safety
+/// This panics if you attempt to create an Observation with a data vector
+/// of the wrong length.
 #[repr(transparent)]
 pub struct Observation {
     data: *mut i64,
 }
 
 impl From<Vec<i64>> for Observation {
+    /// Converts a `Vec<i64>` representing sample observations
+    /// into a more memory efficient `Observation`
+    /// # Safety
+    /// This panics if you attempt to create an Observation with a data vector
+    /// of the wrong length.
     fn from(v: Vec<i64>) -> Self {
-        if let Some(len) = Self::len() {
-            assert_eq!(len, v.len(), "Sample observation was the wrong length");
-        } else {
-            LENGTH.with(|len| *len.borrow_mut() = Some(v.len()));
-        }
-        let b = v.into_boxed_slice();
-        let p = Box::into_raw(b);
-        let data = p as *mut i64;
-        Self { data }
+        Self::new(v)
     }
 }
 
@@ -58,13 +61,45 @@ impl Observation {
     pub fn len() -> Option<usize> {
         LENGTH.with(|len| *len.borrow())
     }
+
+    /// Converts a `Vec<i64>` representing sample observations
+    /// into a more memory efficient `Observation`
+    /// # Safety
+    /// This panics if you attempt to create an Observation with a data vector
+    /// of the wrong length.
+    fn new(v: Vec<i64>) -> Self {
+        if let Some(len) = Self::len() {
+            assert_eq!(len, v.len(), "Sample observation was the wrong length");
+        } else {
+            LENGTH.with(|len| *len.borrow_mut() = Some(v.len()));
+        }
+        // First, convert the vector into a boxed slice.
+        // This shrinks any excess capacity on the vec.
+        // At this point, the memory is now owned by the box.
+        // https://doc.rust-lang.org/std/vec/struct.Vec.html#method.into_boxed_slice
+        let b = v.into_boxed_slice();
+        // Get the fat pointer representing the slice out of the box.
+        // At this point, we now own the memory
+        // https://doc.rust-lang.org/std/boxed/struct.Box.html#method.into_raw
+        let p = Box::into_raw(b);
+        // Get the pointer to just the data part of the slice, throwing away
+        // the length metadata.
+        // At this point, we are now responsible for tracking the length
+        // ourselves, which we do in the LENGTH static.
+        let data = p as *mut i64;
+        Self { data }
+    }
 }
 
 impl Drop for Observation {
     fn drop(&mut self) {
         unsafe {
+            // To drop we need to recreate the original Box, and drop that
+            // https://doc.rust-lang.org/std/boxed/struct.Box.html#method.into_raw
             let r = self.as_mut() as *mut [i64];
             let b = Box::from_raw(r);
+            // TODO: is this necessary, or will drop be automatically called when
+            // `b` goes out of scope?
             std::mem::drop(b)
         }
     }
