@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime};
 
 #[repr(C)]
 pub enum ProfileAddResult {
-    // Do not use the value of Ok. This value only exists to overcome Rust -> C code generation.
+    /// Do not use the value of Ok. This value only exists to overcome Rust -> C code generation.
     Ok(bool),
     Err(Error),
 }
@@ -26,7 +26,7 @@ pub enum SerializeResult {
 
 #[repr(C)]
 pub enum UpscalingRuleAddResult {
-    // Do not use the value of Ok. This value only exists to overcome Rust -> C code generation.
+    /// Do not use the value of Ok. This value only exists to overcome Rust -> C code generation.
     Ok(bool),
     Err(Error),
 }
@@ -364,7 +364,7 @@ impl From<ProfileAddResult> for Result<(), String> {
 /// module. All pointers inside the `sample` need to be valid for the duration
 /// of this call.
 ///
-/// If successful, it returns `true` in the Ok variant.
+/// If successful, it returns the Ok variant.
 /// On error, it holds an error message in the error variant.
 ///
 /// # Safety
@@ -734,10 +734,16 @@ mod test {
             };
 
             Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), sample)).unwrap();
-            assert_eq!(profile.as_ref().num_aggregated_samples(), 1);
+            assert_eq!(
+                profile.as_ref().only_for_testing_num_aggregated_samples(),
+                1
+            );
 
             Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), sample)).unwrap();
-            assert_eq!(profile.as_ref().num_aggregated_samples(), 1);
+            assert_eq!(
+                profile.as_ref().only_for_testing_num_aggregated_samples(),
+                1
+            );
 
             ddog_prof_Profile_drop(Some(profile.as_mut()));
         }
@@ -803,10 +809,16 @@ mod test {
         };
 
         Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), main_sample)).unwrap();
-        assert_eq!(profile.as_ref().num_aggregated_samples(), 1);
+        assert_eq!(
+            profile.as_ref().only_for_testing_num_aggregated_samples(),
+            1
+        );
 
         Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), test_sample)).unwrap();
-        assert_eq!(profile.as_ref().num_aggregated_samples(), 2);
+        assert_eq!(
+            profile.as_ref().only_for_testing_num_aggregated_samples(),
+            2
+        );
 
         profile
     }

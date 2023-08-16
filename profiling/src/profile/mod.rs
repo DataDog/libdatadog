@@ -293,11 +293,10 @@ impl Default for Endpoints {
 
 // For testing and debugging purposes
 impl Profile {
-    // DSN TODO
-    pub fn num_aggregated_samples(&self) -> usize {
+    pub fn only_for_testing_num_aggregated_samples(&self) -> usize {
         self.aggregated_samples.len()
     }
-    pub fn num_timestamped_samples(&self) -> usize {
+    pub fn only_for_testing_num_timestamped_samples(&self) -> usize {
         self.timestamped_samples.len()
     }
 }
@@ -458,6 +457,9 @@ impl Profile {
                     let series = vec![(ts, values)];
                     self.timestamped_samples.insert(s, series);
                 }
+                // Repeated timestamps are unlikely but possible.
+                // We choose to record each as separate observations, and
+                // allow the backend to decide what to do.
                 Some(series) => series.push((ts, values)),
             }
         } else {
@@ -485,6 +487,9 @@ impl Profile {
         for label in sample.labels.iter() {
             let key = self.intern(label.key);
 
+            // The current API stores timestamps on a label.
+            // The internal representation stores them in the timestamped_samples map.
+            // Extract them from the labels, and pass them on to put into the map
             if key == self.timestamp_key {
                 anyhow::ensure!(
                     label.str.is_none(),
@@ -493,10 +498,11 @@ impl Profile {
                     label.key
                 );
                 anyhow::ensure!(label.num != 0, "the label \"{}\" must not be 0", label.key);
-                //TODO what should I ensure the units are?
+                anyhow::ensure!(label.num_unit.is_none(), "Timestamps with label '{}' are always nanoseconds and do not take a unit: found '{}'", label.key, label.num_unit.unwrap());
 
                 timestamp = Some(NonZeroI64::new(label.num).unwrap());
-                // Don't put the timestamp into the labels
+                // Once the timestamp is extracted, we remove it from the labels.
+                // This allows `Sample` with the same values other than the timestamp to dedup.
                 continue;
             }
 
@@ -948,7 +954,7 @@ mod api_test {
         ];
 
         let mut profile = Profile::builder().sample_types(sample_types).build();
-        assert_eq!(profile.num_aggregated_samples(), 0);
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
 
         profile
             .add(api::Sample {
@@ -958,7 +964,7 @@ mod api_test {
             })
             .expect("add to succeed");
 
-        assert_eq!(profile.num_aggregated_samples(), 1);
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
     }
 
     fn provide_distinct_locations() -> Profile {
@@ -1954,7 +1960,6 @@ mod api_test {
         assert_eq!(second.values, vec![5, 24, 99]);
     }
 
- 
     #[test]
     fn test_upscaling_by_label_with_two_different_rules_on_two_different_sample() {
         let sample_types = create_samples_types();
