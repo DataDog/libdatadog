@@ -43,7 +43,7 @@ impl Profile {
     }
 }
 
-#[derive(Eq, Hash, PartialEq, ::prost::Message)]
+#[derive(Clone, Eq, Hash, PartialEq, PartialOrd, Ord, ::prost::Message)]
 pub struct Sample {
     /// The ids recorded here correspond to a Profile.location.id.
     /// The leaf is at location_id\[0\].
@@ -71,7 +71,7 @@ pub struct ValueType {
     pub unit: i64, // Index into string table
 }
 
-#[derive(Clone, Eq, PartialEq, Hash, ::prost::Message)]
+#[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, ::prost::Message)]
 pub struct Label {
     #[prost(int64, tag = "1")]
     pub(crate) key: i64, // Index into string table
@@ -165,7 +165,16 @@ pub struct Function {
     #[prost(int64, tag = "4")]
     pub filename: i64, // Index into string table
     #[prost(int64, tag = "5")]
-    pub start_line: i64, // Line number in source file.
+    pub start_line: i64, // Index into string table
+}
+
+#[cfg(test)]
+impl Profile {
+    pub fn sorted_samples(&self) -> Vec<Sample> {
+        let mut samples = self.samples.clone();
+        samples.sort_unstable();
+        samples
+    }
 }
 
 #[cfg(test)]

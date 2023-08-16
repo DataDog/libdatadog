@@ -7,11 +7,10 @@ pub mod pprof;
 pub mod profiled_endpoints;
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::convert::TryInto;
-use std::fmt::Debug;
 use std::hash::{BuildHasherDefault, Hash};
-use std::num::NonZeroU32;
-use std::ops::AddAssign;
+use std::num::NonZeroI64;
 use std::time::{Duration, SystemTime};
 
 use internal::*;
@@ -23,38 +22,7 @@ use self::api::UpscalingInfo;
 pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<rustc_hash::FxHasher>>;
 pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::FxHasher>>;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[repr(transparent)]
-pub struct SampleId(NonZeroU32);
-
-impl SampleId {
-    pub fn new<T>(v: T) -> Self
-    where
-        T: TryInto<u32>,
-        T::Error: Debug,
-    {
-        let index: u32 = v.try_into().expect("SampleId to fit into a u32");
-
-        // PProf reserves location 0.
-        // Both this, and the serialization of the table, add 1 to avoid the 0 element
-        let index = index.checked_add(1).expect("SampleId to fit into a u32");
-        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
-        let index = unsafe { NonZeroU32::new_unchecked(index) };
-        Self(index)
-    }
-}
-
-impl From<SampleId> for u64 {
-    fn from(s: SampleId) -> Self {
-        Self::from(&s)
-    }
-}
-
-impl From<&SampleId> for u64 {
-    fn from(s: &SampleId) -> Self {
-        s.0.get().into()
-    }
-}
+pub type Timestamp = NonZeroI64;
 
 #[derive(Eq, PartialEq, Hash)]
 struct Sample {
@@ -96,16 +64,18 @@ impl UpscalingRule {
 }
 
 pub struct Profile {
-    sample_types: Vec<ValueType>,
-    samples: FxIndexMap<Sample, Vec<i64>>,
-    mappings: FxIndexSet<Mapping>,
-    locations: FxIndexSet<Location>,
-    functions: FxIndexSet<Function>,
-    stack_traces: FxIndexSet<StackTrace>,
-    strings: FxIndexSet<String>,
-    start_time: SystemTime,
-    period: Option<(i64, ValueType)>,
+    aggregated_samples: HashMap<Sample, Vec<i64>>,
     endpoints: Endpoints,
+    functions: FxIndexSet<Function>,
+    locations: FxIndexSet<Location>,
+    mappings: FxIndexSet<Mapping>,
+    period: Option<(i64, ValueType)>,
+    sample_types: Vec<ValueType>,
+    stack_traces: FxIndexSet<StackTrace>,
+    start_time: SystemTime,
+    strings: FxIndexSet<String>,
+    timestamp_key: StringId,
+    timestamped_samples: HashMap<Sample, Vec<(Timestamp, Vec<i64>)>>,
     upscaling_rules: UpscalingRules,
 }
 
@@ -321,6 +291,17 @@ impl Default for Endpoints {
     }
 }
 
+// For testing and debugging purposes
+impl Profile {
+    // DSN TODO
+    pub fn num_aggregated_samples(&self) -> usize {
+        self.aggregated_samples.len()
+    }
+    pub fn num_timestamped_samples(&self) -> usize {
+        self.timestamped_samples.len()
+    }
+}
+
 impl Profile {
     /// Creates a profile with `start_time`.
     /// Initializes the string table to hold:
@@ -333,16 +314,18 @@ impl Profile {
          * overflow, since that default impl calls this method.
          */
         let mut profile = Self {
-            sample_types: vec![],
-            samples: Default::default(),
-            mappings: Default::default(),
-            locations: Default::default(),
+            aggregated_samples: Default::default(),
+            endpoints: Default::default(),
             functions: Default::default(),
-            strings: Default::default(),
+            locations: Default::default(),
+            mappings: Default::default(),
+            period: None,
+            sample_types: vec![],
             stack_traces: Default::default(),
             start_time,
-            period: None,
-            endpoints: Default::default(),
+            strings: Default::default(),
+            timestamp_key: Default::default(),
+            timestamped_samples: Default::default(),
             upscaling_rules: Default::default(),
         };
 
@@ -352,6 +335,7 @@ impl Profile {
 
         profile.endpoints.local_root_span_id_label = profile.intern("local root span id");
         profile.endpoints.endpoint_label = profile.intern("trace endpoint");
+        profile.timestamp_key = profile.intern("end_timestamp_ns");
         profile
     }
 
@@ -443,7 +427,7 @@ impl Profile {
         })
     }
 
-    pub fn add(&mut self, sample: api::Sample) -> anyhow::Result<SampleId> {
+    pub fn add(&mut self, sample: api::Sample) -> anyhow::Result<()> {
         anyhow::ensure!(
             sample.values.len() == self.sample_types.len(),
             "expected {} sample types, but sample had {} sample types",
@@ -452,7 +436,8 @@ impl Profile {
         );
 
         let values = sample.values.clone();
-        let (labels, local_root_span_id_label_offset) = self.extract_sample_labels(&sample)?;
+        let (labels, local_root_span_id_label_offset, timestamp) =
+            self.extract_sample_labels(&sample)?;
 
         let locations = sample
             .locations
@@ -467,39 +452,53 @@ impl Profile {
             local_root_span_id_label_offset,
         };
 
-        let id = match self.samples.get_index_of(&s) {
-            None => {
-                self.samples.insert(s, values);
-                SampleId::new(self.samples.len() - 1)
-            }
-            Some(index) => {
-                let (_, existing_values) =
-                    self.samples.get_index_mut(index).expect("index to exist");
-                for (a, b) in existing_values.iter_mut().zip(values) {
-                    a.add_assign(b)
+        if let Some(ts) = timestamp {
+            match self.timestamped_samples.get_mut(&s) {
+                None => {
+                    let series = vec![(ts, values)];
+                    self.timestamped_samples.insert(s, series);
                 }
-                SampleId::new(index)
+                Some(series) => series.push((ts, values)),
+            }
+        } else {
+            match self.aggregated_samples.get_mut(&s) {
+                None => {
+                    self.aggregated_samples.insert(s, values);
+                }
+                Some(v) => v.iter_mut().zip(values).for_each(|(a, b)| *a += b),
             }
         };
-
-        Ok(id)
+        Ok(())
     }
 
     /// Validates labels and converts them to the internal representation.
+    /// Extracts out the timestamp label, if it exists.
     /// Also tracks the index of the label with key "local root span id".
     fn extract_sample_labels(
         &mut self,
         sample: &api::Sample,
-    ) -> anyhow::Result<(Vec<Label>, Option<usize>)> {
+    ) -> anyhow::Result<(Vec<Label>, Option<usize>, Option<Timestamp>)> {
         let mut labels: Vec<Label> = Vec::with_capacity(sample.labels.len());
         let mut local_root_span_id_label_offset: Option<usize> = None;
-        for label in sample.labels.iter() {
-            anyhow::ensure!(
-                label.uses_at_most_one_of_str_and_num(),
-                "Invalid label: used both str and num fields: {label:?}"
-            );
+        let mut timestamp: Option<Timestamp> = None;
 
+        for label in sample.labels.iter() {
             let key = self.intern(label.key);
+
+            if key == self.timestamp_key {
+                anyhow::ensure!(
+                    label.str.is_none(),
+                    "the label \"{}\" must be sent as a number, not string {}",
+                    label.str.unwrap(),
+                    label.key
+                );
+                anyhow::ensure!(label.num != 0, "the label \"{}\" must not be 0", label.key);
+                //TODO what should I ensure the units are?
+
+                timestamp = Some(NonZeroI64::new(label.num).unwrap());
+                // Don't put the timestamp into the labels
+                continue;
+            }
 
             if key == self.endpoints.local_root_span_id_label {
                 // Panic: if the label.str isn't 0, then str must have been provided.
@@ -532,7 +531,7 @@ impl Profile {
             // If you refactor this push, ensure the local_root_span_id_label_offset is correct.
             labels.push(internal_label);
         }
-        Ok((labels, local_root_span_id_label_offset))
+        Ok((labels, local_root_span_id_label_offset, timestamp))
     }
 
     fn extract_api_sample_types(&self) -> Option<Vec<api::ValueType>> {
@@ -756,6 +755,50 @@ impl Profile {
 
         Ok(new_values)
     }
+
+    fn translate_and_enrich_sample_labels(
+        &self,
+        sample: &Sample,
+    ) -> anyhow::Result<Vec<pprof::Label>> {
+        let mut labels: Vec<_> = sample.labels.iter().map(pprof::Label::from).collect();
+        if let Some(offset) = sample.local_root_span_id_label_offset {
+            // Safety: this offset was created internally and isn't be mutated.
+            let lrsi_label = unsafe { sample.labels.get_unchecked(offset) };
+            if let Some(endpoint_value_id) = self.get_endpoint_for_label(lrsi_label)? {
+                labels.push(Label::str(self.endpoints.endpoint_label, endpoint_value_id).into());
+            }
+        }
+        Ok(labels)
+    }
+
+    /// Given a sample, and a set of observations at different timestamps,
+    /// expand to one Sample for each timestamp.
+    fn expand_timestamped_sample(
+        &self,
+        sample: &Sample,
+        observations: &[(Timestamp, Vec<i64>)],
+    ) -> anyhow::Result<Vec<pprof::Sample>> {
+        // Clone the labels, but enrich them with endpoint profiling.
+        let labels = self.translate_and_enrich_sample_labels(sample)?;
+        let stacktrace = self.get_stacktrace(sample.stacktrace);
+
+        observations
+            .iter()
+            .map(|(timestamp, values)| {
+                let new_values: Vec<i64> = self.upscale_values(values.as_ref(), &labels)?;
+                let mut labels = labels.clone();
+
+                // pprof uses a label to store the timestamp so put it there
+                labels.push(Label::num(self.timestamp_key, timestamp.get(), None).into());
+
+                Ok(pprof::Sample {
+                    location_ids: stacktrace.locations.iter().map(Id::to_raw_id).collect(),
+                    values: new_values,
+                    labels,
+                })
+            })
+            .collect()
+    }
 }
 
 impl TryFrom<&Profile> for pprof::Profile {
@@ -770,29 +813,21 @@ impl TryFrom<&Profile> for pprof::Profile {
         /* Rust pattern: inverting Vec<Result<T,E>> into Result<Vec<T>, E> error with .collect:
          * https://doc.rust-lang.org/rust-by-example/error/iter_result.html#fail-the-entire-operation-with-collect
          */
-        let samples: anyhow::Result<Vec<pprof::Sample>> = profile
-            .samples
+        let timestamped_samples: anyhow::Result<Vec<Vec<pprof::Sample>>> = profile
+            .timestamped_samples
+            .iter()
+            .map(|(sample, observations)| profile.expand_timestamped_sample(sample, observations))
+            .collect();
+
+        let aggregated_samples: anyhow::Result<Vec<pprof::Sample>> = profile
+            .aggregated_samples
             .iter()
             .map(|(sample, values)| {
-                // Clone the labels, but enrich them with endpoint profiling.
-                let mut labels: Vec<pprof::Label> =
-                    sample.labels.iter().map(pprof::Label::from).collect();
-                if let Some(offset) = sample.local_root_span_id_label_offset {
-                    // Safety: this offset was created internally and isn't be mutated.
-                    let lrsi_label = unsafe { sample.labels.get_unchecked(offset) };
-                    if let Some(endpoint_value_id) = profile.get_endpoint_for_label(lrsi_label)? {
-                        labels.push(pprof::Label {
-                            key: profile.endpoints.endpoint_label.to_raw_id(),
-                            str: endpoint_value_id.to_raw_id(),
-                            num: 0,
-                            num_unit: 0,
-                        });
-                    }
-                }
+                let labels = profile.translate_and_enrich_sample_labels(sample)?;
 
-                let new_values = profile.upscale_values(values.as_ref(), &labels)?;
                 let stacktrace = profile.get_stacktrace(sample.stacktrace);
-
+                let new_values: Vec<i64> =
+                    profile.upscale_values(values.as_ref(), labels.as_ref())?;
                 Ok(pprof::Sample {
                     location_ids: stacktrace.locations.iter().map(Id::to_raw_id).collect(),
                     values: new_values,
@@ -801,13 +836,19 @@ impl TryFrom<&Profile> for pprof::Profile {
             })
             .collect();
 
+        let samples: Vec<_> = timestamped_samples?
+            .into_iter()
+            .flatten()
+            .chain(aggregated_samples?)
+            .collect();
+
         Ok(pprof::Profile {
             sample_types: profile
                 .sample_types
                 .iter()
                 .map(pprof::ValueType::from)
                 .collect(),
-            samples: samples?,
+            samples,
             mappings: to_pprof_vec(&profile.mappings),
             locations: to_pprof_vec(&profile.locations),
             functions: to_pprof_vec(&profile.functions),
@@ -897,7 +938,9 @@ mod api_test {
         ];
 
         let mut profile = Profile::builder().sample_types(sample_types).build();
-        let sample_id = profile
+        assert_eq!(profile.num_aggregated_samples(), 0);
+
+        profile
             .add(api::Sample {
                 locations,
                 values: vec![1, 10000],
@@ -905,7 +948,7 @@ mod api_test {
             })
             .expect("add to succeed");
 
-        assert_eq!(sample_id, SampleId::new(0));
+        assert_eq!(profile.num_aggregated_samples(), 1);
     }
 
     fn provide_distinct_locations() -> Profile {
@@ -934,6 +977,16 @@ mod api_test {
             line: 0,
         }];
 
+        let timestamp_lines = vec![api::Line {
+            function: api::Function {
+                name: "test",
+                system_name: "test",
+                filename: "index.php",
+                start_line: 3,
+            },
+            line: 0,
+        }];
+
         let mapping = api::Mapping {
             filename: "php",
             ..Default::default()
@@ -949,8 +1002,14 @@ mod api_test {
             lines: test_lines,
             ..Default::default()
         }];
+        let timestamp_locations = vec![api::Location {
+            mapping,
+            lines: timestamp_lines,
+            ..Default::default()
+        }];
+
         let values: Vec<i64> = vec![1];
-        let labels = vec![api::Label {
+        let mut labels = vec![api::Label {
             key: "pid",
             num: 101,
             ..Default::default()
@@ -964,18 +1023,35 @@ mod api_test {
 
         let test_sample = api::Sample {
             locations: test_locations,
+            values: values.clone(),
+            labels: labels.clone(),
+        };
+
+        labels.push(api::Label {
+            key: "end_timestamp_ns",
+            num: 42,
+            ..Default::default()
+        });
+        let timestamp_sample = api::Sample {
+            locations: timestamp_locations,
             values,
             labels,
         };
 
         let mut profile = Profile::builder().sample_types(sample_types).build();
+        assert_eq!(profile.aggregated_samples.len(), 0);
 
-        let sample_id1 = profile.add(main_sample).expect("profile to not be full");
-        assert_eq!(sample_id1, SampleId::new(0));
+        profile.add(main_sample).expect("profile to not be full");
+        assert_eq!(profile.aggregated_samples.len(), 1);
 
-        let sample_id2 = profile.add(test_sample).expect("profile to not be full");
-        assert_eq!(sample_id2, SampleId::new(1));
+        profile.add(test_sample).expect("profile to not be full");
+        assert_eq!(profile.aggregated_samples.len(), 2);
 
+        assert_eq!(profile.timestamped_samples.len(), 0);
+        profile
+            .add(timestamp_sample)
+            .expect("profile to not be full");
+        assert_eq!(profile.timestamped_samples.len(), 1);
         profile
     }
 
@@ -984,7 +1060,7 @@ mod api_test {
         let locations = provide_distinct_locations();
         let profile = pprof::Profile::try_from(&locations).unwrap();
 
-        assert_eq!(profile.samples.len(), 2);
+        assert_eq!(profile.samples.len(), 3);
         assert_eq!(profile.mappings.len(), 1);
         assert_eq!(profile.locations.len(), 2);
         assert_eq!(profile.functions.len(), 2);
@@ -1002,6 +1078,43 @@ mod api_test {
         }
 
         let sample = profile.samples.get(0).expect("index 0 to exist");
+        assert_eq!(sample.labels.len(), 2);
+        let label = sample.labels.get(0).expect("index 0 to exist");
+        let key = profile
+            .string_table
+            .get(label.key as usize)
+            .expect("index to exist");
+        let str = profile
+            .string_table
+            .get(label.str as usize)
+            .expect("index to exist");
+        let num_unit = profile
+            .string_table
+            .get(label.num_unit as usize)
+            .expect("index to exist");
+        assert_eq!(key, "pid");
+        assert_eq!(label.num, 101);
+        assert_eq!(str, "");
+        assert_eq!(num_unit, "");
+        let label = sample.labels.get(1).expect("index 1 to exist");
+        let key = profile
+            .string_table
+            .get(label.key as usize)
+            .expect("index to exist");
+        let str = profile
+            .string_table
+            .get(label.str as usize)
+            .expect("index to exist");
+        let num_unit = profile
+            .string_table
+            .get(label.num_unit as usize)
+            .expect("index to exist");
+        assert_eq!(key, "end_timestamp_ns");
+        assert_eq!(label.num, 42);
+        assert_eq!(str, "");
+        assert_eq!(num_unit, "");
+
+        let sample = profile.samples.get(1).expect("index 1 to exist");
         assert_eq!(sample.labels.len(), 1);
         let label = sample.labels.get(0).expect("index 0 to exist");
         let key = profile
@@ -1031,7 +1144,8 @@ mod api_test {
         assert!(!profile.functions.is_empty());
         assert!(!profile.locations.is_empty());
         assert!(!profile.mappings.is_empty());
-        assert!(!profile.samples.is_empty());
+        assert!(!profile.aggregated_samples.is_empty());
+        assert!(!profile.timestamped_samples.is_empty());
         assert!(!profile.sample_types.is_empty());
         assert!(profile.period.is_none());
         assert!(profile.endpoints.mappings.is_empty());
@@ -1043,7 +1157,8 @@ mod api_test {
         assert!(profile.functions.is_empty());
         assert!(profile.locations.is_empty());
         assert!(profile.mappings.is_empty());
-        assert!(profile.samples.is_empty());
+        assert!(profile.aggregated_samples.is_empty());
+        assert!(profile.timestamped_samples.is_empty());
         assert!(profile.endpoints.mappings.is_empty());
         assert!(profile.endpoints.stats.is_empty());
         assert!(profile.upscaling_rules.is_empty());
@@ -1163,10 +1278,10 @@ mod api_test {
         profile.add_endpoint(10, Cow::from("my endpoint"));
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
-
         assert_eq!(serialized_profile.samples.len(), 2);
+        let samples = serialized_profile.sorted_samples();
 
-        let s1 = serialized_profile.samples.get(0).expect("sample");
+        let s1 = samples.get(0).expect("sample");
 
         // The trace endpoint label should be added to the first sample
         assert_eq!(s1.labels.len(), 3);
@@ -1216,7 +1331,7 @@ mod api_test {
             "my endpoint"
         );
 
-        let s2 = serialized_profile.samples.get(1).expect("sample");
+        let s2 = samples.get(1).expect("sample");
 
         // The trace endpoint label shouldn't be added to second sample because the span id doesn't match
         assert_eq!(s2.labels.len(), 2);
@@ -1818,12 +1933,13 @@ mod api_test {
             .expect("Rule added");
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        let samples = serialized_profile.sorted_samples();
 
-        let first = serialized_profile.samples.get(0).expect("one sample");
+        let first = samples.get(0).expect("one sample");
 
         assert_eq!(first.values, vec![2, 10000, 42]);
 
-        let second = serialized_profile.samples.get(1).expect("one sample");
+        let second = samples.get(1).expect("one sample");
 
         assert_eq!(second.values, vec![5, 24, 99]);
     }
@@ -2341,25 +2457,25 @@ mod api_test {
                 pprof::Label {
                     key: local_root_span_id,
                     str: 0,
-                    num: 10,
-                    num_unit: 0,
-                },
-                pprof::Label::str(trace_endpoint, locate_string("endpoint 10")),
-            ],
-            [
-                pprof::Label {
-                    key: local_root_span_id,
-                    str: 0,
                     num: large_num,
                     num_unit: 0,
                 },
                 pprof::Label::str(trace_endpoint, locate_string("large endpoint")),
             ],
+            [
+                pprof::Label {
+                    key: local_root_span_id,
+                    str: 0,
+                    num: 10,
+                    num_unit: 0,
+                },
+                pprof::Label::str(trace_endpoint, locate_string("endpoint 10")),
+            ],
         ];
 
         // Finally, match the labels.
         for (sample, labels) in serialized_profile
-            .samples
+            .sorted_samples()
             .iter()
             .zip(expected_labels.iter())
         {
