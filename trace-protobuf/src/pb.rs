@@ -73,7 +73,7 @@ pub struct Span {
     #[serde(deserialize_with = "deserialize_null_into_default")]
     pub error: i32,
     /// meta is a mapping from tag name to tag value for string-valued tags.
-    /// @gotags: json:"meta" msg:"meta"
+    /// @gotags: json:"meta,omitempty" msg:"meta,omitempty"
     #[prost(map = "string, string", tag = "10")]
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
@@ -82,7 +82,7 @@ pub struct Span {
         ::prost::alloc::string::String,
     >,
     /// metrics is a mapping from tag name to tag value for numeric-valued tags.
-    /// @gotags: json:"metrics" msg:"metrics"
+    /// @gotags: json:"metrics,omitempty" msg:"metrics,omitempty"
     #[prost(map = "string, double", tag = "11")]
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
@@ -94,7 +94,7 @@ pub struct Span {
     #[serde(deserialize_with = "deserialize_null_into_default")]
     pub r#type: ::prost::alloc::string::String,
     /// meta_struct is a registry of structured "other" data used by, e.g., AppSec.
-    /// @gotags: json:"meta_struct,omitempty" msg:"meta_struct"
+    /// @gotags: json:"meta_struct,omitempty" msg:"meta_struct,omitempty"
     #[prost(map = "string, bytes", tag = "13")]
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
@@ -223,6 +223,7 @@ pub struct StatsPayload {
     pub agent_hostname: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub agent_env: ::prost::alloc::string::String,
+    /// @gotags: json:"stats,omitempty" msg:"Stats,omitempty"
     #[prost(message, repeated, tag = "3")]
     pub stats: ::prost::alloc::vec::Vec<ClientStatsPayload>,
     #[prost(string, tag = "4")]
@@ -250,6 +251,7 @@ pub struct ClientStatsPayload {
     #[prost(string, tag = "3")]
     #[serde(default)]
     pub version: ::prost::alloc::string::String,
+    /// @gotags: json:"stats,omitempty" msg:"Stats,omitempty"
     #[prost(message, repeated, tag = "4")]
     #[serde(default)]
     pub stats: ::prost::alloc::vec::Vec<ClientStatsBucket>,
@@ -304,6 +306,7 @@ pub struct ClientStatsBucket {
     /// bucket duration in nanoseconds
     #[prost(uint64, tag = "2")]
     pub duration: u64,
+    /// @gotags: json:"stats,omitempty" msg:"Stats,omitempty"
     #[prost(message, repeated, tag = "3")]
     pub stats: ::prost::alloc::vec::Vec<ClientGroupedStats>,
     /// AgentTimeShift is the shift applied by the agent stats aggregator on bucket start
@@ -362,4 +365,8 @@ pub struct ClientGroupedStats {
     #[prost(string, tag = "14")]
     #[serde(default)]
     pub peer_service: ::prost::alloc::string::String,
+    /// value of the span.kind tag on the span
+    #[prost(string, tag = "15")]
+    #[serde(default)]
+    pub span_kind: ::prost::alloc::string::String,
 }
