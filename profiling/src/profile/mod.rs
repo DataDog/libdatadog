@@ -1091,8 +1091,31 @@ mod api_test {
         for (index, function) in profile.functions.iter().enumerate() {
             assert_eq!((index + 1) as u64, function.id);
         }
+        let samples = profile.sorted_samples();
 
-        let sample = profile.samples.get(0).expect("index 0 to exist");
+        let sample = samples.get(0).expect("index 0 to exist");
+        assert_eq!(sample.labels.len(), 1);
+        let label = sample.labels.get(0).expect("index 0 to exist");
+        let key = profile
+            .string_table
+            .get(label.key as usize)
+            .expect("index to exist");
+        let str = profile
+            .string_table
+            .get(label.str as usize)
+            .expect("index to exist");
+        let num_unit = profile
+            .string_table
+            .get(label.num_unit as usize)
+            .expect("index to exist");
+        assert_eq!(key, "pid");
+        assert_eq!(label.num, 101);
+        assert_eq!(str, "");
+        assert_eq!(num_unit, "");
+
+        // For some reason, this test never covered index 1
+
+        let sample = samples.get(2).expect("index 2 to exist");
         assert_eq!(sample.labels.len(), 2);
         let label = sample.labels.get(0).expect("index 0 to exist");
         let key = profile
@@ -1129,25 +1152,6 @@ mod api_test {
         assert_eq!(str, "");
         assert_eq!(num_unit, "");
 
-        let sample = profile.samples.get(1).expect("index 1 to exist");
-        assert_eq!(sample.labels.len(), 1);
-        let label = sample.labels.get(0).expect("index 0 to exist");
-        let key = profile
-            .string_table
-            .get(label.key as usize)
-            .expect("index to exist");
-        let str = profile
-            .string_table
-            .get(label.str as usize)
-            .expect("index to exist");
-        let num_unit = profile
-            .string_table
-            .get(label.num_unit as usize)
-            .expect("index to exist");
-        assert_eq!(key, "pid");
-        assert_eq!(label.num, 101);
-        assert_eq!(str, "");
-        assert_eq!(num_unit, "");
     }
 
     #[test]
