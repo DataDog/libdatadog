@@ -7,7 +7,6 @@ pub mod pprof;
 pub mod profiled_endpoints;
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::convert::TryInto;
 use std::hash::{BuildHasherDefault, Hash};
 use std::num::NonZeroI64;
@@ -65,7 +64,7 @@ impl UpscalingRule {
 }
 
 pub struct Profile {
-    aggregated_samples: HashMap<Sample, Box<[i64]>>,
+    aggregated_samples: ObservationMap<Sample>,
     endpoints: Endpoints,
     functions: FxIndexSet<Function>,
     locations: FxIndexSet<Location>,
@@ -76,7 +75,7 @@ pub struct Profile {
     start_time: SystemTime,
     strings: FxIndexSet<String>,
     timestamp_key: StringId,
-    timestamped_samples: HashMap<Sample, Vec<TimestampedObservation>>,
+    timestamped_samples: TimestampedObservationMap<Sample>,
     upscaling_rules: UpscalingRules,
 }
 
@@ -423,7 +422,7 @@ impl Profile {
             sample.values.len(),
         );
 
-        let values = sample.values.clone().into_boxed_slice();
+        let values = sample.values.clone();
         let (labels, local_root_span_id_label_offset, timestamp) =
             self.extract_sample_labels(&sample)?;
 
@@ -441,23 +440,9 @@ impl Profile {
         };
 
         if let Some(ts) = timestamp {
-            match self.timestamped_samples.get_mut(&s) {
-                None => {
-                    let series = vec![(ts, values)];
-                    self.timestamped_samples.insert(s, series);
-                }
-                // Repeated timestamps are unlikely but possible.
-                // We choose to record each as separate observations, and
-                // allow the backend to decide what to do.
-                Some(series) => series.push((ts, values)),
-            }
+            self.timestamped_samples.insert_or_append(s, ts, values);
         } else {
-            match self.aggregated_samples.get_mut(&s) {
-                None => {
-                    self.aggregated_samples.insert(s, values);
-                }
-                Some(v) => v.iter_mut().zip(values.as_ref()).for_each(|(a, b)| *a += b),
-            }
+            self.aggregated_samples.insert_or_aggregate(s, values);
         };
         Ok(())
     }
@@ -771,7 +756,7 @@ impl Profile {
     fn expand_timestamped_sample(
         &self,
         sample: &Sample,
-        observations: &[(Timestamp, Box<[i64]>)],
+        observations: &[(Timestamp, &[i64])],
     ) -> anyhow::Result<Vec<pprof::Sample>> {
         // Clone the labels, but enrich them with endpoint profiling.
         let labels = self.translate_and_enrich_sample_labels(sample)?;
@@ -817,7 +802,7 @@ impl TryFrom<&Profile> for pprof::Profile {
             .timestamped_samples
             .iter()
             .flat_map(|(sample, observations)| {
-                profile.expand_timestamped_sample(sample, observations)
+                profile.expand_timestamped_sample(sample, &observations)
             })
             .flatten()
             .collect();
