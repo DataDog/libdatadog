@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package datadog.trace;
+package pb;
 
 option go_package = "pkg/proto/pbgo/trace"; // golang
 

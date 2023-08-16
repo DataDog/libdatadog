@@ -12,19 +12,29 @@ jobs:
         working-directory: trace-protobuf/src/pb
         run: |
           GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/main/pkg/proto/datadog/trace/agent_payload.proto")
+          GO_AGENT_PROTO_NORMALIZED=$(echo "$GO_AGENT_PROTO" | sed -e "s/datadog.trace/pb/g")
 
-          echo "$GO_AGENT_PROTO" | diff agent_payload.proto -
+          echo "$GO_AGENT_PROTO_NORMALIZED" | diff agent_payload.proto -
+      - name: diff tracer_payload.proto
+        working-directory: trace-protobuf/src/pb
+        run: |
+          GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/main/pkg/proto/datadog/trace/tracer_payload.proto")
+          GO_AGENT_PROTO_NORMALIZED=$(echo "$GO_AGENT_PROTO" | sed -e "s/datadog.trace/pb/g")
+
+          echo "$GO_AGENT_PROTO_NORMALIZED" | diff agent_payload.proto -
       - name: diff stats.proto
         working-directory: trace-protobuf/src/pb
         run: |
           GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/main/pkg/proto/datadog/trace/stats.proto")
-          GO_AGENT_PROTO_FIXED=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
+          GO_AGENT_PROTO_REPLACE_GOGO_PATH=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
+          GO_AGENT_PROTO_NORMALIZED=$(echo "$GO_AGENT_PROTO_REPLACE_GOGO_PATH" | sed -e "s/datadog.trace/pb/g")
 
-          echo "$GO_AGENT_PROTO_FIXED" | diff stats.proto -
+          echo "$GO_AGENT_PROTO_NORMALIZED" | diff stats.proto -
       - name: diff span.proto
         working-directory: trace-protobuf/src/pb
         run: |
           GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/main/pkg/proto/datadog/trace/span.proto")
-          GO_AGENT_PROTO_FIXED=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
+          GO_AGENT_PROTO_REPLACE_GOGO_PATH=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
+          GO_AGENT_PROTO_NORMALIZED=$(echo "$GO_AGENT_PROTO_REPLACE_GOGO_PATH" | sed -e "s/datadog.trace/pb/g")
 
-          echo "$GO_AGENT_PROTO_FIXED" | diff span.proto -
+          echo "$GO_AGENT_PROTO_NORMALIZED" | diff span.proto -
