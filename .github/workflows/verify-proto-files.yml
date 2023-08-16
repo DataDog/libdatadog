@@ -20,22 +20,23 @@ jobs:
         working-directory: trace-protobuf/src/pb
         run: |
           GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/main/pkg/proto/datadog/trace/tracer_payload.proto")
-          GO_AGENT_PROTO_NORMALIZED=$(echo "$GO_AGENT_PROTO" | sed -e "s/datadog.trace/pb/g")
+          FIX_IMPORT_PATH=$(echo "$GO_AGENT_PROTO" | sed -e "s/datadog\/trace\/span.proto/span.proto/g")
+          FIX_PACKAGE_NAME=$(echo "$FIX_IMPORT_PATH" | sed -e "s/datadog.trace/pb/g")
 
-          echo "$GO_AGENT_PROTO_NORMALIZED" | diff agent_payload.proto -
+          echo "$FIX_PACKAGE_NAME" | diff tracer_payload.proto -
       - name: diff stats.proto
         working-directory: trace-protobuf/src/pb
         run: |
           GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/main/pkg/proto/datadog/trace/stats.proto")
-          GO_AGENT_PROTO_REPLACE_GOGO_PATH=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
-          GO_AGENT_PROTO_NORMALIZED=$(echo "$GO_AGENT_PROTO_REPLACE_GOGO_PATH" | sed -e "s/datadog.trace/pb/g")
+          FIX_IMPORT_PATH=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
+          FIX_PACKAGE_NAME=$(echo "$FIX_IMPORT_PATH" | sed -e "s/datadog.trace/pb/g")
 
-          echo "$GO_AGENT_PROTO_NORMALIZED" | diff stats.proto -
+          echo "$FIX_PACKAGE_NAME" | diff stats.proto -
       - name: diff span.proto
         working-directory: trace-protobuf/src/pb
         run: |
           GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/main/pkg/proto/datadog/trace/span.proto")
-          GO_AGENT_PROTO_REPLACE_GOGO_PATH=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
-          GO_AGENT_PROTO_NORMALIZED=$(echo "$GO_AGENT_PROTO_REPLACE_GOGO_PATH" | sed -e "s/datadog.trace/pb/g")
+          FIX_IMPORT_PATH=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
+          FIX_PACKAGE_NAME=$(echo "$FIX_IMPORT_PATH" | sed -e "s/datadog.trace/pb/g")
 
-          echo "$GO_AGENT_PROTO_NORMALIZED" | diff span.proto -
+          echo "$FIX_PACKAGE_NAME" | diff span.proto -
