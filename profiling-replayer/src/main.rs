@@ -34,7 +34,7 @@ fn median(values: &[usize]) -> Option<f64> {
         None => None,
         Some((midpoint, is_odd)) => {
             if is_odd {
-                Some((values[midpoint] + values[midpoint + 1]) as f64)
+                Some((values[midpoint] + values[midpoint + 1]) / 2 as f64)
             } else {
                 Some(values[midpoint] as f64)
             }
