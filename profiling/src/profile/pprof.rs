@@ -165,7 +165,7 @@ pub struct Function {
     #[prost(int64, tag = "4")]
     pub filename: i64, // Index into string table
     #[prost(int64, tag = "5")]
-    pub start_line: i64, // Index into string table
+    pub start_line: i64, // Line number in source file.
 }
 
 #[cfg(test)]

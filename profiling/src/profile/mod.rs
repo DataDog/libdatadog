@@ -2,10 +2,11 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 pub mod api;
+pub mod internal;
 pub mod pprof;
 pub mod profiled_endpoints;
-use core::fmt;
-use std::borrow::{Borrow, Cow};
+
+use std::borrow::Cow;
 use std::convert::TryInto;
 use std::fmt::Debug;
 use std::hash::{BuildHasherDefault, Hash};
@@ -13,7 +14,7 @@ use std::num::NonZeroU32;
 use std::ops::AddAssign;
 use std::time::{Duration, SystemTime};
 
-use pprof::{Function, Label, Line, Location, ValueType};
+use internal::*;
 use profiled_endpoints::ProfiledEndpointsStats;
 use prost::{EncodeError, Message};
 
@@ -21,72 +22,6 @@ use self::api::UpscalingInfo;
 
 pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<rustc_hash::FxHasher>>;
 pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::FxHasher>>;
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[repr(transparent)]
-pub struct FunctionId(NonZeroU32);
-
-impl FunctionId {
-    pub fn new<T>(v: T) -> Self
-    where
-        T: TryInto<u32>,
-        T::Error: Debug,
-    {
-        let index: u32 = v.try_into().expect("FunctionId to fit into a u32");
-
-        // PProf reserves location 0.
-        // Both this, and the serialization of the table, add 1 to avoid the 0 element
-        let index = index.checked_add(1).expect("FunctionId to fit into a u32");
-        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
-        let index = unsafe { NonZeroU32::new_unchecked(index) };
-        Self(index)
-    }
-}
-
-impl From<FunctionId> for u64 {
-    fn from(s: FunctionId) -> Self {
-        Self::from(&s)
-    }
-}
-
-impl From<&FunctionId> for u64 {
-    fn from(s: &FunctionId) -> Self {
-        s.0.get().into()
-    }
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[repr(transparent)]
-pub struct MappingId(NonZeroU32);
-
-impl MappingId {
-    pub fn new<T>(v: T) -> Self
-    where
-        T: TryInto<u32>,
-        T::Error: Debug,
-    {
-        let index: u32 = v.try_into().expect("MappingId to fit into a u32");
-
-        // PProf reserves location 0.
-        // Both this, and the serialization of the table, add 1 to avoid the 0 element
-        let index = index.checked_add(1).expect("MappingId to fit into a u32");
-        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
-        let index = unsafe { NonZeroU32::new_unchecked(index) };
-        Self(index)
-    }
-}
-
-impl From<MappingId> for u64 {
-    fn from(s: MappingId) -> Self {
-        Self::from(&s)
-    }
-}
-
-impl From<&MappingId> for u64 {
-    fn from(s: &MappingId) -> Self {
-        s.0.get().into()
-    }
-}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
@@ -119,106 +54,6 @@ impl From<&SampleId> for u64 {
     fn from(s: &SampleId) -> Self {
         s.0.get().into()
     }
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[repr(transparent)]
-pub struct StackTraceId(usize);
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[repr(transparent)]
-pub struct LocationId(NonZeroU32);
-
-impl LocationId {
-    pub fn new<T>(v: T) -> Self
-    where
-        T: TryInto<u32>,
-        T::Error: Debug,
-    {
-        let index: u32 = v.try_into().expect("LocationId to fit into a u32");
-
-        // PProf reserves location 0.
-        // Both this, and the serialization of the table, add 1 to avoid the 0 element
-        let index = index.checked_add(1).expect("LocationId to fit into a u32");
-        // Safety: the `checked_add(1).expect(...)` guards this from ever being zero.
-        let index = unsafe { NonZeroU32::new_unchecked(index) };
-        Self(index)
-    }
-}
-
-impl From<LocationId> for u64 {
-    fn from(s: LocationId) -> Self {
-        Self::from(&s)
-    }
-}
-
-impl From<&LocationId> for u64 {
-    fn from(s: &LocationId) -> Self {
-        s.0.get().into()
-    }
-}
-
-#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Hash)]
-#[repr(transparent)]
-pub struct StringId(u32);
-
-impl StringId {
-    #[inline]
-    pub const fn zero() -> Self {
-        Self(0)
-    }
-
-    pub fn new<T>(v: T) -> Self
-    where
-        T: TryInto<u32>,
-        T::Error: Debug,
-    {
-        Self(v.try_into().expect("StringId to fit into a u32"))
-    }
-
-    #[inline]
-    pub const fn is_zero(&self) -> bool {
-        self.0 == 0
-    }
-}
-
-impl From<StringId> for i64 {
-    fn from(s: StringId) -> Self {
-        Self::from(&s)
-    }
-}
-
-impl From<&StringId> for i64 {
-    fn from(s: &StringId) -> Self {
-        s.0.into()
-    }
-}
-
-#[derive(Eq, PartialEq, Hash)]
-struct Mapping {
-    /// Address at which the binary (or DLL) is loaded into memory.
-    pub memory_start: u64,
-    /// The limit of the address range occupied by this mapping.
-    pub memory_limit: u64,
-    /// Offset in the binary that corresponds to the first mapped address.
-    pub file_offset: u64,
-
-    /// The object this entry is loaded from.  This can be a filename on
-    /// disk for the main binary and shared libraries, or virtual
-    /// abstractions like "[vdso]".
-    pub filename: StringId,
-
-    /// A string that uniquely identifies a particular program version
-    /// with high probability. E.g., for binaries generated by GNU tools,
-    /// it could be the contents of the .note.gnu.build-id field.
-    pub build_id: StringId,
-}
-
-#[derive(Eq, PartialEq, Hash)]
-struct StackTrace {
-    /// The ids recorded here correspond to a Profile.location.id.
-    /// The leaf is at location_id[0].
-    pub locations: Vec<LocationId>,
 }
 
 #[derive(Eq, PartialEq, Hash)]
@@ -364,7 +199,7 @@ impl UpscalingRules {
                 collision_offset.unwrap(),
                 vec_to_string(values_offset)
             )
-        } else if let Some(rules) = self.rules.get(&(StringId::zero(), StringId::zero())) {
+        } else if let Some(rules) = self.rules.get(&(StringId::ZERO, StringId::ZERO)) {
             let collide_with_byvalue_rule = rules
                 .iter()
                 .find(|rule| is_overlapping(&rule.values_offset, values_offset));
@@ -382,6 +217,7 @@ impl UpscalingRules {
     }
 }
 
+#[derive(Default)]
 pub struct ProfileBuilder<'a> {
     period: Option<api::Period<'a>>,
     sample_types: Vec<api::ValueType<'a>>,
@@ -389,10 +225,10 @@ pub struct ProfileBuilder<'a> {
 }
 
 impl<'a> ProfileBuilder<'a> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         ProfileBuilder {
             period: None,
-            sample_types: vec![],
+            sample_types: Vec::new(),
             start_time: None,
         }
     }
@@ -419,8 +255,8 @@ impl<'a> ProfileBuilder<'a> {
             .sample_types
             .iter()
             .map(|vt| ValueType {
-                r#type: profile.intern(vt.r#type).into(),
-                unit: profile.intern(vt.unit).into(),
+                r#type: profile.intern(vt.r#type),
+                unit: profile.intern(vt.unit),
             })
             .collect();
 
@@ -428,8 +264,8 @@ impl<'a> ProfileBuilder<'a> {
             profile.period = Some((
                 period.value,
                 ValueType {
-                    r#type: profile.intern(period.r#type.r#type).into(),
-                    unit: profile.intern(period.r#type.unit).into(),
+                    r#type: profile.intern(period.r#type.r#type),
+                    unit: profile.intern(period.r#type.unit),
                 },
             ));
         };
@@ -438,61 +274,28 @@ impl<'a> ProfileBuilder<'a> {
     }
 }
 
-impl<'a> Default for ProfileBuilder<'a> {
-    fn default() -> Self {
-        Self::new()
-    }
+trait Dedup<T: Item> {
+    /// Deduplicate the Item and return its associated Id.
+    /// # Panics
+    /// Panics if the number of items overflows the storage capabilities of
+    /// the associated Id type.
+    fn dedup(&mut self, item: T) -> <T as Item>::Id;
 }
 
-trait DedupExt<T: Eq + Hash> {
-    fn dedup(&mut self, item: T) -> usize;
-
-    fn dedup_ref<'a, Q>(&mut self, item: &'a Q) -> usize
-    where
-        T: Eq + Hash + From<&'a Q> + Borrow<Q>,
-        Q: Eq + Hash + ?Sized;
-}
-
-impl<T: Sized + Hash + Eq> DedupExt<T> for FxIndexSet<T> {
-    fn dedup(&mut self, item: T) -> usize {
+impl<T: Item> Dedup<T> for FxIndexSet<T> {
+    fn dedup(&mut self, item: T) -> <T as Item>::Id {
         let (id, _) = self.insert_full(item);
-        id
-    }
-
-    fn dedup_ref<'a, Q>(&mut self, item: &'a Q) -> usize
-    where
-        T: Eq + Hash + From<&'a Q> + Borrow<Q>,
-        Q: Eq + Hash + ?Sized,
-    {
-        match self.get_index_of(item) {
-            Some(index) => index,
-            None => {
-                let (index, inserted) = self.insert_full(item.into());
-                // This wouldn't make any sense; the item couldn't be found so
-                // it was inserted but then it already existed? Screams race-
-                // -condition to me!
-                assert!(inserted);
-                index
-            }
-        }
+        <T as Item>::Id::from_offset(id)
     }
 }
 
-#[derive(Debug)]
-pub struct FullError;
-
-impl fmt::Display for FullError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Full")
-    }
+fn to_pprof_vec<T: PprofItem>(collection: &FxIndexSet<T>) -> Vec<T::PprofMessage> {
+    collection
+        .iter()
+        .enumerate()
+        .map(|(index, item)| item.to_pprof(<T as Item>::Id::from_offset(index)))
+        .collect()
 }
-
-/// Since the ids are index + 1, we need to take 1 off the size. I also want
-/// to restrict the maximum to a 32 bit value; we're gathering way too much
-/// data if we ever exceed this in a single profile.
-const CONTAINER_MAX: usize = (u32::MAX - 1) as usize;
-
-impl std::error::Error for FullError {}
 
 pub struct EncodedProfile {
     pub start: SystemTime,
@@ -543,7 +346,10 @@ impl Profile {
             upscaling_rules: Default::default(),
         };
 
-        profile.intern("");
+        // Ensure the empty string is the first inserted item and has a 0 id.
+        let _id = profile.intern("");
+        debug_assert!(_id == StringId::ZERO);
+
         profile.endpoints.local_root_span_id_label = profile.intern("local root span id");
         profile.endpoints.endpoint_label = profile.intern("trace endpoint");
         profile
@@ -555,65 +361,86 @@ impl Profile {
     }
 
     /// Interns the `str` as a string, returning the id in the string table.
-    fn intern(&mut self, str: &str) -> StringId {
-        // strings are special because the empty string is actually allowed at
-        // index 0; most other 0's are reserved and cannot exist
-        StringId::new(self.strings.dedup_ref(str))
+    /// The empty string is guaranteed to have an id of [StringId::ZERO].
+    fn intern(&mut self, item: &str) -> StringId {
+        // For performance, delay converting the [&str] to a [String] until
+        // after it has been determined to not exist in the set. This avoids
+        // temporary allocations.
+        let index = match self.strings.get_index_of(item) {
+            Some(index) => index,
+            None => {
+                let (index, _inserted) = self.strings.insert_full(item.into());
+                // This wouldn't make any sense; the item couldn't be found so
+                // we try to insert it, but suddenly it exists now?
+                debug_assert!(_inserted);
+                index
+            }
+        };
+        StringId::from_offset(index)
     }
 
     pub fn builder<'a>() -> ProfileBuilder<'a> {
         ProfileBuilder::new()
     }
 
-    fn add_mapping(&mut self, mapping: &api::Mapping) -> Result<MappingId, FullError> {
-        // todo: do full checks as part of intern/dedup
-        if self.strings.len() >= CONTAINER_MAX || self.mappings.len() >= CONTAINER_MAX {
-            return Err(FullError);
-        }
+    fn add_stacktrace(&mut self, locations: Vec<LocationId>) -> StackTraceId {
+        self.stack_traces.dedup(StackTrace { locations })
+    }
 
+    fn get_stacktrace(&self, st: StackTraceId) -> &StackTrace {
+        self.stack_traces
+            .get_index(st.to_raw_id())
+            .expect("StackTraceId {st} to exist in profile")
+    }
+
+    fn add_function(&mut self, function: &api::Function) -> FunctionId {
+        let name = self.intern(function.name);
+        let system_name = self.intern(function.system_name);
+        let filename = self.intern(function.filename);
+
+        let start_line = function.start_line;
+        self.functions.dedup(Function {
+            name,
+            system_name,
+            filename,
+            start_line,
+        })
+    }
+
+    fn add_location(&mut self, location: &api::Location) -> LocationId {
+        let mapping_id = self.add_mapping(&location.mapping);
+        let lines: Vec<Line> = location
+            .lines
+            .iter()
+            .map(|line| {
+                let function_id = self.add_function(&line.function);
+                let line1 = line.line;
+                Line {
+                    function_id,
+                    line: line1,
+                }
+            })
+            .collect();
+
+        self.locations.dedup(Location {
+            mapping_id,
+            address: location.address,
+            lines,
+            is_folded: location.is_folded,
+        })
+    }
+
+    fn add_mapping(&mut self, mapping: &api::Mapping) -> MappingId {
         let filename = self.intern(mapping.filename);
         let build_id = self.intern(mapping.build_id);
 
-        let index = self.mappings.dedup(Mapping {
+        self.mappings.dedup(Mapping {
             memory_start: mapping.memory_start,
             memory_limit: mapping.memory_limit,
             file_offset: mapping.file_offset,
             filename,
             build_id,
-        });
-
-        /* PProf reserves mapping 0 for "no mapping", and it won't let you put
-         * one in there with all "zero" data either, so we shift the ids.
-         */
-        Ok(MappingId::new(index))
-    }
-
-    fn add_stacktrace(&mut self, locations: Vec<LocationId>) -> StackTraceId {
-        let index = self.stack_traces.dedup(StackTrace { locations });
-        StackTraceId(index)
-    }
-
-    fn get_stacktrace(&self, st: StackTraceId) -> &StackTrace {
-        self.stack_traces.get_index(st.0).unwrap()
-    }
-
-    fn add_function(&mut self, function: &api::Function) -> FunctionId {
-        let name = self.intern(function.name).into();
-        let system_name = self.intern(function.system_name).into();
-        let filename = self.intern(function.filename).into();
-
-        let index = self.functions.dedup(Function {
-            id: 0,
-            name,
-            system_name,
-            filename,
-            start_line: function.start_line,
-        });
-
-        /* PProf reserves function 0 for "no function", and it won't let you put
-         * one in there with all "zero" data either, so we shift the ids.
-         */
-        FunctionId::new(index)
+        })
     }
 
     pub fn add(&mut self, sample: api::Sample) -> anyhow::Result<SampleId> {
@@ -627,31 +454,12 @@ impl Profile {
         let values = sample.values.clone();
         let (labels, local_root_span_id_label_offset) = self.extract_sample_labels(&sample)?;
 
-        let mut locations = Vec::with_capacity(sample.locations.len());
-        for location in sample.locations.iter() {
-            let mapping_id = self.add_mapping(&location.mapping)?;
-            let lines: Vec<Line> = location
-                .lines
-                .iter()
-                .map(|line| {
-                    let function_id = self.add_function(&line.function);
-                    Line {
-                        function_id: function_id.into(),
-                        line: line.line,
-                    }
-                })
-                .collect();
+        let locations = sample
+            .locations
+            .iter()
+            .map(|l| self.add_location(l))
+            .collect();
 
-            let index = self.locations.dedup(Location {
-                id: 0,
-                mapping_id: u64::from(mapping_id),
-                address: location.address,
-                lines,
-                is_folded: location.is_folded,
-            });
-
-            locations.push(LocationId::new(index))
-        }
         let stacktrace = self.add_stacktrace(locations);
         let s = Sample {
             stacktrace,
@@ -686,20 +494,17 @@ impl Profile {
         let mut labels: Vec<Label> = Vec::with_capacity(sample.labels.len());
         let mut local_root_span_id_label_offset: Option<usize> = None;
         for label in sample.labels.iter() {
+            anyhow::ensure!(
+                label.uses_at_most_one_of_str_and_num(),
+                "Invalid label: used both str and num fields: {label:?}"
+            );
+
             let key = self.intern(label.key);
-            let str = label
-                .str
-                .map(|s| self.intern(s))
-                .unwrap_or(StringId::zero());
-            let num_unit = label
-                .num_unit
-                .map(|s| self.intern(s))
-                .unwrap_or(StringId::zero());
 
             if key == self.endpoints.local_root_span_id_label {
                 // Panic: if the label.str isn't 0, then str must have been provided.
                 anyhow::ensure!(
-                    str.is_zero(),
+                    label.str.is_none(),
                     "the label \"local root span id\" must be sent as a number, not string {}",
                     label.str.unwrap()
                 );
@@ -709,19 +514,23 @@ impl Profile {
                 );
                 anyhow::ensure!(
                     local_root_span_id_label_offset.is_none(),
-                    "only one label per sample can have the key \"local root span id\", found two: {}, {}",
-                    labels[local_root_span_id_label_offset.unwrap()].num, label.num
+                    "only one label per sample can have the key \"local root span id\", found two: {:?}, {}",
+                    labels[local_root_span_id_label_offset.unwrap()], label.num
                 );
                 local_root_span_id_label_offset = Some(labels.len());
             }
 
+            let internal_label = if let Some(s) = label.str {
+                let str = self.intern(s);
+                Label::str(key, str)
+            } else {
+                let num = label.num;
+                let num_unit = label.num_unit.map(|s| self.intern(s));
+                Label::num(key, num, num_unit)
+            };
+
             // If you refactor this push, ensure the local_root_span_id_label_offset is correct.
-            labels.push(Label {
-                key: key.into(),
-                str: str.into(),
-                num: label.num,
-                num_unit: num_unit.into(),
-            });
+            labels.push(internal_label);
         }
         Ok((labels, local_root_span_id_label_offset))
     }
@@ -730,8 +539,8 @@ impl Profile {
         let mut sample_types: Vec<api::ValueType> = Vec::with_capacity(self.sample_types.len());
         for sample_type in self.sample_types.iter() {
             sample_types.push(api::ValueType {
-                r#type: self.get_string(sample_type.r#type)?.as_str(),
-                unit: self.get_string(sample_type.unit)?.as_str(),
+                r#type: self.get_string(sample_type.r#type),
+                unit: self.get_string(sample_type.unit),
             })
         }
         Some(sample_types)
@@ -746,16 +555,13 @@ impl Profile {
          */
         let sample_types: Vec<api::ValueType> = self.extract_api_sample_types()?;
 
-        let period = match &self.period {
-            Some(t) => Some(api::Period {
-                r#type: api::ValueType {
-                    r#type: self.get_string(t.1.r#type)?.as_str(),
-                    unit: self.get_string(t.1.unit)?.as_str(),
-                },
-                value: t.0,
-            }),
-            None => None,
-        };
+        let period = self.period.map(|t| api::Period {
+            r#type: api::ValueType {
+                r#type: self.get_string(t.1.r#type),
+                unit: self.get_string(t.1.unit),
+            },
+            value: t.0,
+        });
 
         let mut profile = ProfileBuilder::new()
             .sample_types(sample_types)
@@ -861,8 +667,10 @@ impl Profile {
         })
     }
 
-    pub fn get_string(&self, id: i64) -> Option<&String> {
-        self.strings.get_index(id as usize)
+    pub fn get_string(&self, id: StringId) -> &str {
+        self.strings
+            .get_index(id.to_offset())
+            .expect("StringId to have a valid interned index")
     }
 
     /// Fetches the endpoint information for the label. There may be errors,
@@ -870,21 +678,28 @@ impl Profile {
     /// Hence, the return type of Result<Option<_>, _>.
     fn get_endpoint_for_label(&self, label: &Label) -> anyhow::Result<Option<StringId>> {
         anyhow::ensure!(
-            StringId::new(label.key) == self.endpoints.local_root_span_id_label,
+            label.get_key() == self.endpoints.local_root_span_id_label,
             "bug: get_endpoint_for_label should only be called on labels with the key \"local root span id\", called on label with key \"{}\"",
-            &self.strings[label.key as usize]
+            self.get_string(label.get_key())
         );
 
         anyhow::ensure!(
-            label.str == 0,
-            "the local root span id label value must be sent as a number, not a string, given string id {}",
-            label.str
+            label.has_num_value(),
+            "the local root span id label value must be sent as a number, not a string, given {:?}",
+            label
         );
 
-        /* Safety: the value is a u64, but pprof only has signed values, so we
-         * transmute it; the backend does the same.
-         */
-        let local_root_span_id: u64 = unsafe { std::intrinsics::transmute(label.num) };
+        let local_root_span_id: u64 = if let LabelValue::Num { num, .. } = label.get_value() {
+            // Manually specify the type here to be sure we're transmuting an
+            // i64 and not a &i64.
+            let id: i64 = *num;
+            // Safety: the value is a u64, but pprof only has signed values, so we
+            // transmute it; the backend does the same.
+            unsafe { std::intrinsics::transmute(id) }
+        } else {
+            return Err(anyhow::format_err!("the local root span id label value must be sent as a number, not a string, given {:?}",
+            label));
+        };
 
         Ok(self
             .endpoints
@@ -893,7 +708,8 @@ impl Profile {
             .map(StringId::clone))
     }
 
-    fn upscale_values(&self, values: &[i64], labels: &[Label]) -> anyhow::Result<Vec<i64>> {
+    // TODO: Consider whether to use the internal Label here instead
+    fn upscale_values(&self, values: &[i64], labels: &[pprof::Label]) -> anyhow::Result<Vec<i64>> {
         let mut new_values = values.to_vec();
 
         if !self.upscaling_rules.is_empty() {
@@ -909,9 +725,7 @@ impl Profile {
                 .collect::<Vec<&Vec<UpscalingRule>>>();
 
             // get byvalue rules if any
-            if let Some(byvalue_rules) = self
-                .upscaling_rules
-                .get(&(StringId::zero(), StringId::zero()))
+            if let Some(byvalue_rules) = self.upscaling_rules.get(&(StringId::ZERO, StringId::ZERO))
             {
                 group_of_rules.push(byvalue_rules);
             }
@@ -961,25 +775,26 @@ impl TryFrom<&Profile> for pprof::Profile {
             .iter()
             .map(|(sample, values)| {
                 // Clone the labels, but enrich them with endpoint profiling.
-                let mut labels = sample.labels.clone();
+                let mut labels: Vec<pprof::Label> =
+                    sample.labels.iter().map(pprof::Label::from).collect();
                 if let Some(offset) = sample.local_root_span_id_label_offset {
                     // Safety: this offset was created internally and isn't be mutated.
                     let lrsi_label = unsafe { sample.labels.get_unchecked(offset) };
                     if let Some(endpoint_value_id) = profile.get_endpoint_for_label(lrsi_label)? {
-                        labels.push(Label {
-                            key: profile.endpoints.endpoint_label.into(),
-                            str: endpoint_value_id.into(),
+                        labels.push(pprof::Label {
+                            key: profile.endpoints.endpoint_label.to_raw_id(),
+                            str: endpoint_value_id.to_raw_id(),
                             num: 0,
                             num_unit: 0,
                         });
                     }
                 }
 
-                let new_values = profile.upscale_values(values.as_ref(), labels.as_ref())?;
+                let new_values = profile.upscale_values(values.as_ref(), &labels)?;
                 let stacktrace = profile.get_stacktrace(sample.stacktrace);
 
                 Ok(pprof::Sample {
-                    location_ids: stacktrace.locations.iter().map(Into::into).collect(),
+                    location_ids: stacktrace.locations.iter().map(Id::to_raw_id).collect(),
                     values: new_values,
                     labels,
                 })
@@ -987,44 +802,15 @@ impl TryFrom<&Profile> for pprof::Profile {
             .collect();
 
         Ok(pprof::Profile {
-            sample_types: profile.sample_types.clone(),
+            sample_types: profile
+                .sample_types
+                .iter()
+                .map(pprof::ValueType::from)
+                .collect(),
             samples: samples?,
-            mappings: profile
-                .mappings
-                .iter()
-                .enumerate()
-                .map(|(index, mapping)| pprof::Mapping {
-                    id: (index + 1) as u64,
-                    memory_start: mapping.memory_start,
-                    memory_limit: mapping.memory_limit,
-                    file_offset: mapping.file_offset,
-                    filename: mapping.filename.into(),
-                    build_id: mapping.build_id.into(),
-                    ..Default::default() // todo: support detailed Mapping info
-                })
-                .collect(),
-            locations: profile
-                .locations
-                .iter()
-                .enumerate()
-                .map(|(index, location)| pprof::Location {
-                    id: (index + 1) as u64,
-                    mapping_id: location.mapping_id,
-                    address: location.address,
-                    lines: location.lines.clone(),
-                    is_folded: location.is_folded,
-                })
-                .collect(),
-            functions: profile
-                .functions
-                .iter()
-                .enumerate()
-                .map(|(index, function)| {
-                    let mut function = *function;
-                    function.id = (index + 1) as u64;
-                    function
-                })
-                .collect(),
+            mappings: to_pprof_vec(&profile.mappings),
+            locations: to_pprof_vec(&profile.locations),
+            functions: to_pprof_vec(&profile.functions),
             string_table: profile.strings.iter().map(Into::into).collect(),
             time_nanos: profile
                 .start_time
@@ -1033,7 +819,7 @@ impl TryFrom<&Profile> for pprof::Profile {
                     duration.as_nanos().min(i64::MAX as u128) as i64
                 }),
             period,
-            period_type,
+            period_type: period_type.map(pprof::ValueType::from),
             ..Default::default()
         })
     }
@@ -1053,7 +839,7 @@ mod api_test {
         }];
         let mut profiles = Profile::builder().sample_types(sample_types).build();
 
-        let expected_id = StringId::new(profiles.interned_strings_count());
+        let expected_id = StringId::from_offset(profiles.interned_strings_count());
 
         let string = "a";
         let id1 = profiles.intern(string);
@@ -1265,10 +1051,9 @@ mod api_test {
         assert_eq!(profile.period, prev.period);
         assert_eq!(profile.sample_types, prev.sample_types);
 
-        // The string table should have at least the empty string:
+        // The string table should have at least the empty string.
         assert!(!profile.strings.is_empty());
-        // The empty string should be at position 0
-        assert_eq!(profile.get_string(0).expect("index 0 to be found"), "");
+        assert_eq!("", profile.get_string(StringId::ZERO));
     }
 
     #[test]
@@ -1281,8 +1066,8 @@ mod api_test {
         let period = Some((
             10_000_000,
             ValueType {
-                r#type: profile.intern("wall-time").into(),
-                unit: profile.intern("nanoseconds").into(),
+                r#type: profile.intern("wall-time"),
+                unit: profile.intern("nanoseconds"),
             },
         ));
         profile.period = period;
@@ -1294,18 +1079,8 @@ mod api_test {
         // table offsets may not match).
         let (value, period_type) = profile.period.expect("profile to have a period");
         assert_eq!(value, period.unwrap().0);
-        assert_eq!(
-            profile
-                .get_string(period_type.r#type)
-                .expect("string to be found"),
-            "wall-time"
-        );
-        assert_eq!(
-            profile
-                .get_string(period_type.unit)
-                .expect("string to be found"),
-            "nanoseconds"
-        );
+        assert_eq!(profile.get_string(period_type.r#type), "wall-time");
+        assert_eq!(profile.get_string(period_type.unit), "nanoseconds");
     }
 
     #[test]
@@ -2093,7 +1868,7 @@ mod api_test {
         let id_label2 = api::Label {
             key: "my other label",
             str: Some("foobar"),
-            num: 10,
+            num: 0,
             num_unit: None,
         };
 
