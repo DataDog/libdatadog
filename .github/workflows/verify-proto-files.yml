@@ -11,20 +11,32 @@ jobs:
       - name: diff agent_payload.proto
         working-directory: trace-protobuf/src/pb
         run: |
-          GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/master/pkg/trace/pb/agent_payload.proto")
+          GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/main/pkg/proto/datadog/trace/agent_payload.proto")
+          FIX_IMPORT_PATH=$(echo "$GO_AGENT_PROTO" | sed -e "s/datadog\/trace\/tracer_payload.proto/tracer_payload.proto/g")
+          FIX_PACKAGE_NAME=$(echo "$FIX_IMPORT_PATH" | sed -e "s/datadog.trace/pb/g")
 
-          echo "$GO_AGENT_PROTO" | diff agent_payload.proto -
+          echo "$FIX_PACKAGE_NAME" | diff agent_payload.proto -
+      - name: diff tracer_payload.proto
+        working-directory: trace-protobuf/src/pb
+        run: |
+          GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/main/pkg/proto/datadog/trace/tracer_payload.proto")
+          FIX_IMPORT_PATH=$(echo "$GO_AGENT_PROTO" | sed -e "s/datadog\/trace\/span.proto/span.proto/g")
+          FIX_PACKAGE_NAME=$(echo "$FIX_IMPORT_PATH" | sed -e "s/datadog.trace/pb/g")
+
+          echo "$FIX_PACKAGE_NAME" | diff tracer_payload.proto -
       - name: diff stats.proto
         working-directory: trace-protobuf/src/pb
         run: |
-          GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/master/pkg/trace/pb/stats.proto")
-          GO_AGENT_PROTO_FIXED=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
+          GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/main/pkg/proto/datadog/trace/stats.proto")
+          FIX_IMPORT_PATH=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
+          FIX_PACKAGE_NAME=$(echo "$FIX_IMPORT_PATH" | sed -e "s/datadog.trace/pb/g")
 
-          echo "$GO_AGENT_PROTO_FIXED" | diff stats.proto -
+          echo "$FIX_PACKAGE_NAME" | diff stats.proto -
       - name: diff span.proto
         working-directory: trace-protobuf/src/pb
         run: |
-          GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/master/pkg/trace/pb/span.proto")
-          GO_AGENT_PROTO_FIXED=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
+          GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/main/pkg/proto/datadog/trace/span.proto")
+          FIX_IMPORT_PATH=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
+          FIX_PACKAGE_NAME=$(echo "$FIX_IMPORT_PATH" | sed -e "s/datadog.trace/pb/g")
 
-          echo "$GO_AGENT_PROTO_FIXED" | diff span.proto -
+          echo "$FIX_PACKAGE_NAME" | diff span.proto -
