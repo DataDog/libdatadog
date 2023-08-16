@@ -18,9 +18,10 @@ pub struct Serie {
 #[derive(Serialize, Debug, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricNamespace {
-    Trace,
-    Profiling,
+    Tracers,
+    Profilers,
     Appsec,
+    Sidecar,
 }
 
 #[derive(Serialize, Debug, Clone, Copy)]
