@@ -74,6 +74,7 @@ fn generate_protobuf() {
     config.field_attribute("ClientGroupedStats.DB_type", "#[serde(default)]");
     config.field_attribute("ClientGroupedStats.type", "#[serde(default)]");
     config.field_attribute("ClientGroupedStats.peer_service", "#[serde(default)]");
+    config.field_attribute("ClientGroupedStats.span_kind", "#[serde(default)]");
 
     config.field_attribute(
         "ClientGroupedStats.okSummary",

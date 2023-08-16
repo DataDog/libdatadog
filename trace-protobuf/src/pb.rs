@@ -367,5 +367,6 @@ pub struct ClientGroupedStats {
     pub peer_service: ::prost::alloc::string::String,
     /// value of the span.kind tag on the span
     #[prost(string, tag = "15")]
+    #[serde(default)]
     pub span_kind: ::prost::alloc::string::String,
 }
