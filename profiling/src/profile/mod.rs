@@ -780,7 +780,12 @@ impl Profile {
     ) -> anyhow::Result<Vec<pprof::Sample>> {
         // Clone the labels, but enrich them with endpoint profiling.
         let labels = self.translate_and_enrich_sample_labels(sample)?;
-        let stacktrace = self.get_stacktrace(sample.stacktrace);
+        let location_ids: Vec<_> = self
+            .get_stacktrace(sample.stacktrace)
+            .locations
+            .iter()
+            .map(Id::to_raw_id)
+            .collect();
 
         observations
             .iter()
@@ -792,7 +797,7 @@ impl Profile {
                 labels.push(Label::num(self.timestamp_key, timestamp.get(), None).into());
 
                 Ok(pprof::Sample {
-                    location_ids: stacktrace.locations.iter().map(Id::to_raw_id).collect(),
+                    location_ids: location_ids.clone(),
                     values: new_values,
                     labels,
                 })
@@ -825,11 +830,16 @@ impl TryFrom<&Profile> for pprof::Profile {
             .map(|(sample, values)| {
                 let labels = profile.translate_and_enrich_sample_labels(sample)?;
 
-                let stacktrace = profile.get_stacktrace(sample.stacktrace);
+                let location_ids: Vec<_> = profile
+                    .get_stacktrace(sample.stacktrace)
+                    .locations
+                    .iter()
+                    .map(Id::to_raw_id)
+                    .collect();
                 let new_values: Vec<i64> =
                     profile.upscale_values(values.as_ref(), labels.as_ref())?;
                 Ok(pprof::Sample {
-                    location_ids: stacktrace.locations.iter().map(Id::to_raw_id).collect(),
+                    location_ids,
                     values: new_values,
                     labels,
                 })
@@ -1708,12 +1718,12 @@ mod api_test {
             .expect("Rule added");
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
-
-        let first = serialized_profile.samples.get(0).expect("first sample");
+        let samples = serialized_profile.sorted_samples();
+        let first = samples.get(0).expect("first sample");
 
         assert_eq!(first.values, vec![2, 10000, 42]);
 
-        let second = serialized_profile.samples.get(1).expect("second sample");
+        let second = samples.get(1).expect("second sample");
 
         assert_eq!(second.values, vec![10, 24, 198]);
     }
@@ -1778,12 +1788,12 @@ mod api_test {
             .expect("Rule added");
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
-
-        let first = serialized_profile.samples.get(0).expect("first sample");
+        let samples = serialized_profile.sorted_samples();
+        let first = samples.get(0).expect("first sample");
 
         assert_eq!(first.values, vec![2, 10000, 105]);
 
-        let second = serialized_profile.samples.get(1).expect("second sample");
+        let second = samples.get(1).expect("second sample");
 
         assert_eq!(second.values, vec![10, 24, 495]);
     }
@@ -1944,6 +1954,7 @@ mod api_test {
         assert_eq!(second.values, vec![5, 24, 99]);
     }
 
+ 
     #[test]
     fn test_upscaling_by_label_with_two_different_rules_on_two_different_sample() {
         let sample_types = create_samples_types();
@@ -1984,7 +1995,7 @@ mod api_test {
         let id_label2 = api::Label {
             key: "my other label",
             str: Some("foobar"),
-            num: 0,
+            num: 10,
             num_unit: None,
         };
 
@@ -2023,12 +2034,12 @@ mod api_test {
             .expect("Rule added");
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
-
-        let first = serialized_profile.samples.get(0).expect("one sample");
+        let samples = serialized_profile.sorted_samples();
+        let first = samples.get(0).expect("one sample");
 
         assert_eq!(first.values, vec![2, 10000, 42]);
 
-        let second = serialized_profile.samples.get(1).expect("one sample");
+        let second = samples.get(1).expect("one sample");
 
         assert_eq!(second.values, vec![5, 24, 990]);
     }
@@ -2068,7 +2079,6 @@ mod api_test {
 
         assert_eq!(first.values, vec![2, 20000, 42]);
     }
-
     #[test]
     fn test_upscaling_by_value_and_by_label_different_values() {
         let sample_types = create_samples_types();
