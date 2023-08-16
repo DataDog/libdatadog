@@ -1481,6 +1481,7 @@ mod api_test {
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
 
+        assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
 
         assert_eq!(first.values[0], 1);
@@ -1535,6 +1536,7 @@ mod api_test {
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
 
+        assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
 
         assert_eq!(first.values, vec![0, 10000, 42]);
@@ -1562,6 +1564,7 @@ mod api_test {
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
 
+        assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
 
         assert_eq!(first.values, vec![3, 10000, 42]);
@@ -1593,6 +1596,7 @@ mod api_test {
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
 
+        assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
 
         assert_eq!(first.values, vec![1, 298, 29]);
@@ -1624,6 +1628,7 @@ mod api_test {
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
 
+        assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
 
         assert_eq!(first.values, vec![1, 16, 0]);
@@ -1857,6 +1862,7 @@ mod api_test {
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
 
+        assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
 
         assert_eq!(first.values, vec![1, 10000, 42]);
@@ -1891,6 +1897,7 @@ mod api_test {
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
 
+        assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
 
         assert_eq!(first.values, vec![2, 10000, 42]);
@@ -2083,6 +2090,7 @@ mod api_test {
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
 
+        assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
 
         assert_eq!(first.values, vec![2, 20000, 42]);
@@ -2124,6 +2132,7 @@ mod api_test {
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
 
+        assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
 
         assert_eq!(first.values, vec![2, 10000, 210]);
