@@ -796,7 +796,7 @@ impl Profile {
         observations
             .iter()
             .map(|(timestamp, values)| {
-                let new_values: Vec<i64> = self.upscale_values(values.as_ref(), &labels)?;
+                let values = self.upscale_values(values, &labels)?;
                 let mut labels = labels.clone();
 
                 // pprof uses a label to store the timestamp so put it there
@@ -804,7 +804,7 @@ impl Profile {
 
                 Ok(pprof::Sample {
                     location_ids: location_ids.clone(),
-                    values: new_values,
+                    values,
                     labels,
                 })
             })
@@ -842,11 +842,10 @@ impl TryFrom<&Profile> for pprof::Profile {
                     .iter()
                     .map(Id::to_raw_id)
                     .collect();
-                let new_values: Vec<i64> =
-                    profile.upscale_values(values.as_ref(), labels.as_ref())?;
+                let values = profile.upscale_values(values, &labels)?;
                 Ok(pprof::Sample {
                     location_ids,
-                    values: new_values,
+                    values,
                     labels,
                 })
             })
