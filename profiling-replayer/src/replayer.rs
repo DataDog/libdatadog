@@ -21,7 +21,7 @@ pub struct Replayer<'pprof> {
 impl<'pprof> Replayer<'pprof> {
     fn system_time_add(system_time: SystemTime, ns: i64) -> SystemTime {
         if ns < 0 {
-            let u64 = ns.abs() as u64;
+            let u64 = ns.unsigned_abs();
             system_time.sub(Duration::from_nanos(u64))
         } else {
             let u64 = ns as u64;

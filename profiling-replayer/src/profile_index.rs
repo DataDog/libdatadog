@@ -4,7 +4,6 @@
 use anyhow::Result;
 use datadog_profiling::profile::pprof::{Function, Location, Mapping, Profile};
 use std::collections::HashMap;
-use std::ops::Deref;
 
 pub struct ProfileIndex<'pprof> {
     pub pprof: &'pprof Profile,
@@ -66,21 +65,21 @@ impl<'pprof> ProfileIndex<'pprof> {
     pub fn get_mapping(&'pprof self, id: u64) -> Result<&'pprof Mapping> {
         match self.mappings.get(&id) {
             None => anyhow::bail!("pprof did not contain mapping id {id}"),
-            Some(item) => Ok(item.deref()),
+            Some(item) => Ok(*item),
         }
     }
 
     pub fn get_location(&'pprof self, id: u64) -> Result<&'pprof Location> {
         match self.locations.get(&id) {
             None => anyhow::bail!("pprof did not contain location id {id}"),
-            Some(item) => Ok(item.deref()),
+            Some(item) => Ok(*item),
         }
     }
 
     pub fn get_function(&'pprof self, id: u64) -> Result<&'pprof Function> {
         match self.functions.get(&id) {
             None => anyhow::bail!("pprof did not contain function id {id}"),
-            Some(item) => Ok(item.deref()),
+            Some(item) => Ok(*item),
         }
     }
 }

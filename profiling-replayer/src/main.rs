@@ -34,7 +34,7 @@ fn median(values: &[usize]) -> Option<f64> {
         None => None,
         Some((midpoint, is_odd)) => {
             if is_odd {
-                Some((values[midpoint] + values[midpoint + 1]) / 2 as f64)
+                Some((values[midpoint] + values[midpoint + 1]) as f64 / 2.0)
             } else {
                 Some(values[midpoint] as f64)
             }
@@ -151,7 +151,7 @@ fn main() -> anyhow::Result<()> {
     let mut outprof = profile::Profile::builder()
         .start_time(Some(replayer.start_time))
         .sample_types(replayer.sample_types.clone())
-        .period(replayer.period.clone())
+        .period(replayer.period)
         .build();
 
     // Before benchmarking, let's calculate some statistics.
@@ -168,10 +168,7 @@ fn main() -> anyhow::Result<()> {
         depths.sort();
         let min = depths.first().unwrap();
         let [q1, q2, q3] = quartiles(depths.as_slice()).unwrap();
-        let median = {};
         let max = depths.last().unwrap();
-
-        let max = depths[depths.len() - 1];
 
         println!("Min stack depth is {min}.");
         println!("Q1 = {q1}, Q2 = {q2}, Q3 = {q3}.");
