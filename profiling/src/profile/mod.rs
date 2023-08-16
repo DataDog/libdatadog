@@ -64,7 +64,7 @@ impl UpscalingRule {
 }
 
 pub struct Profile {
-    aggregated_samples: HashMap<Sample, Vec<i64>>,
+    aggregated_samples: HashMap<Sample, Box<[i64]>>,
     endpoints: Endpoints,
     functions: FxIndexSet<Function>,
     locations: FxIndexSet<Location>,
@@ -75,7 +75,7 @@ pub struct Profile {
     start_time: SystemTime,
     strings: FxIndexSet<String>,
     timestamp_key: StringId,
-    timestamped_samples: HashMap<Sample, Vec<(Timestamp, Vec<i64>)>>,
+    timestamped_samples: HashMap<Sample, Vec<(Timestamp, Box<[i64]>)>>,
     upscaling_rules: UpscalingRules,
 }
 
@@ -434,7 +434,7 @@ impl Profile {
             sample.values.len(),
         );
 
-        let values = sample.values.clone();
+        let values = sample.values.clone().into_boxed_slice();
         let (labels, local_root_span_id_label_offset, timestamp) =
             self.extract_sample_labels(&sample)?;
 
@@ -467,7 +467,7 @@ impl Profile {
                 None => {
                     self.aggregated_samples.insert(s, values);
                 }
-                Some(v) => v.iter_mut().zip(values).for_each(|(a, b)| *a += b),
+                Some(v) => v.iter_mut().zip(values.as_ref()).for_each(|(a, b)| *a += b),
             }
         };
         Ok(())
@@ -782,7 +782,7 @@ impl Profile {
     fn expand_timestamped_sample(
         &self,
         sample: &Sample,
-        observations: &[(Timestamp, Vec<i64>)],
+        observations: &[(Timestamp, Box<[i64]>)],
     ) -> anyhow::Result<Vec<pprof::Sample>> {
         // Clone the labels, but enrich them with endpoint profiling.
         let labels = self.translate_and_enrich_sample_labels(sample)?;
@@ -1151,7 +1151,6 @@ mod api_test {
         assert_eq!(label.num, 42);
         assert_eq!(str, "");
         assert_eq!(num_unit, "");
-
     }
 
     #[test]
