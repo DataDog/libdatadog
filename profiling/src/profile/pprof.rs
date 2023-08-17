@@ -74,9 +74,9 @@ pub struct ValueType {
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, ::prost::Message)]
 pub struct Label {
     #[prost(int64, tag = "1")]
-    pub(crate) key: i64, // Index into string table
+    pub key: i64, // Index into string table
     #[prost(int64, tag = "2")]
-    pub(crate) str: i64, // Index into string table
+    pub str: i64, // Index into string table
     #[prost(int64, tag = "3")]
     pub num: i64,
     #[prost(int64, tag = "4")]

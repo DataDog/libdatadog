@@ -24,6 +24,7 @@ members = [
   "tests/spawn_from_lib",
   "serverless"
 ]
+exclude = ["profiling-replayer"]
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"
 

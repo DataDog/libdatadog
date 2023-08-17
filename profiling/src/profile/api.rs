@@ -11,7 +11,7 @@ pub struct ValueType<'a> {
     pub unit: &'a str,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Period<'a> {
     pub r#type: ValueType<'a>,
     pub value: i64,
@@ -55,7 +55,7 @@ pub struct Function<'a> {
     pub start_line: i64,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Line<'a> {
     /// The corresponding profile.Function for this line.
     pub function: Function<'a>,
@@ -64,7 +64,7 @@ pub struct Line<'a> {
     pub line: i64,
 }
 
-#[derive(Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Location<'a> {
     pub mapping: Mapping<'a>,
 
@@ -116,7 +116,7 @@ impl<'a> Label<'a> {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Sample<'a> {
     /// The leaf is at locations[0].
     pub locations: Vec<Location<'a>>,
