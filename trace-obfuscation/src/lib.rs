@@ -7,6 +7,4 @@
 
 pub mod credit_cards;
 pub mod http;
-pub mod obfuscate;
-pub mod obfuscation_config;
 pub mod replacer;
