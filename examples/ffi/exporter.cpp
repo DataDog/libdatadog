@@ -1,6 +1,6 @@
 extern "C" {
-  #include <datadog/common.h>
-  #include <datadog/profiling.h>
+#include <datadog/common.h>
+#include <datadog/profiling.h>
 }
 #include <cstdint>
 #include <cstdio>
@@ -40,21 +40,17 @@ int main(int argc, char *argv[]) {
 
   const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
   const ddog_prof_Period period = {wall_time, 60};
-  std::unique_ptr<ddog_prof_Profile, Deleter> profile{ ddog_prof_Profile_new(sample_types, &period, nullptr) };
+  std::unique_ptr<ddog_prof_Profile, Deleter> profile{
+      ddog_prof_Profile_new(sample_types, &period, nullptr)};
 
-  ddog_prof_Line root_line = {
+  ddog_prof_Location root_location = {
+      // yes, a zero-initialized mapping is valid
+      .mapping = {},
       .function =
           {
               .name = DDOG_CHARSLICE_C("{main}"),
               .filename = DDOG_CHARSLICE_C("/srv/example/index.php"),
           },
-      .line = 0,
-  };
-
-  ddog_prof_Location root_location = {
-      // yes, a zero-initialized mapping is valid
-      .mapping = {},
-      .lines = {&root_line, 1},
   };
 
   int64_t value = 10;
@@ -78,16 +74,18 @@ int main(int argc, char *argv[]) {
   ddog_prof_Slice_Usize offsets_slice = {.ptr = offset, .len = 1};
   ddog_CharSlice empty_charslice = DDOG_CHARSLICE_C("");
 
-  auto upscaling_addresult =
-    ddog_prof_Profile_add_upscaling_rule_proportional(profile.get(), offsets_slice, empty_charslice, empty_charslice, 1, 1);
+  auto upscaling_addresult = ddog_prof_Profile_add_upscaling_rule_proportional(
+      profile.get(), offsets_slice, empty_charslice, empty_charslice, 1, 1);
 
   if (upscaling_addresult.tag == DDOG_PROF_PROFILE_UPSCALING_RULE_ADD_RESULT_ERR) {
     print_error("Failed to add an upscaling rule: ", upscaling_addresult.err);
     ddog_Error_drop(&upscaling_addresult.err);
-    return 1; // in this specific case, we want to fail the executiong. But in general, we should not
+    // in this specific case, we want to fail the execution. But in general, we should not
+    return 1;
   }
 
-  ddog_prof_Profile_SerializeResult serialize_result = ddog_prof_Profile_serialize(profile.get(), nullptr, nullptr);
+  ddog_prof_Profile_SerializeResult serialize_result =
+      ddog_prof_Profile_serialize(profile.get(), nullptr, nullptr);
   if (serialize_result.tag == DDOG_PROF_PROFILE_SERIALIZE_RESULT_ERR) {
     print_error("Failed to serialize profile: ", serialize_result.err);
     ddog_Error_drop(&serialize_result.err);
@@ -108,13 +106,9 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  ddog_prof_Exporter_NewResult exporter_new_result = ddog_prof_Exporter_new(
-      DDOG_CHARSLICE_C("exporter-example"),
-      DDOG_CHARSLICE_C("1.2.3"),
-      DDOG_CHARSLICE_C("native"),
-      &tags,
-      endpoint
-  );
+  ddog_prof_Exporter_NewResult exporter_new_result =
+      ddog_prof_Exporter_new(DDOG_CHARSLICE_C("exporter-example"), DDOG_CHARSLICE_C("1.2.3"),
+                             DDOG_CHARSLICE_C("native"), &tags, endpoint);
   ddog_Vec_Tag_drop(tags);
 
   if (exporter_new_result.tag == DDOG_PROF_EXPORTER_NEW_RESULT_ERR) {
@@ -131,19 +125,12 @@ int main(int argc, char *argv[]) {
   }};
 
   ddog_prof_Exporter_Slice_File files = {.ptr = files_, .len = sizeof files_ / sizeof *files_};
-  ddog_CharSlice internal_metadata_example =
-    DDOG_CHARSLICE_C("{\"no_signals_workaround_enabled\": \"true\", \"execution_trace_enabled\": \"false\"}");
+  ddog_CharSlice internal_metadata_example = DDOG_CHARSLICE_C(
+      "{\"no_signals_workaround_enabled\": \"true\", \"execution_trace_enabled\": \"false\"}");
 
-  ddog_prof_Exporter_Request_BuildResult build_result = ddog_prof_Exporter_Request_build(
-    exporter,
-    encoded_profile->start,
-    encoded_profile->end,
-    files,
-    nullptr,
-    nullptr,
-    &internal_metadata_example,
-    30000
-  );
+  ddog_prof_Exporter_Request_BuildResult build_result =
+      ddog_prof_Exporter_Request_build(exporter, encoded_profile->start, encoded_profile->end,
+                                       files, nullptr, nullptr, &internal_metadata_example, 30000);
   ddog_prof_EncodedProfile_drop(encoded_profile);
 
   if (build_result.tag == DDOG_PROF_EXPORTER_REQUEST_BUILD_RESULT_ERR) {

@@ -393,24 +393,12 @@ impl Profile {
 
     fn add_location(&mut self, location: &api::Location) -> LocationId {
         let mapping_id = self.add_mapping(&location.mapping);
-        let lines: Vec<Line> = location
-            .lines
-            .iter()
-            .map(|line| {
-                let function_id = self.add_function(&line.function);
-                let line1 = line.line;
-                Line {
-                    function_id,
-                    line: line1,
-                }
-            })
-            .collect();
-
+        let function_id = self.add_function(&location.function);
         self.locations.dedup(Location {
             mapping_id,
+            function_id,
             address: location.address,
-            lines,
-            is_folded: location.is_folded,
+            line: location.line,
         })
     }
 
@@ -934,23 +922,18 @@ mod api_test {
         let locations = vec![
             api::Location {
                 mapping,
-                lines: vec![api::Line {
-                    function: api::Function {
-                        name: "phpinfo",
-                        system_name: "phpinfo",
-                        filename: "index.php",
-                        start_line: 0,
-                    },
-                    line: 0,
-                }],
+                function: api::Function {
+                    name: "phpinfo",
+                    system_name: "phpinfo",
+                    filename: "index.php",
+                    start_line: 0,
+                },
                 ..Default::default()
             },
             api::Location {
                 mapping,
-                lines: vec![api::Line {
-                    function: index,
-                    line: 3,
-                }],
+                function: index,
+                line: 3,
                 ..Default::default()
             },
         ];
@@ -975,36 +958,6 @@ mod api_test {
             unit: "count",
         }];
 
-        let main_lines = vec![api::Line {
-            function: api::Function {
-                name: "{main}",
-                system_name: "{main}",
-                filename: "index.php",
-                start_line: 0,
-            },
-            line: 0,
-        }];
-
-        let test_lines = vec![api::Line {
-            function: api::Function {
-                name: "test",
-                system_name: "test",
-                filename: "index.php",
-                start_line: 3,
-            },
-            line: 0,
-        }];
-
-        let timestamp_lines = vec![api::Line {
-            function: api::Function {
-                name: "test",
-                system_name: "test",
-                filename: "index.php",
-                start_line: 3,
-            },
-            line: 0,
-        }];
-
         let mapping = api::Mapping {
             filename: "php",
             ..Default::default()
@@ -1012,17 +965,32 @@ mod api_test {
 
         let main_locations = vec![api::Location {
             mapping,
-            lines: main_lines,
+            function: api::Function {
+                name: "{main}",
+                system_name: "{main}",
+                filename: "index.php",
+                ..Default::default()
+            },
             ..Default::default()
         }];
         let test_locations = vec![api::Location {
             mapping,
-            lines: test_lines,
+            function: api::Function {
+                name: "test",
+                system_name: "test",
+                filename: "index.php",
+                start_line: 3,
+            },
             ..Default::default()
         }];
         let timestamp_locations = vec![api::Location {
             mapping,
-            lines: timestamp_lines,
+            function: api::Function {
+                name: "test",
+                system_name: "test",
+                filename: "index.php",
+                start_line: 4,
+            },
             ..Default::default()
         }];
 
@@ -1080,8 +1048,8 @@ mod api_test {
 
         assert_eq!(profile.samples.len(), 3);
         assert_eq!(profile.mappings.len(), 1);
-        assert_eq!(profile.locations.len(), 2);
-        assert_eq!(profile.functions.len(), 2);
+        assert_eq!(profile.locations.len(), 3);
+        assert_eq!(profile.functions.len(), 3);
 
         for (index, mapping) in profile.mappings.iter().enumerate() {
             assert_eq!((index + 1) as u64, mapping.id);
@@ -1713,16 +1681,6 @@ mod api_test {
             labels: vec![],
         };
 
-        let main_lines = vec![api::Line {
-            function: api::Function {
-                name: "{main}",
-                system_name: "{main}",
-                filename: "index.php",
-                start_line: 0,
-            },
-            line: 0,
-        }];
-
         let mapping = api::Mapping {
             filename: "php",
             ..Default::default()
@@ -1730,8 +1688,14 @@ mod api_test {
 
         let main_locations = vec![api::Location {
             mapping,
-            lines: main_lines,
-            ..Default::default()
+            function: api::Function {
+                name: "{main}",
+                system_name: "{main}",
+                filename: "index.php",
+                start_line: 0,
+            },
+            address: 0,
+            line: 0,
         }];
 
         let sample2 = api::Sample {
@@ -1774,16 +1738,6 @@ mod api_test {
             labels: vec![],
         };
 
-        let main_lines = vec![api::Line {
-            function: api::Function {
-                name: "{main}",
-                system_name: "{main}",
-                filename: "index.php",
-                start_line: 0,
-            },
-            line: 0,
-        }];
-
         let mapping = api::Mapping {
             filename: "php",
             ..Default::default()
@@ -1791,7 +1745,12 @@ mod api_test {
 
         let main_locations = vec![api::Location {
             mapping,
-            lines: main_lines,
+            function: api::Function {
+                name: "{main}",
+                system_name: "{main}",
+                filename: "index.php",
+                start_line: 0,
+            },
             ..Default::default()
         }];
 
@@ -1937,16 +1896,6 @@ mod api_test {
             labels: vec![id_label],
         };
 
-        let main_lines = vec![api::Line {
-            function: api::Function {
-                name: "{main}",
-                system_name: "{main}",
-                filename: "index.php",
-                start_line: 0,
-            },
-            line: 0,
-        }];
-
         let mapping = api::Mapping {
             filename: "php",
             ..Default::default()
@@ -1954,7 +1903,12 @@ mod api_test {
 
         let main_locations = vec![api::Location {
             mapping,
-            lines: main_lines,
+            function: api::Function {
+                name: "{main}",
+                system_name: "{main}",
+                filename: "index.php",
+                start_line: 0,
+            },
             ..Default::default()
         }];
 
@@ -2006,16 +1960,6 @@ mod api_test {
             labels: vec![id_label, id_no_match_label],
         };
 
-        let main_lines = vec![api::Line {
-            function: api::Function {
-                name: "{main}",
-                system_name: "{main}",
-                filename: "index.php",
-                start_line: 0,
-            },
-            line: 0,
-        }];
-
         let mapping = api::Mapping {
             filename: "php",
             ..Default::default()
@@ -2023,7 +1967,12 @@ mod api_test {
 
         let main_locations = vec![api::Location {
             mapping,
-            lines: main_lines,
+            function: api::Function {
+                name: "{main}",
+                system_name: "{main}",
+                filename: "index.php",
+                start_line: 0,
+            },
             ..Default::default()
         }];
 
