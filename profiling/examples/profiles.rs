@@ -32,26 +32,21 @@ fn main() {
         locations: vec![
             api::Location {
                 mapping,
-                lines: vec![api::Line {
-                    function: api::Function {
-                        name: "phpinfo",
-                        filename: "/srv/public/index.php",
-                        ..Default::default()
-                    },
-                    line: 3,
-                }],
+                function: api::Function {
+                    name: "phpinfo",
+                    filename: "/srv/public/index.php",
+                    ..Default::default()
+                },
+                line: 3,
                 ..Default::default()
             },
             api::Location {
                 mapping,
-                lines: vec![api::Line {
-                    function: api::Function {
-                        name: "{main}",
-                        filename: "/srv/public/index.php",
-                        ..Default::default()
-                    },
-                    line: 0,
-                }],
+                function: api::Function {
+                    name: "{main}",
+                    filename: "/srv/public/index.php",
+                    ..Default::default()
+                },
                 ..Default::default()
             },
         ],

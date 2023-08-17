@@ -13,16 +13,13 @@ fn php_location<'a>(name: &'a str, filename: &'a str, line: i64) -> api::Locatio
     api::Location {
         mapping: api::Mapping::default(),
         address: 0,
-        lines: vec![api::Line {
-            function: api::Function {
-                name,
-                system_name: "",
-                filename,
-                start_line: 0,
-            },
-            line,
-        }],
-        is_folded: false,
+        function: api::Function {
+            name,
+            system_name: "",
+            filename,
+            start_line: 0,
+        },
+        line,
     }
 }
 
