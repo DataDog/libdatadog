@@ -23,6 +23,7 @@ pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<rustc_ha
 pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::FxHasher>>;
 
 pub type Timestamp = NonZeroI64;
+pub type TimestampedObservation = (Timestamp, Box<[i64]>);
 
 #[derive(Eq, PartialEq, Hash)]
 struct Sample {
@@ -75,7 +76,7 @@ pub struct Profile {
     start_time: SystemTime,
     strings: FxIndexSet<String>,
     timestamp_key: StringId,
-    timestamped_samples: HashMap<Sample, Vec<(Timestamp, Box<[i64]>)>>,
+    timestamped_samples: HashMap<Sample, Vec<TimestampedObservation>>,
     upscaling_rules: UpscalingRules,
 }
 
@@ -824,10 +825,13 @@ impl TryFrom<&Profile> for pprof::Profile {
         /* Rust pattern: inverting Vec<Result<T,E>> into Result<Vec<T>, E> error with .collect:
          * https://doc.rust-lang.org/rust-by-example/error/iter_result.html#fail-the-entire-operation-with-collect
          */
-        let timestamped_samples: anyhow::Result<Vec<Vec<pprof::Sample>>> = profile
+        let timestamped_samples: Vec<pprof::Sample> = profile
             .timestamped_samples
             .iter()
-            .map(|(sample, observations)| profile.expand_timestamped_sample(sample, observations))
+            .flat_map(|(sample, observations)| {
+                profile.expand_timestamped_sample(sample, observations)
+            })
+            .flatten()
             .collect();
 
         let aggregated_samples: anyhow::Result<Vec<pprof::Sample>> = profile
@@ -851,9 +855,8 @@ impl TryFrom<&Profile> for pprof::Profile {
             })
             .collect();
 
-        let samples: Vec<_> = timestamped_samples?
+        let samples: Vec<_> = timestamped_samples
             .into_iter()
-            .flatten()
             .chain(aggregated_samples?)
             .collect();
 
@@ -1113,7 +1116,25 @@ mod api_test {
         assert_eq!(str, "");
         assert_eq!(num_unit, "");
 
-        // For some reason, this test never covered index 1
+        let sample = samples.get(1).expect("index 1 to exist");
+        assert_eq!(sample.labels.len(), 1);
+        let label = sample.labels.get(0).expect("index 0 to exist");
+        let key = profile
+            .string_table
+            .get(label.key as usize)
+            .expect("index to exist");
+        let str = profile
+            .string_table
+            .get(label.str as usize)
+            .expect("index to exist");
+        let num_unit = profile
+            .string_table
+            .get(label.num_unit as usize)
+            .expect("index to exist");
+        assert_eq!(key, "pid");
+        assert_eq!(label.num, 101);
+        assert_eq!(str, "");
+        assert_eq!(num_unit, "");
 
         let sample = samples.get(2).expect("index 2 to exist");
         assert_eq!(sample.labels.len(), 2);
