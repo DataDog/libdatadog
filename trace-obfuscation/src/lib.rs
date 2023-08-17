@@ -6,4 +6,5 @@
 #![deny(clippy::all)]
 
 pub mod credit_cards;
+pub mod http;
 pub mod replacer;
