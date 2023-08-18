@@ -234,14 +234,14 @@ mod test {
             Vec::new(),
             MetricType::Gauge,
             false,
-            MetricNamespace::Trace,
+            MetricNamespace::Tracers,
         );
         let context_key_2 = contexts.register_metric_context(
             "metric2".into(),
             Vec::new(),
             MetricType::Gauge,
             false,
-            MetricNamespace::Trace,
+            MetricNamespace::Tracers,
         );
         let extra_tags = vec![Tag::from_value("service:foobar").unwrap()];
 

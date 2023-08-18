@@ -783,7 +783,7 @@ impl TelemetryWorkerBuilder {
             },
             config,
             mailbox,
-            seq_id: AtomicU64::new(0),
+            seq_id: AtomicU64::new(1),
             runtime_id: self
                 .runtime_id
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),

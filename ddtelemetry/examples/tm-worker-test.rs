@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Vec::new(),
         data::metrics::MetricType::Count,
         false,
-        data::metrics::MetricNamespace::Trace,
+        data::metrics::MetricNamespace::Tracers,
     );
     handle.send_start().unwrap();
 

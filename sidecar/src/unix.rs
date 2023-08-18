@@ -100,18 +100,18 @@ fn self_telemetry(server: SidecarServer, mut shutdown_receiver: Receiver<()>) ->
                         worker: &worker,
                         server: &server,
                         submitted_payloads: worker.register_metric_context(
-                            "sidecar.submitted_payloads".to_string(),
+                            "server.submitted_payloads".to_string(),
                             vec![],
                             MetricType::Count,
                             true,
-                            MetricNamespace::Trace,
+                            MetricNamespace::Sidecar,
                         ),
                         active_sessions: worker.register_metric_context(
-                            "sidecar.active_sessions".to_string(),
+                            "server.active_sessions".to_string(),
                             vec![],
                             MetricType::Gauge,
                             true,
-                            MetricNamespace::Trace,
+                            MetricNamespace::Sidecar,
                         ),
                     };
 
