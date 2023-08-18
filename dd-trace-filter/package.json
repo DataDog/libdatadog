@@ -1,0 +1,15 @@
+{
+  "name": "dd-trace-filter",
+  "version": "1.0.0",
+  "description": "Filter binary trace data before sending over the wire",
+  "main": "index.js",
+  "author": "Stephen Belanger <stephen.belanger@datadoghq.com>",
+  "license": "MIT",
+  "scripts": {
+    "build": "wasm-pack build --target=nodejs . --features wasm",
+    "test": "wasm-pack test --node . --features wasm"
+  },
+  "devDependencies": {
+    "msgpack-lite": "^0.1.26"
+  }
+}
