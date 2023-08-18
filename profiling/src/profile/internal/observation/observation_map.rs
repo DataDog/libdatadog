@@ -195,9 +195,7 @@ mod test {
         tsm.insert_or_aggregate(2, vec![]);
         assert_eq!(tsm.len(), 2);
         tsm.iter().for_each(|(k, v)| {
-            if *k == 1 {
-                assert_eq!(v, Vec::<i64>::new());
-            } else if *k == 2 {
+            if *k == 1 || *k == 2 {
                 assert_eq!(v, Vec::<i64>::new());
             } else {
                 panic!("Unexpected key");
