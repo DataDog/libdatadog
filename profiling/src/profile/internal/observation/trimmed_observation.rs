@@ -1,11 +1,24 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+//! This file contains the internal structures used by `ObservationMap` and `TimestampedObservationMap`.
+//! See the comment on mod.rs for more explanation.
+
+use std::mem;
+
+/// This represents the length of a TrimmedObservation.  This is private to
+/// this module, which means that only the `*Map` types can create and use
+/// these.  This helps to ensure that the lengths given when we rehydrate a
+/// slice are the same as when we trimmed it.
 #[repr(transparent)]
 #[derive(Copy, Clone)]
-pub struct ObservationLength(usize);
+pub(super) struct ObservationLength(usize);
 
 impl ObservationLength {
+    pub fn assert_eq(&self, other: usize) {
+        assert_eq!(self.0, other, "Expected observation lengths to be the same");
+    }
+
     pub fn new(obs_len: usize) -> Self {
         Self(obs_len)
     }
@@ -41,7 +54,7 @@ impl TrimmedObservation {
     /// This panics if you attempt to create an Observation with a data vector
     /// of the wrong length.
     pub fn new(v: Vec<i64>, len: ObservationLength) -> Self {
-        assert_eq!(len.0, v.len(), "Sample observation was the wrong length");
+        len.assert_eq(v.len());
 
         // First, convert the vector into a boxed slice.
         // This shrinks any excess capacity on the vec.
@@ -55,7 +68,7 @@ impl TrimmedObservation {
         // Get the pointer to just the data part of the slice, throwing away
         // the length metadata.
         // At this point, we are now responsible for tracking the length
-        // ourselves, which we do in the LENGTH static.
+        // ourselves.
         let data = p as *mut i64;
         Self { data }
     }
@@ -63,15 +76,25 @@ impl TrimmedObservation {
     /// Safety: the ObservationLength must have come from the same profile as the Observation
     pub fn into_boxed_slice(mut self, len: ObservationLength) -> Box<[i64]> {
         unsafe {
-            let s: &mut [i64] = std::slice::from_raw_parts_mut(self.data, len.0);
-            self.data = std::ptr::null_mut();
+            let s: &mut [i64] = std::slice::from_raw_parts_mut(
+                mem::replace(&mut self.data, std::ptr::null_mut()),
+                len.0,
+            );
             Box::from_raw(s)
         }
     }
 }
 
 impl Drop for TrimmedObservation {
+    /// Dropping a TrimmedObservation that still owns data is an error.
+    /// By the time this is called, the owner of the `TrimmedObservation` should
+    /// have extracted the memory using `into_boxed_slice`.
     fn drop(&mut self) {
-        assert_eq!(self.data, std::ptr::null_mut());
+        assert_eq!(
+            self.data,
+            std::ptr::null_mut(),
+            "Dropped TrimmedObservation that still owned data."
+        );
     }
 }
+

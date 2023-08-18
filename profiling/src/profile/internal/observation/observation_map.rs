@@ -55,6 +55,8 @@ impl<K: Hash + Eq> ObservationMap<K> {
     }
 
     pub fn insert_or_aggregate(&mut self, key: K, values: Vec<i64>) {
+        self.check_length(&values);
+
         match self.get_mut(&key) {
             None => {
                 self.insert(key, values);
@@ -66,6 +68,14 @@ impl<K: Hash + Eq> ObservationMap<K> {
 
 // Private functions
 impl<K: Hash + Eq> ObservationMap<K> {
+    fn check_length(&mut self, values: &Vec<i64>) {
+        if let Some(obs_len) = self.obs_len {
+            obs_len.assert_eq(values.len());
+        } else {
+            self.obs_len = Some(ObservationLength::new(values.len()));
+        }
+    }
+
     fn _get(&self, key: &K) -> Option<&[i64]> {
         self.data.get(key).map(|v| v.as_ref(self.obs_len.unwrap()))
     }
@@ -76,14 +86,11 @@ impl<K: Hash + Eq> ObservationMap<K> {
             .map(|v| v.as_mut(self.obs_len.unwrap()))
     }
 
-    fn insert(&mut self, key: K, value: Vec<i64>) {
-        // Init the length at first use
-        if self.obs_len.is_none() {
-            self.obs_len = Some(ObservationLength::new(value.len()));
-        }
-        let value = TrimmedObservation::new(value, self.obs_len.unwrap());
+    fn insert(&mut self, key: K, values: Vec<i64>) {
+        self.check_length(&values);
+        let values = TrimmedObservation::new(values, self.obs_len.unwrap());
         assert!(!self.data.contains_key(&key));
-        self.data.insert(key, value);
+        self.data.insert(key, values);
     }
 }
 
@@ -91,6 +98,149 @@ impl<K> Drop for ObservationMap<K> {
     fn drop(&mut self) {
         self.data.drain().for_each(|(_, v)| {
             let _ = v.into_boxed_slice(self.obs_len.unwrap());
+        });
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    #[should_panic]
+    fn different_lengths_panic_different_key() {
+        let mut tsm: ObservationMap<usize> = ObservationMap::default();
+        tsm.insert_or_aggregate(1, vec![1, 2, 3]);
+        // This should panic
+        tsm.insert_or_aggregate(2, vec![4, 5]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn different_lengths_panic_same_key() {
+        let mut tsm: ObservationMap<usize> = ObservationMap::default();
+        tsm.insert_or_aggregate(1, vec![1, 2, 3]);
+        // This should panic
+        tsm.insert_or_aggregate(1, vec![4, 5]);
+    }
+
+    #[test]
+    fn explicit_new() {
+        let mut tsm: ObservationMap<usize> = ObservationMap::new(3);
+        assert!(tsm.is_empty());
+        tsm.insert_or_aggregate(1, vec![1, 2, 3]);
+        assert_eq!(tsm.len(), 1);
+        tsm.insert_or_aggregate(1, vec![4, 5, 6]);
+        assert_eq!(tsm.len(), 1);
+        tsm.insert_or_aggregate(2, vec![7, 8, 9]);
+        assert_eq!(tsm.len(), 2);
+        tsm.iter().for_each(|(k, v)| {
+            if *k == 1 {
+                assert_eq!(v, vec![5, 7, 9]);
+            } else if *k == 2 {
+                assert_eq!(v, vec![7, 8, 9]);
+            } else {
+                panic!("Unexpected key");
+            }
+        });
+        // Iter twice to make sure there are no issues doing that
+        tsm.iter().for_each(|(k, v)| {
+            if *k == 1 {
+                assert_eq!(v, vec![5, 7, 9]);
+            } else if *k == 2 {
+                assert_eq!(v, vec![7, 8, 9]);
+            } else {
+                panic!("Unexpected key");
+            }
+        });
+        tsm.insert_or_aggregate(3, vec![10, 11, 12]);
+        assert_eq!(tsm.len(), 3);
+        // Iter twice to make sure there are no issues doing that
+        tsm.iter().for_each(|(k, v)| {
+            if *k == 1 {
+                assert_eq!(v, vec![5, 7, 9]);
+            } else if *k == 2 {
+                assert_eq!(v, vec![7, 8, 9]);
+            } else if *k == 3 {
+                assert_eq!(v, vec![10, 11, 12]);
+            } else {
+                panic!("Unexpected key");
+            }
+        });
+    }
+
+    #[test]
+    fn empty_vec_test() {
+        let mut tsm: ObservationMap<usize> = ObservationMap::default();
+
+        assert!(tsm.is_empty());
+        tsm.insert_or_aggregate(1, vec![]);
+        assert_eq!(tsm.len(), 1);
+        tsm.insert_or_aggregate(1, vec![]);
+        assert_eq!(tsm.len(), 1);
+        tsm.insert_or_aggregate(2, vec![]);
+        assert_eq!(tsm.len(), 2);
+        tsm.iter().for_each(|(k, v)| {
+            if *k == 1 {
+                assert_eq!(v, Vec::<i64>::new());
+            } else if *k == 2 {
+                assert_eq!(v, Vec::<i64>::new());
+            } else {
+                panic!("Unexpected key");
+            }
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn explicit_new_panics_wrong_length() {
+        let mut tsm: ObservationMap<usize> = ObservationMap::new(3);
+        // This should panic
+        tsm.insert_or_aggregate(1, vec![1, 2]);
+    }
+
+    #[test]
+    fn non_empty_vec_test() {
+        let mut tsm: ObservationMap<usize> = ObservationMap::default();
+        assert!(tsm.is_empty());
+        tsm.insert_or_aggregate(1, vec![1, 2, 3]);
+        assert_eq!(tsm.len(), 1);
+        tsm.insert_or_aggregate(1, vec![4, 5, 6]);
+        assert_eq!(tsm.len(), 1);
+        tsm.insert_or_aggregate(2, vec![7, 8, 9]);
+        assert_eq!(tsm.len(), 2);
+        tsm.iter().for_each(|(k, v)| {
+            if *k == 1 {
+                assert_eq!(v, vec![5, 7, 9]);
+            } else if *k == 2 {
+                assert_eq!(v, vec![7, 8, 9]);
+            } else {
+                panic!("Unexpected key");
+            }
+        });
+        // Iter twice to make sure there are no issues doing that
+        tsm.iter().for_each(|(k, v)| {
+            if *k == 1 {
+                assert_eq!(v, vec![5, 7, 9]);
+            } else if *k == 2 {
+                assert_eq!(v, vec![7, 8, 9]);
+            } else {
+                panic!("Unexpected key");
+            }
+        });
+        tsm.insert_or_aggregate(3, vec![10, 11, 12]);
+        assert_eq!(tsm.len(), 3);
+        // Iter twice to make sure there are no issues doing that
+        tsm.iter().for_each(|(k, v)| {
+            if *k == 1 {
+                assert_eq!(v, vec![5, 7, 9]);
+            } else if *k == 2 {
+                assert_eq!(v, vec![7, 8, 9]);
+            } else if *k == 3 {
+                assert_eq!(v, vec![10, 11, 12]);
+            } else {
+                panic!("Unexpected key");
+            }
         });
     }
 }

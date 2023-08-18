@@ -49,6 +49,14 @@ impl<K> Default for TimestampedObservationMap<K> {
 }
 
 impl<K: Hash + Eq> TimestampedObservationMap<K> {
+    fn check_length(&mut self, values: &Vec<i64>) {
+        if let Some(obs_len) = self.obs_len {
+            obs_len.assert_eq(values.len());
+        } else {
+            self.obs_len = Some(ObservationLength::new(values.len()));
+        }
+    }
+
     pub fn new(obs_len: usize) -> Self {
         Self {
             data: HashMap::new(),
@@ -74,9 +82,7 @@ impl<K: Hash + Eq> TimestampedObservationMap<K> {
     /// NOTE: Repeated timestamps are unlikely but possible.
     /// We choose to record each as separate observations, and allow the backend to decide what to do.
     pub fn insert_or_append(&mut self, key: K, ts: Timestamp, values: Vec<i64>) {
-        if self.obs_len.is_none() {
-            self.obs_len = Some(ObservationLength::new(values.len()));
-        }
+        self.check_length(&values);
 
         let timestamped = (ts, TrimmedObservation::new(values, self.obs_len.unwrap()));
         match self.data.get_mut(&key) {
@@ -182,7 +188,7 @@ mod test {
             }
         });
     }
-    
+
     #[test]
     fn empty_vec_tes() {
         let ts1 = Timestamp::new(1).unwrap();
