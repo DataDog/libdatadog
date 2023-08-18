@@ -12,7 +12,8 @@ use std::time::{Duration, SystemTime};
 
 #[repr(C)]
 pub enum ProfileAddResult {
-    Ok(u64),
+    /// Do not use the value of Ok. This value only exists to overcome Rust -> C code generation.
+    Ok(bool),
     Err(Error),
 }
 
@@ -24,7 +25,7 @@ pub enum SerializeResult {
 
 #[repr(C)]
 pub enum UpscalingRuleAddResult {
-    // Do not use the value of Ok. This value only exists to overcome Rust -> C code generation.
+    /// Do not use the value of Ok. This value only exists to overcome Rust -> C code generation.
     Ok(bool),
     Err(Error),
 }
@@ -327,10 +328,10 @@ pub unsafe extern "C" fn ddog_prof_Profile_drop(profile: Option<&mut Profile>) {
 }
 
 #[cfg(test)]
-impl From<ProfileAddResult> for Result<u64, String> {
+impl From<ProfileAddResult> for Result<(), String> {
     fn from(result: ProfileAddResult) -> Self {
         match result {
-            ProfileAddResult::Ok(ok) => Ok(ok),
+            ProfileAddResult::Ok(_) => Ok(()),
             ProfileAddResult::Err(err) => Err(err.into()),
         }
     }
@@ -341,8 +342,8 @@ impl From<ProfileAddResult> for Result<u64, String> {
 /// module. All pointers inside the `sample` need to be valid for the duration
 /// of this call.
 ///
-/// If successful, it returns the internal id of the sample (> 0) in the Ok
-/// variant. On error, it holds an error message in the error variant.
+/// If successful, it returns the Ok variant.
+/// On error, it holds an error message in the error variant.
 ///
 /// # Safety
 /// The `profile` ptr must point to a valid Profile object created by this
@@ -355,7 +356,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
     sample: Sample,
 ) -> ProfileAddResult {
     match ddog_prof_profile_add_impl(profile, sample) {
-        Ok(id) => ProfileAddResult::Ok(id),
+        Ok(_) => ProfileAddResult::Ok(true),
         Err(err) => ProfileAddResult::Err(Error::from(err.context("failed ddog_prof_Profile_add"))),
     }
 }
@@ -363,14 +364,14 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
 unsafe fn ddog_prof_profile_add_impl(
     profile: Option<&mut Profile>,
     sample: Sample,
-) -> anyhow::Result<u64> {
+) -> anyhow::Result<()> {
     let profile = match profile {
         Some(p) => p,
         None => anyhow::bail!("profile pointer was null"),
     };
     match sample.try_into().map(|s| profile.add(s)) {
         Ok(r) => match r {
-            Ok(id) => Ok(u64::from(id)),
+            Ok(_) => Ok(()),
             Err(err) => Err(err),
         },
         Err(err) => Err(anyhow::Error::from(err)),
@@ -704,13 +705,17 @@ mod test {
                 labels: Slice::from(&labels),
             };
 
-            let sample_id1 =
-                Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), sample)).unwrap();
-            assert_eq!(sample_id1, 1);
+            Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), sample)).unwrap();
+            assert_eq!(
+                profile.as_ref().only_for_testing_num_aggregated_samples(),
+                1
+            );
 
-            let sample_id2 =
-                Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), sample)).unwrap();
-            assert_eq!(sample_id1, sample_id2);
+            Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), sample)).unwrap();
+            assert_eq!(
+                profile.as_ref().only_for_testing_num_aggregated_samples(),
+                1
+            );
 
             ddog_prof_Profile_drop(Some(profile.as_mut()));
         }
@@ -766,14 +771,17 @@ mod test {
             labels: Slice::from(labels.as_slice()),
         };
 
-        let sample_id1 =
-            Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), main_sample)).unwrap();
+        Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), main_sample)).unwrap();
+        assert_eq!(
+            profile.as_ref().only_for_testing_num_aggregated_samples(),
+            1
+        );
 
-        assert_eq!(sample_id1, 1);
-
-        let sample_id2 =
-            Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), test_sample)).unwrap();
-        assert_eq!(sample_id2, 2);
+        Result::from(ddog_prof_Profile_add(Some(profile.as_mut()), test_sample)).unwrap();
+        assert_eq!(
+            profile.as_ref().only_for_testing_num_aggregated_samples(),
+            2
+        );
 
         profile
     }
