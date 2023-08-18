@@ -1,6 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+//! See the mod.rs file comment for why this module and file exists.
+
 use super::trimmed_observation::*;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -17,12 +19,16 @@ impl<'a, K: 'a + Hash + Eq> Iterator for ObservationMapIter<'a, K> {
     }
 }
 
-pub struct ObservationMap<K> {
+/// A `Map` like structure, specialized to storing profile observations in
+/// a memory efficient way.
+///
+/// See the file comment on observations/mod.rs for more details.
+pub struct ObservationMap<K: Hash + Eq> {
     data: HashMap<K, TrimmedObservation>,
     obs_len: Option<ObservationLength>,
 }
 
-impl<K> Default for ObservationMap<K> {
+impl<K: Hash + Eq> Default for ObservationMap<K> {
     fn default() -> Self {
         Self {
             data: Default::default(),
@@ -92,13 +98,21 @@ impl<K: Hash + Eq> ObservationMap<K> {
         assert!(!self.data.contains_key(&key));
         self.data.insert(key, values);
     }
+
+    fn obs_len(&self) -> ObservationLength {
+        self.obs_len
+            .expect("ObservationLength to be set before it's used")
+    }
 }
 
-impl<K> Drop for ObservationMap<K> {
+impl<K: Hash + Eq> Drop for ObservationMap<K> {
     fn drop(&mut self) {
-        self.data.drain().for_each(|(_, v)| {
-            let _ = v.into_boxed_slice(self.obs_len.unwrap());
-        });
+        if !self.is_empty() {
+            let o = self.obs_len();
+            self.data.drain().for_each(|(_, v)| {
+                v.consume(o);
+            });
+        }
     }
 }
 

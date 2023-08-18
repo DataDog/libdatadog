@@ -48,6 +48,13 @@ impl TrimmedObservation {
         unsafe { std::slice::from_raw_parts(self.data, len.0) }
     }
 
+    /// Consumes self, ensuring that the memory behind it is dropped.
+    /// It is an error to drop a TrimmedObservation without consuming it first.
+    /// Safety: the ObservationLength must have come from the same profile as the Observation
+    pub fn consume(self, len: ObservationLength) {
+        let _b = self.into_boxed_slice(len);
+    }
+
     /// Converts a `Vec<i64>` representing sample observations
     /// into a more memory efficient `Observation`
     /// # Safety
@@ -74,7 +81,7 @@ impl TrimmedObservation {
     }
 
     /// Safety: the ObservationLength must have come from the same profile as the Observation
-    pub fn into_boxed_slice(mut self, len: ObservationLength) -> Box<[i64]> {
+    fn into_boxed_slice(mut self, len: ObservationLength) -> Box<[i64]> {
         unsafe {
             let s: &mut [i64] = std::slice::from_raw_parts_mut(
                 mem::replace(&mut self.data, std::ptr::null_mut()),
@@ -88,7 +95,7 @@ impl TrimmedObservation {
 impl Drop for TrimmedObservation {
     /// Dropping a TrimmedObservation that still owns data is an error.
     /// By the time this is called, the owner of the `TrimmedObservation` should
-    /// have extracted the memory using `into_boxed_slice`.
+    /// have consumed the memory using `consume()`.
     fn drop(&mut self) {
         assert_eq!(
             self.data,
@@ -98,3 +105,53 @@ impl Drop for TrimmedObservation {
     }
 }
 
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn as_mut_test() {
+        let v = vec![1, 2];
+        let o = ObservationLength::new(2);
+        let mut t = TrimmedObservation::new(v, o);
+        assert_eq!(t.as_mut(o), &vec![1, 2]);
+        t.as_mut(o).iter_mut().for_each(|v| *v *= 2);
+        assert_eq!(t.as_mut(o), &vec![2, 4]);
+        t.consume(o);
+    }
+
+    #[test]
+    fn as_ref_test() {
+        let v = vec![1, 2];
+        let o = ObservationLength::new(2);
+        let t = TrimmedObservation::new(v, o);
+        assert_eq!(t.as_ref(o), &vec![1, 2]);
+        t.consume(o);
+    }
+
+    #[test]
+    fn drop_after_emptying_test() {
+        let v = vec![1, 2];
+        let o = ObservationLength::new(2);
+        let t = TrimmedObservation::new(v, o);
+        t.consume(o);
+    }
+
+    #[test]
+    #[should_panic]
+    fn drop_owned_data_panics_test() {
+        let v = vec![1, 2];
+        let o = ObservationLength::new(2);
+        let _t = TrimmedObservation::new(v, o);
+    }
+
+    #[test]
+    fn into_boxed_slice_test() {
+        let v = vec![1, 2];
+        let o = ObservationLength::new(2);
+        let t = TrimmedObservation::new(v, o);
+        assert_eq!(t.as_ref(o), &vec![1, 2]);
+        let b = t.into_boxed_slice(o);
+        assert_eq!(*b, vec![1, 2]);
+    }
+}
