@@ -97,3 +97,180 @@ impl<K> Drop for TimestampedObservationMap<K> {
         });
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    #[should_panic]
+    fn different_lengths_panic_different_key() {
+        let ts1 = Timestamp::new(1).unwrap();
+        let ts2 = Timestamp::new(2).unwrap();
+
+        let mut tsm: TimestampedObservationMap<usize> = TimestampedObservationMap::default();
+        tsm.insert_or_append(1, ts1, vec![1, 2, 3]);
+        // This should panic
+        tsm.insert_or_append(2, ts2, vec![4, 5]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn different_lengths_panic_same_key() {
+        let ts1 = Timestamp::new(1).unwrap();
+        let ts2 = Timestamp::new(2).unwrap();
+
+        let mut tsm: TimestampedObservationMap<usize> = TimestampedObservationMap::default();
+        tsm.insert_or_append(1, ts1, vec![1, 2, 3]);
+        // This should panic
+        tsm.insert_or_append(1, ts2, vec![4, 5]);
+    }
+
+    #[test]
+    fn explicit_new() {
+        let ts1 = Timestamp::new(1).unwrap();
+        let ts2 = Timestamp::new(2).unwrap();
+
+        let mut tsm: TimestampedObservationMap<usize> = TimestampedObservationMap::new(3);
+        assert!(tsm.is_empty());
+        tsm.insert_or_append(1, ts1, vec![1, 2, 3]);
+        assert_eq!(tsm.len(), 1);
+        tsm.insert_or_append(1, ts2, vec![4, 5, 6]);
+        assert_eq!(tsm.len(), 1);
+        tsm.insert_or_append(2, ts2, vec![7, 8, 9]);
+        assert_eq!(tsm.len(), 2);
+        tsm.iter().for_each(|(k, v)| {
+            if *k == 1 {
+                assert_eq!(v.len(), 2);
+                assert_eq!(v[0], (ts1, vec![1, 2, 3].as_ref()));
+                assert_eq!(v[1], (ts2, vec![4, 5, 6].as_ref()));
+            } else if *k == 2 {
+                assert_eq!(v.len(), 1);
+                assert_eq!(v[0], (ts2, vec![7, 8, 9].as_ref()));
+            } else {
+                panic!("Unexpected key");
+            }
+        });
+        // Iter twice to make sure there are no issues doing that
+        tsm.iter().for_each(|(k, v)| {
+            if *k == 1 {
+                assert_eq!(v.len(), 2);
+                assert_eq!(v[0], (ts1, vec![1, 2, 3].as_ref()));
+                assert_eq!(v[1], (ts2, vec![4, 5, 6].as_ref()));
+            } else if *k == 2 {
+                assert_eq!(v.len(), 1);
+                assert_eq!(v[0], (ts2, vec![7, 8, 9].as_ref()));
+            } else {
+                panic!("Unexpected key");
+            }
+        });
+        tsm.insert_or_append(3, ts2, vec![10, 11, 12]);
+        assert_eq!(tsm.len(), 3);
+        tsm.iter().for_each(|(k, v)| {
+            if *k == 1 {
+                assert_eq!(v.len(), 2);
+                assert_eq!(v[0], (ts1, vec![1, 2, 3].as_ref()));
+                assert_eq!(v[1], (ts2, vec![4, 5, 6].as_ref()));
+            } else if *k == 2 {
+                assert_eq!(v.len(), 1);
+                assert_eq!(v[0], (ts2, vec![7, 8, 9].as_ref()));
+            } else if *k == 3 {
+                assert_eq!(v.len(), 1);
+                assert_eq!(v[0], (ts2, vec![10, 11, 12].as_ref()));
+            } else {
+                panic!("Unexpected key");
+            }
+        });
+    }
+    
+    #[test]
+    fn empty_vec_tes() {
+        let ts1 = Timestamp::new(1).unwrap();
+        let ts2 = Timestamp::new(2).unwrap();
+
+        let mut tsm: TimestampedObservationMap<usize> = TimestampedObservationMap::default();
+        assert!(tsm.is_empty());
+        tsm.insert_or_append(1, ts1, vec![]);
+        assert_eq!(tsm.len(), 1);
+        tsm.insert_or_append(1, ts2, vec![]);
+        assert_eq!(tsm.len(), 1);
+        tsm.insert_or_append(2, ts2, vec![]);
+        assert_eq!(tsm.len(), 2);
+        tsm.iter().for_each(|(k, v)| {
+            if *k == 1 {
+                assert_eq!(v.len(), 2);
+            } else if *k == 2 {
+                assert_eq!(v.len(), 1);
+            } else {
+                panic!("Unexpected key");
+            }
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn explicit_new_panics_wrong_length() {
+        let ts1 = Timestamp::new(1).unwrap();
+
+        let mut tsm: TimestampedObservationMap<usize> = TimestampedObservationMap::new(3);
+        // This should panic
+        tsm.insert_or_append(1, ts1, vec![1, 2]);
+    }
+
+    #[test]
+    fn non_empty_vec_test() {
+        let ts1 = Timestamp::new(1).unwrap();
+        let ts2 = Timestamp::new(2).unwrap();
+
+        let mut tsm: TimestampedObservationMap<usize> = TimestampedObservationMap::default();
+        assert!(tsm.is_empty());
+        tsm.insert_or_append(1, ts1, vec![1, 2, 3]);
+        assert_eq!(tsm.len(), 1);
+        tsm.insert_or_append(1, ts2, vec![4, 5, 6]);
+        assert_eq!(tsm.len(), 1);
+        tsm.insert_or_append(2, ts2, vec![7, 8, 9]);
+        assert_eq!(tsm.len(), 2);
+        tsm.iter().for_each(|(k, v)| {
+            if *k == 1 {
+                assert_eq!(v.len(), 2);
+                assert_eq!(v[0], (ts1, vec![1, 2, 3].as_ref()));
+                assert_eq!(v[1], (ts2, vec![4, 5, 6].as_ref()));
+            } else if *k == 2 {
+                assert_eq!(v.len(), 1);
+                assert_eq!(v[0], (ts2, vec![7, 8, 9].as_ref()));
+            } else {
+                panic!("Unexpected key");
+            }
+        });
+        // Iter twice to make sure there are no issues doing that
+        tsm.iter().for_each(|(k, v)| {
+            if *k == 1 {
+                assert_eq!(v.len(), 2);
+                assert_eq!(v[0], (ts1, vec![1, 2, 3].as_ref()));
+                assert_eq!(v[1], (ts2, vec![4, 5, 6].as_ref()));
+            } else if *k == 2 {
+                assert_eq!(v.len(), 1);
+                assert_eq!(v[0], (ts2, vec![7, 8, 9].as_ref()));
+            } else {
+                panic!("Unexpected key");
+            }
+        });
+        tsm.insert_or_append(3, ts2, vec![10, 11, 12]);
+        assert_eq!(tsm.len(), 3);
+        tsm.iter().for_each(|(k, v)| {
+            if *k == 1 {
+                assert_eq!(v.len(), 2);
+                assert_eq!(v[0], (ts1, vec![1, 2, 3].as_ref()));
+                assert_eq!(v[1], (ts2, vec![4, 5, 6].as_ref()));
+            } else if *k == 2 {
+                assert_eq!(v.len(), 1);
+                assert_eq!(v[0], (ts2, vec![7, 8, 9].as_ref()));
+            } else if *k == 3 {
+                assert_eq!(v.len(), 1);
+                assert_eq!(v[0], (ts2, vec![10, 11, 12].as_ref()));
+            } else {
+                panic!("Unexpected key");
+            }
+        });
+    }
+}
