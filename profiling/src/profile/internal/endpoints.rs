@@ -5,9 +5,9 @@ use crate::profile::profiled_endpoints::ProfiledEndpointsStats;
 use crate::profile::FxIndexMap;
 
 pub struct Endpoints {
-    pub mappings: FxIndexMap<u64, StringId>,
-    pub local_root_span_id_label: StringId,
     pub endpoint_label: StringId,
+    pub local_root_span_id_label: StringId,
+    pub mappings: FxIndexMap<u64, StringId>,
     pub stats: ProfiledEndpointsStats,
 }
 

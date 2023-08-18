@@ -7,8 +7,8 @@ use crate::profile::pprof;
 use crate::profile::FxIndexMap;
 
 pub struct UpscalingRule {
-    values_offset: Vec<usize>,
     upscaling_info: UpscalingInfo,
+    values_offset: Vec<usize>,
 }
 
 impl UpscalingRule {
