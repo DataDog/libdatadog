@@ -72,10 +72,6 @@ impl UpscalingRules {
         }
     }
 
-    pub fn get(&self, k: &(StringId, StringId)) -> Option<&Vec<UpscalingRule>> {
-        self.rules.get(k)
-    }
-
     pub fn check_collisions(
         &self,
         values_offset: &[usize],
@@ -136,6 +132,14 @@ impl UpscalingRules {
         Ok(())
     }
 
+    pub fn get(&self, k: &(StringId, StringId)) -> Option<&Vec<UpscalingRule>> {
+        self.rules.get(k)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rules.is_empty()
+    }
+
     // TODO: Consider whether to use the internal Label here instead
     pub fn upscale_values(
         &self,
@@ -184,9 +188,5 @@ impl UpscalingRules {
         }
 
         Ok(new_values)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.rules.is_empty()
     }
 }

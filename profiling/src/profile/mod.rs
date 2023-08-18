@@ -41,13 +41,6 @@ pub struct Profile {
     upscaling_rules: UpscalingRules,
 }
 
-pub struct Endpoints {
-    mappings: FxIndexMap<u64, StringId>,
-    local_root_span_id_label: StringId,
-    endpoint_label: StringId,
-    stats: ProfiledEndpointsStats,
-}
-
 #[derive(Default)]
 pub struct ProfileBuilder<'a> {
     period: Option<api::Period<'a>>,
@@ -133,23 +126,6 @@ pub struct EncodedProfile {
     pub end: SystemTime,
     pub buffer: Vec<u8>,
     pub endpoints_stats: ProfiledEndpointsStats,
-}
-
-impl Endpoints {
-    pub fn new() -> Self {
-        Self {
-            mappings: Default::default(),
-            local_root_span_id_label: Default::default(),
-            endpoint_label: Default::default(),
-            stats: Default::default(),
-        }
-    }
-}
-
-impl Default for Endpoints {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 // For testing and debugging purposes
