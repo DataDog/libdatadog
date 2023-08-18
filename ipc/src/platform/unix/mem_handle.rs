@@ -195,23 +195,23 @@ impl NamedShmHandle {
                 | Mode::S_IWOTH,
         )?;
         ftruncate(fd, size as off_t)?;
-        Self::new(fd, path, size)
+        Self::new(fd, Some(path), size)
     }
 
     pub fn open(path: CString) -> io::Result<NamedShmHandle> {
         let fd = shm_open(path.as_bytes(), OFlag::O_RDWR, Mode::empty())?;
         let file: File = unsafe { OwnedFd::from_raw_fd(fd) }.into();
         let size = file.metadata()?.size() as usize;
-        Self::new(file.into_raw_fd(), path, size)
+        Self::new(file.into_raw_fd(), None, size)
     }
 
-    fn new(fd: RawFd, path: CString, size: usize) -> io::Result<NamedShmHandle> {
+    fn new(fd: RawFd, path: Option<CString>, size: usize) -> io::Result<NamedShmHandle> {
         Ok(NamedShmHandle {
             inner: ShmHandle {
                 handle: unsafe { PlatformHandle::from_raw_fd(fd) },
                 size,
             },
-            path: Some(ShmPath { name: path }),
+            path: path.map(|path| ShmPath { name: path }),
         })
     }
 }
