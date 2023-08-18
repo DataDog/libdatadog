@@ -61,10 +61,7 @@ fn main() {
         .build();
 
     match profile.add(sample) {
-        Ok(id) => {
-            let index: u64 = id.into();
-            assert_eq!(index, 1)
-        }
+        Ok(_) => {}
         Err(_) => exit(1),
     }
 
