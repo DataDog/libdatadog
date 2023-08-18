@@ -2,9 +2,6 @@ use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use crate::truncate::TruncateUtf8;
 
-#[cfg(feature = "wasm")]
-use wasm_bindgen::prelude::*;
-
 /// Span representation with msgpack encode and decode
 // TODO: for 0.5 all Strings should be u32
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -35,7 +32,6 @@ type Chunk = Vec<Trace>;
 /// The filter engine should be constructed when the app starts and then be
 /// reused for the lifetime of the process. Each chunk that would be written
 /// to the network would first be given to the filter, processed, and returned.
-#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub struct Filter {
   max_resource_length: usize,
   max_meta_key_length: usize,
@@ -43,10 +39,8 @@ pub struct Filter {
   max_metrics_key_length: usize
 }
 
-#[cfg_attr(feature = "wasm", wasm_bindgen)]
 impl Filter {
   /// Construct an instance of the filter engine
-  #[cfg_attr(feature = "wasm", wasm_bindgen(constructor))]
   pub fn new() -> Self {
     Self {
       max_resource_length: 5000,
@@ -103,8 +97,7 @@ impl Filter {
     }
   }
 
-  /// Filter a msgpack encoded Trace to a new msgpack encoded Chunk 
-  #[cfg_attr(feature = "wasm", wasm_bindgen(js_name = filter_span))]
+  /// Filter a msgpack encoded Trace to a new msgpack encoded Chunk
   pub fn filter_span_data(&self, data: Vec<u8>) -> Result<Vec<u8>, String> {
     let span: Span = rmp_serde::from_slice(&data).unwrap();
     Ok(rmp_serde::to_vec(&self.filter_span(span)).unwrap())
@@ -116,8 +109,7 @@ impl Filter {
       .collect()
   }
 
-  /// Filter a msgpack encoded Trace to a new msgpack encoded Chunk 
-  #[cfg_attr(feature = "wasm", wasm_bindgen(js_name = filter_trace))]
+  /// Filter a msgpack encoded Trace to a new msgpack encoded Chunk
   pub fn filter_trace_data(&self, data: Vec<u8>) -> Result<Vec<u8>, String> {
     let trace: Trace = rmp_serde::from_slice(&data).unwrap();
     Ok(rmp_serde::to_vec(&self.filter_trace(trace)).unwrap())
@@ -130,8 +122,7 @@ impl Filter {
       .collect()
   }
 
-  /// Filter a msgpack encoded Chunk to a new msgpack encoded Chunk 
-  #[cfg_attr(feature = "wasm", wasm_bindgen(js_name = filter_chunk))]
+  /// Filter a msgpack encoded Chunk to a new msgpack encoded Chunk
   pub fn filter_chunk_data(&self, data: Vec<u8>) -> Result<Vec<u8>, String> {
     let chunk: Chunk = rmp_serde::from_slice(&data).unwrap();
     Ok(rmp_serde::to_vec(&self.filter_chunk(chunk)).unwrap())
@@ -142,10 +133,6 @@ impl Filter {
 mod test {
   use super::*;
 
-  #[cfg(feature = "wasm")]
-  use wasm_bindgen_test::wasm_bindgen_test;
-
-  #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
   #[test]
   fn test_filter() {
     let filter = Filter::new();

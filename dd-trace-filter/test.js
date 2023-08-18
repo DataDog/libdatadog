@@ -1,6 +1,16 @@
+const { readFileSync } = require('fs')
 const { Filter } = require('./pkg')
 
-const filter = new Filter('world')
+const pkg = require('./pkg')
+console.log(pkg)
 
-const buffer = new Uint8Array([ 12, 34, 56, 78, 90 ])
-console.log(filter.filter(buffer))
+const filter = new Filter()
+
+const before = Uint8Array.from(readFileSync('./src/out.data'))
+
+const after = filter.filterChunk(before)
+
+console.log({
+  before,
+  after
+})
