@@ -471,10 +471,7 @@ impl Profile {
 
         upscaling_info.check_validity(self.sample_types.len())?;
 
-        let rule = UpscalingRule {
-            values_offset: new_values_offset,
-            upscaling_info,
-        };
+        let rule = UpscalingRule::new(new_values_offset, upscaling_info);
 
         self.upscaling_rules
             .add(label_name_id, label_value_id, rule);
@@ -562,56 +559,6 @@ impl Profile {
             .map(StringId::clone))
     }
 
-    // TODO: Consider whether to use the internal Label here instead
-    // TODO move this to upscaling rules
-    fn upscale_values(&self, values: &[i64], labels: &[pprof::Label]) -> anyhow::Result<Vec<i64>> {
-        let mut new_values = values.to_vec();
-
-        if !self.upscaling_rules.is_empty() {
-            let mut values_to_update: Vec<usize> = vec![0; self.sample_types.len()];
-
-            // get bylabel rules first (if any)
-            let mut group_of_rules = labels
-                .iter()
-                .filter_map(|label| {
-                    self.upscaling_rules
-                        .get(&(StringId::new(label.key), StringId::new(label.str)))
-                })
-                .collect::<Vec<&Vec<UpscalingRule>>>();
-
-            // get byvalue rules if any
-            if let Some(byvalue_rules) = self.upscaling_rules.get(&(StringId::ZERO, StringId::ZERO))
-            {
-                group_of_rules.push(byvalue_rules);
-            }
-
-            // check for collision(s)
-            group_of_rules.iter().for_each(|rules| {
-                rules.iter().for_each(|rule| {
-                    rule.values_offset
-                        .iter()
-                        .for_each(|offset| values_to_update[*offset] += 1)
-                })
-            });
-
-            anyhow::ensure!(
-                values_to_update.iter().all(|v| *v < 2),
-                "Multiple rules modifying the same offset for this sample"
-            );
-
-            group_of_rules.iter().for_each(|rules| {
-                rules.iter().for_each(|rule| {
-                    let scale = rule.compute_scale(values);
-                    rule.values_offset.iter().for_each(|offset| {
-                        new_values[*offset] = (new_values[*offset] as f64 * scale).round() as i64
-                    })
-                })
-            });
-        }
-
-        Ok(new_values)
-    }
-
     fn translate_and_enrich_sample_labels(
         &self,
         sample: &Sample,
@@ -646,7 +593,9 @@ impl Profile {
         observations
             .iter()
             .map(|(timestamp, values)| {
-                let values = self.upscale_values(values, &labels)?;
+                let values =
+                    self.upscaling_rules
+                        .upscale_values(values, &labels, &self.sample_types)?;
                 let mut labels = labels.clone();
 
                 // pprof uses a label to store the timestamp so put it there
@@ -695,7 +644,11 @@ impl TryFrom<&Profile> for pprof::Profile {
                     .iter()
                     .map(Id::to_raw_id)
                     .collect();
-                let values = profile.upscale_values(values, &labels)?;
+                let values = profile.upscaling_rules.upscale_values(
+                    values,
+                    &labels,
+                    &profile.sample_types,
+                )?;
                 Ok(pprof::Sample {
                     location_ids,
                     values,

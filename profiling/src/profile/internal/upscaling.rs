@@ -1,12 +1,14 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-use super::StringId;
+use super::{StringId, ValueType};
 use crate::profile::api::UpscalingInfo;
+use crate::profile::pprof;
 use crate::profile::FxIndexMap;
+
 pub struct UpscalingRule {
-    pub values_offset: Vec<usize>,
-    pub upscaling_info: UpscalingInfo,
+    values_offset: Vec<usize>,
+    upscaling_info: UpscalingInfo,
 }
 
 impl UpscalingRule {
@@ -27,6 +29,13 @@ impl UpscalingRule {
                 1_f64 / (1_f64 - (-avg / sampling_distance as f64).exp())
             }
             UpscalingInfo::Proportional { scale } => scale,
+        }
+    }
+
+    pub fn new(values_offset: Vec<usize>, upscaling_info: UpscalingInfo) -> Self {
+        Self {
+            values_offset,
+            upscaling_info,
         }
     }
 }
@@ -125,6 +134,56 @@ impl UpscalingRules {
                 vec_to_string(values_offset))
         }
         Ok(())
+    }
+
+    // TODO: Consider whether to use the internal Label here instead
+    pub fn upscale_values(
+        &self,
+        values: &[i64],
+        labels: &[pprof::Label],
+        sample_types: &Vec<ValueType>,
+    ) -> anyhow::Result<Vec<i64>> {
+        let mut new_values = values.to_vec();
+
+        if !self.is_empty() {
+            let mut values_to_update: Vec<usize> = vec![0; sample_types.len()];
+
+            // get bylabel rules first (if any)
+            let mut group_of_rules = labels
+                .iter()
+                .filter_map(|label| self.get(&(StringId::new(label.key), StringId::new(label.str))))
+                .collect::<Vec<&Vec<UpscalingRule>>>();
+
+            // get byvalue rules if any
+            if let Some(byvalue_rules) = self.get(&(StringId::ZERO, StringId::ZERO)) {
+                group_of_rules.push(byvalue_rules);
+            }
+
+            // check for collision(s)
+            group_of_rules.iter().for_each(|rules| {
+                rules.iter().for_each(|rule| {
+                    rule.values_offset
+                        .iter()
+                        .for_each(|offset| values_to_update[*offset] += 1)
+                })
+            });
+
+            anyhow::ensure!(
+                values_to_update.iter().all(|v| *v < 2),
+                "Multiple rules modifying the same offset for this sample"
+            );
+
+            group_of_rules.iter().for_each(|rules| {
+                rules.iter().for_each(|rule| {
+                    let scale = rule.compute_scale(values);
+                    rule.values_offset.iter().for_each(|offset| {
+                        new_values[*offset] = (new_values[*offset] as f64 * scale).round() as i64
+                    })
+                })
+            });
+        }
+
+        Ok(new_values)
     }
 
     pub fn is_empty(&self) -> bool {
