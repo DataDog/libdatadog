@@ -15,7 +15,9 @@ pub struct ObservationMapIter<'a, K: 'a + Hash + Eq> {
 impl<'a, K: 'a + Hash + Eq> Iterator for ObservationMapIter<'a, K> {
     type Item = (&'a K, &'a [i64]);
     fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next().map(|(k, v)| (k, v.as_ref(self.obs_len)))
+        self.iter
+            .next()
+            .map(|(k, v)| (k, unsafe { v.as_ref(self.obs_len) }))
     }
 }
 
@@ -83,18 +85,20 @@ impl<K: Hash + Eq> ObservationMap<K> {
     }
 
     fn _get(&self, key: &K) -> Option<&[i64]> {
-        self.data.get(key).map(|v| v.as_ref(self.obs_len.unwrap()))
+        self.data
+            .get(key)
+            .map(|v| unsafe { v.as_ref(self.obs_len()) })
     }
 
     fn get_mut(&mut self, key: &K) -> Option<&mut [i64]> {
         self.data
             .get_mut(key)
-            .map(|v| v.as_mut(self.obs_len.unwrap()))
+            .map(|v| unsafe { v.as_mut(self.obs_len.unwrap()) })
     }
 
     fn insert(&mut self, key: K, values: Vec<i64>) {
         self.check_length(&values);
-        let values = TrimmedObservation::new(values, self.obs_len.unwrap());
+        let values = TrimmedObservation::new(values, self.obs_len());
         assert!(!self.data.contains_key(&key));
         self.data.insert(key, values);
     }
@@ -110,7 +114,7 @@ impl<K: Hash + Eq> Drop for ObservationMap<K> {
         if !self.is_empty() {
             let o = self.obs_len();
             self.data.drain().for_each(|(_, v)| {
-                v.consume(o);
+                unsafe { v.consume(o) };
             });
         }
     }

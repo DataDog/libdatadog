@@ -18,7 +18,7 @@ fn transform_trimmed_vector(
     obs_len: ObservationLength,
 ) -> TimestampedObservationVector {
     v.iter()
-        .map(|(ts, obs)| (*ts, obs.as_ref(obs_len)))
+        .map(|(ts, obs)| (*ts, unsafe { obs.as_ref(obs_len) }))
         .collect()
 }
 
@@ -100,7 +100,7 @@ impl<K: Hash + Eq> TimestampedObservationMap<K> {
     pub fn insert_or_append(&mut self, key: K, ts: Timestamp, values: Vec<i64>) {
         self.check_length(&values);
 
-        let timestamped = (ts, TrimmedObservation::new(values, self.obs_len.unwrap()));
+        let timestamped = (ts, TrimmedObservation::new(values, self.obs_len()));
         match self.data.get_mut(&key) {
             None => {
                 self.data.insert(key, vec![timestamped]);
@@ -115,7 +115,7 @@ impl<K: Hash + Eq> Drop for TimestampedObservationMap<K> {
         if !self.is_empty() {
             let o = self.obs_len();
             self.data.drain().for_each(|(_, v)| {
-                v.into_iter().for_each(|(_, obs)| {
+                v.into_iter().for_each(|(_, obs)| unsafe {
                     obs.consume(o);
                 })
             });
