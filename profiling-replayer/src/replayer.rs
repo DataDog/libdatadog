@@ -153,15 +153,21 @@ impl<'pprof> Replayer<'pprof> {
     ) -> anyhow::Result<api::Location<'pprof>> {
         let location = profile_index.get_location(id)?;
         let mapping = Self::get_mapping(profile_index, location.mapping_id)?;
-        let mut lines = Vec::with_capacity(location.lines.len());
-        for line in location.lines.iter() {
-            lines.push(Self::get_line(profile_index, line)?);
-        }
+        let lines = location
+            .lines
+            .iter()
+            .map(|line| Self::get_line(profile_index, line))
+            .collect::<Result<Vec<api::Line>, _>>()?;
+
+        anyhow::ensure!(lines.len() == 1, "expected Location to have exactly 1 Line");
+        // SAFETY: checked that lines.len() == 1 right above this.
+        let line = unsafe { lines.first().unwrap_unchecked() };
+
         Ok(api::Location {
             mapping,
+            function: line.function,
             address: location.address,
-            lines,
-            is_folded: location.is_folded,
+            line: line.line,
         })
     }
 
