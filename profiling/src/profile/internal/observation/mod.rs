@@ -8,12 +8,9 @@
 //! If each map type stores its own length, then we can reduce this down to a
 //! single pointer of overhead.
 
-mod observation_map;
 mod observations;
-mod timestamped_observation_map;
 mod trimmed_observation;
 
 // We keep trimmed_observation private, to ensure that only maps can make and
 // operate on trimmed objects, which helps ensure safety.
-pub use observation_map::*;
-pub use timestamped_observation_map::*;
+pub use observations::*;

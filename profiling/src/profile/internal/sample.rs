@@ -24,6 +24,13 @@ impl Item for Sample {
 #[repr(transparent)]
 pub struct SampleId(u32);
 
+impl SampleId {
+    #[inline]
+    pub fn to_offset(&self) -> usize {
+        self.0 as usize
+    }
+}
+
 impl Id for SampleId {
     type RawId = usize;
 

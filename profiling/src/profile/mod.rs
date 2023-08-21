@@ -25,7 +25,7 @@ pub type Timestamp = NonZeroI64;
 pub type TimestampedObservation = (Timestamp, Box<[i64]>);
 
 pub struct Profile {
-    aggregated_samples: ObservationMap<Sample>,
+    observations: Observations,
     endpoints: Endpoints,
     functions: FxIndexSet<Function>,
     locations: FxIndexSet<Location>,
@@ -36,7 +36,7 @@ pub struct Profile {
     start_time: SystemTime,
     strings: FxIndexSet<String>,
     timestamp_key: StringId,
-    timestamped_samples: TimestampedObservationMap<Sample>,
+    samples: FxIndexSet<Sample>,
     upscaling_rules: UpscalingRules,
 }
 
@@ -130,10 +130,17 @@ pub struct EncodedProfile {
 // For testing and debugging purposes
 impl Profile {
     pub fn only_for_testing_num_aggregated_samples(&self) -> usize {
-        self.aggregated_samples.len()
+        self.observations
+            .iter()
+            .filter(|(_, ts, _)| ts.is_none())
+            .count()
     }
+
     pub fn only_for_testing_num_timestamped_samples(&self) -> usize {
-        self.timestamped_samples.len()
+        use std::collections::HashSet;
+        let sample_set: HashSet<Timestamp> =
+            HashSet::from_iter(self.observations.iter().filter_map(|(_, ts, _)| ts));
+        sample_set.len()
     }
 }
 
@@ -149,18 +156,18 @@ impl Profile {
          * overflow, since that default impl calls this method.
          */
         let mut profile = Self {
-            aggregated_samples: Default::default(),
             endpoints: Default::default(),
             functions: Default::default(),
             locations: Default::default(),
             mappings: Default::default(),
+            observations: Default::default(),
             period: None,
+            samples: Default::default(),
             sample_types: vec![],
             stack_traces: Default::default(),
             start_time,
             strings: Default::default(),
             timestamp_key: Default::default(),
-            timestamped_samples: Default::default(),
             upscaling_rules: Default::default(),
         };
 
@@ -274,12 +281,8 @@ impl Profile {
             labels,
             local_root_span_id_label_offset,
         };
-
-        if let Some(ts) = timestamp {
-            self.timestamped_samples.insert_or_append(s, ts, values);
-        } else {
-            self.aggregated_samples.insert_or_aggregate(s, values);
-        };
+        let sample_id = self.samples.dedup(s);
+        self.observations.add(sample_id, timestamp, values);
         Ok(())
     }
 
@@ -479,6 +482,12 @@ impl Profile {
         })
     }
 
+    pub fn get_sample(&self, id: SampleId) -> &Sample {
+        self.samples
+            .get_index(id.to_offset())
+            .expect("SampleId to have a valid interned index")
+    }
+
     pub fn get_string(&self, id: StringId) -> &str {
         self.strings
             .get_index(id.to_offset())
@@ -534,42 +543,6 @@ impl Profile {
         }
         Ok(labels)
     }
-
-    /// Given a sample, and a set of observations at different timestamps,
-    /// expand to one Sample for each timestamp.
-    fn expand_timestamped_sample(
-        &self,
-        sample: &Sample,
-        observations: &[(Timestamp, &[i64])],
-    ) -> anyhow::Result<Vec<pprof::Sample>> {
-        // Clone the labels, but enrich them with endpoint profiling.
-        let labels = self.translate_and_enrich_sample_labels(sample)?;
-        let location_ids: Vec<_> = self
-            .get_stacktrace(sample.stacktrace)
-            .locations
-            .iter()
-            .map(Id::to_raw_id)
-            .collect();
-
-        observations
-            .iter()
-            .map(|(timestamp, values)| {
-                let values =
-                    self.upscaling_rules
-                        .upscale_values(values, &labels, &self.sample_types)?;
-                let mut labels = labels.clone();
-
-                // pprof uses a label to store the timestamp so put it there
-                labels.push(Label::num(self.timestamp_key, timestamp.get(), None).into());
-
-                Ok(pprof::Sample {
-                    location_ids: location_ids.clone(),
-                    values,
-                    labels,
-                })
-            })
-            .collect()
-    }
 }
 
 impl TryFrom<&Profile> for pprof::Profile {
@@ -584,20 +557,17 @@ impl TryFrom<&Profile> for pprof::Profile {
         /* Rust pattern: inverting Vec<Result<T,E>> into Result<Vec<T>, E> error with .collect:
          * https://doc.rust-lang.org/rust-by-example/error/iter_result.html#fail-the-entire-operation-with-collect
          */
-        let timestamped_samples: Vec<pprof::Sample> = profile
-            .timestamped_samples
-            .iter()
-            .flat_map(|(sample, observations)| {
-                profile.expand_timestamped_sample(sample, &observations)
-            })
-            .flatten()
-            .collect();
 
-        let aggregated_samples: anyhow::Result<Vec<pprof::Sample>> = profile
-            .aggregated_samples
+        let samples: anyhow::Result<Vec<pprof::Sample>> = profile
+            .observations
             .iter()
-            .map(|(sample, values)| {
-                let labels = profile.translate_and_enrich_sample_labels(sample)?;
+            .map(|(sample_id, timestamp, values)| {
+                let sample = profile.get_sample(sample_id);
+                let mut labels = profile.translate_and_enrich_sample_labels(sample)?;
+                if let Some(timestamp) = timestamp {
+                    // pprof uses a label to store the timestamp so put it there
+                    labels.push(Label::num(profile.timestamp_key, timestamp.get(), None).into());
+                }
 
                 let location_ids: Vec<_> = profile
                     .get_stacktrace(sample.stacktrace)
@@ -610,6 +580,7 @@ impl TryFrom<&Profile> for pprof::Profile {
                     &labels,
                     &profile.sample_types,
                 )?;
+
                 Ok(pprof::Sample {
                     location_ids,
                     values,
@@ -617,12 +588,7 @@ impl TryFrom<&Profile> for pprof::Profile {
                 })
             })
             .collect();
-
-        let samples: Vec<_> = timestamped_samples
-            .into_iter()
-            .chain(aggregated_samples?)
-            .collect();
-
+        let samples = samples?;
         Ok(pprof::Profile {
             sample_types: profile
                 .sample_types
@@ -800,19 +766,19 @@ mod api_test {
         };
 
         let mut profile = Profile::builder().sample_types(sample_types).build();
-        assert_eq!(profile.aggregated_samples.len(), 0);
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
 
         profile.add(main_sample).expect("profile to not be full");
-        assert_eq!(profile.aggregated_samples.len(), 1);
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
 
         profile.add(test_sample).expect("profile to not be full");
-        assert_eq!(profile.aggregated_samples.len(), 2);
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 2);
 
-        assert_eq!(profile.timestamped_samples.len(), 0);
+        assert_eq!(profile.only_for_testing_num_timestamped_samples(), 0);
         profile
             .add(timestamp_sample)
             .expect("profile to not be full");
-        assert_eq!(profile.timestamped_samples.len(), 1);
+        assert_eq!(profile.only_for_testing_num_timestamped_samples(), 1);
         profile
     }
 
@@ -926,8 +892,8 @@ mod api_test {
         assert!(!profile.functions.is_empty());
         assert!(!profile.locations.is_empty());
         assert!(!profile.mappings.is_empty());
-        assert!(!profile.aggregated_samples.is_empty());
-        assert!(!profile.timestamped_samples.is_empty());
+        assert!(!profile.samples.is_empty());
+        assert!(!profile.observations.is_empty());
         assert!(!profile.sample_types.is_empty());
         assert!(profile.period.is_none());
         assert!(profile.endpoints.mappings.is_empty());
@@ -939,8 +905,8 @@ mod api_test {
         assert!(profile.functions.is_empty());
         assert!(profile.locations.is_empty());
         assert!(profile.mappings.is_empty());
-        assert!(profile.aggregated_samples.is_empty());
-        assert!(profile.timestamped_samples.is_empty());
+        assert!(profile.samples.is_empty());
+        assert!(profile.observations.is_empty());
         assert!(profile.endpoints.mappings.is_empty());
         assert!(profile.endpoints.stats.is_empty());
         assert!(profile.upscaling_rules.is_empty());

@@ -3,9 +3,9 @@
 
 //! See the mod.rs file comment for why this module and file exists.
 
-use super::super::{Id, Sample, SampleId};
+use super::super::SampleId;
 use super::trimmed_observation::{ObservationLength, TrimmedObservation};
-use crate::profile::{Dedup, FxIndexSet, Timestamp};
+use crate::profile::Timestamp;
 use std::collections::HashMap;
 
 pub struct ObservationsIter<'a> {
@@ -34,7 +34,7 @@ impl<'a> Iterator for ObservationsIter<'a> {
 type TrimmedTimestampedObservation = (SampleId, Timestamp, TrimmedObservation);
 
 #[derive(Default)]
-struct Observations {
+pub struct Observations {
     aggregated_data: HashMap<SampleId, TrimmedObservation>,
     timestamped_data: Vec<TrimmedTimestampedObservation>,
     obs_len: Option<ObservationLength>,
@@ -57,6 +57,10 @@ impl Observations {
             let trimmed = TrimmedObservation::new(values, obs_len);
             self.aggregated_data.insert(sample_id, trimmed);
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.aggregated_data.is_empty() && self.timestamped_data.is_empty()
     }
 
     pub fn iter(&self) -> ObservationsIter {
@@ -106,6 +110,8 @@ impl Drop for Observations {
 #[cfg(test)]
 mod test {
     use std::num::NonZeroI64;
+
+    use crate::profile::internal::Id;
 
     use super::*;
 
