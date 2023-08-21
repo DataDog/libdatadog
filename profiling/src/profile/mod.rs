@@ -25,18 +25,18 @@ pub type Timestamp = NonZeroI64;
 pub type TimestampedObservation = (Timestamp, Box<[i64]>);
 
 pub struct Profile {
-    observations: Observations,
     endpoints: Endpoints,
     functions: FxIndexSet<Function>,
     locations: FxIndexSet<Location>,
     mappings: FxIndexSet<Mapping>,
+    observations: Observations,
     period: Option<(i64, ValueType)>,
     sample_types: Vec<ValueType>,
+    samples: FxIndexSet<Sample>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: FxIndexSet<String>,
     timestamp_key: StringId,
-    samples: FxIndexSet<Sample>,
     upscaling_rules: UpscalingRules,
 }
 
