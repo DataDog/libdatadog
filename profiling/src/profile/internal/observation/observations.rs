@@ -39,7 +39,6 @@ impl Observations {
         let obs_len = observations.obs_len;
 
         if let Some(ts) = timestamp {
-            let values = values.clone();
             let trimmed = TrimmedObservation::new(values, obs_len);
             observations.timestamped_data.push((sample_id, ts, trimmed));
         } else if let Some(v) = observations.aggregated_data.get_mut(&sample_id) {
