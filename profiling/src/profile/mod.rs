@@ -265,7 +265,6 @@ impl Profile {
             sample.values.len(),
         );
 
-        let values = sample.values.clone();
         let (labels, local_root_span_id_label_offset, timestamp) =
             self.extract_sample_labels(&sample)?;
 
@@ -282,7 +281,7 @@ impl Profile {
             local_root_span_id_label_offset,
         };
         let sample_id = self.samples.dedup(s);
-        self.observations.add(sample_id, timestamp, values);
+        self.observations.add(sample_id, timestamp, &sample.values);
         Ok(())
     }
 

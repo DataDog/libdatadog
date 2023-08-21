@@ -42,10 +42,11 @@ pub struct Observations {
 
 /// Public API
 impl Observations {
-    pub fn add(&mut self, sample_id: SampleId, timestamp: Option<Timestamp>, values: Vec<i64>) {
+    pub fn add(&mut self, sample_id: SampleId, timestamp: Option<Timestamp>, values: &Vec<i64>) {
         self.check_length(&values);
         let obs_len = self.obs_len();
         if let Some(ts) = timestamp {
+            let values = values.clone();
             let trimmed = TrimmedObservation::new(values, obs_len);
             self.timestamped_data.push((sample_id, ts, trimmed));
         } else if let Some(v) = self.aggregated_data.get_mut(&sample_id) {
@@ -54,6 +55,7 @@ impl Observations {
                 .zip(values)
                 .for_each(|(a, b)| *a += b);
         } else {
+            let values = values.clone();
             let trimmed = TrimmedObservation::new(values, obs_len);
             self.aggregated_data.insert(sample_id, trimmed);
         }
@@ -124,9 +126,9 @@ mod test {
         let t1 = Some(Timestamp::new(1).unwrap());
         let t2 = Some(Timestamp::new(2).unwrap());
 
-        o.add(s1, None, vec![1, 2, 3]);
-        o.add(s1, None, vec![4, 5, 6]);
-        o.add(s2, None, vec![7, 8, 9]);
+        o.add(s1, None, &vec![1, 2, 3]);
+        o.add(s1, None, &vec![4, 5, 6]);
+        o.add(s2, None, &vec![7, 8, 9]);
         o.iter().for_each(|(k, ts, v)| {
             assert!(ts.is_none());
             if k == s1 {
@@ -148,7 +150,7 @@ mod test {
                 panic!("Unexpected key");
             }
         });
-        o.add(s3, t1, vec![10, 11, 12]);
+        o.add(s3, t1, &vec![10, 11, 12]);
 
         o.iter().for_each(|(k, ts, v)| {
             if k == s1 {
@@ -165,7 +167,7 @@ mod test {
             }
         });
 
-        o.add(s2, t2, vec![13, 14, 15]);
+        o.add(s2, t2, &vec![13, 14, 15]);
         o.iter().for_each(|(k, ts, v)| {
             if k == s1 {
                 assert_eq!(v, vec![5, 7, 9]);
@@ -191,18 +193,18 @@ mod test {
     #[should_panic]
     fn different_lengths_panic_different_key_no_ts() {
         let mut o = Observations::default();
-        o.add(SampleId::from_offset(1), None, vec![1, 2, 3]);
+        o.add(SampleId::from_offset(1), None, &vec![1, 2, 3]);
         // This should panic
-        o.add(SampleId::from_offset(2), None, vec![4, 5]);
+        o.add(SampleId::from_offset(2), None, &vec![4, 5]);
     }
 
     #[test]
     #[should_panic]
     fn different_lengths_panic_same_key_no_ts() {
         let mut o = Observations::default();
-        o.add(SampleId::from_offset(1), None, vec![1, 2, 3]);
+        o.add(SampleId::from_offset(1), None, &vec![1, 2, 3]);
         // This should panic
-        o.add(SampleId::from_offset(1), None, vec![4, 5]);
+        o.add(SampleId::from_offset(1), None, &vec![4, 5]);
     }
 
     #[test]
@@ -210,9 +212,9 @@ mod test {
     fn different_lengths_panic_different_key_ts() {
         let mut o = Observations::default();
         let ts = NonZeroI64::new(1).unwrap();
-        o.add(SampleId::from_offset(1), Some(ts), vec![1, 2, 3]);
+        o.add(SampleId::from_offset(1), Some(ts), &vec![1, 2, 3]);
         // This should panic
-        o.add(SampleId::from_offset(2), Some(ts), vec![4, 5]);
+        o.add(SampleId::from_offset(2), Some(ts), &vec![4, 5]);
     }
 
     #[test]
@@ -220,9 +222,9 @@ mod test {
     fn different_lengths_panic_same_key_ts() {
         let mut o = Observations::default();
         let ts = NonZeroI64::new(1).unwrap();
-        o.add(SampleId::from_offset(1), Some(ts), vec![1, 2, 3]);
+        o.add(SampleId::from_offset(1), Some(ts), &vec![1, 2, 3]);
         // This should panic
-        o.add(SampleId::from_offset(1), Some(ts), vec![4, 5]);
+        o.add(SampleId::from_offset(1), Some(ts), &vec![4, 5]);
     }
 
     #[test]
@@ -230,9 +232,9 @@ mod test {
     fn different_lengths_panic_different_key_mixed() {
         let mut o = Observations::default();
         let ts = NonZeroI64::new(1).unwrap();
-        o.add(SampleId::from_offset(1), None, vec![1, 2, 3]);
+        o.add(SampleId::from_offset(1), None, &vec![1, 2, 3]);
         // This should panic
-        o.add(SampleId::from_offset(2), Some(ts), vec![4, 5]);
+        o.add(SampleId::from_offset(2), Some(ts), &vec![4, 5]);
     }
 
     #[test]
@@ -240,8 +242,8 @@ mod test {
     fn different_lengths_panic_same_key_mixed() {
         let mut o = Observations::default();
         let ts = NonZeroI64::new(1).unwrap();
-        o.add(SampleId::from_offset(1), Some(ts), vec![1, 2, 3]);
+        o.add(SampleId::from_offset(1), Some(ts), &vec![1, 2, 3]);
         // This should panic
-        o.add(SampleId::from_offset(1), None, vec![4, 5]);
+        o.add(SampleId::from_offset(1), None, &&vec![4, 5]);
     }
 }
