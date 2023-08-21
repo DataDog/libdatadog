@@ -1,4 +1,4 @@
-ARG ALPINE_BASE_IMAGE="alpine:3.17"
+ARG ALPINE_BASE_IMAGE="alpine:3.18"
 ARG CARGO_BUILD_INCREMENTAL="true"
 ARG CARGO_NET_RETRY="2"
 ARG BUILDER_IMAGE=debian_builder
@@ -77,6 +77,7 @@ COPY "ddtelemetry/Cargo.toml" "ddtelemetry/"
 COPY "ddtelemetry-ffi/Cargo.toml" "ddtelemetry-ffi/"
 COPY "profiling/Cargo.toml" "profiling/"
 COPY "profiling-ffi/Cargo.toml" "profiling-ffi/"
+COPY "profiling-replayer/Cargo.toml" "profiling-replayer/"
 COPY "sidecar/Cargo.toml" "sidecar/"
 COPY "sidecar/macros/Cargo.toml" "sidecar/macros/"
 COPY "sidecar-ffi/Cargo.toml" "sidecar-ffi/"
