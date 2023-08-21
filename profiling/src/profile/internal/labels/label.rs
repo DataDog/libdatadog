@@ -1,7 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-use super::*;
+use super::super::*;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum LabelValue {
@@ -73,5 +73,26 @@ impl From<&Label> for pprof::Label {
                 num_unit: num_unit.map(StringId::into_raw_id).unwrap_or_default(),
             },
         }
+    }
+}
+
+impl Item for Label {
+    type Id = LabelId;
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[repr(transparent)]
+pub struct LabelId(u32);
+
+impl Id for LabelId {
+    type RawId = usize;
+
+    fn from_offset(inner: usize) -> Self {
+        let index: u32 = inner.try_into().expect("LabelId to fit into a u32");
+        Self(index)
+    }
+
+    fn to_raw_id(&self) -> Self::RawId {
+        self.0 as Self::RawId
     }
 }
