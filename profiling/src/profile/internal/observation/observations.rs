@@ -43,7 +43,7 @@ pub struct Observations {
 /// Public API
 impl Observations {
     pub fn add(&mut self, sample_id: SampleId, timestamp: Option<Timestamp>, values: &Vec<i64>) {
-        self.check_length(&values);
+        self.check_length(values);
         let obs_len = self.obs_len();
         if let Some(ts) = timestamp {
             let values = values.clone();
