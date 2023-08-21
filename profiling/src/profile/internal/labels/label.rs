@@ -96,3 +96,9 @@ impl Id for LabelId {
         self.0 as Self::RawId
     }
 }
+impl LabelId {
+    #[inline]
+    pub fn to_offset(&self) -> usize {
+        self.0 as usize
+    }
+}

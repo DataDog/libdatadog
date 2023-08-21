@@ -29,6 +29,8 @@ pub struct Profile {
     aggregated_samples: HashMap<Sample, Box<[i64]>>,
     endpoints: Endpoints,
     functions: FxIndexSet<Function>,
+    labels: FxIndexSet<Label>,
+    label_sets: FxIndexSet<LabelSet>,
     locations: FxIndexSet<Location>,
     mappings: FxIndexSet<Mapping>,
     period: Option<(i64, ValueType)>,
@@ -153,6 +155,8 @@ impl Profile {
             aggregated_samples: Default::default(),
             endpoints: Default::default(),
             functions: Default::default(),
+            labels: Default::default(),
+            label_sets: Default::default(),
             locations: Default::default(),
             mappings: Default::default(),
             period: None,
@@ -260,8 +264,7 @@ impl Profile {
         );
 
         let values = sample.values.clone().into_boxed_slice();
-        let (labels, local_root_span_id_label_offset, timestamp) =
-            self.extract_sample_labels(&sample)?;
+        let (labels, local_root_span_id_label, timestamp) = self.extract_sample_labels(&sample)?;
 
         let locations = sample
             .locations
@@ -273,7 +276,7 @@ impl Profile {
         let s = Sample {
             stacktrace,
             labels,
-            local_root_span_id_label_offset,
+            local_root_span_id_label,
         };
 
         if let Some(ts) = timestamp {
@@ -304,9 +307,9 @@ impl Profile {
     fn extract_sample_labels(
         &mut self,
         sample: &api::Sample,
-    ) -> anyhow::Result<(Vec<Label>, Option<usize>, Option<Timestamp>)> {
-        let mut labels: Vec<Label> = Vec::with_capacity(sample.labels.len());
-        let mut local_root_span_id_label_offset: Option<usize> = None;
+    ) -> anyhow::Result<(LabelSetId, Option<LabelId>, Option<Timestamp>)> {
+        let mut labels: Vec<LabelId> = Vec::with_capacity(sample.labels.len());
+        let mut local_root_span_id_label: Option<LabelId> = None;
         let mut timestamp: Option<Timestamp> = None;
 
         for label in sample.labels.iter() {
@@ -331,6 +334,17 @@ impl Profile {
                 continue;
             }
 
+            let internal_label = if let Some(s) = label.str {
+                let str = self.intern(s);
+                Label::str(key, str)
+            } else {
+                let num = label.num;
+                let num_unit = label.num_unit.map(|s| self.intern(s));
+                Label::num(key, num, num_unit)
+            };
+
+            let label_id = self.labels.dedup(internal_label);
+
             if key == self.endpoints.local_root_span_id_label {
                 // Panic: if the label.str isn't 0, then str must have been provided.
                 anyhow::ensure!(
@@ -342,27 +356,21 @@ impl Profile {
                     label.num != 0,
                     "the label \"local root span id\" must not be 0"
                 );
+
                 anyhow::ensure!(
-                    local_root_span_id_label_offset.is_none(),
-                    "only one label per sample can have the key \"local root span id\", found two: {:?}, {}",
-                    labels[local_root_span_id_label_offset.unwrap()], label.num
+                    local_root_span_id_label.is_none(),
+                    "only one label per sample can have the key \"local root span id\", found two: {:?}, {:?}",
+                    self.get_label(local_root_span_id_label.unwrap()), label
                 );
-                local_root_span_id_label_offset = Some(labels.len());
-            }
-
-            let internal_label = if let Some(s) = label.str {
-                let str = self.intern(s);
-                Label::str(key, str)
+                local_root_span_id_label = Some(label_id);
             } else {
-                let num = label.num;
-                let num_unit = label.num_unit.map(|s| self.intern(s));
-                Label::num(key, num, num_unit)
-            };
-
-            // If you refactor this push, ensure the local_root_span_id_label_offset is correct.
-            labels.push(internal_label);
+                labels.push(label_id);
+            }
         }
-        Ok((labels, local_root_span_id_label_offset, timestamp))
+
+        let label_set_id = self.label_sets.dedup(LabelSet::new(labels));
+
+        Ok((label_set_id, local_root_span_id_label, timestamp))
     }
 
     fn extract_api_sample_types(&self) -> Option<Vec<api::ValueType>> {
@@ -494,6 +502,18 @@ impl Profile {
         })
     }
 
+    pub fn get_label(&self, id: LabelId) -> &Label {
+        self.labels
+            .get_index(id.to_offset())
+            .expect("LabelId to have a valid interned index")
+    }
+
+    pub fn get_label_set(&self, id: LabelSetId) -> &LabelSet {
+        self.label_sets
+            .get_index(id.to_offset())
+            .expect("LabelSetId to have a valid interned index")
+    }
+
     pub fn get_string(&self, id: StringId) -> &str {
         self.strings
             .get_index(id.to_offset())
@@ -539,10 +559,15 @@ impl Profile {
         &self,
         sample: &Sample,
     ) -> anyhow::Result<Vec<pprof::Label>> {
-        let mut labels: Vec<_> = sample.labels.iter().map(pprof::Label::from).collect();
-        if let Some(offset) = sample.local_root_span_id_label_offset {
+        let mut labels: Vec<_> = self
+            .get_label_set(sample.labels)
+            .iter()
+            .map(|l| self.get_label(*l).into())
+            .collect();
+        if let Some(lrsi_id) = sample.local_root_span_id_label {
             // Safety: this offset was created internally and isn't be mutated.
-            let lrsi_label = unsafe { sample.labels.get_unchecked(offset) };
+            let lrsi_label = self.get_label(lrsi_id);
+            labels.push(lrsi_label.into());
             if let Some(endpoint_value_id) = self.get_endpoint_for_label(lrsi_label)? {
                 labels.push(Label::str(self.endpoints.endpoint_label, endpoint_value_id).into());
             }
@@ -939,6 +964,8 @@ mod api_test {
          * are working with so that we can test that reset works.
          */
         assert!(!profile.functions.is_empty());
+        assert!(!profile.labels.is_empty());
+        assert!(!profile.label_sets.is_empty());
         assert!(!profile.locations.is_empty());
         assert!(!profile.mappings.is_empty());
         assert!(!profile.aggregated_samples.is_empty());
@@ -952,6 +979,8 @@ mod api_test {
 
         // These should all be empty now
         assert!(profile.functions.is_empty());
+        assert!(profile.labels.is_empty());
+        assert!(profile.label_sets.is_empty());
         assert!(profile.locations.is_empty());
         assert!(profile.mappings.is_empty());
         assert!(profile.aggregated_samples.is_empty());
@@ -1083,7 +1112,7 @@ mod api_test {
         // The trace endpoint label should be added to the first sample
         assert_eq!(s1.labels.len(), 3);
 
-        let l1 = s1.labels.get(0).expect("label");
+        let l1 = s1.labels.get(1).expect("label");
 
         assert_eq!(
             serialized_profile
@@ -1094,7 +1123,7 @@ mod api_test {
         );
         assert_eq!(l1.num, 10);
 
-        let l2 = s1.labels.get(1).expect("label");
+        let l2 = s1.labels.get(0).expect("label");
 
         assert_eq!(
             serialized_profile
