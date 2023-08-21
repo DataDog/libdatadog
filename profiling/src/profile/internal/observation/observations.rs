@@ -93,15 +93,11 @@ impl Observations {
 
 impl Drop for Observations {
     fn drop(&mut self) {
-        if !self.aggregated_data.is_empty() {
+        if !self.is_empty() {
             let o = self.obs_len();
             self.aggregated_data.drain().for_each(|(_, v)| {
                 unsafe { v.consume(o) };
             });
-        }
-
-        if !self.timestamped_data.is_empty() {
-            let o = self.obs_len();
             self.timestamped_data.drain(..).for_each(|(_, _, v)| {
                 unsafe { v.consume(o) };
             });
