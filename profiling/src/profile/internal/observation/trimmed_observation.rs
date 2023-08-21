@@ -11,7 +11,7 @@ use std::mem;
 /// these.  This helps to ensure that the lengths given when we rehydrate a
 /// slice are the same as when we trimmed it.
 #[repr(transparent)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub(super) struct ObservationLength(usize);
 
 impl ObservationLength {
@@ -19,7 +19,7 @@ impl ObservationLength {
         assert_eq!(self.0, other, "Expected observation lengths to be the same");
     }
 
-    pub fn new(obs_len: usize) -> Self {
+    pub const fn new(obs_len: usize) -> Self {
         Self(obs_len)
     }
 }
@@ -39,12 +39,12 @@ pub(super) struct TrimmedObservation {
 
 impl TrimmedObservation {
     /// Safety: the ObservationLength must have come from the same profile as the Observation
-    pub unsafe fn as_mut(&mut self, len: ObservationLength) -> &mut [i64] {
+    pub unsafe fn as_mut_slice(&mut self, len: ObservationLength) -> &mut [i64] {
         unsafe { std::slice::from_raw_parts_mut(self.data, len.0) }
     }
 
     /// Safety: the ObservationLength must have come from the same profile as the Observation
-    pub unsafe fn as_ref(&self, len: ObservationLength) -> &[i64] {
+    pub unsafe fn as_slice(&self, len: ObservationLength) -> &[i64] {
         unsafe { std::slice::from_raw_parts(self.data, len.0) }
     }
 
@@ -52,7 +52,7 @@ impl TrimmedObservation {
     /// It is an error to drop a TrimmedObservation without consuming it first.
     /// Safety: the ObservationLength must have come from the same profile as the Observation
     pub unsafe fn consume(self, len: ObservationLength) {
-        let _b = self.into_boxed_slice(len);
+        drop(self.into_boxed_slice(len));
     }
 
     /// Converts a `Vec<i64>` representing sample observations
@@ -115,9 +115,9 @@ mod test {
         let o = ObservationLength::new(2);
         let mut t = TrimmedObservation::new(v, o);
         unsafe {
-            assert_eq!(t.as_mut(o), &vec![1, 2]);
-            t.as_mut(o).iter_mut().for_each(|v| *v *= 2);
-            assert_eq!(t.as_mut(o), &vec![2, 4]);
+            assert_eq!(t.as_mut_slice(o), &vec![1, 2]);
+            t.as_mut_slice(o).iter_mut().for_each(|v| *v *= 2);
+            assert_eq!(t.as_mut_slice(o), &vec![2, 4]);
             t.consume(o);
         }
     }
@@ -128,7 +128,7 @@ mod test {
         let o = ObservationLength::new(2);
         let t = TrimmedObservation::new(v, o);
         unsafe {
-            assert_eq!(t.as_ref(o), &vec![1, 2]);
+            assert_eq!(t.as_slice(o), &vec![1, 2]);
             t.consume(o);
         }
     }
@@ -160,7 +160,7 @@ mod test {
         let o = ObservationLength::new(2);
         let t = TrimmedObservation::new(v, o);
         unsafe {
-            assert_eq!(t.as_ref(o), &vec![1, 2]);
+            assert_eq!(t.as_slice(o), &vec![1, 2]);
             let b = t.into_boxed_slice(o);
             assert_eq!(*b, vec![1, 2]);
         }

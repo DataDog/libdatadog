@@ -281,7 +281,7 @@ impl Profile {
             local_root_span_id_label_offset,
         };
         let sample_id = self.samples.dedup(s);
-        self.observations.add(sample_id, timestamp, &sample.values);
+        self.observations.add(sample_id, timestamp, sample.values);
         Ok(())
     }
 
