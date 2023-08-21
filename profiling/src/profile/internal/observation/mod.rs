@@ -9,6 +9,7 @@
 //! single pointer of overhead.
 
 mod observation_map;
+mod observations;
 mod timestamped_observation_map;
 mod trimmed_observation;
 
