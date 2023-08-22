@@ -3,9 +3,10 @@ on:
   push:
     paths:
       - 'profiling/**' # Only run action when profile related things are touched
+                       # If we add other miri tests, add them here
 
 jobs:
-  test:
+  profiler-observation-test:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
