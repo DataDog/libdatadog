@@ -76,10 +76,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 );
                 for span in chunk.spans.iter_mut() {
                     trace_utils::enrich_span_with_mini_agent_metadata(span, &mini_agent_metadata);
-                }
-
-                if let Some(rules) = &config.tag_replace_rules {
-                    replacer::replace_trace_tags(&mut chunk.spans, rules)
+                    obfuscate_span(span, &config.obfuscation_config);
                 }
             },
         );
