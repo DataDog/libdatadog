@@ -56,7 +56,8 @@ impl Config {
 
         let obfuscation_config = obfuscation_config::ObfuscationConfig::new().map_err(|err| {
             anyhow::anyhow!(
-                "Error creating obfuscation config, Mini Agent will not start. Error: {err}",
+                "Error creating obfuscation config, Mini Agent will not start. Error: {}",
+                err
             )
         })?;
 

@@ -7,11 +7,11 @@ use percent_encoding::percent_decode_str;
 use url::Url;
 
 pub fn obfuscate_url_string(
-    url: String,
+    url: &str,
     remove_query_string: bool,
     remove_path_digits: bool,
 ) -> String {
-    let mut parsed_url = match Url::parse(&url) {
+    let mut parsed_url = match Url::parse(url) {
         Ok(res) => res,
         Err(_) => return "?".to_string(),
     };
@@ -57,113 +57,113 @@ mod tests {
             test_name           [remove_query_string_1]
             remove_query_string [true]
             remove_path_digits  [false]
-            input               ["http://foo.com/".to_string()]
-            expected_output     ["http://foo.com/".to_string()];
+            input               ["http://foo.com/"]
+            expected_output     ["http://foo.com/"];
         ]
         [
             test_name       [remove_query_string_2]
             remove_query_string [true]
             remove_path_digits  [false]
-            input           ["http://foo.com/123".to_string()]
-            expected_output ["http://foo.com/123".to_string()];
+            input           ["http://foo.com/123"]
+            expected_output ["http://foo.com/123"];
         ]
         [
             test_name       [remove_query_string_3]
             remove_query_string [true]
             remove_path_digits  [false]
-            input           ["http://foo.com/id/123/page/1?search=bar&page=2".to_string()]
-            expected_output ["http://foo.com/id/123/page/1?".to_string()];
+            input           ["http://foo.com/id/123/page/1?search=bar&page=2"]
+            expected_output ["http://foo.com/id/123/page/1?"];
         ]
         [
             test_name       [remove_query_string_4]
             remove_query_string [true]
             remove_path_digits  [false]
-            input           ["http://foo.com/id/123/page/1?search=bar&page=2#fragment".to_string()]
-            expected_output ["http://foo.com/id/123/page/1?#fragment".to_string()];
+            input           ["http://foo.com/id/123/page/1?search=bar&page=2#fragment"]
+            expected_output ["http://foo.com/id/123/page/1?#fragment"];
         ]
         [
             test_name       [remove_query_string_5]
             remove_query_string [true]
             remove_path_digits  [false]
-            input           ["http://foo.com/id/123/page/1?blabla".to_string()]
-            expected_output ["http://foo.com/id/123/page/1?".to_string()];
+            input           ["http://foo.com/id/123/page/1?blabla"]
+            expected_output ["http://foo.com/id/123/page/1?"];
         ]
         [
             test_name       [remove_query_string_6]
             remove_query_string [true]
             remove_path_digits  [false]
-            input           ["http://foo.com/id/123/pa%3Fge/1?blabla".to_string()]
-            expected_output ["http://foo.com/id/123/pa%3Fge/1?".to_string()];
+            input           ["http://foo.com/id/123/pa%3Fge/1?blabla"]
+            expected_output ["http://foo.com/id/123/pa%3Fge/1?"];
         ]
         [
             test_name       [remove_query_string_7]
             remove_query_string [true]
             remove_path_digits  [false]
-            input           ["http://user:password@foo.com/1/2/3?q=james".to_string()]
-            expected_output ["http://foo.com/1/2/3?".to_string()];
+            input           ["http://user:password@foo.com/1/2/3?q=james"]
+            expected_output ["http://foo.com/1/2/3?"];
         ]
         [
             test_name           [remove_path_digits_1]
             remove_query_string [false]
             remove_path_digits  [true]
-            input               ["http://foo.com/".to_string()]
-            expected_output     ["http://foo.com/".to_string()];
+            input               ["http://foo.com/"]
+            expected_output     ["http://foo.com/"];
         ]
         [
             test_name           [remove_path_digits_2]
             remove_query_string [false]
             remove_path_digits  [true]
-            input               ["http://foo.com/name?query=search".to_string()]
-            expected_output     ["http://foo.com/name?query=search".to_string()];
+            input               ["http://foo.com/name?query=search"]
+            expected_output     ["http://foo.com/name?query=search"];
         ]
         [
             test_name           [remove_path_digits_3]
             remove_query_string [false]
             remove_path_digits  [true]
-            input               ["http://foo.com/id/123/page/1?search=bar&page=2".to_string()]
-            expected_output     ["http://foo.com/id/?/page/??search=bar&page=2".to_string()];
+            input               ["http://foo.com/id/123/page/1?search=bar&page=2"]
+            expected_output     ["http://foo.com/id/?/page/??search=bar&page=2"];
         ]
         [
             test_name           [remove_path_digits_4]
             remove_query_string [false]
             remove_path_digits  [true]
-            input               ["http://foo.com/id/a1/page/1qwe233?search=bar&page=2#fragment-123".to_string()]
-            expected_output     ["http://foo.com/id/?/page/??search=bar&page=2#fragment-123".to_string()];
+            input               ["http://foo.com/id/a1/page/1qwe233?search=bar&page=2#fragment-123"]
+            expected_output     ["http://foo.com/id/?/page/??search=bar&page=2#fragment-123"];
         ]
         [
             test_name           [remove_path_digits_5]
             remove_query_string [false]
             remove_path_digits  [true]
-            input               ["http://foo.com/123".to_string()]
-            expected_output     ["http://foo.com/?".to_string()];
+            input               ["http://foo.com/123"]
+            expected_output     ["http://foo.com/?"];
         ]
         [
             test_name           [remove_path_digits_6]
             remove_query_string [false]
             remove_path_digits  [true]
-            input               ["http://foo.com/123/abcd9".to_string()]
-            expected_output     ["http://foo.com/?/?".to_string()];
+            input               ["http://foo.com/123/abcd9"]
+            expected_output     ["http://foo.com/?/?"];
         ]
         [
             test_name           [remove_path_digits_7]
             remove_query_string [false]
             remove_path_digits  [true]
-            input               ["http://foo.com/123/name/abcd9".to_string()]
-            expected_output     ["http://foo.com/?/name/?".to_string()];
+            input               ["http://foo.com/123/name/abcd9"]
+            expected_output     ["http://foo.com/?/name/?"];
         ]
         [
             test_name           [remove_path_digits_8]
             remove_query_string [false]
             remove_path_digits  [true]
-            input               ["http://foo.com/1%3F3/nam%3Fe/abcd9".to_string()]
-            expected_output     ["http://foo.com/?/nam%3Fe/?".to_string()];
+            input               ["http://foo.com/1%3F3/nam%3Fe/abcd9"]
+            expected_output     ["http://foo.com/?/nam%3Fe/?"];
         ]
         [
             test_name           [remove_path_digits_9]
             remove_query_string [false]
             remove_path_digits  [true]
-            input               ["http://user:password@foo.com/1/2/3?q=james".to_string()]
-            expected_output     ["http://foo.com/?/?/??q=james".to_string()];
+            input               ["http://user:password@foo.com/1/2/3?q=james"]
+            expected_output     ["http://foo.com/?/?/??q=james"];
         ]
     )]
     #[test]
