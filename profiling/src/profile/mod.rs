@@ -554,6 +554,7 @@ impl Profile {
     fn translate_and_enrich_sample_labels(
         &self,
         sample: &Sample,
+        timestamp: Option<Timestamp>,
     ) -> anyhow::Result<Vec<pprof::Label>> {
         let labels: Vec<_> = self
             .get_label_set(sample.labels)
@@ -563,6 +564,7 @@ impl Profile {
                 self.get_endpoint_for_labels(sample.labels)?
                     .map(pprof::Label::from),
             )
+            .chain(timestamp.map(|ts| Label::num(self.timestamp_key, ts.get(), None).into()))
             .collect();
 
         Ok(labels)
@@ -586,12 +588,7 @@ impl TryFrom<&Profile> for pprof::Profile {
             .observations
             .iter()
             .map(|(sample, timestamp, values)| {
-                let mut labels = profile.translate_and_enrich_sample_labels(sample)?;
-                if let Some(timestamp) = timestamp {
-                    // pprof uses a label to store the timestamp so put it there
-                    labels.push(Label::num(profile.timestamp_key, timestamp.get(), None).into());
-                }
-
+                let labels = profile.translate_and_enrich_sample_labels(sample, timestamp)?;
                 let location_ids: Vec<_> = profile
                     .get_stacktrace(sample.stacktrace)
                     .locations
