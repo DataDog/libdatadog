@@ -8,7 +8,7 @@ use hyper::{http, Body, Request, Response, StatusCode};
 use log::info;
 use tokio::sync::mpsc::Sender;
 
-use datadog_trace_obfuscation::replacer;
+use datadog_trace_obfuscation::obfuscate::obfuscate_span;
 use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::SendData;
 
@@ -103,6 +103,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
 
 #[cfg(test)]
 mod tests {
+    use datadog_trace_obfuscation::obfuscation_config::ObfuscationConfig;
     use hyper::Request;
     use std::{
         collections::HashMap,
@@ -147,7 +148,7 @@ mod tests {
             dd_site: "datadoghq.com".to_string(),
             env_type: trace_utils::EnvironmentType::CloudFunction,
             os: "linux".to_string(),
-            tag_replace_rules: None,
+            obfuscation_config: ObfuscationConfig::new().unwrap(),
         }
     }
 
