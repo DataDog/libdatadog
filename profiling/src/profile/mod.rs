@@ -269,7 +269,7 @@ impl Profile {
             sample.values.len(),
         );
 
-        let (labels, local_root_span_id_label, timestamp) = self.extract_sample_labels(&sample)?;
+        let (labels, timestamp) = self.extract_sample_labels(&sample)?;
 
         let locations = sample
             .locations
@@ -278,11 +278,7 @@ impl Profile {
             .collect();
 
         let stacktrace = self.add_stacktrace(locations);
-        let s = Sample {
-            stacktrace,
-            labels,
-            local_root_span_id_label,
-        };
+        let s = Sample { stacktrace, labels };
         let sample_id = self.samples.dedup(s);
         self.observations.add(sample_id, timestamp, sample.values);
         Ok(())
@@ -294,10 +290,10 @@ impl Profile {
     fn extract_sample_labels(
         &mut self,
         sample: &api::Sample,
-    ) -> anyhow::Result<(LabelSetId, Option<LabelId>, Option<Timestamp>)> {
+    ) -> anyhow::Result<(LabelSetId, Option<Timestamp>)> {
         let mut labels: Vec<LabelId> = Vec::with_capacity(sample.labels.len());
-        let mut local_root_span_id_label: Option<LabelId> = None;
         let mut timestamp: Option<Timestamp> = None;
+        let mut local_root_span_id_label = None;
 
         for label in sample.labels.iter() {
             let key = self.intern(label.key);
@@ -333,6 +329,12 @@ impl Profile {
             let label_id = self.labels.dedup(internal_label);
 
             if key == self.endpoints.local_root_span_id_label {
+                anyhow::ensure!(
+                    local_root_span_id_label.is_none(),
+                    "only one label per sample can have the key \"local root span id\", found two: {:?}, {:?}",
+                    self.get_label(local_root_span_id_label.unwrap()), label
+                );
+
                 // Panic: if the label.str isn't 0, then str must have been provided.
                 anyhow::ensure!(
                     label.str.is_none(),
@@ -343,21 +345,15 @@ impl Profile {
                     label.num != 0,
                     "the label \"local root span id\" must not be 0"
                 );
-
-                anyhow::ensure!(
-                    local_root_span_id_label.is_none(),
-                    "only one label per sample can have the key \"local root span id\", found two: {:?}, {:?}",
-                    self.get_label(local_root_span_id_label.unwrap()), label
-                );
                 local_root_span_id_label = Some(label_id);
-            } else {
-                labels.push(label_id);
             }
+
+            labels.push(label_id);
         }
 
         let label_set_id = self.label_sets.dedup(LabelSet::new(labels));
 
-        Ok((label_set_id, local_root_span_id_label, timestamp))
+        Ok((label_set_id, timestamp))
     }
 
     fn extract_api_sample_types(&self) -> Option<Vec<api::ValueType>> {
@@ -516,7 +512,7 @@ impl Profile {
     /// Fetches the endpoint information for the label. There may be errors,
     /// but there may also be no endpoint information for a given endpoint.
     /// Hence, the return type of Result<Option<_>, _>.
-    fn get_endpoint_for_label(&self, label: &Label) -> anyhow::Result<Option<StringId>> {
+    fn get_endpoint_for_label(&self, label: &Label) -> anyhow::Result<Option<Label>> {
         anyhow::ensure!(
             label.get_key() == self.endpoints.local_root_span_id_label,
             "bug: get_endpoint_for_label should only be called on labels with the key \"local root span id\", called on label with key \"{}\"",
@@ -545,26 +541,39 @@ impl Profile {
             .endpoints
             .mappings
             .get(&local_root_span_id)
-            .map(StringId::clone))
+            .map(|v| Label::str(self.endpoints.endpoint_label, *v)))
+    }
+
+    fn get_endpoint_for_labels(&self, label_set_id: LabelSetId) -> anyhow::Result<Option<Label>> {
+        let label = self.get_label_set(label_set_id).iter().find_map(|id| {
+            let label = self.get_label(*id);
+            if label.get_key() == self.endpoints.local_root_span_id_label {
+                Some(label)
+            } else {
+                None
+            }
+        });
+        if let Some(label) = label {
+            self.get_endpoint_for_label(label)
+        } else {
+            Ok(None)
+        }
     }
 
     fn translate_and_enrich_sample_labels(
         &self,
         sample: &Sample,
     ) -> anyhow::Result<Vec<pprof::Label>> {
-        let mut labels: Vec<_> = self
+        let labels: Vec<_> = self
             .get_label_set(sample.labels)
             .iter()
             .map(|l| self.get_label(*l).into())
+            .chain(
+                self.get_endpoint_for_labels(sample.labels)?
+                    .map(pprof::Label::from),
+            )
             .collect();
-        if let Some(lrsi_id) = sample.local_root_span_id_label {
-            // Safety: this offset was created internally and isn't be mutated.
-            let lrsi_label = self.get_label(lrsi_id);
-            labels.push(lrsi_label.into());
-            if let Some(endpoint_value_id) = self.get_endpoint_for_label(lrsi_label)? {
-                labels.push(Label::str(self.endpoints.endpoint_label, endpoint_value_id).into());
-            }
-        }
+
         Ok(labels)
     }
 }
@@ -1062,7 +1071,7 @@ mod api_test {
         // The trace endpoint label should be added to the first sample
         assert_eq!(s1.labels.len(), 3);
 
-        let l1 = s1.labels.get(1).expect("label");
+        let l1 = s1.labels.get(0).expect("label");
 
         assert_eq!(
             serialized_profile
@@ -1073,7 +1082,7 @@ mod api_test {
         );
         assert_eq!(l1.num, 10);
 
-        let l2 = s1.labels.get(0).expect("label");
+        let l2 = s1.labels.get(1).expect("label");
 
         assert_eq!(
             serialized_profile
