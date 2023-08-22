@@ -283,36 +283,48 @@ impl Profile {
 
     /// Validates labels and converts them to the internal representation.
     /// Extracts out the timestamp label, if it exists.
+    fn extract_timestamp(&mut self, sample: &api::Sample) -> anyhow::Result<Option<Timestamp>> {
+        if let Some(label) = sample
+            .labels
+            .iter()
+            .find(|label| label.key == "end_timestamp_ns")
+        {
+            anyhow::ensure!(
+                label.str.is_none(),
+                "the label \"{}\" must be sent as a number, not string {}",
+                label.str.unwrap(),
+                label.key
+            );
+            anyhow::ensure!(label.num != 0, "the label \"{}\" must not be 0", label.key);
+            anyhow::ensure!(label.num_unit.is_none(), "Timestamps with label '{}' are always nanoseconds and do not take a unit: found '{}'", label.key, label.num_unit.unwrap());
+
+            Ok(Some(NonZeroI64::new(label.num).unwrap()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Validates labels and converts them to the internal representation.
+    /// Extracts out the timestamp label, if it exists.
     fn extract_sample_labels(
         &mut self,
         sample: &api::Sample,
     ) -> anyhow::Result<(LabelSetId, Option<Timestamp>)> {
-        let mut labels: Vec<LabelId> = Vec::with_capacity(sample.labels.len());
-        let mut timestamp: Option<Timestamp> = None;
+        let timestamp = self.extract_timestamp(sample)?;
+
+        let mut labels: Vec<LabelId> = Vec::with_capacity(if timestamp.is_some() {
+            sample.labels.len() - 1
+        } else {
+            sample.labels.len()
+        });
         let mut local_root_span_id_label = None;
 
         for label in sample.labels.iter() {
-            let key = self.intern(label.key);
-
-            // The current API stores timestamps on a label.
-            // The internal representation stores them in the timestamped_samples map.
-            // Extract them from the labels, and pass them on to put into the map
-            if key == self.timestamp_key {
-                anyhow::ensure!(
-                    label.str.is_none(),
-                    "the label \"{}\" must be sent as a number, not string {}",
-                    label.str.unwrap(),
-                    label.key
-                );
-                anyhow::ensure!(label.num != 0, "the label \"{}\" must not be 0", label.key);
-                anyhow::ensure!(label.num_unit.is_none(), "Timestamps with label '{}' are always nanoseconds and do not take a unit: found '{}'", label.key, label.num_unit.unwrap());
-
-                timestamp = Some(NonZeroI64::new(label.num).unwrap());
-                // Once the timestamp is extracted, we remove it from the labels.
-                // This allows `Sample` with the same values other than the timestamp to dedup.
+            if label.key == "end_timestamp_ns" {
                 continue;
             }
 
+            let key = self.intern(label.key);
             let internal_label = if let Some(s) = label.str {
                 let str = self.intern(s);
                 Label::str(key, str)
