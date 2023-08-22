@@ -3,7 +3,7 @@
 
 mod endpoints;
 mod function;
-mod labels;
+mod label;
 mod location;
 mod mapping;
 mod observation;
@@ -15,7 +15,7 @@ mod value_type;
 
 pub use endpoints::*;
 pub use function::*;
-pub use labels::*;
+pub use label::*;
 pub use location::*;
 pub use mapping::*;
 pub use observation::*;
