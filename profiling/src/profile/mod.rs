@@ -564,7 +564,7 @@ impl Profile {
 
     fn translate_and_enrich_sample_labels(
         &self,
-        sample: &Sample,
+        sample: Sample,
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<Vec<pprof::Label>> {
         let labels: Vec<_> = self

@@ -61,7 +61,7 @@ impl Observations {
         self.inner.is_none()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&Sample, Option<Timestamp>, &[i64])> {
+    pub fn iter(&self) -> impl Iterator<Item = (Sample, Option<Timestamp>, &[i64])> {
         self.inner.iter().flat_map(|observations| {
             let obs_len = observations.obs_len;
             let aggregated_data = observations
@@ -77,7 +77,7 @@ impl Observations {
                 .map(move |(sample, ts, obs)| {
                     // SAFETY: The only way to build one of these is through
                     // [Self::add], which already checked that the length was correct.
-                    (sample, ts, unsafe { obs.as_slice(obs_len) })
+                    (*sample, ts, unsafe { obs.as_slice(obs_len) })
                 })
         })
     }
@@ -131,9 +131,9 @@ mod test {
         o.add(s2, None, vec![7, 8, 9]);
         o.iter().for_each(|(k, ts, v)| {
             assert!(ts.is_none());
-            if *k == s1 {
+            if k == s1 {
                 assert_eq!(v, vec![5, 7, 9]);
-            } else if *k == s2 {
+            } else if k == s2 {
                 assert_eq!(v, vec![7, 8, 9]);
             } else {
                 panic!("Unexpected key");
@@ -142,9 +142,9 @@ mod test {
         // Iter twice to make sure there are no issues doing that
         o.iter().for_each(|(k, ts, v)| {
             assert!(ts.is_none());
-            if *k == s1 {
+            if k == s1 {
                 assert_eq!(v, vec![5, 7, 9]);
-            } else if *k == s2 {
+            } else if k == s2 {
                 assert_eq!(v, vec![7, 8, 9]);
             } else {
                 panic!("Unexpected key");
@@ -153,13 +153,13 @@ mod test {
         o.add(s3, t1, vec![10, 11, 12]);
 
         o.iter().for_each(|(k, ts, v)| {
-            if *k == s1 {
+            if k == s1 {
                 assert_eq!(v, vec![5, 7, 9]);
                 assert!(ts.is_none());
-            } else if *k == s2 {
+            } else if k == s2 {
                 assert_eq!(v, vec![7, 8, 9]);
                 assert!(ts.is_none());
-            } else if *k == s3 {
+            } else if k == s3 {
                 assert_eq!(v, vec![10, 11, 12]);
                 assert_eq!(ts, t1);
             } else {
@@ -169,10 +169,10 @@ mod test {
 
         o.add(s2, t2, vec![13, 14, 15]);
         o.iter().for_each(|(k, ts, v)| {
-            if *k == s1 {
+            if k == s1 {
                 assert_eq!(v, vec![5, 7, 9]);
                 assert!(ts.is_none());
-            } else if *k == s2 {
+            } else if k == s2 {
                 if ts.is_some() {
                     assert_eq!(v, vec![13, 14, 15]);
                     assert_eq!(ts, t2);
@@ -180,7 +180,7 @@ mod test {
                     assert_eq!(v, vec![7, 8, 9]);
                     assert!(ts.is_none());
                 }
-            } else if *k == s3 {
+            } else if k == s3 {
                 assert_eq!(v, vec![10, 11, 12]);
                 assert_eq!(ts, t1);
             } else {
