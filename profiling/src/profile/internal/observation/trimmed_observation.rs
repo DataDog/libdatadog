@@ -147,7 +147,7 @@ mod test {
     #[should_panic]
     // This test has an explicit memory leak, and shows that we panic if that
     // happens
-    //#[cfg_attr(miri, ignore)]
+    #[cfg_attr(miri, ignore)]
     fn drop_owned_data_panics_test() {
         let v = vec![1, 2];
         let o = ObservationLength::new(2);
