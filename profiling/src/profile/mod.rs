@@ -283,7 +283,6 @@ impl Profile {
 
     /// Validates labels and converts them to the internal representation.
     /// Extracts out the timestamp label, if it exists.
-    /// Also tracks the index of the label with key "local root span id".
     fn extract_sample_labels(
         &mut self,
         sample: &api::Sample,
