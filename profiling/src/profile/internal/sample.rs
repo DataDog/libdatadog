@@ -4,7 +4,7 @@
 use super::{Id, Item, LabelSetId, StackTraceId};
 
 use std::hash::Hash;
-#[derive(Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Sample {
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
@@ -14,6 +14,12 @@ pub struct Sample {
 
 impl Item for Sample {
     type Id = SampleId;
+}
+
+impl Sample {
+    pub fn new(labels: LabelSetId, stacktrace: StackTraceId) -> Self {
+        Self { labels, stacktrace }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]

@@ -34,7 +34,6 @@ pub struct Profile {
     observations: Observations,
     period: Option<(i64, ValueType)>,
     sample_types: Vec<ValueType>,
-    samples: FxIndexSet<Sample>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: FxIndexSet<String>,
@@ -166,7 +165,6 @@ impl Profile {
             mappings: Default::default(),
             observations: Default::default(),
             period: None,
-            samples: Default::default(),
             sample_types: vec![],
             stack_traces: Default::default(),
             start_time,
@@ -278,9 +276,8 @@ impl Profile {
             .collect();
 
         let stacktrace = self.add_stacktrace(locations);
-        let s = Sample { stacktrace, labels };
-        let sample_id = self.samples.dedup(s);
-        self.observations.add(sample_id, timestamp, sample.values);
+        self.observations
+            .add(Sample::new(labels, stacktrace), timestamp, sample.values);
         Ok(())
     }
 
@@ -497,12 +494,6 @@ impl Profile {
             .expect("LabelSetId to have a valid interned index")
     }
 
-    pub fn get_sample(&self, id: SampleId) -> &Sample {
-        self.samples
-            .get_index(id.to_offset())
-            .expect("SampleId to have a valid interned index")
-    }
-
     pub fn get_string(&self, id: StringId) -> &str {
         self.strings
             .get_index(id.to_offset())
@@ -594,8 +585,7 @@ impl TryFrom<&Profile> for pprof::Profile {
         let samples: anyhow::Result<Vec<pprof::Sample>> = profile
             .observations
             .iter()
-            .map(|(sample_id, timestamp, values)| {
-                let sample = profile.get_sample(sample_id);
+            .map(|(sample, timestamp, values)| {
                 let mut labels = profile.translate_and_enrich_sample_labels(sample)?;
                 if let Some(timestamp) = timestamp {
                     // pprof uses a label to store the timestamp so put it there
@@ -927,7 +917,6 @@ mod api_test {
         assert!(!profile.label_sets.is_empty());
         assert!(!profile.locations.is_empty());
         assert!(!profile.mappings.is_empty());
-        assert!(!profile.samples.is_empty());
         assert!(!profile.observations.is_empty());
         assert!(!profile.sample_types.is_empty());
         assert!(profile.period.is_none());
@@ -942,7 +931,6 @@ mod api_test {
         assert!(profile.label_sets.is_empty());
         assert!(profile.locations.is_empty());
         assert!(profile.mappings.is_empty());
-        assert!(profile.samples.is_empty());
         assert!(profile.observations.is_empty());
         assert!(profile.endpoints.mappings.is_empty());
         assert!(profile.endpoints.stats.is_empty());
