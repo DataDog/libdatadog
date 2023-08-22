@@ -651,7 +651,7 @@ mod tests {
             HashMap::from([
                 (
                     "runtime-id".to_string(),
-                    "afjksdljfkllksdj-28934889".to_string()
+                    "test-runtime-id-value".to_string()
                 ),
                 ("_dd.origin".to_string(), "azurefunction".to_string()),
                 ("origin".to_string(), "azurefunction".to_string()),
@@ -676,7 +676,7 @@ mod tests {
             HashMap::from([
                 (
                     "runtime-id".to_string(),
-                    "afjksdljfkllksdj-28934889".to_string()
+                    "test-runtime-id-value".to_string()
                 ),
                 ("_dd.origin".to_string(), "cloudfunction".to_string()),
                 ("origin".to_string(), "cloudfunction".to_string()),

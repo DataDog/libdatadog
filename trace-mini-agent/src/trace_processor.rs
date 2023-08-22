@@ -4,11 +4,11 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use datadog_trace_obfuscation::replacer;
 use hyper::{http, Body, Request, Response, StatusCode};
 use log::info;
 use tokio::sync::mpsc::Sender;
 
+use datadog_trace_obfuscation::replacer;
 use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::SendData;
 
@@ -163,7 +163,7 @@ mod tests {
 
         let start = get_current_timestamp_nanos();
 
-        let json_span = create_test_json_span(111, 222, 333, start);
+        let json_span = create_test_json_span(11, 222, 333, start);
 
         let bytes = rmp_serde::to_vec(&vec![vec![json_span]]).unwrap();
         let request = Request::builder()
@@ -196,11 +196,11 @@ mod tests {
             language_name: "nodejs".to_string(),
             language_version: "v19.7.0".to_string(),
             tracer_version: "4.0.0".to_string(),
-            runtime_id: "afjksdljfkllksdj-28934889".to_string(),
+            runtime_id: "test-runtime-id-value".to_string(),
             chunks: vec![pb::TraceChunk {
                 priority: i8::MIN as i32,
                 origin: "".to_string(),
-                spans: vec![create_test_span(111, 222, 333, start, true)],
+                spans: vec![create_test_span(11, 222, 333, start, true)],
                 tags: HashMap::new(),
                 dropped_trace: false,
             }],
@@ -262,7 +262,7 @@ mod tests {
             language_name: "nodejs".to_string(),
             language_version: "v19.7.0".to_string(),
             tracer_version: "4.0.0".to_string(),
-            runtime_id: "afjksdljfkllksdj-28934889".to_string(),
+            runtime_id: "test-runtime-id-value".to_string(),
             chunks: vec![pb::TraceChunk {
                 priority: i8::MIN as i32,
                 origin: "".to_string(),

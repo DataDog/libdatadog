@@ -28,7 +28,7 @@ pub fn create_test_span(
             ("env".to_string(), "test-env".to_string()),
             (
                 "runtime-id".to_string(),
-                "afjksdljfkllksdj-28934889".to_string(),
+                "test-runtime-id-value".to_string(),
             ),
         ]),
         metrics: HashMap::new(),
@@ -70,7 +70,7 @@ pub fn create_test_json_span(
             "meta": {
                 "service": "test-service",
                 "env": "test-env",
-                "runtime-id": "afjksdljfkllksdj-28934889",
+                "runtime-id": "test-runtime-id-value",
             },
             "metrics": {},
             "meta_struct": {},
