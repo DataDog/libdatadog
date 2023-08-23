@@ -18,10 +18,8 @@ pub mod parse_env {
     }
 
     pub fn bool(name: &str) -> Option<bool> {
-        match env::var(name).ok()?.as_str() {
-            "1" | "t" | "T" | "TRUE" | "true" | "True" => Some(true),
-            _ => Some(false),
-        }
+        let var = env::var(name).ok()?;
+        Some(var == "true" || var == "1")
     }
 
     pub fn str_not_empty(name: &str) -> Option<String> {
