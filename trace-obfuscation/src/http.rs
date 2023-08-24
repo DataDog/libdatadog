@@ -61,46 +61,46 @@ mod tests {
             expected_output     ["http://foo.com/"];
         ]
         [
-            test_name       [remove_query_string_2]
+            test_name           [remove_query_string_2]
             remove_query_string [true]
             remove_path_digits  [false]
-            input           ["http://foo.com/123"]
-            expected_output ["http://foo.com/123"];
+            input               ["http://foo.com/123"]
+            expected_output     ["http://foo.com/123"];
         ]
         [
-            test_name       [remove_query_string_3]
+            test_name           [remove_query_string_3]
             remove_query_string [true]
             remove_path_digits  [false]
-            input           ["http://foo.com/id/123/page/1?search=bar&page=2"]
-            expected_output ["http://foo.com/id/123/page/1?"];
+            input               ["http://foo.com/id/123/page/1?search=bar&page=2"]
+            expected_output     ["http://foo.com/id/123/page/1?"];
         ]
         [
-            test_name       [remove_query_string_4]
+            test_name           [remove_query_string_4]
             remove_query_string [true]
             remove_path_digits  [false]
-            input           ["http://foo.com/id/123/page/1?search=bar&page=2#fragment"]
-            expected_output ["http://foo.com/id/123/page/1?#fragment"];
+            input               ["http://foo.com/id/123/page/1?search=bar&page=2#fragment"]
+            expected_output     ["http://foo.com/id/123/page/1?#fragment"];
         ]
         [
-            test_name       [remove_query_string_5]
+            test_name           [remove_query_string_5]
             remove_query_string [true]
             remove_path_digits  [false]
-            input           ["http://foo.com/id/123/page/1?blabla"]
-            expected_output ["http://foo.com/id/123/page/1?"];
+            input               ["http://foo.com/id/123/page/1?blabla"]
+            expected_output     ["http://foo.com/id/123/page/1?"];
         ]
         [
-            test_name       [remove_query_string_6]
+            test_name           [remove_query_string_6]
             remove_query_string [true]
             remove_path_digits  [false]
-            input           ["http://foo.com/id/123/pa%3Fge/1?blabla"]
-            expected_output ["http://foo.com/id/123/pa%3Fge/1?"];
+            input               ["http://foo.com/id/123/pa%3Fge/1?blabla"]
+            expected_output     ["http://foo.com/id/123/pa%3Fge/1?"];
         ]
         [
-            test_name       [remove_query_string_7]
+            test_name           [remove_query_string_7]
             remove_query_string [true]
             remove_path_digits  [false]
-            input           ["http://user:password@foo.com/1/2/3?q=james"]
-            expected_output ["http://foo.com/1/2/3?"];
+            input               ["http://user:password@foo.com/1/2/3?q=james"]
+            expected_output     ["http://foo.com/1/2/3?"];
         ]
         [
             test_name           [remove_path_digits_1]
