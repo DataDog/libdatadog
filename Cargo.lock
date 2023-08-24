@@ -815,6 +815,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "hex",
+ "http",
  "hyper",
  "hyper-rustls",
  "indexmap",
