@@ -76,7 +76,7 @@ impl MetricBuckets {
         for (key, bucket) in self.buckets.drain() {
             self.series
                 .entry(key)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push((timestamp, bucket.value()))
         }
     }
