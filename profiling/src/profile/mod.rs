@@ -482,7 +482,7 @@ impl Profile {
             .as_nanos()
             .min(i64::MAX as u128) as i64;
 
-        let mut buffer: Vec<u8> = Vec::new();
+        let mut buffer: Vec<u8> = Vec::with_capacity(32 * 1024);
         profile.encode(&mut buffer)?;
 
         Ok(EncodedProfile {

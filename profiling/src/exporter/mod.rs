@@ -238,7 +238,9 @@ impl ProfileExporter {
         );
 
         for file in files {
-            let mut encoder = FrameEncoder::new(Vec::new());
+            // We tend to have good compression ratios
+            let buffer = Vec::with_capacity((file.bytes.len() / 10).next_power_of_two());
+            let mut encoder = FrameEncoder::new(buffer);
             encoder.write_all(file.bytes)?;
             let encoded = encoder.finish()?;
             /* The Datadog RFC examples strip off the file extension, but the exact behavior isn't
