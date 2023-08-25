@@ -15,6 +15,7 @@ pub mod connector;
 pub mod container_id;
 #[macro_use]
 pub mod cstr;
+pub mod config;
 pub mod tag;
 
 pub mod header {

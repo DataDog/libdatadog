@@ -27,12 +27,13 @@ pub type TimestampedObservation = (Timestamp, Box<[i64]>);
 pub struct Profile {
     endpoints: Endpoints,
     functions: FxIndexSet<Function>,
+    labels: FxIndexSet<Label>,
+    label_sets: FxIndexSet<LabelSet>,
     locations: FxIndexSet<Location>,
     mappings: FxIndexSet<Mapping>,
     observations: Observations,
     period: Option<(i64, ValueType)>,
     sample_types: Vec<ValueType>,
-    samples: FxIndexSet<Sample>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: FxIndexSet<String>,
@@ -158,11 +159,12 @@ impl Profile {
         let mut profile = Self {
             endpoints: Default::default(),
             functions: Default::default(),
+            labels: Default::default(),
+            label_sets: Default::default(),
             locations: Default::default(),
             mappings: Default::default(),
             observations: Default::default(),
             period: None,
-            samples: Default::default(),
             sample_types: vec![],
             stack_traces: Default::default(),
             start_time,
@@ -265,8 +267,7 @@ impl Profile {
             sample.values.len(),
         );
 
-        let (labels, local_root_span_id_label_offset, timestamp) =
-            self.extract_sample_labels(&sample)?;
+        let (labels, timestamp) = self.extract_sample_labels(&sample)?;
 
         let locations = sample
             .locations
@@ -275,50 +276,73 @@ impl Profile {
             .collect();
 
         let stacktrace = self.add_stacktrace(locations);
-        let s = Sample {
-            stacktrace,
-            labels,
-            local_root_span_id_label_offset,
-        };
-        let sample_id = self.samples.dedup(s);
-        self.observations.add(sample_id, timestamp, sample.values);
+        self.observations
+            .add(Sample::new(labels, stacktrace), timestamp, sample.values);
         Ok(())
     }
 
     /// Validates labels and converts them to the internal representation.
     /// Extracts out the timestamp label, if it exists.
-    /// Also tracks the index of the label with key "local root span id".
+    fn extract_timestamp(&mut self, sample: &api::Sample) -> anyhow::Result<Option<Timestamp>> {
+        if let Some(label) = sample
+            .labels
+            .iter()
+            .find(|label| label.key == "end_timestamp_ns")
+        {
+            anyhow::ensure!(
+                label.str.is_none(),
+                "the label \"{}\" must be sent as a number, not string {}",
+                label.str.unwrap(),
+                label.key
+            );
+            anyhow::ensure!(label.num != 0, "the label \"{}\" must not be 0", label.key);
+            anyhow::ensure!(label.num_unit.is_none(), "Timestamps with label '{}' are always nanoseconds and do not take a unit: found '{}'", label.key, label.num_unit.unwrap());
+
+            Ok(Some(NonZeroI64::new(label.num).unwrap()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Validates labels and converts them to the internal representation.
+    /// Extracts out the timestamp label, if it exists.
     fn extract_sample_labels(
         &mut self,
         sample: &api::Sample,
-    ) -> anyhow::Result<(Vec<Label>, Option<usize>, Option<Timestamp>)> {
-        let mut labels: Vec<Label> = Vec::with_capacity(sample.labels.len());
-        let mut local_root_span_id_label_offset: Option<usize> = None;
-        let mut timestamp: Option<Timestamp> = None;
+    ) -> anyhow::Result<(LabelSetId, Option<Timestamp>)> {
+        let timestamp = self.extract_timestamp(sample)?;
+
+        let mut labels: Vec<LabelId> = Vec::with_capacity(if timestamp.is_some() {
+            sample.labels.len() - 1
+        } else {
+            sample.labels.len()
+        });
+        let mut local_root_span_id_label = None;
 
         for label in sample.labels.iter() {
-            let key = self.intern(label.key);
-
-            // The current API stores timestamps on a label.
-            // The internal representation stores them in the timestamped_samples map.
-            // Extract them from the labels, and pass them on to put into the map
-            if key == self.timestamp_key {
-                anyhow::ensure!(
-                    label.str.is_none(),
-                    "the label \"{}\" must be sent as a number, not string {}",
-                    label.str.unwrap(),
-                    label.key
-                );
-                anyhow::ensure!(label.num != 0, "the label \"{}\" must not be 0", label.key);
-                anyhow::ensure!(label.num_unit.is_none(), "Timestamps with label '{}' are always nanoseconds and do not take a unit: found '{}'", label.key, label.num_unit.unwrap());
-
-                timestamp = Some(NonZeroI64::new(label.num).unwrap());
-                // Once the timestamp is extracted, we remove it from the labels.
-                // This allows `Sample` with the same values other than the timestamp to dedup.
+            if label.key == "end_timestamp_ns" {
                 continue;
             }
 
+            let key = self.intern(label.key);
+            let internal_label = if let Some(s) = label.str {
+                let str = self.intern(s);
+                Label::str(key, str)
+            } else {
+                let num = label.num;
+                let num_unit = label.num_unit.map(|s| self.intern(s));
+                Label::num(key, num, num_unit)
+            };
+
+            let label_id = self.labels.dedup(internal_label);
+
             if key == self.endpoints.local_root_span_id_label {
+                anyhow::ensure!(
+                    local_root_span_id_label.is_none(),
+                    "only one label per sample can have the key \"local root span id\", found two: {:?}, {:?}",
+                    self.get_label(local_root_span_id_label.unwrap()), label
+                );
+
                 // Panic: if the label.str isn't 0, then str must have been provided.
                 anyhow::ensure!(
                     label.str.is_none(),
@@ -329,27 +353,15 @@ impl Profile {
                     label.num != 0,
                     "the label \"local root span id\" must not be 0"
                 );
-                anyhow::ensure!(
-                    local_root_span_id_label_offset.is_none(),
-                    "only one label per sample can have the key \"local root span id\", found two: {:?}, {}",
-                    labels[local_root_span_id_label_offset.unwrap()], label.num
-                );
-                local_root_span_id_label_offset = Some(labels.len());
+                local_root_span_id_label = Some(label_id);
             }
 
-            let internal_label = if let Some(s) = label.str {
-                let str = self.intern(s);
-                Label::str(key, str)
-            } else {
-                let num = label.num;
-                let num_unit = label.num_unit.map(|s| self.intern(s));
-                Label::num(key, num, num_unit)
-            };
-
-            // If you refactor this push, ensure the local_root_span_id_label_offset is correct.
-            labels.push(internal_label);
+            labels.push(label_id);
         }
-        Ok((labels, local_root_span_id_label_offset, timestamp))
+
+        let label_set_id = self.label_sets.dedup(LabelSet::new(labels));
+
+        Ok((label_set_id, timestamp))
     }
 
     fn extract_api_sample_types(&self) -> Option<Vec<api::ValueType>> {
@@ -481,10 +493,16 @@ impl Profile {
         })
     }
 
-    pub fn get_sample(&self, id: SampleId) -> &Sample {
-        self.samples
+    pub fn get_label(&self, id: LabelId) -> &Label {
+        self.labels
             .get_index(id.to_offset())
-            .expect("SampleId to have a valid interned index")
+            .expect("LabelId to have a valid interned index")
+    }
+
+    pub fn get_label_set(&self, id: LabelSetId) -> &LabelSet {
+        self.label_sets
+            .get_index(id.to_offset())
+            .expect("LabelSetId to have a valid interned index")
     }
 
     pub fn get_string(&self, id: StringId) -> &str {
@@ -496,7 +514,7 @@ impl Profile {
     /// Fetches the endpoint information for the label. There may be errors,
     /// but there may also be no endpoint information for a given endpoint.
     /// Hence, the return type of Result<Option<_>, _>.
-    fn get_endpoint_for_label(&self, label: &Label) -> anyhow::Result<Option<StringId>> {
+    fn get_endpoint_for_label(&self, label: &Label) -> anyhow::Result<Option<Label>> {
         anyhow::ensure!(
             label.get_key() == self.endpoints.local_root_span_id_label,
             "bug: get_endpoint_for_label should only be called on labels with the key \"local root span id\", called on label with key \"{}\"",
@@ -525,21 +543,41 @@ impl Profile {
             .endpoints
             .mappings
             .get(&local_root_span_id)
-            .map(StringId::clone))
+            .map(|v| Label::str(self.endpoints.endpoint_label, *v)))
+    }
+
+    fn get_endpoint_for_labels(&self, label_set_id: LabelSetId) -> anyhow::Result<Option<Label>> {
+        let label = self.get_label_set(label_set_id).iter().find_map(|id| {
+            let label = self.get_label(*id);
+            if label.get_key() == self.endpoints.local_root_span_id_label {
+                Some(label)
+            } else {
+                None
+            }
+        });
+        if let Some(label) = label {
+            self.get_endpoint_for_label(label)
+        } else {
+            Ok(None)
+        }
     }
 
     fn translate_and_enrich_sample_labels(
         &self,
-        sample: &Sample,
+        sample: Sample,
+        timestamp: Option<Timestamp>,
     ) -> anyhow::Result<Vec<pprof::Label>> {
-        let mut labels: Vec<_> = sample.labels.iter().map(pprof::Label::from).collect();
-        if let Some(offset) = sample.local_root_span_id_label_offset {
-            // Safety: this offset was created internally and isn't be mutated.
-            let lrsi_label = unsafe { sample.labels.get_unchecked(offset) };
-            if let Some(endpoint_value_id) = self.get_endpoint_for_label(lrsi_label)? {
-                labels.push(Label::str(self.endpoints.endpoint_label, endpoint_value_id).into());
-            }
-        }
+        let labels: Vec<_> = self
+            .get_label_set(sample.labels)
+            .iter()
+            .map(|l| self.get_label(*l).into())
+            .chain(
+                self.get_endpoint_for_labels(sample.labels)?
+                    .map(pprof::Label::from),
+            )
+            .chain(timestamp.map(|ts| Label::num(self.timestamp_key, ts.get(), None).into()))
+            .collect();
+
         Ok(labels)
     }
 }
@@ -560,14 +598,8 @@ impl TryFrom<&Profile> for pprof::Profile {
         let samples: anyhow::Result<Vec<pprof::Sample>> = profile
             .observations
             .iter()
-            .map(|(sample_id, timestamp, values)| {
-                let sample = profile.get_sample(sample_id);
-                let mut labels = profile.translate_and_enrich_sample_labels(sample)?;
-                if let Some(timestamp) = timestamp {
-                    // pprof uses a label to store the timestamp so put it there
-                    labels.push(Label::num(profile.timestamp_key, timestamp.get(), None).into());
-                }
-
+            .map(|(sample, timestamp, values)| {
+                let labels = profile.translate_and_enrich_sample_labels(sample, timestamp)?;
                 let location_ids: Vec<_> = profile
                     .get_stacktrace(sample.stacktrace)
                     .locations
@@ -889,9 +921,10 @@ mod api_test {
          * are working with so that we can test that reset works.
          */
         assert!(!profile.functions.is_empty());
+        assert!(!profile.labels.is_empty());
+        assert!(!profile.label_sets.is_empty());
         assert!(!profile.locations.is_empty());
         assert!(!profile.mappings.is_empty());
-        assert!(!profile.samples.is_empty());
         assert!(!profile.observations.is_empty());
         assert!(!profile.sample_types.is_empty());
         assert!(profile.period.is_none());
@@ -902,9 +935,10 @@ mod api_test {
 
         // These should all be empty now
         assert!(profile.functions.is_empty());
+        assert!(profile.labels.is_empty());
+        assert!(profile.label_sets.is_empty());
         assert!(profile.locations.is_empty());
         assert!(profile.mappings.is_empty());
-        assert!(profile.samples.is_empty());
         assert!(profile.observations.is_empty());
         assert!(profile.endpoints.mappings.is_empty());
         assert!(profile.endpoints.stats.is_empty());
