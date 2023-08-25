@@ -107,7 +107,6 @@ impl TraceProcessor for ServerlessTraceProcessor {
 #[cfg(test)]
 mod tests {
     use hyper::Request;
-    use serde_json::json;
     use std::{
         collections::HashMap,
         sync::Arc,
@@ -120,69 +119,11 @@ mod tests {
         trace_processor::{self, TraceProcessor},
     };
     use datadog_trace_protobuf::pb;
-    use datadog_trace_utils::trace_utils;
+    use datadog_trace_utils::{
+        trace_test_utils::{create_test_json_span, create_test_span},
+        trace_utils,
+    };
     use ddcommon::Endpoint;
-
-    fn create_test_span(start: i64, span_id: u64, parent_id: u64, is_top_level: bool) -> pb::Span {
-        let mut span = pb::Span {
-            trace_id: 111,
-            span_id,
-            service: "test-service".to_string(),
-            name: "test_name".to_string(),
-            resource: "test-resource".to_string(),
-            parent_id,
-            start,
-            duration: 5,
-            error: 0,
-            meta: HashMap::from([
-                ("service".to_string(), "test-service".to_string()),
-                ("env".to_string(), "test-env".to_string()),
-                (
-                    "runtime-id".to_string(),
-                    "afjksdljfkllksdj-28934889".to_string(),
-                ),
-            ]),
-            metrics: HashMap::new(),
-            r#type: "".to_string(),
-            meta_struct: HashMap::new(),
-        };
-        if is_top_level {
-            span.metrics.insert("_top_level".to_string(), 1.0);
-            span.meta
-                .insert("_dd.origin".to_string(), "cloudfunction".to_string());
-            span.meta
-                .insert("origin".to_string(), "cloudfunction".to_string());
-            span.meta.insert(
-                "functionname".to_string(),
-                "dummy_function_name".to_string(),
-            );
-            span.r#type = "serverless".to_string();
-        }
-        span
-    }
-
-    fn create_test_json_span(start: i64, span_id: u64, parent_id: u64) -> serde_json::Value {
-        json!(
-            {
-                "trace_id": 111,
-                "span_id": span_id,
-                "service": "test-service",
-                "name": "test_name",
-                "resource": "test-resource",
-                "parent_id": parent_id,
-                "start": start,
-                "duration": 5,
-                "error": 0,
-                "meta": {
-                    "service": "test-service",
-                    "env": "test-env",
-                    "runtime-id": "afjksdljfkllksdj-28934889",
-                },
-                "metrics": {},
-                "meta_struct": {},
-            }
-        )
-    }
 
     fn get_current_timestamp_nanos() -> i64 {
         SystemTime::now()
@@ -222,7 +163,7 @@ mod tests {
 
         let start = get_current_timestamp_nanos();
 
-        let json_span = create_test_json_span(start, 222, 0);
+        let json_span = create_test_json_span(11, 222, 333, start);
 
         let bytes = rmp_serde::to_vec(&vec![vec![json_span]]).unwrap();
         let request = Request::builder()
@@ -255,11 +196,11 @@ mod tests {
             language_name: "nodejs".to_string(),
             language_version: "v19.7.0".to_string(),
             tracer_version: "4.0.0".to_string(),
-            runtime_id: "afjksdljfkllksdj-28934889".to_string(),
+            runtime_id: "test-runtime-id-value".to_string(),
             chunks: vec![pb::TraceChunk {
                 priority: i8::MIN as i32,
                 origin: "".to_string(),
-                spans: vec![create_test_span(start, 222, 0, true)],
+                spans: vec![create_test_span(11, 222, 333, start, true)],
                 tags: HashMap::new(),
                 dropped_trace: false,
             }],
@@ -285,9 +226,9 @@ mod tests {
         let start = get_current_timestamp_nanos();
 
         let json_trace = vec![
-            create_test_json_span(start, 333, 222),
-            create_test_json_span(start, 222, 0),
-            create_test_json_span(start, 444, 333),
+            create_test_json_span(11, 333, 222, start),
+            create_test_json_span(11, 222, 0, start),
+            create_test_json_span(11, 444, 333, start),
         ];
 
         let bytes = rmp_serde::to_vec(&vec![json_trace]).unwrap();
@@ -321,14 +262,14 @@ mod tests {
             language_name: "nodejs".to_string(),
             language_version: "v19.7.0".to_string(),
             tracer_version: "4.0.0".to_string(),
-            runtime_id: "afjksdljfkllksdj-28934889".to_string(),
+            runtime_id: "test-runtime-id-value".to_string(),
             chunks: vec![pb::TraceChunk {
                 priority: i8::MIN as i32,
                 origin: "".to_string(),
                 spans: vec![
-                    create_test_span(start, 333, 222, false),
-                    create_test_span(start, 222, 0, true),
-                    create_test_span(start, 444, 333, false),
+                    create_test_span(11, 333, 222, start, false),
+                    create_test_span(11, 222, 0, start, true),
+                    create_test_span(11, 444, 333, start, false),
                 ],
                 tags: HashMap::new(),
                 dropped_trace: false,
@@ -338,7 +279,6 @@ mod tests {
             hostname: "".to_string(),
             app_version: "".to_string(),
         };
-
         assert_eq!(
             expected_tracer_payload,
             tracer_payload.unwrap().get_payloads()[0]

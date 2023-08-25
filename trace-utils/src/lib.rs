@@ -3,4 +3,5 @@
 
 pub mod config_utils;
 pub mod stats_utils;
+pub mod trace_test_utils;
 pub mod trace_utils;
