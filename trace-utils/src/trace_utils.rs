@@ -537,7 +537,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{get_root_span_index, set_serverless_root_span_tags};
-    use crate::trace_utils;
+    use crate::{trace_test_utils::create_test_span, trace_utils};
     use datadog_trace_protobuf::pb;
 
     #[tokio::test]
@@ -612,30 +612,12 @@ mod tests {
         }
     }
 
-    fn create_test_span(trace_id: u64, span_id: u64, parent_id: u64) -> pb::Span {
-        pb::Span {
-            trace_id,
-            span_id,
-            service: "service".to_string(),
-            name: "name".to_string(),
-            resource: "".to_string(),
-            parent_id,
-            start: 0,
-            duration: 5,
-            error: 0,
-            meta: HashMap::new(),
-            metrics: HashMap::new(),
-            r#type: "".to_string(),
-            meta_struct: HashMap::new(),
-        }
-    }
-
     #[test]
     fn test_get_root_span_index_from_complete_trace() {
         let trace = vec![
-            create_test_span(1234, 12341, 0),
-            create_test_span(1234, 12342, 12341),
-            create_test_span(1234, 12343, 12342),
+            create_test_span(1234, 12341, 0, 1, false),
+            create_test_span(1234, 12342, 12341, 1, false),
+            create_test_span(1234, 12343, 12342, 1, false),
         ];
 
         let root_span_index = get_root_span_index(&trace);
@@ -646,9 +628,9 @@ mod tests {
     #[test]
     fn test_get_root_span_index_from_partial_trace() {
         let trace = vec![
-            create_test_span(1234, 12342, 12341),
-            create_test_span(1234, 12341, 12340), // this is the root span, it's parent is not in the trace
-            create_test_span(1234, 12343, 12342),
+            create_test_span(1234, 12342, 12341, 1, false),
+            create_test_span(1234, 12341, 12340, 1, false), // this is the root span, it's parent is not in the trace
+            create_test_span(1234, 12343, 12342, 1, false),
         ];
 
         let root_span_index = get_root_span_index(&trace);
@@ -658,7 +640,7 @@ mod tests {
 
     #[test]
     fn test_set_serverless_root_span_tags_azure_function() {
-        let mut span = create_test_span(1234, 12342, 12341);
+        let mut span = create_test_span(1234, 12342, 12341, 1, false);
         set_serverless_root_span_tags(
             &mut span,
             Some("test_function".to_string()),
@@ -667,9 +649,15 @@ mod tests {
         assert_eq!(
             span.meta,
             HashMap::from([
+                (
+                    "runtime-id".to_string(),
+                    "test-runtime-id-value".to_string()
+                ),
                 ("_dd.origin".to_string(), "azurefunction".to_string()),
                 ("origin".to_string(), "azurefunction".to_string()),
-                ("functionname".to_string(), "test_function".to_string())
+                ("functionname".to_string(), "test_function".to_string()),
+                ("env".to_string(), "test-env".to_string()),
+                ("service".to_string(), "test-service".to_string())
             ]),
         );
         assert_eq!(span.r#type, "serverless".to_string())
@@ -677,7 +665,7 @@ mod tests {
 
     #[test]
     fn test_set_serverless_root_span_tags_cloud_function() {
-        let mut span = create_test_span(1234, 12342, 12341);
+        let mut span = create_test_span(1234, 12342, 12341, 1, false);
         set_serverless_root_span_tags(
             &mut span,
             Some("test_function".to_string()),
@@ -686,9 +674,15 @@ mod tests {
         assert_eq!(
             span.meta,
             HashMap::from([
+                (
+                    "runtime-id".to_string(),
+                    "test-runtime-id-value".to_string()
+                ),
                 ("_dd.origin".to_string(), "cloudfunction".to_string()),
                 ("origin".to_string(), "cloudfunction".to_string()),
-                ("functionname".to_string(), "test_function".to_string())
+                ("functionname".to_string(), "test_function".to_string()),
+                ("env".to_string(), "test-env".to_string()),
+                ("service".to_string(), "test-service".to_string())
             ]),
         );
         assert_eq!(span.r#type, "serverless".to_string())
