@@ -126,7 +126,7 @@ mod tests {
         let mut handles = meta.drain_to_send();
         let second_batch = meta.drain_to_send();
 
-        handles.extend(second_batch.into_iter());
+        handles.extend(second_batch);
         assert_eq!(MAX_FDS * 2, handles.len());
         assert_eq!(0, meta.drain_to_send().len());
 
