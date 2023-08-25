@@ -11,12 +11,12 @@ version = "3.0.0"
 crate-type = ["lib"]
 
 [dependencies]
-http = "0.2"
 anyhow = "1.0"
 futures = "0.3"
 futures-core = { version = "0.3.0", default-features = false }
 futures-util = { version = "0.3.0", default-features = false }
 hex = "0.4"
+http = "0.2"
 hyper = { version = "0.14", features = [
     "http1",
     "client",
