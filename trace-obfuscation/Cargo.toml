@@ -13,6 +13,7 @@ url = "2.4.0"
 percent-encoding = "2.1"
 log = "0.4"
 datadog-trace-protobuf = { path = "../trace-protobuf" }
+datadog-trace-utils = { path = "../trace-utils" }
 ddcommon = { path = "../ddcommon" }
 
 [dev-dependencies]
