@@ -23,7 +23,7 @@ pub struct Vec<T: Sized> {
 
 impl<T: PartialEq> PartialEq for Vec<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.len() == other.len() && self.into_iter().zip(other.into_iter()).all(|(s, o)| s == o)
+        self.len() == other.len() && self.iter().zip(other.iter()).all(|(s, o)| s == o)
     }
 }
 

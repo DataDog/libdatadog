@@ -54,18 +54,18 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_invalid_cstr_with_extra_null_character() {
-        cstr!("/dev/null\0\0");
+        _ = cstr!("/dev/null\0\0");
     }
 
     #[test]
     #[should_panic]
     fn test_invalid_cstr_u8_without_terminatid_nul() {
-        cstr_u8!(b"/dev/null");
+        _ = cstr_u8!(b"/dev/null");
     }
 
     #[test]
     #[should_panic]
     fn test_invalid_cstr_with_nul_character() {
-        cstr!("/dev/\0null");
+        _ = cstr!("/dev/\0null");
     }
 }
