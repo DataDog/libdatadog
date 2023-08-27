@@ -242,7 +242,6 @@ where
 {
     let (to_dispatch, pending_requests) = mpsc::channel(config.pending_request_buffer);
     let (cancellation, canceled_requests) = cancellations();
-    let canceled_requests = canceled_requests;
 
     NewClient {
         client: Channel {
@@ -514,7 +513,6 @@ where
         // poll_next_request only returns Ready if there is room to buffer another request.
         // Therefore, we can call write_request without fear of erroring due to a full
         // buffer.
-        let request_id = request_id;
         let request = ClientMessage::Request(Request {
             id: request_id,
             message: request,
