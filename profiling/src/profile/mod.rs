@@ -482,7 +482,18 @@ impl Profile {
             .as_nanos()
             .min(i64::MAX as u128) as i64;
 
-        let mut buffer: Vec<u8> = Vec::new();
+        // On 2023-08-23, we analyzed the uploaded tarball size per language.
+        // These tarballs include 1 or more profiles, but for most languages
+        // using libdatadog (all?) there is only 1 profile, so this is a good
+        // proxy for the compressed, final size of the profiles.
+        // We found that for all languages using libdatadog, the average
+        // tarball was at least 18 KiB. Since these archives are compressed,
+        // and because profiles compress well, especially ones with timeline
+        // enabled (over 9x for some analyzed timeline profiles), this initial
+        // size of 32KiB should definitely out-perform starting at zero for
+        // time consumed, allocator pressure, and allocator fragmentation.
+        const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
+        let mut buffer: Vec<u8> = Vec::with_capacity(INITIAL_PPROF_BUFFER_SIZE);
         profile.encode(&mut buffer)?;
 
         Ok(EncodedProfile {
