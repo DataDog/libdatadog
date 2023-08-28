@@ -9,11 +9,11 @@ use std::{
 
 use io_lifetimes::OwnedFd;
 
+use crate::platform::AsyncChannel;
 use crate::{
     handles::{HandlesTransport, TransferHandles},
     platform::{Message, PlatformHandle, MAX_FDS},
 };
-use crate::platform::AsyncChannel;
 
 #[derive(Debug)]
 pub struct ChannelMetadata {

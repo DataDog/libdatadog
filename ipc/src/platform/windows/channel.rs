@@ -1,18 +1,18 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use crate::handles::TransferHandles;
+use crate::platform::{AsyncChannel, Message};
+use std::future::Future;
+use std::os::windows::io::IntoRawHandle;
 use std::{
     io::{self, Read, Write},
     time::Duration,
 };
-use std::future::Future;
-use std::os::windows::io::IntoRawHandle;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::NamedPipeClient;
-use tokio::runtime::{Builder, Runtime};
+use tokio::runtime::Handle;
 use tokio::time::timeout;
-use crate::handles::TransferHandles;
-use crate::platform::{AsyncChannel, Message};
 
 pub mod async_channel;
 pub mod metadata;
@@ -27,7 +27,7 @@ struct Inner {
     blocking: bool,
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
-    runtime: Runtime,
+    runtime: Handle,
 }
 
 #[derive(Debug)]
@@ -68,26 +68,47 @@ impl Channel {
         self.inner.pipe.as_ref().unwrap().try_read(&mut buf).is_ok()
     }
 
-    fn wait_io_future<'a, O, F, Fut>(&'a mut self, call: F, duration: Option<Duration>) -> Result<O, io::Error> where F: FnOnce(&'a mut AsyncChannel) -> Fut, Fut: Future<Output=Result<O, io::Error>> + 'a {
-        let pipe = self.inner.pipe.as_mut().unwrap();
-        self.inner.runtime.block_on(async move {
-            let future = call(pipe);
-            if let Some(duration) = duration {
-                match timeout(duration, future).await {
-                    Ok(o) => o,
-                    Err(e) => Err(io::Error::from(e))
-                }
-            } else {
-                future.await
+    async fn do_wait<'a, O, F, Fut>(
+        pipe: &'a mut AsyncChannel,
+        call: F,
+        duration: Option<Duration>,
+    ) -> Result<O, io::Error>
+    where
+        F: FnOnce(&'a mut AsyncChannel) -> Fut,
+        Fut: Future<Output = Result<O, io::Error>> + 'a,
+    {
+        let future = call(pipe);
+        if let Some(duration) = duration {
+            match timeout(duration, future).await {
+                Ok(o) => o,
+                Err(e) => Err(io::Error::from(e)),
             }
-        })
+        } else {
+            future.await
+        }
+    }
+
+    fn wait_io_future<'a, O, F, Fut>(
+        &'a mut self,
+        call: F,
+        duration: Option<Duration>,
+    ) -> Result<O, io::Error>
+    where
+        F: FnOnce(&'a mut AsyncChannel) -> Fut,
+        Fut: Future<Output = Result<O, io::Error>> + 'a,
+    {
+        let pipe = self.inner.pipe.as_mut().unwrap();
+        self.inner
+            .runtime
+            .block_on(Self::do_wait(pipe, call, duration))
     }
 
     pub fn create_message<T>(&mut self, item: T) -> Result<Message<T>, io::Error>
-        where
-            T: TransferHandles,
+    where
+        T: TransferHandles,
     {
-        self.metadata.create_message(item, self.inner.pipe.as_ref().unwrap())
+        self.metadata
+            .create_message(item, self.inner.pipe.as_ref().unwrap())
     }
 }
 
@@ -125,25 +146,30 @@ impl From<Channel> for PlatformHandle<UnixStream> {
 
 impl From<PlatformHandle<NamedPipeClient>> for Channel {
     fn from(h: PlatformHandle<NamedPipeClient>) -> Self {
+        Channel::from(
+            AsyncChannel::from_raw(false, h.into_owned_handle().unwrap().into_raw_handle())
+                .unwrap(),
+        )
+    }
+}
+
+impl From<NamedPipeClient> for Channel {
+    fn from(stream: NamedPipeClient) -> Self {
+        Channel::from(AsyncChannel::from(stream))
+    }
+}
+
+impl From<AsyncChannel> for Channel {
+    fn from(channel: AsyncChannel) -> Self {
         Channel {
             inner: Inner {
-                pipe: Some(AsyncChannel::from_raw(false, h.into_owned_handle().unwrap().into_raw_handle()).unwrap()),
+                pipe: Some(channel),
                 blocking: true,
                 read_timeout: None,
                 write_timeout: None,
-                runtime: Builder::new_current_thread().enable_all().build().unwrap(),
+                runtime: Handle::current(),
             },
             metadata: Default::default(),
         }
     }
 }
-
-/*
-impl From<UnixStream> for Channel {
-    fn from(stream: UnixStream) -> Self {
-        Channel {
-            inner: PlatformHandle::from(stream),
-        }
-    }
-}
-*/

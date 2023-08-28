@@ -10,10 +10,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use datadog_ipc::platform::{self, locks::FLock};
 use crate::setup::Liaison;
+use datadog_ipc::platform::{self, locks::FLock, Channel};
 
-pub type IpcClient = UnixStream;
 pub type IpcServer = UnixListener;
 
 fn ensure_dir_world_writable<P: AsRef<Path>>(path: P) -> io::Result<()> {
@@ -39,8 +38,8 @@ pub struct SharedDirLiaison {
 }
 
 impl Liaison for SharedDirLiaison {
-    fn connect_to_server(&self) -> io::Result<UnixStream> {
-        UnixStream::connect(&self.socket_path)
+    fn connect_to_server(&self) -> io::Result<Channel> {
+        Channel::from(UnixStream::connect(&self.socket_path)?)
     }
 
     fn attempt_listen(&self) -> io::Result<Option<UnixListener>> {
@@ -117,6 +116,7 @@ mod linux {
     use spawn_worker::getpid;
 
     use datadog_ipc::platform;
+    use datadog_ipc::platform::Channel;
 
     use super::Liaison;
 
@@ -126,8 +126,8 @@ mod linux {
     pub type DefaultLiason = AbstractUnixSocketLiaison;
 
     impl Liaison for AbstractUnixSocketLiaison {
-        fn connect_to_server(&self) -> io::Result<UnixStream> {
-            platform::sockets::connect_abstract(&self.path)
+        fn connect_to_server(&self) -> io::Result<Channel> {
+            Channel::from(platform::sockets::connect_abstract(&self.path)?)
         }
 
         fn attempt_listen(&self) -> io::Result<Option<UnixListener>> {

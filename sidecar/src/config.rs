@@ -5,6 +5,7 @@ use http::uri::{PathAndQuery, Scheme};
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use ddcommon::{parse_uri, Endpoint};
+#[cfg(unix)]
 use spawn_worker::LibDependency;
 
 const ENV_SIDECAR_IPC_MODE: &str = "_DD_DEBUG_SIDECAR_IPC_MODE";
@@ -14,7 +15,7 @@ const SIDECAR_IPC_MODE_PER_PROCESS: &str = "instance_per_process";
 const ENV_SIDECAR_LOG_METHOD: &str = "_DD_DEBUG_SIDECAR_LOG_METHOD";
 const SIDECAR_LOG_METHOD_DISABLED: &str = "disabled";
 const SIDECAR_LOG_METHOD_STDOUT: &str = "stdout";
-const SIDECAR_LOG_METHOD_STDERR: &str = "stderr";
+const SIDECAR_LOG_METHOD_STDERR: &str = "stderr"; // https://github.com/tokio-rs/tokio/issues/5866
 
 const SIDECAR_HELP: &str = "help";
 
@@ -76,6 +77,7 @@ pub struct Config {
     pub log_method: LogMethod,
     pub idle_linger_time: Duration,
     pub self_telemetry: bool,
+    #[cfg(unix)]
     pub library_dependencies: Vec<LibDependency>,
     pub child_env: HashMap<std::ffi::OsString, std::ffi::OsString>,
 }
@@ -161,6 +163,7 @@ impl FromEnv {
             log_method: Self::log_method(),
             idle_linger_time: Self::idle_linger_time(),
             self_telemetry: Self::self_telemetry(),
+            #[cfg(unix)]
             library_dependencies: vec![],
             child_env: std::env::vars_os().collect(),
         }

@@ -4,6 +4,8 @@
 pub(crate) const TRAMPOLINE_BIN: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/trampoline.bin"));
 
+pub(crate) static ENV_PASS_FD_KEY: &str = "__DD_INTERNAL_PASSED_FD";
+
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub(crate) const LD_PRELOAD_TRAMPOLINE_LIB: &[u8] = include_bytes!(concat!(
     env!("OUT_DIR"),
@@ -29,7 +31,7 @@ pub struct Entrypoint {
     pub symbol_name: CString,
 }
 pub enum Target {
-    Entrypoint(crate::Entrypoint),
+    Entrypoint(Entrypoint),
     ManualTrampoline(String, String),
     Noop,
 }

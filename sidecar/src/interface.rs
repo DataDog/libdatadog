@@ -29,7 +29,6 @@ use datadog_ipc::platform::{FileBackedHandle, NamedShmHandle, ShmHandle};
 use datadog_ipc::tarpc::{context::Context, server::Channel};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use tokio::net::UnixStream;
 use tokio::select;
 use tokio::task::{JoinError, JoinHandle};
 use tracing::{error, info};

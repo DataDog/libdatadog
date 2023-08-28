@@ -39,7 +39,6 @@ use crate::setup::{self, Liaison};
 
 use crate::config::{self, Config};
 
-
 #[no_mangle]
 pub extern "C" fn ddog_daemon_entry_point() {
     if let Err(err) = nix::unistd::setsid() {
@@ -59,7 +58,20 @@ pub extern "C" fn ddog_daemon_entry_point() {
         let acquire_listener = move || {
             let listener = UnixListener::from_std(listener)?;
             listener.set_nonblocking(true)?;
-            listener
+
+            // shutdown to gracefully dequeue, and immediately relinquish ownership of the socket while shutting down
+            let cancel = {
+                let listener_fd = listener.as_raw_fd();
+                move || {
+                    // We need to drop O_NONBLOCK, as accept() on a shutdown socket will just give EAGAIN instead of EINVAL
+                    let flags =
+                        OFlag::from_bits_truncate(fcntl(listener_fd, F_GETFL).ok().unwrap());
+                    _ = fcntl(listener_fd, F_SETFL(flags & !OFlag::O_NONBLOCK));
+                    _ = shutdown(listener_fd, Shutdown::Both);
+                }
+            };
+
+            Ok((|handler| accept_socket_loop(listener, handler), cancel))
         };
         if let Err(err) = enter_listener_loop(acquire_listener) {
             tracing::error!("Error: {err}")
@@ -71,4 +83,47 @@ pub extern "C" fn ddog_daemon_entry_point() {
         getpid(),
         now.elapsed().as_secs_f64()
     )
+}
+
+async fn accept_socket_loop<F>(
+    server: UnixListener,
+    handler: Box<dyn Fn(UnixStream)>,
+) -> io::Result<()> {
+    while let Ok((socket, _)) = listener.accept().await {
+        handler(socket);
+    }
+    Ok(())
+}
+
+pub fn setup_daemon_process(
+    listener: &UnixListener,
+    cfg: Config,
+    spawn_cfg: &mut SpawnWorker,
+) -> io::Result<()> {
+    spawn_cfg
+        .shared_lib_dependencies(cfg.library_dependencies.clone())
+        .daemonize(true)
+        .pass_fd(listener)
+        .stdin(Stdio::Null);
+
+    match cfg.log_method {
+        config::LogMethod::File(path) => {
+            let file = File::options()
+                .write(true)
+                .append(true)
+                .truncate(false)
+                .create(true)
+                .open(path)?;
+            let (out, err) = (Stdio::Fd(file.try_clone()?.into(), Stdio::Fd(file.into())));
+            spawn_cfg.stdout(out);
+            spawn_cfg.stderr(err);
+        }
+        config::LogMethod::Disabled => {
+            spawn_cfg.stdout(Stdio::Null);
+            spawn_cfg.stderr(Stdio::Null);
+        }
+        _ => {}
+    }
+
+    Ok(())
 }

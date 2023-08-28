@@ -3,7 +3,10 @@
 // #![cfg(feature = "prefer-dynamic")]
 // use test_spawn_from_lib::spawn_self;
 
-use std::{process::Stdio, io::{Seek, Read}};
+use std::{
+    io::{Read, Seek},
+    process::Stdio,
+};
 
 fn rewind_and_read(file: &mut std::fs::File) -> anyhow::Result<String> {
     file.rewind()?;
@@ -26,7 +29,7 @@ fn test_spawning_trampoline_worker() {
         .stderr(stderr.try_clone().unwrap())
         .spawn()
         .unwrap();
-    
+
     let output = child.wait_with_output().unwrap();
 
     if !output.status.success() {

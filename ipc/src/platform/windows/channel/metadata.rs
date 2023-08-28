@@ -1,16 +1,16 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use std::io;
 use std::collections::HashMap;
+use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::os::windows::prelude::RawHandle;
 
+use crate::platform::AsyncChannel;
 use crate::{
     handles::TransferHandles,
     platform::{Message, PlatformHandle},
 };
-use crate::platform::AsyncChannel;
 
 #[derive(Debug)]
 pub struct ChannelMetadata {
@@ -39,7 +39,11 @@ impl ChannelMetadata {
         Ok(item)
     }
 
-    pub fn create_message<T>(&mut self, item: T, channel: &AsyncChannel) -> Result<Message<T>, io::Error>
+    pub fn create_message<T>(
+        &mut self,
+        item: T,
+        channel: &AsyncChannel,
+    ) -> Result<Message<T>, io::Error>
     where
         T: TransferHandles,
     {
@@ -47,7 +51,10 @@ impl ChannelMetadata {
 
         let mut handle_map = HashMap::new();
         for handle in self.handles_to_send.drain(..) {
-            handle_map.insert(handle.fd as u64, channel.send_file_handle(handle.as_raw_handle())? as u64);
+            handle_map.insert(
+                handle.fd as u64,
+                channel.send_file_handle(handle.as_raw_handle())? as u64,
+            );
         }
 
         let message = Message {

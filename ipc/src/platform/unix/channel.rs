@@ -1,6 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use crate::handles::TransferHandles;
+use crate::platform::Message;
 use nix::sys::select::FdSet;
 use nix::sys::time::{TimeVal, TimeValLike};
 use std::{
@@ -11,8 +13,6 @@ use std::{
     },
     time::Duration,
 };
-use crate::handles::TransferHandles;
-use crate::platform::Message;
 
 pub mod async_channel;
 pub mod metadata;
@@ -64,8 +64,8 @@ impl Channel {
     }
 
     pub fn create_message<T>(&mut self, item: T) -> Result<Message<T>, io::Error>
-        where
-            T: TransferHandles,
+    where
+        T: TransferHandles,
     {
         self.metadata.create_message(item)
     }

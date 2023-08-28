@@ -1,14 +1,25 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use std::ffi::OsString;
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
+use std::os::windows::process::CommandExt;
 use std::{
+    env,
     io::{Seek, Write},
-    mem,
     process::{Child, Command, Stdio},
 };
 
-pub(crate) fn write_trampoline() -> anyhow::Result<tempfile::NamedTempFile> {
-    let tmp_file = tempfile::NamedTempFile::new()?;
+pub(crate) fn write_trampoline(
+    process_name: &Option<String>,
+) -> anyhow::Result<tempfile::NamedTempFile> {
+    let tmp_file = if let Some(process_name) = process_name {
+        tempfile::Builder::new()
+            .prefix(&format!("{}-", process_name))
+            .tempfile()
+    } else {
+        tempfile::NamedTempFile::new()
+    }?;
     let mut file = tmp_file.as_file();
     file.set_len(crate::TRAMPOLINE_BIN.len() as u64)?;
     file.write_all(crate::TRAMPOLINE_BIN)?;
@@ -17,24 +28,21 @@ pub(crate) fn write_trampoline() -> anyhow::Result<tempfile::NamedTempFile> {
     Ok(tmp_file)
 }
 
+use windows::Win32::System::Threading::{
+    CREATE_DEFAULT_ERROR_MODE, CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS,
+};
 use windows::{
-    core::{PCSTR, PCWSTR},
+    core::PCSTR,
     Win32::{
         Foundation::{GetLastError, HMODULE},
-        System::{
-            Diagnostics::Debug::{
-                SymFromAddrW, SymInitializeW, MAX_SYM_NAME, SYMBOL_INFOW, SYMBOL_INFO_PACKAGEW,
-            },
-            LibraryLoader::{
-                GetModuleFileNameW, GetModuleHandleExA, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            },
-            Threading::GetCurrentProcess,
+        System::LibraryLoader::{
+            GetModuleFileNameW, GetModuleHandleExA, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
         },
     },
 };
 
-use crate::Target;
+use crate::{Target, ENV_PASS_FD_KEY};
 
 pub struct SpawnWorker {
     stdin: Option<Stdio>,
@@ -42,6 +50,9 @@ pub struct SpawnWorker {
     stdout: Option<Stdio>,
     target: Target,
     env_clear: bool,
+    env: Vec<(OsString, OsString)>,
+    process_name: Option<String>,
+    passed_handle: Option<OwnedHandle>,
 }
 
 impl Default for SpawnWorker {
@@ -58,6 +69,9 @@ impl SpawnWorker {
             stderr: None,
             target: Target::Noop,
             env_clear: false,
+            env: Vec::new(),
+            process_name: None,
+            passed_handle: None,
         }
     }
 
@@ -81,15 +95,42 @@ impl SpawnWorker {
         self
     }
 
+    pub fn pass_handle(&mut self, handle: OwnedHandle) -> &mut Self {
+        self.passed_handle = Some(handle);
+        self
+    }
+
+    pub fn append_env<K: Into<OsString>, V: Into<OsString>>(
+        &mut self,
+        key: K,
+        value: V,
+    ) -> &mut Self {
+        self.env.push((key.into(), value.into()));
+        self
+    }
+
+    pub fn process_name<S: Into<String>>(&mut self, process_name: S) -> &mut Self {
+        self.process_name = Some(process_name.into());
+        self
+    }
+
+    pub fn wait_spawn(&mut self) -> anyhow::Result<()> {
+        self.spawn()?;
+        Ok(())
+    }
+
     pub fn spawn(&mut self) -> anyhow::Result<Child> {
         self.do_spawn()
     }
 
     fn do_spawn(&mut self) -> anyhow::Result<Child> {
-        let (f, path) = write_trampoline()?.keep()?;
+        let (f, path) = write_trampoline(&self.process_name)?.keep()?;
         drop(f);
 
         let mut cmd = Command::new(path);
+        cmd.creation_flags(
+            DETACHED_PROCESS.0 | CREATE_NEW_PROCESS_GROUP.0 | CREATE_DEFAULT_ERROR_MODE.0,
+        );
 
         if let Some(stdin) = self.stdin.take() {
             cmd.stdin(stdin);
@@ -106,6 +147,14 @@ impl SpawnWorker {
             cmd.env_clear();
         }
 
+        for (key, val) in self.env.iter() {
+            cmd.env(key, val);
+        }
+
+        if let Some(ref handle) = self.passed_handle {
+            cmd.env(ENV_PASS_FD_KEY, (handle.as_raw_handle() as u64).to_string());
+        }
+
         cmd.arg("");
 
         match &self.target {
@@ -119,6 +168,12 @@ impl SpawnWorker {
 
         Ok(cmd.spawn()?)
     }
+}
+
+pub fn recv_passed_handle() -> Option<OwnedHandle> {
+    let val = env::var(ENV_PASS_FD_KEY).ok()?;
+    let handle: u64 = val.parse().ok()?;
+    unsafe { Some(OwnedHandle::from_raw_handle(handle as RawHandle)) }
 }
 
 fn get_module_file_name(h: HMODULE) -> anyhow::Result<String> {
@@ -142,31 +197,8 @@ fn get_module_file_name(h: HMODULE) -> anyhow::Result<String> {
     }
 }
 
-fn get_sym_name(f: *const u8) -> anyhow::Result<String> {
-    let hprocess = unsafe { GetCurrentProcess() };
-
-    unsafe { SymInitializeW(hprocess, PCWSTR::null(), true).ok()? };
-
-    let mut sym = SYMBOL_INFO_PACKAGEW::default();
-    sym.si.SizeOfStruct = mem::size_of::<SYMBOL_INFOW>() as u32;
-    sym.si.MaxNameLen = sym.name.len() as u32;
-    unsafe {
-        SymFromAddrW(hprocess, f as u64, None, &mut sym.si as *mut SYMBOL_INFOW)
-            .ok()
-            .unwrap();
-    }
-    let sn_len = sym.si.NameLen as usize;
-    let reassembled_name =
-        unsafe { mem::transmute::<_, &[u16; MAX_SYM_NAME as usize]>(&sym.si.Name) };
-
-    Ok(String::from_utf16(&reassembled_name[0..sn_len])?)
-}
-
 pub fn get_trampoline_target_data(f: *const u8) -> anyhow::Result<String> {
     let mut h = HMODULE::default();
-
-
-    // "C:\\Users\\pawel\\repos\\libdatadog\\target\\debug\\test_spawn_from_lib.dll"
 
     unsafe {
         GetModuleHandleExA(
@@ -177,27 +209,18 @@ pub fn get_trampoline_target_data(f: *const u8) -> anyhow::Result<String> {
         .ok()?
     };
 
-    let module_file_name = get_module_file_name(h)?;
-
-    // TODO: lib autodetection in tests is broken on windows
-    let current_exe = std::env::current_exe().unwrap().to_str().unwrap().to_owned();
-    if current_exe == module_file_name {
-        return Ok(String::from("C:\\Users\\pawel\\repos\\libdatadog\\target\\debug\\test_spawn_from_lib.dll"));
-    }
-
-    Ok(module_file_name)
+    get_module_file_name(h)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{env};
+    use std::env;
 
     use super::get_trampoline_target_data;
 
     #[test]
     pub fn test_trampoline_target_data() {
-        let path =
-            get_trampoline_target_data(test_trampoline_target_data as *const u8).unwrap();
+        let path = get_trampoline_target_data(test_trampoline_target_data as *const u8).unwrap();
 
         let current_exe = env::current_exe().unwrap().to_str().unwrap().to_owned();
         assert_eq!(current_exe, path);

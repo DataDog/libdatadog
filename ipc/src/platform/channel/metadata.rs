@@ -1,9 +1,9 @@
-use std::io;
-#[cfg(windows)]
-use std::os::windows::io::AsRawHandle;
 use crate::handles::HandlesTransport;
 use crate::platform::metadata::ChannelMetadata;
 use crate::platform::PlatformHandle;
+use std::io;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
 
 impl HandlesTransport for &mut ChannelMetadata {
     type Error = io::Error;
@@ -22,10 +22,7 @@ impl HandlesTransport for &mut ChannelMetadata {
             let handle = hint.as_raw_handle();
             io::Error::new(
                 io::ErrorKind::Other,
-                format!(
-                    "can't provide expected handle for hint: {:?}",
-                    handle
-                ),
+                format!("can't provide expected handle for hint: {:?}", handle),
             )
         })
     }

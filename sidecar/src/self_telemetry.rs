@@ -1,15 +1,17 @@
-use std::sync::atomic::Ordering;
-use std::time::Duration;
+use crate::config::Config;
+use crate::interface::SidecarServer;
+use ddtelemetry::data::metrics::{MetricNamespace, MetricType};
+use ddtelemetry::metrics::ContextKey;
+use ddtelemetry::worker::{
+    LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle,
+};
 use futures::future;
 use manual_future::ManualFuture;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
 use tokio::select;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
-use ddtelemetry::data::metrics::MetricNamespace;
-use ddtelemetry::metrics::ContextKey;
-use ddtelemetry::worker::{TelemetryActions, TelemetryWorkerHandle};
-use crate::interface::SidecarServer;
-use crate::config::{self, Config};
 
 struct MetricData<'a> {
     worker: &'a TelemetryWorkerHandle,
@@ -36,11 +38,14 @@ impl<'a> MetricData<'a> {
                 self.server.active_session_count() as f64,
             ),
         ])
-            .await;
+        .await;
     }
 }
 
-pub fn self_telemetry(server: SidecarServer, mut shutdown_receiver: Receiver<()>) -> JoinHandle<()> {
+pub fn self_telemetry(
+    server: SidecarServer,
+    mut shutdown_receiver: Receiver<()>,
+) -> JoinHandle<()> {
     if !Config::get().self_telemetry {
         return tokio::spawn(async move {
             shutdown_receiver.recv().await;

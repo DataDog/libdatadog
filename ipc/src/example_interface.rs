@@ -14,7 +14,7 @@ use tarpc::context::Context;
 use tarpc::server::Channel;
 
 use super::{
-    platform::{PlatformHandle},
+    platform::PlatformHandle,
     transport::{blocking::BlockingTransport, Transport},
 };
 

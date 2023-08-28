@@ -17,6 +17,8 @@ struct OBJECT_NAME_INFORMATION {
     NameBuffer: [WCHAR; 1000],
 }
 
+pub const PIPE_PATH: &str = r"\\.\pipe\";
+
 pub fn named_pipe_name_from_raw_handle(handle: RawHandle) -> Option<String> {
     unsafe {
         let mut ret_size: u32 = 0;
@@ -27,11 +29,22 @@ pub fn named_pipe_name_from_raw_handle(handle: RawHandle) -> Option<String> {
             Buffer: null_mut(),
         });
         let mut name_info = name_info.assume_init();
-        NtQueryObject(handle as HANDLE, ObjectNameInformation, &mut name_info as *mut OBJECT_NAME_INFORMATION as *mut c_void, mem::size_of::<OBJECT_NAME_INFORMATION>() as u32, &mut ret_size);
+        NtQueryObject(
+            handle as HANDLE,
+            ObjectNameInformation,
+            &mut name_info as *mut OBJECT_NAME_INFORMATION as *mut c_void,
+            mem::size_of::<OBJECT_NAME_INFORMATION>() as u32,
+            &mut ret_size,
+        );
         if name_info.Name.Buffer.is_null() {
             None
         } else {
-            String::from_utf16(std::slice::from_raw_parts(name_info.Name.Buffer, (name_info.Name.Length / 2) as usize)).ok()
+            String::from_utf16(std::slice::from_raw_parts(
+                name_info.Name.Buffer,
+                (name_info.Name.Length / 2) as usize,
+            ))
+            .map(|path| format!("{}{}", PIPE_PATH, &path[r"\Device\NamedPipe\".len()..]))
+            .ok()
         }
     }
 }

@@ -67,8 +67,6 @@ impl Entrypoint {
     }
 }
 
-pub(crate) static ENV_PASS_FD_KEY: &str = "__DD_INTERNAL_PASSED_FD";
-
 pub fn recv_passed_fd() -> Option<OwnedFd> {
     let val = env::var(ENV_PASS_FD_KEY).ok()?;
     let fd: RawFd = val.parse().ok()?;

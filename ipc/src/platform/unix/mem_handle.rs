@@ -1,18 +1,19 @@
-use std::fs::File;
-use std::io;
-use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicI32, Ordering};
+use crate::platform::{
+    FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle, ShmPath,
+};
 use libc::{getpid, off_t};
-use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle, ShmPath};
-#[cfg(not(target_os = "linux"))]
-use nix::unistd::getpid;
 use nix::fcntl::OFlag;
 use nix::sys::mman::{mmap, munmap, shm_open, shm_unlink, MapFlags, ProtFlags};
 use nix::sys::stat::Mode;
 use nix::unistd::ftruncate;
+#[cfg(not(target_os = "linux"))]
+use nix::unistd::getpid;
+use std::fs::File;
+use std::io;
+use std::num::NonZeroUsize;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
-
+use std::sync::atomic::{AtomicI32, Ordering};
 
 fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMem<T>> {
     let fd: RawFd = handle.get_shm().handle.as_raw_fd();
@@ -49,7 +50,11 @@ impl ShmHandle {
 
     #[cfg(not(target_os = "linux"))]
     fn open_anon_shm() -> anyhow::Result<RawFd> {
-        let path = format!("/libdatadog-shm-anon-{}-{}", unsafe { getpid() }, ANON_SHM_ID.fetch_add(1, Ordering::SeqCst));
+        let path = format!(
+            "/libdatadog-shm-anon-{}-{}",
+            unsafe { getpid() },
+            ANON_SHM_ID.fetch_add(1, Ordering::SeqCst)
+        );
         let result = shm_open(
             path.as_bytes(),
             OFlag::O_CREAT | OFlag::O_RDWR,
@@ -118,4 +123,3 @@ impl Drop for ShmPath {
         _ = shm_unlink(self.name.as_c_str());
     }
 }
-

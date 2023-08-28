@@ -8,19 +8,19 @@ impl<Item> Message<Item> {
 }
 
 impl<T> TransferHandles for Message<T>
-    where
-        T: TransferHandles,
+where
+    T: TransferHandles,
 {
     fn move_handles<M>(&self, mover: M) -> Result<(), M::Error>
-        where
-            M: HandlesTransport,
+    where
+        M: HandlesTransport,
     {
         self.item.move_handles(mover)
     }
 
     fn receive_handles<P>(&mut self, provider: P) -> Result<(), P::Error>
-        where
-            P: HandlesTransport,
+    where
+        P: HandlesTransport,
     {
         self.item.receive_handles(provider)
     }

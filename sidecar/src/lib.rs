@@ -2,12 +2,12 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 pub mod agent_remote_config;
 pub mod config;
+pub mod entry;
 pub mod interface;
 pub mod one_way_shared_memory;
-pub mod setup;
-pub mod entry;
-mod tracer;
 mod self_telemetry;
+pub mod setup;
+mod tracer;
 
 pub use entry::*;
 
@@ -19,4 +19,4 @@ pub use unix::*;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use windows::*;
+pub use self::windows::*;

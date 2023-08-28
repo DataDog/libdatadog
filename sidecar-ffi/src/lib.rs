@@ -10,12 +10,12 @@ use datadog_sidecar::agent_remote_config::{
 use ddcommon_ffi as ffi;
 use libc::c_char;
 use std::ffi::c_void;
-use std::time::Duration;
-use std::{fs::File};
+use std::fs::File;
 #[cfg(unix)]
 use std::os::unix::prelude::FromRawFd;
 #[cfg(windows)]
 use std::os::windows::io::{FromRawHandle, RawHandle};
+use std::time::Duration;
 
 use datadog_sidecar::interface::{
     blocking::{self, SidecarTransport},
@@ -48,7 +48,8 @@ pub unsafe extern "C" fn ddog_ph_file_from(file: *mut libc::FILE) -> NativeFile 
     #[cfg(unix)]
     let handle = PlatformHandle::from_raw_fd(libc::fileno(file));
     #[cfg(windows)]
-    let handle = PlatformHandle::from_raw_handle(libc::get_osfhandle(libc::fileno(file)) as RawHandle);
+    let handle =
+        PlatformHandle::from_raw_handle(libc::get_osfhandle(libc::fileno(file)) as RawHandle);
 
     NativeFile {
         handle: Box::from(handle),
@@ -186,13 +187,6 @@ pub extern "C" fn ddog_agent_remote_config_writer_drop(_: Box<AgentRemoteConfigW
 
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_transport_drop(_: Box<SidecarTransport>) {}
-
-#[no_mangle]
-pub extern "C" fn ddog_sidecar_transport_clone(
-    transport: &SidecarTransport,
-) -> Box<SidecarTransport> {
-    Box::new(transport.clone())
-}
 
 /// # Safety
 /// Caller must ensure the process is safe to fork, at the time when this method is called

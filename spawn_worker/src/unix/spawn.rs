@@ -291,6 +291,21 @@ impl SpawnWorker {
         self
     }
 
+    fn wait_pid(pid: Option<libc::pid_t>) -> anyhow::Result<()> {
+        let pid = match pid {
+            Some(pid) => Pid::from_raw(pid),
+            None => return Ok(()),
+        };
+
+        nix::sys::wait::waitpid(Some(pid), None)?;
+        Ok(())
+    }
+
+    pub fn wait_spawn(&mut self) -> anyhow::Result<()> {
+        let Child { pid } = self.spawn()?;
+        Self::wait_pid(pid)
+    }
+
     pub fn spawn(&mut self) -> anyhow::Result<Child> {
         let pid = self.do_spawn()?;
 
@@ -530,21 +545,6 @@ impl SpawnWorker {
 
         spawn();
         std::process::exit(1);
-    }
-}
-
-pub struct Child {
-    pub pid: Option<libc::pid_t>,
-}
-
-impl Child {
-    pub fn wait(self) -> anyhow::Result<WaitStatus> {
-        let pid = match self.pid {
-            Some(pid) => Pid::from_raw(pid),
-            None => return Ok(WaitStatus::Exited(Pid::from_raw(0), 0)),
-        };
-
-        Ok(nix::sys::wait::waitpid(Some(pid), None)?)
     }
 }
 

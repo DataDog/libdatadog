@@ -35,6 +35,7 @@ pub struct BlockingTransport<IncomingItem, OutgoingItem> {
 impl<IncomingItem, OutgoingItem> Clone for BlockingTransport<IncomingItem, OutgoingItem> {
     fn clone(&self) -> Self {
         Self {
+            #[cfg(unix)]
             pid: self.pid,
             requests_id: self.requests_id.clone(),
             transport: self.transport.clone(),
@@ -102,8 +103,7 @@ where
                         // TODO: make sure this optimization is really needed - once BenchPlatform is connected to libdatadog
                         // benchmark unfilled_mut vs initialize_unfilled - and if the difference is negligible - then lets switch to
                         // implementation that doesn't use UB.
-                        let b = &mut *(buf_window.unfilled_mut()
-                            as *mut [MaybeUninit<u8>]
+                        let b = &mut *(buf_window.unfilled_mut() as *mut [MaybeUninit<u8>]
                             as *mut [u8]);
 
                         let n = self.channel.read(b)?;

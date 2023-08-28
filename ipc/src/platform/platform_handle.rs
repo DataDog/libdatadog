@@ -1,18 +1,14 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use std::{
-    io,
-    marker::PhantomData,
-    sync::Arc,
-};
+#[cfg(windows)]
+//noinspection RsUnusedImport
+use crate::platform::{deserialize_rawhandle, serialize_rawhandle};
 #[cfg(unix)]
 use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
 #[cfg(windows)]
-use std::os::windows::io::{RawHandle, OwnedHandle};
-#[cfg(windows)]
-//noinspection RsUnusedImport
-use crate::platform::{serialize_rawhandle, deserialize_rawhandle};
+use std::os::windows::io::{OwnedHandle, RawHandle};
+use std::{io, marker::PhantomData, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
@@ -31,7 +27,13 @@ pub type OwnedFileHandle = OwnedHandle;
 /// allowing safe transfer and sharing of file handles across processes, and threads
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PlatformHandle<T> {
-    #[cfg_attr(windows, serde(deserialize_with = "deserialize_rawhandle", serialize_with = "serialize_rawhandle"))]
+    #[cfg_attr(
+        windows,
+        serde(
+            deserialize_with = "deserialize_rawhandle",
+            serialize_with = "serialize_rawhandle"
+        )
+    )]
     pub(crate) fd: RawFileHandle, // Just an fd number to be used as reference e.g. when serializing, not for accessing actual fd
     #[serde(skip)]
     pub(crate) inner: Option<Arc<OwnedFileHandle>>,
@@ -136,12 +138,11 @@ impl<T> TransferHandles for PlatformHandle<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::File, io::Write, thread};
     use io_lifetimes::{
         views::{FilelikeView, FilelikeViewType, SocketlikeView, SocketlikeViewType},
         AsFilelike, AsSocketlike,
     };
-
+    use std::{fs::File, io::Write, thread};
 
     use super::PlatformHandle;
     macro_rules! assert_file_is_open_for_writing {

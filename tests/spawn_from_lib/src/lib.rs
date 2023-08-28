@@ -2,10 +2,10 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 // #![cfg(unix)]
 
-use std::{io::Write};
+use std::io::Write;
 
+use spawn_worker::entrypoint;
 use spawn_worker::SpawnWorker;
-use spawn_worker::{entrypoint};
 
 #[cfg(not(target_os = "windows"))]
 use spawn_worker::recv_passed_fd;
