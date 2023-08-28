@@ -9,6 +9,7 @@
 #include <dlfcn.h>
 #include <unistd.h>
 #else
+#include <windows.h>
 #define unlink _unlink
 #endif
 
@@ -76,6 +77,23 @@ int main(int argc, char *argv[]) {
       }
       free(handles);
     }
+#else
+    HINSTANCE handle = LoadLibrary(library_path);
+    if (!handle) {
+        DWORD res = GetLastError();
+        fprintf(stderr, "error: %i, could not load shared library\n", res);
+        return 10;
+    } 
+
+    void (*fn)() = GetProcAddress(handle, symbol_name);
+
+    if (!fn) {
+        DWORD res = GetLastError();
+        fprintf(stderr, "error: %i loading symbol: %s from: %s\n", res, symbol_name, library_path);
+        return 11;
+    }
+
+    (*fn)();
 #endif
     return 0;
   }

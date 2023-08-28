@@ -88,11 +88,7 @@ pub enum SpawnMethod {
     Exec,
 }
 
-pub enum Target {
-    Entrypoint(crate::Entrypoint),
-    Manual(CString, CString),
-    Noop,
-}
+use crate::Target;
 
 impl Target {
     /// TODO: ld_preload type trampoline is not yet supported on osx
@@ -543,7 +539,6 @@ pub struct Child {
 
 impl Child {
     pub fn wait(self) -> anyhow::Result<WaitStatus> {
-        // Command::spawn(&mut self);
         let pid = match self.pid {
             Some(pid) => Pid::from_raw(pid),
             None => return Ok(WaitStatus::Exited(Pid::from_raw(0), 0)),
