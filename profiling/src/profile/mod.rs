@@ -970,22 +970,22 @@ mod api_test {
          */
         let mut profile = provide_distinct_locations();
 
-        let period = Some((
+        let period = (
             10_000_000,
             ValueType {
                 r#type: profile.intern("wall-time"),
                 unit: profile.intern("nanoseconds"),
             },
-        ));
-        profile.period = period;
+        );
+        profile.period = Some(period);
 
         let prev = profile.reset(None).expect("reset to succeed");
-        assert_eq!(period, prev.period);
+        assert_eq!(Some(period), prev.period);
 
         // Resolve the string values to check that they match (their string
         // table offsets may not match).
         let (value, period_type) = profile.period.expect("profile to have a period");
-        assert_eq!(value, period.unwrap().0);
+        assert_eq!(value, period.0);
         assert_eq!(profile.get_string(period_type.r#type), "wall-time");
         assert_eq!(profile.get_string(period_type.unit), "nanoseconds");
     }
