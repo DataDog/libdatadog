@@ -4,6 +4,8 @@ use crate::platform::PlatformHandle;
 use std::io;
 #[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
+#[cfg(unix)]
+use std::os::unix::prelude::AsRawFd;
 
 impl HandlesTransport for &mut ChannelMetadata {
     type Error = io::Error;

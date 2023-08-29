@@ -25,8 +25,6 @@ use crate::{
 use super::DefaultCodec;
 
 pub struct BlockingTransport<IncomingItem, OutgoingItem> {
-    #[cfg(unix)]
-    pid: libc::pid_t,
     requests_id: Arc<AtomicU64>,
     transport: FramedBlocking<Response<IncomingItem>, ClientMessage<OutgoingItem>>,
 }
@@ -47,8 +45,6 @@ impl<IncomingItem, OutgoingItem> Clone for BlockingTransport<IncomingItem, Outgo
 impl<IncomingItem, OutgoingItem> From<Channel> for BlockingTransport<IncomingItem, OutgoingItem> {
     fn from(c: Channel) -> Self {
         BlockingTransport {
-            #[cfg(unix)]
-            pid: unsafe { libc::getpid() },
             requests_id: Arc::from(AtomicU64::new(0)),
             transport: c.into(),
         }
@@ -59,10 +55,8 @@ impl<IncomingItem, OutgoingItem> From<Channel> for BlockingTransport<IncomingIte
 impl<IncomingItem, OutgoingItem> From<std::os::unix::net::UnixStream>
     for BlockingTransport<IncomingItem, OutgoingItem>
 {
-    fn from(s: UnixStream) -> Self {
-        let pid = unsafe { libc::getpid() };
+    fn from(s: std::os::unix::net::UnixStream) -> Self {
         BlockingTransport {
-            pid,
             requests_id: Arc::from(AtomicU64::new(0)),
             transport: Channel::from(s).into(),
         }

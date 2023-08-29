@@ -2,7 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use crate::handles::TransferHandles;
-use crate::platform::Message;
+use crate::platform::{Message, PlatformHandle};
 use nix::sys::select::FdSet;
 use nix::sys::time::{TimeVal, TimeValLike};
 use std::{
@@ -21,7 +21,7 @@ use sendfd::{RecvWithFd, SendWithFd};
 
 use self::metadata::ChannelMetadata;
 
-use super::{PlatformHandle, MAX_FDS};
+use super::MAX_FDS;
 
 #[derive(Debug)]
 pub struct Channel {

@@ -4,8 +4,12 @@
 use crate::handles::{HandlesTransport, TransferHandles};
 use crate::platform::{mmap_handle, munmap_handle, OwnedFileHandle, PlatformHandle};
 use serde::{Deserialize, Serialize};
-use std::ffi::CString;
-use std::io;
+use std::{
+    ffi::CString,
+    io,
+};
+#[cfg(unix)]
+use std::os::unix::prelude::AsRawFd;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ShmHandle {
@@ -85,9 +89,9 @@ where
         unsafe {
             self.set_mapping_size(size)?;
         }
-        ftruncate(
+        nix::unistd::ftruncate(
             self.get_shm().handle.as_raw_fd(),
-            self.get_shm().size as off_t,
+            self.get_shm().size as libc::off_t,
         )?;
         Ok(())
     }

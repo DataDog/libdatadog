@@ -16,6 +16,7 @@ use winapi::{DWORD, ERROR_ACCESS_DENIED, ERROR_PIPE_BUSY, SECURITY_ATTRIBUTES};
 
 use crate::setup::Liaison;
 
+pub type IpcClient = NamedPipeServer;
 pub type IpcServer = NamedPipeServer;
 
 pub struct NamedPipeLiaison {

@@ -4,24 +4,20 @@
 #[cfg(windows)]
 //noinspection RsUnusedImport
 use crate::platform::{deserialize_rawhandle, serialize_rawhandle};
-#[cfg(unix)]
-use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
-#[cfg(windows)]
-use std::os::windows::io::{OwnedHandle, RawHandle};
-use std::{io, marker::PhantomData, sync::Arc};
 
+use std::{io, marker::PhantomData, sync::Arc};
 use serde::{Deserialize, Serialize};
 
 use crate::handles::TransferHandles;
 
 #[cfg(not(windows))]
-type RawFileHandle = RawFd;
+type RawFileHandle = std::os::unix::prelude::RawFd;
 #[cfg(not(windows))]
 pub type OwnedFileHandle = io_lifetimes::OwnedFd;
 #[cfg(windows)]
-type RawFileHandle = RawHandle;
+type RawFileHandle = std::os::windows::io::RawHandle;
 #[cfg(windows)]
-pub type OwnedFileHandle = OwnedHandle;
+pub type OwnedFileHandle = std::os::windows::io::OwnedHandle;
 
 /// PlatformHandle contains a valid reference counted FileDescriptor and associated Type information
 /// allowing safe transfer and sharing of file handles across processes, and threads
@@ -62,7 +58,7 @@ impl<T> Clone for PlatformHandle<T> {
 
 #[cfg(unix)]
 impl<T> PlatformHandle<T> {
-    fn as_owned_fd(&self) -> io::Result<&Arc<OwnedFileHandle>> {
+    pub(crate) fn as_owned_fd(&self) -> io::Result<&Arc<OwnedFileHandle>> {
         match &self.inner {
             Some(fd) => Ok(fd),
             None => Err(io::Error::new(

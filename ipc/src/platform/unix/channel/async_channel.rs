@@ -15,7 +15,8 @@ use tokio::{
     net::UnixStream,
 };
 
-use super::{Channel, ChannelMetadata, PlatformHandle, MAX_FDS};
+use crate::platform::PlatformHandle;
+use super::{Channel, ChannelMetadata, MAX_FDS};
 
 #[derive(Debug)]
 #[pin_project]

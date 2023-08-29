@@ -11,6 +11,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+#[cfg(windows)]
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
@@ -18,7 +19,7 @@ use crate::interface::blocking::SidecarTransport;
 use crate::interface::SidecarServer;
 use datadog_ipc::platform::AsyncChannel;
 
-use crate::setup::{self, IpcServer, Liaison};
+use crate::setup::{self, IpcClient, IpcServer, Liaison};
 
 use crate::config::{self, Config};
 use crate::self_telemetry::self_telemetry;
@@ -26,7 +27,7 @@ use crate::{ddog_daemon_entry_point, setup_daemon_process};
 
 async fn main_loop<L, C, Fut>(listener: L, cancel: Arc<C>) -> io::Result<()>
 where
-    L: FnOnce(Box<dyn Fn(IpcServer)>) -> Fut,
+    L: FnOnce(Box<dyn Fn(IpcClient)>) -> Fut,
     Fut: Future<Output = io::Result<()>>,
     C: Fn() + Sync + Send + 'static,
 {
@@ -102,7 +103,7 @@ where
 pub fn enter_listener_loop<F, L, Fut, C>(acquire_listener: F) -> anyhow::Result<()>
 where
     F: FnOnce() -> io::Result<(L, C)>,
-    L: FnOnce(Box<dyn Fn(IpcServer)>) -> Fut,
+    L: FnOnce(Box<dyn Fn(IpcClient)>) -> Fut,
     Fut: Future<Output = io::Result<()>>,
     C: Fn() + Sync + Send + 'static,
 {
@@ -133,6 +134,8 @@ pub fn daemonize(listener: IpcServer, cfg: Config) -> io::Result<()> {
         spawn_cfg.append_env(env, val);
     }
 
+    // NamedPipeServer on Windows has no into_owned_handle.
+    // Thus, we need to keep this alive until the actual spawning.
     setup_daemon_process(&listener, cfg, &mut spawn_cfg)?;
 
     spawn_cfg

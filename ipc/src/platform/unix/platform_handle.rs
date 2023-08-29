@@ -1,7 +1,12 @@
+use std::io;
+use std::marker::PhantomData;
 use io_lifetimes::{
     views::{FilelikeView, FilelikeViewType, SocketlikeView, SocketlikeViewType},
     AsFilelike, AsSocketlike,
 };
+use crate::platform::PlatformHandle;
+use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
+use std::sync::Arc;
 
 
 impl<T> FromRawFd for PlatformHandle<T> {

@@ -1,43 +1,19 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use spawn_worker::{entrypoint, getpid, Stdio};
+use spawn_worker::{getpid, SpawnWorker, Stdio};
 
 use std::fs::File;
 use std::os::unix::net::UnixListener as StdUnixListener;
 
-use futures::future;
-use manual_future::ManualFuture;
 use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
 use nix::sys::socket::{shutdown, Shutdown};
-use std::os::unix::prelude::AsRawFd;
-use std::time::{self, Instant};
-use std::{
-    io::{self},
-    sync::{
-        atomic::{AtomicI32, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
-use tokio::{select, spawn};
-
-use tokio::net::UnixListener;
-use tokio::sync::mpsc::{self, Receiver};
-use tokio::task::JoinHandle;
-
-use crate::interface::blocking::SidecarTransport;
-use crate::interface::SidecarServer;
-use datadog_ipc::platform::Channel as IpcChannel;
-use ddtelemetry::data::metrics::{MetricNamespace, MetricType};
-use ddtelemetry::metrics::ContextKey;
-use ddtelemetry::worker::{
-    LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle,
-};
-
-use crate::setup::{self, Liaison};
-
+use std::os::unix::prelude::{AsRawFd, FromRawFd, OwnedFd};
+use std::time::Instant;
+use std::io;
+use tokio::net::{UnixListener, UnixStream};
 use crate::config::{self, Config};
+use crate::{enable_tracing, enter_listener_loop};
 
 #[no_mangle]
 pub extern "C" fn ddog_daemon_entry_point() {
@@ -56,8 +32,8 @@ pub extern "C" fn ddog_daemon_entry_point() {
         let listener: StdUnixListener = fd.into();
         tracing::info!("Starting sidecar, pid: {}", getpid());
         let acquire_listener = move || {
-            let listener = UnixListener::from_std(listener)?;
             listener.set_nonblocking(true)?;
+            let listener = UnixListener::from_std(listener)?;
 
             // shutdown to gracefully dequeue, and immediately relinquish ownership of the socket while shutting down
             let cancel = {
@@ -85,8 +61,8 @@ pub extern "C" fn ddog_daemon_entry_point() {
     )
 }
 
-async fn accept_socket_loop<F>(
-    server: UnixListener,
+async fn accept_socket_loop(
+    listener: UnixListener,
     handler: Box<dyn Fn(UnixStream)>,
 ) -> io::Result<()> {
     while let Ok((socket, _)) = listener.accept().await {
@@ -96,14 +72,14 @@ async fn accept_socket_loop<F>(
 }
 
 pub fn setup_daemon_process(
-    listener: &UnixListener,
+    listener: &StdUnixListener,
     cfg: Config,
     spawn_cfg: &mut SpawnWorker,
 ) -> io::Result<()> {
     spawn_cfg
         .shared_lib_dependencies(cfg.library_dependencies.clone())
         .daemonize(true)
-        .pass_fd(listener)
+        .pass_fd(unsafe { OwnedFd::from_raw_fd(listener.as_raw_fd()) })
         .stdin(Stdio::Null);
 
     match cfg.log_method {
@@ -114,7 +90,7 @@ pub fn setup_daemon_process(
                 .truncate(false)
                 .create(true)
                 .open(path)?;
-            let (out, err) = (Stdio::Fd(file.try_clone()?.into(), Stdio::Fd(file.into())));
+            let (out, err) = (Stdio::Fd(file.try_clone()?.into()), Stdio::Fd(file.into()));
             spawn_cfg.stdout(out);
             spawn_cfg.stderr(err);
         }

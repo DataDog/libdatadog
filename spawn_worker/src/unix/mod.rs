@@ -19,7 +19,7 @@ pub use spawn::*;
 // Reexport nix::WaitStatus
 pub use nix::sys::wait::WaitStatus;
 
-use crate::Entrypoint;
+use crate::{Entrypoint, ENV_PASS_FD_KEY};
 
 /// returns the path of the library from which the symbol pointed to by *addr* was loaded from
 ///

@@ -97,11 +97,14 @@ where
 
     fn start_send(self: Pin<&mut Self>, item: SinkItem) -> io::Result<()> {
         let this = self.project();
-        let message = this
+        let mut message = this
             .channel_metadata
             .lock()
-            .unwrap()
-            .create_message(item, this.inner.get_ref().get_ref())?;
+            .unwrap();
+        #[cfg(windows)]
+        let message = message.create_message(item, this.inner.get_ref().get_ref())?;
+        #[cfg(unix)]
+        let message = message.create_message(item)?;
 
         this.inner
             .start_send(message)

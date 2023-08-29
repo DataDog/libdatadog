@@ -9,9 +9,8 @@ use std::{
 
 use io_lifetimes::OwnedFd;
 
-use crate::platform::AsyncChannel;
 use crate::{
-    handles::{HandlesTransport, TransferHandles},
+    handles::TransferHandles,
     platform::{Message, PlatformHandle, MAX_FDS},
 };
 

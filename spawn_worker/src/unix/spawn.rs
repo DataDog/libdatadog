@@ -122,10 +122,7 @@ impl Target {
                     "can't find the entrypoint's target path",
                 )
             }),
-            Target::Manual(p, _) => p
-                .to_str()
-                .map(PathBuf::from)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)),
+            Target::ManualTrampoline(p, _) => Ok(PathBuf::from(p)),
             Target::Noop => return Ok(default_method),
         }?;
         let target_filename = target_path.file_name().ok_or_else(|| {
@@ -331,9 +328,9 @@ impl SpawnWorker {
                 argv.push(path);
                 entrypoint.symbol_name.clone()
             }
-            Target::Manual(path, symbol_name) => {
-                argv.push(path.clone());
-                symbol_name.clone()
+            Target::ManualTrampoline(path, symbol_name) => {
+                argv.push(CString::new(path.as_str())?);
+                CString::new(symbol_name.as_str())?
             }
             Target::Noop => return Ok(None),
         };
@@ -545,6 +542,22 @@ impl SpawnWorker {
 
         spawn();
         std::process::exit(1);
+    }
+}
+
+pub struct Child {
+    pub pid: Option<libc::pid_t>,
+}
+
+impl Child {
+    pub fn wait(self) -> anyhow::Result<WaitStatus> {
+        // Command::spawn(&mut self);
+        let pid = match self.pid {
+            Some(pid) => Pid::from_raw(pid),
+            None => return Ok(WaitStatus::Exited(Pid::from_raw(0), 0)),
+        };
+
+        Ok(nix::sys::wait::waitpid(Some(pid), None)?)
     }
 }
 
