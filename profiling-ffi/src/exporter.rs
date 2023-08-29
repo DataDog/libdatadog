@@ -470,7 +470,6 @@ mod test {
     // This test invokes an external function SecTrustSettingsCopyCertificates
     // which Miri cannot evaluate.
     #[cfg_attr(miri, ignore)]
-
     fn profile_exporter_new_and_delete() {
         let mut tags = ddcommon_ffi::Vec::default();
         let host = Tag::new("host", "localhost").expect("static tags to be valid");
@@ -498,6 +497,9 @@ mod test {
     }
 
     #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
     fn test_build() {
         let exporter_result = unsafe {
             ddog_prof_Exporter_new(
@@ -563,6 +565,9 @@ mod test {
     }
 
     #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
     fn test_build_with_internal_metadata() {
         let exporter_result = unsafe {
             ddog_prof_Exporter_new(
@@ -630,6 +635,9 @@ mod test {
     }
 
     #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
     fn test_build_with_invalid_internal_metadata() {
         let exporter_result = unsafe {
             ddog_prof_Exporter_new(
