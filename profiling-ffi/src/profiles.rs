@@ -322,7 +322,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_Profile_drop(profile: *mut Profile) {
     // Safety: Profile is not repr(C), and is therefore boxed.
-    drop(Box::from_raw(profile))
+    if !profile.is_null() {
+        drop(Box::from_raw(profile))
+    }
 }
 
 #[cfg(test)]
