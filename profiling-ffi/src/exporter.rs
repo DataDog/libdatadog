@@ -637,7 +637,7 @@ mod test {
     #[test]
     // This test invokes an external function SecTrustSettingsCopyCertificates
     // which Miri cannot evaluate.
-    #[cfg_attr(miri, ignore)]
+    //#[cfg_attr(miri, ignore)]
     fn test_build_with_invalid_internal_metadata() {
         let exporter_result = unsafe {
             ddog_prof_Exporter_new(
