@@ -482,7 +482,18 @@ impl Profile {
             .as_nanos()
             .min(i64::MAX as u128) as i64;
 
-        let mut buffer: Vec<u8> = Vec::new();
+        // On 2023-08-23, we analyzed the uploaded tarball size per language.
+        // These tarballs include 1 or more profiles, but for most languages
+        // using libdatadog (all?) there is only 1 profile, so this is a good
+        // proxy for the compressed, final size of the profiles.
+        // We found that for all languages using libdatadog, the average
+        // tarball was at least 18 KiB. Since these archives are compressed,
+        // and because profiles compress well, especially ones with timeline
+        // enabled (over 9x for some analyzed timeline profiles), this initial
+        // size of 32KiB should definitely out-perform starting at zero for
+        // time consumed, allocator pressure, and allocator fragmentation.
+        const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
+        let mut buffer: Vec<u8> = Vec::with_capacity(INITIAL_PPROF_BUFFER_SIZE);
         profile.encode(&mut buffer)?;
 
         Ok(EncodedProfile {
@@ -959,22 +970,22 @@ mod api_test {
          */
         let mut profile = provide_distinct_locations();
 
-        let period = Some((
+        let period = (
             10_000_000,
             ValueType {
                 r#type: profile.intern("wall-time"),
                 unit: profile.intern("nanoseconds"),
             },
-        ));
-        profile.period = period;
+        );
+        profile.period = Some(period);
 
         let prev = profile.reset(None).expect("reset to succeed");
-        assert_eq!(period, prev.period);
+        assert_eq!(Some(period), prev.period);
 
         // Resolve the string values to check that they match (their string
         // table offsets may not match).
         let (value, period_type) = profile.period.expect("profile to have a period");
-        assert_eq!(value, period.unwrap().0);
+        assert_eq!(value, period.0);
         assert_eq!(profile.get_string(period_type.r#type), "wall-time");
         assert_eq!(profile.get_string(period_type.unit), "nanoseconds");
     }

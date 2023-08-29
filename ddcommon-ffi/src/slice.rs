@@ -164,7 +164,7 @@ impl<'a, T> Default for Slice<'a, T> {
 impl<'a, T: 'a> From<&'a [T]> for Slice<'a, T> {
     fn from(s: &'a [T]) -> Self {
         // SAFETY: Rust slices meet all the invariants required for Slice::new.
-        unsafe { Slice::new(s.as_ptr() as *const T, s.len()) }
+        unsafe { Slice::new(s.as_ptr(), s.len()) }
     }
 }
 

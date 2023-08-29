@@ -37,6 +37,12 @@ pub(super) struct TrimmedObservation {
     data: *mut i64,
 }
 
+/// # Safety
+/// Since [TrimmedObservation] is essentially Box<[i64]> that's been shrunk
+/// down in size with no other semantic changes, and that type is [Send], then
+/// so is [TrimmedObservation].
+unsafe impl Send for TrimmedObservation {}
+
 impl TrimmedObservation {
     /// Safety: the ObservationLength must have come from the same profile as the Observation
     pub unsafe fn as_mut_slice(&mut self, len: ObservationLength) -> &mut [i64] {
