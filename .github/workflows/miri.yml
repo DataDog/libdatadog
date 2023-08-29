@@ -1,9 +1,9 @@
 name: Miri test
 on:
   push:
-    # paths:
-    #   - 'profiling/**' # Only run action when profile related things are touched
-    #   - 'profiling-ffi/**' # Only run action when profile related things are touched
+    paths:
+      - 'profiling/**' # Only run action when profile related things are touched
+      - 'profiling-ffi/**' # Only run action when profile related things are touched
 
 jobs:
   profiler-test:
