@@ -338,20 +338,21 @@ impl Profile {
         Ok((label_set_id, timestamp))
     }
 
-    fn extract_api_sample_types(&self) -> Option<Vec<api::ValueType>> {
-        let mut sample_types: Vec<api::ValueType> = Vec::with_capacity(self.sample_types.len());
-        for sample_type in self.sample_types.iter() {
-            sample_types.push(api::ValueType {
+    fn extract_api_sample_types(&self) -> anyhow::Result<Vec<api::ValueType>> {
+        let sample_types = self
+            .sample_types
+            .iter()
+            .map(|sample_type| api::ValueType {
                 r#type: self.get_string(sample_type.r#type),
                 unit: self.get_string(sample_type.unit),
             })
-        }
-        Some(sample_types)
+            .collect();
+        Ok(sample_types)
     }
 
     /// Resets all data except the sample types and period. Returns the
     /// previous Profile on success.
-    pub fn reset(&mut self, start_time: Option<SystemTime>) -> Option<Profile> {
+    pub fn reset(&mut self, start_time: Option<SystemTime>) -> anyhow::Result<Profile> {
         /* We have to map over the types because the order of the strings is
          * not generally guaranteed, so we can't just copy the underlying
          * structures.
@@ -373,7 +374,7 @@ impl Profile {
             .build();
 
         std::mem::swap(&mut *self, &mut profile);
-        Some(profile)
+        Ok(profile)
     }
 
     /// Add the endpoint data to the endpoint mappings.
