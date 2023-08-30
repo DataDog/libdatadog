@@ -24,6 +24,8 @@ fn php_location<'a>(name: &'a str, filename: &'a str, line: i64) -> api::Locatio
 }
 
 #[test]
+// This test is too slow for miri
+#[cfg_attr(miri, ignore)]
 fn wordpress() {
     let compressed_size = 101824_u64;
     let uncompressed_size = 200692_u64;
