@@ -715,18 +715,14 @@ impl SidecarServer {
         // TODO: log errors
         let instance_option =
             if let Ok((handle, worker_join)) = builder.spawn_with_config(config.clone()).await {
-                tracing::info!("spawning worker {config:?}");
+                info!("spawning worker {config:?}");
 
                 let instance = AppInstance {
                     telemetry: handle,
                     telemetry_worker_shutdown: worker_join.map(Result::ok).boxed().shared(),
                 };
 
-                instance
-                    .telemetry
-                    .send_msgs(inital_actions.into_iter())
-                    .await
-                    .ok();
+                instance.telemetry.send_msgs(inital_actions).await.ok();
 
                 instance
                     .telemetry

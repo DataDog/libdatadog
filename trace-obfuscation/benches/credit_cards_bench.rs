@@ -8,7 +8,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use datadog_trace_obfuscation::credit_cards::is_card_number;
 
 fn is_card_number_bench(c: &mut Criterion) {
-    let ccs = vec![
+    let ccs = [
         "378282246310005",
         "  378282246310005",
         "  3782-8224-6310-005 ",
@@ -27,7 +27,7 @@ fn is_card_number_bench(c: &mut Criterion) {
 }
 
 fn is_card_number_no_luhn_bench(c: &mut Criterion) {
-    let ccs = vec![
+    let ccs = [
         "378282246310005",
         "  378282246310005",
         "  3782-8224-6310-005 ",

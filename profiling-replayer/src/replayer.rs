@@ -6,6 +6,9 @@ use datadog_profiling::profile::{api, pprof};
 use std::ops::{Add, Sub};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+type LabelsAndEndpointInfo<'pprof> = (Vec<api::Label<'pprof>>, Option<(u64, &'pprof str)>);
+type SamplesAndEndpointInfo<'pprof> = (Vec<api::Sample<'pprof>>, Vec<(u64, &'pprof str)>);
+
 pub struct Replayer<'pprof> {
     pub profile_index: ProfileIndex<'pprof>,
 
@@ -76,7 +79,7 @@ impl<'pprof> Replayer<'pprof> {
     fn sample_labels<'a>(
         profile_index: &'a ProfileIndex<'pprof>,
         sample: &'pprof pprof::Sample,
-    ) -> anyhow::Result<(Vec<api::Label<'pprof>>, Option<(u64, &'pprof str)>)> {
+    ) -> anyhow::Result<LabelsAndEndpointInfo<'pprof>> {
         let mut labels = Vec::with_capacity(sample.labels.len());
         for label in sample.labels.iter() {
             labels.push(api::Label {
@@ -117,7 +120,7 @@ impl<'pprof> Replayer<'pprof> {
             endpoint_info.replace((local_root_span_id, endpoint_value));
         }
 
-        // Remove all labels except "trace endpoint"
+        // Keep all labels except "trace endpoint"
         labels.retain(|label| label.key != "trace endpoint");
 
         Ok((labels, endpoint_info))
@@ -153,15 +156,21 @@ impl<'pprof> Replayer<'pprof> {
     ) -> anyhow::Result<api::Location<'pprof>> {
         let location = profile_index.get_location(id)?;
         let mapping = Self::get_mapping(profile_index, location.mapping_id)?;
-        let mut lines = Vec::with_capacity(location.lines.len());
-        for line in location.lines.iter() {
-            lines.push(Self::get_line(profile_index, line)?);
-        }
+        let lines = location
+            .lines
+            .iter()
+            .map(|line| Self::get_line(profile_index, line))
+            .collect::<Result<Vec<api::Line>, _>>()?;
+
+        anyhow::ensure!(lines.len() == 1, "expected Location to have exactly 1 Line");
+        // SAFETY: checked that lines.len() == 1 right above this.
+        let line = unsafe { lines.first().unwrap_unchecked() };
+
         Ok(api::Location {
             mapping,
+            function: line.function,
             address: location.address,
-            lines,
-            is_folded: location.is_folded,
+            line: line.line,
         })
     }
 
@@ -191,7 +200,7 @@ impl<'pprof> Replayer<'pprof> {
 
     fn samples<'a>(
         profile_index: &'a ProfileIndex<'pprof>,
-    ) -> anyhow::Result<(Vec<api::Sample<'pprof>>, Vec<(u64, &'pprof str)>)> {
+    ) -> anyhow::Result<SamplesAndEndpointInfo<'pprof>> {
         // Find the "local root span id" and "trace endpoint" labels. If
         // they are found, then save them into a vec to replay later, and
         // drop the "trace endpoint" label from sample.

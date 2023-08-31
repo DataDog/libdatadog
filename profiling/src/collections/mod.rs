@@ -1,7 +1,4 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-pub mod config_utils;
-pub mod stats_utils;
-pub mod trace_test_utils;
-pub mod trace_utils;
+pub mod identifiable;

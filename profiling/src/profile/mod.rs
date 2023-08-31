@@ -7,185 +7,35 @@ pub mod pprof;
 pub mod profiled_endpoints;
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::convert::TryInto;
-use std::hash::{BuildHasherDefault, Hash};
 use std::num::NonZeroI64;
 use std::time::{Duration, SystemTime};
 
+use crate::collections::identifiable::*;
 use internal::*;
 use profiled_endpoints::ProfiledEndpointsStats;
 use prost::{EncodeError, Message};
 
 use self::api::UpscalingInfo;
 
-pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<rustc_hash::FxHasher>>;
-pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::FxHasher>>;
-
 pub type Timestamp = NonZeroI64;
 pub type TimestampedObservation = (Timestamp, Box<[i64]>);
 
-#[derive(Eq, PartialEq, Hash)]
-struct Sample {
-    pub stacktrace: StackTraceId,
-
-    /// label includes additional context for this sample. It can include
-    /// things like a thread id, allocation size, etc
-    pub labels: Vec<Label>,
-
-    /// Offset into `labels` for the label with key == "local root span id".
-    local_root_span_id_label_offset: Option<usize>,
-}
-
-pub struct UpscalingRule {
-    values_offset: Vec<usize>,
-    upscaling_info: UpscalingInfo,
-}
-
-impl UpscalingRule {
-    pub fn compute_scale(&self, values: &[i64]) -> f64 {
-        match self.upscaling_info {
-            UpscalingInfo::Poisson {
-                sum_value_offset,
-                count_value_offset,
-                sampling_distance,
-            } => {
-                // This should not happen, but if it happens,
-                // do not upscale
-                if values[sum_value_offset] == 0 || values[count_value_offset] == 0 {
-                    return 1_f64;
-                }
-
-                let avg = values[sum_value_offset] as f64 / values[count_value_offset] as f64;
-                1_f64 / (1_f64 - (-avg / sampling_distance as f64).exp())
-            }
-            UpscalingInfo::Proportional { scale } => scale,
-        }
-    }
-}
-
 pub struct Profile {
-    aggregated_samples: HashMap<Sample, Box<[i64]>>,
     endpoints: Endpoints,
     functions: FxIndexSet<Function>,
+    labels: FxIndexSet<Label>,
+    label_sets: FxIndexSet<LabelSet>,
     locations: FxIndexSet<Location>,
     mappings: FxIndexSet<Mapping>,
+    observations: Observations,
     period: Option<(i64, ValueType)>,
     sample_types: Vec<ValueType>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: FxIndexSet<String>,
     timestamp_key: StringId,
-    timestamped_samples: HashMap<Sample, Vec<TimestampedObservation>>,
     upscaling_rules: UpscalingRules,
-}
-
-pub struct Endpoints {
-    mappings: FxIndexMap<u64, StringId>,
-    local_root_span_id_label: StringId,
-    endpoint_label: StringId,
-    stats: ProfiledEndpointsStats,
-}
-
-#[derive(Default)]
-pub struct UpscalingRules {
-    rules: FxIndexMap<(StringId, StringId), Vec<UpscalingRule>>,
-    // this is just an optimization in the case where we check collisions (when adding
-    // a by-value rule) against by-label rules
-    // 32 should be enough for the size of the bitmap
-    offset_modified_by_bylabel_rule: bitmaps::Bitmap<32>,
-}
-
-impl UpscalingRules {
-    pub fn add(&mut self, label_name_id: StringId, label_value_id: StringId, rule: UpscalingRule) {
-        // fill the bitmap for by-label rules
-        if !label_name_id.is_zero() || !label_value_id.is_zero() {
-            rule.values_offset.iter().for_each(|offset| {
-                self.offset_modified_by_bylabel_rule.set(*offset, true);
-            })
-        }
-        match self.rules.get_index_of(&(label_name_id, label_value_id)) {
-            None => {
-                let rules = vec![rule];
-                self.rules.insert((label_name_id, label_value_id), rules);
-            }
-            Some(index) => {
-                let (_, rules) = self
-                    .rules
-                    .get_index_mut(index)
-                    .expect("Already existing rules");
-                rules.push(rule);
-            }
-        }
-    }
-
-    pub fn get(&self, k: &(StringId, StringId)) -> Option<&Vec<UpscalingRule>> {
-        self.rules.get(k)
-    }
-
-    fn check_collisions(
-        &self,
-        values_offset: &[usize],
-        label_name: (&str, StringId),
-        label_value: (&str, StringId),
-        upscaling_info: &UpscalingInfo,
-    ) -> anyhow::Result<()> {
-        // Check for duplicates
-        fn is_overlapping(v1: &[usize], v2: &[usize]) -> bool {
-            v1.iter().any(|x| v2.contains(x))
-        }
-
-        fn vec_to_string(v: &[usize]) -> String {
-            format!("{:?}", v)
-        }
-
-        let colliding_rule = match self.rules.get(&(label_name.1, label_value.1)) {
-            Some(rules) => rules
-                .iter()
-                .find(|rule| is_overlapping(&rule.values_offset, values_offset)),
-            None => None,
-        };
-
-        anyhow::ensure!(
-            colliding_rule.is_none(),
-            "There are dupicated by-label rules for the same label name: {} and label value: {} with at least one value offset in common.\n\
-            Existing values offset(s) {}, new rule values offset(s) {}.\n\
-            Existing upscaling info: {}, new rule upscaling info: {}",
-            vec_to_string(&colliding_rule.unwrap().values_offset), vec_to_string(values_offset),
-            label_name.0, label_value.0,
-            upscaling_info, colliding_rule.unwrap().upscaling_info
-        );
-
-        // if we are adding a by-value rule, we need to check against
-        // all by-label rules for collisions
-        if label_name.1.is_zero() && label_value.1.is_zero() {
-            let collision_offset = values_offset
-                .iter()
-                .find(|offset| self.offset_modified_by_bylabel_rule.get(**offset));
-
-            anyhow::ensure!(
-                collision_offset.is_none(),
-                "The by-value rule is collinding with at least one by-label rule at offset {}\n\
-                by-value rule values offset(s) {}",
-                collision_offset.unwrap(),
-                vec_to_string(values_offset)
-            )
-        } else if let Some(rules) = self.rules.get(&(StringId::ZERO, StringId::ZERO)) {
-            let collide_with_byvalue_rule = rules
-                .iter()
-                .find(|rule| is_overlapping(&rule.values_offset, values_offset));
-            anyhow::ensure!(collide_with_byvalue_rule.is_none(),
-                "The by-label rule (label name {}, label value {}) is colliding with a by-value rule on values offsets\n\
-                Existing values offset(s) {}, new rule values offset(s) {}",
-                label_name.0, label_value.0, vec_to_string(&collide_with_byvalue_rule.unwrap().values_offset),
-                vec_to_string(values_offset))
-        }
-        Ok(())
-    }
-
-    fn is_empty(&self) -> bool {
-        self.rules.is_empty()
-    }
 }
 
 #[derive(Default)]
@@ -245,29 +95,6 @@ impl<'a> ProfileBuilder<'a> {
     }
 }
 
-trait Dedup<T: Item> {
-    /// Deduplicate the Item and return its associated Id.
-    /// # Panics
-    /// Panics if the number of items overflows the storage capabilities of
-    /// the associated Id type.
-    fn dedup(&mut self, item: T) -> <T as Item>::Id;
-}
-
-impl<T: Item> Dedup<T> for FxIndexSet<T> {
-    fn dedup(&mut self, item: T) -> <T as Item>::Id {
-        let (id, _) = self.insert_full(item);
-        <T as Item>::Id::from_offset(id)
-    }
-}
-
-fn to_pprof_vec<T: PprofItem>(collection: &FxIndexSet<T>) -> Vec<T::PprofMessage> {
-    collection
-        .iter()
-        .enumerate()
-        .map(|(index, item)| item.to_pprof(<T as Item>::Id::from_offset(index)))
-        .collect()
-}
-
 pub struct EncodedProfile {
     pub start: SystemTime,
     pub end: SystemTime,
@@ -275,30 +102,20 @@ pub struct EncodedProfile {
     pub endpoints_stats: ProfiledEndpointsStats,
 }
 
-impl Endpoints {
-    pub fn new() -> Self {
-        Self {
-            mappings: Default::default(),
-            local_root_span_id_label: Default::default(),
-            endpoint_label: Default::default(),
-            stats: Default::default(),
-        }
-    }
-}
-
-impl Default for Endpoints {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 // For testing and debugging purposes
 impl Profile {
     pub fn only_for_testing_num_aggregated_samples(&self) -> usize {
-        self.aggregated_samples.len()
+        self.observations
+            .iter()
+            .filter(|(_, ts, _)| ts.is_none())
+            .count()
     }
+
     pub fn only_for_testing_num_timestamped_samples(&self) -> usize {
-        self.timestamped_samples.len()
+        use std::collections::HashSet;
+        let sample_set: HashSet<Timestamp> =
+            HashSet::from_iter(self.observations.iter().filter_map(|(_, ts, _)| ts));
+        sample_set.len()
     }
 }
 
@@ -314,18 +131,19 @@ impl Profile {
          * overflow, since that default impl calls this method.
          */
         let mut profile = Self {
-            aggregated_samples: Default::default(),
             endpoints: Default::default(),
             functions: Default::default(),
+            labels: Default::default(),
+            label_sets: Default::default(),
             locations: Default::default(),
             mappings: Default::default(),
+            observations: Default::default(),
             period: None,
             sample_types: vec![],
             stack_traces: Default::default(),
             start_time,
             strings: Default::default(),
             timestamp_key: Default::default(),
-            timestamped_samples: Default::default(),
             upscaling_rules: Default::default(),
         };
 
@@ -423,9 +241,7 @@ impl Profile {
             sample.values.len(),
         );
 
-        let values = sample.values.clone().into_boxed_slice();
-        let (labels, local_root_span_id_label_offset, timestamp) =
-            self.extract_sample_labels(&sample)?;
+        let (labels, timestamp) = self.extract_sample_labels(&sample)?;
 
         let locations = sample
             .locations
@@ -434,68 +250,73 @@ impl Profile {
             .collect();
 
         let stacktrace = self.add_stacktrace(locations);
-        let s = Sample {
-            stacktrace,
-            labels,
-            local_root_span_id_label_offset,
-        };
-
-        if let Some(ts) = timestamp {
-            match self.timestamped_samples.get_mut(&s) {
-                None => {
-                    let series = vec![(ts, values)];
-                    self.timestamped_samples.insert(s, series);
-                }
-                // Repeated timestamps are unlikely but possible.
-                // We choose to record each as separate observations, and
-                // allow the backend to decide what to do.
-                Some(series) => series.push((ts, values)),
-            }
-        } else {
-            match self.aggregated_samples.get_mut(&s) {
-                None => {
-                    self.aggregated_samples.insert(s, values);
-                }
-                Some(v) => v.iter_mut().zip(values.as_ref()).for_each(|(a, b)| *a += b),
-            }
-        };
+        self.observations
+            .add(Sample::new(labels, stacktrace), timestamp, sample.values);
         Ok(())
     }
 
     /// Validates labels and converts them to the internal representation.
     /// Extracts out the timestamp label, if it exists.
-    /// Also tracks the index of the label with key "local root span id".
+    fn extract_timestamp(&mut self, sample: &api::Sample) -> anyhow::Result<Option<Timestamp>> {
+        if let Some(label) = sample
+            .labels
+            .iter()
+            .find(|label| label.key == "end_timestamp_ns")
+        {
+            anyhow::ensure!(
+                label.str.is_none(),
+                "the label \"{}\" must be sent as a number, not string {}",
+                label.str.unwrap(),
+                label.key
+            );
+            anyhow::ensure!(label.num != 0, "the label \"{}\" must not be 0", label.key);
+            anyhow::ensure!(label.num_unit.is_none(), "Timestamps with label '{}' are always nanoseconds and do not take a unit: found '{}'", label.key, label.num_unit.unwrap());
+
+            Ok(Some(NonZeroI64::new(label.num).unwrap()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Validates labels and converts them to the internal representation.
+    /// Extracts out the timestamp label, if it exists.
     fn extract_sample_labels(
         &mut self,
         sample: &api::Sample,
-    ) -> anyhow::Result<(Vec<Label>, Option<usize>, Option<Timestamp>)> {
-        let mut labels: Vec<Label> = Vec::with_capacity(sample.labels.len());
-        let mut local_root_span_id_label_offset: Option<usize> = None;
-        let mut timestamp: Option<Timestamp> = None;
+    ) -> anyhow::Result<(LabelSetId, Option<Timestamp>)> {
+        let timestamp = self.extract_timestamp(sample)?;
+
+        let mut labels: Vec<LabelId> = Vec::with_capacity(if timestamp.is_some() {
+            sample.labels.len() - 1
+        } else {
+            sample.labels.len()
+        });
+        let mut local_root_span_id_label = None;
 
         for label in sample.labels.iter() {
-            let key = self.intern(label.key);
-
-            // The current API stores timestamps on a label.
-            // The internal representation stores them in the timestamped_samples map.
-            // Extract them from the labels, and pass them on to put into the map
-            if key == self.timestamp_key {
-                anyhow::ensure!(
-                    label.str.is_none(),
-                    "the label \"{}\" must be sent as a number, not string {}",
-                    label.str.unwrap(),
-                    label.key
-                );
-                anyhow::ensure!(label.num != 0, "the label \"{}\" must not be 0", label.key);
-                anyhow::ensure!(label.num_unit.is_none(), "Timestamps with label '{}' are always nanoseconds and do not take a unit: found '{}'", label.key, label.num_unit.unwrap());
-
-                timestamp = Some(NonZeroI64::new(label.num).unwrap());
-                // Once the timestamp is extracted, we remove it from the labels.
-                // This allows `Sample` with the same values other than the timestamp to dedup.
+            if label.key == "end_timestamp_ns" {
                 continue;
             }
 
+            let key = self.intern(label.key);
+            let internal_label = if let Some(s) = label.str {
+                let str = self.intern(s);
+                Label::str(key, str)
+            } else {
+                let num = label.num;
+                let num_unit = label.num_unit.map(|s| self.intern(s));
+                Label::num(key, num, num_unit)
+            };
+
+            let label_id = self.labels.dedup(internal_label);
+
             if key == self.endpoints.local_root_span_id_label {
+                anyhow::ensure!(
+                    local_root_span_id_label.is_none(),
+                    "only one label per sample can have the key \"local root span id\", found two: {:?}, {:?}",
+                    self.get_label(local_root_span_id_label.unwrap()), label
+                );
+
                 // Panic: if the label.str isn't 0, then str must have been provided.
                 anyhow::ensure!(
                     label.str.is_none(),
@@ -506,43 +327,32 @@ impl Profile {
                     label.num != 0,
                     "the label \"local root span id\" must not be 0"
                 );
-                anyhow::ensure!(
-                    local_root_span_id_label_offset.is_none(),
-                    "only one label per sample can have the key \"local root span id\", found two: {:?}, {}",
-                    labels[local_root_span_id_label_offset.unwrap()], label.num
-                );
-                local_root_span_id_label_offset = Some(labels.len());
+                local_root_span_id_label = Some(label_id);
             }
 
-            let internal_label = if let Some(s) = label.str {
-                let str = self.intern(s);
-                Label::str(key, str)
-            } else {
-                let num = label.num;
-                let num_unit = label.num_unit.map(|s| self.intern(s));
-                Label::num(key, num, num_unit)
-            };
-
-            // If you refactor this push, ensure the local_root_span_id_label_offset is correct.
-            labels.push(internal_label);
+            labels.push(label_id);
         }
-        Ok((labels, local_root_span_id_label_offset, timestamp))
+
+        let label_set_id = self.label_sets.dedup(LabelSet::new(labels));
+
+        Ok((label_set_id, timestamp))
     }
 
-    fn extract_api_sample_types(&self) -> Option<Vec<api::ValueType>> {
-        let mut sample_types: Vec<api::ValueType> = Vec::with_capacity(self.sample_types.len());
-        for sample_type in self.sample_types.iter() {
-            sample_types.push(api::ValueType {
+    fn extract_api_sample_types(&self) -> anyhow::Result<Vec<api::ValueType>> {
+        let sample_types = self
+            .sample_types
+            .iter()
+            .map(|sample_type| api::ValueType {
                 r#type: self.get_string(sample_type.r#type),
                 unit: self.get_string(sample_type.unit),
             })
-        }
-        Some(sample_types)
+            .collect();
+        Ok(sample_types)
     }
 
     /// Resets all data except the sample types and period. Returns the
     /// previous Profile on success.
-    pub fn reset(&mut self, start_time: Option<SystemTime>) -> Option<Profile> {
+    pub fn reset(&mut self, start_time: Option<SystemTime>) -> anyhow::Result<Profile> {
         /* We have to map over the types because the order of the strings is
          * not generally guaranteed, so we can't just copy the underlying
          * structures.
@@ -564,7 +374,7 @@ impl Profile {
             .build();
 
         std::mem::swap(&mut *self, &mut profile);
-        Some(profile)
+        Ok(profile)
     }
 
     /// Add the endpoint data to the endpoint mappings.
@@ -611,10 +421,7 @@ impl Profile {
 
         upscaling_info.check_validity(self.sample_types.len())?;
 
-        let rule = UpscalingRule {
-            values_offset: new_values_offset,
-            upscaling_info,
-        };
+        let rule = UpscalingRule::new(new_values_offset, upscaling_info);
 
         self.upscaling_rules
             .add(label_name_id, label_value_id, rule);
@@ -650,7 +457,18 @@ impl Profile {
             .as_nanos()
             .min(i64::MAX as u128) as i64;
 
-        let mut buffer: Vec<u8> = Vec::new();
+        // On 2023-08-23, we analyzed the uploaded tarball size per language.
+        // These tarballs include 1 or more profiles, but for most languages
+        // using libdatadog (all?) there is only 1 profile, so this is a good
+        // proxy for the compressed, final size of the profiles.
+        // We found that for all languages using libdatadog, the average
+        // tarball was at least 18 KiB. Since these archives are compressed,
+        // and because profiles compress well, especially ones with timeline
+        // enabled (over 9x for some analyzed timeline profiles), this initial
+        // size of 32KiB should definitely out-perform starting at zero for
+        // time consumed, allocator pressure, and allocator fragmentation.
+        const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
+        let mut buffer: Vec<u8> = Vec::with_capacity(INITIAL_PPROF_BUFFER_SIZE);
         profile.encode(&mut buffer)?;
 
         Ok(EncodedProfile {
@@ -659,6 +477,18 @@ impl Profile {
             buffer,
             endpoints_stats: self.endpoints.stats.clone(),
         })
+    }
+
+    pub fn get_label(&self, id: LabelId) -> &Label {
+        self.labels
+            .get_index(id.to_offset())
+            .expect("LabelId to have a valid interned index")
+    }
+
+    pub fn get_label_set(&self, id: LabelSetId) -> &LabelSet {
+        self.label_sets
+            .get_index(id.to_offset())
+            .expect("LabelSetId to have a valid interned index")
     }
 
     pub fn get_string(&self, id: StringId) -> &str {
@@ -670,7 +500,7 @@ impl Profile {
     /// Fetches the endpoint information for the label. There may be errors,
     /// but there may also be no endpoint information for a given endpoint.
     /// Hence, the return type of Result<Option<_>, _>.
-    fn get_endpoint_for_label(&self, label: &Label) -> anyhow::Result<Option<StringId>> {
+    fn get_endpoint_for_label(&self, label: &Label) -> anyhow::Result<Option<Label>> {
         anyhow::ensure!(
             label.get_key() == self.endpoints.local_root_span_id_label,
             "bug: get_endpoint_for_label should only be called on labels with the key \"local root span id\", called on label with key \"{}\"",
@@ -699,105 +529,42 @@ impl Profile {
             .endpoints
             .mappings
             .get(&local_root_span_id)
-            .map(StringId::clone))
+            .map(|v| Label::str(self.endpoints.endpoint_label, *v)))
     }
 
-    // TODO: Consider whether to use the internal Label here instead
-    fn upscale_values(&self, values: &[i64], labels: &[pprof::Label]) -> anyhow::Result<Vec<i64>> {
-        let mut new_values = values.to_vec();
-
-        if !self.upscaling_rules.is_empty() {
-            let mut values_to_update: Vec<usize> = vec![0; self.sample_types.len()];
-
-            // get bylabel rules first (if any)
-            let mut group_of_rules = labels
-                .iter()
-                .filter_map(|label| {
-                    self.upscaling_rules
-                        .get(&(StringId::new(label.key), StringId::new(label.str)))
-                })
-                .collect::<Vec<&Vec<UpscalingRule>>>();
-
-            // get byvalue rules if any
-            if let Some(byvalue_rules) = self.upscaling_rules.get(&(StringId::ZERO, StringId::ZERO))
-            {
-                group_of_rules.push(byvalue_rules);
+    fn get_endpoint_for_labels(&self, label_set_id: LabelSetId) -> anyhow::Result<Option<Label>> {
+        let label = self.get_label_set(label_set_id).iter().find_map(|id| {
+            let label = self.get_label(*id);
+            if label.get_key() == self.endpoints.local_root_span_id_label {
+                Some(label)
+            } else {
+                None
             }
-
-            // check for collision(s)
-            group_of_rules.iter().for_each(|rules| {
-                rules.iter().for_each(|rule| {
-                    rule.values_offset
-                        .iter()
-                        .for_each(|offset| values_to_update[*offset] += 1)
-                })
-            });
-
-            anyhow::ensure!(
-                values_to_update.iter().all(|v| *v < 2),
-                "Multiple rules modifying the same offset for this sample"
-            );
-
-            group_of_rules.iter().for_each(|rules| {
-                rules.iter().for_each(|rule| {
-                    let scale = rule.compute_scale(values);
-                    rule.values_offset.iter().for_each(|offset| {
-                        new_values[*offset] = (new_values[*offset] as f64 * scale).round() as i64
-                    })
-                })
-            });
+        });
+        if let Some(label) = label {
+            self.get_endpoint_for_label(label)
+        } else {
+            Ok(None)
         }
-
-        Ok(new_values)
     }
 
     fn translate_and_enrich_sample_labels(
         &self,
-        sample: &Sample,
+        sample: Sample,
+        timestamp: Option<Timestamp>,
     ) -> anyhow::Result<Vec<pprof::Label>> {
-        let mut labels: Vec<_> = sample.labels.iter().map(pprof::Label::from).collect();
-        if let Some(offset) = sample.local_root_span_id_label_offset {
-            // Safety: this offset was created internally and isn't be mutated.
-            let lrsi_label = unsafe { sample.labels.get_unchecked(offset) };
-            if let Some(endpoint_value_id) = self.get_endpoint_for_label(lrsi_label)? {
-                labels.push(Label::str(self.endpoints.endpoint_label, endpoint_value_id).into());
-            }
-        }
-        Ok(labels)
-    }
-
-    /// Given a sample, and a set of observations at different timestamps,
-    /// expand to one Sample for each timestamp.
-    fn expand_timestamped_sample(
-        &self,
-        sample: &Sample,
-        observations: &[(Timestamp, Box<[i64]>)],
-    ) -> anyhow::Result<Vec<pprof::Sample>> {
-        // Clone the labels, but enrich them with endpoint profiling.
-        let labels = self.translate_and_enrich_sample_labels(sample)?;
-        let location_ids: Vec<_> = self
-            .get_stacktrace(sample.stacktrace)
-            .locations
+        let labels: Vec<_> = self
+            .get_label_set(sample.labels)
             .iter()
-            .map(Id::to_raw_id)
+            .map(|l| self.get_label(*l).into())
+            .chain(
+                self.get_endpoint_for_labels(sample.labels)?
+                    .map(pprof::Label::from),
+            )
+            .chain(timestamp.map(|ts| Label::num(self.timestamp_key, ts.get(), None).into()))
             .collect();
 
-        observations
-            .iter()
-            .map(|(timestamp, values)| {
-                let values = self.upscale_values(values, &labels)?;
-                let mut labels = labels.clone();
-
-                // pprof uses a label to store the timestamp so put it there
-                labels.push(Label::num(self.timestamp_key, timestamp.get(), None).into());
-
-                Ok(pprof::Sample {
-                    location_ids: location_ids.clone(),
-                    values,
-                    labels,
-                })
-            })
-            .collect()
+        Ok(labels)
     }
 }
 
@@ -813,28 +580,24 @@ impl TryFrom<&Profile> for pprof::Profile {
         /* Rust pattern: inverting Vec<Result<T,E>> into Result<Vec<T>, E> error with .collect:
          * https://doc.rust-lang.org/rust-by-example/error/iter_result.html#fail-the-entire-operation-with-collect
          */
-        let timestamped_samples: Vec<pprof::Sample> = profile
-            .timestamped_samples
-            .iter()
-            .flat_map(|(sample, observations)| {
-                profile.expand_timestamped_sample(sample, observations)
-            })
-            .flatten()
-            .collect();
 
-        let aggregated_samples: anyhow::Result<Vec<pprof::Sample>> = profile
-            .aggregated_samples
+        let samples: anyhow::Result<Vec<pprof::Sample>> = profile
+            .observations
             .iter()
-            .map(|(sample, values)| {
-                let labels = profile.translate_and_enrich_sample_labels(sample)?;
-
+            .map(|(sample, timestamp, values)| {
+                let labels = profile.translate_and_enrich_sample_labels(sample, timestamp)?;
                 let location_ids: Vec<_> = profile
                     .get_stacktrace(sample.stacktrace)
                     .locations
                     .iter()
                     .map(Id::to_raw_id)
                     .collect();
-                let values = profile.upscale_values(values, &labels)?;
+                let values = profile.upscaling_rules.upscale_values(
+                    values,
+                    &labels,
+                    &profile.sample_types,
+                )?;
+
                 Ok(pprof::Sample {
                     location_ids,
                     values,
@@ -842,12 +605,7 @@ impl TryFrom<&Profile> for pprof::Profile {
                 })
             })
             .collect();
-
-        let samples: Vec<_> = timestamped_samples
-            .into_iter()
-            .chain(aggregated_samples?)
-            .collect();
-
+        let samples = samples?;
         Ok(pprof::Profile {
             sample_types: profile
                 .sample_types
@@ -1025,19 +783,19 @@ mod api_test {
         };
 
         let mut profile = Profile::builder().sample_types(sample_types).build();
-        assert_eq!(profile.aggregated_samples.len(), 0);
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
 
         profile.add(main_sample).expect("profile to not be full");
-        assert_eq!(profile.aggregated_samples.len(), 1);
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
 
         profile.add(test_sample).expect("profile to not be full");
-        assert_eq!(profile.aggregated_samples.len(), 2);
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 2);
 
-        assert_eq!(profile.timestamped_samples.len(), 0);
+        assert_eq!(profile.only_for_testing_num_timestamped_samples(), 0);
         profile
             .add(timestamp_sample)
             .expect("profile to not be full");
-        assert_eq!(profile.timestamped_samples.len(), 1);
+        assert_eq!(profile.only_for_testing_num_timestamped_samples(), 1);
         profile
     }
 
@@ -1149,10 +907,11 @@ mod api_test {
          * are working with so that we can test that reset works.
          */
         assert!(!profile.functions.is_empty());
+        assert!(!profile.labels.is_empty());
+        assert!(!profile.label_sets.is_empty());
         assert!(!profile.locations.is_empty());
         assert!(!profile.mappings.is_empty());
-        assert!(!profile.aggregated_samples.is_empty());
-        assert!(!profile.timestamped_samples.is_empty());
+        assert!(!profile.observations.is_empty());
         assert!(!profile.sample_types.is_empty());
         assert!(profile.period.is_none());
         assert!(profile.endpoints.mappings.is_empty());
@@ -1162,10 +921,11 @@ mod api_test {
 
         // These should all be empty now
         assert!(profile.functions.is_empty());
+        assert!(profile.labels.is_empty());
+        assert!(profile.label_sets.is_empty());
         assert!(profile.locations.is_empty());
         assert!(profile.mappings.is_empty());
-        assert!(profile.aggregated_samples.is_empty());
-        assert!(profile.timestamped_samples.is_empty());
+        assert!(profile.observations.is_empty());
         assert!(profile.endpoints.mappings.is_empty());
         assert!(profile.endpoints.stats.is_empty());
         assert!(profile.upscaling_rules.is_empty());
@@ -1185,22 +945,22 @@ mod api_test {
          */
         let mut profile = provide_distinct_locations();
 
-        let period = Some((
+        let period = (
             10_000_000,
             ValueType {
                 r#type: profile.intern("wall-time"),
                 unit: profile.intern("nanoseconds"),
             },
-        ));
-        profile.period = period;
+        );
+        profile.period = Some(period);
 
         let prev = profile.reset(None).expect("reset to succeed");
-        assert_eq!(period, prev.period);
+        assert_eq!(Some(period), prev.period);
 
         // Resolve the string values to check that they match (their string
         // table offsets may not match).
         let (value, period_type) = profile.period.expect("profile to have a period");
-        assert_eq!(value, period.unwrap().0);
+        assert_eq!(value, period.0);
         assert_eq!(profile.get_string(period_type.r#type), "wall-time");
         assert_eq!(profile.get_string(period_type.unit), "nanoseconds");
     }
