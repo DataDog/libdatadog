@@ -8,18 +8,15 @@ pub mod profiled_endpoints;
 
 use std::borrow::Cow;
 use std::convert::TryInto;
-use std::hash::BuildHasherDefault;
 use std::num::NonZeroI64;
 use std::time::{Duration, SystemTime};
 
+use crate::collections::identifiable::*;
 use internal::*;
 use profiled_endpoints::ProfiledEndpointsStats;
 use prost::{EncodeError, Message};
 
 use self::api::UpscalingInfo;
-
-pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<rustc_hash::FxHasher>>;
-pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::FxHasher>>;
 
 pub type Timestamp = NonZeroI64;
 pub type TimestampedObservation = (Timestamp, Box<[i64]>);
@@ -96,29 +93,6 @@ impl<'a> ProfileBuilder<'a> {
 
         profile
     }
-}
-
-trait Dedup<T: Item> {
-    /// Deduplicate the Item and return its associated Id.
-    /// # Panics
-    /// Panics if the number of items overflows the storage capabilities of
-    /// the associated Id type.
-    fn dedup(&mut self, item: T) -> <T as Item>::Id;
-}
-
-impl<T: Item> Dedup<T> for FxIndexSet<T> {
-    fn dedup(&mut self, item: T) -> <T as Item>::Id {
-        let (id, _) = self.insert_full(item);
-        <T as Item>::Id::from_offset(id)
-    }
-}
-
-fn to_pprof_vec<T: PprofItem>(collection: &FxIndexSet<T>) -> Vec<T::PprofMessage> {
-    collection
-        .iter()
-        .enumerate()
-        .map(|(index, item)| item.to_pprof(<T as Item>::Id::from_offset(index)))
-        .collect()
 }
 
 pub struct EncodedProfile {
