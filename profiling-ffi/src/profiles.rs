@@ -766,7 +766,7 @@ mod test {
                 labels: Slice::default(),
             };
 
-            let result = Result::from(ddog_prof_Profile_add(&mut profile, sample));
+            let result = Result::from(ddog_prof_Profile_add(&mut profile, sample, None));
             result.unwrap_err();
             ddog_prof_Profile_drop(&mut profile);
         }
@@ -809,7 +809,7 @@ mod test {
                 labels: Slice::from(&labels),
             };
 
-            Result::from(ddog_prof_Profile_add(&mut profile, sample)).unwrap();
+            Result::from(ddog_prof_Profile_add(&mut profile, sample, None)).unwrap();
             assert_eq!(
                 profile
                     .inner
@@ -819,7 +819,7 @@ mod test {
                 1
             );
 
-            Result::from(ddog_prof_Profile_add(&mut profile, sample)).unwrap();
+            Result::from(ddog_prof_Profile_add(&mut profile, sample, None)).unwrap();
             assert_eq!(
                 profile
                     .inner
@@ -884,7 +884,7 @@ mod test {
             labels: Slice::from(labels.as_slice()),
         };
 
-        Result::from(ddog_prof_Profile_add(&mut profile, main_sample)).unwrap();
+        Result::from(ddog_prof_Profile_add(&mut profile, main_sample, None)).unwrap();
         assert_eq!(
             profile
                 .inner
@@ -894,7 +894,7 @@ mod test {
             1
         );
 
-        Result::from(ddog_prof_Profile_add(&mut profile, test_sample)).unwrap();
+        Result::from(ddog_prof_Profile_add(&mut profile, test_sample, None)).unwrap();
         assert_eq!(
             profile
                 .inner

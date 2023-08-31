@@ -234,6 +234,14 @@ impl Profile {
         })
     }
 
+    pub fn add_no_timestamp(&mut self, sample: api::Sample) -> anyhow::Result<()> {
+        assert_eq!(
+            sample.labels.iter().find(|l| l.key == "end_timestamp_ns"),
+            None
+        );
+        self.add(sample, None)
+    }
+
     pub fn add(&mut self, sample: api::Sample, timestamp: Option<Timestamp>) -> anyhow::Result<()> {
         anyhow::ensure!(
             sample.values.len() == self.sample_types.len(),
@@ -290,6 +298,12 @@ impl Profile {
                     label
                 );
             }
+
+            anyhow::ensure!(
+                label.key != "end_timestamp_ns",
+                "Timestamp should not be passed as a label {:?}",
+                label
+            );
         }
         Ok(())
     }
@@ -656,11 +670,14 @@ mod api_test {
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
 
         profile
-            .add(api::Sample {
-                locations,
-                values: vec![1, 10000],
-                labels: vec![],
-            })
+            .add(
+                api::Sample {
+                    locations,
+                    values: vec![1, 10000],
+                    labels: vec![],
+                },
+                None,
+            )
             .expect("add to succeed");
 
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
@@ -709,7 +726,7 @@ mod api_test {
         }];
 
         let values: Vec<i64> = vec![1];
-        let mut labels = vec![api::Label {
+        let labels = vec![api::Label {
             key: "pid",
             num: 101,
             ..Default::default()
@@ -727,11 +744,6 @@ mod api_test {
             labels: labels.clone(),
         };
 
-        labels.push(api::Label {
-            key: "end_timestamp_ns",
-            num: 42,
-            ..Default::default()
-        });
         let timestamp_sample = api::Sample {
             locations: timestamp_locations,
             values,
@@ -741,15 +753,19 @@ mod api_test {
         let mut profile = Profile::builder().sample_types(sample_types).build();
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
 
-        profile.add(main_sample).expect("profile to not be full");
+        profile
+            .add_no_timestamp(main_sample)
+            .expect("profile to not be full");
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
 
-        profile.add(test_sample).expect("profile to not be full");
+        profile
+            .add_no_timestamp(test_sample)
+            .expect("profile to not be full");
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 2);
 
         assert_eq!(profile.only_for_testing_num_timestamped_samples(), 0);
         profile
-            .add(timestamp_sample)
+            .add(timestamp_sample, Timestamp::new(42))
             .expect("profile to not be full");
         assert_eq!(profile.only_for_testing_num_timestamped_samples(), 1);
         profile
@@ -943,7 +959,7 @@ mod api_test {
             labels: vec![id_label],
         };
 
-        assert!(profile.add(sample).is_err());
+        assert!(profile.add_no_timestamp(sample).is_err());
     }
 
     #[test]
@@ -994,9 +1010,9 @@ mod api_test {
             labels: vec![id2_label, other_label],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add_no_timestamp(sample1).expect("add to success");
 
-        profile.add(sample2).expect("add to success");
+        profile.add_no_timestamp(sample2).expect("add to success");
 
         profile.add_endpoint(10, Cow::from("my endpoint"));
 
@@ -1150,7 +1166,7 @@ mod api_test {
             labels,
         };
 
-        profile.add(sample).unwrap_err();
+        profile.add_no_timestamp(sample).unwrap_err();
     }
 
     #[test]
@@ -1181,7 +1197,7 @@ mod api_test {
             labels: vec![id_label],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add_no_timestamp(sample1).expect("add to success");
 
         let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
 
@@ -1230,7 +1246,7 @@ mod api_test {
             labels: vec![],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add_no_timestamp(sample1).expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
         let values_offset = vec![0];
@@ -1258,7 +1274,7 @@ mod api_test {
             labels: vec![],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add_no_timestamp(sample1).expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.7 };
         let values_offset = vec![0];
@@ -1286,7 +1302,7 @@ mod api_test {
             labels: vec![],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add_no_timestamp(sample1).expect("add to success");
 
         let upscaling_info = UpscalingInfo::Poisson {
             sum_value_offset: 1,
@@ -1318,7 +1334,7 @@ mod api_test {
             labels: vec![],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add_no_timestamp(sample1).expect("add to success");
 
         let upscaling_info = UpscalingInfo::Poisson {
             sum_value_offset: 1,
@@ -1350,7 +1366,7 @@ mod api_test {
             labels: vec![],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add_no_timestamp(sample1).expect("add to success");
 
         // invalid sampling_distance vaue
         let upscaling_info = UpscalingInfo::Poisson {
@@ -1420,8 +1436,8 @@ mod api_test {
             labels: vec![],
         };
 
-        profile.add(sample1).expect("add to success");
-        profile.add(sample2).expect("add to success");
+        profile.add_no_timestamp(sample1).expect("add to success");
+        profile.add_no_timestamp(sample2).expect("add to success");
 
         // upscale the first value and the last one
         let values_offset: Vec<usize> = vec![0, 2];
@@ -1476,8 +1492,8 @@ mod api_test {
             labels: vec![],
         };
 
-        profile.add(sample1).expect("add to success");
-        profile.add(sample2).expect("add to success");
+        profile.add_no_timestamp(sample1).expect("add to success");
+        profile.add_no_timestamp(sample2).expect("add to success");
 
         let mut values_offset: Vec<usize> = vec![0];
 
@@ -1521,7 +1537,7 @@ mod api_test {
             labels: vec![id_label],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add_no_timestamp(sample1).expect("add to success");
 
         let values_offset: Vec<usize> = vec![0];
 
@@ -1577,7 +1593,7 @@ mod api_test {
             labels: vec![id_label],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add_no_timestamp(sample1).expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
         let values_offset: Vec<usize> = vec![0];
@@ -1634,8 +1650,8 @@ mod api_test {
             labels: vec![],
         };
 
-        profile.add(sample1).expect("add to success");
-        profile.add(sample2).expect("add to success");
+        profile.add_no_timestamp(sample1).expect("add to success");
+        profile.add_no_timestamp(sample2).expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
         let values_offset: Vec<usize> = vec![0];
@@ -1705,8 +1721,8 @@ mod api_test {
             labels: vec![id_no_match_label, id_label2],
         };
 
-        profile.add(sample1).expect("add to success");
-        profile.add(sample2).expect("add to success");
+        profile.add_no_timestamp(sample1).expect("add to success");
+        profile.add_no_timestamp(sample2).expect("add to success");
 
         // add rule for the first sample on the 1st value
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
@@ -1758,7 +1774,7 @@ mod api_test {
             labels: vec![id_label],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add_no_timestamp(sample1).expect("add to success");
 
         // upscale samples and wall-time values
         let values_offset: Vec<usize> = vec![0, 1];
@@ -1794,7 +1810,7 @@ mod api_test {
             labels: vec![id_label],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add_no_timestamp(sample1).expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
         let mut value_offsets: Vec<usize> = vec![0];
@@ -2066,7 +2082,7 @@ mod api_test {
             labels: vec![id_label],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add_no_timestamp(sample1).expect("add to success");
 
         let mut value_offsets: Vec<usize> = vec![0, 1];
         // Add by-label rule first
@@ -2134,8 +2150,8 @@ mod api_test {
             labels: vec![id2_label],
         };
 
-        profile.add(sample1).expect("add to success");
-        profile.add(sample2).expect("add to success");
+        profile.add_no_timestamp(sample1).expect("add to success");
+        profile.add_no_timestamp(sample2).expect("add to success");
 
         profile.add_endpoint(10, Cow::from("endpoint 10"));
         profile.add_endpoint(large_span_id, Cow::from("large endpoint"));

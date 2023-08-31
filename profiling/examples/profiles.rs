@@ -60,7 +60,7 @@ fn main() {
         .period(Some(period))
         .build();
 
-    match profile.add(sample) {
+    match profile.add(sample, None) {
         Ok(_) => {}
         Err(_) => exit(1),
     }
