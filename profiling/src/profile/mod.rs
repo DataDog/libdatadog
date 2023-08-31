@@ -7,6 +7,7 @@ pub mod pprof;
 pub mod profiled_endpoints;
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::num::NonZeroI64;
 use std::time::{Duration, SystemTime};
@@ -233,7 +234,7 @@ impl Profile {
         })
     }
 
-    pub fn add(&mut self, sample: api::Sample) -> anyhow::Result<()> {
+    pub fn add(&mut self, sample: api::Sample, timestamp: Option<Timestamp>) -> anyhow::Result<()> {
         anyhow::ensure!(
             sample.values.len() == self.sample_types.len(),
             "expected {} sample types, but sample had {} sample types",
@@ -241,7 +242,25 @@ impl Profile {
             sample.values.len(),
         );
 
-        let (labels, timestamp) = self.extract_sample_labels(&sample)?;
+        self.validate_sample_labels(&sample)?;
+        let labels: Vec<_> = sample
+            .labels
+            .iter()
+            .map(|label| {
+                let key = self.intern(label.key);
+                let internal_label = if let Some(s) = label.str {
+                    let str = self.intern(s);
+                    Label::str(key, str)
+                } else {
+                    let num = label.num;
+                    let num_unit = label.num_unit.map(|s| self.intern(s));
+                    Label::num(key, num, num_unit)
+                };
+
+                self.labels.dedup(internal_label)
+            })
+            .collect();
+        let labels = self.label_sets.dedup(LabelSet::new(labels));
 
         let locations = sample
             .locations
@@ -255,87 +274,24 @@ impl Profile {
         Ok(())
     }
 
-    /// Validates labels and converts them to the internal representation.
-    /// Extracts out the timestamp label, if it exists.
-    fn extract_timestamp(&mut self, sample: &api::Sample) -> anyhow::Result<Option<Timestamp>> {
-        if let Some(label) = sample
-            .labels
-            .iter()
-            .find(|label| label.key == "end_timestamp_ns")
-        {
-            anyhow::ensure!(
-                label.str.is_none(),
-                "the label \"{}\" must be sent as a number, not string {}",
-                label.str.unwrap(),
-                label.key
-            );
-            anyhow::ensure!(label.num != 0, "the label \"{}\" must not be 0", label.key);
-            anyhow::ensure!(label.num_unit.is_none(), "Timestamps with label '{}' are always nanoseconds and do not take a unit: found '{}'", label.key, label.num_unit.unwrap());
-
-            Ok(Some(NonZeroI64::new(label.num).unwrap()))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Validates labels and converts them to the internal representation.
-    /// Extracts out the timestamp label, if it exists.
-    fn extract_sample_labels(
-        &mut self,
-        sample: &api::Sample,
-    ) -> anyhow::Result<(LabelSetId, Option<Timestamp>)> {
-        let timestamp = self.extract_timestamp(sample)?;
-
-        let mut labels: Vec<LabelId> = Vec::with_capacity(if timestamp.is_some() {
-            sample.labels.len() - 1
-        } else {
-            sample.labels.len()
-        });
-        let mut local_root_span_id_label = None;
+    /// Validates labels
+    fn validate_sample_labels(&mut self, sample: &api::Sample) -> anyhow::Result<()> {
+        let mut seen: HashMap<&str, &api::Label> = HashMap::new();
 
         for label in sample.labels.iter() {
-            if label.key == "end_timestamp_ns" {
-                continue;
+            if let Some(duplicate) = seen.insert(label.key, label) {
+                anyhow::bail!("Duplicate label on sample: {:?} {:?}", duplicate, label);
             }
 
-            let key = self.intern(label.key);
-            let internal_label = if let Some(s) = label.str {
-                let str = self.intern(s);
-                Label::str(key, str)
-            } else {
-                let num = label.num;
-                let num_unit = label.num_unit.map(|s| self.intern(s));
-                Label::num(key, num, num_unit)
-            };
-
-            let label_id = self.labels.dedup(internal_label);
-
-            if key == self.endpoints.local_root_span_id_label {
+            if label.key == "local root span id" {
                 anyhow::ensure!(
-                    local_root_span_id_label.is_none(),
-                    "only one label per sample can have the key \"local root span id\", found two: {:?}, {:?}",
-                    self.get_label(local_root_span_id_label.unwrap()), label
+                    label.str.is_none() && label.num != 0,
+                    "Invalid \"local root span id\" label: {:?}",
+                    label
                 );
-
-                // Panic: if the label.str isn't 0, then str must have been provided.
-                anyhow::ensure!(
-                    label.str.is_none(),
-                    "the label \"local root span id\" must be sent as a number, not string {}",
-                    label.str.unwrap()
-                );
-                anyhow::ensure!(
-                    label.num != 0,
-                    "the label \"local root span id\" must not be 0"
-                );
-                local_root_span_id_label = Some(label_id);
             }
-
-            labels.push(label_id);
         }
-
-        let label_set_id = self.label_sets.dedup(LabelSet::new(labels));
-
-        Ok((label_set_id, timestamp))
+        Ok(())
     }
 
     fn extract_api_sample_types(&self) -> anyhow::Result<Vec<api::ValueType>> {

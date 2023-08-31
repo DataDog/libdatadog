@@ -6,6 +6,7 @@ use datadog_profiling::profile::{self, api, profiled_endpoints};
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
 use ddcommon_ffi::Error;
 use std::convert::{TryFrom, TryInto};
+use std::num::NonZeroI64;
 use std::str::Utf8Error;
 use std::time::{Duration, SystemTime};
 
@@ -388,8 +389,9 @@ impl From<ProfileResult> for Result<(), String> {
 pub unsafe extern "C" fn ddog_prof_Profile_add(
     profile: *mut Profile,
     sample: Sample,
+    timestamp: Option<NonZeroI64>,
 ) -> ProfileResult {
-    match ddog_prof_profile_add_impl(profile, sample) {
+    match ddog_prof_profile_add_impl(profile, sample, timestamp) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(err.context("ddog_prof_Profile_add failed"))),
     }
@@ -398,10 +400,11 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
 unsafe fn ddog_prof_profile_add_impl(
     profile_ptr: *mut Profile,
     sample: Sample,
+    timestamp: Option<NonZeroI64>,
 ) -> anyhow::Result<()> {
     let profile = profile_ptr_to_inner(profile_ptr)?;
 
-    match sample.try_into().map(|s| profile.add(s)) {
+    match sample.try_into().map(|s| profile.add(s, timestamp)) {
         Ok(r) => match r {
             Ok(_) => Ok(()),
             Err(err) => Err(err),

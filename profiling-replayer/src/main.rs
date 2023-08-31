@@ -162,7 +162,7 @@ fn main() -> anyhow::Result<()> {
         let mut depths: Vec<usize> = replayer
             .samples
             .iter()
-            .map(|sample| sample.locations.len())
+            .map(|(_, sample)| sample.locations.len())
             .collect();
 
         depths.sort();
@@ -183,8 +183,8 @@ fn main() -> anyhow::Result<()> {
     }
 
     let before = Instant::now();
-    for sample in samples {
-        outprof.add(sample)?;
+    for (timestamp, sample) in samples {
+        outprof.add(sample, timestamp)?;
     }
     let duration = before.elapsed();
 
