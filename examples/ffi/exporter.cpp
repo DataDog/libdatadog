@@ -64,7 +64,7 @@ int main(int argc, char *argv[]) {
       .values = {&value, 1},
       .labels = {&label, 1},
   };
-  auto add_result = ddog_prof_Profile_add(profile.get(), sample);
+  auto add_result = ddog_prof_Profile_add(profile.get(), sample, 0);
   if (add_result.tag != DDOG_PROF_PROFILE_RESULT_OK) {
     print_error("Failed to add sample to profile: ", add_result.err);
     ddog_Error_drop(&add_result.err);

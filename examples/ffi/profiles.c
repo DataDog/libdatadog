@@ -40,7 +40,7 @@ int main(void) {
   for (int i = 0; i < 10000000; i++) {
     label.num = i;
 
-    ddog_prof_Profile_Result add_result = ddog_prof_Profile_add(&profile, sample);
+    ddog_prof_Profile_Result add_result = ddog_prof_Profile_add(&profile, sample, 0);
     if (add_result.tag != DDOG_PROF_PROFILE_RESULT_OK) {
       ddog_CharSlice message = ddog_Error_message(&add_result.err);
       fprintf(stderr, "%*s", (int)message.len, message.ptr);
