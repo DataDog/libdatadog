@@ -75,6 +75,14 @@ impl<T: Item> Dedup<T> for FxIndexSet<T> {
     }
 }
 
+pub fn into_pprof_vec<T: PprofItem>(collection: FxIndexSet<T>) -> Vec<T::PprofMessage> {
+    collection
+        .into_iter()
+        .enumerate()
+        .map(|(index, item)| item.to_pprof(<T as Item>::Id::from_offset(index)))
+        .collect()
+}
+
 pub fn to_pprof_vec<T: PprofItem>(collection: &FxIndexSet<T>) -> Vec<T::PprofMessage> {
     collection
         .iter()
