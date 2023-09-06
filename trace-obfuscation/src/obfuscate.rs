@@ -6,7 +6,8 @@
 use datadog_trace_protobuf::pb;
 
 use crate::{
-    http::obfuscate_url_string, memcached::obfuscate_memcached_string,
+    http::obfuscate_url_string,
+    memcached::obfuscate_memcached_string,
     obfuscation_config::ObfuscationConfig,
     redis::{obfuscate_redis_string, remove_all_redis_args},
     replacer::replace_span_tags,
@@ -29,6 +30,19 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
         "memcached" if config.obfuscate_memcached => {
             if let Some(cmd) = span.meta.get_mut("memcached.command") {
                 *cmd = obfuscate_memcached_string(cmd)
+            }
+        }
+        "redis" => {
+            if config.obfuscation_redis_enabled {
+                if span.meta.is_empty() {
+                    return;
+                }
+                if let Some(redis_cmd) = span.meta.get_mut("redis.raw_command") {
+                    if config.obfuscation_redis_remove_all_args {
+                        *redis_cmd = remove_all_redis_args(redis_cmd)
+                    }
+                    *redis_cmd = obfuscate_redis_string(redis_cmd)
+                }
             }
         }
         "redis" => {
