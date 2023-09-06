@@ -169,11 +169,55 @@ fn obfuscate_redis_args_step(mut args: Vec<String>, start: usize, step: usize) -
     args
 }
 
+pub fn remove_all_redis_args(redis_cmd: &str) -> String {
+    let mut redis_cmd_iter = redis_cmd.split_whitespace().peekable();
+    let mut obfuscated_cmd = String::new();
+    if redis_cmd_iter.peek().is_none() {
+        return obfuscated_cmd;
+    }
+
+    let cmd = redis_cmd_iter.next().unwrap_or_default();
+    obfuscated_cmd.push_str(cmd);
+
+    if redis_cmd_iter.peek().is_none() {
+        return obfuscated_cmd;
+    }
+
+    obfuscated_cmd.push(' ');
+
+    match cmd.to_uppercase().as_str() {
+        "BITFIELD" => {
+            obfuscated_cmd.push('?');
+            for a in redis_cmd_iter {
+                let arg = a.to_uppercase();
+                if arg == "SET" || arg == "GET" || arg == "INCRBY" {
+                    obfuscated_cmd.push_str(format!(" {a} ?").as_str());
+                }
+            }
+        }
+        "CONFIG" => {
+            let a = redis_cmd_iter.next().unwrap_or_default();
+            let arg = a.to_uppercase();
+            if arg == "GET" || arg == "SET" || arg == "RESETSTAT" || arg == "REWRITE" {
+                // out.WriteString(strings.Join([]string{args[0], "?"}, " "))
+                obfuscated_cmd.push_str(format!("{a} ?").as_str());
+            } else {
+                obfuscated_cmd.push('?');
+            }
+        }
+        _ => {
+            obfuscated_cmd.push('?');
+        }
+    }
+
+    obfuscated_cmd
+}
+
 #[cfg(test)]
 mod tests {
     use duplicate::duplicate_item;
 
-    use super::obfuscate_redis_string;
+    use super::{obfuscate_redis_string, remove_all_redis_args};
 
     #[duplicate_item(
         [
@@ -514,6 +558,99 @@ SET k ?"#];
     #[test]
     fn test_name() {
         let result = obfuscate_redis_string(input);
+        assert_eq!(result, expected);
+    }
+
+    #[duplicate_item(
+        [
+            test_name   [test_obfuscate_all_redis_args_1]
+            input       [""]
+            expected    [""];
+        ]
+        [
+            test_name   [test_obfuscate_all_redis_args_2]
+            input       ["SET key value"]
+            expected    ["SET ?"];
+        ]
+        [
+            test_name   [test_obfuscate_all_redis_args_3]
+            input       ["GET k"]
+            expected    ["GET ?"];
+        ]
+        [
+            test_name   [test_obfuscate_all_redis_args_4]
+            input       ["FAKECMD key value hash"]
+            expected    ["FAKECMD ?"];
+        ]
+        [
+            test_name   [test_obfuscate_all_redis_args_5]
+            input       ["AUTH password"]
+            expected    ["AUTH ?"];
+        ]
+        [
+            test_name   [test_obfuscate_all_redis_args_6]
+            input       ["GET"]
+            expected    ["GET"];
+        ]
+        [
+            test_name   [test_obfuscate_all_redis_args_7]
+            input       ["CONFIG SET key value"]
+            expected    ["CONFIG SET ?"];
+        ]
+        [
+            test_name   [test_obfuscate_all_redis_args_8]
+            input       ["CONFIG GET key"]
+            expected    ["CONFIG GET ?"];
+        ]
+        [
+            test_name   [test_obfuscate_all_redis_args_9]
+            input       ["CONFIG key"]
+            expected    ["CONFIG ?"];
+        ]
+        [
+            test_name   [test_obfuscate_all_redis_args_10]
+            input       ["BITFIELD key SET key value GET key"]
+            expected    ["BITFIELD ? SET ? GET ?"];
+        ]
+        [
+            test_name   [test_obfuscate_all_redis_args_11]
+            input       ["BITFIELD key INCRBY value"]
+            expected    ["BITFIELD ? INCRBY ?"];
+        ]
+        [
+            test_name   [test_obfuscate_all_redis_args_12]
+            input       ["BITFIELD secret key"]
+            expected    ["BITFIELD ?"];
+        ]
+        [
+            test_name   [test_obfuscate_all_redis_args_13]
+            input       ["set key value"]
+            expected    ["set ?"];
+        ]
+        [
+            test_name   [test_obfuscate_all_redis_args_14]
+            input       ["Get key"]
+            expected    ["Get ?"];
+        ]
+        [
+            test_name   [test_obfuscate_all_redis_args_15]
+            input       ["config key"]
+            expected    ["config ?"];
+        ]
+        [
+            test_name   [test_obfuscate_all_redis_args_16]
+            input       ["CONFIG get key"]
+            expected    ["CONFIG get ?"];
+        ]
+        [
+            test_name   [test_obfuscate_all_redis_args_17]
+            input       ["bitfield key SET key value incrby 3"]
+            expected    ["bitfield ? SET ? incrby ?"];
+        ]
+    )]
+    #[test]
+    fn test_name() {
+        let result = remove_all_redis_args(input);
         assert_eq!(result, expected);
     }
 }
