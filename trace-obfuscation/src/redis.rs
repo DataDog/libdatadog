@@ -24,7 +24,7 @@ pub fn obfuscate_redis_string(cmd: &str) -> String {
             RedisTokenType::RedisTokenArgument => args.push(res.token),
         }
         if res.done {
-            args = obfuscate_redis_cmd(s, cmd.unwrap_or_default(), args);
+            obfuscate_redis_cmd(s, cmd.unwrap_or_default(), args);
             break;
         }
     }
