@@ -40,7 +40,8 @@ pub struct Profile {
 }
 
 impl From<Profile> for serializer::Profile {
-    //TODO handle endpoints
+    // TODO handle endpoints
+    // TODO handle upscaling
     fn from(p: Profile) -> Self {
         Self {
             functions: p.functions.into_iter().map(|i| i.into()).collect(),
