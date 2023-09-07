@@ -433,7 +433,53 @@ impl Profile {
         // time consumed, allocator pressure, and allocator fragmentation.
         const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
         let mut buffer: Vec<u8> = Vec::with_capacity(INITIAL_PPROF_BUFFER_SIZE);
-        profile.encode(&mut buffer)?;
+
+        for item in profile.sample_types {
+            buffer.push(0x0A); // 1
+            item.encode_length_delimited(&mut buffer)?;
+            // println!("Buffer size is {}!", buffer.len());
+        }
+
+        for item in profile.samples {
+            buffer.push(0x12); // 2
+            item.encode_length_delimited(&mut buffer)?;
+        }
+
+        for item in profile.mappings {
+            buffer.push(0x1A); // 3
+            item.encode_length_delimited(&mut buffer)?;
+        }
+
+        for item in profile.locations {
+            buffer.push(0x22); // 4
+            item.encode_length_delimited(&mut buffer)?;
+        }
+
+        for item in profile.functions {
+            buffer.push(0x2A); // 5
+            item.encode_length_delimited(&mut buffer)?;
+        }
+
+        // for item in profile.string_table {
+        //     buffer.push(0x32); // 6
+        //     item.encode_length_delimited(&mut buffer)?;
+        // }
+
+        let profile_simpler = pprof::ProfileSimpler {
+            string_table: profile.string_table,
+            drop_frames: profile.drop_frames,
+            keep_frames: profile.keep_frames,
+            time_nanos: profile.time_nanos,
+            duration_nanos: profile.duration_nanos,
+            period_type: profile.period_type,
+            period: profile.period,
+            comment: profile.comment,
+            default_sample_type: profile.default_sample_type,
+        };
+
+        profile_simpler.encode(&mut buffer)?;
+
+        //profile.encode(&mut buffer)?;
 
         Ok(EncodedProfile {
             start,
