@@ -367,5 +367,4 @@ mod test {
         // Two of the samples were aggregated, so three total samples at the end
         assert_eq!(count, 3);
     }
-
 }

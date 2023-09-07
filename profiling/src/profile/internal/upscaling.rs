@@ -143,12 +143,10 @@ impl UpscalingRules {
     // TODO: Consider whether to use the internal Label here instead
     pub fn upscale_values(
         &self,
-        values: &[i64],
+        values: &mut [i64],
         labels: &[pprof::Label],
         sample_types: &Vec<ValueType>,
-    ) -> anyhow::Result<Vec<i64>> {
-        let mut new_values = values.to_vec();
-
+    ) -> anyhow::Result<()> {
         if !self.is_empty() {
             let mut values_to_update: Vec<usize> = vec![0; sample_types.len()];
 
@@ -181,12 +179,12 @@ impl UpscalingRules {
                 rules.iter().for_each(|rule| {
                     let scale = rule.compute_scale(values);
                     rule.values_offset.iter().for_each(|offset| {
-                        new_values[*offset] = (new_values[*offset] as f64 * scale).round() as i64
+                        values[*offset] = (values[*offset] as f64 * scale).round() as i64
                     })
                 })
             });
         }
 
-        Ok(new_values)
+        Ok(())
     }
 }
