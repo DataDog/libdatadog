@@ -83,6 +83,15 @@ pub fn to_pprof_vec<T: PprofItem>(collection: FxIndexSet<T>) -> Vec<T::PprofMess
         .collect()
 }
 
+pub fn into_pprof_iter<T: PprofItem>(
+    collection: FxIndexSet<T>,
+) -> impl Iterator<Item = T::PprofMessage> {
+    collection
+        .into_iter()
+        .enumerate()
+        .map(|(index, item)| item.to_pprof(<T as Item>::Id::from_offset(index)))
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

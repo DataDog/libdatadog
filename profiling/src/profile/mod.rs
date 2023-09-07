@@ -8,7 +8,6 @@ pub mod profiled_endpoints;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::num::NonZeroI64;
 use std::time::{Duration, SystemTime};
 
@@ -400,17 +399,14 @@ impl Profile {
     ///                may also accidentally pass an earlier time. The duration will be set to zero
     ///                these cases.
     pub fn serialize(
-        self,
+        mut self,
         end_time: Option<SystemTime>,
         duration: Option<Duration>,
     ) -> anyhow::Result<EncodedProfile> {
         let end = end_time.unwrap_or_else(SystemTime::now);
         let start = self.start_time;
         let endpoints_stats = self.endpoints.stats.clone();
-
-        let mut profile: pprof::Profile = self.try_into()?;
-
-        profile.duration_nanos = duration
+        let duration_nanos = duration
             .unwrap_or_else(|| {
                 end.duration_since(start).unwrap_or({
                     // Let's not throw away the whole profile just because the clocks were wrong.
@@ -420,6 +416,10 @@ impl Profile {
             })
             .as_nanos()
             .min(i64::MAX as u128) as i64;
+        let (period, period_type) = match self.period {
+            Some(tuple) => (tuple.0, Some(tuple.1.into())),
+            None => (0, None),
+        };
 
         // On 2023-08-23, we analyzed the uploaded tarball size per language.
         // These tarballs include 1 or more profiles, but for most languages
@@ -434,53 +434,68 @@ impl Profile {
         const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
         let mut buffer: Vec<u8> = Vec::with_capacity(INITIAL_PPROF_BUFFER_SIZE);
 
-        for item in profile.sample_types {
-            buffer.push(0x0A); // 1
-            item.encode_length_delimited(&mut buffer)?;
-            // println!("Buffer size is {}!", buffer.len());
-        }
+        for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
+            let labels = self.translate_and_enrich_sample_labels(sample, timestamp)?;
+            let location_ids: Vec<_> = self
+                .get_stacktrace(sample.stacktrace)
+                .locations
+                .iter()
+                .map(Id::to_raw_id)
+                .collect();
+            self.upscaling_rules
+                .upscale_values(&mut values, &labels, &self.sample_types)?;
 
-        for item in profile.samples {
+            let item = pprof::Sample {
+                location_ids,
+                values,
+                labels,
+            };
+
             buffer.push(0x12); // 2
             item.encode_length_delimited(&mut buffer)?;
         }
 
-        for item in profile.mappings {
+        // We need to do this out of order because we use the sample_types while
+        // upscaling
+        for sample_type in self.sample_types.into_iter() {
+            let item: pprof::ValueType = sample_type.into();
+            buffer.push(0x0A); // 1
+            item.encode_length_delimited(&mut buffer)?;
+        }
+
+        for item in into_pprof_iter(self.mappings) {
             buffer.push(0x1A); // 3
             item.encode_length_delimited(&mut buffer)?;
         }
 
-        for item in profile.locations {
+        for item in into_pprof_iter(self.locations) {
             buffer.push(0x22); // 4
             item.encode_length_delimited(&mut buffer)?;
         }
 
-        for item in profile.functions {
+        for item in into_pprof_iter(self.functions) {
             buffer.push(0x2A); // 5
             item.encode_length_delimited(&mut buffer)?;
         }
 
-        // for item in profile.string_table {
-        //     buffer.push(0x32); // 6
-        //     item.encode_length_delimited(&mut buffer)?;
-        // }
+        for item in self.strings.into_iter() {
+            buffer.push(0x32); // 6
+            item.encode_length_delimited(&mut buffer)?;
+        }
 
         let profile_simpler = pprof::ProfileSimpler {
-            string_table: profile.string_table,
-            drop_frames: profile.drop_frames,
-            keep_frames: profile.keep_frames,
-            time_nanos: profile.time_nanos,
-            duration_nanos: profile.duration_nanos,
-            period_type: profile.period_type,
-            period: profile.period,
-            comment: profile.comment,
-            default_sample_type: profile.default_sample_type,
+            time_nanos: self
+                .start_time
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |duration| {
+                    duration.as_nanos().min(i64::MAX as u128) as i64
+                }),
+            duration_nanos,
+            period_type,
+            period,
         };
 
         profile_simpler.encode(&mut buffer)?;
-
-        //profile.encode(&mut buffer)?;
-
         Ok(EncodedProfile {
             start,
             end,

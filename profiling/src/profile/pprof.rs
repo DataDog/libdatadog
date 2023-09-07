@@ -38,12 +38,6 @@ pub struct Profile {
 
 #[derive(Eq, Hash, PartialEq, ::prost::Message)]
 pub struct ProfileSimpler {
-    #[prost(string, repeated, tag = "6")]
-    pub string_table: Vec<String>,
-    #[prost(int64, tag = "7")]
-    pub drop_frames: i64,
-    #[prost(int64, tag = "8")]
-    pub keep_frames: i64,
     #[prost(int64, tag = "9")]
     pub time_nanos: i64,
     #[prost(int64, tag = "10")]
@@ -52,12 +46,7 @@ pub struct ProfileSimpler {
     pub period_type: Option<ValueType>,
     #[prost(int64, tag = "12")]
     pub period: i64,
-    #[prost(int64, repeated, tag = "13")]
-    pub comment: Vec<i64>,
-    #[prost(int64, tag = "14")]
-    pub default_sample_type: i64,
 }
-
 
 impl Profile {
     pub fn write_to_vec(&self, buffer: &mut Vec<u8>) -> Result<(), EncodeError> {
