@@ -400,13 +400,13 @@ impl Profile {
     ///                may also accidentally pass an earlier time. The duration will be set to zero
     ///                these cases.
     pub fn serialize(
-        self,
+        mut self,
         end_time: Option<SystemTime>,
         duration: Option<Duration>,
     ) -> anyhow::Result<EncodedProfile> {
         let end = end_time.unwrap_or_else(SystemTime::now);
         let start = self.start_time;
-        let endpoints_stats = self.endpoints.stats.clone();
+        let endpoints_stats = std::mem::take(&mut self.endpoints.stats);
 
         let mut profile: pprof::Profile = self.try_into()?;
 
@@ -576,9 +576,9 @@ impl TryFrom<Profile> for pprof::Profile {
                 .map(pprof::ValueType::from)
                 .collect(),
             samples,
-            mappings: to_pprof_vec(profile.mappings),
-            locations: to_pprof_vec(profile.locations),
-            functions: to_pprof_vec(profile.functions),
+            mappings: into_pprof_vec(profile.mappings),
+            locations: into_pprof_vec(profile.locations),
+            functions: into_pprof_vec(profile.functions),
             string_table: profile.strings.into_iter().collect(),
             time_nanos: profile
                 .start_time
