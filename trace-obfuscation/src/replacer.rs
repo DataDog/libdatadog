@@ -31,22 +31,27 @@ pub struct ReplaceRule {
 
 /// replace_trace_tags replaces the tag values of all spans within a trace with a given set of rules.
 pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
+    for span in trace.iter_mut() {
+        replace_span_tags(span, rules);
+    }
+}
+
+/// replace_span_tags replaces the tag values of a span with a given set of rules.
+pub fn replace_span_tags(span: &mut pb::Span, rules: &[ReplaceRule]) {
     for rule in rules {
-        for span in trace.iter_mut() {
-            match rule.name.as_ref() {
-                "*" => {
-                    for (_, val) in span.meta.iter_mut() {
-                        *val = rule.re.replace_all(val, &rule.repl).to_string();
-                    }
+        match rule.name.as_ref() {
+            "*" => {
+                for (_, val) in span.meta.iter_mut() {
+                    *val = rule.re.replace_all(val, &rule.repl).to_string();
                 }
-                "resource.name" => {
-                    span.resource = rule.re.replace_all(&span.resource, &rule.repl).to_string();
-                }
-                _ => {
-                    if let Some(val) = span.meta.get_mut(&rule.name) {
-                        let replaced_tag = rule.re.replace_all(val, &rule.repl).to_string();
-                        *val = replaced_tag;
-                    }
+            }
+            "resource.name" => {
+                span.resource = rule.re.replace_all(&span.resource, &rule.repl).to_string();
+            }
+            _ => {
+                if let Some(val) = span.meta.get_mut(&rule.name) {
+                    let replaced_tag = rule.re.replace_all(val, &rule.repl).to_string();
+                    *val = replaced_tag;
                 }
             }
         }
