@@ -6,8 +6,10 @@ pub mod internal;
 pub mod pprof;
 pub mod profiled_endpoints;
 
+use lz4_flex::frame::FrameEncoder;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::io::Write;
 use std::num::NonZeroI64;
 use std::time::{Duration, SystemTime};
 
@@ -432,7 +434,8 @@ impl Profile {
         // size of 32KiB should definitely out-perform starting at zero for
         // time consumed, allocator pressure, and allocator fragmentation.
         const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
-        let mut buffer: Vec<u8> = Vec::with_capacity(INITIAL_PPROF_BUFFER_SIZE);
+        let mut buffer = Vec::with_capacity(INITIAL_PPROF_BUFFER_SIZE);
+        let mut encoder = FrameEncoder::new(Vec::with_capacity(INITIAL_PPROF_BUFFER_SIZE));
 
         for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
             let labels = self.translate_and_enrich_sample_labels(sample, timestamp)?;
@@ -451,36 +454,32 @@ impl Profile {
                 labels,
             };
 
-            buffer.push(0x12); // 2
+            //TODO extract this into a function cause we keep repeating it
+            encoder.write_all(&[0x12])?; // 2
             item.encode_length_delimited(&mut buffer)?;
+            encoder.write_all(&buffer)?;
+            buffer.clear();
         }
 
         // We need to do this out of order because we use the sample_types while
         // upscaling
         for sample_type in self.sample_types.into_iter() {
             let item: pprof::ValueType = sample_type.into();
-            buffer.push(0x0A); // 1
+            encoder.write_all(&[0x0A])?; // 1
             item.encode_length_delimited(&mut buffer)?;
+            encoder.write_all(&buffer)?;
+            buffer.clear();
         }
 
-        for item in into_pprof_iter(self.mappings) {
-            buffer.push(0x1A); // 3
-            item.encode_length_delimited(&mut buffer)?;
-        }
-
-        for item in into_pprof_iter(self.locations) {
-            buffer.push(0x22); // 4
-            item.encode_length_delimited(&mut buffer)?;
-        }
-
-        for item in into_pprof_iter(self.functions) {
-            buffer.push(0x2A); // 5
-            item.encode_length_delimited(&mut buffer)?;
-        }
+        serialize_as_pprof(self.mappings, 0x1A /*3*/, &mut buffer, &mut encoder)?;
+        serialize_as_pprof(self.locations, 0x22 /*4*/, &mut buffer, &mut encoder)?;
+        serialize_as_pprof(self.functions, 0x2A /*5*/, &mut buffer, &mut encoder)?;
 
         for item in self.strings.into_iter() {
-            buffer.push(0x32); // 6
+            encoder.write_all(&[0x32])?; // 6
             item.encode_length_delimited(&mut buffer)?;
+            encoder.write_all(&buffer)?;
+            buffer.clear();
         }
 
         let profile_simpler = pprof::ProfileSimpler {
@@ -496,10 +495,13 @@ impl Profile {
         };
 
         profile_simpler.encode(&mut buffer)?;
+        encoder.write_all(&buffer)?;
+        buffer.clear();
+
         Ok(EncodedProfile {
             start,
             end,
-            buffer,
+            buffer: encoder.finish()?,
             endpoints_stats,
         })
     }

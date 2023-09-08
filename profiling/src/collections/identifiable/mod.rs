@@ -9,6 +9,7 @@ use std::num::NonZeroU32;
 pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<rustc_hash::FxHasher>>;
 pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::FxHasher>>;
 
+use prost::Message;
 pub use string_id::*;
 
 pub trait Id: Copy + Eq + Hash {
@@ -90,6 +91,21 @@ pub fn into_pprof_iter<T: PprofItem>(
         .into_iter()
         .enumerate()
         .map(|(index, item)| item.to_pprof(<T as Item>::Id::from_offset(index)))
+}
+
+pub fn serialize_as_pprof<T: PprofItem>(
+    collection: FxIndexSet<T>,
+    field_idx: u8,
+    buffer: &mut Vec<u8>,
+    encoder: &mut impl std::io::Write,
+) -> anyhow::Result<()> {
+    for item in into_pprof_iter(collection) {
+        encoder.write_all(&[field_idx])?; // 5
+        item.encode_length_delimited(buffer)?;
+        encoder.write_all(buffer)?;
+        buffer.clear();
+    }
+    Ok(())
 }
 
 #[cfg(test)]

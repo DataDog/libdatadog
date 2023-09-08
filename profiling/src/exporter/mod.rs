@@ -10,10 +10,8 @@ pub use chrono::{DateTime, Utc};
 pub use ddcommon::tag::Tag;
 pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
-use lz4_flex::frame::FrameEncoder;
 use mime;
 use serde_json::json;
-use std::io::Write;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
@@ -238,22 +236,25 @@ impl ProfileExporter {
         );
 
         for file in files {
-            // We tend to have good compression ratios for the pprof files,
-            // especially with timeline enabled. Not all files compress this
-            // well, but these are just initial Vec sizes, not a hard-bound.
-            // Using 1/10 gives us a better start than starting at zero, while
-            // not reserving too much for things that compress really well, and
-            // power-of-two capacities are almost always the best performing.
-            let capacity = (file.bytes.len() / 10).next_power_of_two();
-            let buffer = Vec::with_capacity(capacity);
-            let mut encoder = FrameEncoder::new(buffer);
-            encoder.write_all(file.bytes)?;
-            let encoded = encoder.finish()?;
+            //TODO : confirm that this is not needed since we now pre-encode
+            // // We tend to have good compression ratios for the pprof files,
+            // // especially with timeline enabled. Not all files compress this
+            // // well, but these are just initial Vec sizes, not a hard-bound.
+            // // Using 1/10 gives us a better start than starting at zero, while
+            // // not reserving too much for things that compress really well, and
+            // // power-of-two capacities are almost always the best performing.
+            // let capacity = (file.bytes.len() / 10).next_power_of_two();
+            // let buffer = Vec::with_capacity(capacity);
+            // let mut encoder = FrameEncoder::new(buffer);
+            // encoder.write_all(file.bytes)?;
+            // let encoded = encoder.finish()?;
             /* The Datadog RFC examples strip off the file extension, but the exact behavior isn't
              * specified. This does the simple thing of using the filename without modification for
              * the form name because intake does not care about these name of the form field for
              * these attachments.
              */
+            //TODO, take the file as owned
+            let encoded = file.bytes.to_vec();
             form.add_reader_file(file.name, Cursor::new(encoded), file.name)
         }
 
