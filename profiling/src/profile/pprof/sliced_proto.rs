@@ -46,6 +46,7 @@ pub struct ProfileStringTableEntry {
     pub string_table_entry: Vec<String>,
 }
 
+// These fields are not repeated so we can just make a combined struct for them.
 #[derive(Eq, Hash, PartialEq, ::prost::Message)]
 pub struct ProfileSimpler {
     #[prost(int64, tag = "9")]
@@ -56,4 +57,52 @@ pub struct ProfileSimpler {
     pub period_type: Option<ValueType>,
     #[prost(int64, tag = "12")]
     pub period: i64,
+}
+
+impl From<ValueType> for ProfileSampleTypesEntry {
+    fn from(item: ValueType) -> Self {
+        Self {
+            sample_types_entry: Some(item),
+        }
+    }
+}
+
+impl From<Sample> for ProfileSamplesEntry {
+    fn from(item: Sample) -> Self {
+        Self {
+            samples_entry: Some(item),
+        }
+    }
+}
+
+impl From<Mapping> for ProfileMappingsEntry {
+    fn from(item: Mapping) -> Self {
+        Self {
+            mappings_entry: Some(item),
+        }
+    }
+}
+
+impl From<Location> for ProfileLocationsEntry {
+    fn from(item: Location) -> Self {
+        Self {
+            locations_entry: Some(item),
+        }
+    }
+}
+
+impl From<Function> for ProfileFunctionsEntry {
+    fn from(item: Function) -> Self {
+        Self {
+            function_entry: Some(item),
+        }
+    }
+}
+
+impl From<String> for ProfileStringTableEntry {
+    fn from(item: String) -> Self {
+        Self {
+            string_table_entry: vec![item],
+        }
+    }
 }

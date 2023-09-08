@@ -453,17 +453,14 @@ impl Profile {
                 labels,
             };
 
-            encoder.encode(ProfileSamplesEntry {
-                samples_entry: Some(item),
-            })?;
+            encoder.encode(ProfileSamplesEntry::from(item))?;
         }
 
         // We need to do this out of order because we use the sample_types while
         // upscaling
         for sample_type in self.sample_types.into_iter() {
-            encoder.encode(ProfileSampleTypesEntry {
-                sample_types_entry: Some(sample_type.into()),
-            })?;
+            let item: pprof::ValueType = sample_type.into();
+            encoder.encode(ProfileSampleTypesEntry::from(item))?;
         }
 
         for item in into_pprof_iter(self.mappings) {
@@ -473,21 +470,15 @@ impl Profile {
         }
 
         for item in into_pprof_iter(self.locations) {
-            encoder.encode(ProfileLocationsEntry {
-                locations_entry: Some(item),
-            })?;
+            encoder.encode(ProfileLocationsEntry::from(item))?;
         }
 
         for item in into_pprof_iter(self.functions) {
-            encoder.encode(ProfileFunctionsEntry {
-                function_entry: Some(item),
-            })?;
+            encoder.encode(ProfileFunctionsEntry::from(item))?;
         }
 
         for item in self.strings.into_iter() {
-            encoder.encode(ProfileStringTableEntry {
-                string_table_entry: vec![item],
-            })?;
+            encoder.encode(ProfileStringTableEntry::from(item))?;
         }
 
         encoder.encode(ProfileSimpler {
