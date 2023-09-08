@@ -89,6 +89,18 @@ pub struct ValueType {
     pub unit: i64, // Index into string table
 }
 
+#[derive(Eq, Hash, PartialEq, ::prost::Message)]
+pub struct ProfileSampleTypesEntry {
+    #[prost(message, tag = "1")]
+    pub sample_types_entry: Option<ValueType>,
+}
+
+#[derive(Eq, Hash, PartialEq, ::prost::Message)]
+pub struct ProfileSamplesEntry {
+    #[prost(message, tag = "2")]
+    pub samples_entry: Option<Sample>,
+}
+
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, ::prost::Message)]
 pub struct Label {
     #[prost(int64, tag = "1")]

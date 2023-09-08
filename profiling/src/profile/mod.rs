@@ -455,8 +455,9 @@ impl Profile {
             };
 
             //TODO extract this into a function cause we keep repeating it
-            encoder.write_all(&[0x12])?; // 2
-            item.encode_length_delimited(&mut buffer)?;
+            pprof::ProfileSamplesEntry {
+                samples_entry: Some(item),
+            }.encode(&mut buffer)?;
             encoder.write_all(&buffer)?;
             buffer.clear();
         }
@@ -465,8 +466,9 @@ impl Profile {
         // upscaling
         for sample_type in self.sample_types.into_iter() {
             let item: pprof::ValueType = sample_type.into();
-            encoder.write_all(&[0x0A])?; // 1
-            item.encode_length_delimited(&mut buffer)?;
+            pprof::ProfileSampleTypesEntry {
+                sample_types_entry: Some(item),
+            }.encode(&mut buffer)?;
             encoder.write_all(&buffer)?;
             buffer.clear();
         }
