@@ -590,67 +590,6 @@ impl Profile {
     }
 }
 
-impl TryFrom<Profile> for pprof::Profile {
-    type Error = anyhow::Error;
-
-    fn try_from(mut profile: Profile) -> anyhow::Result<pprof::Profile> {
-        let (period, period_type) = match profile.period {
-            Some(tuple) => (tuple.0, Some(tuple.1)),
-            None => (0, None),
-        };
-
-        /* Rust pattern: inverting Vec<Result<T,E>> into Result<Vec<T>, E> error with .collect:
-         * https://doc.rust-lang.org/rust-by-example/error/iter_result.html#fail-the-entire-operation-with-collect
-         */
-
-        let samples: anyhow::Result<Vec<pprof::Sample>> = std::mem::take(&mut profile.observations)
-            .into_iter()
-            .map(|(sample, timestamp, mut values)| {
-                let labels = profile.translate_and_enrich_sample_labels(sample, timestamp)?;
-                let location_ids: Vec<_> = profile
-                    .get_stacktrace(sample.stacktrace)
-                    .locations
-                    .iter()
-                    .map(Id::to_raw_id)
-                    .collect();
-                profile.upscaling_rules.upscale_values(
-                    &mut values,
-                    &labels,
-                    &profile.sample_types,
-                )?;
-
-                Ok(pprof::Sample {
-                    location_ids,
-                    values,
-                    labels,
-                })
-            })
-            .collect();
-        let samples = samples?;
-        Ok(pprof::Profile {
-            sample_types: profile
-                .sample_types
-                .into_iter()
-                .map(pprof::ValueType::from)
-                .collect(),
-            samples,
-            mappings: to_pprof_vec(profile.mappings),
-            locations: to_pprof_vec(profile.locations),
-            functions: to_pprof_vec(profile.functions),
-            string_table: profile.strings.into_iter().collect(),
-            time_nanos: profile
-                .start_time
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map_or(0, |duration| {
-                    duration.as_nanos().min(i64::MAX as u128) as i64
-                }),
-            period,
-            period_type: period_type.map(pprof::ValueType::from),
-            ..Default::default()
-        })
-    }
-}
-
 #[cfg(test)]
 mod api_test {
 
@@ -825,7 +764,7 @@ mod api_test {
     #[test]
     fn impl_from_profile_for_pprof_profile() {
         let locations = provide_distinct_locations();
-        let profile = pprof::Profile::try_from(locations).unwrap();
+        let profile = pprof::roundtrip_to_pprof(locations).unwrap();
 
         assert_eq!(profile.samples.len(), 3);
         assert_eq!(profile.mappings.len(), 1);
@@ -1067,7 +1006,7 @@ mod api_test {
 
         profile.add_endpoint(10, Cow::from("my endpoint"));
 
-        let serialized_profile = pprof::Profile::try_from(profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         assert_eq!(serialized_profile.samples.len(), 2);
         let samples = serialized_profile.sorted_samples();
 
@@ -1250,7 +1189,7 @@ mod api_test {
 
         profile.add(sample1, None).expect("add to success");
 
-        let serialized_profile = pprof::Profile::try_from(profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -1305,7 +1244,7 @@ mod api_test {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -1333,7 +1272,7 @@ mod api_test {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -1365,7 +1304,7 @@ mod api_test {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -1397,7 +1336,7 @@ mod api_test {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -1498,7 +1437,7 @@ mod api_test {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         let samples = serialized_profile.sorted_samples();
         let first = samples.get(0).expect("first sample");
 
@@ -1563,7 +1502,7 @@ mod api_test {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info2)
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         let samples = serialized_profile.sorted_samples();
         let first = samples.get(0).expect("first sample");
 
@@ -1622,7 +1561,7 @@ mod api_test {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -1657,7 +1596,7 @@ mod api_test {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -1715,7 +1654,7 @@ mod api_test {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         let samples = serialized_profile.sorted_samples();
 
         let first = samples.get(0).expect("one sample");
@@ -1800,7 +1739,7 @@ mod api_test {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         let samples = serialized_profile.sorted_samples();
         let first = samples.get(0).expect("one sample");
 
@@ -1840,7 +1779,7 @@ mod api_test {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -1882,7 +1821,7 @@ mod api_test {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -2207,7 +2146,7 @@ mod api_test {
         profile.add_endpoint(10, Cow::from("endpoint 10"));
         profile.add_endpoint(large_span_id, Cow::from("large endpoint"));
 
-        let serialized_profile = pprof::Profile::try_from(profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         assert_eq!(serialized_profile.samples.len(), 2);
 
         // Find common label strings in the string table.
