@@ -36,54 +36,6 @@ pub struct Profile {
     pub default_sample_type: i64,
 }
 
-#[derive(Eq, Hash, PartialEq, ::prost::Message)]
-pub struct ProfileSampleTypesEntry {
-    #[prost(message, tag = "1")]
-    pub sample_types_entry: Option<ValueType>,
-}
-
-#[derive(Eq, Hash, PartialEq, ::prost::Message)]
-pub struct ProfileSamplesEntry {
-    #[prost(message, tag = "2")]
-    pub samples_entry: Option<Sample>,
-}
-
-#[derive(Eq, Hash, PartialEq, ::prost::Message)]
-pub struct ProfileMappingsEntry {
-    #[prost(message, tag = "3")]
-    pub mappings_entry: Option<Mapping>,
-}
-
-#[derive(Eq, Hash, PartialEq, ::prost::Message)]
-pub struct ProfileLocationsEntry {
-    #[prost(message, tag = "4")]
-    pub locations_entry: Option<Location>,
-}
-
-#[derive(Eq, Hash, PartialEq, ::prost::Message)]
-pub struct ProfileFunctionsEntry {
-    #[prost(message, tag = "5")]
-    pub function_entry: Option<Function>,
-}
-
-#[derive(Eq, Hash, PartialEq, ::prost::Message)]
-pub struct ProfileStringTableEntry {
-    #[prost(string, repeated, tag = "6")]
-    pub string_table_entry: Vec<String>,
-}
-
-#[derive(Eq, Hash, PartialEq, ::prost::Message)]
-pub struct ProfileSimpler {
-    #[prost(int64, tag = "9")]
-    pub time_nanos: i64,
-    #[prost(int64, tag = "10")]
-    pub duration_nanos: i64,
-    #[prost(message, optional, tag = "11")]
-    pub period_type: Option<ValueType>,
-    #[prost(int64, tag = "12")]
-    pub period: i64,
-}
-
 impl Profile {
     pub fn write_to_vec(&self, buffer: &mut Vec<u8>) -> Result<(), EncodeError> {
         use prost::Message;

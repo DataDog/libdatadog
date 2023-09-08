@@ -14,6 +14,7 @@ use std::time::{Duration, SystemTime};
 use crate::collections::identifiable::*;
 use crate::serializer::ZippedProtobufSerializer;
 use internal::*;
+use pprof::sliced_proto::*;
 use profiled_endpoints::ProfiledEndpointsStats;
 use prost::EncodeError;
 
@@ -452,7 +453,7 @@ impl Profile {
                 labels,
             };
 
-            encoder.encode(pprof::ProfileSamplesEntry {
+            encoder.encode(ProfileSamplesEntry {
                 samples_entry: Some(item),
             })?;
         }
@@ -460,36 +461,36 @@ impl Profile {
         // We need to do this out of order because we use the sample_types while
         // upscaling
         for sample_type in self.sample_types.into_iter() {
-            encoder.encode(pprof::ProfileSampleTypesEntry {
+            encoder.encode(ProfileSampleTypesEntry {
                 sample_types_entry: Some(sample_type.into()),
             })?;
         }
 
         for item in into_pprof_iter(self.mappings) {
-            encoder.encode(pprof::ProfileMappingsEntry {
+            encoder.encode(ProfileMappingsEntry {
                 mappings_entry: Some(item),
             })?;
         }
 
         for item in into_pprof_iter(self.locations) {
-            encoder.encode(pprof::ProfileLocationsEntry {
+            encoder.encode(ProfileLocationsEntry {
                 locations_entry: Some(item),
             })?;
         }
 
         for item in into_pprof_iter(self.functions) {
-            encoder.encode(pprof::ProfileFunctionsEntry {
+            encoder.encode(ProfileFunctionsEntry {
                 function_entry: Some(item),
             })?;
         }
 
         for item in self.strings.into_iter() {
-            encoder.encode(pprof::ProfileStringTableEntry {
+            encoder.encode(ProfileStringTableEntry {
                 string_table_entry: vec![item],
             })?;
         }
 
-        encoder.encode(pprof::ProfileSimpler {
+        encoder.encode(ProfileSimpler {
             time_nanos: self
                 .start_time
                 .duration_since(SystemTime::UNIX_EPOCH)
