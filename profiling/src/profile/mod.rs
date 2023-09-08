@@ -6,17 +6,16 @@ pub mod internal;
 pub mod pprof;
 pub mod profiled_endpoints;
 
-use lz4_flex::frame::FrameEncoder;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::Write;
 use std::num::NonZeroI64;
 use std::time::{Duration, SystemTime};
 
 use crate::collections::identifiable::*;
+use crate::serializer::ZippedProtobufSerializer;
 use internal::*;
 use profiled_endpoints::ProfiledEndpointsStats;
-use prost::{EncodeError, Message};
+use prost::EncodeError;
 
 use self::api::UpscalingInfo;
 
@@ -434,8 +433,7 @@ impl Profile {
         // size of 32KiB should definitely out-perform starting at zero for
         // time consumed, allocator pressure, and allocator fragmentation.
         const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
-        let mut buffer = Vec::with_capacity(INITIAL_PPROF_BUFFER_SIZE);
-        let mut encoder = FrameEncoder::new(Vec::with_capacity(INITIAL_PPROF_BUFFER_SIZE));
+        let mut encoder = ZippedProtobufSerializer::with_capacity(INITIAL_PPROF_BUFFER_SIZE);
 
         for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
             let labels = self.translate_and_enrich_sample_labels(sample, timestamp)?;
@@ -454,53 +452,44 @@ impl Profile {
                 labels,
             };
 
-            //TODO extract this into a function cause we keep repeating it
-            pprof::ProfileSamplesEntry {
+            encoder.encode(pprof::ProfileSamplesEntry {
                 samples_entry: Some(item),
-            }.encode(&mut buffer)?;
-            encoder.write_all(&buffer)?;
-            buffer.clear();
+            })?;
         }
 
         // We need to do this out of order because we use the sample_types while
         // upscaling
         for sample_type in self.sample_types.into_iter() {
-            let item: pprof::ValueType = sample_type.into();
-            pprof::ProfileSampleTypesEntry {
-                sample_types_entry: Some(item),
-            }.encode(&mut buffer)?;
-            encoder.write_all(&buffer)?;
-            buffer.clear();
+            encoder.encode(pprof::ProfileSampleTypesEntry {
+                sample_types_entry: Some(sample_type.into()),
+            })?;
         }
 
-        serialize_as_pprof(self.mappings, 0x1A /*3*/, &mut buffer, &mut encoder)?;
-        serialize_as_pprof(self.locations, 0x22 /*4*/, &mut buffer, &mut encoder)?;
-        serialize_as_pprof(self.functions, 0x2A /*5*/, &mut buffer, &mut encoder)?;
+        for item in into_pprof_iter(self.mappings) {
+            encoder.encode(pprof::ProfileMappingsEntry {
+                mappings_entry: Some(item),
+            })?;
+        }
 
-        // FIXME: @ivoanjo For some bizarre reason I can't understand, prost seems to not emit a message
-        // with an empty string, which pprof expects as the first item in the string table
-        //
-        // So... this is a no-op... apparently?
-        // pprof::ProfileStringTableEntry {
-        //     string_table_entry: "".to_string(),
-        // }.encode(&mut buffer)?;
-        //
-        // ...and thus we do it by hand ;)
-        encoder.write_all(&[0x32])?; // 6
-        "".to_string().encode_length_delimited(&mut buffer)?;
-        encoder.write_all(&buffer)?;
-        buffer.clear();
+        for item in into_pprof_iter(self.locations) {
+            encoder.encode(pprof::ProfileLocationsEntry {
+                locations_entry: Some(item),
+            })?;
+        }
+
+        for item in into_pprof_iter(self.functions) {
+            encoder.encode(pprof::ProfileFunctionsEntry {
+                function_entry: Some(item),
+            })?;
+        }
 
         for item in self.strings.into_iter() {
-            pprof::ProfileStringTableEntry {
-                string_table_entry: item,
-            }.encode(&mut buffer)?;
-
-            encoder.write_all(&buffer)?;
-            buffer.clear();
+            encoder.encode(pprof::ProfileStringTableEntry {
+                string_table_entry: vec![item],
+            })?;
         }
 
-        let profile_simpler = pprof::ProfileSimpler {
+        encoder.encode(pprof::ProfileSimpler {
             time_nanos: self
                 .start_time
                 .duration_since(SystemTime::UNIX_EPOCH)
@@ -510,11 +499,7 @@ impl Profile {
             duration_nanos,
             period_type,
             period,
-        };
-
-        profile_simpler.encode(&mut buffer)?;
-        encoder.write_all(&buffer)?;
-        buffer.clear();
+        })?;
 
         Ok(EncodedProfile {
             start,
