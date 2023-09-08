@@ -595,7 +595,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -626,7 +626,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-ffi"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -642,7 +642,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -813,7 +813,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -838,7 +838,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-ffi"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "ddcommon",
@@ -847,7 +847,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "ddcommon",
@@ -871,7 +871,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry-ffi"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "ddcommon",
  "ddcommon-ffi",
