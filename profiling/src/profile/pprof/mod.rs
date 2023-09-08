@@ -18,6 +18,6 @@ pub fn deserialize_zipped_pprof(encoded: &[u8]) -> anyhow::Result<proto::Profile
 }
 
 pub fn roundtrip_to_pprof(profile: super::Profile) -> anyhow::Result<proto::Profile> {
-    let encoded = profile.serialize(None, None)?;
+    let encoded = profile.serialize_into_compressed_pprof(None, None)?;
     deserialize_zipped_pprof(&encoded.buffer)
 }

@@ -709,7 +709,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
         Some(x) if *x < 0 => None,
         Some(x) => Some(Duration::from_nanos((*x) as u64)),
     };
-    match old_profile.serialize(end_time, duration) {
+    match old_profile.serialize_into_compressed_pprof(end_time, duration) {
         Ok(ok) => SerializeResult::Ok(ok.into()),
         Err(err) => SerializeResult::Err(err.into()),
     }

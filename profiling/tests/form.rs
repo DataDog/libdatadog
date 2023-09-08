@@ -33,15 +33,7 @@ fn multipart(exporter: &ProfileExporter, internal_metadata: Option<serde_json::V
     let timeout = std::time::Duration::from_secs(10);
 
     let request = exporter
-        .build(
-            start,
-            end,
-            files,
-            None,
-            None,
-            internal_metadata,
-            timeout,
-        )
+        .build(start, end, files, None, None, internal_metadata, timeout)
         .expect("request to be built");
 
     let actual_timeout = request.timeout().expect("timeout to exist");
