@@ -158,11 +158,6 @@ impl SqlTokenizer {
 
         if self.is_leading_letter(self.cur_char) {
             // Todo: add is_dbms_postgres specific logic
-            println!("----leading-letter------");
-            println!(
-                "scan identifier: val at offset: {}",
-                self.query[self.offset.unwrap()]
-            );
             return self.scan_identifier();
         }
         if self.cur_char.is_ascii_digit() {
@@ -248,11 +243,6 @@ impl SqlTokenizer {
                 self.set_unexpected_char_error_and_return()
             }
             '=' | ',' | ';' | '(' | ')' | '+' | '*' | '&' | '|' | '^' | ']' => {
-                println!("logic for '=' ");
-                println!("offset: {}", self.offset.unwrap());
-                println!("vec: {:?}", self.query);
-                println!("val at offset: {}", self.query[self.offset.unwrap()]);
-                println!("is done: {}", self.done);
                 SqlTokenizerScanResult {
                     token_kind: TokenKind::Char,
                     token: self.get_advanced_chars(),
@@ -515,7 +505,6 @@ impl SqlTokenizer {
     }
 
     fn scan_identifier(&mut self) -> SqlTokenizerScanResult {
-        println!("scanning identifier");
         self.next();
         while self.is_letter(self.cur_char)
             || self.cur_char.is_ascii_digit()
@@ -529,9 +518,6 @@ impl SqlTokenizer {
         if let Ok(token_kind) = TokenKind::from_str(&token.to_uppercase()) {
             return SqlTokenizerScanResult { token_kind, token };
         }
-
-        println!("after scanning identifier. cur char: {}", self.cur_char);
-        println!("-------------");
 
         SqlTokenizerScanResult {
             token_kind: TokenKind::ID,
@@ -697,7 +683,6 @@ impl SqlTokenizer {
     }
 
     fn scan_number(&mut self, seen_decimal_point: bool) -> SqlTokenizerScanResult {
-        println!("scanning number");
         if seen_decimal_point {
             self.scan_mantissa(10);
             self.scan_exponent();
@@ -918,18 +903,30 @@ mod tests {
 
     #[test]
     fn test_tokenizer_tokens() {
-        let query = "SELECT username AS         person FROM users WHERE id=4";
+        let query = "SELECT username AS         person FROM (SELECT * FROM users) WHERE id=4";
         let expected = [
-            "SELECT", "username", "AS", "person", "FROM", "users", "WHERE", "id", "=", "4",
+            "SELECT", "username", "AS", "person", "FROM", "(", "SELECT", "*", "FROM", "users", ")",
+            "WHERE", "id", "=", "4",
         ];
         let mut tokenizer = SqlTokenizer::new(query, false);
         for expected_val in expected {
             let result = tokenizer.scan(false);
-            if result.token_kind == TokenKind::LexError {
-                println!("lex error: {}", tokenizer.err.unwrap());
-                panic!();
-            }
-            println!("{}: {:?}", result.token.trim(), result.token_kind);
+            assert_eq!(result.token.trim(), expected_val)
+        }
+    }
+
+    #[test]
+    fn test_tokenizer_multi_line_comment() {
+        let query = r#"SELECT * FROM host /*
+multiline comment with parameters,
+host:localhost,url:controller#home,id:FF005:00CAA
+*/"#;
+        let expected = [
+            "SELECT", "*", "FROM", "host", "/*\nmultiline comment with parameters,\nhost:localhost,url:controller#home,id:FF005:00CAA\n*/",
+        ];
+        let mut tokenizer = SqlTokenizer::new(query, false);
+        for expected_val in expected {
+            let result = tokenizer.scan(false);
             assert_eq!(result.token.trim(), expected_val)
         }
     }
