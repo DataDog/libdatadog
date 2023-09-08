@@ -475,9 +475,25 @@ impl Profile {
         serialize_as_pprof(self.locations, 0x22 /*4*/, &mut buffer, &mut encoder)?;
         serialize_as_pprof(self.functions, 0x2A /*5*/, &mut buffer, &mut encoder)?;
 
+        // FIXME: @ivoanjo For some bizarre reason I can't understand, prost seems to not emit a message
+        // with an empty string, which pprof expects as the first item in the string table
+        //
+        // So... this is a no-op... apparently?
+        // pprof::ProfileStringTableEntry {
+        //     string_table_entry: "".to_string(),
+        // }.encode(&mut buffer)?;
+        //
+        // ...and thus we do it by hand ;)
+        encoder.write_all(&[0x32])?; // 6
+        "".to_string().encode_length_delimited(&mut buffer)?;
+        encoder.write_all(&buffer)?;
+        buffer.clear();
+
         for item in self.strings.into_iter() {
-            encoder.write_all(&[0x32])?; // 6
-            item.encode_length_delimited(&mut buffer)?;
+            pprof::ProfileStringTableEntry {
+                string_table_entry: item,
+            }.encode(&mut buffer)?;
+
             encoder.write_all(&buffer)?;
             buffer.clear();
         }

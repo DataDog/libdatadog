@@ -75,6 +75,12 @@ pub struct Sample {
     pub labels: Vec<Label>,
 }
 
+#[derive(Eq, Hash, PartialEq, ::prost::Message)]
+pub struct ProfileStringTableEntry {
+    #[prost(string, tag = "6")]
+    pub string_table_entry: String,
+}
+
 #[derive(Copy, Clone, Eq, PartialEq, Hash, ::prost::Message)]
 pub struct ValueType {
     #[prost(int64, tag = "1")]
