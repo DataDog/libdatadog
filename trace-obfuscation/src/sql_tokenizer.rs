@@ -1,0 +1,971 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0. This product includes software
+// developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
+// Datadog, Inc.
+
+use std::str::FromStr;
+
+const ESCAPE_CHARACTER: char = '\\';
+
+#[derive(Debug, PartialEq)]
+enum TokenKind {
+    LexError,
+
+    Done,
+
+    Char,
+
+    ID,
+    Limit,
+    Null,
+    String,
+    DoubleQuotedString,
+    DollarQuotedString, // https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-DOLLAR-QUOTING
+    DollarQuotedFunc, // a dollar-quoted string delimited by the tag "$func$"; gets special treatment when feature "dollar_quoted_func" is set
+    Number,
+    BooleanLiteral,
+    ValueArg,
+    ListArg,
+    Comment,
+    Variable,
+    Savepoint,
+    PreparedStatement,
+    EscapeSequence,
+    NullSafeEqual,
+    LE,
+    GE,
+    NE,
+    Not,
+    As,
+    Alter,
+    Drop,
+    Create,
+    Grant,
+    Revoke,
+    Commit,
+    Begin,
+    Truncate,
+    Select,
+    From,
+    Update,
+    Delete,
+    Insert,
+    Into,
+    Join,
+    TableName,
+    ColonCast,
+
+    // PostgreSQL specific JSON operators
+    JSONSelect,         // ->
+    JSONSelectText,     // ->>
+    JSONSelectPath,     // #>
+    JSONSelectPathText, // #>>
+    JSONContains,       // @>
+    JSONContainsLeft,   // <@
+    JSONKeyExists,      // ?
+    JSONAnyKeysExist,   // ?|
+    JSONAllKeysExist,   // ?&
+    JSONDelete,         // #-
+
+    // FilteredGroupable specifies that the given token has been discarded by one of the
+    // token filters and that it is groupable together with consecutive FilteredGroupable
+    // tokens.
+    FilteredGroupable,
+
+    // FilteredGroupableParenthesis is a parenthesis marked as filtered groupable. It is the
+    // beginning of either a group of values ('(') or a nested query. We track is as
+    // a special case for when it may start a nested query as opposed to just another
+    // value group to be obfuscated.
+    FilteredGroupableParenthesis,
+
+    // Filtered specifies that the token is a comma and was discarded by one
+    // of the filters.
+    Filtered,
+
+    // FilteredBracketedIdentifier specifies that we are currently discarding
+    // a bracketed identifier (MSSQL).
+    // See issue https://github.com/DataDog/datadog-trace-agent/issues/475.
+    FilteredBracketedIdentifier,
+}
+
+impl FromStr for TokenKind {
+    type Err = anyhow::Error;
+    fn from_str(input: &str) -> Result<TokenKind, anyhow::Error> {
+        match input {
+            "NULL" => Ok(TokenKind::Null),
+            "TRUE" => Ok(TokenKind::BooleanLiteral),
+            "FALSE" => Ok(TokenKind::BooleanLiteral),
+            "SAVEPOINT" => Ok(TokenKind::Savepoint),
+            "LIMIT" => Ok(TokenKind::Limit),
+            "AS" => Ok(TokenKind::As),
+            "ALTER" => Ok(TokenKind::Alter),
+            "CREATE" => Ok(TokenKind::Create),
+            "GRANT" => Ok(TokenKind::Grant),
+            "REVOKE" => Ok(TokenKind::Revoke),
+            "COMMIT" => Ok(TokenKind::Commit),
+            "BEGIN" => Ok(TokenKind::Begin),
+            "TRUNCATE" => Ok(TokenKind::Truncate),
+            "DROP" => Ok(TokenKind::Drop),
+            "SELECT" => Ok(TokenKind::Select),
+            "FROM" => Ok(TokenKind::From),
+            "UPDATE" => Ok(TokenKind::Update),
+            "DELETE" => Ok(TokenKind::Delete),
+            "INSERT" => Ok(TokenKind::Insert),
+            "INTO" => Ok(TokenKind::Into),
+            "JOIN" => Ok(TokenKind::Join),
+            _ => Err(anyhow::anyhow!("Error creating TokenKind from string")),
+        }
+    }
+}
+
+pub struct SqlTokenizerScanResult {
+    token_kind: TokenKind,
+    token: String,
+}
+
+pub struct SqlTokenizer {
+    cur_char: char,        // the current char
+    offset: Option<usize>, // the index of the current char
+    index_of_last_read: usize,
+    query: Vec<char>,           // the sql query we are parsing
+    err: Option<anyhow::Error>, // any errors that occurred while reading
+    curlys: i32, // number of active open curly braces in top-level sql escape sequences
+    literal_escapes: bool, // indicates we should not treat backslashes as escape characters
+    seen_escape: bool, // indicated whether this tokenizer has seen an escape character within a string
+    done: bool,
+}
+
+impl SqlTokenizer {
+    pub fn new(query: &str, literal_escapes: bool) -> SqlTokenizer {
+        SqlTokenizer {
+            cur_char: ' ',
+            query: query.trim().chars().collect(),
+            offset: None,
+            index_of_last_read: 0,
+            err: None,
+            curlys: 0,
+            literal_escapes,
+            seen_escape: false,
+            done: false,
+        }
+    }
+
+    pub fn scan(&mut self, is_dbms_postgres: bool) -> SqlTokenizerScanResult {
+        if self.offset.is_none() {
+            self.next();
+        }
+        self.skip_blank();
+
+        if self.is_leading_letter(self.cur_char) {
+            // Todo: add is_dbms_postgres specific logic
+            println!("----leading-letter------");
+            println!(
+                "scan identifier: val at offset: {}",
+                self.query[self.offset.unwrap()]
+            );
+            return self.scan_identifier();
+        }
+        if self.cur_char.is_ascii_digit() {
+            return self.scan_number(false);
+        }
+
+        let prev_char = self.cur_char;
+
+        self.next();
+
+        if self.done && self.err.is_some() {
+            return SqlTokenizerScanResult {
+                token_kind: TokenKind::LexError,
+                token: String::new(),
+            };
+        }
+        if self.done {
+            return SqlTokenizerScanResult {
+                token_kind: TokenKind::Done,
+                token: String::new(),
+            };
+        }
+
+        match prev_char {
+            ':' => {
+                if self.cur_char == ':' {
+                    self.next();
+                    return SqlTokenizerScanResult {
+                        token_kind: TokenKind::ColonCast,
+                        token: "::".to_string(),
+                    };
+                }
+                if self.cur_char.is_whitespace() {
+                    // example scenario: "autovacuum: VACUUM ANALYZE fake.table"
+                    return SqlTokenizerScanResult {
+                        token_kind: TokenKind::Char,
+                        token: "::".to_string(),
+                    };
+                }
+                if self.cur_char != '=' {
+                    return self.scan_bind_var();
+                }
+                self.set_unexpected_char_error_and_return()
+            }
+            '~' => {
+                if self.cur_char == '*' {
+                    self.next();
+                    return SqlTokenizerScanResult {
+                        token_kind: TokenKind::Char,
+                        token: "~*".to_string(),
+                    };
+                }
+                SqlTokenizerScanResult {
+                    token_kind: TokenKind::Char,
+                    token: self.get_advanced_chars(),
+                }
+            }
+            '?' => {
+                // if is_dbms_postgres {
+                //     match self.cur_char {
+                //         '|' => {
+                //             self.next();
+                //             return SqlTokenizerScanResult {
+                //                 token_kind: TokenKind::JSONAnyKeysExist,
+                //                 token: "?|".to_string(),
+                //             };
+                //         }
+                //         '&' => {
+                //             self.next();
+                //             return SqlTokenizerScanResult {
+                //                 token_kind: TokenKind::JSONAnyKeysExist,
+                //                 token: "?&".to_string(),
+                //             };
+                //         }
+                //         _ => {
+                //             return SqlTokenizerScanResult {
+                //                 token_kind: TokenKind::JSONKeyExists,
+                //                 token: self.get_advanced_chars(),
+                //             };
+                //         }
+                //     }
+                // }
+                self.set_unexpected_char_error_and_return()
+            }
+            '=' | ',' | ';' | '(' | ')' | '+' | '*' | '&' | '|' | '^' | ']' => {
+                println!("logic for '=' ");
+                println!("offset: {}", self.offset.unwrap());
+                println!("vec: {:?}", self.query);
+                println!("val at offset: {}", self.query[self.offset.unwrap()]);
+                println!("is done: {}", self.done);
+                SqlTokenizerScanResult {
+                    token_kind: TokenKind::Char,
+                    token: self.get_advanced_chars(),
+                }
+            }
+            '[' => {
+                // if is_dbms_postgres {
+                //     return self.scan_string(']', TokenKind::DoubleQuotedString);
+                // }
+                SqlTokenizerScanResult {
+                    token_kind: TokenKind::Char,
+                    token: self.get_advanced_chars(),
+                }
+            }
+            '.' => {
+                if self.cur_char.is_ascii_digit() {
+                    return self.scan_number(true);
+                }
+                SqlTokenizerScanResult {
+                    token_kind: TokenKind::Char,
+                    token: self.get_advanced_chars(),
+                }
+            }
+            '/' => match self.cur_char {
+                '/' => {
+                    self.next();
+                    self.scan_comment_type_1()
+                }
+                '*' => {
+                    self.next();
+                    self.scan_comment_type_2()
+                }
+                _ => SqlTokenizerScanResult {
+                    token_kind: TokenKind::Char,
+                    token: self.get_advanced_chars(),
+                },
+            },
+            '-' => {
+                if self.cur_char == '-' {
+                    self.next();
+                    return self.scan_comment_type_1();
+                }
+                if self.cur_char == '>' {
+                    // if is_dbms_postgres {
+                    //     self.next();
+                    //     if self.cur_char == '>' {
+                    //         self.next();
+                    //         return SqlTokenizerScanResult {
+                    //             token_kind: TokenKind::JSONSelectText,
+                    //             token: "->>".to_string(),
+                    //         };
+                    //     }
+                    //     return SqlTokenizerScanResult {
+                    //         token_kind: TokenKind::JSONSelectText,
+                    //         token: "->".to_string(),
+                    //     };
+                    // }
+                    return SqlTokenizerScanResult {
+                        token_kind: TokenKind::Char,
+                        token: self.get_advanced_chars(),
+                    };
+                }
+                if self.cur_char.is_ascii_digit() {
+                    return self.scan_number(false);
+                }
+                if self.cur_char == '.' {
+                    self.next();
+                    if self.cur_char.is_ascii_digit() {
+                        return self.scan_number(true);
+                    }
+                    // if the next char after a period is not a digit, revert back a character
+                    self.cur_char = '.';
+                    self.offset = Some(self.offset.unwrap() - 1);
+                }
+                SqlTokenizerScanResult {
+                    token_kind: TokenKind::Char,
+                    token: self.get_advanced_chars(),
+                }
+            }
+            '#' => {
+                // there is differing behavior depending on the DBMS
+                // below is the default for no specified DBMS
+                self.next();
+                SqlTokenizerScanResult {
+                    token_kind: TokenKind::Char,
+                    token: self.get_advanced_chars(),
+                }
+            }
+            '<' => match self.cur_char {
+                '>' => {
+                    self.next();
+                    SqlTokenizerScanResult {
+                        token_kind: TokenKind::NE,
+                        token: "<>".to_string(),
+                    }
+                }
+                '=' => {
+                    self.next();
+                    if self.cur_char == '>' {
+                        self.next();
+                        return SqlTokenizerScanResult {
+                            token_kind: TokenKind::NullSafeEqual,
+                            token: "<=>".to_string(),
+                        };
+                    }
+                    SqlTokenizerScanResult {
+                        token_kind: TokenKind::LE,
+                        token: "<=".to_string(),
+                    }
+                }
+                _ => SqlTokenizerScanResult {
+                    token_kind: TokenKind::Char,
+                    token: self.get_advanced_chars(),
+                },
+            },
+            '>' => {
+                if self.cur_char == '=' {
+                    self.next();
+                    return SqlTokenizerScanResult {
+                        token_kind: TokenKind::GE,
+                        token: ">=".to_string(),
+                    };
+                }
+                SqlTokenizerScanResult {
+                    token_kind: TokenKind::Char,
+                    token: self.get_advanced_chars(),
+                }
+            }
+            '!' => match self.cur_char {
+                '=' => {
+                    self.next();
+                    SqlTokenizerScanResult {
+                        token_kind: TokenKind::NE,
+                        token: "!=".to_string(),
+                    }
+                }
+                '~' => {
+                    self.next();
+                    if self.cur_char == '*' {
+                        self.next();
+                        return SqlTokenizerScanResult {
+                            token_kind: TokenKind::NE,
+                            token: "!~*".to_string(),
+                        };
+                    }
+                    SqlTokenizerScanResult {
+                        token_kind: TokenKind::NE,
+                        token: "!~".to_string(),
+                    }
+                }
+                _ => {
+                    if self.is_valid_char_after_operator(self.cur_char) {
+                        return SqlTokenizerScanResult {
+                            token_kind: TokenKind::Not,
+                            token: self.get_advanced_chars(),
+                        };
+                    }
+                    self.err = Some(anyhow::anyhow!(format!(
+                        "unexpected char \"{}\" after \"!\"",
+                        self.cur_char
+                    )));
+                    SqlTokenizerScanResult {
+                        token_kind: TokenKind::LexError,
+                        token: self.get_advanced_chars(),
+                    }
+                }
+            },
+            '\'' => self.scan_string(prev_char, TokenKind::String),
+            '"' => self.scan_string(prev_char, TokenKind::DoubleQuotedString),
+            '`' => self.scan_string(prev_char, TokenKind::ID),
+            '%' => {
+                if self.cur_char == '(' {
+                    return self.scan_variable_identifier();
+                }
+                if self.is_letter(self.cur_char) {
+                    // format parameter (e.g. '%s')
+                    return self.scan_format_identifier();
+                }
+                // modulo operator (e.g. 'id % 8')
+                SqlTokenizerScanResult {
+                    token_kind: TokenKind::Char,
+                    token: self.get_advanced_chars(),
+                }
+            }
+            '$' => {
+                if self.cur_char.is_ascii_digit() {
+                    // TODO: the first digit after $ does not necessarily guarantee
+                    // that this isn't a dollar-quoted string constant. We might eventually
+                    // want to cover for this use-case too (e.g. $1$some text$1$).
+                    return self.scan_prepared_statement();
+                }
+
+                // A special case for a string starts with single $ but does not end with $.
+                // For example in SQLServer, you can have "MG..... OUTPUT $action, inserted.*"
+                // $action in the OUTPUT clause of a MERGE statement is a special identifier
+                // that returns one of three values for each row: 'INSERT', 'UPDATE', or 'DELETE'.
+                // See: https://docs.microsoft.com/en-us/sql/t-sql/statements/merge-transact-sql?view=sql-server-ver15
+                // if is_dbms_postgres && self.is_letter(self.cur_char) {
+                //     return self.scan_identifier();
+                // }
+                self.scan_dollar_quoted_string(false)
+                // TODO: handle when dollar_quoted_function=true
+            }
+            '{' => {
+                if self.offset.unwrap_or_default() == 1 || self.curlys > 0 {
+                    // A closing curly brace has no place outside an in-progress top-level SQL escape sequence
+                    // started by the '{' switch-case.
+                    self.curlys += 1;
+                    return SqlTokenizerScanResult {
+                        token_kind: TokenKind::Char,
+                        token: self.get_advanced_chars(),
+                    };
+                }
+                self.scan_escape_sequence()
+            }
+            '}' => {
+                if self.curlys == 0 {
+                    self.err = Some(anyhow::anyhow!("unexptected char \"{}\"", self.cur_char));
+                    return SqlTokenizerScanResult {
+                        token_kind: TokenKind::LexError,
+                        token: self.get_advanced_chars(),
+                    };
+                }
+                self.curlys -= 1;
+                SqlTokenizerScanResult {
+                    token_kind: TokenKind::Char,
+                    token: self.get_advanced_chars(),
+                }
+            }
+            _ => {
+                self.err = Some(anyhow::anyhow!("unexptected char \"{}\"", self.cur_char));
+                SqlTokenizerScanResult {
+                    token_kind: TokenKind::LexError,
+                    token: self.get_advanced_chars(),
+                }
+            }
+        }
+    }
+
+    fn set_unexpected_char_error_and_return(&mut self) -> SqlTokenizerScanResult {
+        self.err = Some(anyhow::anyhow!("unexpected char: {}", self.cur_char));
+        SqlTokenizerScanResult {
+            token_kind: TokenKind::Char,
+            token: self.get_advanced_chars(),
+        }
+    }
+
+    fn skip_blank(&mut self) {
+        while self.cur_char.is_whitespace() {
+            self.next();
+        }
+    }
+
+    fn scan_format_identifier(&mut self) -> SqlTokenizerScanResult {
+        self.next();
+        SqlTokenizerScanResult {
+            token_kind: TokenKind::Variable,
+            token: self.get_advanced_chars(),
+        }
+    }
+
+    fn scan_identifier(&mut self) -> SqlTokenizerScanResult {
+        println!("scanning identifier");
+        self.next();
+        while self.is_letter(self.cur_char)
+            || self.cur_char.is_ascii_digit()
+            || ".*$".contains(self.cur_char)
+        {
+            self.next();
+        }
+
+        let token = self.get_advanced_chars().trim().to_string();
+
+        if let Ok(token_kind) = TokenKind::from_str(&token.to_uppercase()) {
+            return SqlTokenizerScanResult { token_kind, token };
+        }
+
+        println!("after scanning identifier. cur char: {}", self.cur_char);
+        println!("-------------");
+
+        SqlTokenizerScanResult {
+            token_kind: TokenKind::ID,
+            token,
+        }
+    }
+
+    fn scan_variable_identifier(&mut self) -> SqlTokenizerScanResult {
+        while self.cur_char != ')' && !self.done {
+            self.next();
+        }
+        self.next();
+        if !self.is_letter(self.cur_char) {
+            self.err = Some(anyhow::anyhow!(
+                "invalid character after variable identifier: {}",
+                self.cur_char
+            ));
+            return SqlTokenizerScanResult {
+                token_kind: TokenKind::LexError,
+                token: self.get_advanced_chars(),
+            };
+        }
+        self.next();
+        SqlTokenizerScanResult {
+            token_kind: TokenKind::Variable,
+            token: self.get_advanced_chars(),
+        }
+    }
+
+    // scan_dollar_quoted_string scans a Postgres dollar-quoted string constant.
+    // See: https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-DOLLAR-QUOTING
+    fn scan_dollar_quoted_string(
+        &mut self,
+        dollar_quoted_function: bool,
+    ) -> SqlTokenizerScanResult {
+        let string_result = Self::scan_string(self, '$', TokenKind::String);
+        if string_result.token_kind == TokenKind::LexError {
+            return SqlTokenizerScanResult {
+                token_kind: TokenKind::LexError,
+                token: self.get_advanced_chars(),
+            };
+        }
+        let s = &mut String::new();
+        let mut got = 0;
+        let mut delim = string_result.token;
+        // on empty strings, scan_string returns the delimiters
+        if delim != "$$" {
+            delim = format!("${delim}$");
+        }
+        let delim_arr: Vec<char> = delim.chars().collect();
+        loop {
+            let prev_char = self.cur_char;
+            self.next();
+            if self.done {
+                self.err = Some(anyhow::anyhow!("unexpected EOF in dollar-quoted string"));
+                return SqlTokenizerScanResult {
+                    token_kind: TokenKind::LexError,
+                    token: s.to_string(),
+                };
+            }
+            if prev_char == delim_arr[got] {
+                got += 1;
+                if got == delim.len() {
+                    break;
+                }
+                continue;
+            }
+            if got > 0 {
+                s.push(delim_arr[got - 1]);
+                got = 0;
+            }
+            s.push(prev_char)
+        }
+        if dollar_quoted_function && delim == "$func$" {
+            return SqlTokenizerScanResult {
+                token_kind: TokenKind::DollarQuotedFunc,
+                token: s.to_string(),
+            };
+        }
+
+        SqlTokenizerScanResult {
+            token_kind: TokenKind::DollarQuotedString,
+            token: s.to_string(),
+        }
+    }
+
+    fn scan_prepared_statement(&mut self) -> SqlTokenizerScanResult {
+        // a prepared statement expects a digit identifier like $1
+        if !self.cur_char.is_ascii_digit() {
+            self.err = Some(anyhow::anyhow!(
+                "prepared statements must start with digits, got {}",
+                self.cur_char
+            ));
+            return SqlTokenizerScanResult {
+                token_kind: TokenKind::LexError,
+                token: self.get_advanced_chars(),
+            };
+        }
+
+        // scan_number keeps the prefix rune instact
+        // read numbers and return error if any
+        let number_result = Self::scan_number(self, false);
+        if number_result.token_kind == TokenKind::LexError {
+            return SqlTokenizerScanResult {
+                token_kind: TokenKind::LexError,
+                token: self.get_advanced_chars(),
+            };
+        }
+
+        SqlTokenizerScanResult {
+            token_kind: TokenKind::PreparedStatement,
+            token: number_result.token,
+        }
+    }
+
+    fn scan_escape_sequence(&mut self) -> SqlTokenizerScanResult {
+        while self.cur_char != '}' && !self.done {
+            self.next();
+        }
+
+        // we've reached the end of the string without finding closing curly braces
+        if self.done {
+            self.err = Some(anyhow::anyhow!("unexpected EOF in escape sequence"));
+            return SqlTokenizerScanResult {
+                token_kind: TokenKind::LexError,
+                token: self.get_advanced_chars(),
+            };
+        }
+
+        self.next();
+        SqlTokenizerScanResult {
+            token_kind: TokenKind::EscapeSequence,
+            token: self.get_advanced_chars(),
+        }
+    }
+
+    fn scan_bind_var(&mut self) -> SqlTokenizerScanResult {
+        let mut token_kind = TokenKind::ValueArg;
+        if self.cur_char == ':' {
+            token_kind = TokenKind::ListArg;
+            self.next();
+        }
+        if !self.is_letter(self.cur_char) && !self.cur_char.is_ascii_digit() {
+            self.err = Some(anyhow::anyhow!(
+                "bind variables should start with letters or digits. got {}",
+                self.cur_char
+            ));
+            return SqlTokenizerScanResult {
+                token_kind: TokenKind::LexError,
+                token: self.get_advanced_chars(),
+            };
+        }
+        while self.is_letter(self.cur_char)
+            || self.cur_char.is_ascii_digit()
+            || self.cur_char == '.'
+        {
+            self.next();
+        }
+        SqlTokenizerScanResult {
+            token_kind,
+            token: self.get_advanced_chars(),
+        }
+    }
+
+    fn scan_number(&mut self, seen_decimal_point: bool) -> SqlTokenizerScanResult {
+        println!("scanning number");
+        if seen_decimal_point {
+            self.scan_mantissa(10);
+            self.scan_exponent();
+            return self.finish_number_scan();
+        }
+
+        if self.cur_char == '0' {
+            self.next();
+            if self.cur_char == 'x' || self.cur_char == 'X' {
+                // hexadecimel int
+                self.next();
+                self.scan_mantissa(16);
+            } else {
+                // octal int or float
+                self.scan_mantissa(8);
+                if self.cur_char == '8' || self.cur_char == '9' {
+                    self.scan_mantissa(10);
+                }
+                if self.cur_char == '.' || self.cur_char == 'e' || self.cur_char == 'E' {
+                    self.scan_fraction();
+                }
+            }
+            return self.finish_number_scan();
+        }
+
+        self.scan_mantissa(10);
+        self.scan_fraction();
+        self.scan_exponent();
+        self.finish_number_scan()
+    }
+
+    fn scan_fraction(&mut self) {
+        if self.cur_char != '.' {
+            return;
+        }
+        self.next();
+        self.scan_mantissa(10);
+    }
+
+    fn scan_exponent(&mut self) {
+        if self.cur_char != 'e' && self.cur_char != 'E' {
+            return;
+        }
+        self.next();
+        if self.cur_char == '+' || self.cur_char == '-' {
+            self.next();
+        }
+        self.scan_mantissa(10);
+    }
+
+    fn finish_number_scan(&mut self) -> SqlTokenizerScanResult {
+        let s = self.get_advanced_chars();
+        if s.is_empty() {
+            self.err = Some(anyhow::anyhow!(
+                "Parse error: ended up with a zero-length number."
+            ));
+            return SqlTokenizerScanResult {
+                token_kind: TokenKind::LexError,
+                token: s,
+            };
+        }
+        SqlTokenizerScanResult {
+            token_kind: TokenKind::Number,
+            token: s,
+        }
+    }
+
+    fn scan_mantissa(&mut self, base: u32) {
+        while !self.done && self.digit_val(self.cur_char) < base {
+            self.next()
+        }
+    }
+
+    fn digit_val(&mut self, c: char) -> u32 {
+        if c.is_ascii_digit() {
+            return c.to_digit(10).unwrap();
+        }
+        if ('a'..='f').contains(&c) {
+            return c as u32 - 'a' as u32 + 10;
+        }
+        if ('A'..='F').contains(&c) {
+            return c as u32 - 'A' as u32 + 10;
+        }
+        16
+    }
+
+    fn scan_string(&mut self, delim: char, kind: TokenKind) -> SqlTokenizerScanResult {
+        let s = &mut String::new();
+        loop {
+            if self.cur_char == delim {
+                if self.cur_char == delim {
+                    // doubling the delimiter is the default way to embed the delimiter within a string
+                    self.next();
+                } else {
+                    // a single delimiter denotes the end of the string
+                    break;
+                }
+            } else if self.cur_char == ESCAPE_CHARACTER {
+                self.seen_escape = true;
+
+                if !self.literal_escapes {
+                    // treat as an escape character
+                    self.next();
+                }
+            }
+            if self.done {
+                self.err = Some(anyhow::anyhow!("unexpected EOF in string"));
+            }
+            s.push(self.cur_char);
+        }
+        if kind == TokenKind::ID && s.is_empty() || s.chars().all(|c| c.is_whitespace()) {
+            return SqlTokenizerScanResult {
+                token_kind: kind,
+                token: format!("{delim}{delim}"),
+            };
+        }
+        SqlTokenizerScanResult {
+            token_kind: kind,
+            token: s.to_string(),
+        }
+    }
+
+    fn scan_comment_type_1(&mut self) -> SqlTokenizerScanResult {
+        while !self.done {
+            if self.cur_char == '\n' {
+                self.next();
+                break;
+            }
+            self.next();
+        }
+        SqlTokenizerScanResult {
+            token_kind: TokenKind::Comment,
+            token: self.get_advanced_chars(),
+        }
+    }
+
+    fn scan_comment_type_2(&mut self) -> SqlTokenizerScanResult {
+        loop {
+            if self.cur_char == '*' {
+                self.next();
+                if self.cur_char == '/' {
+                    self.next();
+                    break;
+                }
+                continue;
+            }
+            if self.done {
+                self.err = Some(anyhow::anyhow!("unexpected EOF in comment"));
+                break;
+            }
+            self.next();
+        }
+        SqlTokenizerScanResult {
+            token_kind: TokenKind::Comment,
+            token: self.get_advanced_chars(),
+        }
+    }
+
+    // gets the substring of the query that were advanced since the last time this function
+    // was called
+    fn get_advanced_chars(&mut self) -> String {
+        if self.offset.is_none() {
+            return String::new();
+        }
+        let end_index = self.offset.unwrap();
+
+        let return_val: String = self.query[self.index_of_last_read..end_index]
+            .iter()
+            .collect();
+
+        self.index_of_last_read = self.offset.unwrap();
+        return_val
+    }
+
+    fn next(&mut self) {
+        if let Some(offset) = self.offset {
+            self.offset = Some(offset + 1);
+        } else {
+            self.offset = Some(0);
+        }
+        let offset = self.offset.unwrap();
+        if offset < self.query.len() {
+            self.cur_char = self.query[offset];
+            return;
+        }
+        self.done = true;
+    }
+
+    fn is_leading_letter(&mut self, c: char) -> bool {
+        char::is_alphabetic(c) || c == '_' || c == '@'
+    }
+
+    fn is_letter(&mut self, c: char) -> bool {
+        self.is_leading_letter(c) || c == '#'
+    }
+
+    fn is_valid_char_after_operator(&mut self, c: char) -> bool {
+        c == '('
+            || c == '`'
+            || c == '\''
+            || c == '"'
+            || c == '+'
+            || c == '-'
+            || c.is_whitespace()
+            || c.is_ascii_digit()
+            || self.is_letter(c)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use duplicate::duplicate_item;
+
+    use crate::sql_tokenizer::TokenKind;
+
+    use super::SqlTokenizer;
+
+    #[test]
+    fn test_tokenizer_tokens() {
+        let query = "SELECT username AS         person FROM users WHERE id=4";
+        let expected = [
+            "SELECT", "username", "AS", "person", "FROM", "users", "WHERE", "id", "=", "4",
+        ];
+        let mut tokenizer = SqlTokenizer::new(query, false);
+        for expected_val in expected {
+            let result = tokenizer.scan(false);
+            if result.token_kind == TokenKind::LexError {
+                println!("lex error: {}", tokenizer.err.unwrap());
+                panic!();
+            }
+            println!("{}: {:?}", result.token.trim(), result.token_kind);
+            assert_eq!(result.token.trim(), expected_val)
+        }
+    }
+
+    #[duplicate_item(
+        test_name                       number_value;
+        [test_tokenize_int_strings_1]   ["123456789"];
+        [test_tokenize_int_strings_2]   ["0"];
+        [test_tokenize_int_strings_3]   ["-1"];
+        [test_tokenize_int_strings_4]   ["-2018"];
+        [test_tokenize_int_strings_5]   [i64::MIN.to_string().as_str()];
+        [test_tokenize_int_strings_6]   [i64::MAX.to_string().as_str()];
+        [test_tokenize_int_strings_7]   ["39"];
+        [test_tokenize_int_strings_8]   ["7"];
+        [test_tokenize_int_strings_9]   ["-83"];
+        [test_tokenize_int_strings_10]  ["-9223372036854775807"];
+        [test_tokenize_int_strings_11]  ["9"];
+        [test_tokenize_int_strings_12]  ["-108"];
+        [test_tokenize_int_strings_13]  ["-71"];
+        [test_tokenize_int_strings_14]  ["-71"];
+        [test_tokenize_int_strings_15]  ["-9223372036854775675"];
+        [test_tokenize_float_strings_1] ["0"];
+        [test_tokenize_float_strings_2] ["0.123456789"];
+        [test_tokenize_float_strings_3] ["-0.123456789"];
+        [test_tokenize_float_strings_4] ["12.3456789"];
+        [test_tokenize_float_strings_5] ["-12.3456789"];
+        [test_tokenize_only_decimal_1]  [".001"];
+        [test_tokenize_decimal_only_2]  [".21341"];
+        [test_tokenize_decimal_only_3]  ["-.1234"];
+        [test_tokenize_decimal_only_4]  ["-.0003"];
+    )]
+    #[test]
+    fn test_name() {
+        let mut tokenizer = SqlTokenizer::new(number_value, false);
+        let result = tokenizer.scan(false);
+        assert_eq!(result.token, number_value);
+        assert_eq!(result.token_kind, TokenKind::Number)
+    }
+}

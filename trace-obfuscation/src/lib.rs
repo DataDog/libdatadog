@@ -10,3 +10,4 @@ pub mod http;
 pub mod obfuscate;
 pub mod obfuscation_config;
 pub mod replacer;
+pub mod sql_tokenizer;
