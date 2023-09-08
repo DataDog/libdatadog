@@ -43,6 +43,7 @@ pub enum Endpoint<'a> {
 pub struct File<'a> {
     name: CharSlice<'a>,
     file: ByteSlice<'a>,
+    compress_before_exporting: bool,
 }
 
 // This type exists only to force cbindgen to expose an CancellationToken as an opaque type.
@@ -183,7 +184,12 @@ unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> 
         .map(|file| {
             let name = file.name.try_to_utf8().unwrap_or("{invalid utf-8}");
             let bytes = file.file.as_slice();
-            exporter::File { name, bytes }
+            let compress_before_exporting = file.compress_before_exporting;
+            exporter::File {
+                name,
+                bytes,
+                compress_before_exporting,
+            }
         })
         .collect()
 }
@@ -519,6 +525,7 @@ mod test {
         let files: &[File] = &[File {
             name: CharSlice::from("foo.pprof"),
             file: ByteSlice::from(b"dummy contents" as &[u8]),
+            compress_before_exporting: true,
         }];
 
         let start = Timespec {
@@ -587,6 +594,7 @@ mod test {
         let files: &[File] = &[File {
             name: CharSlice::from("foo.pprof"),
             file: ByteSlice::from(b"dummy contents" as &[u8]),
+            compress_before_exporting: true,
         }];
 
         let start = Timespec {
@@ -657,6 +665,7 @@ mod test {
         let files: &[File] = &[File {
             name: CharSlice::from("foo.pprof"),
             file: ByteSlice::from(b"dummy contents" as &[u8]),
+            compress_before_exporting: true,
         }];
 
         let start = Timespec {
