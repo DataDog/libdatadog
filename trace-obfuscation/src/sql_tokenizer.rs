@@ -701,8 +701,11 @@ impl SqlTokenizer {
                 if self.cur_char == '8' || self.cur_char == '9' {
                     self.scan_mantissa(10);
                 }
-                if self.cur_char == '.' || self.cur_char == 'e' || self.cur_char == 'E' {
+                if self.cur_char == '.' {
                     self.scan_fraction();
+                }
+                if self.cur_char == 'e' || self.cur_char == 'E' {
+                    self.scan_exponent();
                 }
             }
             return self.finish_number_scan();
