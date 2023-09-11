@@ -2,12 +2,19 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use crate::profile_index::ProfileIndex;
-use datadog_profiling::profile::{api, pprof};
+use datadog_profiling::profile::{api, pprof, Timestamp};
 use std::ops::{Add, Sub};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-type LabelsAndEndpointInfo<'pprof> = (Vec<api::Label<'pprof>>, Option<(u64, &'pprof str)>);
-type SamplesAndEndpointInfo<'pprof> = (Vec<api::Sample<'pprof>>, Vec<(u64, &'pprof str)>);
+type LabelsAndEndpointInfo<'pprof> = (
+    Option<Timestamp>,
+    Vec<api::Label<'pprof>>,
+    Option<(u64, &'pprof str)>,
+);
+type SamplesAndEndpointInfo<'pprof> = (
+    Vec<(Option<Timestamp>, api::Sample<'pprof>)>,
+    Vec<(u64, &'pprof str)>,
+);
 
 pub struct Replayer<'pprof> {
     pub profile_index: ProfileIndex<'pprof>,
@@ -18,7 +25,7 @@ pub struct Replayer<'pprof> {
     pub sample_types: Vec<api::ValueType<'pprof>>,
     pub period: Option<api::Period<'pprof>>,
     pub endpoints: Vec<(u64, &'pprof str)>,
-    pub samples: Vec<api::Sample<'pprof>>,
+    pub samples: Vec<(Option<Timestamp>, api::Sample<'pprof>)>,
 }
 
 impl<'pprof> Replayer<'pprof> {
@@ -80,23 +87,28 @@ impl<'pprof> Replayer<'pprof> {
         profile_index: &'a ProfileIndex<'pprof>,
         sample: &'pprof pprof::Sample,
     ) -> anyhow::Result<LabelsAndEndpointInfo<'pprof>> {
-        let mut labels = Vec::with_capacity(sample.labels.len());
-        for label in sample.labels.iter() {
-            labels.push(api::Label {
-                key: profile_index.get_string(label.key)?,
-                str: if label.str == 0 {
-                    None
-                } else {
-                    Some(profile_index.get_string(label.str)?)
-                },
-                num: label.num,
-                num_unit: if label.num_unit == 0 {
-                    None
-                } else {
-                    Some(profile_index.get_string(label.num_unit)?)
-                },
+        let labels: anyhow::Result<Vec<api::Label>> = sample
+            .labels
+            .iter()
+            .map(|label| {
+                Ok(api::Label {
+                    key: profile_index.get_string(label.key)?,
+                    str: if label.str == 0 {
+                        None
+                    } else {
+                        Some(profile_index.get_string(label.str)?)
+                    },
+                    num: label.num,
+                    num_unit: if label.num_unit == 0 {
+                        None
+                    } else {
+                        Some(profile_index.get_string(label.num_unit)?)
+                    },
+                })
             })
-        }
+            .collect();
+        let mut labels = labels?;
+
         let lrsi = labels
             .iter()
             .find(|label| label.key == "local root span id");
@@ -120,10 +132,18 @@ impl<'pprof> Replayer<'pprof> {
             endpoint_info.replace((local_root_span_id, endpoint_value));
         }
 
-        // Keep all labels except "trace endpoint"
-        labels.retain(|label| label.key != "trace endpoint");
+        let timestamp = labels.iter().find_map(|label| {
+            if label.key == "end_timestamp_ns" {
+                Some(Timestamp::try_from(label.num).expect("non-zero timestamp"))
+            } else {
+                None
+            }
+        });
 
-        Ok((labels, endpoint_info))
+        // Keep all labels except "trace endpoint" and "end_timestamp_ns"
+        labels.retain(|label| label.key != "trace endpoint" && label.key != "end_timestamp_ns");
+
+        Ok((timestamp, labels, endpoint_info))
     }
 
     fn get_mapping<'a>(
@@ -208,12 +228,15 @@ impl<'pprof> Replayer<'pprof> {
         let mut samples = Vec::with_capacity(profile_index.pprof.samples.len());
 
         for sample in profile_index.pprof.samples.iter() {
-            let (labels, endpoint) = Self::sample_labels(profile_index, sample)?;
-            samples.push(api::Sample {
-                locations: Self::sample_locations(profile_index, sample)?,
-                values: sample.values.clone(),
-                labels,
-            });
+            let (timestamp, labels, endpoint) = Self::sample_labels(profile_index, sample)?;
+            samples.push((
+                timestamp,
+                api::Sample {
+                    locations: Self::sample_locations(profile_index, sample)?,
+                    values: sample.values.clone(),
+                    labels,
+                },
+            ));
             if let Some(endpoint_info) = endpoint {
                 endpoints.push(endpoint_info)
             }
