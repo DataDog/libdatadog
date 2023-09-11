@@ -100,12 +100,14 @@ impl IntoIterator for Observations {
 
     fn into_iter(self) -> Self::IntoIter {
         let it = self.inner.into_iter().flat_map(|mut observations| {
-            let td = std::mem::take(&mut observations.timestamped_data);
-            let ad = std::mem::take(&mut observations.aggregated_data);
-            let td_it = td.into_iter().map(|(s, t, o)| (s, Some(t), o));
-            let ad_it = ad.into_iter().map(|(s, o)| (s, None, o));
-            td_it
-                .chain(ad_it)
+            let timestamped_data_it = std::mem::take(&mut observations.timestamped_data)
+                .into_iter()
+                .map(|(s, t, o)| (s, Some(t), o));
+            let aggregated_data_it = std::mem::take(&mut observations.aggregated_data)
+                .into_iter()
+                .map(|(s, o)| (s, None, o));
+            timestamped_data_it
+                .chain(aggregated_data_it)
                 .map(move |(s, t, o)| (s, t, unsafe { o.into_vec(observations.obs_len) }))
         });
         ObservationsIntoIter { it: Box::new(it) }

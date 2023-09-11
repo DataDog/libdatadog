@@ -407,7 +407,7 @@ impl Profile {
     ) -> anyhow::Result<EncodedProfile> {
         let end = end_time.unwrap_or_else(SystemTime::now);
         let start = self.start_time;
-        let endpoints_stats = self.endpoints.stats.clone();
+        let endpoints_stats = std::mem::take(&mut self.endpoints.stats);
         let duration_nanos = duration
             .unwrap_or_else(|| {
                 end.duration_since(start).unwrap_or({
@@ -464,9 +464,7 @@ impl Profile {
         }
 
         for item in into_pprof_iter(self.mappings) {
-            encoder.encode(ProfileMappingsEntry {
-                mappings_entry: Some(item),
-            })?;
+            encoder.encode(ProfileMappingsEntry::from(item))?;
         }
 
         for item in into_pprof_iter(self.locations) {
