@@ -20,8 +20,6 @@ enum TokenKind {
     Null,
     String,
     DoubleQuotedString,
-    DollarQuotedString, // https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-DOLLAR-QUOTING
-    DollarQuotedFunc, // a dollar-quoted string delimited by the tag "$func$"; gets special treatment when feature "dollar_quoted_func" is set
     Number,
     BooleanLiteral,
     ValueArg,
@@ -29,7 +27,6 @@ enum TokenKind {
     Comment,
     Variable,
     Savepoint,
-    PreparedStatement,
     EscapeSequence,
     NullSafeEqual,
     LE,
@@ -455,92 +452,6 @@ impl SqlTokenizer {
         SqlTokenizerScanResult {
             token_kind: TokenKind::Variable,
             token: self.get_advanced_chars(),
-        }
-    }
-
-    // scan_dollar_quoted_string scans a Postgres dollar-quoted string constant.
-    // See: https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-DOLLAR-QUOTING
-    fn scan_dollar_quoted_string(
-        &mut self,
-        dollar_quoted_function: bool,
-    ) -> SqlTokenizerScanResult {
-        let string_result = Self::scan_string(self, '$', TokenKind::String);
-        if string_result.token_kind == TokenKind::LexError {
-            return SqlTokenizerScanResult {
-                token_kind: TokenKind::LexError,
-                token: self.get_advanced_chars(),
-            };
-        }
-        let s = &mut String::new();
-        let mut got = 0;
-        let mut delim = string_result.token;
-        // on empty strings, scan_string returns the delimiters
-        if delim != "$$" {
-            delim = format!("${delim}$");
-        }
-        let delim_arr: Vec<char> = delim.chars().collect();
-        loop {
-            let prev_char = self.cur_char;
-            self.next();
-            if self.done {
-                self.err = Some(anyhow::anyhow!("unexpected EOF in dollar-quoted string"));
-                return SqlTokenizerScanResult {
-                    token_kind: TokenKind::LexError,
-                    token: s.to_string(),
-                };
-            }
-            if prev_char == delim_arr[got] {
-                got += 1;
-                if got == delim.len() {
-                    break;
-                }
-                continue;
-            }
-            if got > 0 {
-                s.push(delim_arr[got - 1]);
-                got = 0;
-            }
-            s.push(prev_char)
-        }
-        if dollar_quoted_function && delim == "$func$" {
-            return SqlTokenizerScanResult {
-                token_kind: TokenKind::DollarQuotedFunc,
-                token: s.to_string(),
-            };
-        }
-
-        SqlTokenizerScanResult {
-            token_kind: TokenKind::DollarQuotedString,
-            token: s.to_string(),
-        }
-    }
-
-    fn scan_prepared_statement(&mut self) -> SqlTokenizerScanResult {
-        // a prepared statement expects a digit identifier like $1
-        if !self.cur_char.is_ascii_digit() {
-            self.err = Some(anyhow::anyhow!(
-                "prepared statements must start with digits, got {}",
-                self.cur_char
-            ));
-            return SqlTokenizerScanResult {
-                token_kind: TokenKind::LexError,
-                token: self.get_advanced_chars(),
-            };
-        }
-
-        // scan_number keeps the prefix rune instact
-        // read numbers and return error if any
-        let number_result = Self::scan_number(self, false);
-        if number_result.token_kind == TokenKind::LexError {
-            return SqlTokenizerScanResult {
-                token_kind: TokenKind::LexError,
-                token: self.get_advanced_chars(),
-            };
-        }
-
-        SqlTokenizerScanResult {
-            token_kind: TokenKind::PreparedStatement,
-            token: number_result.token,
         }
     }
 
