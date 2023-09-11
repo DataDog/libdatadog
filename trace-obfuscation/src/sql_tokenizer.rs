@@ -52,40 +52,7 @@ enum TokenKind {
     Insert,
     Into,
     Join,
-    TableName,
     ColonCast,
-
-    // PostgreSQL specific JSON operators
-    JSONSelect,         // ->
-    JSONSelectText,     // ->>
-    JSONSelectPath,     // #>
-    JSONSelectPathText, // #>>
-    JSONContains,       // @>
-    JSONContainsLeft,   // <@
-    JSONKeyExists,      // ?
-    JSONAnyKeysExist,   // ?|
-    JSONAllKeysExist,   // ?&
-    JSONDelete,         // #-
-
-    // FilteredGroupable specifies that the given token has been discarded by one of the
-    // token filters and that it is groupable together with consecutive FilteredGroupable
-    // tokens.
-    FilteredGroupable,
-
-    // FilteredGroupableParenthesis is a parenthesis marked as filtered groupable. It is the
-    // beginning of either a group of values ('(') or a nested query. We track is as
-    // a special case for when it may start a nested query as opposed to just another
-    // value group to be obfuscated.
-    FilteredGroupableParenthesis,
-
-    // Filtered specifies that the token is a comma and was discarded by one
-    // of the filters.
-    Filtered,
-
-    // FilteredBracketedIdentifier specifies that we are currently discarding
-    // a bracketed identifier (MSSQL).
-    // See issue https://github.com/DataDog/datadog-trace-agent/issues/475.
-    FilteredBracketedIdentifier,
 }
 
 impl FromStr for TokenKind {
@@ -150,14 +117,14 @@ impl SqlTokenizer {
         }
     }
 
-    pub fn scan(&mut self, is_dbms_postgres: bool) -> SqlTokenizerScanResult {
+    pub fn scan(&mut self) -> SqlTokenizerScanResult {
         if self.offset.is_none() {
             self.next();
         }
         self.skip_blank();
 
         if self.is_leading_letter(self.cur_char) {
-            // Todo: add is_dbms_postgres specific logic
+            // TODO: add is_dbms_postgres specific logic
             return self.scan_identifier();
         }
         if self.cur_char.is_ascii_digit() {
@@ -182,6 +149,8 @@ impl SqlTokenizer {
         }
 
         match prev_char {
+            // TODO: Add postgres specific behavior for '$' and '@' match cases (which are omitted)
+            //       in addition to the other postgres TODOs in included match cases.
             ':' => {
                 if self.cur_char == ':' {
                     self.next();
@@ -216,30 +185,7 @@ impl SqlTokenizer {
                 }
             }
             '?' => {
-                // if is_dbms_postgres {
-                //     match self.cur_char {
-                //         '|' => {
-                //             self.next();
-                //             return SqlTokenizerScanResult {
-                //                 token_kind: TokenKind::JSONAnyKeysExist,
-                //                 token: "?|".to_string(),
-                //             };
-                //         }
-                //         '&' => {
-                //             self.next();
-                //             return SqlTokenizerScanResult {
-                //                 token_kind: TokenKind::JSONAnyKeysExist,
-                //                 token: "?&".to_string(),
-                //             };
-                //         }
-                //         _ => {
-                //             return SqlTokenizerScanResult {
-                //                 token_kind: TokenKind::JSONKeyExists,
-                //                 token: self.get_advanced_chars(),
-                //             };
-                //         }
-                //     }
-                // }
+                // TODO: add dbms postgres specific logic
                 self.set_unexpected_char_error_and_return()
             }
             '=' | ',' | ';' | '(' | ')' | '+' | '*' | '&' | '|' | '^' | ']' => {
@@ -249,9 +195,7 @@ impl SqlTokenizer {
                 }
             }
             '[' => {
-                // if is_dbms_postgres {
-                //     return self.scan_string(']', TokenKind::DoubleQuotedString);
-                // }
+                // TODO: add dbms postgres specific logic
                 SqlTokenizerScanResult {
                     token_kind: TokenKind::Char,
                     token: self.get_advanced_chars(),
@@ -286,20 +230,7 @@ impl SqlTokenizer {
                     return self.scan_comment_type_1();
                 }
                 if self.cur_char == '>' {
-                    // if is_dbms_postgres {
-                    //     self.next();
-                    //     if self.cur_char == '>' {
-                    //         self.next();
-                    //         return SqlTokenizerScanResult {
-                    //             token_kind: TokenKind::JSONSelectText,
-                    //             token: "->>".to_string(),
-                    //         };
-                    //     }
-                    //     return SqlTokenizerScanResult {
-                    //         token_kind: TokenKind::JSONSelectText,
-                    //         token: "->".to_string(),
-                    //     };
-                    // }
+                    // TODO: add dbms postgres specific logic
                     return SqlTokenizerScanResult {
                         token_kind: TokenKind::Char,
                         token: self.get_advanced_chars(),
@@ -323,8 +254,7 @@ impl SqlTokenizer {
                 }
             }
             '#' => {
-                // there is differing behavior depending on the DBMS
-                // below is the default for no specified DBMS
+                // TODO: add dbms postgres specific logic
                 self.next();
                 SqlTokenizerScanResult {
                     token_kind: TokenKind::Char,
@@ -426,25 +356,6 @@ impl SqlTokenizer {
                     token_kind: TokenKind::Char,
                     token: self.get_advanced_chars(),
                 }
-            }
-            '$' => {
-                if self.cur_char.is_ascii_digit() {
-                    // TODO: the first digit after $ does not necessarily guarantee
-                    // that this isn't a dollar-quoted string constant. We might eventually
-                    // want to cover for this use-case too (e.g. $1$some text$1$).
-                    return self.scan_prepared_statement();
-                }
-
-                // A special case for a string starts with single $ but does not end with $.
-                // For example in SQLServer, you can have "MG..... OUTPUT $action, inserted.*"
-                // $action in the OUTPUT clause of a MERGE statement is a special identifier
-                // that returns one of three values for each row: 'INSERT', 'UPDATE', or 'DELETE'.
-                // See: https://docs.microsoft.com/en-us/sql/t-sql/statements/merge-transact-sql?view=sql-server-ver15
-                // if is_dbms_postgres && self.is_letter(self.cur_char) {
-                //     return self.scan_identifier();
-                // }
-                self.scan_dollar_quoted_string(false)
-                // TODO: handle when dollar_quoted_function=true
             }
             '{' => {
                 if self.offset.unwrap_or_default() == 1 || self.curlys > 0 {
@@ -913,9 +824,10 @@ mod tests {
         ];
         let mut tokenizer = SqlTokenizer::new(query, false);
         for expected_val in expected {
-            let result = tokenizer.scan(false);
+            let result = tokenizer.scan();
             assert_eq!(result.token.trim(), expected_val)
         }
+        assert!(tokenizer.done);
     }
 
     #[test]
@@ -929,9 +841,10 @@ host:localhost,url:controller#home,id:FF005:00CAA
         ];
         let mut tokenizer = SqlTokenizer::new(query, false);
         for expected_val in expected {
-            let result = tokenizer.scan(false);
+            let result = tokenizer.scan();
             assert_eq!(result.token.trim(), expected_val)
         }
+        assert!(tokenizer.done);
     }
 
     #[duplicate_item(
@@ -971,7 +884,7 @@ host:localhost,url:controller#home,id:FF005:00CAA
     #[test]
     fn test_name() {
         let mut tokenizer = SqlTokenizer::new(number_value, false);
-        let result = tokenizer.scan(false);
+        let result = tokenizer.scan();
         assert!(tokenizer.done);
         assert_eq!(result.token, number_value);
         assert_eq!(result.token_kind, TokenKind::Number);
