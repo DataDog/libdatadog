@@ -7,6 +7,9 @@
 //! the top level message in a protobuf doesn't have a length header, so the
 //! bits on the wire are indistinguishable between serializing these sliced
 //! messages, and serializing the top-level message.
+//!
+//! The `tag` number and type for each of these sliced messages matches the
+//! corresponding field in the `Profile` message in `profile.proto`.
 
 use super::*;
 
@@ -42,6 +45,10 @@ pub struct ProfileFunctionsEntry {
 
 #[derive(Eq, Hash, PartialEq, ::prost::Message)]
 pub struct ProfileStringTableEntry {
+    // profile.proto requires that 'string_table[0] must always be "".'
+    // Writing "" to a protobuf is a no-op, unless the field is "repeated".
+    // Making this field repeated (and hence take Vec<String>) ensures that the
+    // initial "" will be correctly serialized.
     #[prost(string, repeated, tag = "6")]
     pub string_table_entry: Vec<String>,
 }
