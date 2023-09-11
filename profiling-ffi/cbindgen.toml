@@ -34,14 +34,13 @@ renaming_overrides_prefixing = true
 
 "ExporterNewResult" = "ddog_prof_Exporter_NewResult"
 "File" = "ddog_prof_Exporter_File"
-"ProfileAddResult" = "ddog_prof_Profile_AddResult"
+"ProfileResult" = "ddog_prof_Profile_Result"
 "ProfileExporter" = "ddog_prof_Exporter"
 "Request" = "ddog_prof_Exporter_Request"
 "RequestBuildResult" = "ddog_prof_Exporter_Request_BuildResult"
 "SendResult" = "ddog_prof_Exporter_SendResult"
 "SerializeResult" = "ddog_prof_Profile_SerializeResult"
 "Slice_File" = "ddog_prof_Exporter_Slice_File"
-"UpscalingRuleAddResult" = "ddog_prof_Profile_UpscalingRuleAddResult"
 
 [export.mangle]
 rename_types = "PascalCase"

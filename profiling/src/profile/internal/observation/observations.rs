@@ -102,7 +102,7 @@ impl Drop for NonEmptyObservations {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::profile::internal::Id;
+    use crate::collections::identifiable::*;
     use crate::profile::{LabelSetId, StackTraceId};
     use std::num::NonZeroI64;
 

@@ -1,7 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-use super::{StringId, ValueType};
+use super::*;
 use crate::profile::api::UpscalingInfo;
 use crate::profile::pprof;
 use crate::profile::FxIndexMap;

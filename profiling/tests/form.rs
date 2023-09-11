@@ -73,6 +73,9 @@ mod tests {
     }
 
     #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
     fn multipart_agent() {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
@@ -119,6 +122,9 @@ mod tests {
     }
 
     #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
     fn including_internal_metadata() {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
@@ -145,6 +151,9 @@ mod tests {
     }
 
     #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
     fn multipart_agentless() {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";

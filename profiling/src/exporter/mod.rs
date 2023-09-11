@@ -238,7 +238,15 @@ impl ProfileExporter {
         );
 
         for file in files {
-            let mut encoder = FrameEncoder::new(Vec::new());
+            // We tend to have good compression ratios for the pprof files,
+            // especially with timeline enabled. Not all files compress this
+            // well, but these are just initial Vec sizes, not a hard-bound.
+            // Using 1/10 gives us a better start than starting at zero, while
+            // not reserving too much for things that compress really well, and
+            // power-of-two capacities are almost always the best performing.
+            let capacity = (file.bytes.len() / 10).next_power_of_two();
+            let buffer = Vec::with_capacity(capacity);
+            let mut encoder = FrameEncoder::new(buffer);
             encoder.write_all(file.bytes)?;
             let encoded = encoder.finish()?;
             /* The Datadog RFC examples strip off the file extension, but the exact behavior isn't

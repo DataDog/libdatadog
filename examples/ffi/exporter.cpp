@@ -40,8 +40,9 @@ int main(int argc, char *argv[]) {
 
   const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
   const ddog_prof_Period period = {wall_time, 60};
-  std::unique_ptr<ddog_prof_Profile, Deleter> profile{
+  ddog_prof_Profile profile_data{
       ddog_prof_Profile_new(sample_types, &period, nullptr)};
+  std::unique_ptr<ddog_prof_Profile, Deleter> profile{&profile_data};
 
   ddog_prof_Location root_location = {
       // yes, a zero-initialized mapping is valid
@@ -63,8 +64,8 @@ int main(int argc, char *argv[]) {
       .values = {&value, 1},
       .labels = {&label, 1},
   };
-  auto add_result = ddog_prof_Profile_add(profile.get(), sample);
-  if (add_result.tag != DDOG_PROF_PROFILE_ADD_RESULT_OK) {
+  auto add_result = ddog_prof_Profile_add(profile.get(), sample, 0);
+  if (add_result.tag != DDOG_PROF_PROFILE_RESULT_OK) {
     print_error("Failed to add sample to profile: ", add_result.err);
     ddog_Error_drop(&add_result.err);
     return 1;
@@ -77,7 +78,7 @@ int main(int argc, char *argv[]) {
   auto upscaling_addresult = ddog_prof_Profile_add_upscaling_rule_proportional(
       profile.get(), offsets_slice, empty_charslice, empty_charslice, 1, 1);
 
-  if (upscaling_addresult.tag == DDOG_PROF_PROFILE_UPSCALING_RULE_ADD_RESULT_ERR) {
+  if (upscaling_addresult.tag == DDOG_PROF_PROFILE_RESULT_ERR) {
     print_error("Failed to add an upscaling rule: ", upscaling_addresult.err);
     ddog_Error_drop(&upscaling_addresult.err);
     // in this specific case, we want to fail the execution. But in general, we should not
