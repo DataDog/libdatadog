@@ -932,31 +932,38 @@ host:localhost,url:controller#home,id:FF005:00CAA
     }
 
     #[duplicate_item(
-        test_name                       number_value;
-        [test_tokenize_int_strings_1]   ["123456789"];
-        [test_tokenize_int_strings_2]   ["0"];
-        [test_tokenize_int_strings_3]   ["-1"];
-        [test_tokenize_int_strings_4]   ["-2018"];
-        [test_tokenize_int_strings_5]   [i64::MIN.to_string().as_str()];
-        [test_tokenize_int_strings_6]   [i64::MAX.to_string().as_str()];
-        [test_tokenize_int_strings_7]   ["39"];
-        [test_tokenize_int_strings_8]   ["7"];
-        [test_tokenize_int_strings_9]   ["-83"];
-        [test_tokenize_int_strings_10]  ["-9223372036854775807"];
-        [test_tokenize_int_strings_11]  ["9"];
-        [test_tokenize_int_strings_12]  ["-108"];
-        [test_tokenize_int_strings_13]  ["-71"];
-        [test_tokenize_int_strings_14]  ["-71"];
-        [test_tokenize_int_strings_15]  ["-9223372036854775675"];
-        [test_tokenize_float_strings_1] ["0"];
-        [test_tokenize_float_strings_2] ["0.123456789"];
-        [test_tokenize_float_strings_3] ["-0.123456789"];
-        [test_tokenize_float_strings_4] ["12.3456789"];
-        [test_tokenize_float_strings_5] ["-12.3456789"];
-        [test_tokenize_only_decimal_1]  [".001"];
-        [test_tokenize_decimal_only_2]  [".21341"];
-        [test_tokenize_decimal_only_3]  ["-.1234"];
-        [test_tokenize_decimal_only_4]  ["-.0003"];
+        test_name                           number_value;
+        [test_tokenize_int_strings_1]       ["123456789"];
+        [test_tokenize_int_strings_2]       ["0"];
+        [test_tokenize_int_strings_3]       ["-1"];
+        [test_tokenize_int_strings_4]       ["-2018"];
+        [test_tokenize_int_strings_5]       [i64::MIN.to_string().as_str()];
+        [test_tokenize_int_strings_6]       [i64::MAX.to_string().as_str()];
+        [test_tokenize_int_strings_7]       ["39"];
+        [test_tokenize_int_strings_8]       ["7"];
+        [test_tokenize_int_strings_9]       ["-83"];
+        [test_tokenize_int_strings_10]      ["-9223372036854775807"];
+        [test_tokenize_int_strings_11]      ["9"];
+        [test_tokenize_int_strings_12]      ["-108"];
+        [test_tokenize_int_strings_13]      ["-71"];
+        [test_tokenize_int_strings_14]      ["-71"];
+        [test_tokenize_int_strings_15]      ["-9223372036854775675"];
+        [test_tokenize_float_strings_1]     ["0"];
+        [test_tokenize_float_strings_2]     ["0.123456789"];
+        [test_tokenize_float_strings_3]     ["-0.123456789"];
+        [test_tokenize_float_strings_4]     ["12.3456789"];
+        [test_tokenize_float_strings_5]     ["-12.3456789"];
+        [test_tokenize_only_decimal_1]      [".001"];
+        [test_tokenize_decimal_only_2]      [".21341"];
+        [test_tokenize_decimal_only_3]      ["-.1234"];
+        [test_tokenize_decimal_only_4]      ["-.0003"];
+        [test_tokenize_hex_number_1]        ["0x6400"];
+        [test_tokenize_decimal_exponent_1]  ["2.5E+01"];
+        [test_tokenize_decimal_exponent_2]  ["2.5e+01"];
+        [test_tokenize_decimal_exponent_3]  ["9.99999E+05"];
+        [test_tokenize_decimal_exponent_4]  ["9.99999e+05"];
+        [test_tokenize_decimal_exponent_5]  ["0E+00"];
+        [test_tokenize_decimal_exponent_6]  ["0e+00"];
     )]
     #[test]
     fn test_name() {
