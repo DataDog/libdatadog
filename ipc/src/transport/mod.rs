@@ -101,9 +101,6 @@ where
             .channel_metadata
             .lock()
             .unwrap();
-        #[cfg(windows)]
-        let message = message.create_message(item, this.inner.get_ref().get_ref())?;
-        #[cfg(unix)]
         let message = message.create_message(item)?;
 
         this.inner

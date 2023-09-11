@@ -11,17 +11,12 @@ use manual_future::ManualFuture;
 use spawn_worker::SpawnWorker;
 use std::fs::File;
 use std::io;
-use std::mem::MaybeUninit;
-use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle};
+use std::os::windows::io::{AsRawHandle, IntoRawHandle, OwnedHandle};
 use std::process::Stdio;
-use std::ptr::null_mut;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::select;
-use windows::Wdk::Storage::FileSystem::{NtSetInformationFile, FILE_COMPLETION_INFORMATION};
-use windows::Win32::Foundation::HANDLE;
-use windows::Win32::System::WindowsProgramming::FILE_INFORMATION_CLASS;
 
 #[no_mangle]
 pub extern "C" fn ddog_daemon_entry_point() {
@@ -48,28 +43,6 @@ pub extern "C" fn ddog_daemon_entry_point() {
         tracing::info!("Starting sidecar, pid: {}", pid);
 
         let acquire_listener = move || unsafe {
-            // This code ensures there's no completion port used for this handle - apparently pinned completion ports are preserved across process inheritance.
-            // If we don't remove the completion port, the usage of the NamePipeServer will just silently hang indefinitely.
-            // This restricts ourselves to minimum Windows 8.1
-            // The alternative would be manually creating the NamedPipeServer handle in the spawning
-            // process instead of using tokio code. And avoiding a registration being ever created for it.
-            let completion_info = FILE_COMPLETION_INFORMATION {
-                Port: Default::default(),
-                Key: null_mut(),
-            };
-
-            #[allow(non_upper_case_globals)]
-            const FileReplaceCompletionInformation: i32 = 61;
-
-            let mut io_status_block = MaybeUninit::uninit();
-            NtSetInformationFile(
-                HANDLE(handle.as_raw_handle() as isize),
-                io_status_block.as_mut_ptr(),
-                &completion_info as *const FILE_COMPLETION_INFORMATION as *const core::ffi::c_void,
-                std::mem::size_of_val(&completion_info) as u32,
-                FILE_INFORMATION_CLASS(FileReplaceCompletionInformation),
-            )?;
-
             let (closed_future, close_completer) = ManualFuture::new();
             let close_completer = Arc::from(Mutex::new(Some(close_completer)));
             let pipe = NamedPipeServer::from_raw_handle(handle.into_raw_handle())?;
@@ -124,11 +97,13 @@ async fn accept_socket_loop(
 }
 
 pub fn setup_daemon_process(
-    listener: &NamedPipeServer,
+    listener: OwnedHandle,
     cfg: Config,
     spawn_cfg: &mut SpawnWorker,
 ) -> io::Result<()> {
-    spawn_cfg.pass_handle(unsafe { OwnedHandle::from_raw_handle(listener.as_raw_handle()) });
+    spawn_cfg
+        .pass_handle(listener)
+        .stdin(Stdio::null());
 
     match cfg.log_method {
         config::LogMethod::File(path) => {
@@ -141,8 +116,12 @@ pub fn setup_daemon_process(
             let (out, err) = (Stdio::from(file.try_clone()?), Stdio::from(file));
             spawn_cfg.stdout(out);
             spawn_cfg.stderr(err);
-        }
-        _ => {}
+        },
+        config::LogMethod::Disabled => {
+            spawn_cfg.stdout(Stdio::null());
+            spawn_cfg.stderr(Stdio::null());
+        },
+        _ => {},
     }
 
     Ok(())

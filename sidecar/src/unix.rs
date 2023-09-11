@@ -8,7 +8,7 @@ use std::os::unix::net::UnixListener as StdUnixListener;
 
 use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
 use nix::sys::socket::{shutdown, Shutdown};
-use std::os::unix::prelude::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::time::Instant;
 use std::io;
 use tokio::net::{UnixListener, UnixStream};
@@ -72,14 +72,14 @@ async fn accept_socket_loop(
 }
 
 pub fn setup_daemon_process(
-    listener: &StdUnixListener,
+    listener: StdUnixListener,
     cfg: Config,
     spawn_cfg: &mut SpawnWorker,
 ) -> io::Result<()> {
     spawn_cfg
         .shared_lib_dependencies(cfg.library_dependencies.clone())
         .daemonize(true)
-        .pass_fd(unsafe { OwnedFd::from_raw_fd(listener.as_raw_fd()) })
+        .pass_fd(unsafe { OwnedFd::from_raw_fd(listener.into_raw_fd()) })
         .stdin(Stdio::Null);
 
     match cfg.log_method {

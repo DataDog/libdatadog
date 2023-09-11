@@ -2,32 +2,42 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use crate::handles::TransferHandles;
-use crate::platform::{AsyncChannel, Message};
-use std::future::Future;
-use std::os::windows::io::IntoRawHandle;
+use crate::platform::Message;
+use std::os::windows::io::AsRawHandle;
 use std::{
     io::{self, Read, Write},
     time::Duration,
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::windows::named_pipe::NamedPipeClient;
-use tokio::runtime::Handle;
-use tokio::time::timeout;
+use std::ffi::c_void;
+use std::fmt::{Debug, Formatter, Pointer};
+use std::os::windows::prelude::OwnedHandle;
+use std::ptr::{null, null_mut};
+use winapi::um::winbase::INFINITE;
+use windows_sys::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
+use windows_sys::Win32::Storage::FileSystem::{ReadFile, WriteFile};
+use windows_sys::Win32::System::IO::{GetOverlappedResult, OVERLAPPED, OVERLAPPED_0};
+use windows_sys::Win32::System::Pipes::{PeekNamedPipe, PIPE_NOWAIT, PIPE_WAIT, SetNamedPipeHandleState};
+use windows_sys::Win32::System::Threading::{CreateEventA, WaitForSingleObject};
+use crate::platform::metadata::ProcessHandle;
 
 pub mod async_channel;
 pub mod metadata;
 
 use self::metadata::ChannelMetadata;
 
-use super::super::PlatformHandle;
-
-#[derive(Debug)]
 struct Inner {
-    pipe: Option<AsyncChannel>,
-    blocking: bool,
+    overlapped: OVERLAPPED,
+    handle: OwnedHandle,
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
-    runtime: Handle,
+    blocking: bool,
+    client: bool,
+}
+
+impl Debug for Inner {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Pointer::fmt(&self.handle.as_raw_handle(), f)
+    }
 }
 
 #[derive(Debug)]
@@ -35,17 +45,6 @@ pub struct Channel {
     inner: Inner,
     pub metadata: ChannelMetadata,
 }
-
-/*
-impl Clone for Channel {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            metadata: Default::default(),
-        }
-    }
-}
-*/
 
 impl Channel {
     pub fn set_read_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
@@ -60,116 +59,91 @@ impl Channel {
 
     pub fn set_nonblocking(&mut self, nonblocking: bool) -> io::Result<()> {
         self.inner.blocking = !nonblocking;
-        Ok(())
-    }
-
-    pub fn probe_readable(&self) -> bool {
-        let mut buf = [0u8; 1];
-        self.inner.pipe.as_ref().unwrap().try_read(&mut buf).is_ok()
-    }
-
-    async fn do_wait<'a, O, F, Fut>(
-        pipe: &'a mut AsyncChannel,
-        call: F,
-        duration: Option<Duration>,
-    ) -> Result<O, io::Error>
-    where
-        F: FnOnce(&'a mut AsyncChannel) -> Fut,
-        Fut: Future<Output = Result<O, io::Error>> + 'a,
-    {
-        let future = call(pipe);
-        if let Some(duration) = duration {
-            match timeout(duration, future).await {
-                Ok(o) => o,
-                Err(e) => Err(io::Error::from(e)),
-            }
+        let mode = if nonblocking { PIPE_NOWAIT } else { PIPE_WAIT };
+        if unsafe { SetNamedPipeHandleState(self.inner.handle.as_raw_handle() as HANDLE, &mode, null(), null()) } != 0 {
+            Ok(())
         } else {
-            future.await
+            Err(io::Error::last_os_error())
         }
     }
 
-    fn wait_io_future<'a, O, F, Fut>(
-        &'a mut self,
-        call: F,
+    pub fn probe_readable(&self) -> bool {
+        let mut available_bytes = 0;
+        if unsafe { PeekNamedPipe(self.inner.handle.as_raw_handle() as HANDLE, null_mut(), 0, null_mut(), &mut available_bytes, null_mut()) } != 0 {
+            available_bytes > 0
+        } else {
+            true
+        }
+    }
+
+    fn wait_io_overlapped(
+        &mut self,
         duration: Option<Duration>,
-    ) -> Result<O, io::Error>
-    where
-        F: FnOnce(&'a mut AsyncChannel) -> Fut,
-        Fut: Future<Output = Result<O, io::Error>> + 'a,
+    ) -> Result<usize, io::Error>
     {
-        let pipe = self.inner.pipe.as_mut().unwrap();
-        self.inner
-            .runtime
-            .block_on(Self::do_wait(pipe, call, duration))
+        match unsafe { WaitForSingleObject(self.inner.overlapped.hEvent, duration.map(|d| d.as_millis() as u32).unwrap_or(INFINITE)) } {
+            WAIT_OBJECT_0 => {
+                let mut transferred: u32 = 0;
+                if unsafe { GetOverlappedResult(self.inner.handle.as_raw_handle() as HANDLE, &self.inner.overlapped, &mut transferred, 1) } == 0 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(transferred as usize)
+                }
+            },
+            e @ _ => Err(io::Error::from_raw_os_error(e as i32)),
+        }
     }
 
     pub fn create_message<T>(&mut self, item: T) -> Result<Message<T>, io::Error>
     where
         T: TransferHandles,
     {
-        self.metadata
-            .create_message(item, self.inner.pipe.as_ref().unwrap())
+        self.metadata.create_message(item)
+    }
+
+    pub fn from_client_handle_and_pid(h: OwnedHandle, pid: ProcessHandle) -> Channel {
+        Channel {
+            inner: Inner {
+                overlapped: OVERLAPPED {
+                    Internal: 0,
+                    InternalHigh: 0,
+                    Anonymous: OVERLAPPED_0 {
+                        Pointer: null_mut(),
+                    },
+                    hEvent: unsafe { CreateEventA(null_mut(), 1, 0, null_mut()) },
+                },
+                handle: h,
+                read_timeout: None,
+                write_timeout: None,
+                blocking: true,
+                client: true,
+            },
+            metadata: ChannelMetadata::from_process_handle(pid),
+        }
     }
 }
 
 impl Read for Channel {
     fn read<'a>(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.inner.blocking {
-            self.wait_io_future(|p| p.read(buf), self.inner.read_timeout)
+        if unsafe { ReadFile(self.inner.handle.as_raw_handle() as HANDLE, buf.as_mut_ptr() as *mut c_void, buf.len() as u32, null_mut(), &mut self.inner.overlapped as *mut OVERLAPPED) } != 0 {
+            self.wait_io_overlapped(self.inner.read_timeout)
         } else {
-            self.inner.pipe.as_ref().unwrap().try_read(buf)
+            Err(io::Error::last_os_error())
         }
     }
 }
 
 impl Write for Channel {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.inner.blocking {
-            self.wait_io_future(|p| p.write(buf), self.inner.write_timeout)
+        if unsafe { WriteFile(self.inner.handle.as_raw_handle() as HANDLE, buf.as_ptr(), buf.len() as u32, null_mut(), &mut self.inner.overlapped as *mut OVERLAPPED) } != 0 {
+            self.wait_io_overlapped(self.inner.write_timeout)
         } else {
-            self.inner.pipe.as_ref().unwrap().try_write(buf)
+            Err(io::Error::last_os_error())
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.wait_io_future(|p| p.flush(), self.inner.write_timeout)
-    }
-}
-
-/*
-impl From<Channel> for PlatformHandle<UnixStream> {
-    fn from(c: Channel) -> Self {
-        c.inner
-    }
-}
-*/
-
-impl From<PlatformHandle<NamedPipeClient>> for Channel {
-    fn from(h: PlatformHandle<NamedPipeClient>) -> Self {
-        Channel::from(
-            AsyncChannel::from_raw(false, h.into_owned_handle().unwrap().into_raw_handle())
-                .unwrap(),
-        )
-    }
-}
-
-impl From<NamedPipeClient> for Channel {
-    fn from(stream: NamedPipeClient) -> Self {
-        Channel::from(AsyncChannel::from(stream))
-    }
-}
-
-impl From<AsyncChannel> for Channel {
-    fn from(channel: AsyncChannel) -> Self {
-        Channel {
-            inner: Inner {
-                pipe: Some(channel),
-                blocking: true,
-                read_timeout: None,
-                write_timeout: None,
-                runtime: Handle::current(),
-            },
-            metadata: Default::default(),
-        }
+        // No-op on windows named pipes
+        Ok(())
     }
 }

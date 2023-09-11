@@ -11,8 +11,6 @@ use std::{
     },
     time::{Duration, Instant},
 };
-#[cfg(windows)]
-use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
 use crate::interface::blocking::SidecarTransport;
@@ -134,9 +132,7 @@ pub fn daemonize(listener: IpcServer, cfg: Config) -> io::Result<()> {
         spawn_cfg.append_env(env, val);
     }
 
-    // NamedPipeServer on Windows has no into_owned_handle.
-    // Thus, we need to keep this alive until the actual spawning.
-    setup_daemon_process(&listener, cfg, &mut spawn_cfg)?;
+    setup_daemon_process(listener, cfg, &mut spawn_cfg)?;
 
     spawn_cfg
         .wait_spawn()
@@ -145,29 +141,7 @@ pub fn daemonize(listener: IpcServer, cfg: Config) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(windows)]
-static mut RUNTIME: Option<Runtime> = None;
-
 pub fn start_or_connect_to_sidecar(cfg: Config) -> io::Result<SidecarTransport> {
-    #[cfg(windows)]
-    // We need a runtime to setup a NamedPipeServer, spawn one here
-    let _g = if tokio::runtime::Handle::try_current().is_err() {
-        unsafe {
-            if RUNTIME.is_none() {
-                // Apparently NamedPipeClient will hang indefinitely when a current thread runtime is used
-                // I presume this is a bug. According to the debugger it parks the main thread then, waiting indefinitely for resumption.
-                RUNTIME = Some(
-                    tokio::runtime::Builder::new_multi_thread()
-                        .enable_all()
-                        .build()?,
-                );
-            }
-            Some(RUNTIME.as_ref().unwrap().enter())
-        }
-    } else {
-        None
-    };
-
     let liaison = match cfg.ipc_mode {
         config::IpcMode::Shared => setup::DefaultLiason::ipc_shared(),
         config::IpcMode::InstancePerProcess => setup::DefaultLiason::ipc_per_process(),
