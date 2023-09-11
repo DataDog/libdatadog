@@ -4,12 +4,12 @@
 use lz4_flex::frame::FrameEncoder;
 use std::io::Write;
 
-pub struct ZippedProtobufSerializer {
+pub struct CompressedProtobufSerializer {
     buffer: Vec<u8>,
     zipper: FrameEncoder<Vec<u8>>,
 }
 
-impl ZippedProtobufSerializer {
+impl CompressedProtobufSerializer {
     pub fn encode(&mut self, item: impl prost::Message) -> anyhow::Result<()> {
         item.encode(&mut self.buffer)?;
         self.zipper.write_all(&self.buffer)?;

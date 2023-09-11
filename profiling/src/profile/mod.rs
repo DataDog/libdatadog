@@ -12,7 +12,7 @@ use std::num::NonZeroI64;
 use std::time::{Duration, SystemTime};
 
 use crate::collections::identifiable::*;
-use crate::serializer::ZippedProtobufSerializer;
+use crate::serializer::CompressedProtobufSerializer;
 use internal::*;
 use pprof::sliced_proto::*;
 use profiled_endpoints::ProfiledEndpointsStats;
@@ -434,7 +434,7 @@ impl Profile {
         // size of 32KiB should definitely out-perform starting at zero for
         // time consumed, allocator pressure, and allocator fragmentation.
         const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
-        let mut encoder = ZippedProtobufSerializer::with_capacity(INITIAL_PPROF_BUFFER_SIZE);
+        let mut encoder = CompressedProtobufSerializer::with_capacity(INITIAL_PPROF_BUFFER_SIZE);
 
         for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
             let labels = self.translate_and_enrich_sample_labels(sample, timestamp)?;
