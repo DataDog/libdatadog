@@ -222,16 +222,10 @@ impl SqlTokenizer {
                 },
             },
             '-' => {
+                // TODO: add dbms postgres specific logic
                 if self.cur_char == '-' {
                     self.next();
                     return self.scan_comment_type_1();
-                }
-                if self.cur_char == '>' {
-                    // TODO: add dbms postgres specific logic
-                    return SqlTokenizerScanResult {
-                        token_kind: TokenKind::Char,
-                        token: self.get_advanced_chars(),
-                    };
                 }
                 if self.cur_char.is_ascii_digit() {
                     return self.scan_number(false);
@@ -381,7 +375,7 @@ impl SqlTokenizer {
                 }
             }
             _ => {
-                self.err = Some(anyhow::anyhow!("unexptected char \"{}\"", self.cur_char));
+                self.err = Some(anyhow::anyhow!("unexpected char \"{}\"", self.cur_char));
                 SqlTokenizerScanResult {
                     token_kind: TokenKind::LexError,
                     token: self.get_advanced_chars(),
@@ -414,7 +408,7 @@ impl SqlTokenizer {
 
     fn scan_identifier(&mut self) -> SqlTokenizerScanResult {
         self.next();
-        while self.is_letter(self.cur_char)
+        while !self.done && self.is_letter(self.cur_char)
             || self.cur_char.is_ascii_digit()
             || ".*$".contains(self.cur_char)
         {
@@ -727,11 +721,69 @@ mod tests {
     use super::SqlTokenizer;
 
     #[test]
-    fn test_tokenizer_tokens() {
+    fn test_tokenizer_simple_query() {
         let query = "SELECT username AS         person FROM (SELECT * FROM users) WHERE id=4";
         let expected = [
             "SELECT", "username", "AS", "person", "FROM", "(", "SELECT", "*", "FROM", "users", ")",
             "WHERE", "id", "=", "4",
+        ];
+        let mut tokenizer = SqlTokenizer::new(query, false);
+        for expected_val in expected {
+            let result = tokenizer.scan();
+            assert_eq!(result.token.trim(), expected_val)
+        }
+        assert!(tokenizer.done);
+    }
+
+    #[test]
+    fn test_tokenizer_single_line_comment_dashes() {
+        let query = r#"
+-- Single line comment
+-- Another single line comment
+-- Another another single line comment
+GRANT USAGE, DELETE ON SCHEMA datadog TO datadog"#;
+        let expected = [
+            "-- Single line comment",
+            "-- Another single line comment",
+            "-- Another another single line comment",
+            "GRANT",
+            "USAGE",
+            ",",
+            "DELETE",
+            "ON",
+            "SCHEMA",
+            "datadog",
+            "TO",
+            "datadog",
+        ];
+        let mut tokenizer = SqlTokenizer::new(query, false);
+        for expected_val in expected {
+            let result = tokenizer.scan();
+            assert_eq!(result.token.trim(), expected_val)
+        }
+        assert!(tokenizer.done);
+    }
+
+    #[test]
+    fn test_tokenizer_single_line_comment_slash() {
+        let query = r#"
+// Single line comment
+// Another single line comment
+// Another another single line comment
+GRANT USAGE, DELETE ON SCHEMA datadog TO datadog"#;
+        let expected = [
+            "// Single line comment",
+            "// Another single line comment",
+            "// Another another single line comment",
+            "GRANT",
+            "USAGE",
+            ",",
+            "DELETE",
+            "ON",
+            "SCHEMA",
+            "datadog",
+            "TO",
+            "datadog",
         ];
         let mut tokenizer = SqlTokenizer::new(query, false);
         for expected_val in expected {
