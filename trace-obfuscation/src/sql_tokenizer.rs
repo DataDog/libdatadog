@@ -969,7 +969,8 @@ host:localhost,url:controller#home,id:FF005:00CAA
     fn test_name() {
         let mut tokenizer = SqlTokenizer::new(number_value, false);
         let result = tokenizer.scan(false);
+        assert!(tokenizer.done);
         assert_eq!(result.token, number_value);
-        assert_eq!(result.token_kind, TokenKind::Number)
+        assert_eq!(result.token_kind, TokenKind::Number);
     }
 }
