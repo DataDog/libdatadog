@@ -14,10 +14,20 @@
 //! Note that although many of these fields are of type `repeated` in the
 //! underlying `pprof::Profile`, there is, (except for packed arrays of scalars,
 //! which we don't use at this level), no difference in the byte representation
-//! between using a "required" field, and using a "repeated" field with one
-//! element.  
+//! between
+//! 1. repeatedly emitting a sliced message with a "required" field,
+//! 2. repeatedly emitting a sliced message using a "repeated" field,
+//! 3. Emitting once the message with the repeated field containing all values.
 //! In other words, we get the same bytes from "required" as "repeated", but
-//! with fewer allocations (since we don't need a `Vec` for the single element).
+//! with fewer allocations (since we don't need a `Vec` for the elements).
+//!
+//! Note that it is important to make the field "required".  Pprof requires that
+//! the "" string be the 0th element of the string table.  In a "repeated" field
+//! default-valued messages are emitted; in an "optional" field, default-valued
+//! messages are simply never emitted, and the parser just uses the default
+//! value.  This drops the "" string, and messes up the string table.
+//! Making all fields required stops this from happening and gives the desired
+//! semantics.
 
 use super::*;
 
