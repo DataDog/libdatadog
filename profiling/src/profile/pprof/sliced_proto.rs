@@ -10,37 +10,45 @@
 //!
 //! The `tag` number and type for each of these sliced messages matches the
 //! corresponding field in the `Profile` message in `profile.proto`.
+//!
+//! Note that although many of these fields are of type `repeated` in the
+//! underlying `pprof::Profile`, there is, (except for packed arrays of scalars,
+//! which we don't use at this level), no difference in the byte representation
+//! between using a "required" field, and using a "repeated" field with one
+//! element.  
+//! In other words, we get the same bytes from "required" as "repeated", but
+//! with fewer allocations (since we don't need a `Vec` for the single element).
 
 use super::*;
 
 #[derive(Eq, Hash, PartialEq, ::prost::Message)]
 pub struct ProfileSampleTypesEntry {
-    #[prost(message, tag = "1")]
-    pub sample_types_entry: Option<ValueType>,
+    #[prost(message, required, tag = "1")]
+    pub sample_types_entry: ValueType,
 }
 
 #[derive(Eq, Hash, PartialEq, ::prost::Message)]
 pub struct ProfileSamplesEntry {
-    #[prost(message, tag = "2")]
-    pub samples_entry: Option<Sample>,
+    #[prost(message, required, tag = "2")]
+    pub samples_entry: Sample,
 }
 
 #[derive(Eq, Hash, PartialEq, ::prost::Message)]
 pub struct ProfileMappingsEntry {
-    #[prost(message, tag = "3")]
-    pub mappings_entry: Option<Mapping>,
+    #[prost(message, required, tag = "3")]
+    pub mappings_entry: Mapping,
 }
 
 #[derive(Eq, Hash, PartialEq, ::prost::Message)]
 pub struct ProfileLocationsEntry {
-    #[prost(message, tag = "4")]
-    pub locations_entry: Option<Location>,
+    #[prost(message, required, tag = "4")]
+    pub locations_entry: Location,
 }
 
 #[derive(Eq, Hash, PartialEq, ::prost::Message)]
 pub struct ProfileFunctionsEntry {
-    #[prost(message, tag = "5")]
-    pub function_entry: Option<Function>,
+    #[prost(message, required, tag = "5")]
+    pub function_entry: Function,
 }
 
 #[derive(Eq, Hash, PartialEq, ::prost::Message)]
@@ -49,8 +57,8 @@ pub struct ProfileStringTableEntry {
     // Writing "" to a protobuf is a no-op, unless the field is "repeated".
     // Making this field repeated (and hence take Vec<String>) ensures that the
     // initial "" will be correctly serialized.
-    #[prost(string, repeated, tag = "6")]
-    pub string_table_entry: Vec<String>,
+    #[prost(string, required, tag = "6")]
+    pub string_table_entry: String,
 }
 
 // These fields are not repeated so we can just make a combined struct for them.
@@ -69,7 +77,7 @@ pub struct ProfileSimpler {
 impl From<ValueType> for ProfileSampleTypesEntry {
     fn from(item: ValueType) -> Self {
         Self {
-            sample_types_entry: Some(item),
+            sample_types_entry: item,
         }
     }
 }
@@ -77,7 +85,7 @@ impl From<ValueType> for ProfileSampleTypesEntry {
 impl From<Sample> for ProfileSamplesEntry {
     fn from(item: Sample) -> Self {
         Self {
-            samples_entry: Some(item),
+            samples_entry: item,
         }
     }
 }
@@ -85,7 +93,7 @@ impl From<Sample> for ProfileSamplesEntry {
 impl From<Mapping> for ProfileMappingsEntry {
     fn from(item: Mapping) -> Self {
         Self {
-            mappings_entry: Some(item),
+            mappings_entry: item,
         }
     }
 }
@@ -93,7 +101,7 @@ impl From<Mapping> for ProfileMappingsEntry {
 impl From<Location> for ProfileLocationsEntry {
     fn from(item: Location) -> Self {
         Self {
-            locations_entry: Some(item),
+            locations_entry: item,
         }
     }
 }
@@ -101,7 +109,7 @@ impl From<Location> for ProfileLocationsEntry {
 impl From<Function> for ProfileFunctionsEntry {
     fn from(item: Function) -> Self {
         Self {
-            function_entry: Some(item),
+            function_entry: item,
         }
     }
 }
@@ -109,7 +117,7 @@ impl From<Function> for ProfileFunctionsEntry {
 impl From<String> for ProfileStringTableEntry {
     fn from(item: String) -> Self {
         Self {
-            string_table_entry: vec![item],
+            string_table_entry: item,
         }
     }
 }

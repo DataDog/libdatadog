@@ -456,8 +456,8 @@ impl Profile {
             encoder.encode(ProfileSamplesEntry::from(item))?;
         }
 
-        // We need to do this out of order because we use the sample_types while
-        // upscaling
+        // `Sample`s must be emitted before `SampleTypes` since we use
+        // the `sample_types` during upscaling.
         for sample_type in self.sample_types.into_iter() {
             let item: pprof::ValueType = sample_type.into();
             encoder.encode(ProfileSampleTypesEntry::from(item))?;
