@@ -458,6 +458,8 @@ impl Profile {
 
         // `Sample`s must be emitted before `SampleTypes` since we use
         // the `sample_types` during upscaling.
+        // It is valid to emit protobuf fields out of order. See example in:
+        // https://protobuf.dev/programming-guides/encoding/#optional
         for sample_type in self.sample_types.into_iter() {
             let item: pprof::ValueType = sample_type.into();
             encoder.encode(ProfileSampleTypesEntry::from(item))?;
