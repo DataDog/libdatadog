@@ -362,31 +362,15 @@ impl Profile {
         label_value: &str,
         upscaling_info: UpscalingInfo,
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            offset_values.iter().all(|x| x < &self.sample_types.len()),
-            "Invalid offset. Highest expected offset: {}",
-            self.sample_types.len() - 1
-        );
-
         let label_name_id = self.intern(label_name);
         let label_value_id = self.intern(label_value);
-
-        let mut new_values_offset = offset_values.to_vec();
-        new_values_offset.sort_unstable();
-
-        self.upscaling_rules.check_collisions(
-            &new_values_offset,
+        self.upscaling_rules.add(
+            offset_values,
             (label_name, label_name_id),
             (label_value, label_value_id),
-            &upscaling_info,
+            upscaling_info,
+            self.sample_types.len(),
         )?;
-
-        upscaling_info.check_validity(self.sample_types.len())?;
-
-        let rule = UpscalingRule::new(new_values_offset, upscaling_info);
-
-        self.upscaling_rules
-            .add(label_name_id, label_value_id, rule);
 
         Ok(())
     }
