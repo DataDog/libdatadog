@@ -6,7 +6,8 @@
 use datadog_trace_protobuf::pb;
 
 use crate::{
-    http::obfuscate_url_string, obfuscation_config::ObfuscationConfig, replacer::replace_span_tags,
+    http::obfuscate_url_string, memcached::obfuscate_memcached_string,
+    obfuscation_config::ObfuscationConfig, replacer::replace_span_tags,
 };
 
 pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
@@ -20,7 +21,12 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
                     url,
                     config.http_remove_query_string,
                     config.http_remove_path_digits,
-                );
+                )
+            }
+        }
+        "memcached" if config.obfuscate_memcached => {
+            if let Some(cmd) = span.meta.get_mut("memcached.command") {
+                *cmd = obfuscate_memcached_string(cmd)
             }
         }
         _ => {}
@@ -39,7 +45,7 @@ mod tests {
     use super::obfuscate_span;
 
     #[test]
-    fn obfuscates_span_url_strings() {
+    fn test_obfuscates_span_url_strings() {
         let mut span = trace_test_utils::create_test_span(111, 222, 0, 1, true);
         span.r#type = "http".to_string();
         span.meta.insert(
@@ -50,6 +56,7 @@ mod tests {
             tag_replace_rules: None,
             http_remove_query_string: true,
             http_remove_path_digits: true,
+            obfuscate_memcached: false,
         };
         obfuscate_span(&mut span, &obf_config);
         assert_eq!(
@@ -59,7 +66,7 @@ mod tests {
     }
 
     #[test]
-    fn replace_span_tags() {
+    fn test_replace_span_tags() {
         let mut span = trace_test_utils::create_test_span(111, 222, 0, 1, true);
         span.meta
             .insert("custom.tag".to_string(), "/foo/bar/foo".to_string());
@@ -72,6 +79,7 @@ mod tests {
             tag_replace_rules: Some(parsed_rules),
             http_remove_query_string: false,
             http_remove_path_digits: false,
+            obfuscate_memcached: false,
         };
 
         obfuscate_span(&mut span, &obf_config);
