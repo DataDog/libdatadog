@@ -554,11 +554,7 @@ impl TryFrom<&Profile> for pprof::Profile {
                     .iter()
                     .map(Id::to_raw_id)
                     .collect();
-                let values = profile.upscaling_rules.upscale_values(
-                    values,
-                    &labels,
-                    &profile.sample_types,
-                )?;
+                let values = profile.upscaling_rules.upscale_values(values, &labels)?;
 
                 Ok(pprof::Sample {
                     location_ids,

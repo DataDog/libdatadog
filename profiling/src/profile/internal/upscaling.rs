@@ -145,13 +145,10 @@ impl UpscalingRules {
         &self,
         values: &[i64],
         labels: &[pprof::Label],
-        sample_types: &Vec<ValueType>,
     ) -> anyhow::Result<Vec<i64>> {
         let mut new_values = values.to_vec();
 
         if !self.is_empty() {
-            let mut values_to_update: Vec<usize> = vec![0; sample_types.len()];
-
             // get bylabel rules first (if any)
             let mut group_of_rules = labels
                 .iter()
@@ -162,20 +159,6 @@ impl UpscalingRules {
             if let Some(byvalue_rules) = self.get(&(StringId::ZERO, StringId::ZERO)) {
                 group_of_rules.push(byvalue_rules);
             }
-
-            // check for collision(s)
-            group_of_rules.iter().for_each(|rules| {
-                rules.iter().for_each(|rule| {
-                    rule.values_offset
-                        .iter()
-                        .for_each(|offset| values_to_update[*offset] += 1)
-                })
-            });
-
-            anyhow::ensure!(
-                values_to_update.iter().all(|v| *v < 2),
-                "Multiple rules modifying the same offset for this sample"
-            );
 
             group_of_rules.iter().for_each(|rules| {
                 rules.iter().for_each(|rule| {
