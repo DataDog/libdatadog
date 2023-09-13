@@ -120,18 +120,22 @@ int main(int argc, char *argv[]) {
 
   auto exporter = exporter_new_result.ok;
 
-  ddog_prof_Exporter_File files_[] = {{
+  ddog_prof_Exporter_File files_to_compress_and_export_[] = {{
       .name = DDOG_CHARSLICE_C("auto.pprof"),
       .file = ddog_Vec_U8_as_slice(&encoded_profile->buffer),
   }};
+  ddog_prof_Exporter_Slice_File files_to_compress_and_export = {.ptr = files_to_compress_and_export_, .len = sizeof files_to_compress_and_export_ / sizeof *files_to_compress_and_export_};
+  
+  ddog_prof_Exporter_File files_to_export_unmodified_[] = {};
+  ddog_prof_Exporter_Slice_File files_to_export_unmodified = {.ptr = files_to_compress_and_export_, .len = sizeof files_to_compress_and_export_ / sizeof *files_to_compress_and_export_};
 
-  ddog_prof_Exporter_Slice_File files = {.ptr = files_, .len = sizeof files_ / sizeof *files_};
+  
   ddog_CharSlice internal_metadata_example = DDOG_CHARSLICE_C(
       "{\"no_signals_workaround_enabled\": \"true\", \"execution_trace_enabled\": \"false\"}");
 
   ddog_prof_Exporter_Request_BuildResult build_result =
       ddog_prof_Exporter_Request_build(exporter, encoded_profile->start, encoded_profile->end,
-                                       files, nullptr, nullptr, &internal_metadata_example, 30000);
+                                       files_to_compress_and_export, files_to_export_unmodified, nullptr, nullptr, &internal_metadata_example, 30000);
   ddog_prof_EncodedProfile_drop(encoded_profile);
 
   if (build_result.tag == DDOG_PROF_EXPORTER_REQUEST_BUILD_RESULT_ERR) {

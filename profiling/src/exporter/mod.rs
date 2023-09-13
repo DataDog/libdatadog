@@ -54,7 +54,6 @@ pub struct ProfileExporter {
 pub struct File<'a> {
     pub name: &'a str,
     pub bytes: &'a [u8],
-    pub compress_before_exporting: bool,
 }
 
 #[derive(Debug)]
@@ -163,7 +162,8 @@ impl ProfileExporter {
         &self,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
-        files: &[File],
+        files_to_compress_and_export: &[File],
+        files_to_export_unmodified: &[File],
         additional_tags: Option<&Vec<Tag>>,
         endpoint_counts: Option<&ProfiledEndpointsStats>,
         internal_metadata: Option<serde_json::Value>,
@@ -214,7 +214,11 @@ impl ProfileExporter {
 
         tags_profiler.pop(); // clean up the trailing comma
 
-        let attachments: Vec<String> = files.iter().map(|file| file.name.to_owned()).collect();
+        let attachments: Vec<String> = files_to_compress_and_export
+            .iter()
+            .chain(files_to_export_unmodified.iter())
+            .map(|file| file.name.to_owned())
+            .collect();
 
         let event = json!({
             "attachments": attachments,
@@ -237,22 +241,28 @@ impl ProfileExporter {
             mime::APPLICATION_JSON,
         );
 
-        for file in files {
-            let encoded = if file.compress_before_exporting {
-                // We tend to have good compression ratios for the pprof files,
-                // especially with timeline enabled. Not all files compress this
-                // well, but these are just initial Vec sizes, not a hard-bound.
-                // Using 1/10 gives us a better start than starting at zero, while
-                // not reserving too much for things that compress really well, and
-                // power-of-two capacities are almost always the best performing.
-                let capacity = (file.bytes.len() / 10).next_power_of_two();
-                let buffer = Vec::with_capacity(capacity);
-                let mut encoder = FrameEncoder::new(buffer);
-                encoder.write_all(file.bytes)?;
-                encoder.finish()?
-            } else {
-                file.bytes.to_vec()
-            };
+        for file in files_to_compress_and_export {
+            // We tend to have good compression ratios for the pprof files,
+            // especially with timeline enabled. Not all files compress this
+            // well, but these are just initial Vec sizes, not a hard-bound.
+            // Using 1/10 gives us a better start than starting at zero, while
+            // not reserving too much for things that compress really well, and
+            // power-of-two capacities are almost always the best performing.
+            let capacity = (file.bytes.len() / 10).next_power_of_two();
+            let buffer = Vec::with_capacity(capacity);
+            let mut encoder = FrameEncoder::new(buffer);
+            encoder.write_all(file.bytes)?;
+            let encoded = encoder.finish()?;
+            /* The Datadog RFC examples strip off the file extension, but the exact behavior isn't
+             * specified. This does the simple thing of using the filename without modification for
+             * the form name because intake does not care about these name of the form field for
+             * these attachments.
+             */
+            form.add_reader_file(file.name, Cursor::new(encoded), file.name);
+        }
+
+        for file in files_to_export_unmodified {
+            let encoded = file.bytes.to_vec();
             /* The Datadog RFC examples strip off the file extension, but the exact behavior isn't
              * specified. This does the simple thing of using the filename without modification for
              * the form name because intake does not care about these name of the form field for

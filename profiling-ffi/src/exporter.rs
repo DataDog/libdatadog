@@ -43,7 +43,6 @@ pub enum Endpoint<'a> {
 pub struct File<'a> {
     name: CharSlice<'a>,
     file: ByteSlice<'a>,
-    compress_before_exporting: bool,
 }
 
 // This type exists only to force cbindgen to expose an CancellationToken as an opaque type.
@@ -184,12 +183,7 @@ unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> 
         .map(|file| {
             let name = file.name.try_to_utf8().unwrap_or("{invalid utf-8}");
             let bytes = file.file.as_slice();
-            let compress_before_exporting = file.compress_before_exporting;
-            exporter::File {
-                name,
-                bytes,
-                compress_before_exporting,
-            }
+            exporter::File { name, bytes }
         })
         .collect()
 }
@@ -224,7 +218,8 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     exporter: Option<&mut ProfileExporter>,
     start: Timespec,
     end: Timespec,
-    files: Slice<File>,
+    files_to_compress_and_export: Slice<File>,
+    files_to_export_unmodified: Slice<File>,
     optional_additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
     optional_endpoints_stats: Option<&profiled_endpoints::ProfiledEndpointsStats>,
     optional_internal_metadata_json: Option<&CharSlice>,
@@ -234,7 +229,8 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
         None => RequestBuildResult::Err(anyhow::anyhow!("exporter was null").into()),
         Some(exporter) => {
             let timeout = std::time::Duration::from_millis(timeout_ms);
-            let converted_files = into_vec_files(files);
+            let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
+            let files_to_export_unmodified = into_vec_files(files_to_export_unmodified);
             let tags = optional_additional_tags.map(|tags| tags.iter().cloned().collect());
 
             let internal_metadata =
@@ -246,7 +242,8 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
             match exporter.build(
                 start.into(),
                 end.into(),
-                converted_files.as_slice(),
+                files_to_compress_and_export.as_slice(),
+                files_to_export_unmodified.as_slice(),
                 tags.as_ref(),
                 optional_endpoints_stats,
                 internal_metadata,
@@ -522,10 +519,9 @@ mod test {
             ExporterNewResult::Err(_) => panic!("Should not occur!"),
         };
 
-        let files: &[File] = &[File {
+        let files_to_compress_and_export: &[File] = &[File {
             name: CharSlice::from("foo.pprof"),
             file: ByteSlice::from(b"dummy contents" as &[u8]),
-            compress_before_exporting: true,
         }];
 
         let start = Timespec {
@@ -543,7 +539,8 @@ mod test {
                 Some(exporter.as_mut()),
                 start,
                 finish,
-                Slice::from(files),
+                Slice::from(files_to_compress_and_export),
+                Slice::default(),
                 None,
                 None,
                 None,
@@ -594,7 +591,6 @@ mod test {
         let files: &[File] = &[File {
             name: CharSlice::from("foo.pprof"),
             file: ByteSlice::from(b"dummy contents" as &[u8]),
-            compress_before_exporting: true,
         }];
 
         let start = Timespec {
@@ -623,6 +619,7 @@ mod test {
                 start,
                 finish,
                 Slice::from(files),
+                Slice::default(),
                 None,
                 None,
                 Some(&raw_internal_metadata),
@@ -665,7 +662,6 @@ mod test {
         let files: &[File] = &[File {
             name: CharSlice::from("foo.pprof"),
             file: ByteSlice::from(b"dummy contents" as &[u8]),
-            compress_before_exporting: true,
         }];
 
         let start = Timespec {
@@ -686,6 +682,7 @@ mod test {
                 start,
                 finish,
                 Slice::from(files),
+                Slice::default(),
                 None,
                 None,
                 Some(&raw_internal_metadata),
@@ -718,6 +715,7 @@ mod test {
                 None, // No exporter, will fail
                 start,
                 finish,
+                Slice::default(),
                 Slice::default(),
                 None,
                 None,
