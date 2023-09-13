@@ -2,14 +2,38 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 //! This file is a companion to the standard pprof protobuf definition.
-//! `Profile` fields are "sliced" into separate messages, allowing them to be
-//! serialized in a streamed manner.  This takes advantage of the fact that
-//! the top level message in a protobuf doesn't have a length header, so the
-//! bits on the wire are indistinguishable between serializing these sliced
-//! messages, and serializing the top-level message.
 //!
-//! The `tag` number and type for each of these sliced messages matches the
-//! corresponding field in the `Profile` message in `profile.proto`.
+//! When `prost` serializes the standard `pprof` protobuf, it does a batch
+//! operation:
+//! 1. the entire `internal::Profile` is converted to `pprof::Profile`,
+//! 2. which is then serialized into a byte-vector holding the protobuf,
+//! 3. which is then compressed.
+//!
+//! This operation is memory inefficient:
+//! 1. `pprof::Profile` does not deduplicate stack traces or labels, causing
+//!    significant memory blow-up compared to `internal::Profile` for timelined
+//!    traces.
+//! 2. The `pprof` protobuf is highly compressible, particularly when timeline
+//!    is enabled.  We are storing in memory a large buffer, that could have
+//!    easily been compressed to a small one.  
+//! 3. Only at this point do we have a small in-memory buffer.
+//!
+//! If we stream the creation of the protobuf, we can avoid this memory blowup.
+//! In particular, if each `pprof` Message (e.g. Sample, Location, etc) is
+//! generated in a streaming fashion, and then immediately serialized and
+//! compressed, we go directly from the efficient `internal` format to an
+//! a compact compressed serialized format, without needing to ever create large
+//! intermediate data-structures.
+//!
+//! We do this by taking advantage of the fact that the top level message in a
+//! protobuf doesn't have a length header.  This means that the bits on the wire
+//! are indistinguishable between serializing a single the top-level message,
+//! and serializing a series of top level message "slices" whose field indices
+//! correspond to the indices in the unified top-level message.
+//!
+//! In particular, `pprof::Profile` fields are "sliced" into separate messages,
+//! where `tag` number and type for each of these sliced messages matches the
+//! corresponding field in the `pprof::Profile` message in `profile.proto`.
 //!
 //! Note that although many of these fields are of type `repeated` in the
 //! underlying `pprof::Profile`, there is, (except for packed arrays of scalars,
@@ -58,15 +82,11 @@ pub struct ProfileLocationsEntry {
 #[derive(Eq, Hash, PartialEq, ::prost::Message)]
 pub struct ProfileFunctionsEntry {
     #[prost(message, required, tag = "5")]
-    pub function_entry: Function,
+    pub functions_entry: Function,
 }
 
 #[derive(Eq, Hash, PartialEq, ::prost::Message)]
 pub struct ProfileStringTableEntry {
-    // profile.proto requires that 'string_table[0] must always be "".'
-    // Writing "" to a protobuf is a no-op, unless the field is "repeated".
-    // Making this field repeated (and hence take Vec<String>) ensures that the
-    // initial "" will be correctly serialized.
     #[prost(string, required, tag = "6")]
     pub string_table_entry: String,
 }
@@ -119,7 +139,7 @@ impl From<Location> for ProfileLocationsEntry {
 impl From<Function> for ProfileFunctionsEntry {
     fn from(item: Function) -> Self {
         Self {
-            function_entry: item,
+            functions_entry: item,
         }
     }
 }

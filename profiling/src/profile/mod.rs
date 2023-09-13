@@ -313,9 +313,12 @@ impl Profile {
         Ok(sample_types)
     }
 
-    /// Resets all data except the sample types and period. Returns the
-    /// previous Profile on success.
-    pub fn reset(&mut self, start_time: Option<SystemTime>) -> anyhow::Result<Profile> {
+    /// Resets all data except the sample types and period.
+    /// Returns the previous Profile on success.
+    pub fn reset_and_return_previous(
+        &mut self,
+        start_time: Option<SystemTime>,
+    ) -> anyhow::Result<Profile> {
         /* We have to map over the types because the order of the strings is
          * not generally guaranteed, so we can't just copy the underlying
          * structures.
@@ -456,10 +459,16 @@ impl Profile {
             encoder.encode(ProfileSamplesEntry::from(item))?;
         }
 
-        // `Sample`s must be emitted before `SampleTypes` since we use
-        // the `sample_types` during upscaling.
+        // `Sample`s must be emitted before `SampleTypes` since we use consume
+        // fields as we convert (using `into_iter`).  This allows Rust to
+        // release memory faster, reducing our peak RSS, but means that we
+        // must process fields in dependency order, regardless of the numeric
+        // field index in the `pprof` protobuf.
         // It is valid to emit protobuf fields out of order. See example in:
         // https://protobuf.dev/programming-guides/encoding/#optional
+        //
+        // In this case, we use `sample_types` during upscaling of `samples`,
+        // so we must serialize `Sample` before `SampleType`.
         for sample_type in self.sample_types.into_iter() {
             let item: pprof::ValueType = sample_type.into();
             encoder.encode(ProfileSampleTypesEntry::from(item))?;
@@ -879,7 +888,9 @@ mod api_test {
         assert!(profile.endpoints.mappings.is_empty());
         assert!(profile.endpoints.stats.is_empty());
 
-        let prev = profile.reset(None).expect("reset to succeed");
+        let prev = profile
+            .reset_and_return_previous(None)
+            .expect("reset to succeed");
 
         // These should all be empty now
         assert!(profile.functions.is_empty());
@@ -916,7 +927,9 @@ mod api_test {
         );
         profile.period = Some(period);
 
-        let prev = profile.reset(None).expect("reset to succeed");
+        let prev = profile
+            .reset_and_return_previous(None)
+            .expect("reset to succeed");
         assert_eq!(Some(period), prev.period);
 
         // Resolve the string values to check that they match (their string

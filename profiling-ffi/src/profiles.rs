@@ -694,7 +694,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
             ))
         }
     };
-    let old_profile = match profile.reset(start_time.map(SystemTime::from)) {
+    let old_profile = match profile.reset_and_return_previous(start_time.map(SystemTime::from)) {
         Ok(ok) => ok,
         Err(err) => {
             return SerializeResult::Err(Error::from(
@@ -711,7 +711,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     };
     match old_profile.serialize_into_compressed_pprof(end_time, duration) {
         Ok(ok) => SerializeResult::Ok(ok.into()),
-        Err(err) => SerializeResult::Err(err.into()),
+        Err(err) => SerializeResult::Err(Error::from(
+            err.context("ddog_prof_Profile_serialize failed"),
+        )),
     }
 }
 
@@ -740,7 +742,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_reset(
     start_time: Option<&Timespec>,
 ) -> ProfileResult {
     match profile_ptr_to_inner(profile) {
-        Ok(profile) => match profile.reset(start_time.map(SystemTime::from)) {
+        Ok(profile) => match profile.reset_and_return_previous(start_time.map(SystemTime::from)) {
             Ok(_) => ProfileResult::Ok(true),
             Err(err) => {
                 ProfileResult::Err(Error::from(err.context("ddog_prof_Profile_reset failed")))
