@@ -9,7 +9,7 @@ const QUESTION_MARK: char = '?';
 
 pub fn obfuscate_sql_string(s: &str) -> String {
     let use_literal_escapes = true;
-    let mut tokenizer = SqlTokenizer::new(s, use_literal_escapes);
+    let tokenizer = SqlTokenizer::new(s, use_literal_escapes);
     attempt_sql_obfuscation(tokenizer).unwrap_or("?".to_string())
 }
 
@@ -25,7 +25,7 @@ fn attempt_sql_obfuscation(mut tokenizer: SqlTokenizer) -> anyhow::Result<String
         if result.token_kind == TokenKind::LexError && tokenizer.err.is_some() {
             anyhow::bail!(tokenizer.err.unwrap())
         }
-        result = discard(result, last_token.as_str(), &last_token_kind)?;
+        result = discard(result, &last_token_kind)?;
         result = replace(result, last_token.as_str(), &last_token_kind)?;
 
         let mut grouping_filter = GroupingFilter::new();
@@ -89,7 +89,6 @@ fn set_result_filtered_groupable(mut result: SqlTokenizerScanResult, replacement
 // Filter the given result so that the certain tokens are completely skipped
 fn discard(
     mut result: SqlTokenizerScanResult,
-    last_token: &str,
     last_token_kind: &TokenKind,
 ) -> anyhow::Result<SqlTokenizerScanResult> {
     if *last_token_kind == TokenKind::As {
@@ -149,7 +148,7 @@ fn replace(
     }
 
     match result.token_kind {
-        TokenKind::String | TokenKind::Number | TokenKind::Null | TokenKind::Variable | TokenKind::BooleanLiteral | TokenKind::EscapeSequence => {
+        TokenKind::DollarQuotedString | TokenKind::String | TokenKind::Number | TokenKind::Null | TokenKind::Variable | TokenKind::BooleanLiteral | TokenKind::EscapeSequence => {
             set_result_filtered_groupable(result, Some(QUESTION_MARK))
         }
         TokenKind::ID => {
@@ -244,6 +243,21 @@ mod tests {
     use super::attempt_sql_obfuscation;
 
     #[duplicate_item(
+        [
+            test_name   [test_sql_obfuscation_remove_alias]
+            input       ["SELECT username AS person FROM users WHERE id=4"]
+            expected    ["SELECT username FROM users WHERE id = ?"];
+        ]
+        [
+            test_name   [test_sql_obfuscation_dollar_quoted_string_1]
+            input       ["SELECT $func$INSERT INTO table VALUES ('a', 1, 2)$func$ FROM users"]
+            expected    ["SELECT ? FROM users"];
+        ]
+        [
+            test_name   [test_sql_obfuscation_dollar_quoted_string_2]
+            input       ["SELECT $$INSERT INTO table VALUES ('a', 1, 2)$$ FROM users"]
+            expected    ["SELECT ? FROM users"];
+        ]
         [
             test_name   [test_sql_obfuscation_1]
             input       ["SELECT * from table_name"]
