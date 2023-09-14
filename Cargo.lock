@@ -751,7 +751,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "2.1.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "datadog-trace-protobuf",
@@ -761,7 +761,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "2.1.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -779,7 +779,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "2.1.0"
+version = "4.0.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -790,7 +790,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-utils"
-version = "2.1.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "datadog-trace-normalization",
@@ -2922,7 +2922,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "0.1.0"
+version = "4.0.0"
 dependencies = [
  "lazy_static",
  "regex",
