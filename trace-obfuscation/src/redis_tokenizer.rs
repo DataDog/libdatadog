@@ -2,7 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 #[derive(Debug)]
-enum RedisTokenType {
+pub enum RedisTokenType {
     RedisTokenCommand,
     RedisTokenArgument,
 }
@@ -17,9 +17,9 @@ pub struct RedisTokenizer {
 
 #[derive(Debug)]
 pub struct RedisTokenizerScanResult {
-    token: String,
-    token_type: RedisTokenType,
-    done: bool,
+    pub token: String,
+    pub token_type: RedisTokenType,
+    pub done: bool,
 }
 
 impl RedisTokenizer {
@@ -182,7 +182,7 @@ impl RedisTokenizer {
 mod tests {
     use duplicate::duplicate_item;
 
-    use super::{RedisTokenizer, RedisTokenizerScanResult};
+    use super::RedisTokenizer;
 
     #[duplicate_item(
         [
