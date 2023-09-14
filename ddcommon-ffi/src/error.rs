@@ -96,7 +96,7 @@ pub unsafe extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
 #[no_mangle]
 pub unsafe extern "C" fn ddog_Error_message(error: Option<&Error>) -> CharSlice {
     match error {
-        None => CharSlice::default(),
+        None => CharSlice::empty(),
         Some(err) => CharSlice::from(err.as_ref()),
     }
 }

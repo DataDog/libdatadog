@@ -45,6 +45,12 @@ pub struct File<'a> {
     file: ByteSlice<'a>,
 }
 
+#[must_use]
+#[no_mangle]
+pub extern "C" fn ddog_prof_Exporter_Slice_File_empty() -> Slice<'static, File<'static>> {
+    Slice::empty()
+}
+
 // This type exists only to force cbindgen to expose an CancellationToken as an opaque type.
 pub struct CancellationToken(tokio_util::sync::CancellationToken);
 
@@ -540,7 +546,7 @@ mod test {
                 start,
                 finish,
                 Slice::from(files_to_compress_and_export),
-                Slice::default(),
+                Slice::empty(),
                 None,
                 None,
                 None,
@@ -619,7 +625,7 @@ mod test {
                 start,
                 finish,
                 Slice::from(files),
-                Slice::default(),
+                Slice::empty(),
                 None,
                 None,
                 Some(&raw_internal_metadata),
@@ -682,7 +688,7 @@ mod test {
                 start,
                 finish,
                 Slice::from(files),
-                Slice::default(),
+                Slice::empty(),
                 None,
                 None,
                 Some(&raw_internal_metadata),
@@ -715,8 +721,8 @@ mod test {
                 None, // No exporter, will fail
                 start,
                 finish,
-                Slice::default(),
-                Slice::default(),
+                Slice::empty(),
+                Slice::empty(),
                 None,
                 None,
                 None,

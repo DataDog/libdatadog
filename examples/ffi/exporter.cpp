@@ -124,13 +124,12 @@ int main(int argc, char *argv[]) {
       .name = DDOG_CHARSLICE_C("auto.pprof"),
       .file = ddog_Vec_U8_as_slice(&encoded_profile->buffer),
   }};
-  ddog_prof_Exporter_Slice_File files_to_compress_and_export = {.ptr = files_to_compress_and_export_, .len = sizeof files_to_compress_and_export_ / sizeof *files_to_compress_and_export_};
-  
-  // Ensure we get a non-null pointer: it is required that:
-  // "data must be non-null and aligned even for zero-length slices."
-  // https://doc.rust-lang.org/std/slice/fn.from_raw_parts.html
-  ddog_prof_Exporter_File files_to_export_unmodified_[1];
-  ddog_prof_Exporter_Slice_File files_to_export_unmodified = {.ptr = files_to_export_unmodified_, .len = 0};
+  ddog_prof_Exporter_Slice_File files_to_compress_and_export = {
+      .ptr = files_to_compress_and_export_,
+      .len = sizeof files_to_compress_and_export_ / sizeof *files_to_compress_and_export_,
+  };
+
+  ddog_prof_Exporter_Slice_File files_to_export_unmodified = ddog_prof_Exporter_Slice_File_empty();
   
   ddog_CharSlice internal_metadata_example = DDOG_CHARSLICE_C(
       "{\"no_signals_workaround_enabled\": \"true\", \"execution_trace_enabled\": \"false\"}");

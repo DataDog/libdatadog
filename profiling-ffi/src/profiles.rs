@@ -775,9 +775,9 @@ mod test {
             let values: &[i64] = &[];
 
             let sample = Sample {
-                locations: Slice::default(),
+                locations: Slice::empty(),
                 values: Slice::from(values),
-                labels: Slice::default(),
+                labels: Slice::empty(),
             };
 
             let result = Result::from(ddog_prof_Profile_add(&mut profile, sample, None));
