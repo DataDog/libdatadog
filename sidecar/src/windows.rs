@@ -1,6 +1,4 @@
 use crate::config::Config;
-#[cfg(feature = "tracing")]
-use crate::enable_tracing;
 use crate::setup::pid_shm_path;
 use crate::{config, enter_listener_loop};
 use datadog_ipc::platform::{
@@ -8,11 +6,10 @@ use datadog_ipc::platform::{
 };
 use futures::FutureExt;
 use manual_future::ManualFuture;
-use spawn_worker::SpawnWorker;
+use spawn_worker::{SpawnWorker, Stdio};
 use std::fs::File;
 use std::io;
 use std::os::windows::io::{AsRawHandle, IntoRawHandle, OwnedHandle};
-use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
@@ -21,7 +18,7 @@ use tokio::select;
 #[no_mangle]
 pub extern "C" fn ddog_daemon_entry_point() {
     #[cfg(feature = "tracing")]
-    enable_tracing().ok();
+    crate::enable_tracing().ok();
     let now = Instant::now();
 
     let pid = unsafe { libc::getpid() };
@@ -103,7 +100,7 @@ pub fn setup_daemon_process(
 ) -> io::Result<()> {
     spawn_cfg
         .pass_handle(listener)
-        .stdin(Stdio::null());
+        .stdin(Stdio::Null);
 
     match cfg.log_method {
         config::LogMethod::File(path) => {
@@ -113,13 +110,13 @@ pub fn setup_daemon_process(
                 .truncate(false)
                 .create(true)
                 .open(path)?;
-            let (out, err) = (Stdio::from(file.try_clone()?), Stdio::from(file));
+            let (out, err) = (Stdio::from(&file), Stdio::from(&file));
             spawn_cfg.stdout(out);
             spawn_cfg.stderr(err);
         },
         config::LogMethod::Disabled => {
-            spawn_cfg.stdout(Stdio::null());
-            spawn_cfg.stderr(Stdio::null());
+            spawn_cfg.stdout(Stdio::Null);
+            spawn_cfg.stderr(Stdio::Null);
         },
         _ => {},
     }

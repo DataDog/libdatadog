@@ -13,7 +13,7 @@ use std::time::Instant;
 use std::io;
 use tokio::net::{UnixListener, UnixStream};
 use crate::config::{self, Config};
-use crate::{enable_tracing, enter_listener_loop};
+use crate::enter_listener_loop;
 
 #[no_mangle]
 pub extern "C" fn ddog_daemon_entry_point() {
@@ -25,7 +25,7 @@ pub extern "C" fn ddog_daemon_entry_point() {
     let _ = prctl::set_name("dd-ipc-helper");
 
     #[cfg(feature = "tracing")]
-    enable_tracing().ok();
+    crate::enable_tracing().ok();
     let now = Instant::now();
 
     if let Some(fd) = spawn_worker::recv_passed_fd() {

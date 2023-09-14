@@ -2510,10 +2510,12 @@ dependencies = [
  "anyhow",
  "cc_utils",
  "io-lifetimes",
+ "kernel32-sys",
  "memfd",
  "nix 0.24.3",
  "rlimit",
  "tempfile",
+ "winapi 0.2.8",
  "windows 0.48.0",
 ]
 

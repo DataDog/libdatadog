@@ -11,6 +11,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use anyhow::Context;
 use tokio::sync::mpsc;
 
 use crate::interface::blocking::SidecarTransport;
@@ -120,7 +121,7 @@ where
         .map_err(|e| e.into())
 }
 
-pub fn daemonize(listener: IpcServer, cfg: Config) -> io::Result<()> {
+pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
     #[allow(unused_unsafe)] // the unix method is unsafe
     let mut spawn_cfg = unsafe { spawn_worker::SpawnWorker::new() };
 
@@ -136,12 +137,13 @@ pub fn daemonize(listener: IpcServer, cfg: Config) -> io::Result<()> {
 
     spawn_cfg
         .wait_spawn()
-        .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+        .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+        .context("Could not spawn the sidecar daemon")?;
 
     Ok(())
 }
 
-pub fn start_or_connect_to_sidecar(cfg: Config) -> io::Result<SidecarTransport> {
+pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTransport> {
     let liaison = match cfg.ipc_mode {
         config::IpcMode::Shared => setup::DefaultLiason::ipc_shared(),
         config::IpcMode::InstancePerProcess => setup::DefaultLiason::ipc_per_process(),
