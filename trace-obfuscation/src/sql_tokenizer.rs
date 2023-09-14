@@ -8,7 +8,7 @@ use std::str::FromStr;
 const ESCAPE_CHARACTER: char = '\\';
 
 #[derive(Debug, PartialEq)]
-enum TokenKind {
+pub enum TokenKind {
     LexError,
 
     Done,
@@ -50,6 +50,23 @@ enum TokenKind {
     Into,
     Join,
     ColonCast,
+
+    // Filtered specifies that the token is a comma and was discarded by one
+    // of the filters.
+    Filtered,
+
+    // FilteredGroupableParenthesis is a parenthesis marked as filtered groupable. It is the
+	// beginning of either a group of values ('(') or a nested query. We track is as
+	// a special case for when it may start a nested query as opposed to just another
+	// value group to be obfuscated.
+	FilteredGroupableParenthesis,
+
+    // FilteredGroupable specifies that the given token has been discarded by one of the
+	// token filters and that it is groupable together with consecutive FilteredGroupable
+	// tokens.
+	FilteredGroupable,
+
+    DollarQuotedString,
 }
 
 impl FromStr for TokenKind {
@@ -83,20 +100,20 @@ impl FromStr for TokenKind {
 }
 
 pub struct SqlTokenizerScanResult {
-    token_kind: TokenKind,
-    token: String,
+    pub token_kind: TokenKind,
+    pub token: String,
 }
 
 pub struct SqlTokenizer {
     cur_char: char,        // the current char
     offset: Option<usize>, // the index of the current char
     index_of_last_read: usize,
-    query: Vec<char>,           // the sql query we are parsing
-    err: Option<anyhow::Error>, // any errors that occurred while reading
+    query: Vec<char>,               // the sql query we are parsing
+    pub err: Option<anyhow::Error>, // any errors that occurred while reading
     curlys: i32, // number of active open curly braces in top-level sql escape sequences
     literal_escapes: bool, // indicates we should not treat backslashes as escape characters
     seen_escape: bool, // indicated whether this tokenizer has seen an escape character within a string
-    done: bool,
+    pub done: bool,
 }
 
 impl SqlTokenizer {
@@ -141,7 +158,7 @@ impl SqlTokenizer {
         if self.done {
             return SqlTokenizerScanResult {
                 token_kind: TokenKind::Done,
-                token: String::new(),
+                token: self.get_advanced_chars(),
             };
         }
 
@@ -160,7 +177,7 @@ impl SqlTokenizer {
                     // example scenario: "autovacuum: VACUUM ANALYZE fake.table"
                     return SqlTokenizerScanResult {
                         token_kind: TokenKind::Char,
-                        token: "::".to_string(),
+                        token: self.get_advanced_chars(),
                     };
                 }
                 if self.cur_char != '=' {
@@ -374,6 +391,16 @@ impl SqlTokenizer {
                     token: self.get_advanced_chars(),
                 }
             }
+            '$' => {
+                // TODO: Handle SQLServer strings starting with a single '$'
+                // For example in SQLServer, you can have "MG..... OUTPUT $action, inserted.*"
+                // $action in the OUTPUT clause of a MERGE statement is a special identifier
+                // that returns one of three values for each row: 'INSERT', 'UPDATE', or 'DELETE'.
+                // See: https://docs.microsoft.com/en-us/sql/t-sql/statements/merge-transact-sql?view=sql-server-ver15
+                let result = self.scan_dollar_quoted_string();
+                self.get_advanced_chars();
+                result
+            }
             _ => {
                 self.err = Some(anyhow::anyhow!("unexpected char \"{}\"", self.cur_char));
                 SqlTokenizerScanResult {
@@ -393,7 +420,7 @@ impl SqlTokenizer {
     }
 
     fn skip_blank(&mut self) {
-        while self.cur_char.is_whitespace() {
+        while self.cur_char.is_whitespace() && !self.done {
             self.next();
         }
     }
@@ -591,7 +618,9 @@ impl SqlTokenizer {
     fn scan_string(&mut self, delim: char, kind: TokenKind) -> SqlTokenizerScanResult {
         let s = &mut String::new();
         loop {
-            if self.cur_char == delim {
+            let mut prev_char = self.cur_char;
+            self.next();
+            if prev_char == delim {
                 if self.cur_char == delim {
                     // doubling the delimiter is the default way to embed the delimiter within a string
                     self.next();
@@ -599,18 +628,23 @@ impl SqlTokenizer {
                     // a single delimiter denotes the end of the string
                     break;
                 }
-            } else if self.cur_char == ESCAPE_CHARACTER {
+            } else if prev_char == ESCAPE_CHARACTER {
                 self.seen_escape = true;
 
                 if !self.literal_escapes {
                     // treat as an escape character
+                    prev_char = self.cur_char;
                     self.next();
                 }
             }
             if self.done {
                 self.err = Some(anyhow::anyhow!("unexpected EOF in string"));
+                return SqlTokenizerScanResult {
+                    token_kind: TokenKind::LexError,
+                    token: s.to_string(),
+                };
             }
-            s.push(self.cur_char);
+            s.push(prev_char);
         }
         if kind == TokenKind::ID && s.is_empty() || s.chars().all(|c| c.is_whitespace()) {
             return SqlTokenizerScanResult {
@@ -622,6 +656,52 @@ impl SqlTokenizer {
             token_kind: kind,
             token: s.to_string(),
         }
+    }
+
+    fn scan_dollar_quoted_string(&mut self) -> SqlTokenizerScanResult {
+        let mut result = self.scan_string('$', TokenKind::String);
+        if result.token_kind == TokenKind::LexError {
+            result.token = self.get_advanced_chars();
+            return result;
+        }
+        let s = &mut String::new();
+        let mut delim_index = 0;
+        let delim: Vec<char> = match result.token.as_str() {
+            "$$" => {
+                result.token.chars().collect()
+            }
+            _ => {
+                format!("${}$", result.token).chars().collect()
+            }
+        };
+        loop {
+            let c = self.cur_char;
+            self.next();
+            if self.done {
+                self.err = Some(anyhow::anyhow!("unexpected EOF in dollar-quoted string"));
+                return SqlTokenizerScanResult {
+                    token_kind: TokenKind::LexError,
+                    token: s.to_string()
+                };
+            }
+            if c == delim[delim_index] {
+                delim_index += 1;
+                if delim_index == delim.len() {
+                    break;
+                }
+                continue;
+            }
+            if delim_index > 0 {
+                s.push_str(&result.token[0..delim_index]);
+                delim_index = 0;
+            }
+            s.push(c);
+        }
+        SqlTokenizerScanResult {
+            token_kind: TokenKind::DollarQuotedString,
+            token: s.to_string()
+        }
+
     }
 
     fn scan_comment_type_1(&mut self) -> SqlTokenizerScanResult {
@@ -667,6 +747,10 @@ impl SqlTokenizer {
             return String::new();
         }
         let end_index = self.offset.unwrap();
+
+        if end_index > self.query.len() {
+            return String::new();
+        }
 
         let return_val: String = self.query[self.index_of_last_read..end_index]
             .iter()
@@ -719,6 +803,18 @@ mod tests {
     use crate::sql_tokenizer::TokenKind;
 
     use super::SqlTokenizer;
+
+    #[test]
+    fn test_tokenizer_empty_query() {
+        let query = "";
+        let expected = [""];
+        let mut tokenizer = SqlTokenizer::new(query, false);
+        for expected_val in expected {
+            let result = tokenizer.scan();
+            assert_eq!(result.token.trim(), expected_val)
+        }
+        assert!(tokenizer.done);
+    }
 
     #[test]
     fn test_tokenizer_simple_query() {
