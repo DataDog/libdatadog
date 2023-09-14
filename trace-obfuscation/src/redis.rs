@@ -14,7 +14,6 @@ pub fn obfuscate_redis_string(cmd: &str) -> String {
         match res.token_type {
             RedisTokenType::RedisTokenCommand => {
                 if let Some(cmd) = cmd {
-                    println!("new command starting");
                     args = obfuscate_redis_cmd(s, cmd, args);
                     s.push('\n');
                 }
