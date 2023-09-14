@@ -27,7 +27,7 @@
 //!
 //! We do this by taking advantage of the fact that the top level message in a
 //! protobuf doesn't have a length header.  This means that the bits on the wire
-//! are indistinguishable between serializing a single the top-level message,
+//! are indistinguishable between serializing a single top-level message,
 //! and serializing a series of top level message "slices" whose field indices
 //! correspond to the indices in the unified top-level message.
 //!
