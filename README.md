@@ -29,4 +29,4 @@ bash build-profiling-ffi.sh /opt/libdatadog
 
 #### Build Dependencies
 
-Rust 1.60 or newer with cargo. Some platforms may need protoc; others have it shipped in prost-build.
+Rust 1.69 or newer with cargo. Some platforms may need protoc; others have it shipped in prost-build.
