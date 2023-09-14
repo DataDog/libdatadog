@@ -33,42 +33,14 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
             }
         }
         "redis" => {
-            if config.obfuscation_redis_enabled {
-                if span.meta.is_empty() {
-                    return;
-                }
-                if let Some(redis_cmd) = span.meta.get_mut("redis.raw_command") {
-                    if config.obfuscation_redis_remove_all_args {
-                        *redis_cmd = remove_all_redis_args(redis_cmd)
-                    }
-                    *redis_cmd = obfuscate_redis_string(redis_cmd)
-                }
+            if !config.obfuscation_redis_enabled || span.meta.is_empty() {
+                return;
             }
-        }
-        "redis" => {
-            if config.obfuscation_redis_enabled {
-                if span.meta.is_empty() {
-                    return;
+            if let Some(redis_cmd) = span.meta.get_mut("redis.raw_command") {
+                if config.obfuscation_redis_remove_all_args {
+                    *redis_cmd = remove_all_redis_args(redis_cmd)
                 }
-                if let Some(redis_cmd) = span.meta.get_mut("redis.raw_command") {
-                    if config.obfuscation_redis_remove_all_args {
-                        *redis_cmd = remove_all_redis_args(redis_cmd)
-                    }
-                    *redis_cmd = obfuscate_redis_string(redis_cmd)
-                }
-            }
-        }
-        "redis" => {
-            if config.obfuscation_redis_enabled {
-                if span.meta.is_empty() {
-                    return;
-                }
-                if let Some(redis_cmd) = span.meta.get_mut("redis.raw_command") {
-                    if config.obfuscation_redis_remove_all_args {
-                        *redis_cmd = remove_all_redis_args(redis_cmd)
-                    }
-                    *redis_cmd = obfuscate_redis_string(redis_cmd)
-                }
+                *redis_cmd = obfuscate_redis_string(redis_cmd)
             }
         }
         _ => {}
@@ -147,6 +119,7 @@ mod tests {
             http_remove_path_digits: false,
             obfuscation_redis_enabled: true,
             obfuscation_redis_remove_all_args: true,
+            obfuscate_memcached: false,
         };
         obfuscate_span(&mut span, &obf_config);
         assert_eq!(span.meta.get("redis.raw_command").unwrap(), "GEOADD ?")
@@ -166,6 +139,7 @@ mod tests {
             http_remove_path_digits: false,
             obfuscation_redis_enabled: true,
             obfuscation_redis_remove_all_args: false,
+            obfuscate_memcached: false,
         };
         obfuscate_span(&mut span, &obf_config);
         assert_eq!(
