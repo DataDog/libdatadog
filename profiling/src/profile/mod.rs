@@ -459,7 +459,7 @@ impl Profile {
             encoder.encode(ProfileSamplesEntry::from(item))?;
         }
 
-        // `Sample`s must be emitted before `SampleTypes` since we use consume
+        // `Sample`s must be emitted before `SampleTypes` since we consume
         // fields as we convert (using `into_iter`).  This allows Rust to
         // release memory faster, reducing our peak RSS, but means that we
         // must process fields in dependency order, regardless of the numeric
