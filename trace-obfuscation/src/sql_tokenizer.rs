@@ -692,7 +692,8 @@ impl SqlTokenizer {
                 continue;
             }
             if delim_index > 0 {
-                s.push_str(&result.token[0..delim_index]);
+                let seen_delim_substr: String = (delim[0..delim_index]).iter().collect();
+                s.push_str(&seen_delim_substr);
                 delim_index = 0;
             }
             s.push(c);
@@ -947,5 +948,35 @@ host:localhost,url:controller#home,id:FF005:00CAA
         assert!(tokenizer.done);
         assert_eq!(result.token, number_value);
         assert_eq!(result.token_kind, TokenKind::Number);
+    }
+
+    #[duplicate_item(
+        test_name                               input               expected;
+        [test_tokenize_dollar_quoted_str_1]  ["$tag$abc$tag$"]   ["abc"];
+        [test_tokenize_dollar_quoted_str_2]  ["$func$abc$func$"]   ["abc"];
+        [test_tokenize_dollar_quoted_str_3]  [r#"$tag$textwith\n\rnewlinesand\r\\\$tag$"#]   [r#"textwith\n\rnewlinesand\r\\\"#];
+        [test_tokenize_dollar_quoted_str_4]  ["$tag$ab$tactac$tx$tag$"]   ["ab$tactac$tx"];
+        [test_tokenize_dollar_quoted_str_5]  ["$$abc$$"]   ["abc"];
+    )]
+    #[test]
+    fn test_name() {
+        let mut tokenizer = SqlTokenizer::new(input, false);
+        let result = tokenizer.scan();
+        assert!(tokenizer.done);
+        assert_eq!(result.token, expected);
+    }
+
+    #[duplicate_item(
+        test_name                               input               expected;
+        [test_tokenize_dollar_quoted_str_err_1]  ["$$abc"]   ["abc"];
+        [test_tokenize_dollar_quoted_str_err_2]  ["$$abc$"]   ["abc"];
+    )]
+    #[test]
+    fn test_name() {
+        let mut tokenizer = SqlTokenizer::new(input, false);
+        let result = tokenizer.scan();
+        assert!(tokenizer.done);
+        assert_eq!(result.token_kind, TokenKind::LexError);
+        assert_eq!(tokenizer.err.unwrap().to_string(), "unexpected EOF in dollar-quoted string");
     }
 }
