@@ -18,6 +18,8 @@ fn attempt_sql_obfuscation(mut tokenizer: SqlTokenizer) -> anyhow::Result<String
     let mut last_token_kind = TokenKind::Char;
     let mut last_token = String::new();
 
+    let mut grouping_filter = GroupingFilter::new();
+
     loop {
         let mut result = tokenizer.scan();
         result.token = result.token.trim().to_string();
@@ -27,8 +29,6 @@ fn attempt_sql_obfuscation(mut tokenizer: SqlTokenizer) -> anyhow::Result<String
         }
         result = discard(result, &last_token_kind)?;
         result = replace(result, last_token.as_str(), &last_token_kind)?;
-
-        let mut grouping_filter = GroupingFilter::new();
 
         result = grouping_filter.grouping(result, last_token.as_str(), &last_token_kind)?;
         if !result.token.is_empty() {
@@ -201,28 +201,18 @@ impl GroupingFilter {
             self.reset();
             result.token += "( ";
             return Ok(result);
-        }
-
-        if is_filtered_groupable(&result.token_kind) {
+        } else if is_filtered_groupable(&result.token_kind) {
             // the previous filter has dropped this token so we should start
             // counting the group filter so that we accept only one '?' for
             // the same group
-            self.consec_dropped_groups += 1;
+            self.consec_dropped_vals += 1;
 
-            if self.consec_dropped_groups > 1 {
+            if self.consec_dropped_vals > 1 {
                 return set_result_filtered_groupable(result, None);
             }
-        }
-
-        if self.consec_dropped_vals > 0 && (result.token == "," || result.token == "?") {
+        } else if (self.consec_dropped_vals > 0 && (result.token == "," || result.token == "?")) || self.consec_dropped_groups > 1 {
             return set_result_filtered_groupable(result, None);
-        }
-
-        if self.consec_dropped_groups > 1 {
-            return set_result_filtered_groupable(result, None);
-        }
-
-        if ![",", "(", ")"].contains(&result.token.as_str()) && !is_filtered_groupable(&result.token_kind) {
+        } else if ![",", "(", ")"].contains(&result.token.as_str()) && !is_filtered_groupable(&result.token_kind) {
             self.reset()
         }
         
@@ -272,6 +262,55 @@ mod tests {
             test_name   [test_sql_obfuscation_3]
             input       ["autovacuum: VACUUM fake.big_table (to prevent wraparound)"]
             expected    ["autovacuum : VACUUM fake.big_table ( to prevent wraparound )"];
+        ]
+        [
+            test_name   [test_sql_obfuscation_4]
+            input       [r#"/* Multi-line comment */
+SELECT * FROM clients WHERE (clients.first_name = 'Andy') LIMIT 1 BEGIN INSERT INTO owners (created_at, first_name, locked, orders_count, updated_at) VALUES ('2011-08-30 05:22:57', 'Andy', 1, NULL, '2011-08-30 05:22:57') COMMIT"#]
+            expected    ["SELECT * FROM clients WHERE ( clients.first_name = ? ) LIMIT ? BEGIN INSERT INTO owners ( created_at, first_name, locked, orders_count, updated_at ) VALUES ( ? ) COMMIT"];
+        ]
+        [
+            test_name   [test_sql_obfuscation_5]
+            input       [r#"/* Multi-line comment
+with line breaks */
+WITH sales AS
+(SELECT sf2.*
+    FROM gosalesdw28391.sls_order_method_dim AS md,
+        gosalesdw1920.sls_product_dim391 AS pd190,
+        gosalesdw3819.emp_employee_dim AS ed,
+        gosalesdw3919.sls_sales_fact3819 AS sf2
+    WHERE pd190.product_key = sf2.product_key
+    AND pd190.product_number381 > 10000
+    AND pd190.base_product_key > 30
+    AND md.order_method_key = sf2.order_method_key8319
+    AND md.order_method_code > 5
+    AND ed.employee_key = sf2.employee_key
+    AND ed.manager_code1 > 20),
+inventory3118 AS
+(SELECT if.*
+    FROM gosalesdw1592.go_branch_dim AS bd3221,
+    gosalesdw.dist_inventory_fact AS if
+    WHERE if.branch_key = bd3221.branch_key
+    AND bd3221.branch_code > 20)
+SELECT sales1828.product_key AS PROD_KEY,
+SUM(CAST (inventory3118.quantity_shipped AS BIGINT)) AS INV_SHIPPED3118,
+SUM(CAST (sales1828.quantity AS BIGINT)) AS PROD_QUANTITY,
+RANK() OVER ( ORDER BY SUM(CAST (sales1828.quantity AS BIGINT)) DESC) AS PROD_RANK
+FROM sales1828, inventory3118
+WHERE sales1828.product_key = inventory3118.product_key
+GROUP BY sales1828.product_key"#]
+            expected    ["WITH sales SELECT sf?.* FROM gosalesdw?.sls_order_method_dim, gosalesdw?.sls_product_dim?, gosalesdw?.emp_employee_dim, gosalesdw?.sls_sales_fact? WHERE pd?.product_key = sf?.product_key AND pd?.product_number? > ? AND pd?.base_product_key > ? AND md.order_method_key = sf?.order_method_key? AND md.order_method_code > ? AND ed.employee_key = sf?.employee_key AND ed.manager_code? > ? ) inventory? SELECT if.* FROM gosalesdw?.go_branch_dim, gosalesdw.dist_inventory_fact WHERE if.branch_key = bd?.branch_key AND bd?.branch_code > ? ) SELECT sales?.product_key, SUM ( CAST ( inventory?.quantity_shipped ) ), SUM ( CAST ( sales?.quantity ) ), RANK ( ) OVER ( ORDER BY SUM ( CAST ( sales?.quantity ) ) DESC ) FROM sales?, inventory? WHERE sales?.product_key = inventory?.product_key GROUP BY sales?.product_key"];
+        ]
+        [
+            test_name   [test_sql_obfuscation_6]
+            input       [r#"/*
+Multi-line comment
+with line breaks
+*/
+/* Two multi-line comments with
+line breaks */
+SELECT clients.* FROM clients INNER JOIN posts ON posts.author_id = author.id AND posts.published = 't'"#]
+            expected    ["SELECT clients.* FROM clients INNER JOIN posts ON posts.author_id = author.id AND posts.published = ?"];
         ]
     )]
     #[test]
