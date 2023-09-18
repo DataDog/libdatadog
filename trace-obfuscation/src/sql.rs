@@ -6,11 +6,12 @@
 use crate::sql_tokenizer::{SqlTokenizer, SqlTokenizerScanResult, TokenKind};
 
 const QUESTION_MARK: char = '?';
+const QUESTION_MARK_STR: &str = "?";
 
 pub fn obfuscate_sql_string(s: &str, replace_digits: bool) -> String {
     let use_literal_escapes = true;
     let tokenizer = SqlTokenizer::new(s, use_literal_escapes);
-    attempt_sql_obfuscation(tokenizer, replace_digits).unwrap_or("?".to_string())
+    attempt_sql_obfuscation(tokenizer, replace_digits).unwrap_or(QUESTION_MARK_STR.to_string())
 }
 
 fn attempt_sql_obfuscation(mut tokenizer: SqlTokenizer, replace_digits: bool) -> anyhow::Result<String> {
@@ -166,7 +167,7 @@ fn replace(
     if last_token == "=" && result.token_kind == TokenKind::DoubleQuotedString {
         return set_result_filtered_groupable(result, Some(QUESTION_MARK));
     }
-    if result.token == "?" {
+    if result.token == QUESTION_MARK_STR {
         return set_result_filtered_groupable(result, Some(QUESTION_MARK));
     }
 
@@ -235,7 +236,7 @@ impl GroupingFilter {
             if self.consec_dropped_vals > 1 {
                 return set_result_filtered_groupable(result, None);
             }
-        } else if (self.consec_dropped_vals > 0 && (result.token == "," || result.token == "?")) || self.consec_dropped_groups > 1 {
+        } else if (self.consec_dropped_vals > 0 && (result.token == "," || result.token == QUESTION_MARK_STR)) || self.consec_dropped_groups > 1 {
             return set_result_filtered_groupable(result, None);
         } else if ![",", "(", ")"].contains(&result.token.as_str()) && !is_filtered_groupable(&result.token_kind) {
             self.reset()
