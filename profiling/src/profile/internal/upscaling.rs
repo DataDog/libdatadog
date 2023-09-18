@@ -61,8 +61,7 @@ impl UpscalingRules {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             values_offset.iter().all(|x| *x < max_offset),
-            "Invalid offset. Highest expected offset: {}",
-            max_offset
+            "Invalid offset. Highest expected offset: {max_offset}",
         );
 
         let mut new_values_offset = values_offset.to_vec();
