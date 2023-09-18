@@ -149,13 +149,16 @@ pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTranspo
         config::IpcMode::InstancePerProcess => setup::DefaultLiason::ipc_per_process(),
     };
 
-    match liaison.attempt_listen() {
-        Ok(Some(listener)) => daemonize(listener, cfg)?,
-        Ok(None) => {}
-        Err(err) => tracing::error!("Error starting sidecar {}", err),
-    }
+    let err = match liaison.attempt_listen() {
+        Ok(Some(listener)) => {
+            daemonize(listener, cfg)?;
+            None
+        },
+        Ok(None) => None,
+        err@ _ => err.context("Error starting sidecar").err(),
+    };
 
-    Ok(liaison.connect_to_server()?.into())
+    Ok(liaison.connect_to_server().map_err(|e| err.unwrap_or(e.into()))?.into())
 }
 
 #[cfg(feature = "tracing")]

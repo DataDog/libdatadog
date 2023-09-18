@@ -5,7 +5,7 @@ name = "datadog-sidecar"
 version = "0.0.1"
 
 [features]
-default = []
+default = ["tracing"]
 tracing = ["tracing/std", "tracing-subscriber"]
 tokio-console = ["tokio/full", "tokio/tracing", "console-subscriber"]
 
