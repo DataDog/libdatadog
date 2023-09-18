@@ -40,9 +40,12 @@ int main(int argc, char *argv[]) {
 
   const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
   const ddog_prof_Period period = {wall_time, 60};
-  ddog_prof_Profile profile_data{
-      ddog_prof_Profile_new(sample_types, &period, nullptr)};
-  std::unique_ptr<ddog_prof_Profile, Deleter> profile{&profile_data};
+  ddog_prof_Profile_NewResult profile_new_result =
+      ddog_prof_Profile_new(sample_types, &period, nullptr);
+  if (profile_new_result.tag != DDOG_PROF_PROFILE_NEW_RESULT_OK) {
+    print_error("Failed to make new profile: ", profile_new_result.err);
+  }
+  std::unique_ptr<ddog_prof_Profile, Deleter> profile{&profile_new_result.ok};
 
   ddog_prof_Location root_location = {
       // yes, a zero-initialized mapping is valid
@@ -130,13 +133,13 @@ int main(int argc, char *argv[]) {
   };
 
   ddog_prof_Exporter_Slice_File files_to_export_unmodified = ddog_prof_Exporter_Slice_File_empty();
-  
+
   ddog_CharSlice internal_metadata_example = DDOG_CHARSLICE_C(
       "{\"no_signals_workaround_enabled\": \"true\", \"execution_trace_enabled\": \"false\"}");
 
-  ddog_prof_Exporter_Request_BuildResult build_result =
-      ddog_prof_Exporter_Request_build(exporter, encoded_profile->start, encoded_profile->end,
-                                       files_to_compress_and_export, files_to_export_unmodified, nullptr, nullptr, &internal_metadata_example, 30000);
+  ddog_prof_Exporter_Request_BuildResult build_result = ddog_prof_Exporter_Request_build(
+      exporter, encoded_profile->start, encoded_profile->end, files_to_compress_and_export,
+      files_to_export_unmodified, nullptr, nullptr, &internal_metadata_example, 30000);
   ddog_prof_EncodedProfile_drop(encoded_profile);
 
   if (build_result.tag == DDOG_PROF_EXPORTER_REQUEST_BUILD_RESULT_ERR) {
