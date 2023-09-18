@@ -658,7 +658,6 @@ impl SqlTokenizer {
                 token: format!("{delim}{delim}"),
             };
         }
-        self.get_advanced_chars();
         SqlTokenizerScanResult {
             token_kind: kind,
             token: s.to_string(),
