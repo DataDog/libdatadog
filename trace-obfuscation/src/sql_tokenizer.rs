@@ -117,7 +117,7 @@ pub struct SqlTokenizer {
     pub err: Option<anyhow::Error>, // any errors that occurred while reading
     curlys: i32, // number of active open curly braces in top-level sql escape sequences
     literal_escapes: bool, // indicates we should not treat backslashes as escape characters
-    seen_escape: bool, // indicated whether this tokenizer has seen an escape character within a string
+    pub seen_escape: bool, // indicated whether this tokenizer has seen an escape character within a string
     pub done: bool,
 }
 
@@ -134,6 +134,10 @@ impl SqlTokenizer {
             seen_escape: false,
             done: false,
         }
+    }
+
+    pub fn set_literal_escapes(&mut self, literal_escapes: bool) {
+        self.literal_escapes = literal_escapes
     }
 
     pub fn scan(&mut self) -> SqlTokenizerScanResult {
@@ -160,12 +164,6 @@ impl SqlTokenizer {
                 token: String::new(),
             };
         }
-        if self.done {
-            return SqlTokenizerScanResult {
-                token_kind: TokenKind::Done,
-                token: self.get_advanced_chars(),
-            };
-        }
 
         match prev_char {
             // TODO: Add postgres specific behavior for '$' and '@' match cases (which are omitted)
@@ -173,6 +171,7 @@ impl SqlTokenizer {
             ':' => {
                 if self.cur_char == ':' {
                     self.next();
+                    self.get_advanced_chars();
                     return SqlTokenizerScanResult {
                         token_kind: TokenKind::ColonCast,
                         token: "::".to_string(),
@@ -193,6 +192,7 @@ impl SqlTokenizer {
             '~' => {
                 if self.cur_char == '*' {
                     self.next();
+                    self.get_advanced_chars();
                     return SqlTokenizerScanResult {
                         token_kind: TokenKind::Char,
                         token: "~*".to_string(),
@@ -269,14 +269,12 @@ impl SqlTokenizer {
             '#' => {
                 // TODO: add dbms postgres specific logic
                 self.next();
-                SqlTokenizerScanResult {
-                    token_kind: TokenKind::Char,
-                    token: self.get_advanced_chars(),
-                }
+                self.scan_comment_type_1()
             }
             '<' => match self.cur_char {
                 '>' => {
                     self.next();
+                    self.get_advanced_chars();
                     SqlTokenizerScanResult {
                         token_kind: TokenKind::NE,
                         token: "<>".to_string(),
@@ -286,11 +284,13 @@ impl SqlTokenizer {
                     self.next();
                     if self.cur_char == '>' {
                         self.next();
+                        self.get_advanced_chars();
                         return SqlTokenizerScanResult {
                             token_kind: TokenKind::NullSafeEqual,
                             token: "<=>".to_string(),
                         };
                     }
+                    self.get_advanced_chars();
                     SqlTokenizerScanResult {
                         token_kind: TokenKind::LE,
                         token: "<=".to_string(),
@@ -304,6 +304,7 @@ impl SqlTokenizer {
             '>' => {
                 if self.cur_char == '=' {
                     self.next();
+                    self.get_advanced_chars();
                     return SqlTokenizerScanResult {
                         token_kind: TokenKind::GE,
                         token: ">=".to_string(),
@@ -317,6 +318,7 @@ impl SqlTokenizer {
             '!' => match self.cur_char {
                 '=' => {
                     self.next();
+                    self.get_advanced_chars();
                     SqlTokenizerScanResult {
                         token_kind: TokenKind::NE,
                         token: "!=".to_string(),
@@ -326,11 +328,13 @@ impl SqlTokenizer {
                     self.next();
                     if self.cur_char == '*' {
                         self.next();
+                        self.get_advanced_chars();
                         return SqlTokenizerScanResult {
                             token_kind: TokenKind::NE,
                             token: "!~*".to_string(),
                         };
                     }
+                    self.get_advanced_chars();
                     SqlTokenizerScanResult {
                         token_kind: TokenKind::NE,
                         token: "!~".to_string(),
@@ -629,6 +633,13 @@ impl SqlTokenizer {
                 if self.cur_char == delim && !self.done {
                     // doubling the delimiter is the default way to embed the delimiter within a string
                     self.next();
+                } else if self.done && self.offset.unwrap() > self.query.len() {
+                    // edge case where we start scanning for a string at the very end of the query
+                    self.err = Some(anyhow::anyhow!("unexpected EOF in string"));
+                    return SqlTokenizerScanResult {
+                        token_kind: TokenKind::LexError,
+                        token: s.to_string(),
+                    };
                 } else {
                     // a single delimiter denotes the end of the string
                     break;
