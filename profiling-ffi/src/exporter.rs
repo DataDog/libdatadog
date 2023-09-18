@@ -45,6 +45,12 @@ pub struct File<'a> {
     file: ByteSlice<'a>,
 }
 
+#[must_use]
+#[no_mangle]
+pub extern "C" fn ddog_prof_Exporter_Slice_File_empty() -> Slice<'static, File<'static>> {
+    Slice::empty()
+}
+
 // This type exists only to force cbindgen to expose an CancellationToken as an opaque type.
 pub struct CancellationToken(tokio_util::sync::CancellationToken);
 
@@ -218,7 +224,8 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     exporter: Option<&mut ProfileExporter>,
     start: Timespec,
     end: Timespec,
-    files: Slice<File>,
+    files_to_compress_and_export: Slice<File>,
+    files_to_export_unmodified: Slice<File>,
     optional_additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
     optional_endpoints_stats: Option<&profiled_endpoints::ProfiledEndpointsStats>,
     optional_internal_metadata_json: Option<&CharSlice>,
@@ -228,7 +235,8 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
         None => RequestBuildResult::Err(anyhow::anyhow!("exporter was null").into()),
         Some(exporter) => {
             let timeout = std::time::Duration::from_millis(timeout_ms);
-            let converted_files = into_vec_files(files);
+            let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
+            let files_to_export_unmodified = into_vec_files(files_to_export_unmodified);
             let tags = optional_additional_tags.map(|tags| tags.iter().cloned().collect());
 
             let internal_metadata =
@@ -240,7 +248,8 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
             match exporter.build(
                 start.into(),
                 end.into(),
-                converted_files.as_slice(),
+                files_to_compress_and_export.as_slice(),
+                files_to_export_unmodified.as_slice(),
                 tags.as_ref(),
                 optional_endpoints_stats,
                 internal_metadata,
@@ -516,7 +525,7 @@ mod test {
             ExporterNewResult::Err(_) => panic!("Should not occur!"),
         };
 
-        let files: &[File] = &[File {
+        let files_to_compress_and_export: &[File] = &[File {
             name: CharSlice::from("foo.pprof"),
             file: ByteSlice::from(b"dummy contents" as &[u8]),
         }];
@@ -536,7 +545,8 @@ mod test {
                 Some(exporter.as_mut()),
                 start,
                 finish,
-                Slice::from(files),
+                Slice::from(files_to_compress_and_export),
+                Slice::empty(),
                 None,
                 None,
                 None,
@@ -615,6 +625,7 @@ mod test {
                 start,
                 finish,
                 Slice::from(files),
+                Slice::empty(),
                 None,
                 None,
                 Some(&raw_internal_metadata),
@@ -677,6 +688,7 @@ mod test {
                 start,
                 finish,
                 Slice::from(files),
+                Slice::empty(),
                 None,
                 None,
                 Some(&raw_internal_metadata),
@@ -709,7 +721,8 @@ mod test {
                 None, // No exporter, will fail
                 start,
                 finish,
-                Slice::default(),
+                Slice::empty(),
+                Slice::empty(),
                 None,
                 None,
                 None,
