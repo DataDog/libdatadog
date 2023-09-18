@@ -66,6 +66,11 @@ pub enum TokenKind {
 	// tokens.
 	FilteredGroupable,
 
+    // FilteredBracketedIdentifier specifies that we are currently discarding
+	// a bracketed identifier (MSSQL).
+	// See issue https://github.com/DataDog/datadog-trace-agent/issues/475.
+	FilteredBracketedIdentifier,
+
     DollarQuotedString,
 }
 
@@ -435,9 +440,9 @@ impl SqlTokenizer {
 
     fn scan_identifier(&mut self) -> SqlTokenizerScanResult {
         self.next();
-        while !self.done && self.is_letter(self.cur_char)
+        while !self.done && (self.is_letter(self.cur_char)
             || self.cur_char.is_ascii_digit()
-            || ".*$".contains(self.cur_char)
+            || ".*$".contains(self.cur_char))
         {
             self.next();
         }
@@ -646,13 +651,13 @@ impl SqlTokenizer {
             }
             s.push(prev_char);
         }
+        self.get_advanced_chars();
         if kind == TokenKind::ID && s.is_empty() || s.chars().all(|c| c.is_whitespace()) {
             return SqlTokenizerScanResult {
                 token_kind: kind,
                 token: format!("{delim}{delim}"),
             };
         }
-        self.get_advanced_chars();
         SqlTokenizerScanResult {
             token_kind: kind,
             token: s.to_string(),
