@@ -626,7 +626,7 @@ impl SqlTokenizer {
             let mut prev_char = self.cur_char;
             self.next();
             if prev_char == delim {
-                if self.cur_char == delim && !self.done  {
+                if self.cur_char == delim && !self.done {
                     // doubling the delimiter is the default way to embed the delimiter within a string
                     self.next();
                 } else {
