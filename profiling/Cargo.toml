@@ -3,9 +3,10 @@
 
 [package]
 name = "datadog-profiling"
-version = "4.0.0"
-edition = "2021"
-license = "Apache-2.0"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["lib"]

@@ -56,20 +56,20 @@ pub enum TokenKind {
     Filtered,
 
     // FilteredGroupableParenthesis is a parenthesis marked as filtered groupable. It is the
-	// beginning of either a group of values ('(') or a nested query. We track is as
-	// a special case for when it may start a nested query as opposed to just another
-	// value group to be obfuscated.
-	FilteredGroupableParenthesis,
+    // beginning of either a group of values ('(') or a nested query. We track is as
+    // a special case for when it may start a nested query as opposed to just another
+    // value group to be obfuscated.
+    FilteredGroupableParenthesis,
 
     // FilteredGroupable specifies that the given token has been discarded by one of the
-	// token filters and that it is groupable together with consecutive FilteredGroupable
-	// tokens.
-	FilteredGroupable,
+    // token filters and that it is groupable together with consecutive FilteredGroupable
+    // tokens.
+    FilteredGroupable,
 
     // FilteredBracketedIdentifier specifies that we are currently discarding
-	// a bracketed identifier (MSSQL).
-	// See issue https://github.com/DataDog/datadog-trace-agent/issues/475.
-	FilteredBracketedIdentifier,
+    // a bracketed identifier (MSSQL).
+    // See issue https://github.com/DataDog/datadog-trace-agent/issues/475.
+    FilteredBracketedIdentifier,
 
     DollarQuotedString,
 }
@@ -117,9 +117,9 @@ pub struct SqlTokenizer {
     offset: Option<usize>, // the index of the current char
     index_of_last_read: usize,
     query: Vec<char>,               // the sql query we are parsing
-    pub err: Option<anyhow::Error>, // any errors that occurred while reading
     curlys: i32, // number of active open curly braces in top-level sql escape sequences
     literal_escapes: bool, // indicates we should not treat backslashes as escape characters
+    pub err: Option<anyhow::Error>, // any errors that occurred while reading
     pub seen_escape: bool, // indicated whether this tokenizer has seen an escape character within a string
     pub done: bool,
 }
@@ -147,6 +147,7 @@ impl SqlTokenizer {
         if self.offset.is_none() {
             self.next();
             if self.done {
+                // query is empty
                 return SqlTokenizerScanResult {
                     token_kind: TokenKind::Done,
                     token: String::new(),
@@ -397,7 +398,7 @@ impl SqlTokenizer {
             }
             '}' => {
                 if self.curlys == 0 {
-                    self.set_error(&format!("unexptected char \"{}\"", self.cur_char));
+                    self.set_error(&format!("unexpected char \"{}\"", self.cur_char));
                     return SqlTokenizerScanResult {
                         token_kind: TokenKind::LexError,
                         token: self.get_advanced_chars(),
@@ -458,9 +459,10 @@ impl SqlTokenizer {
 
     fn scan_identifier(&mut self) -> SqlTokenizerScanResult {
         self.next();
-        while !self.done && (self.is_letter(self.cur_char)
-            || self.cur_char.is_ascii_digit()
-            || ".*$".contains(self.cur_char))
+        while !self.done
+            && (self.is_letter(self.cur_char)
+                || self.cur_char.is_ascii_digit()
+                || ".*$".contains(self.cur_char))
         {
             self.next();
         }
@@ -698,12 +700,8 @@ impl SqlTokenizer {
         let s = &mut String::new();
         let mut delim_index = 0;
         let delim: Vec<char> = match result.token.as_str() {
-            "$$" => {
-                result.token.chars().collect()
-            }
-            _ => {
-                format!("${}$", result.token).chars().collect()
-            }
+            "$$" => result.token.chars().collect(),
+            _ => format!("${}$", result.token).chars().collect(),
         };
         loop {
             let c = self.cur_char;
@@ -712,7 +710,7 @@ impl SqlTokenizer {
                 self.err = Some(anyhow::anyhow!("unexpected EOF in dollar-quoted string"));
                 return SqlTokenizerScanResult {
                     token_kind: TokenKind::LexError,
-                    token: s.to_string()
+                    token: s.to_string(),
                 };
             }
             if c == delim[delim_index] {
@@ -731,9 +729,8 @@ impl SqlTokenizer {
         }
         SqlTokenizerScanResult {
             token_kind: TokenKind::DollarQuotedString,
-            token: s.to_string()
+            token: s.to_string(),
         }
-
     }
 
     fn scan_comment_type_1(&mut self) -> SqlTokenizerScanResult {
@@ -990,7 +987,7 @@ host:localhost,url:controller#home,id:FF005:00CAA
         test_name                               input               expected;
         [test_tokenize_dollar_quoted_str_1]  ["$tag$abc$tag$"]   ["abc"];
         [test_tokenize_dollar_quoted_str_2]  ["$func$abc$func$"]   ["abc"];
-        [test_tokenize_dollar_quoted_str_3]  [r#"$tag$textwith\n\rnewlinesand\r\\\$tag$"#]   [r#"textwith\n\rnewlinesand\r\\\"#];
+        [test_tokenize_dollar_quoted_str_3]  [r"$tag$textwith\n\rnewlinesand\r\\\$tag$"]   [r"textwith\n\rnewlinesand\r\\\"];
         [test_tokenize_dollar_quoted_str_4]  ["$tag$ab$tactac$tx$tag$"]   ["ab$tactac$tx"];
         [test_tokenize_dollar_quoted_str_5]  ["$$abc$$"]   ["abc"];
     )]
@@ -1013,7 +1010,10 @@ host:localhost,url:controller#home,id:FF005:00CAA
         let result = tokenizer.scan();
         assert!(tokenizer.done);
         assert_eq!(result.token_kind, TokenKind::LexError);
-        assert_eq!(tokenizer.err.unwrap().to_string(), "unexpected EOF in dollar-quoted string");
+        assert_eq!(
+            tokenizer.err.unwrap().to_string(),
+            "unexpected EOF in dollar-quoted string"
+        );
     }
 
     #[duplicate_item(
@@ -1031,123 +1031,123 @@ host:localhost,url:controller#home,id:FF005:00CAA
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_3]
-            input           [r#"'String with backslash at end \'"#]
+            input           [r"'String with backslash at end \'"]
             expected        ["String with backslash at end '"]
 			token_kind_str  ["LEXERROR"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_4]
-            input           [r#"'String with backslash \ in the middle'"#]
+            input           [r"'String with backslash \ in the middle'"]
             expected        ["String with backslash  in the middle"]
 			token_kind_str  ["STRING"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_5]
-            input           [r#"'String with double-backslash at end \\'"#]
+            input           [r"'String with double-backslash at end \\'"]
             expected        ["String with double-backslash at end \\"]
 			token_kind_str  ["STRING"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_6]
-            input           [r#"'String with double-backslash \\ in the middle'"#]
+            input           [r"'String with double-backslash \\ in the middle'"]
             expected        ["String with double-backslash \\ in the middle"]
 			token_kind_str  ["STRING"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_7]
-            input           [r#"'String with backslash-escaped quote at end \''"#]
+            input           [r"'String with backslash-escaped quote at end \''"]
             expected        ["String with backslash-escaped quote at end '"]
 			token_kind_str  ["STRING"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_8]
-            input           [r#"'String with backslash-escaped quote \' in middle'"#]
+            input           [r"'String with backslash-escaped quote \' in middle'"]
             expected        ["String with backslash-escaped quote ' in middle"]
 			token_kind_str  ["STRING"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_9]
-            input           [r#"'String with backslash-escaped embedded string \'foo\' in the middle'"#]
+            input           [r"'String with backslash-escaped embedded string \'foo\' in the middle'"]
             expected        ["String with backslash-escaped embedded string 'foo' in the middle"]
 			token_kind_str  ["STRING"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_10]
-            input           [r#"'String with backslash-escaped embedded string at end \'foo\''"#]
+            input           [r"'String with backslash-escaped embedded string at end \'foo\''"]
             expected        ["String with backslash-escaped embedded string at end 'foo'"]
 			token_kind_str  ["STRING"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_11]
-            input           [r#"'String with double-backslash-escaped embedded string at the end \\'foo\\''"#]
+            input           [r"'String with double-backslash-escaped embedded string at the end \\'foo\\''"]
             expected        ["String with double-backslash-escaped embedded string at the end \\"]
 			token_kind_str  ["STRING"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_12]
-            input           [r#"'String with double-backslash-escaped embedded string \\'foo\\' in the middle'"#]
+            input           [r"'String with double-backslash-escaped embedded string \\'foo\\' in the middle'"]
             expected        ["String with double-backslash-escaped embedded string \\"]
 			token_kind_str  ["STRING"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_13]
-            input           [r#"'String with backslash-escaped embedded string \'foo\' in the middle followed by one at the end \'"#]
+            input           [r"'String with backslash-escaped embedded string \'foo\' in the middle followed by one at the end \'"]
             expected        ["String with backslash-escaped embedded string 'foo' in the middle followed by one at the end '"]
 			token_kind_str  ["LEXERROR"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_14]
-            input           [r#"'String with embedded string at end ''foo'''"#]
+            input           [r"'String with embedded string at end ''foo'''"]
             expected        ["String with embedded string at end 'foo'"]
 			token_kind_str  ["STRING"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_15]
-            input           [r#"'String with embedded string ''foo'' in the middle'"#]
+            input           [r"'String with embedded string ''foo'' in the middle'"]
             expected        ["String with embedded string 'foo' in the middle"]
 			token_kind_str  ["STRING"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_16]
-            input           [r#"'String with tab at end	'"#]
+            input           [r"'String with tab at end	'"]
             expected        ["String with tab at end\t"]
 			token_kind_str  ["STRING"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_17]
-            input           [r#"'String with tab	in the middle'"#]
+            input           [r"'String with tab	in the middle'"]
             expected        ["String with tab\tin the middle"]
 			token_kind_str  ["STRING"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_18]
-            input           [r#"'String with newline at the end
-'"#]
+            input           [r"'String with newline at the end
+'"]
             expected        ["String with newline at the end\n"]
 			token_kind_str  ["STRING"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_19]
-            input           [r#"'String with newline
-in the middle'"#]
+            input           [r"'String with newline
+in the middle'"]
             expected        ["String with newline\nin the middle"]
 			token_kind_str  ["STRING"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_20]
-            input           [r#"'Simple string missing closing quote"#]
+            input           [r"'Simple string missing closing quote"]
             expected        ["Simple string missing closing quote"]
 			token_kind_str  ["LEXERROR"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_21]
-            input           [r#"'String missing closing quote with backslash at end \"#]
+            input           [r"'String missing closing quote with backslash at end \"]
             expected        ["String missing closing quote with backslash at end \\"]
 			token_kind_str  ["LEXERROR"];
 		]
 		[
             test_name       [test_tokenize_literal_escapes_false_22]
-            input           [r#"'String with backslash \ in the middle missing closing quote"#]
+            input           [r"'String with backslash \ in the middle missing closing quote"]
             expected        ["String with backslash  in the middle missing closing quote"]
 			token_kind_str  ["LEXERROR"];
 		]
@@ -1160,7 +1160,7 @@ in the middle'"#]
 		// The following case will treat the final quote as unescaped
 		[
             test_name       [test_tokenize_literal_escapes_false_24]
-            input           [r#"'String missing closing quote with backslash-escaped quote at end \'"#]
+            input           [r"'String missing closing quote with backslash-escaped quote at end \'"]
             expected        ["String missing closing quote with backslash-escaped quote at end '"]
 			token_kind_str  ["LEXERROR"];
         ]
@@ -1169,38 +1169,41 @@ in the middle'"#]
     fn test_name() {
         let mut tokenizer = SqlTokenizer::new(input, false);
         let result = tokenizer.scan();
-        assert_eq!(result.token_kind, TokenKind::from_str(token_kind_str).unwrap());
+        assert_eq!(
+            result.token_kind,
+            TokenKind::from_str(token_kind_str).unwrap()
+        );
         assert_eq!(result.token, expected);
     }
 
     #[duplicate_item(
         [
             test_name       [test_tokenize_literal_escapes_true_1]
-            input           [r#"'Simple string'"#]
+            input           ["'Simple string'"]
             expected        ["Simple string"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_2]
-            input           [r#"'String with backslash at end \'"#]
+            input           [r"'String with backslash at end \'"]
             expected        ["String with backslash at end \\"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_3]
-            input           [r#"'String with backslash \ in the middle'"#]
+            input           [r"'String with backslash \ in the middle'"]
             expected        ["String with backslash \\ in the middle"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_4]
-            input           [r#"'String with double-backslash at end \\'"#]
+            input           [r"'String with double-backslash at end \\'"]
             expected        ["String with double-backslash at end \\\\"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_5]
-            input           [r#"'String with double-backslash \\ in the middle'"#]
+            input           [r"'String with double-backslash \\ in the middle'"]
             expected        ["String with double-backslash \\\\ in the middle"]
             token_kind_str  ["STRING"];
         ]
@@ -1208,106 +1211,106 @@ in the middle'"#]
         // thus missing the final single quote
         [
             test_name       [test_tokenize_literal_escapes_true_6]
-            input           [r#"'String with backslash-escaped quote at end \''"#]
+            input           [r"'String with backslash-escaped quote at end \''"]
             expected        ["String with backslash-escaped quote at end \\'"]
             token_kind_str  ["LEXERROR"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_7]
-            input           [r#"'String with backslash-escaped quote \' in middle'"#]
+            input           [r"'String with backslash-escaped quote \' in middle'"]
             expected        ["String with backslash-escaped quote \\"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_8]
-            input           [r#"'String with backslash-escaped embedded string at the end \'foo\''"#]
+            input           [r"'String with backslash-escaped embedded string at the end \'foo\''"]
             expected        ["String with backslash-escaped embedded string at the end \\"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_9]
-            input           [r#"'String with backslash-escaped embedded string \'foo\' in the middle'"#]
+            input           [r"'String with backslash-escaped embedded string \'foo\' in the middle'"]
             expected        ["String with backslash-escaped embedded string \\"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_10]
-            input           [r#"'String with double-backslash-escaped embedded string at end \\'foo\\''"#]
+            input           [r"'String with double-backslash-escaped embedded string at end \\'foo\\''"]
             expected        ["String with double-backslash-escaped embedded string at end \\\\"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_11]
-            input           [r#"'String with double-backslash-escaped embedded string \\'foo\\' in the middle'"#]
+            input           [r"'String with double-backslash-escaped embedded string \\'foo\\' in the middle'"]
             expected        ["String with double-backslash-escaped embedded string \\\\"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_12]
-            input           [r#"'String with backslash-escaped embedded string \'foo\' in the middle followed by one at the end \'"#]
+            input           [r"'String with backslash-escaped embedded string \'foo\' in the middle followed by one at the end \'"]
             expected        ["String with backslash-escaped embedded string \\"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_13]
-            input           [r#"'String with embedded string at end ''foo'''"#]
+            input           ["'String with embedded string at end ''foo'''"]
             expected        ["String with embedded string at end 'foo'"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_14]
-            input           [r#"'String with embedded string ''foo'' in the middle'"#]
+            input           ["'String with embedded string ''foo'' in the middle'"]
             expected        ["String with embedded string 'foo' in the middle"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_15]
-            input           [r#"'String with tab at end	'"#]
+            input           ["'String with tab at end	'"]
             expected        ["String with tab at end\t"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_16]
-            input           [r#"'String with tab	in the middle'"#]
+            input           ["'String with tab	in the middle'"]
             expected        ["String with tab\tin the middle"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_17]
-            input           [r#"'String with newline at the end
-'"#]
+            input           ["'String with newline at the end
+'"]
             expected        ["String with newline at the end\n"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_18]
-            input           [r#"'String with newline
-in the middle'"#]
+            input           ["'String with newline
+in the middle'"]
             expected        ["String with newline\nin the middle"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_19]
-            input           [r#"'Simple string missing closing quote"#]
+            input           ["'Simple string missing closing quote"]
             expected        ["Simple string missing closing quote"]
             token_kind_str  ["LEXERROR"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_20]
-            input           [r#"'String missing closing quote with backslash at end \"#]
+            input           [r"'String missing closing quote with backslash at end \"]
             expected        ["String missing closing quote with backslash at end \\"]
             token_kind_str  ["LEXERROR"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_21]
-            input           [r#"'String with backslash \ in the middle missing closing quote"#]
+            input           [r"'String with backslash \ in the middle missing closing quote"]
             expected        ["String with backslash \\ in the middle missing closing quote"]
             token_kind_str  ["LEXERROR"];
         ]
         // The following case will treat the final quote as unescaped
         [
             test_name       [test_tokenize_literal_escapes_true_22]
-            input           [r#"'String missing closing quote with backslash-escaped quote at end \'"#]
+            input           [r"'String missing closing quote with backslash-escaped quote at end \'"]
             expected        ["String missing closing quote with backslash-escaped quote at end \\"]
             token_kind_str  ["STRING"];
         ]
@@ -1316,7 +1319,10 @@ in the middle'"#]
     fn test_name() {
         let mut tokenizer = SqlTokenizer::new(input, true);
         let result = tokenizer.scan();
-        assert_eq!(result.token_kind, TokenKind::from_str(token_kind_str).unwrap());
+        assert_eq!(
+            result.token_kind,
+            TokenKind::from_str(token_kind_str).unwrap()
+        );
         assert_eq!(result.token, expected);
     }
 }

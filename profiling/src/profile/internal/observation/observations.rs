@@ -83,6 +83,37 @@ impl Observations {
     }
 }
 
+pub struct ObservationsIntoIter {
+    it: Box<dyn Iterator<Item = <ObservationsIntoIter as IntoIterator>::Item>>,
+}
+
+impl Iterator for ObservationsIntoIter {
+    type Item = (Sample, Option<Timestamp>, Vec<i64>);
+    fn next(&mut self) -> Option<Self::Item> {
+        self.it.next()
+    }
+}
+
+impl IntoIterator for Observations {
+    type Item = (Sample, Option<Timestamp>, Vec<i64>);
+    type IntoIter = ObservationsIntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let it = self.inner.into_iter().flat_map(|mut observations| {
+            let timestamped_data_it = std::mem::take(&mut observations.timestamped_data)
+                .into_iter()
+                .map(|(s, t, o)| (s, Some(t), o));
+            let aggregated_data_it = std::mem::take(&mut observations.aggregated_data)
+                .into_iter()
+                .map(|(s, o)| (s, None, o));
+            timestamped_data_it
+                .chain(aggregated_data_it)
+                .map(move |(s, t, o)| (s, t, unsafe { o.into_vec(observations.obs_len) }))
+        });
+        ObservationsIntoIter { it: Box::new(it) }
+    }
+}
+
 impl Drop for NonEmptyObservations {
     fn drop(&mut self) {
         let o = self.obs_len;
@@ -293,5 +324,49 @@ mod test {
         o.add(s1, Some(ts), vec![1, 2, 3]);
         // This should panic
         o.add(s1, None, vec![4, 5]);
+    }
+
+    #[test]
+    fn into_iter_test() {
+        let mut o = Observations::default();
+        // These are only for test purposes. The only thing that matters is that
+        // they differ
+        let s1 = Sample {
+            labels: LabelSetId::from_offset(1),
+            stacktrace: StackTraceId::from_offset(1),
+        };
+        let s2 = Sample {
+            labels: LabelSetId::from_offset(2),
+            stacktrace: StackTraceId::from_offset(2),
+        };
+        let s3 = Sample {
+            labels: LabelSetId::from_offset(3),
+            stacktrace: StackTraceId::from_offset(3),
+        };
+        let t1 = Some(Timestamp::new(1).unwrap());
+
+        o.add(s1, None, vec![1, 2, 3]);
+        o.add(s1, None, vec![4, 5, 6]);
+        o.add(s2, None, vec![7, 8, 9]);
+        o.add(s3, t1, vec![1, 1, 2]);
+
+        let mut count = 0;
+        o.into_iter().for_each(|(k, ts, v)| {
+            count += 1;
+            if k == s1 {
+                assert!(ts.is_none());
+                assert_eq!(v, vec![5, 7, 9]);
+            } else if k == s2 {
+                assert!(ts.is_none());
+                assert_eq!(v, vec![7, 8, 9]);
+            } else if k == s3 {
+                assert_eq!(ts, t1);
+                assert_eq!(v, vec![1, 1, 2]);
+            } else {
+                panic!("Unexpected key");
+            }
+        });
+        // Two of the samples were aggregated, so three total samples at the end
+        assert_eq!(count, 3);
     }
 }

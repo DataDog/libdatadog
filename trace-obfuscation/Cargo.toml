@@ -1,8 +1,10 @@
 [package]
 name = "datadog-trace-obfuscation"
-version = "2.1.0"
 authors = ["David Lee <david.lee@datadoghq.com>"]
-edition = "2021"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
 
 [dependencies]
 anyhow = "1.0"
