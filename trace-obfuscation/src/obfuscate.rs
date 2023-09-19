@@ -4,11 +4,14 @@
 // Datadog, Inc.
 
 use datadog_trace_protobuf::pb;
+use log::debug;
 
 use crate::{
     http::obfuscate_url_string, memcached::obfuscate_memcached_string,
-    obfuscation_config::ObfuscationConfig, replacer::replace_span_tags,
+    obfuscation_config::ObfuscationConfig, replacer::replace_span_tags, sql::obfuscate_sql_string,
 };
+
+const TEXT_NON_PARSABLE: &str = "Non-parsable SQL query";
 
 pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
     match span.r#type.as_str() {
@@ -28,6 +31,24 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
             if let Some(cmd) = span.meta.get_mut("memcached.command") {
                 *cmd = obfuscate_memcached_string(cmd)
             }
+        }
+        "sql" | "cassandra" => {
+            if span.resource.is_empty() {
+                return;
+            }
+            let sql_obfuscation_result = obfuscate_sql_string(&span.resource, false);
+            if let Some(err) = sql_obfuscation_result.error {
+                debug!(
+                    "Error parsing SQL query: {}. Resource: {}",
+                    err, span.resource
+                );
+                span.resource = TEXT_NON_PARSABLE.to_string();
+                span.meta
+                    .insert("sql.query".to_string(), TEXT_NON_PARSABLE.to_string());
+            }
+            let query = sql_obfuscation_result.obfuscated_string.unwrap_or_default();
+            span.resource = query.clone();
+            span.meta.insert("sql.query".to_string(), query);
         }
         _ => {}
     }
@@ -89,5 +110,24 @@ mod tests {
         obfuscate_span(&mut span, &obf_config);
 
         assert_eq!(span.meta.get("custom.tag").unwrap(), "/foo/bar/extra");
+    }
+
+    #[test]
+    fn test_obfuscate_span_sql_query() {
+        let mut span = trace_test_utils::create_test_span(111, 222, 0, 1, true);
+        span.resource = "SELECT username AS name from users where id = 2".to_string();
+        span.r#type = "sql".to_string();
+        let obf_config = obfuscation_config::ObfuscationConfig {
+            tag_replace_rules: None,
+            http_remove_query_string: false,
+            http_remove_path_digits: false,
+            obfuscate_memcached: false,
+        };
+        obfuscate_span(&mut span, &obf_config);
+        assert_eq!(span.resource, "SELECT username from users where id = ?");
+        assert_eq!(
+            span.meta.get("sql.query").unwrap(),
+            "SELECT username from users where id = ?"
+        )
     }
 }
