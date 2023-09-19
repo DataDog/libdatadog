@@ -3,7 +3,10 @@
 // developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
 // Datadog, Inc.
 
-use crate::{sql_tokenizer::{SqlTokenizer, SqlTokenizerScanResult, TokenKind}, obfuscation_config::ObfuscationConfig};
+use crate::{
+    obfuscation_config::ObfuscationConfig,
+    sql_tokenizer::{SqlTokenizer, SqlTokenizerScanResult, TokenKind},
+};
 
 const QUESTION_MARK: char = '?';
 const QUESTION_MARK_STR: &str = "?";
@@ -349,7 +352,7 @@ mod tests {
 
     use duplicate::duplicate_item;
 
-    use crate::{sql::obfuscate_sql_string, sql_tokenizer::SqlTokenizer, obfuscation_config};
+    use crate::{obfuscation_config, sql::obfuscate_sql_string, sql_tokenizer::SqlTokenizer};
 
     use super::attempt_sql_obfuscation;
 
