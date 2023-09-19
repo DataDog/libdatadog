@@ -56,20 +56,20 @@ pub enum TokenKind {
     Filtered,
 
     // FilteredGroupableParenthesis is a parenthesis marked as filtered groupable. It is the
-	// beginning of either a group of values ('(') or a nested query. We track is as
-	// a special case for when it may start a nested query as opposed to just another
-	// value group to be obfuscated.
-	FilteredGroupableParenthesis,
+    // beginning of either a group of values ('(') or a nested query. We track is as
+    // a special case for when it may start a nested query as opposed to just another
+    // value group to be obfuscated.
+    FilteredGroupableParenthesis,
 
     // FilteredGroupable specifies that the given token has been discarded by one of the
-	// token filters and that it is groupable together with consecutive FilteredGroupable
-	// tokens.
-	FilteredGroupable,
+    // token filters and that it is groupable together with consecutive FilteredGroupable
+    // tokens.
+    FilteredGroupable,
 
     // FilteredBracketedIdentifier specifies that we are currently discarding
-	// a bracketed identifier (MSSQL).
-	// See issue https://github.com/DataDog/datadog-trace-agent/issues/475.
-	FilteredBracketedIdentifier,
+    // a bracketed identifier (MSSQL).
+    // See issue https://github.com/DataDog/datadog-trace-agent/issues/475.
+    FilteredBracketedIdentifier,
 
     DollarQuotedString,
 }
@@ -459,9 +459,10 @@ impl SqlTokenizer {
 
     fn scan_identifier(&mut self) -> SqlTokenizerScanResult {
         self.next();
-        while !self.done && (self.is_letter(self.cur_char)
-            || self.cur_char.is_ascii_digit()
-            || ".*$".contains(self.cur_char))
+        while !self.done
+            && (self.is_letter(self.cur_char)
+                || self.cur_char.is_ascii_digit()
+                || ".*$".contains(self.cur_char))
         {
             self.next();
         }
@@ -699,12 +700,8 @@ impl SqlTokenizer {
         let s = &mut String::new();
         let mut delim_index = 0;
         let delim: Vec<char> = match result.token.as_str() {
-            "$$" => {
-                result.token.chars().collect()
-            }
-            _ => {
-                format!("${}$", result.token).chars().collect()
-            }
+            "$$" => result.token.chars().collect(),
+            _ => format!("${}$", result.token).chars().collect(),
         };
         loop {
             let c = self.cur_char;
@@ -713,7 +710,7 @@ impl SqlTokenizer {
                 self.err = Some(anyhow::anyhow!("unexpected EOF in dollar-quoted string"));
                 return SqlTokenizerScanResult {
                     token_kind: TokenKind::LexError,
-                    token: s.to_string()
+                    token: s.to_string(),
                 };
             }
             if c == delim[delim_index] {
@@ -732,9 +729,8 @@ impl SqlTokenizer {
         }
         SqlTokenizerScanResult {
             token_kind: TokenKind::DollarQuotedString,
-            token: s.to_string()
+            token: s.to_string(),
         }
-
     }
 
     fn scan_comment_type_1(&mut self) -> SqlTokenizerScanResult {
@@ -1014,7 +1010,10 @@ host:localhost,url:controller#home,id:FF005:00CAA
         let result = tokenizer.scan();
         assert!(tokenizer.done);
         assert_eq!(result.token_kind, TokenKind::LexError);
-        assert_eq!(tokenizer.err.unwrap().to_string(), "unexpected EOF in dollar-quoted string");
+        assert_eq!(
+            tokenizer.err.unwrap().to_string(),
+            "unexpected EOF in dollar-quoted string"
+        );
     }
 
     #[duplicate_item(
@@ -1170,7 +1169,10 @@ in the middle'"#]
     fn test_name() {
         let mut tokenizer = SqlTokenizer::new(input, false);
         let result = tokenizer.scan();
-        assert_eq!(result.token_kind, TokenKind::from_str(token_kind_str).unwrap());
+        assert_eq!(
+            result.token_kind,
+            TokenKind::from_str(token_kind_str).unwrap()
+        );
         assert_eq!(result.token, expected);
     }
 
@@ -1317,7 +1319,10 @@ in the middle'"#]
     fn test_name() {
         let mut tokenizer = SqlTokenizer::new(input, true);
         let result = tokenizer.scan();
-        assert_eq!(result.token_kind, TokenKind::from_str(token_kind_str).unwrap());
+        assert_eq!(
+            result.token_kind,
+            TokenKind::from_str(token_kind_str).unwrap()
+        );
         assert_eq!(result.token, expected);
     }
 }
