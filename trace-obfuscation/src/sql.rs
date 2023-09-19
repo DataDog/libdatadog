@@ -12,7 +12,7 @@ pub fn obfuscate_sql_string(s: &str, replace_digits: bool) -> String {
     let use_literal_escapes = false;
     let mut tokenizer = SqlTokenizer::new(s, use_literal_escapes);
     let result = attempt_sql_obfuscation(tokenizer, replace_digits);
-    if result.error.is_none() || !result.seen_escape{
+    if result.error.is_none() || !result.seen_escape {
         return result.obfuscated_string.unwrap_or_default()
     }
 
@@ -45,7 +45,6 @@ fn attempt_sql_obfuscation(mut tokenizer: SqlTokenizer, replace_digits: bool) ->
 
     loop {
         let mut result = tokenizer.scan();
-        result.token = result.token.trim().to_string();
 
         if result.token_kind == TokenKind::Done {
             break;
