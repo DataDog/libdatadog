@@ -3,9 +3,10 @@
 
 [package]
 name = "datadog-profiling-ffi"
-version = "4.0.0"
-edition = "2021"
-license = "Apache-2.0"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
 
 [lib]
 # LTO is ignored if "lib" is added as crate type

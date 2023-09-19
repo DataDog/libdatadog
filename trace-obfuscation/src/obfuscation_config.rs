@@ -13,6 +13,7 @@ pub struct ObfuscationConfig {
     pub tag_replace_rules: Option<Vec<ReplaceRule>>,
     pub http_remove_query_string: bool,
     pub http_remove_path_digits: bool,
+    pub obfuscate_memcached: bool,
 }
 
 impl ObfuscationConfig {
@@ -35,10 +36,14 @@ impl ObfuscationConfig {
         let http_remove_path_digits =
             parse_env::bool("DD_APM_OBFUSCATION_HTTP_REMOVE_PATHS_WITH_DIGITS").unwrap_or(false);
 
+        let obfuscate_memcached =
+            parse_env::bool("DD_APM_OBFUSCATION_MEMCACHED_ENABLED").unwrap_or(false);
+
         Ok(ObfuscationConfig {
             tag_replace_rules,
             http_remove_query_string,
             http_remove_path_digits,
+            obfuscate_memcached,
         })
     }
 }
