@@ -15,7 +15,6 @@ pub fn obfuscate_sql_string(s: &str, replace_digits: bool) -> String {
     if result.error.is_none() || !result.seen_escape{
         return result.obfuscated_string.unwrap_or_default()
     }
-    println!("retrying");
 
     tokenizer = SqlTokenizer::new(s, !use_literal_escapes);
     let second_attempt_result = attempt_sql_obfuscation(tokenizer, replace_digits);
@@ -29,7 +28,7 @@ struct AttemptSqlObfuscationResult {
 }
 
 fn return_attempt_sql_obfuscation_result(obfuscated_string: Option<String>, error: Option<anyhow::Error>, seen_escape: bool) -> AttemptSqlObfuscationResult {
-    return AttemptSqlObfuscationResult {
+    AttemptSqlObfuscationResult {
         obfuscated_string,
         error,
         seen_escape,
@@ -47,6 +46,10 @@ fn attempt_sql_obfuscation(mut tokenizer: SqlTokenizer, replace_digits: bool) ->
     loop {
         let mut result = tokenizer.scan();
         result.token = result.token.trim().to_string();
+
+        if result.token_kind == TokenKind::Done {
+            break;
+        }
 
         if result.token_kind == TokenKind::LexError && tokenizer.err.is_some() {
             return return_attempt_sql_obfuscation_result(None, tokenizer.err, tokenizer.seen_escape);
@@ -1235,7 +1238,85 @@ LIMIT 1
     #[test]
     fn test_name() {
         let result = obfuscate_sql_string(input, replace_digits);
-        // assert!(result.is_ok());
         assert_eq!(result, expected);
+    }
+
+    #[duplicate_item(
+        [
+            test_name       [test_sql_obfuscation_error_1]
+            input           [""]
+            expected_err    ["result is empty"];
+        ]
+        [
+            test_name       [test_sql_obfuscation_error_2]
+            input           ["SELECT a FROM b WHERE a.x !* 2"]
+            expected_err    [r#"at position 27: unexpected char "*" after "!""#];
+        ]
+        [
+            test_name       [test_sql_obfuscation_error_3]
+            input           ["SELECT 🥒"]
+            expected_err    [r#"at position 8: unexpected char "🥒""#];
+        ]
+        [
+            test_name       [test_sql_obfuscation_error_4]
+            input           ["SELECT %(asd)| FROM profile"]
+            expected_err    [r#"at position 13: invalid character after variable identifier: "|""#];
+        ]
+        [
+            test_name       [test_sql_obfuscation_error_5]
+            input           ["USING $A FROM users"]
+            expected_err    [r#"at position 19: unexpected EOF in string"#];
+        ]
+        [
+            test_name       [test_sql_obfuscation_error_6]
+            input           ["INSERT VALUES (1, 2) INTO {ABC"]
+            expected_err    [r#"at position 30: unexpected EOF in escape sequence"#];
+        ]
+        [
+            test_name       [test_sql_obfuscation_error_7]
+            input           ["INSERT VALUES (1, 2) INTO {ABC"]
+            expected_err    [r#"at position 30: unexpected EOF in escape sequence"#];
+        ]
+        [
+            test_name       [test_sql_obfuscation_error_8]
+            input           ["SELECT one, :.two FROM profile"]
+			expected_err    [r#"at position 13: bind variables should start with letters or digits, got ".""#]
+		]
+
+        [
+            test_name       [test_sql_obfuscation_error_9]
+            input           ["SELECT age FROM profile WHERE name='John \\"]
+			expected_err    [r#"at position 43: unexpected EOF in string"#]
+		]
+
+        [
+            test_name       [test_sql_obfuscation_error_10]
+            input           ["SELECT age FROM profile WHERE name='John"]
+			expected_err    [r#"at position 40: unexpected EOF in string"#]
+		]
+
+        [
+            test_name       [test_sql_obfuscation_error_11]
+            input           ["/* abcd"]
+			expected_err    [r#"at position 7: unexpected EOF in comment"#]
+		]
+		// using mixed cases of backslash escaping the single quote
+        [
+            test_name       [test_sql_obfuscation_error_12]
+            input           ["SELECT age FROM profile WHERE name='John\\' and place='John\\'s House'"]
+			expected_err    [r#"at position 59: unexpected char "'""#]
+		]
+
+        [
+            test_name       [test_sql_obfuscation_error_13]
+            input           ["SELECT age FROM profile WHERE place='John\\'s House' and name='John\\'"]
+			expected_err    [r#"at position 68: unexpected EOF in string"#]
+		]
+    )]
+    #[test]
+    fn test_name() {
+        let tokenizer = SqlTokenizer::new(input, false);
+        let result = attempt_sql_obfuscation(tokenizer, false);
+        assert_eq!(result.error.unwrap().to_string(), expected_err);
     }
 }
