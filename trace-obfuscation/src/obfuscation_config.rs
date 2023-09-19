@@ -14,6 +14,8 @@ pub struct ObfuscationConfig {
     pub http_remove_query_string: bool,
     pub http_remove_path_digits: bool,
     pub obfuscate_memcached: bool,
+    pub sql_replace_digits: bool,
+    pub sql_literal_escapes: bool,
 }
 
 impl ObfuscationConfig {
@@ -44,6 +46,8 @@ impl ObfuscationConfig {
             http_remove_query_string,
             http_remove_path_digits,
             obfuscate_memcached,
+            sql_replace_digits: false,
+            sql_literal_escapes: false,
         })
     }
 }

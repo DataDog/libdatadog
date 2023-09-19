@@ -3,21 +3,21 @@
 // developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
 // Datadog, Inc.
 
-use crate::sql_tokenizer::{SqlTokenizer, SqlTokenizerScanResult, TokenKind};
+use crate::{sql_tokenizer::{SqlTokenizer, SqlTokenizerScanResult, TokenKind}, obfuscation_config::ObfuscationConfig};
 
 const QUESTION_MARK: char = '?';
 const QUESTION_MARK_STR: &str = "?";
 
-pub fn obfuscate_sql_string(s: &str, replace_digits: bool) -> AttemptSqlObfuscationResult {
+pub fn obfuscate_sql_string(s: &str, config: &ObfuscationConfig) -> AttemptSqlObfuscationResult {
     let use_literal_escapes = false;
-    let mut tokenizer = SqlTokenizer::new(s, use_literal_escapes);
-    let result = attempt_sql_obfuscation(tokenizer, replace_digits);
+    let mut tokenizer = SqlTokenizer::new(s, config.sql_literal_escapes);
+    let result = attempt_sql_obfuscation(tokenizer, config.sql_replace_digits);
     if result.error.is_none() || !result.seen_escape {
         return result;
     }
 
     tokenizer = SqlTokenizer::new(s, !use_literal_escapes);
-    attempt_sql_obfuscation(tokenizer, replace_digits)
+    attempt_sql_obfuscation(tokenizer, config.sql_replace_digits)
 }
 
 pub struct AttemptSqlObfuscationResult {
@@ -349,7 +349,7 @@ mod tests {
 
     use duplicate::duplicate_item;
 
-    use crate::{sql::obfuscate_sql_string, sql_tokenizer::SqlTokenizer};
+    use crate::{sql::obfuscate_sql_string, sql_tokenizer::SqlTokenizer, obfuscation_config};
 
     use super::attempt_sql_obfuscation;
 
@@ -1297,7 +1297,15 @@ LIMIT 1
     )]
     #[test]
     fn test_name() {
-        let result = obfuscate_sql_string(input, replace_digits);
+        let obf_config = obfuscation_config::ObfuscationConfig {
+            tag_replace_rules: None,
+            http_remove_query_string: false,
+            http_remove_path_digits: false,
+            obfuscate_memcached: false,
+            sql_replace_digits: replace_digits,
+            sql_literal_escapes: false,
+        };
+        let result = obfuscate_sql_string(input, &obf_config);
         assert_eq!(result.obfuscated_string.unwrap(), expected);
     }
 
