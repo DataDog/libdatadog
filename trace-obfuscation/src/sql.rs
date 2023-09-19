@@ -874,7 +874,7 @@ host:localhost,url:controller#home,id:FF005:00CAA
         [
             test_name       [test_sql_obfuscation_quantization_36]
             replace_digits  [false]
-            input           [r#"INSERT INTO delayed_jobs (attempts, created_at, failed_at, handler, last_error, locked_at, locked_by, priority, queue, run_at, updated_at) VALUES (0, '2016-12-04 17:09:59', NULL, '--- !ruby/object:Delayed::PerformableMethod\nobject: !ruby/object:Item\n  store:\n  - a simple string\n  - an \'escaped \' string\n  - another \'escaped\' string\n  - 42\n  string: a string with many \\\\\'escapes\\\\\'\nmethod_name: :show_store\nargs: []\n', NULL, NULL, NULL, 0, NULL, '2016-12-04 17:09:59', '2016-12-04 17:09:59')"#]
+            input           [r"INSERT INTO delayed_jobs (attempts, created_at, failed_at, handler, last_error, locked_at, locked_by, priority, queue, run_at, updated_at) VALUES (0, '2016-12-04 17:09:59', NULL, '--- !ruby/object:Delayed::PerformableMethod\nobject: !ruby/object:Item\n  store:\n  - a simple string\n  - an \'escaped \' string\n  - another \'escaped\' string\n  - 42\n  string: a string with many \\\\\'escapes\\\\\'\nmethod_name: :show_store\nargs: []\n', NULL, NULL, NULL, 0, NULL, '2016-12-04 17:09:59', '2016-12-04 17:09:59')"]
             expected        ["INSERT INTO delayed_jobs ( attempts, created_at, failed_at, handler, last_error, locked_at, locked_by, priority, queue, run_at, updated_at ) VALUES ( ? )"];
         ]
         [
@@ -1071,13 +1071,13 @@ ORDER BY [b].[Name]"#]
         [
             test_name       [test_sql_obfuscation_quantization_62]
             replace_digits  [false]
-            input           [r#"SELECT * FROM foo LEFT JOIN bar ON 'backslash\' = foo.b WHERE foo.name = 'String'"#]
+            input           [r"SELECT * FROM foo LEFT JOIN bar ON 'backslash\' = foo.b WHERE foo.name = 'String'"]
             expected        ["SELECT * FROM foo LEFT JOIN bar ON ? = foo.b WHERE foo.name = ?"];
         ]
         [
             test_name       [test_sql_obfuscation_quantization_63]
             replace_digits  [false]
-            input           [r#"SELECT * FROM foo LEFT JOIN bar ON 'backslash\' = foo.b LEFT JOIN bar2 ON 'backslash2\' = foo.b2 WHERE foo.name = 'String'"#]
+            input           [r"SELECT * FROM foo LEFT JOIN bar ON 'backslash\' = foo.b LEFT JOIN bar2 ON 'backslash2\' = foo.b2 WHERE foo.name = 'String'"]
             expected        ["SELECT * FROM foo LEFT JOIN bar ON ? = foo.b LEFT JOIN bar2 ON ? = foo.b2 WHERE foo.name = ?"];
         ]
         [
@@ -1089,7 +1089,7 @@ ORDER BY [b].[Name]"#]
         [
             test_name       [test_sql_obfuscation_quantization_65]
             replace_digits  [false]
-            input           [r#"SELECT * FROM foo LEFT JOIN bar ON 'embedded \'quote\' in string' = foo.b WHERE foo.name = 'String'"#]
+            input           [r"SELECT * FROM foo LEFT JOIN bar ON 'embedded \'quote\' in string' = foo.b WHERE foo.name = 'String'"]
             expected        ["SELECT * FROM foo LEFT JOIN bar ON ? = foo.b WHERE foo.name = ?"];
         ]
         // postgres specific testcase, '?' only shows up in postgres
