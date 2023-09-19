@@ -465,7 +465,7 @@ impl SqlTokenizer {
             self.next();
         }
 
-        let token = self.get_advanced_chars().trim().to_string();
+        let token = self.get_advanced_chars();
 
         if let Ok(token_kind) = TokenKind::from_str(&token.to_uppercase()) {
             return SqlTokenizerScanResult { token_kind, token };
@@ -780,6 +780,7 @@ impl SqlTokenizer {
         if self.offset.is_none() {
             return String::new();
         }
+
         let end_index = self.offset.unwrap();
 
         if end_index > self.query.len() {
@@ -791,7 +792,7 @@ impl SqlTokenizer {
             .collect();
 
         self.index_of_last_read = self.offset.unwrap();
-        return_val
+        return_val.trim().to_string()
     }
 
     fn next(&mut self) {
@@ -847,7 +848,7 @@ mod tests {
         let mut tokenizer = SqlTokenizer::new(query, false);
         for expected_val in expected {
             let result = tokenizer.scan();
-            assert_eq!(result.token.trim(), expected_val)
+            assert_eq!(result.token, expected_val)
         }
         assert!(tokenizer.done);
     }
@@ -862,7 +863,7 @@ mod tests {
         let mut tokenizer = SqlTokenizer::new(query, false);
         for expected_val in expected {
             let result = tokenizer.scan();
-            assert_eq!(result.token.trim(), expected_val)
+            assert_eq!(result.token, expected_val)
         }
         assert!(tokenizer.done);
     }
@@ -891,7 +892,7 @@ GRANT USAGE, DELETE ON SCHEMA datadog TO datadog"#;
         let mut tokenizer = SqlTokenizer::new(query, false);
         for expected_val in expected {
             let result = tokenizer.scan();
-            assert_eq!(result.token.trim(), expected_val)
+            assert_eq!(result.token, expected_val)
         }
         assert!(tokenizer.done);
     }
@@ -920,7 +921,7 @@ GRANT USAGE, DELETE ON SCHEMA datadog TO datadog"#;
         let mut tokenizer = SqlTokenizer::new(query, false);
         for expected_val in expected {
             let result = tokenizer.scan();
-            assert_eq!(result.token.trim(), expected_val)
+            assert_eq!(result.token, expected_val)
         }
         assert!(tokenizer.done);
     }
@@ -937,7 +938,7 @@ host:localhost,url:controller#home,id:FF005:00CAA
         let mut tokenizer = SqlTokenizer::new(query, false);
         for expected_val in expected {
             let result = tokenizer.scan();
-            assert_eq!(result.token.trim(), expected_val)
+            assert_eq!(result.token, expected_val)
         }
         assert!(tokenizer.done);
     }
