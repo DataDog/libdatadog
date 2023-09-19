@@ -752,6 +752,7 @@ impl SqlTokenizer {
     }
 
     fn scan_comment_type_2(&mut self) -> SqlTokenizerScanResult {
+        let mut token_kind = TokenKind::Comment;
         loop {
             if self.cur_char == '*' {
                 self.next();
@@ -763,15 +764,13 @@ impl SqlTokenizer {
             }
             if self.done {
                 self.set_error("unexpected EOF in comment");
-                return SqlTokenizerScanResult {
-                    token_kind: TokenKind::LexError,
-                    token: self.get_advanced_chars(),
-                };
+                token_kind = TokenKind::LexError;
+                break;
             }
             self.next();
         }
         SqlTokenizerScanResult {
-            token_kind: TokenKind::Comment,
+            token_kind,
             token: self.get_advanced_chars(),
         }
     }
