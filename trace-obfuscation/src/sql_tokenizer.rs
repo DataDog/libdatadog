@@ -146,6 +146,12 @@ impl SqlTokenizer {
     pub fn scan(&mut self) -> SqlTokenizerScanResult {
         if self.offset.is_none() {
             self.next();
+            if self.done {
+                return SqlTokenizerScanResult {
+                    token_kind: TokenKind::Done,
+                    token: String::new(),
+                };
+            }
         }
         self.skip_blank();
 
@@ -350,10 +356,10 @@ impl SqlTokenizer {
                             token: self.get_advanced_chars(),
                         };
                     }
-                    self.err = Some(anyhow::anyhow!(format!(
+                    self.set_error(&format!(
                         "unexpected char \"{}\" after \"!\"",
                         self.cur_char
-                    )));
+                    ));
                     SqlTokenizerScanResult {
                         token_kind: TokenKind::LexError,
                         token: self.get_advanced_chars(),
@@ -391,7 +397,7 @@ impl SqlTokenizer {
             }
             '}' => {
                 if self.curlys == 0 {
-                    self.err = Some(anyhow::anyhow!("unexptected char \"{}\"", self.cur_char));
+                    self.set_error(&format!("unexptected char \"{}\"", self.cur_char));
                     return SqlTokenizerScanResult {
                         token_kind: TokenKind::LexError,
                         token: self.get_advanced_chars(),
@@ -414,13 +420,19 @@ impl SqlTokenizer {
                 result
             }
             _ => {
-                self.err = Some(anyhow::anyhow!("unexpected char \"{}\"", self.cur_char));
+                self.set_error(&format!("unexpected char \"{}\"", self.cur_char));
                 SqlTokenizerScanResult {
                     token_kind: TokenKind::LexError,
                     token: self.get_advanced_chars(),
                 }
             }
         }
+    }
+
+    fn set_error(&mut self, err: &str) {
+        let pos = self.offset.unwrap_or_default();
+        println!("setting error: at position {:?}: {}", pos, err);
+        self.err = Some(anyhow::anyhow!("at position {:?}: {}", pos, err));
     }
 
     fn set_unexpected_char_error_and_return(&mut self) -> SqlTokenizerScanResult {
@@ -472,8 +484,8 @@ impl SqlTokenizer {
         }
         self.next();
         if !self.is_letter(self.cur_char) {
-            self.err = Some(anyhow::anyhow!(
-                "invalid character after variable identifier: {}",
+            self.set_error(&format!(
+                "invalid character after variable identifier: \"{}\"",
                 self.cur_char
             ));
             return SqlTokenizerScanResult {
@@ -495,7 +507,7 @@ impl SqlTokenizer {
 
         // we've reached the end of the string without finding closing curly braces
         if self.done {
-            self.err = Some(anyhow::anyhow!("unexpected EOF in escape sequence"));
+            self.set_error("unexpected EOF in escape sequence");
             return SqlTokenizerScanResult {
                 token_kind: TokenKind::LexError,
                 token: self.get_advanced_chars(),
@@ -516,8 +528,8 @@ impl SqlTokenizer {
             self.next();
         }
         if !self.is_letter(self.cur_char) && !self.cur_char.is_ascii_digit() {
-            self.err = Some(anyhow::anyhow!(
-                "bind variables should start with letters or digits. got {}",
+            self.set_error(&format!(
+                "bind variables should start with letters or digits, got \"{}\"",
                 self.cur_char
             ));
             return SqlTokenizerScanResult {
@@ -638,7 +650,7 @@ impl SqlTokenizer {
                     self.next();
                 } else if self.done && self.offset.unwrap() > self.query.len() {
                     // edge case where we start scanning for a string at the very end of the query
-                    self.err = Some(anyhow::anyhow!("unexpected EOF in string"));
+                    self.set_error("unexpected EOF in string");
                     return SqlTokenizerScanResult {
                         token_kind: TokenKind::LexError,
                         token: s.to_string(),
@@ -658,7 +670,7 @@ impl SqlTokenizer {
             }
             s.push(prev_char);
             if self.done {
-                self.err = Some(anyhow::anyhow!("unexpected EOF in string"));
+                self.set_error("unexpected EOF in string");
                 return SqlTokenizerScanResult {
                     token_kind: TokenKind::LexError,
                     token: s.to_string(),
@@ -750,8 +762,11 @@ impl SqlTokenizer {
                 continue;
             }
             if self.done {
-                self.err = Some(anyhow::anyhow!("unexpected EOF in comment"));
-                break;
+                self.set_error("unexpected EOF in comment");
+                return SqlTokenizerScanResult {
+                    token_kind: TokenKind::LexError,
+                    token: self.get_advanced_chars(),
+                };
             }
             self.next();
         }
