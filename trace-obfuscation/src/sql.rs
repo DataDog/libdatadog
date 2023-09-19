@@ -13,21 +13,25 @@ pub fn obfuscate_sql_string(s: &str, replace_digits: bool) -> String {
     let mut tokenizer = SqlTokenizer::new(s, use_literal_escapes);
     let result = attempt_sql_obfuscation(tokenizer, replace_digits);
     if result.error.is_none() || !result.seen_escape {
-        return result.obfuscated_string.unwrap_or_default()
+        return result.obfuscated_string.unwrap_or_default();
     }
 
     tokenizer = SqlTokenizer::new(s, !use_literal_escapes);
     let second_attempt_result = attempt_sql_obfuscation(tokenizer, replace_digits);
-    second_attempt_result.obfuscated_string.unwrap_or_default() 
+    second_attempt_result.obfuscated_string.unwrap_or_default()
 }
 
 struct AttemptSqlObfuscationResult {
     obfuscated_string: Option<String>,
     error: Option<anyhow::Error>,
-    seen_escape: bool
+    seen_escape: bool,
 }
 
-fn return_attempt_sql_obfuscation_result(obfuscated_string: Option<String>, error: Option<anyhow::Error>, seen_escape: bool) -> AttemptSqlObfuscationResult {
+fn return_attempt_sql_obfuscation_result(
+    obfuscated_string: Option<String>,
+    error: Option<anyhow::Error>,
+    seen_escape: bool,
+) -> AttemptSqlObfuscationResult {
     AttemptSqlObfuscationResult {
         obfuscated_string,
         error,
@@ -35,7 +39,10 @@ fn return_attempt_sql_obfuscation_result(obfuscated_string: Option<String>, erro
     }
 }
 
-fn attempt_sql_obfuscation(mut tokenizer: SqlTokenizer, replace_digits: bool) -> AttemptSqlObfuscationResult {
+fn attempt_sql_obfuscation(
+    mut tokenizer: SqlTokenizer,
+    replace_digits: bool,
+) -> AttemptSqlObfuscationResult {
     // TODO: Support replace digits in specific tables
     let mut result_str = String::new();
     let mut last_token_kind = TokenKind::Char;
@@ -51,20 +58,47 @@ fn attempt_sql_obfuscation(mut tokenizer: SqlTokenizer, replace_digits: bool) ->
         }
 
         if result.token_kind == TokenKind::LexError && tokenizer.err.is_some() {
-            return return_attempt_sql_obfuscation_result(None, tokenizer.err, tokenizer.seen_escape);
+            return return_attempt_sql_obfuscation_result(
+                None,
+                tokenizer.err,
+                tokenizer.seen_escape,
+            );
         }
         result = match discard(result, &last_token_kind) {
             Ok(res) => res,
-            Err(err) => return return_attempt_sql_obfuscation_result(None, Some(err), tokenizer.seen_escape)
+            Err(err) => {
+                return return_attempt_sql_obfuscation_result(
+                    None,
+                    Some(err),
+                    tokenizer.seen_escape,
+                )
+            }
         };
-        result = match replace(result, replace_digits, last_token.as_str(), &last_token_kind)  {
+        result = match replace(
+            result,
+            replace_digits,
+            last_token.as_str(),
+            &last_token_kind,
+        ) {
             Ok(res) => res,
-            Err(err) => return return_attempt_sql_obfuscation_result(None, Some(err), tokenizer.seen_escape)
+            Err(err) => {
+                return return_attempt_sql_obfuscation_result(
+                    None,
+                    Some(err),
+                    tokenizer.seen_escape,
+                )
+            }
         };
 
-        result = match grouping_filter.grouping(result, last_token.as_str(), &last_token_kind)  {
+        result = match grouping_filter.grouping(result, last_token.as_str(), &last_token_kind) {
             Ok(res) => res,
-            Err(err) => return return_attempt_sql_obfuscation_result(None, Some(err), tokenizer.seen_escape)
+            Err(err) => {
+                return return_attempt_sql_obfuscation_result(
+                    None,
+                    Some(err),
+                    tokenizer.seen_escape,
+                )
+            }
         };
 
         if !result.token.is_empty() {
@@ -93,7 +127,11 @@ fn attempt_sql_obfuscation(mut tokenizer: SqlTokenizer, replace_digits: bool) ->
     }
 
     if result_str.is_empty() {
-        return return_attempt_sql_obfuscation_result(None, Some(anyhow::anyhow!("result is empty")), tokenizer.seen_escape)
+        return return_attempt_sql_obfuscation_result(
+            None,
+            Some(anyhow::anyhow!("result is empty")),
+            tokenizer.seen_escape,
+        );
     }
 
     return_attempt_sql_obfuscation_result(Some(result_str), tokenizer.err, tokenizer.seen_escape)
@@ -107,7 +145,10 @@ fn set_result_as_filtered(
     Ok(result)
 }
 
-fn set_result_filtered_groupable(mut result: SqlTokenizerScanResult, replacement: Option<char>) -> anyhow::Result<SqlTokenizerScanResult> {
+fn set_result_filtered_groupable(
+    mut result: SqlTokenizerScanResult,
+    replacement: Option<char>,
+) -> anyhow::Result<SqlTokenizerScanResult> {
     if result.token == "(" {
         result.token_kind = TokenKind::FilteredGroupableParenthesis;
     } else {
@@ -132,11 +173,14 @@ fn discard(
             if result.token_kind != TokenKind::ID {
                 // the token between the brackets *must* be an identifier,
                 // otherwise the query is invalid.
-                anyhow::bail!("expected identifier in bracketed filter, got {}", result.token)
+                anyhow::bail!(
+                    "expected identifier in bracketed filter, got {}",
+                    result.token
+                )
             }
             result.token_kind = TokenKind::FilteredBracketedIdentifier;
             result.token = String::new();
-            return Ok(result)
+            return Ok(result);
         } else {
             return set_result_as_filtered(result);
         }
@@ -206,18 +250,20 @@ fn replace(
     }
 
     match result.token_kind {
-        TokenKind::DollarQuotedString | TokenKind::String | TokenKind::Number | TokenKind::Null | TokenKind::Variable | TokenKind::BooleanLiteral | TokenKind::EscapeSequence => {
-            set_result_filtered_groupable(result, Some(QUESTION_MARK))
-        }
+        TokenKind::DollarQuotedString
+        | TokenKind::String
+        | TokenKind::Number
+        | TokenKind::Null
+        | TokenKind::Variable
+        | TokenKind::BooleanLiteral
+        | TokenKind::EscapeSequence => set_result_filtered_groupable(result, Some(QUESTION_MARK)),
         TokenKind::ID => {
             if should_replace_digits {
                 result = replace_digits(result);
             }
             Ok(result)
         }
-        _ => {
-            Ok(result)
-        }
+        _ => Ok(result),
     }
 }
 
@@ -250,14 +296,25 @@ impl GroupingFilter {
         last_token_kind: &TokenKind,
     ) -> anyhow::Result<SqlTokenizerScanResult> {
         // increasing the number of groups means that we're filtering an entire group
-	    // because it can be represented with a single '( ? )'
-        if (last_token == "(" && is_filtered_groupable(&result.token_kind)) || (result.token == "(" && self.consec_dropped_groups > 0) {
+        // because it can be represented with a single '( ? )'
+        if (last_token == "(" && is_filtered_groupable(&result.token_kind))
+            || (result.token == "(" && self.consec_dropped_groups > 0)
+        {
             self.consec_dropped_groups += 1;
         }
 
-        let is_start_of_sub_query = [TokenKind::Select, TokenKind::Delete, TokenKind::Update, TokenKind::ID].contains(&result.token_kind);
-        
-        if self.consec_dropped_groups > 0 && last_token_kind == &TokenKind::FilteredGroupableParenthesis && is_start_of_sub_query {
+        let is_start_of_sub_query = [
+            TokenKind::Select,
+            TokenKind::Delete,
+            TokenKind::Update,
+            TokenKind::ID,
+        ]
+        .contains(&result.token_kind);
+
+        if self.consec_dropped_groups > 0
+            && last_token_kind == &TokenKind::FilteredGroupableParenthesis
+            && is_start_of_sub_query
+        {
             self.reset();
             result.token = format!("( {}", result.token);
             return Ok(result);
@@ -270,12 +327,17 @@ impl GroupingFilter {
             if self.consec_dropped_vals > 1 {
                 return set_result_filtered_groupable(result, None);
             }
-        } else if (self.consec_dropped_vals > 0 && (result.token == "," || result.token == QUESTION_MARK_STR)) || self.consec_dropped_groups > 1 {
+        } else if (self.consec_dropped_vals > 0
+            && (result.token == "," || result.token == QUESTION_MARK_STR))
+            || self.consec_dropped_groups > 1
+        {
             return set_result_filtered_groupable(result, None);
-        } else if ![",", "(", ")"].contains(&result.token.as_str()) && !is_filtered_groupable(&result.token_kind) {
+        } else if ![",", "(", ")"].contains(&result.token.as_str())
+            && !is_filtered_groupable(&result.token_kind)
+        {
             self.reset()
         }
-        
+
         Ok(result)
     }
 }
@@ -288,7 +350,7 @@ mod tests {
 
     use duplicate::duplicate_item;
 
-    use crate::{sql_tokenizer::SqlTokenizer, sql::obfuscate_sql_string};
+    use crate::{sql::obfuscate_sql_string, sql_tokenizer::SqlTokenizer};
 
     use super::attempt_sql_obfuscation;
 
