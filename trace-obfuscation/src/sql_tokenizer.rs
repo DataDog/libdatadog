@@ -436,7 +436,7 @@ impl SqlTokenizer {
     }
 
     fn set_unexpected_char_error_and_return(&mut self) -> SqlTokenizerScanResult {
-        self.err = Some(anyhow::anyhow!("unexpected char: {}", self.cur_char));
+        self.set_error(&format!("unexpected char: {}", self.cur_char));
         SqlTokenizerScanResult {
             token_kind: TokenKind::Char,
             token: self.get_advanced_chars(),
@@ -607,9 +607,7 @@ impl SqlTokenizer {
     fn finish_number_scan(&mut self) -> SqlTokenizerScanResult {
         let s = self.get_advanced_chars();
         if s.is_empty() {
-            self.err = Some(anyhow::anyhow!(
-                "Parse error: ended up with a zero-length number."
-            ));
+            self.set_error("Parse error: ended up with a zero-length number.");
             return SqlTokenizerScanResult {
                 token_kind: TokenKind::LexError,
                 token: s,
@@ -707,7 +705,7 @@ impl SqlTokenizer {
             let c = self.cur_char;
             self.next();
             if self.done {
-                self.err = Some(anyhow::anyhow!("unexpected EOF in dollar-quoted string"));
+                self.set_error("unexpected EOF in dollar-quoted string");
                 return SqlTokenizerScanResult {
                     token_kind: TokenKind::LexError,
                     token: s.to_string(),
@@ -1010,10 +1008,11 @@ host:localhost,url:controller#home,id:FF005:00CAA
         let result = tokenizer.scan();
         assert!(tokenizer.done);
         assert_eq!(result.token_kind, TokenKind::LexError);
-        assert_eq!(
-            tokenizer.err.unwrap().to_string(),
-            "unexpected EOF in dollar-quoted string"
-        );
+        assert!(tokenizer
+            .err
+            .unwrap()
+            .to_string()
+            .contains("unexpected EOF in dollar-quoted string"));
     }
 
     #[duplicate_item(
