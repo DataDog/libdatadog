@@ -117,9 +117,9 @@ pub struct SqlTokenizer {
     offset: Option<usize>, // the index of the current char
     index_of_last_read: usize,
     query: Vec<char>,               // the sql query we are parsing
-    pub err: Option<anyhow::Error>, // any errors that occurred while reading
     curlys: i32, // number of active open curly braces in top-level sql escape sequences
     literal_escapes: bool, // indicates we should not treat backslashes as escape characters
+    pub err: Option<anyhow::Error>, // any errors that occurred while reading
     pub seen_escape: bool, // indicated whether this tokenizer has seen an escape character within a string
     pub done: bool,
 }
@@ -147,6 +147,7 @@ impl SqlTokenizer {
         if self.offset.is_none() {
             self.next();
             if self.done {
+                // query is empty
                 return SqlTokenizerScanResult {
                     token_kind: TokenKind::Done,
                     token: String::new(),
@@ -397,7 +398,7 @@ impl SqlTokenizer {
             }
             '}' => {
                 if self.curlys == 0 {
-                    self.set_error(&format!("unexptected char \"{}\"", self.cur_char));
+                    self.set_error(&format!("unexpected char \"{}\"", self.cur_char));
                     return SqlTokenizerScanResult {
                         token_kind: TokenKind::LexError,
                         token: self.get_advanced_chars(),
