@@ -36,7 +36,7 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
             if span.resource.is_empty() {
                 return;
             }
-            let sql_obfuscation_result = obfuscate_sql_string(&span.resource, false);
+            let sql_obfuscation_result = obfuscate_sql_string(&span.resource, config);
             if let Some(err) = sql_obfuscation_result.error {
                 debug!(
                     "Error parsing SQL query: {}. Resource: {}",
@@ -122,6 +122,8 @@ mod tests {
             http_remove_query_string: false,
             http_remove_path_digits: false,
             obfuscate_memcached: false,
+            sql_replace_digits: false,
+            sql_literal_escapes: false,
         };
         obfuscate_span(&mut span, &obf_config);
         assert_eq!(span.resource, "SELECT username from users where id = ?");
