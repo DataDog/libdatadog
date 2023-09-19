@@ -1253,51 +1253,51 @@ in the middle'"#]
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_13]
-            input           [r#"'String with embedded string at end ''foo'''"#]
+            input           ["'String with embedded string at end ''foo'''"]
             expected        ["String with embedded string at end 'foo'"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_14]
-            input           [r#"'String with embedded string ''foo'' in the middle'"#]
+            input           ["'String with embedded string ''foo'' in the middle'"]
             expected        ["String with embedded string 'foo' in the middle"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_15]
-            input           [r#"'String with tab at end	'"#]
+            input           ["'String with tab at end	'"]
             expected        ["String with tab at end\t"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_16]
-            input           [r#"'String with tab	in the middle'"#]
+            input           ["'String with tab	in the middle'"]
             expected        ["String with tab\tin the middle"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_17]
-            input           [r#"'String with newline at the end
-'"#]
+            input           ["'String with newline at the end
+'"]
             expected        ["String with newline at the end\n"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_18]
-            input           [r#"'String with newline
-in the middle'"#]
+            input           ["'String with newline
+in the middle'"]
             expected        ["String with newline\nin the middle"]
             token_kind_str  ["STRING"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_19]
-            input           [r#"'Simple string missing closing quote"#]
+            input           ["'Simple string missing closing quote"]
             expected        ["Simple string missing closing quote"]
             token_kind_str  ["LEXERROR"];
         ]
         [
             test_name       [test_tokenize_literal_escapes_true_20]
-            input           [r#"'String missing closing quote with backslash at end \"#]
+            input           [r"'String missing closing quote with backslash at end \"]
             expected        ["String missing closing quote with backslash at end \\"]
             token_kind_str  ["LEXERROR"];
         ]
@@ -1310,7 +1310,7 @@ in the middle'"#]
         // The following case will treat the final quote as unescaped
         [
             test_name       [test_tokenize_literal_escapes_true_22]
-            input           [r#"'String missing closing quote with backslash-escaped quote at end \'"#]
+            input           [r"'String missing closing quote with backslash-escaped quote at end \'"]
             expected        ["String missing closing quote with backslash-escaped quote at end \\"]
             token_kind_str  ["STRING"];
         ]
