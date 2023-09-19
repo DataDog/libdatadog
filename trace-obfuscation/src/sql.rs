@@ -8,23 +8,22 @@ use crate::sql_tokenizer::{SqlTokenizer, SqlTokenizerScanResult, TokenKind};
 const QUESTION_MARK: char = '?';
 const QUESTION_MARK_STR: &str = "?";
 
-pub fn obfuscate_sql_string(s: &str, replace_digits: bool) -> String {
+pub fn obfuscate_sql_string(s: &str, replace_digits: bool) -> AttemptSqlObfuscationResult {
     let use_literal_escapes = false;
     let mut tokenizer = SqlTokenizer::new(s, use_literal_escapes);
     let result = attempt_sql_obfuscation(tokenizer, replace_digits);
     if result.error.is_none() || !result.seen_escape {
-        return result.obfuscated_string.unwrap_or_default();
+        return result;
     }
 
     tokenizer = SqlTokenizer::new(s, !use_literal_escapes);
-    let second_attempt_result = attempt_sql_obfuscation(tokenizer, replace_digits);
-    second_attempt_result.obfuscated_string.unwrap_or_default()
+    attempt_sql_obfuscation(tokenizer, replace_digits)
 }
 
-struct AttemptSqlObfuscationResult {
-    obfuscated_string: Option<String>,
-    error: Option<anyhow::Error>,
-    seen_escape: bool,
+pub struct AttemptSqlObfuscationResult {
+    pub obfuscated_string: Option<String>,
+    pub error: Option<anyhow::Error>,
+    pub seen_escape: bool,
 }
 
 fn return_attempt_sql_obfuscation_result(
@@ -1299,7 +1298,7 @@ LIMIT 1
     #[test]
     fn test_name() {
         let result = obfuscate_sql_string(input, replace_digits);
-        assert_eq!(result, expected);
+        assert_eq!(result.obfuscated_string.unwrap(), expected);
     }
 
     #[duplicate_item(
