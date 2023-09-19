@@ -200,7 +200,8 @@ fn main() -> anyhow::Result<()> {
 
     if let Some(file) = output {
         println!("Writing out pprof to file {file}");
-        let encoded = outprof.serialize(Some(replayer.start_time), Some(replayer.duration))?;
+        let encoded = outprof
+            .serialize_into_compressed_pprof(Some(replayer.start_time), Some(replayer.duration))?;
         if let Some(s) = &mut sysinfo {
             s.measure_memory("After serializing");
         }

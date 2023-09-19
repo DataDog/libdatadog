@@ -12,7 +12,10 @@ use std::str::Utf8Error;
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Slice<'a, T: 'a> {
+    /// Must be non-null and suitably aligned for the underlying type.
     ptr: *const T,
+
+    /// The number of elements (not bytes) that `.ptr` points to.
     len: usize,
     marker: PhantomData<&'a [T]>,
 }
@@ -92,6 +95,17 @@ impl<'a> AsBytes<'a> for Slice<'a, i8> {
 }
 
 impl<'a, T: 'a> Slice<'a, T> {
+    /// Creates a valid empty slice meaning that [Slice::len] is 0 and
+    /// [Slice::is_empty] is true.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            ptr: [].as_ptr(),
+            len: 0,
+            marker: PhantomData,
+        }
+    }
+
     /// # Safety
     /// This function mostly has the same safety requirements as `std::str::from_raw_parts`, but
     /// it can tolerate mis-aligned and null pointers.
@@ -103,7 +117,7 @@ impl<'a, T: 'a> Slice<'a, T> {
                 ..Default::default()
             }
         } else {
-            Slice::default()
+            Slice::empty()
         }
     }
 
@@ -144,20 +158,7 @@ impl<'a, T: 'a> Slice<'a, T> {
 
 impl<'a, T> Default for Slice<'a, T> {
     fn default() -> Self {
-        /* The docs on std::slice::from_raw_parts indicate the pointer should be
-         * non-null and suitably aligned for T even for zero-length slices.
-         * Using a few tests, I wasn't actually able to create any harm with a
-         * null pointer; after all it shouldn't get de-referenced and such, but
-         * nonetheless we follow the documentation and use NonNull::dangling(),
-         * which it suggests.
-         * Since Slice's can be made from C, check for null and unaligned
-         * pointers in associated functions to defend against this.
-         */
-        Self {
-            ptr: std::ptr::NonNull::dangling().as_ptr(),
-            len: 0,
-            marker: Default::default(),
-        }
+        Self::empty()
     }
 }
 
