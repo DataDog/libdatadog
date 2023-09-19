@@ -431,7 +431,6 @@ impl SqlTokenizer {
 
     fn set_error(&mut self, err: &str) {
         let pos = self.offset.unwrap_or_default();
-        println!("setting error: at position {:?}: {}", pos, err);
         self.err = Some(anyhow::anyhow!("at position {:?}: {}", pos, err));
     }
 
