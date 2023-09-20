@@ -4,6 +4,7 @@
 // Datadog, Inc.
 
 #![deny(clippy::all)]
+#![recursion_limit = "512"]
 
 pub mod credit_cards;
 pub mod http;

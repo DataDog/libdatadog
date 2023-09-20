@@ -7,26 +7,41 @@ use std::collections::HashSet;
 
 use serde_json::{json, Value};
 
-pub fn obfuscate_json(json_str: &str, keep_values: Vec<String>) -> String {
+use crate::{sql::obfuscate_sql_string, obfuscation_config::ObfuscationConfig};
+
+pub fn obfuscate_json(config: &ObfuscationConfig, json_str: &str, keep_values: Vec<String>, sql_values: Vec<String>) -> String {
     let mut json_dict: Value = serde_json::from_str(json_str).unwrap_or_default();
     if json_dict.is_null() {
         return "?".to_string();
     }
-    recurse_and_replace_json(&mut json_dict, &HashSet::from_iter(keep_values));
+    recurse_and_replace_json(config, &mut json_dict, &HashSet::from_iter(keep_values), &HashSet::from_iter(sql_values));
 
     json_dict.to_string()
 }
 
-fn recurse_and_replace_json(value: &mut Value, keep_values: &HashSet<String>) {
+fn recurse_and_replace_json(config: &ObfuscationConfig, value: &mut Value, keep_values: &HashSet<String>, sql_values: &HashSet<String>) {
     match value {
         Value::Object(map) => {
             for (k, v) in map {
-                if !keep_values.contains(k) {
-                    if !v.is_array() && !v.is_object() {
+                if keep_values.contains(k) {
+                    continue;
+                }
+                if v.is_array() || v.is_object() {
+                    recurse_and_replace_json(config, v, keep_values, sql_values);
+                    continue;
+                }
+
+                if sql_values.contains(k) {
+                    let obfuscated_sql_result = obfuscate_sql_string(v.as_str().unwrap_or_default(), config);
+                    if let Some(res) = obfuscated_sql_result.obfuscated_string {
+                        *v = json!(res)
+                    } else {
                         *v = json!("?");
                     }
-                    recurse_and_replace_json(v, keep_values);
+                } else {
+                    *v = json!("?");
                 }
+                recurse_and_replace_json(config, v, keep_values, sql_values);
             }
         }
         Value::Array(arr) => {
@@ -34,7 +49,7 @@ fn recurse_and_replace_json(value: &mut Value, keep_values: &HashSet<String>) {
                 if !v.is_array() && !v.is_object() {
                     *v = json!("?");
                 }
-                recurse_and_replace_json(v, keep_values);
+                recurse_and_replace_json(config, v, keep_values, sql_values);
             }
         }
         _ => (),
@@ -46,89 +61,75 @@ mod tests {
     use duplicate::duplicate_item;
     use serde_json::json;
 
+    use crate::obfuscation_config::ObfuscationConfig;
+
     use super::obfuscate_json;
+
+    macro_rules! vec_of_strings {
+        ( $( $x:expr ),* ) => {
+            {
+                let mut temp_vec = Vec::new();
+                $(
+                    temp_vec.push($x.to_string());
+                )*
+                temp_vec
+            }
+        };
+    }
 
     #[duplicate_item(
         [
             test_name       [test_obfuscate_json_1]
-            keep_values     [vec!["other".to_string()]]
-            input           [json!({
-                "query": {
-                    "multi_match": {
-                        "query": "guide",
-                        "fields": [
-                            "_all",
-                            {
-                                "key": "value",
-                                "other": ["1", "2", {"k": "v"}]
-                            },
-                            "2"
-                            ],
-                    }
-                }
-            })]
-            expected        [json!({
-                "query": {
-                    "multi_match": {
-                        "query": "?",
-                        "fields": [
-                            "?",
-                            {
-                                "key": "?",
-                                "other": ["1", "2", {"k": "v"}]
-                            },
-                            "?"
-                            ],
-                    }
-                }
-            }).to_string()];
+            keep_values     [vec_of_strings![]]
+            input           [json!( { "query": { "multi_match" : { "query" : "guide", "fields" : ["_all", { "key": "value", "other": ["1", "2", {"k": "v"}] }, "2"] } } } )]
+            expected        [json!( { "query": { "multi_match": { "query": "?", "fields" : ["?", { "key": "?", "other": ["?", "?", {"k": "?"}] }, "?"] } } } )];
         ]
         [
             test_name       [test_obfuscate_json_2]
-            keep_values     [vec![]]
+            keep_values     [vec_of_strings![]]
             input           [json!({
                 "highlight": {
-                    "pre_tags": [ "<em>" ],
-                    "post_tags": [ "</em>" ],
-                    "index": 1
+                  "pre_tags": [ "<em>" ],
+                  "post_tags": [ "</em>" ],
+                  "index": 1
                 }
-            })]
+              })]
             expected        [json!({
                 "highlight": {
-                    "pre_tags": [ "?" ],
-                    "post_tags": [ "?" ],
-                    "index": "?"
+                  "pre_tags": [ "?" ],
+                  "post_tags": [ "?" ],
+                  "index": "?"
                 }
-            }).to_string()];
+              }).to_string()];
         ]
         [
             test_name       [test_obfuscate_json_3]
-            keep_values     [vec!["other".to_string()]]
-            input           [json!({ "query": { "multi_match" : { "query" : "guide", "fields" : ["_all", { "key": "value", "other": ["1", "2", {"k": "v"}] }, "2"] } } } )]
-            expected        [json!({ "query": { "multi_match": { "query": "?", "fields" : ["?", { "key": "?", "other": ["1", "2", {"k": "v"}] }, "?"] } } }).to_string()];
+            keep_values     [vec_of_strings!["other"]]
+            input           [json!( { "query": { "multi_match" : { "query" : "guide", "fields" : ["_all", { "key": "value", "other": ["1", "2", {"k": "v"}] }, "2"] } } } )]
+            expected        [json!( { "query": { "multi_match": { "query": "?", "fields" : ["?", { "key": "?", "other": ["1", "2", {"k": "v"}] }, "?"] } } } )];
         ]
         [
             test_name       [test_obfuscate_json_4]
-            keep_values     [vec!["fields".to_string()]]
-            input           [json!({"fields" : ["_all", { "key": "value", "other": ["1", "2", {"k": "v"}] }, "2"]})]
-            expected        [json!({"fields" : ["_all", { "key": "value", "other": ["1", "2", {"k": "v"}] }, "2"]}).to_string()];
+            keep_values     [vec_of_strings!["fields"]]
+            input           [json!( {"fields" : ["_all", { "key": "value", "other": ["1", "2", {"k": "v"}] }, "2"]} )]
+            expected        [json!( {"fields" : ["_all", { "key": "value", "other": ["1", "2", {"k": "v"}] }, "2"]} )];
         ]
         [
             test_name       [test_obfuscate_json_5]
-            keep_values     [vec!["k".to_string()]]
-            input           [json!({"fields" : ["_all", { "key": "value", "other": ["1", "2", {"k": "v"}] }, "2"]})]
-            expected        [json!({"fields" : ["?", { "key": "?", "other": ["?", "?", {"k": "v"}] }, "?"]}).to_string()];
+            keep_values     [vec_of_strings!["k"]]
+            input           [json!( {"fields" : ["_all", { "key": "value", "other": ["1", "2", {"k": "v"}] }, "2"]} )]
+            expected        [json!( {"fields" : ["?", { "key": "?", "other": ["?", "?", {"k": "v"}] }, "?"]} )];
         ]
         [
             test_name       [test_obfuscate_json_6]
-            keep_values     [vec!["C".to_string()]]
-            input           [json!({"fields" : [{"A": 1, "B": {"C": 3}}, "2"]})]
-            expected        [json!({"fields" : [{"A": "?", "B": {"C": 3}}, "?"]}).to_string()];
+            keep_values     [vec_of_strings!["C"]]
+            input           [json!( {"fields" : [{"A": 1, "B": {"C": 3}}, "2"]} )]
+            expected        [json!( {"fields" : [{"A": "?", "B": {"C": 3}}, "?"]} )];
         ]
         [
             test_name       [test_obfuscate_json_7]
-            keep_values     [vec![]]
-            input           [json!({
+            keep_values     [vec_of_strings![]]
+            input           [json!( {
                 "query": {
                    "match" : {
                       "title" : "in action"
@@ -142,8 +143,8 @@ mod tests {
                       "title" : {}
                    }
                 }
-            })]
-            expected        [json!({
+            } )]
+            expected        [json!( {
                 "query": {
                    "match" : {
                       "title" : "?"
@@ -157,12 +158,12 @@ mod tests {
                       "title" : {}
                    }
                 }
-            }).to_string()];
+            } )];
         ]
         [
             test_name       [test_obfuscate_json_8]
-            keep_values     [vec!["_source".to_string()]]
-            input           [json!({
+            keep_values     [vec_of_strings!["_source"]]
+            input           [json!( {
                 "query": {
                    "match" : {
                       "title" : "in action"
@@ -176,8 +177,8 @@ mod tests {
                       "title" : {}
                    }
                 }
-            })]
-            expected        [json!({
+            } )]
+            expected        [json!( {
                 "query": {
                    "match" : {
                       "title" : "?"
@@ -191,12 +192,12 @@ mod tests {
                       "title" : {}
                    }
                 }
-            }).to_string()];
+            } )];
         ]
         [
             test_name       [test_obfuscate_json_9]
-            keep_values     [vec!["query".to_string()]]
-            input           [json!({
+            keep_values     [vec_of_strings!["query"]]
+            input           [json!( {
                 "query": {
                    "match" : {
                       "title" : "in action"
@@ -210,8 +211,8 @@ mod tests {
                       "title" : {}
                    }
                 }
-            })]
-            expected        [json!({
+            } )]
+            expected        [json!( {
                 "query": {
                    "match" : {
                       "title" : "in action"
@@ -225,12 +226,12 @@ mod tests {
                       "title" : {}
                    }
                 }
-            }).to_string()];
+            } )];
         ]
         [
             test_name       [test_obfuscate_json_10]
-            keep_values     [vec!["match".to_string()]]
-            input           [json!({
+            keep_values     [vec_of_strings!["match"]]
+            input           [json!( {
                 "query": {
                    "match" : {
                       "title" : "in action"
@@ -244,8 +245,8 @@ mod tests {
                       "title" : {}
                    }
                 }
-            })]
-            expected        [json!({
+            } )]
+            expected        [json!( {
                 "query": {
                    "match" : {
                       "title" : "in action"
@@ -259,12 +260,12 @@ mod tests {
                       "title" : {}
                    }
                 }
-            }).to_string()];
+            } )];
         ]
         [
             test_name       [test_obfuscate_json_11]
-            keep_values     [vec!["hits".to_string()]]
-            input           [json!({
+            keep_values     [vec_of_strings!["hits"]]
+            input           [json!( {
                 "outer": {
                     "total": 2,
                     "max_score": 0.9105287,
@@ -303,8 +304,8 @@ mod tests {
                      }
                     ]
                 }
-            })]
-            expected        [json!({
+            } )]
+            expected        [json!( {
                 "outer": {
                     "total": "?",
                     "max_score": "?",
@@ -343,12 +344,12 @@ mod tests {
                      }
                     ]
                 }
-            }).to_string()];
+            } )];
         ]
         [
             test_name       [test_obfuscate_json_12]
-            keep_values     [vec!["_index".to_string(), "title".to_string()]]
-            input           [json!({
+            keep_values     [vec_of_strings!["_index", "title"]]
+            input           [json!( {
                 "hits": {
                     "total": 2,
                     "max_score": 0.9105287,
@@ -387,8 +388,8 @@ mod tests {
                      }
                     ]
                 }
-            })]
-            expected        [json!({
+            } )]
+            expected        [json!( {
                 "hits": {
                     "total": "?",
                     "max_score": "?",
@@ -427,12 +428,12 @@ mod tests {
                      }
                     ]
                 }
-            }).to_string()];
+            } )];
         ]
         [
             test_name       [test_obfuscate_json_13]
-            keep_values     [vec!["_source".to_string()]]
-            input           [json!({
+            keep_values     [vec_of_strings!["_source"]]
+            input           [json!( {
                 "query": {
                   "bool": {
                     "must": [ { "match": { "title": "smith" } } ],
@@ -454,8 +455,8 @@ mod tests {
                 "from": 100,
                 "_source": [ "title", "id" ],
                 "sort": [ { "_id": { "order": "desc" } } ]
-              })]
-            expected        [json!({
+              } )]
+            expected        [json!( {
                 "query": {
                   "bool": {
                     "must": [ { "match": { "title": "?" } } ],
@@ -478,24 +479,507 @@ mod tests {
                 "_source": [ "title", "id" ],
                 "sort": [ { "_id": { "order": "?" } }
                 ]
-              }).to_string()];
-        ]
-        [
-            test_name       [test_obfuscate_json_14]
-            keep_values     [vec!["C".to_string()]]
-            input           ["not valid json"]
-            expected        ["?".to_string()];
-        ]
-        [
-            test_name       [test_obfuscate_json_15]
-            keep_values     [vec!["C".to_string()]]
-            input           [json!({"fields" : [{"A": 1, "B": {"C": 3}}, "2"]})]
-            expected        [json!({"fields" : [{"A": "?", "B": {"C": 3}}, "?"]}).to_string()];
+              } )];
         ]
     )]
     #[test]
     fn test_name() {
-        let result = obfuscate_json(input.to_string().as_str(), keep_values);
-        assert_eq!(result, expected);
+        let config = ObfuscationConfig {
+            tag_replace_rules: None,
+            http_remove_query_string: false,
+            http_remove_path_digits: false,
+            obfuscate_memcached: false,
+            obfuscate_sql: false,
+            sql_replace_digits: false,
+            sql_literal_escapes: false,
+        };
+        let result = obfuscate_json(&config, input.to_string().as_str(), keep_values, vec_of_strings![]);
+        assert_eq!(result, expected.to_string());
+    }
+
+    #[duplicate_item(
+        [
+            test_name       [test_obfuscate_json_sql_queries_1]
+            keep_values     [vec_of_strings!["hello"]]
+            sql_values      [vec_of_strings!["query"]]
+            input           [json!( {"query": "select * from table where id = 2", "hello": "world", "hi": "there"} )]
+            expected        [json!( {"query": "select * from table where id = ?", "hello": "world", "hi": "?"} )];
+        ]
+        [
+            test_name       [test_obfuscate_json_sql_queries_2]
+            keep_values     [vec_of_strings![]]
+            sql_values      [vec_of_strings!["object"]]
+            input           [json!( {"object": {"not a": "query"}} )]
+            expected        [json!( {"object": {"not a": "?"}} )];
+        ]
+        [
+            test_name       [test_obfuscate_json_sql_queries_3]
+            keep_values     [vec_of_strings![]]
+            sql_values      [vec_of_strings!["object"]]
+            input           [json!( {"object": ["not", "a", "query"]} )]
+            expected        [json!( {"object": ["?", "?", "?"]} )];
+        ]
+        [
+            test_name       [test_obfuscate_json_sql_queries_4]
+            keep_values     [vec_of_strings!["select_id", "using_filesort", "table_name", "access_type", "possible_keys", "key", "key_length", "used_key_parts", "used_columns", "ref", "update"]]
+            sql_values      [vec_of_strings!["attached_condition"]]
+            input           [json!( {
+                "query_block": {
+                  "select_id": 1,
+                  "cost_info": {
+                    "query_cost": "120.31"
+                  },
+                  "ordering_operation": {
+                    "using_filesort": true,
+                    "cost_info": {
+                      "sort_cost": "100.00"
+                    },
+                    "table": {
+                      "table_name": "sbtest1",
+                      "access_type": "range",
+                      "possible_keys": [
+                        "PRIMARY"
+                      ],
+                      "key": "PRIMARY",
+                      "used_key_parts": [
+                        "id"
+                      ],
+                      "key_length": "4",
+                      "rows_examined_per_scan": 100,
+                      "rows_produced_per_join": 100,
+                      "filtered": "100.00",
+                      "cost_info": {
+                        "read_cost": "10.31",
+                        "eval_cost": "10.00",
+                        "prefix_cost": "20.31",
+                        "data_read_per_join": "71K"
+                      },
+                      "used_columns": [
+                        "id",
+                        "c"
+                      ],
+                      "attached_condition": "(`sbtest`.`sbtest1`.`id` between 5016 and 5115)"
+                    }
+                  }
+                }
+              } )]
+            expected        [json!( {
+                "query_block": {
+                  "select_id": 1,
+                  "cost_info": {
+                    "query_cost": "?"
+                  },
+                  "ordering_operation": {
+                    "using_filesort": true,
+                    "cost_info": {
+                      "sort_cost": "?"
+                    },
+                    "table": {
+                      "table_name": "sbtest1",
+                      "access_type": "range",
+                      "possible_keys": [
+                        "PRIMARY"
+                      ],
+                      "key": "PRIMARY",
+                      "used_key_parts": [
+                        "id"
+                      ],
+                      "key_length": "4",
+                      "rows_examined_per_scan": "?",
+                      "rows_produced_per_join": "?",
+                      "filtered": "?",
+                      "cost_info": {
+                        "read_cost": "?",
+                        "eval_cost": "?",
+                        "prefix_cost": "?",
+                        "data_read_per_join": "?"
+                      },
+                      "used_columns": [
+                        "id",
+                        "c"
+                      ],
+                      "attached_condition": "( sbtest . sbtest1 . id between ? and ? )"
+                    }
+                  }
+                }
+              } )];
+        ]
+        [
+            test_name       [test_obfuscate_json_sql_queries_5]
+            keep_values     [vec_of_strings!["Loops", "Actual Rows", "Actual Startup Time", "Actual Total Time", "Alias", "Async Capable", "Average Sort Space Used", "Cache Evictions", "Cache Hits", "Cache Misses", "Cache Overflows", "Calls", "Command", "Conflict Arbiter Indexes", "Conflict Resolution", "Conflicting Tuples", "Constraint Name", "CTE Name", "Custom Plan Provider", "Deforming", "Emission", "Exact Heap Blocks", "Execution Time", "Expressions", "Foreign Delete", "Foreign Insert", "Foreign Update", "Full-sort Groups", "Function Call", "Function Name", "Generation", "Group Count", "Grouping Sets", "Group Key", "HashAgg Batches", "Hash Batches", "Hash Buckets", "Heap Fetches", "I/O Read Time", "I/O Write Time", "Index Name", "Inlining", "Join Type", "Local Dirtied Blocks", "Local Hit Blocks", "Local Read Blocks", "Local Written Blocks", "Lossy Heap Blocks", "Node Type", "Optimization", "Original Hash Batches", "Original Hash Buckets", "Parallel Aware", "Parent Relationship", "Partial Mode", "Peak Memory Usage", "Peak Sort Space Used", "Planned Partitions", "Planning Time", "Pre-sorted Groups", "Presorted Key", "Query Identifier", "Plan Rows", "Plan Width", "Relation Name", "Rows Removed by Conflict Filter", "Rows Removed by Filter", "Rows Removed by Index Recheck", "Rows Removed by Join Filter", "Sampling Method", "Scan Direction", "Schema", "Settings", "Shared Dirtied Blocks", "Shared Hit Blocks", "Shared Read Blocks", "Shared Written Blocks", "Single Copy", "Sort Key", "Sort Method", "Sort Methods Used", "Sort Space", "Sort Space Type", "Sort Space Used", "Startup Cost", "Strategy", "Subplan Name", "Subplans Removed", "Target Tables", "Temp Read Blocks", "Temp Written Blocks", "Time", "Timing", "Total", "Trigger", "Trigger Name", "Triggers", "Tuples Inserted", "Tuplestore Name", "Total Cost", "WAL Bytes", "WAL FPI", "WAL Records", "Worker", "Worker Number", "Workers", "Workers Launched", "Workers Planned"]]
+            sql_values      [vec_of_strings!["Cache Key", "Conflict Filter", "Filter", "Hash Cond", "Index Cond", "Join Filter", "Merge Cond", "Output", "Recheck Cond", "Repeatable Seed", "Sampling Parameters", "TID Cond"]]
+            input           [json!( {
+                "Plan": {
+                  "Node Type": "Aggregate",
+                  "Partial Mode": "Partial",
+                  "Startup Cost": 74286.07,
+                  "Total Cost": 223.59,
+                  "Plan Rows": 100,
+                  "Plan Width": 121,
+                  "Plans": [
+                    {
+                      "Cache Key": "datadog.org_id",
+                      "Conflict Filter": "(datadog.org_id != 8182)",
+                      "Filter": "(query <> 'dogfood'::text)",
+                      "Hash Cond": "(pg_stat_statements.dbid = pg_database.)",
+                      "Index Cond": "((datadog.org.id >= 10) AND (datadog.org.id < 15))",
+                      "Join Filter": "datadog.org.name != 'dummy'",
+                      "Merge Cond": "datadog.org_name = 'dummy'",
+                      "Output": ["'fakename'::text", "25", "NULL::timestamp without time zone", "NULL::text"],
+                      "Recheck Cond": "datadog.org.id >= 10",
+                      "Sampling Parameters": ["'15528'::real"],
+                      "TID Cond": "((datadog.tid > '15531'::tid) AND (datadog.tid <= '(44247,178)'::tid))",
+                      "Alias": "dog",
+                      "Async Capable": true,
+                      "Cache Evictions": 1,
+                      "Cache Hits": 2,
+                      "Cache Misses": 3,
+                      "Cache Overflows": 4,
+                      "Command": "Intersect",
+                      "Conflict Arbiter Indexes": "dummy_index",
+                      "Conflict Resolution": "NOTHING",
+                      "Conflicting Tuples": 1,
+                      "Constraint Name": "datadog_org.id_pkey",
+                      "CTE Name": "CTE_datadog",
+                      "Custom Plan Provider": "Custom Dogfood",
+                      "Deforming": false,
+                      "Exact Heap Blocks": 1,
+                      "Execution Time": 1,
+                      "Expressions": false,
+                      "Foreign Delete": "datadog.org_id",
+                      "Foreign Insert": "datadog.org_id",
+                      "Foreign Update": "datadog.has_apm",
+                      "Function Call": "count_active_users_for_product('dbm')",
+                      "Function Name": "count_active_users_for_product",
+                      "Group Key": ["datadog.org_id", "datadog.has_apm"],
+                      "Grouping Sets": ["datadog.has_apm", "datadog.enabled_logs"],
+                      "Hash Batches": 32,
+                      "Hash Buckets": 8319,
+                      "HashAgg Batches": 4,
+                      "Heap Fetches": 8,
+                      "Index Name": "dogfood",
+                      "I/O Read Time": 5.31,
+                      "I/O Write Time": 8.18,
+                      "Join Type": "Left",
+                      "Lossy Heap Blocks": 1,
+                      "Original Hash Batches": 32,
+                      "Original Hash Buckets": 65536,
+                      "Parallel Aware": false,
+                      "Parent Relationship": "Outer",
+                      "Peak Memory Usage": 3941,
+                      "Planned Partitions": 1,
+                      "Planning Time": 0.431,
+                      "Presorted Key": ["dog", "food"],
+                      "Query Identifier": "3365166609774651210",
+                      "Relation Name": "dog",
+                      "Repeatable Seed": "'60'::double precision",
+                      "Rows Removed by Conflict Filter": 1,
+                      "Rows Removed by Filter": 2,
+                      "Rows Removed by Index Recheck": 3,
+                      "Rows Removed by Join Filter": 4,
+                      "Sampling Method": "System",
+                      "Scan Direction": "Forward",
+                      "Schema": "dogfood_users",
+                      "Settings": {
+                          "enable_mergejoin": "off",
+                          "enable_nestloop": "off",
+                          "jit_above_cost": "0",
+                          "jit_inline_above_cost": "0",
+                          "jit_optimize_above_cost": "0"
+                      },
+                      "Single Copy": false,
+                      "Sort Key": "datadog.org_id",
+                      "Sort Method": "quicksort",
+                      "Sort Space Type": "Memory",
+                      "Sort Space Used": 2,
+                      "Strategy": "Hashed",
+                      "Subplan Name": "DogPlan 1",
+                      "Subplans Removed": 0,
+                      "Target Tables": "dog_food_users",
+                      "Timing": {
+                          "Generation": 1.22,
+                          "Inlining": 0.1,
+                          "Optimization": 0.83,
+                          "Emission": 5.418,
+                          "Total": 7.568
+                      },
+                      "Triggers": [
+                          {
+                             "Trigger Name": "validate_user",
+                             "Relation": "datadog",
+                             "Time": 1.676,
+                             "Calls": 1
+                          },
+                          {
+                             "Trigger Name": "has_apm",
+                             "Relation": "datadog",
+                             "Time": 1.32,
+                             "Calls": 1
+                          }
+                      ],
+                      "Trigger": {
+                         "Trigger Name": "has_apm",
+                         "Relation": "datadog",
+                         "Time": 1.32,
+                         "Calls": 1
+                      },
+                      "Tuples Inserted": 1,
+                      "Tuplestore Name": "dog_tuples",
+                      "WAL Bytes": 1,
+                      "WAL FPI": 2,
+                      "WAL Records": 3,
+                      "Worker": {
+                         "Worker Number": 0,
+                         "Actual Startup Time": 303.67,
+                         "Actual Total Time": 303.92,
+                         "Actual Rows": 256,
+                         "Actual Loops": 1
+                      },
+                      "Workers": [
+                          {
+                             "Worker Number": 0,
+                             "Actual Startup Time": 1303.877,
+                             "Actual Total Time": 1303.928,
+                             "Actual Rows": 256,
+                             "Actual Loops": 1,
+                             "Full-sort Groups": {
+                                "Group Count": 1,
+                                "Sort Methods Used": [
+                                   "quicksort"
+                                ],
+                                "Sort Space Memory": {
+                                   "Average Sort Space Used": 34,
+                                   "Peak Sort Space Used": 34
+                                }
+                             },
+                             "Pre-sorted Groups": {
+                                "Group Count": 1,
+                                "Sort Methods Used": [
+                                   "external merge"
+                                ],
+                                "Sort Space Disk": {
+                                   "Average Sort Space Used": 82256,
+                                   "Peak Sort Space Used": 82256
+                                }
+                             }
+                          },
+                          {
+                             "Worker Number": 1,
+                             "Actual Startup Time": 0.016,
+                             "Actual Total Time": 51.325,
+                             "Actual Rows": 294375,
+                             "Actual Loops": 1,
+                             "Shared Hit Blocks": 3925,
+                             "Shared Read Blocks": 0,
+                             "Shared Dirtied Blocks": 0,
+                             "Shared Written Blocks": 0,
+                             "Local Hit Blocks": 0,
+                             "Local Read Blocks": 0,
+                             "Local Dirtied Blocks": 0,
+                             "Local Written Blocks": 0,
+                             "Temp Read Blocks": 0,
+                             "Temp Written Blocks": 0
+                          }
+                      ],
+                      "Workers Launched": 5,
+                      "Workers Planned": 5
+                    }
+                  ]
+                }
+              } )]
+            expected        [json!( {
+                "Plan": {
+                  "Node Type": "Aggregate",
+                  "Partial Mode": "Partial",
+                  "Startup Cost": 74286.07,
+                  "Total Cost": 223.59,
+                  "Plan Rows": 100,
+                  "Plan Width": 121,
+                  "Plans": [
+                    {
+                      "Cache Key": "datadog.org_id",
+                      "Conflict Filter": "( datadog.org_id != ? )",
+                      "Filter": "( query <> ? :: text )",
+                      "Hash Cond": "( pg_stat_statements.dbid = pg_database. )",
+                      "Index Cond": "( ( datadog.org.id >= ? ) AND ( datadog.org.id < ? ) )",
+                      "Join Filter": "datadog.org.name != ?",
+                      "Merge Cond": "datadog.org_name = ?",
+                      "Output": ["?", "?", "?", "?"],
+                      "Recheck Cond": "datadog.org.id >= ?",
+                      "Sampling Parameters": ["?"],
+                      "TID Cond": "( ( datadog.tid > ? :: tid ) AND ( datadog.tid <= ? :: tid ) )",
+                      "Alias": "dog",
+                      "Async Capable": true,
+                      "Cache Evictions": 1,
+                      "Cache Hits": 2,
+                      "Cache Misses": 3,
+                      "Cache Overflows": 4,
+                      "Command": "Intersect",
+                      "Conflict Arbiter Indexes": "dummy_index",
+                      "Conflict Resolution": "NOTHING",
+                      "Conflicting Tuples": 1,
+                      "Constraint Name": "datadog_org.id_pkey",
+                      "CTE Name": "CTE_datadog",
+                      "Custom Plan Provider": "Custom Dogfood",
+                      "Deforming": false,
+                      "Exact Heap Blocks": 1,
+                      "Execution Time": 1,
+                      "Expressions": false,
+                      "Foreign Delete": "datadog.org_id",
+                      "Foreign Insert": "datadog.org_id",
+                      "Foreign Update": "datadog.has_apm",
+                      "Function Call": "count_active_users_for_product('dbm')",
+                      "Function Name": "count_active_users_for_product",
+                      "Group Key": ["datadog.org_id", "datadog.has_apm"],
+                      "Grouping Sets": ["datadog.has_apm", "datadog.enabled_logs"],
+                      "Hash Batches": 32,
+                      "Hash Buckets": 8319,
+                      "HashAgg Batches": 4,
+                      "Heap Fetches": 8,
+                      "Index Name": "dogfood",
+                      "I/O Read Time": 5.31,
+                      "I/O Write Time": 8.18,
+                      "Join Type": "Left",
+                      "Lossy Heap Blocks": 1,
+                      "Original Hash Batches": 32,
+                      "Original Hash Buckets": 65536,
+                      "Parallel Aware": false,
+                      "Parent Relationship": "Outer",
+                      "Peak Memory Usage": 3941,
+                      "Planned Partitions": 1,
+                      "Planning Time": 0.431,
+                      "Presorted Key": ["dog", "food"],
+                      "Query Identifier": "3365166609774651210",
+                      "Relation Name": "dog",
+                      "Repeatable Seed": "? :: double precision",
+                      "Rows Removed by Conflict Filter": 1,
+                      "Rows Removed by Filter": 2,
+                      "Rows Removed by Index Recheck": 3,
+                      "Rows Removed by Join Filter": 4,
+                      "Sampling Method": "System",
+                      "Scan Direction": "Forward",
+                      "Schema": "dogfood_users",
+                      "Settings": {
+                          "enable_mergejoin": "off",
+                          "enable_nestloop": "off",
+                          "jit_above_cost": "0",
+                          "jit_inline_above_cost": "0",
+                          "jit_optimize_above_cost": "0"
+                      },
+                      "Single Copy": false,
+                      "Sort Key": "datadog.org_id",
+                      "Sort Method": "quicksort",
+                      "Sort Space Type": "Memory",
+                      "Sort Space Used": 2,
+                      "Strategy": "Hashed",
+                      "Subplan Name": "DogPlan 1",
+                      "Subplans Removed": 0,
+                      "Target Tables": "dog_food_users",
+                      "Timing": {
+                          "Generation": 1.22,
+                          "Inlining": 0.1,
+                          "Optimization": 0.83,
+                          "Emission": 5.418,
+                          "Total": 7.568
+                      },
+                      "Triggers": [
+                          {
+                             "Trigger Name": "validate_user",
+                             "Relation": "datadog",
+                             "Time": 1.676,
+                             "Calls": 1
+                          },
+                          {
+                             "Trigger Name": "has_apm",
+                             "Relation": "datadog",
+                             "Time": 1.32,
+                             "Calls": 1
+                          }
+                      ],
+                      "Trigger": {
+                         "Trigger Name": "has_apm",
+                         "Relation": "datadog",
+                         "Time": 1.32,
+                         "Calls": 1
+                      },
+                      "Tuples Inserted": 1,
+                      "Tuplestore Name": "dog_tuples",
+                      "WAL Bytes": 1,
+                      "WAL FPI": 2,
+                      "WAL Records": 3,
+                      "Worker": {
+                         "Worker Number": 0,
+                         "Actual Startup Time": 303.67,
+                         "Actual Total Time": 303.92,
+                         "Actual Rows": 256,
+                         "Actual Loops": 1
+                      },
+                      "Workers": [
+                          {
+                             "Worker Number": 0,
+                             "Actual Startup Time": 1303.877,
+                             "Actual Total Time": 1303.928,
+                             "Actual Rows": 256,
+                             "Actual Loops": 1,
+                             "Full-sort Groups": {
+                                "Group Count": 1,
+                                "Sort Methods Used": [
+                                   "quicksort"
+                                ],
+                                "Sort Space Memory": {
+                                   "Average Sort Space Used": 34,
+                                   "Peak Sort Space Used": 34
+                                }
+                             },
+                             "Pre-sorted Groups": {
+                                "Group Count": 1,
+                                "Sort Methods Used": [
+                                   "external merge"
+                                ],
+                                "Sort Space Disk": {
+                                   "Average Sort Space Used": 82256,
+                                   "Peak Sort Space Used": 82256
+                                }
+                             }
+                          },
+                          {
+                             "Worker Number": 1,
+                             "Actual Startup Time": 0.016,
+                             "Actual Total Time": 51.325,
+                             "Actual Rows": 294375,
+                             "Actual Loops": 1,
+                             "Shared Hit Blocks": 3925,
+                             "Shared Read Blocks": 0,
+                             "Shared Dirtied Blocks": 0,
+                             "Shared Written Blocks": 0,
+                             "Local Hit Blocks": 0,
+                             "Local Read Blocks": 0,
+                             "Local Dirtied Blocks": 0,
+                             "Local Written Blocks": 0,
+                             "Temp Read Blocks": 0,
+                             "Temp Written Blocks": 0
+                          }
+                      ],
+                      "Workers Launched": 5,
+                      "Workers Planned": 5
+                    }
+                  ]
+                }
+              } )];
+        ]
+    )]
+    #[test]
+    fn test_name() {
+        let config = ObfuscationConfig {
+            tag_replace_rules: None,
+            http_remove_query_string: false,
+            http_remove_path_digits: false,
+            obfuscate_memcached: false,
+            obfuscate_sql: true,
+            sql_replace_digits: false,
+            sql_literal_escapes: false,
+        };
+        let result = obfuscate_json(&config, input.to_string().as_str(), keep_values, sql_values);
+        assert_eq!(result, expected.to_string());
     }
 }
