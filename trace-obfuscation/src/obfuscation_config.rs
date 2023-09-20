@@ -41,7 +41,7 @@ impl ObfuscationConfig {
             },
             Err(_) => None,
         };
-        
+
         // HTTP
         let http_remove_query_string =
             parse_env::bool("DD_APM_OBFUSCATION_HTTP_REMOVE_QUERY_STRING").unwrap_or(false);
@@ -54,19 +54,26 @@ impl ObfuscationConfig {
         let obfuscate_sql = parse_env::bool("DD_APM_OBFUSCATION_SQL_ENABLED").unwrap_or(true);
 
         // Elastic Search
-        let obfuscate_elasticsearch = parse_env::bool("DD_APM_OBFUSCATION_ELASTICSEARCH_ENABLED").unwrap_or(false);
-        let elasticsearch_keep_values_raw = parse_env::str_not_empty("DD_APM_OBFUSCATION_ELASTICSEARCH_KEEP_VALUES");
+        let obfuscate_elasticsearch =
+            parse_env::bool("DD_APM_OBFUSCATION_ELASTICSEARCH_ENABLED").unwrap_or(false);
+        let elasticsearch_keep_values_raw =
+            parse_env::str_not_empty("DD_APM_OBFUSCATION_ELASTICSEARCH_KEEP_VALUES");
         let elasticsearch_keep_values = parse_arr_from_string(elasticsearch_keep_values_raw);
-       
-        let elasticsearch_obfuscate_sql_values_raw = parse_env::str_not_empty("DD_APM_OBFUSCATION_ELASTICSEARCH_OBFUSCATE_SQL_VALUES");
-        let elasticsearch_obfuscate_sql_values = parse_arr_from_string(elasticsearch_obfuscate_sql_values_raw);
+
+        let elasticsearch_obfuscate_sql_values_raw =
+            parse_env::str_not_empty("DD_APM_OBFUSCATION_ELASTICSEARCH_OBFUSCATE_SQL_VALUES");
+        let elasticsearch_obfuscate_sql_values =
+            parse_arr_from_string(elasticsearch_obfuscate_sql_values_raw);
 
         // MongoDB
-        let obfuscate_mongodb = parse_env::bool("DD_APM_OBFUSCATION_MONGODB_ENABLED").unwrap_or(false);
-        let mongodb_keep_values_raw = parse_env::str_not_empty("DD_APM_OBFUSCATION_MONGODB_KEEP_VALUES");
+        let obfuscate_mongodb =
+            parse_env::bool("DD_APM_OBFUSCATION_MONGODB_ENABLED").unwrap_or(false);
+        let mongodb_keep_values_raw =
+            parse_env::str_not_empty("DD_APM_OBFUSCATION_MONGODB_KEEP_VALUES");
         let mongodb_keep_values = parse_arr_from_string(mongodb_keep_values_raw);
-        
-        let mongodb_obfuscate_sql_values_raw = parse_env::str_not_empty("DD_APM_OBFUSCATION_MONGODB_OBFUSCATE_SQL_VALUES");
+
+        let mongodb_obfuscate_sql_values_raw =
+            parse_env::str_not_empty("DD_APM_OBFUSCATION_MONGODB_OBFUSCATE_SQL_VALUES");
         let mongodb_obfuscate_sql_values = parse_arr_from_string(mongodb_obfuscate_sql_values_raw);
 
         Ok(ObfuscationConfig {
@@ -118,9 +125,9 @@ fn parse_arr_from_string(str: Option<String>) -> Option<Vec<String>> {
     }
     let res: Vec<&str> = s.split_ascii_whitespace().collect();
     if res.is_empty() {
-        return None
+        return None;
     }
-    return Some(res.iter().map(|s| s.to_string()).collect())
+    return Some(res.iter().map(|s| s.to_string()).collect());
 }
 
 #[cfg(test)]

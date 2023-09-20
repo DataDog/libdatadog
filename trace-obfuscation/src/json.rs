@@ -27,22 +27,16 @@ pub fn obfuscate_json_string(
     let empty_vec = Vec::new();
 
     let json_keep_values = match obfuscation_type {
-        JSONObfuscationType::MongoDB => {
-            config.mongodb_keep_values.as_ref()
-        }
-        JSONObfuscationType::Elasticsearch => {
-            config.elasticsearch_keep_values.as_ref()
-        }
-    }.unwrap_or(&empty_vec);
+        JSONObfuscationType::MongoDB => config.mongodb_keep_values.as_ref(),
+        JSONObfuscationType::Elasticsearch => config.elasticsearch_keep_values.as_ref(),
+    }
+    .unwrap_or(&empty_vec);
 
     let json_sql_values = match obfuscation_type {
-        JSONObfuscationType::MongoDB => {
-            config.mongodb_obfuscate_sql_values.as_ref()
-        }
-        JSONObfuscationType::Elasticsearch => {
-            config.elasticsearch_obfuscate_sql_values.as_ref()
-        }
-    }.unwrap_or(&empty_vec);
+        JSONObfuscationType::MongoDB => config.mongodb_obfuscate_sql_values.as_ref(),
+        JSONObfuscationType::Elasticsearch => config.elasticsearch_obfuscate_sql_values.as_ref(),
+    }
+    .unwrap_or(&empty_vec);
 
     recurse_and_replace_json(
         config,
@@ -102,7 +96,7 @@ mod tests {
     use duplicate::duplicate_item;
     use serde_json::json;
 
-    use crate::{obfuscation_config::ObfuscationConfig, json::JSONObfuscationType};
+    use crate::{json::JSONObfuscationType, obfuscation_config::ObfuscationConfig};
 
     use super::obfuscate_json_string;
 
