@@ -1305,6 +1305,7 @@ LIMIT 1
             http_remove_query_string: false,
             http_remove_path_digits: false,
             obfuscate_memcached: false,
+            obfuscate_sql: true,
             sql_replace_digits: replace_digits,
             sql_literal_escapes: false,
         };
