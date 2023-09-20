@@ -108,7 +108,7 @@ mod tests {
                   "post_tags": [ "?" ],
                   "index": "?"
                 }
-              }).to_string()];
+              })];
         ]
         [
             test_name       [test_obfuscate_json_3]
