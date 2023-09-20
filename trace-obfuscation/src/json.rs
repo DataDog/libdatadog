@@ -7,19 +7,34 @@ use std::collections::HashSet;
 
 use serde_json::{json, Value};
 
-use crate::{sql::obfuscate_sql_string, obfuscation_config::ObfuscationConfig};
+use crate::{obfuscation_config::ObfuscationConfig, sql::obfuscate_sql_string};
 
-pub fn obfuscate_json(config: &ObfuscationConfig, json_str: &str, keep_values: Vec<String>, sql_values: Vec<String>) -> String {
+pub fn obfuscate_json(
+    config: &ObfuscationConfig,
+    json_str: &str,
+    keep_values: Vec<String>,
+    sql_values: Vec<String>,
+) -> String {
     let mut json_dict: Value = serde_json::from_str(json_str).unwrap_or_default();
     if json_dict.is_null() {
         return "?".to_string();
     }
-    recurse_and_replace_json(config, &mut json_dict, &HashSet::from_iter(keep_values), &HashSet::from_iter(sql_values));
+    recurse_and_replace_json(
+        config,
+        &mut json_dict,
+        &HashSet::from_iter(keep_values),
+        &HashSet::from_iter(sql_values),
+    );
 
     json_dict.to_string()
 }
 
-fn recurse_and_replace_json(config: &ObfuscationConfig, value: &mut Value, keep_values: &HashSet<String>, sql_values: &HashSet<String>) {
+fn recurse_and_replace_json(
+    config: &ObfuscationConfig,
+    value: &mut Value,
+    keep_values: &HashSet<String>,
+    sql_values: &HashSet<String>,
+) {
     match value {
         Value::Object(map) => {
             for (k, v) in map {
@@ -32,7 +47,8 @@ fn recurse_and_replace_json(config: &ObfuscationConfig, value: &mut Value, keep_
                 }
 
                 if sql_values.contains(k) {
-                    let obfuscated_sql_result = obfuscate_sql_string(v.as_str().unwrap_or_default(), config);
+                    let obfuscated_sql_result =
+                        obfuscate_sql_string(v.as_str().unwrap_or_default(), config);
                     if let Some(res) = obfuscated_sql_result.obfuscated_string {
                         *v = json!(res)
                     } else {
@@ -485,7 +501,12 @@ mod tests {
             sql_replace_digits: false,
             sql_literal_escapes: false,
         };
-        let result = obfuscate_json(&config, input.to_string().as_str(), parse_test_args(keep_values), vec![]);
+        let result = obfuscate_json(
+            &config,
+            input.to_string().as_str(),
+            parse_test_args(keep_values),
+            vec![],
+        );
         assert_eq!(result, expected.to_string());
     }
 
@@ -971,7 +992,12 @@ mod tests {
             sql_replace_digits: false,
             sql_literal_escapes: false,
         };
-        let result = obfuscate_json(&config, input.to_string().as_str(), parse_test_args(keep_values), parse_test_args(sql_values));
+        let result = obfuscate_json(
+            &config,
+            input.to_string().as_str(),
+            parse_test_args(keep_values),
+            parse_test_args(sql_values),
+        );
         assert_eq!(result, expected.to_string());
     }
 }
