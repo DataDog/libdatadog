@@ -65,28 +65,20 @@ mod tests {
 
     use super::obfuscate_json;
 
-    macro_rules! vec_of_strings {
-        ( $( $x:expr ),* ) => {
-            {
-                let mut temp_vec = Vec::new();
-                $(
-                    temp_vec.push($x.to_string());
-                )*
-                temp_vec
-            }
-        };
+    fn parse_test_args(argv: Vec<&str>) -> Vec<String> {
+        argv.iter().map(|&s| s.to_string()).collect::<Vec<String>>()
     }
 
     #[duplicate_item(
         [
             test_name       [test_obfuscate_json_1]
-            keep_values     [vec_of_strings![]]
+            keep_values     [vec![]]
             input           [json!( { "query": { "multi_match" : { "query" : "guide", "fields" : ["_all", { "key": "value", "other": ["1", "2", {"k": "v"}] }, "2"] } } } )]
             expected        [json!( { "query": { "multi_match": { "query": "?", "fields" : ["?", { "key": "?", "other": ["?", "?", {"k": "?"}] }, "?"] } } } )];
         ]
         [
             test_name       [test_obfuscate_json_2]
-            keep_values     [vec_of_strings![]]
+            keep_values     [vec![]]
             input           [json!({
                 "highlight": {
                   "pre_tags": [ "<em>" ],
@@ -104,31 +96,31 @@ mod tests {
         ]
         [
             test_name       [test_obfuscate_json_3]
-            keep_values     [vec_of_strings!["other"]]
+            keep_values     [vec!["other"]]
             input           [json!( { "query": { "multi_match" : { "query" : "guide", "fields" : ["_all", { "key": "value", "other": ["1", "2", {"k": "v"}] }, "2"] } } } )]
             expected        [json!( { "query": { "multi_match": { "query": "?", "fields" : ["?", { "key": "?", "other": ["1", "2", {"k": "v"}] }, "?"] } } } )];
         ]
         [
             test_name       [test_obfuscate_json_4]
-            keep_values     [vec_of_strings!["fields"]]
+            keep_values     [vec!["fields"]]
             input           [json!( {"fields" : ["_all", { "key": "value", "other": ["1", "2", {"k": "v"}] }, "2"]} )]
             expected        [json!( {"fields" : ["_all", { "key": "value", "other": ["1", "2", {"k": "v"}] }, "2"]} )];
         ]
         [
             test_name       [test_obfuscate_json_5]
-            keep_values     [vec_of_strings!["k"]]
+            keep_values     [vec!["k"]]
             input           [json!( {"fields" : ["_all", { "key": "value", "other": ["1", "2", {"k": "v"}] }, "2"]} )]
             expected        [json!( {"fields" : ["?", { "key": "?", "other": ["?", "?", {"k": "v"}] }, "?"]} )];
         ]
         [
             test_name       [test_obfuscate_json_6]
-            keep_values     [vec_of_strings!["C"]]
+            keep_values     [vec!["C"]]
             input           [json!( {"fields" : [{"A": 1, "B": {"C": 3}}, "2"]} )]
             expected        [json!( {"fields" : [{"A": "?", "B": {"C": 3}}, "?"]} )];
         ]
         [
             test_name       [test_obfuscate_json_7]
-            keep_values     [vec_of_strings![]]
+            keep_values     [vec![]]
             input           [json!( {
                 "query": {
                    "match" : {
@@ -162,7 +154,7 @@ mod tests {
         ]
         [
             test_name       [test_obfuscate_json_8]
-            keep_values     [vec_of_strings!["_source"]]
+            keep_values     [vec!["_source"]]
             input           [json!( {
                 "query": {
                    "match" : {
@@ -196,7 +188,7 @@ mod tests {
         ]
         [
             test_name       [test_obfuscate_json_9]
-            keep_values     [vec_of_strings!["query"]]
+            keep_values     [vec!["query"]]
             input           [json!( {
                 "query": {
                    "match" : {
@@ -230,7 +222,7 @@ mod tests {
         ]
         [
             test_name       [test_obfuscate_json_10]
-            keep_values     [vec_of_strings!["match"]]
+            keep_values     [vec!["match"]]
             input           [json!( {
                 "query": {
                    "match" : {
@@ -264,7 +256,7 @@ mod tests {
         ]
         [
             test_name       [test_obfuscate_json_11]
-            keep_values     [vec_of_strings!["hits"]]
+            keep_values     [vec!["hits"]]
             input           [json!( {
                 "outer": {
                     "total": 2,
@@ -348,7 +340,7 @@ mod tests {
         ]
         [
             test_name       [test_obfuscate_json_12]
-            keep_values     [vec_of_strings!["_index", "title"]]
+            keep_values     [vec!["_index", "title"]]
             input           [json!( {
                 "hits": {
                     "total": 2,
@@ -432,7 +424,7 @@ mod tests {
         ]
         [
             test_name       [test_obfuscate_json_13]
-            keep_values     [vec_of_strings!["_source"]]
+            keep_values     [vec!["_source"]]
             input           [json!( {
                 "query": {
                   "bool": {
@@ -493,36 +485,36 @@ mod tests {
             sql_replace_digits: false,
             sql_literal_escapes: false,
         };
-        let result = obfuscate_json(&config, input.to_string().as_str(), keep_values, vec_of_strings![]);
+        let result = obfuscate_json(&config, input.to_string().as_str(), parse_test_args(keep_values), vec![]);
         assert_eq!(result, expected.to_string());
     }
 
     #[duplicate_item(
         [
             test_name       [test_obfuscate_json_sql_queries_1]
-            keep_values     [vec_of_strings!["hello"]]
-            sql_values      [vec_of_strings!["query"]]
+            keep_values     [vec!["hello"]]
+            sql_values      [vec!["query"]]
             input           [json!( {"query": "select * from table where id = 2", "hello": "world", "hi": "there"} )]
             expected        [json!( {"query": "select * from table where id = ?", "hello": "world", "hi": "?"} )];
         ]
         [
             test_name       [test_obfuscate_json_sql_queries_2]
-            keep_values     [vec_of_strings![]]
-            sql_values      [vec_of_strings!["object"]]
+            keep_values     [vec![]]
+            sql_values      [vec!["object"]]
             input           [json!( {"object": {"not a": "query"}} )]
             expected        [json!( {"object": {"not a": "?"}} )];
         ]
         [
             test_name       [test_obfuscate_json_sql_queries_3]
-            keep_values     [vec_of_strings![]]
-            sql_values      [vec_of_strings!["object"]]
+            keep_values     [vec![]]
+            sql_values      [vec!["object"]]
             input           [json!( {"object": ["not", "a", "query"]} )]
             expected        [json!( {"object": ["?", "?", "?"]} )];
         ]
         [
             test_name       [test_obfuscate_json_sql_queries_4]
-            keep_values     [vec_of_strings!["select_id", "using_filesort", "table_name", "access_type", "possible_keys", "key", "key_length", "used_key_parts", "used_columns", "ref", "update"]]
-            sql_values      [vec_of_strings!["attached_condition"]]
+            keep_values     [vec!["select_id", "using_filesort", "table_name", "access_type", "possible_keys", "key", "key_length", "used_key_parts", "used_columns", "ref", "update"]]
+            sql_values      [vec!["attached_condition"]]
             input           [json!( {
                 "query_block": {
                   "select_id": 1,
@@ -606,8 +598,8 @@ mod tests {
         ]
         [
             test_name       [test_obfuscate_json_sql_queries_5]
-            keep_values     [vec_of_strings!["Loops", "Actual Rows", "Actual Startup Time", "Actual Total Time", "Alias", "Async Capable", "Average Sort Space Used", "Cache Evictions", "Cache Hits", "Cache Misses", "Cache Overflows", "Calls", "Command", "Conflict Arbiter Indexes", "Conflict Resolution", "Conflicting Tuples", "Constraint Name", "CTE Name", "Custom Plan Provider", "Deforming", "Emission", "Exact Heap Blocks", "Execution Time", "Expressions", "Foreign Delete", "Foreign Insert", "Foreign Update", "Full-sort Groups", "Function Call", "Function Name", "Generation", "Group Count", "Grouping Sets", "Group Key", "HashAgg Batches", "Hash Batches", "Hash Buckets", "Heap Fetches", "I/O Read Time", "I/O Write Time", "Index Name", "Inlining", "Join Type", "Local Dirtied Blocks", "Local Hit Blocks", "Local Read Blocks", "Local Written Blocks", "Lossy Heap Blocks", "Node Type", "Optimization", "Original Hash Batches", "Original Hash Buckets", "Parallel Aware", "Parent Relationship", "Partial Mode", "Peak Memory Usage", "Peak Sort Space Used", "Planned Partitions", "Planning Time", "Pre-sorted Groups", "Presorted Key", "Query Identifier", "Plan Rows", "Plan Width", "Relation Name", "Rows Removed by Conflict Filter", "Rows Removed by Filter", "Rows Removed by Index Recheck", "Rows Removed by Join Filter", "Sampling Method", "Scan Direction", "Schema", "Settings", "Shared Dirtied Blocks", "Shared Hit Blocks", "Shared Read Blocks", "Shared Written Blocks", "Single Copy", "Sort Key", "Sort Method", "Sort Methods Used", "Sort Space", "Sort Space Type", "Sort Space Used", "Startup Cost", "Strategy", "Subplan Name", "Subplans Removed", "Target Tables", "Temp Read Blocks", "Temp Written Blocks", "Time", "Timing", "Total", "Trigger", "Trigger Name", "Triggers", "Tuples Inserted", "Tuplestore Name", "Total Cost", "WAL Bytes", "WAL FPI", "WAL Records", "Worker", "Worker Number", "Workers", "Workers Launched", "Workers Planned"]]
-            sql_values      [vec_of_strings!["Cache Key", "Conflict Filter", "Filter", "Hash Cond", "Index Cond", "Join Filter", "Merge Cond", "Output", "Recheck Cond", "Repeatable Seed", "Sampling Parameters", "TID Cond"]]
+            keep_values     [vec!["Loops", "Actual Rows", "Actual Startup Time", "Actual Total Time", "Alias", "Async Capable", "Average Sort Space Used", "Cache Evictions", "Cache Hits", "Cache Misses", "Cache Overflows", "Calls", "Command", "Conflict Arbiter Indexes", "Conflict Resolution", "Conflicting Tuples", "Constraint Name", "CTE Name", "Custom Plan Provider", "Deforming", "Emission", "Exact Heap Blocks", "Execution Time", "Expressions", "Foreign Delete", "Foreign Insert", "Foreign Update", "Full-sort Groups", "Function Call", "Function Name", "Generation", "Group Count", "Grouping Sets", "Group Key", "HashAgg Batches", "Hash Batches", "Hash Buckets", "Heap Fetches", "I/O Read Time", "I/O Write Time", "Index Name", "Inlining", "Join Type", "Local Dirtied Blocks", "Local Hit Blocks", "Local Read Blocks", "Local Written Blocks", "Lossy Heap Blocks", "Node Type", "Optimization", "Original Hash Batches", "Original Hash Buckets", "Parallel Aware", "Parent Relationship", "Partial Mode", "Peak Memory Usage", "Peak Sort Space Used", "Planned Partitions", "Planning Time", "Pre-sorted Groups", "Presorted Key", "Query Identifier", "Plan Rows", "Plan Width", "Relation Name", "Rows Removed by Conflict Filter", "Rows Removed by Filter", "Rows Removed by Index Recheck", "Rows Removed by Join Filter", "Sampling Method", "Scan Direction", "Schema", "Settings", "Shared Dirtied Blocks", "Shared Hit Blocks", "Shared Read Blocks", "Shared Written Blocks", "Single Copy", "Sort Key", "Sort Method", "Sort Methods Used", "Sort Space", "Sort Space Type", "Sort Space Used", "Startup Cost", "Strategy", "Subplan Name", "Subplans Removed", "Target Tables", "Temp Read Blocks", "Temp Written Blocks", "Time", "Timing", "Total", "Trigger", "Trigger Name", "Triggers", "Tuples Inserted", "Tuplestore Name", "Total Cost", "WAL Bytes", "WAL FPI", "WAL Records", "Worker", "Worker Number", "Workers", "Workers Launched", "Workers Planned"]]
+            sql_values      [vec!["Cache Key", "Conflict Filter", "Filter", "Hash Cond", "Index Cond", "Join Filter", "Merge Cond", "Output", "Recheck Cond", "Repeatable Seed", "Sampling Parameters", "TID Cond"]]
             input           [json!( {
                 "Plan": {
                   "Node Type": "Aggregate",
@@ -979,7 +971,7 @@ mod tests {
             sql_replace_digits: false,
             sql_literal_escapes: false,
         };
-        let result = obfuscate_json(&config, input.to_string().as_str(), keep_values, sql_values);
+        let result = obfuscate_json(&config, input.to_string().as_str(), parse_test_args(keep_values), parse_test_args(sql_values));
         assert_eq!(result, expected.to_string());
     }
 }
