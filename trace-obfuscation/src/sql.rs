@@ -29,18 +29,6 @@ pub struct AttemptSqlObfuscationResult {
     pub seen_escape: bool,
 }
 
-fn return_attempt_sql_obfuscation_result(
-    obfuscated_string: Option<String>,
-    error: Option<anyhow::Error>,
-    seen_escape: bool,
-) -> AttemptSqlObfuscationResult {
-    AttemptSqlObfuscationResult {
-        obfuscated_string,
-        error,
-        seen_escape,
-    }
-}
-
 fn attempt_sql_obfuscation(
     mut tokenizer: SqlTokenizer,
     replace_digits: bool,
@@ -60,20 +48,20 @@ fn attempt_sql_obfuscation(
         }
 
         if result.token_kind == TokenKind::LexError && tokenizer.err.is_some() {
-            return return_attempt_sql_obfuscation_result(
-                None,
-                tokenizer.err,
-                tokenizer.seen_escape,
-            );
+            return AttemptSqlObfuscationResult {
+                obfuscated_string: None,
+                error: tokenizer.err,
+                seen_escape: tokenizer.seen_escape,
+            };
         }
         result = match discard(result, &last_token_kind) {
             Ok(res) => res,
             Err(err) => {
-                return return_attempt_sql_obfuscation_result(
-                    None,
-                    Some(err),
-                    tokenizer.seen_escape,
-                )
+                return AttemptSqlObfuscationResult {
+                    obfuscated_string: None,
+                    error: Some(err),
+                    seen_escape: tokenizer.seen_escape,
+                };
             }
         };
         result = match replace(
@@ -84,22 +72,22 @@ fn attempt_sql_obfuscation(
         ) {
             Ok(res) => res,
             Err(err) => {
-                return return_attempt_sql_obfuscation_result(
-                    None,
-                    Some(err),
-                    tokenizer.seen_escape,
-                )
+                return AttemptSqlObfuscationResult {
+                    obfuscated_string: None,
+                    error: Some(err),
+                    seen_escape: tokenizer.seen_escape,
+                };
             }
         };
 
         result = match grouping_filter.grouping(result, last_token.as_str(), &last_token_kind) {
             Ok(res) => res,
             Err(err) => {
-                return return_attempt_sql_obfuscation_result(
-                    None,
-                    Some(err),
-                    tokenizer.seen_escape,
-                )
+                return AttemptSqlObfuscationResult {
+                    obfuscated_string: None,
+                    error: Some(err),
+                    seen_escape: tokenizer.seen_escape,
+                };
             }
         };
 
@@ -129,14 +117,18 @@ fn attempt_sql_obfuscation(
     }
 
     if result_str.is_empty() {
-        return return_attempt_sql_obfuscation_result(
-            None,
-            Some(anyhow::anyhow!("result is empty")),
-            tokenizer.seen_escape,
-        );
+        return AttemptSqlObfuscationResult {
+            obfuscated_string: None,
+            error: Some(anyhow::anyhow!("result is empty")),
+            seen_escape: tokenizer.seen_escape,
+        };
     }
 
-    return_attempt_sql_obfuscation_result(Some(result_str), tokenizer.err, tokenizer.seen_escape)
+    AttemptSqlObfuscationResult {
+        obfuscated_string: Some(result_str),
+        error: tokenizer.err,
+        seen_escape: tokenizer.seen_escape,
+    }
 }
 
 fn set_result_as_filtered(
