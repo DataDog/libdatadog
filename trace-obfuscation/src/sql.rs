@@ -1292,15 +1292,10 @@ LIMIT 1
     )]
     #[test]
     fn test_name() {
-        let obf_config = obfuscation_config::ObfuscationConfig {
-            tag_replace_rules: None,
-            http_remove_query_string: false,
-            http_remove_path_digits: false,
-            obfuscate_memcached: false,
-            obfuscate_sql: true,
-            sql_replace_digits: replace_digits,
-            sql_literal_escapes: false,
-        };
+        let mut obf_config = obfuscation_config::ObfuscationConfig::new_test_config();
+        obf_config.obfuscate_sql = true;
+        obf_config.sql_replace_digits = replace_digits;
+
         let result = obfuscate_sql_string(input, &obf_config);
         assert_eq!(result.obfuscated_string.unwrap(), expected);
     }

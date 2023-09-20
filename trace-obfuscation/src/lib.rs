@@ -4,9 +4,11 @@
 // Datadog, Inc.
 
 #![deny(clippy::all)]
+#![recursion_limit = "512"]
 
 pub mod credit_cards;
 pub mod http;
+pub mod json;
 pub mod memcached;
 pub mod obfuscate;
 pub mod obfuscation_config;
