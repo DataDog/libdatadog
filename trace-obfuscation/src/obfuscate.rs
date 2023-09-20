@@ -61,7 +61,7 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
 mod tests {
     use datadog_trace_utils::trace_test_utils;
 
-    use crate::{obfuscation_config, replacer};
+    use crate::{obfuscation_config::ObfuscationConfig, replacer};
 
     use super::obfuscate_span;
 
@@ -73,15 +73,9 @@ mod tests {
             "http.url".to_string(),
             "http://foo.com/id/123/page/q?search=bar&page=2".to_string(),
         );
-        let obf_config = obfuscation_config::ObfuscationConfig {
-            tag_replace_rules: None,
-            http_remove_query_string: true,
-            http_remove_path_digits: true,
-            obfuscate_memcached: false,
-            obfuscate_sql: false,
-            sql_replace_digits: false,
-            sql_literal_escapes: false,
-        };
+        let mut obf_config = ObfuscationConfig::new_test_config();
+        obf_config.http_remove_query_string = true;
+        obf_config.http_remove_path_digits = true;
         obfuscate_span(&mut span, &obf_config);
         assert_eq!(
             span.meta.get("http.url").unwrap(),
@@ -99,15 +93,8 @@ mod tests {
             r#"[{"name": "custom.tag", "pattern": "(/foo/bar/).*", "repl": "${1}extra"}]"#,
         )
         .unwrap();
-        let obf_config = obfuscation_config::ObfuscationConfig {
-            tag_replace_rules: Some(parsed_rules),
-            http_remove_query_string: false,
-            http_remove_path_digits: false,
-            obfuscate_memcached: false,
-            obfuscate_sql: false,
-            sql_replace_digits: false,
-            sql_literal_escapes: false,
-        };
+        let mut obf_config = ObfuscationConfig::new_test_config();
+        obf_config.tag_replace_rules = Some(parsed_rules);
 
         obfuscate_span(&mut span, &obf_config);
 
@@ -119,15 +106,9 @@ mod tests {
         let mut span = trace_test_utils::create_test_span(111, 222, 0, 1, true);
         span.resource = "SELECT username AS name from users where id = 2".to_string();
         span.r#type = "sql".to_string();
-        let obf_config = obfuscation_config::ObfuscationConfig {
-            tag_replace_rules: None,
-            http_remove_query_string: false,
-            http_remove_path_digits: false,
-            obfuscate_memcached: false,
-            obfuscate_sql: true,
-            sql_replace_digits: false,
-            sql_literal_escapes: false,
-        };
+        let mut obf_config = ObfuscationConfig::new_test_config();
+        obf_config.obfuscate_sql = true;
+
         obfuscate_span(&mut span, &obf_config);
         assert_eq!(span.resource, "SELECT username from users where id = ?");
         assert_eq!(

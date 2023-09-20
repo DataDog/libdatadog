@@ -9,21 +9,46 @@ use serde_json::{json, Value};
 
 use crate::{obfuscation_config::ObfuscationConfig, sql::obfuscate_sql_string};
 
+pub enum JSONObfuscationType {
+    MongoDB,
+    Elasticsearch,
+}
+
 pub fn obfuscate_json_string(
     config: &ObfuscationConfig,
+    obfuscation_type: JSONObfuscationType,
     json_str: &str,
-    keep_values: Vec<String>,
-    sql_values: Vec<String>,
 ) -> String {
     let mut json_dict: Value = serde_json::from_str(json_str).unwrap_or_default();
     if json_dict.is_null() {
         return "?".to_string();
     }
+
+    let empty_vec = Vec::new();
+
+    let json_keep_values = match obfuscation_type {
+        JSONObfuscationType::MongoDB => {
+            config.mongodb_keep_values.as_ref()
+        }
+        JSONObfuscationType::Elasticsearch => {
+            config.elasticsearch_keep_values.as_ref()
+        }
+    }.unwrap_or(&empty_vec);
+
+    let json_sql_values = match obfuscation_type {
+        JSONObfuscationType::MongoDB => {
+            config.mongodb_obfuscate_sql_values.as_ref()
+        }
+        JSONObfuscationType::Elasticsearch => {
+            config.elasticsearch_obfuscate_sql_values.as_ref()
+        }
+    }.unwrap_or(&empty_vec);
+
     recurse_and_replace_json(
         config,
         &mut json_dict,
-        &HashSet::from_iter(keep_values),
-        &HashSet::from_iter(sql_values),
+        &HashSet::from_iter(json_keep_values.iter().map(|s| s.to_string())),
+        &HashSet::from_iter(json_sql_values.iter().map(|s| s.to_string())),
     );
 
     json_dict.to_string()
@@ -77,7 +102,7 @@ mod tests {
     use duplicate::duplicate_item;
     use serde_json::json;
 
-    use crate::obfuscation_config::ObfuscationConfig;
+    use crate::{obfuscation_config::ObfuscationConfig, json::JSONObfuscationType};
 
     use super::obfuscate_json_string;
 
@@ -492,20 +517,12 @@ mod tests {
     )]
     #[test]
     fn test_name() {
-        let config = ObfuscationConfig {
-            tag_replace_rules: None,
-            http_remove_query_string: false,
-            http_remove_path_digits: false,
-            obfuscate_memcached: false,
-            obfuscate_sql: false,
-            sql_replace_digits: false,
-            sql_literal_escapes: false,
-        };
+        let mut config = ObfuscationConfig::new_test_config();
+        config.elasticsearch_keep_values = Some(parse_test_args(keep_values));
         let result = obfuscate_json_string(
             &config,
+            JSONObfuscationType::Elasticsearch,
             input.to_string().as_str(),
-            parse_test_args(keep_values),
-            vec![],
         );
         assert_eq!(result, expected.to_string());
     }
@@ -983,20 +1000,13 @@ mod tests {
     )]
     #[test]
     fn test_name() {
-        let config = ObfuscationConfig {
-            tag_replace_rules: None,
-            http_remove_query_string: false,
-            http_remove_path_digits: false,
-            obfuscate_memcached: false,
-            obfuscate_sql: true,
-            sql_replace_digits: false,
-            sql_literal_escapes: false,
-        };
+        let mut config = ObfuscationConfig::new_test_config();
+        config.elasticsearch_keep_values = Some(parse_test_args(keep_values));
+        config.elasticsearch_obfuscate_sql_values = Some(parse_test_args(sql_values));
         let result = obfuscate_json_string(
             &config,
+            JSONObfuscationType::Elasticsearch,
             input.to_string().as_str(),
-            parse_test_args(keep_values),
-            parse_test_args(sql_values),
         );
         assert_eq!(result, expected.to_string());
     }
