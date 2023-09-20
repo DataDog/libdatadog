@@ -7,7 +7,7 @@ use datadog_trace_protobuf::pb;
 use log::debug;
 
 use crate::{
-    http::obfuscate_url_string, memcached::obfuscate_memcached_string,
+    http::obfuscate_url_string, json::obfuscate_json_string, memcached::obfuscate_memcached_string,
     obfuscation_config::ObfuscationConfig, replacer::replace_span_tags, sql::obfuscate_sql_string,
 };
 
@@ -50,6 +50,34 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
             span.resource = query.clone();
             span.meta.insert("sql.query".to_string(), query);
         }
+        "mongodb" => {
+            if !span.meta.contains_key("mongodb.query") || !config.obfuscate_mongodb {
+                return;
+            }
+            let mongodb_string = &span.meta["mongodb.query"];
+            span.meta.insert(
+                "mongodb.query".to_string(),
+                obfuscate_json_string(
+                    config,
+                    crate::json::JSONObfuscationType::MongoDB,
+                    mongodb_string,
+                ),
+            );
+        }
+        "elasticsearch" => {
+            if !span.meta.contains_key("elasticsearch.body") || !config.obfuscate_elasticsearch {
+                return;
+            }
+            let elasticsearch_string = &span.meta["elasticsearch.body"];
+            span.meta.insert(
+                "elasticsearch.body".to_string(),
+                obfuscate_json_string(
+                    config,
+                    crate::json::JSONObfuscationType::Elasticsearch,
+                    elasticsearch_string,
+                ),
+            );
+        }
         _ => {}
     }
     if let Some(tag_replace_rules) = &config.tag_replace_rules {
@@ -60,6 +88,7 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
 #[cfg(test)]
 mod tests {
     use datadog_trace_utils::trace_test_utils;
+    use serde_json::json;
 
     use crate::{obfuscation_config::ObfuscationConfig, replacer};
 
@@ -114,6 +143,42 @@ mod tests {
         assert_eq!(
             span.meta.get("sql.query").unwrap(),
             "SELECT username from users where id = ?"
+        )
+    }
+
+    #[test]
+    fn test_obfuscate_mongodb_query() {
+        let mut span = trace_test_utils::create_test_span(111, 222, 0, 1, true);
+        span.r#type = "mongodb".to_string();
+        span.meta.insert(
+            "mongodb.query".to_string(),
+            json!( { "key": "val", "obj": { "arr": ["a", "b"]}}).to_string(),
+        );
+        let mut obf_config = ObfuscationConfig::new_test_config();
+        obf_config.obfuscate_mongodb = true;
+
+        obfuscate_span(&mut span, &obf_config);
+        assert_eq!(
+            span.meta.get("mongodb.query").unwrap().to_string(),
+            json!( { "key": "?", "obj": { "arr": ["?", "?"]}} ).to_string()
+        )
+    }
+
+    #[test]
+    fn test_obfuscate_elasticsearch_query() {
+        let mut span = trace_test_utils::create_test_span(111, 222, 0, 1, true);
+        span.r#type = "elasticsearch".to_string();
+        span.meta.insert(
+            "elasticsearch.body".to_string(),
+            json!( { "key": "val", "obj": { "arr": ["a", "b"]}}).to_string(),
+        );
+        let mut obf_config = ObfuscationConfig::new_test_config();
+        obf_config.obfuscate_elasticsearch = true;
+
+        obfuscate_span(&mut span, &obf_config);
+        assert_eq!(
+            span.meta.get("elasticsearch.body").unwrap().to_string(),
+            json!( { "key": "?", "obj": { "arr": ["?", "?"]}} ).to_string()
         )
     }
 }
