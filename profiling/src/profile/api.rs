@@ -120,6 +120,7 @@ pub struct Sample<'a> {
     pub labels: Vec<Label<'a>>,
 }
 
+#[derive(Debug)]
 pub enum UpscalingInfo {
     Poisson {
         // sum_value_offset and count_value_offset are offsets in the profile values type array
