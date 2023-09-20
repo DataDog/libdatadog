@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use crate::{obfuscation_config::ObfuscationConfig, sql::obfuscate_sql_string};
 
-pub fn obfuscate_json(
+pub fn obfuscate_json_string(
     config: &ObfuscationConfig,
     json_str: &str,
     keep_values: Vec<String>,
@@ -79,7 +79,7 @@ mod tests {
 
     use crate::obfuscation_config::ObfuscationConfig;
 
-    use super::obfuscate_json;
+    use super::obfuscate_json_string;
 
     fn parse_test_args(argv: Vec<&str>) -> Vec<String> {
         argv.iter().map(|&s| s.to_string()).collect::<Vec<String>>()
@@ -501,7 +501,7 @@ mod tests {
             sql_replace_digits: false,
             sql_literal_escapes: false,
         };
-        let result = obfuscate_json(
+        let result = obfuscate_json_string(
             &config,
             input.to_string().as_str(),
             parse_test_args(keep_values),
@@ -992,7 +992,7 @@ mod tests {
             sql_replace_digits: false,
             sql_literal_escapes: false,
         };
-        let result = obfuscate_json(
+        let result = obfuscate_json_string(
             &config,
             input.to_string().as_str(),
             parse_test_args(keep_values),
