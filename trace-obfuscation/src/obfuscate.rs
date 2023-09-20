@@ -33,7 +33,7 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
             }
         }
         "sql" | "cassandra" => {
-            if span.resource.is_empty() {
+            if span.resource.is_empty() || !config.obfuscate_sql {
                 return;
             }
             let sql_obfuscation_result = obfuscate_sql_string(&span.resource, config);
@@ -78,6 +78,7 @@ mod tests {
             http_remove_query_string: true,
             http_remove_path_digits: true,
             obfuscate_memcached: false,
+            obfuscate_sql: false,
             sql_replace_digits: false,
             sql_literal_escapes: false,
         };
@@ -103,6 +104,7 @@ mod tests {
             http_remove_query_string: false,
             http_remove_path_digits: false,
             obfuscate_memcached: false,
+            obfuscate_sql: false,
             sql_replace_digits: false,
             sql_literal_escapes: false,
         };
@@ -122,6 +124,7 @@ mod tests {
             http_remove_query_string: false,
             http_remove_path_digits: false,
             obfuscate_memcached: false,
+            obfuscate_sql: true,
             sql_replace_digits: false,
             sql_literal_escapes: false,
         };
