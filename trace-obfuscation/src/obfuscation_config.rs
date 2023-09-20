@@ -42,8 +42,7 @@ impl ObfuscationConfig {
         let obfuscate_memcached =
             parse_env::bool("DD_APM_OBFUSCATION_MEMCACHED_ENABLED").unwrap_or(false);
 
-        let obfuscate_sql =
-            parse_env::bool("DD_APM_OBFUSCATION_SQL_ENABLED").unwrap_or(true);
+        let obfuscate_sql = parse_env::bool("DD_APM_OBFUSCATION_SQL_ENABLED").unwrap_or(true);
 
         Ok(ObfuscationConfig {
             tag_replace_rules,
