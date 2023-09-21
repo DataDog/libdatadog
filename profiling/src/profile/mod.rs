@@ -4,6 +4,7 @@
 pub mod api;
 pub mod internal;
 pub mod pprof;
+pub mod profile_builder;
 pub mod profiled_endpoints;
 
 use std::borrow::Cow;
@@ -15,6 +16,7 @@ use crate::collections::identifiable::*;
 use crate::serializer::CompressedProtobufSerializer;
 use internal::*;
 use pprof::sliced_proto::*;
+use profile_builder::ProfileBuilder;
 use profiled_endpoints::ProfiledEndpointsStats;
 use prost::EncodeError;
 
@@ -38,63 +40,6 @@ pub struct Profile {
     strings: FxIndexSet<String>,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
-}
-
-#[derive(Default)]
-pub struct ProfileBuilder<'a> {
-    period: Option<api::Period<'a>>,
-    sample_types: Vec<api::ValueType<'a>>,
-    start_time: Option<SystemTime>,
-}
-
-impl<'a> ProfileBuilder<'a> {
-    pub const fn new() -> Self {
-        ProfileBuilder {
-            period: None,
-            sample_types: Vec::new(),
-            start_time: None,
-        }
-    }
-
-    pub fn period(mut self, period: Option<api::Period<'a>>) -> Self {
-        self.period = period;
-        self
-    }
-
-    pub fn sample_types(mut self, sample_types: Vec<api::ValueType<'a>>) -> Self {
-        self.sample_types = sample_types;
-        self
-    }
-
-    pub fn start_time(mut self, start_time: Option<SystemTime>) -> Self {
-        self.start_time = start_time;
-        self
-    }
-
-    pub fn build(self) -> Profile {
-        let mut profile = Profile::new(self.start_time.unwrap_or_else(SystemTime::now));
-
-        profile.sample_types = self
-            .sample_types
-            .iter()
-            .map(|vt| ValueType {
-                r#type: profile.intern(vt.r#type),
-                unit: profile.intern(vt.unit),
-            })
-            .collect();
-
-        if let Some(period) = self.period {
-            profile.period = Some((
-                period.value,
-                ValueType {
-                    r#type: profile.intern(period.r#type.r#type),
-                    unit: profile.intern(period.r#type.unit),
-                },
-            ));
-        };
-
-        profile
-    }
 }
 
 pub struct EncodedProfile {
