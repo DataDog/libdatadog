@@ -2,8 +2,9 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use crate::profile_index::ProfileIndex;
+use datadog_profiling::api;
 use datadog_profiling::pprof;
-use datadog_profiling::profile::{api, Timestamp};
+use datadog_profiling::profile::Timestamp;
 use std::ops::{Add, Sub};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

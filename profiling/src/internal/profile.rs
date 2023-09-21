@@ -4,8 +4,8 @@
 use self::api::UpscalingInfo;
 use super::pprof::sliced_proto::*;
 use super::*;
+use crate::api;
 use crate::collections::identifiable::*;
-use crate::profile::api;
 use crate::profile::profiled_endpoints::ProfiledEndpointsStats;
 use crate::profile::Timestamp;
 use crate::serializer::CompressedProtobufSerializer;

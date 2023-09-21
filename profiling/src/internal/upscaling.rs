@@ -2,9 +2,9 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use super::*;
+use crate::api::UpscalingInfo;
 use crate::collections::identifiable::FxIndexMap;
 use crate::pprof;
-use crate::profile::api::UpscalingInfo;
 
 #[derive(Debug)]
 pub struct UpscalingRule {

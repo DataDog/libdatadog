@@ -2,8 +2,9 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use crate::Timespec;
+use datadog_profiling::api;
 use datadog_profiling::internal;
-use datadog_profiling::profile::{api, profiled_endpoints};
+use datadog_profiling::profile::profiled_endpoints;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
 use ddcommon_ffi::Error;
 use std::convert::{TryFrom, TryInto};
