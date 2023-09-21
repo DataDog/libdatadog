@@ -10,6 +10,7 @@ mod observation;
 mod profile;
 mod sample;
 mod stack_trace;
+mod timestamp;
 mod upscaling;
 mod value_type;
 
@@ -22,6 +23,7 @@ pub use observation::*;
 pub use profile::*;
 pub use sample::*;
 pub use stack_trace::*;
+pub use timestamp::*;
 pub use upscaling::*;
 pub use value_type::*;
 

@@ -5,7 +5,7 @@
 
 use super::super::Sample;
 use super::trimmed_observation::{ObservationLength, TrimmedObservation};
-use crate::profile::Timestamp;
+use crate::internal::Timestamp;
 use std::collections::HashMap;
 
 struct NonEmptyObservations {

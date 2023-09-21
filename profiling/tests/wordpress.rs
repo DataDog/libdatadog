@@ -3,7 +3,6 @@
 
 use datadog_profiling::api;
 use datadog_profiling::pprof;
-use datadog_profiling::profile::*;
 use lz4_flex::frame::FrameDecoder;
 use prost::Message;
 use std::fs::File;

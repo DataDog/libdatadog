@@ -3,8 +3,8 @@
 
 use crate::profile_index::ProfileIndex;
 use datadog_profiling::api;
+use datadog_profiling::internal::Timestamp;
 use datadog_profiling::pprof;
-use datadog_profiling::profile::Timestamp;
 use std::ops::{Add, Sub};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

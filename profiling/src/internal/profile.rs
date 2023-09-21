@@ -2,12 +2,11 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use self::api::UpscalingInfo;
-use super::pprof::sliced_proto::*;
 use super::*;
 use crate::api;
 use crate::collections::identifiable::*;
+use crate::pprof::sliced_proto::*;
 use crate::profile::profiled_endpoints::ProfiledEndpointsStats;
-use crate::profile::Timestamp;
 use crate::serializer::CompressedProtobufSerializer;
 use std::borrow::Cow;
 use std::collections::HashMap;
