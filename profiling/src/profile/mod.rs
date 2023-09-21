@@ -2,8 +2,6 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 pub mod api;
-pub mod internal;
-pub mod pprof;
 pub mod profiled_endpoints;
 
 pub type Timestamp = std::num::NonZeroI64;

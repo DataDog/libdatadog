@@ -1,10 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use std::borrow::Cow;
-use std::collections::HashMap;
-use std::time::{Duration, SystemTime};
-
+use self::api::UpscalingInfo;
 use super::pprof::sliced_proto::*;
 use super::*;
 use crate::collections::identifiable::*;
@@ -12,8 +9,9 @@ use crate::profile::api;
 use crate::profile::profiled_endpoints::ProfiledEndpointsStats;
 use crate::profile::Timestamp;
 use crate::serializer::CompressedProtobufSerializer;
-
-use self::api::UpscalingInfo;
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::time::{Duration, SystemTime};
 
 pub struct Profile {
     endpoints: Endpoints,

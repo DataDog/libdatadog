@@ -14,9 +14,7 @@ pub fn deserialize_compressed_pprof(encoded: &[u8]) -> anyhow::Result<super::Pro
 }
 
 #[cfg(test)]
-pub fn roundtrip_to_pprof(
-    profile: crate::profile::internal::Profile,
-) -> anyhow::Result<super::Profile> {
+pub fn roundtrip_to_pprof(profile: crate::internal::Profile) -> anyhow::Result<super::Profile> {
     let encoded = profile.serialize_into_compressed_pprof(None, None)?;
     deserialize_compressed_pprof(&encoded.buffer)
 }

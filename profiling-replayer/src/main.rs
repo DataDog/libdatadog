@@ -5,7 +5,6 @@ mod profile_index;
 mod replayer;
 
 use clap::{command, Arg, ArgAction};
-use datadog_profiling::profile;
 use prost::Message;
 use std::borrow::Cow;
 use std::io::Cursor;
@@ -144,11 +143,11 @@ fn main() -> anyhow::Result<()> {
         std::fs::read(input)?
     };
 
-    let pprof = profile::pprof::Profile::decode(&mut Cursor::new(source))?;
+    let pprof = datadog_profiling::pprof::Profile::decode(&mut Cursor::new(source))?;
 
     let mut replayer = Replayer::try_from(&pprof)?;
 
-    let mut outprof = profile::internal::Profile::new(
+    let mut outprof = datadog_profiling::internal::Profile::new(
         replayer.start_time,
         &replayer.sample_types,
         replayer.period,
