@@ -178,7 +178,7 @@ mod tests {
         obfuscate_span(&mut span, &obf_config);
         assert_eq!(
             span.meta.get("elasticsearch.body").unwrap().to_string(),
-            json!( { "key": "?", "obj": { "arr": ["?", "?"]}} ).to_string()
+            r#"{"key":"?","obj":{"arr":["?","?"]}}"#,
         )
     }
 }
