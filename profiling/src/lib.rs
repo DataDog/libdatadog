@@ -6,5 +6,4 @@ pub mod collections;
 pub mod exporter;
 pub mod internal;
 pub mod pprof;
-pub mod profile;
 pub mod serializer;

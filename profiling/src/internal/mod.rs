@@ -1,6 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
+mod endpoint_stats;
 mod endpoints;
 mod function;
 mod label;
@@ -14,6 +15,7 @@ mod timestamp;
 mod upscaling;
 mod value_type;
 
+pub use endpoint_stats::*;
 pub use endpoints::*;
 pub use function::*;
 pub use label::*;

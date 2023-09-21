@@ -4,7 +4,7 @@
 use crate::Timespec;
 use datadog_profiling::api;
 use datadog_profiling::internal;
-use datadog_profiling::profile::profiled_endpoints;
+use datadog_profiling::internal::ProfiledEndpointsStats;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
 use ddcommon_ffi::Error;
 use std::convert::{TryFrom, TryInto};
@@ -624,7 +624,7 @@ pub struct EncodedProfile {
     start: Timespec,
     end: Timespec,
     buffer: ddcommon_ffi::Vec<u8>,
-    endpoints_stats: Box<profiled_endpoints::ProfiledEndpointsStats>,
+    endpoints_stats: Box<ProfiledEndpointsStats>,
 }
 
 /// # Safety

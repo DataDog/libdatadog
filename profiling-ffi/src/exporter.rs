@@ -7,7 +7,7 @@
 use crate::Timespec;
 use datadog_profiling::exporter;
 use datadog_profiling::exporter::{ProfileExporter, Request};
-use datadog_profiling::profile::profiled_endpoints;
+use datadog_profiling::internal::ProfiledEndpointsStats;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use ddcommon_ffi::Error;
@@ -227,7 +227,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     files_to_compress_and_export: Slice<File>,
     files_to_export_unmodified: Slice<File>,
     optional_additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    optional_endpoints_stats: Option<&profiled_endpoints::ProfiledEndpointsStats>,
+    optional_endpoints_stats: Option<&ProfiledEndpointsStats>,
     optional_internal_metadata_json: Option<&CharSlice>,
     timeout_ms: u64,
 ) -> RequestBuildResult {
