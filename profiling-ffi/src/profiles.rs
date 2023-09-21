@@ -16,17 +16,17 @@ use std::time::{Duration, SystemTime};
 pub struct Profile {
     // This may possibly be null, but will be a valid pointer to an owned
     // Profile otherwise.
-    inner: *mut profile::Profile,
+    inner: *mut profile::internal::Profile,
 }
 
 impl Profile {
-    fn new(profile: profile::Profile) -> Self {
+    fn new(profile: profile::internal::Profile) -> Self {
         Profile {
             inner: Box::into_raw(Box::new(profile)),
         }
     }
 
-    fn take(&mut self) -> Option<Box<profile::Profile>> {
+    fn take(&mut self) -> Option<Box<profile::internal::Profile>> {
         // Leaving a null will help with double-free issues that can
         // arise in C. Of course, it's best to never get there in the
         // first place!
@@ -342,7 +342,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
 ) -> Profile {
     let types: Vec<api::ValueType> = sample_types.into_slice().iter().map(Into::into).collect();
 
-    let builder = profile::Profile::builder()
+    let builder = profile::internal::Profile::builder()
         .period(period.map(Into::into))
         .sample_types(types)
         .start_time(start_time.map(SystemTime::from));
@@ -415,7 +415,7 @@ unsafe fn ddog_prof_profile_add_impl(
 
 unsafe fn profile_ptr_to_inner<'a>(
     profile_ptr: *mut Profile,
-) -> anyhow::Result<&'a mut profile::Profile> {
+) -> anyhow::Result<&'a mut profile::internal::Profile> {
     match profile_ptr.as_mut() {
         None => anyhow::bail!("profile pointer was null"),
         Some(inner_ptr) => match inner_ptr.inner.as_mut() {
@@ -600,7 +600,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_proportional(
 }
 
 unsafe fn add_upscaling_rule(
-    profile: &mut profile::Profile,
+    profile: &mut profile::internal::Profile,
     offset_values: Slice<usize>,
     label_name: CharSlice,
     label_value: CharSlice,
@@ -641,8 +641,8 @@ pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(profile: Option<&mut Enco
     }
 }
 
-impl From<profile::EncodedProfile> for EncodedProfile {
-    fn from(value: profile::EncodedProfile) -> Self {
+impl From<profile::internal::EncodedProfile> for EncodedProfile {
+    fn from(value: profile::internal::EncodedProfile) -> Self {
         let start = value.start.into();
         let end = value.end.into();
         let buffer = value.buffer.into();

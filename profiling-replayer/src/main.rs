@@ -148,7 +148,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut replayer = Replayer::try_from(&pprof)?;
 
-    let mut outprof = profile::Profile::builder()
+    let mut outprof = profile::internal::Profile::builder()
         .start_time(Some(replayer.start_time))
         .sample_types(replayer.sample_types.clone())
         .period(replayer.period)

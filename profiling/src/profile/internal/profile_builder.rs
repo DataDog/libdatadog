@@ -3,11 +3,8 @@
 
 use std::time::SystemTime;
 
-use super::{
-    api::{self},
-    internal::ValueType,
-    Profile,
-};
+use super::Profile;
+use crate::profile::api;
 
 #[derive(Default)]
 pub struct ProfileBuilder<'a> {
@@ -18,28 +15,11 @@ pub struct ProfileBuilder<'a> {
 
 impl<'a> ProfileBuilder<'a> {
     pub fn build(self) -> Profile {
-        let mut profile = Profile::new(self.start_time.unwrap_or_else(SystemTime::now));
-
-        profile.sample_types = self
-            .sample_types
-            .iter()
-            .map(|vt| ValueType {
-                r#type: profile.intern(vt.r#type),
-                unit: profile.intern(vt.unit),
-            })
-            .collect();
-
-        if let Some(period) = self.period {
-            profile.period = Some((
-                period.value,
-                ValueType {
-                    r#type: profile.intern(period.r#type.r#type),
-                    unit: profile.intern(period.r#type.unit),
-                },
-            ));
-        };
-
-        profile
+        Profile::new(
+            self.start_time.unwrap_or_else(SystemTime::now),
+            &self.sample_types,
+            self.period,
+        )
     }
 
     pub const fn new() -> Self {
