@@ -2,6 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use crate::Timespec;
+use datadog_profiling::profile::internal;
 use datadog_profiling::profile::{self, api, profiled_endpoints};
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
 use ddcommon_ffi::Error;
@@ -340,14 +341,12 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
     period: Option<&Period>,
     start_time: Option<&Timespec>,
 ) -> Profile {
-    let types: Vec<api::ValueType> = sample_types.into_slice().iter().map(Into::into).collect();
-
-    let builder = profile::internal::Profile::builder()
-        .period(period.map(Into::into))
-        .sample_types(types)
-        .start_time(start_time.map(SystemTime::from));
-
-    Profile::new(builder.build())
+    let sample_types: Vec<api::ValueType> =
+        sample_types.into_slice().iter().map(Into::into).collect();
+    let period = period.map(Into::into);
+    let start_time = start_time.map_or_else(SystemTime::now, SystemTime::from);
+    let inner = internal::Profile::new(start_time, &sample_types, period);
+    Profile::new(inner)
 }
 
 /// # Safety

@@ -148,11 +148,11 @@ fn main() -> anyhow::Result<()> {
 
     let mut replayer = Replayer::try_from(&pprof)?;
 
-    let mut outprof = profile::internal::Profile::builder()
-        .start_time(Some(replayer.start_time))
-        .sample_types(replayer.sample_types.clone())
-        .period(replayer.period)
-        .build();
+    let mut outprof = profile::internal::Profile::new(
+        replayer.start_time,
+        &replayer.sample_types,
+        replayer.period,
+    );
 
     // Before benchmarking, let's calculate some statistics.
     // No point doing that if there aren't at least 4 samples though.

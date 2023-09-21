@@ -4,6 +4,7 @@
 use datadog_profiling::profile::{api, internal::Profile};
 use std::io::Write;
 use std::process::exit;
+use std::time::SystemTime;
 
 // Keep this in-sync with profiles.c
 fn main() {
@@ -54,11 +55,8 @@ fn main() {
         labels: vec![],
     };
 
-    // Not setting .start_time intentionally to use the current time.
-    let mut profile: Profile = Profile::builder()
-        .sample_types(sample_types)
-        .period(Some(period))
-        .build();
+    // Intentionally use the current time.
+    let mut profile = Profile::new(SystemTime::now(), &sample_types, Some(period));
 
     match profile.add(sample, None) {
         Ok(_) => {}
