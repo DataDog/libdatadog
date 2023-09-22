@@ -113,11 +113,11 @@ pub struct SqlTokenizerScanResult {
 }
 
 pub struct SqlTokenizer {
-    cur_char: char,        // the current char
+    cur_char: char, // the current char
     offset: usize, // the index of the current char
     has_started: bool,
     index_of_last_read: usize,
-    query: Vec<char>,               // the sql query we are parsing
+    query: Vec<char>, // the sql query we are parsing
     curlys: i32, // number of active open curly braces in top-level sql escape sequences
     literal_escapes: bool, // indicates we should not treat backslashes as escape characters
     pub err: Option<anyhow::Error>, // any errors that occurred while reading
