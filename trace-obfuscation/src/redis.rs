@@ -172,13 +172,15 @@ fn obfuscate_redis_args_step(mut args: Vec<String>, start: usize, step: usize) -
 pub fn remove_all_redis_args(redis_cmd: &str) -> String {
     let mut redis_cmd_iter = redis_cmd.split_whitespace().peekable();
     let mut obfuscated_cmd = String::new();
-    if redis_cmd_iter.peek().is_none() {
-        return obfuscated_cmd;
-    }
 
-    let cmd = redis_cmd_iter.next().unwrap_or_default();
+    // If the redis command is empty, return immediately. Otherwise, store the command token.
+    let cmd = match redis_cmd_iter.next() {
+        Some(cmd) => cmd,
+        None => return obfuscated_cmd,
+    };
     obfuscated_cmd.push_str(cmd);
 
+    // If there are no tokens left in the iterator, return the obfuscated result with just the command.
     if redis_cmd_iter.peek().is_none() {
         return obfuscated_cmd;
     }
