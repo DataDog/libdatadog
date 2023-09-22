@@ -22,5 +22,6 @@ datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-normalization = { path = "../trace-normalization" }
 
 [dev-dependencies]
+duplicate = "0.4.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde_json = "1.0"

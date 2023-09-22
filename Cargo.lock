@@ -799,6 +799,7 @@ dependencies = [
  "datadog-trace-normalization",
  "datadog-trace-protobuf",
  "ddcommon",
+ "duplicate",
  "flate2",
  "futures",
  "hyper",
