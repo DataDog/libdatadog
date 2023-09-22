@@ -10,7 +10,8 @@ pub enum RedisTokenType {
 pub struct RedisTokenizer {
     data: Vec<char>,
     cur_char: char,
-    offset: Option<usize>,
+    offset: usize,
+    has_started: bool,
     done: bool,
     state: RedisTokenType, // specifies the token we are about to parse
 }
@@ -27,7 +28,8 @@ impl RedisTokenizer {
         RedisTokenizer {
             data: query.trim().chars().collect(),
             cur_char: ' ',
-            offset: None,
+            offset: 0,
+            has_started: false,
             done: false,
             state: RedisTokenType::RedisTokenCommand,
         }
@@ -154,27 +156,24 @@ impl RedisTokenizer {
     }
 
     fn next(&mut self) {
-        if let Some(offset) = self.offset {
-            self.offset = Some(offset + 1);
+        if self.has_started {
+            self.offset += 1;
         } else {
-            self.offset = Some(0);
+            self.has_started = true;
         }
-        let offset = self.offset.unwrap();
-        if offset < self.data.len() {
-            self.cur_char = self.data[offset];
+        if self.offset < self.data.len() {
+            self.cur_char = self.data[self.offset];
             return;
         }
         self.done = true;
     }
 
     fn unread(&mut self) {
-        if let Some(offset) = self.offset {
-            if offset < 1 {
-                return;
-            }
-            self.offset = Some(offset - 1);
-            self.cur_char = self.data[offset - 1]
+        if !self.offset < 1 {
+            return;
         }
+        self.offset -= 1;
+        self.cur_char = self.data[self.offset];
     }
 }
 
