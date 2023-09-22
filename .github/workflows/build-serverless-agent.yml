@@ -1,5 +1,10 @@
 name: Build the Serverless Agent
-on: push
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: The branch to build the serverless trace mini agent off of. Defaults to main.
+        default: main
 
 jobs:
   build-linux-musl:
@@ -9,7 +14,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          ref: david.lee/mini-agent-azure-tags
+          ref: ${{ inputs.branch }}
       - name: Install musl dependencies
         run: rustup target add x86_64-unknown-linux-musl && sudo apt-get install musl-tools
       - name: Build project
@@ -26,7 +31,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          ref: david.lee/mini-agent-azure-tags
+          ref: ${{ inputs.branch }}
       - name: Build project
         run: cargo build --release -p datadog-serverless-trace-mini-agent
       - name: Upload artifacts
