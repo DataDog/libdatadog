@@ -10,4 +10,5 @@ pub mod http;
 pub mod memcached;
 pub mod obfuscate;
 pub mod obfuscation_config;
+pub mod redis_tokenizer;
 pub mod replacer;
