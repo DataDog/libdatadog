@@ -6,7 +6,7 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hyper::http::HeaderValue;
 use hyper::{body::Buf, Body, Client, HeaderMap, Method, Response, StatusCode};
-use log::{error, info, debug};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
@@ -438,7 +438,7 @@ fn set_azure_function_root_span_tags(span: &mut pb::Span) {
     process_azure_env_vars_and_set_tags(span, website_owner_name, site_name);
 }
 
-// processes the WEBSITE_OWNER_NAME and WEBSITE_SITE_NAME env vars 
+// processes the WEBSITE_OWNER_NAME and WEBSITE_SITE_NAME env vars
 // to set the following meta tags on azure functions:
 // - azurefunction.resource.id
 // - azurefunction.resource.group
@@ -446,7 +446,11 @@ fn set_azure_function_root_span_tags(span: &mut pb::Span) {
 // - azurefunction.site.name
 // - azurefunction.environment.os
 // website_owner_name and site_name both must not be empty.
-fn process_azure_env_vars_and_set_tags(span: &mut pb::Span, mut website_owner_name: String, site_name: String) {
+fn process_azure_env_vars_and_set_tags(
+    span: &mut pb::Span,
+    mut website_owner_name: String,
+    site_name: String,
+) {
     // the WEBSITE_OWNER_NAME env var comes in the format:
     // <subscription-id>+<resource-group>-<webspace-region>
     // on linux, the OS will also be appended to the end:
@@ -458,10 +462,18 @@ fn process_azure_env_vars_and_set_tags(span: &mut pb::Span, mut website_owner_na
     // special care has to be taken, as the subscription id contains dashes and
     // resource-group name can have dashes.
     // the subscription id consists of 5 groups of alphanumeric chars separated by dashes.
-    let index_after_subscription_id = website_owner_name.find('+').unwrap_or(website_owner_name.len());
-    let index_before_os = website_owner_name.rfind('-').unwrap_or(website_owner_name.len());
-    if index_after_subscription_id >= website_owner_name.len() || index_before_os  + 1 >= website_owner_name.len()  {
-        debug!("failed to set azure resource-id tag. failed when parsing WEBSITE_OWNER_NAME env var");
+    let index_after_subscription_id = website_owner_name
+        .find('+')
+        .unwrap_or(website_owner_name.len());
+    let index_before_os = website_owner_name
+        .rfind('-')
+        .unwrap_or(website_owner_name.len());
+    if index_after_subscription_id >= website_owner_name.len()
+        || index_before_os + 1 >= website_owner_name.len()
+    {
+        debug!(
+            "failed to set azure resource-id tag. failed when parsing WEBSITE_OWNER_NAME env var"
+        );
         return;
     }
 
@@ -470,21 +482,41 @@ fn process_azure_env_vars_and_set_tags(span: &mut pb::Span, mut website_owner_na
 
     website_owner_name.truncate(index_before_os);
 
-    let index_after_resource_group = website_owner_name.rfind('-').unwrap_or(website_owner_name.len());
-    if index_after_resource_group >= website_owner_name.len() || index_after_subscription_id + 1 >= website_owner_name.len(){
-        debug!("failed to set azure resource-id tag. failed when parsing WEBSITE_OWNER_NAME env var");
+    let index_after_resource_group = website_owner_name
+        .rfind('-')
+        .unwrap_or(website_owner_name.len());
+    if index_after_resource_group >= website_owner_name.len()
+        || index_after_subscription_id + 1 >= website_owner_name.len()
+    {
+        debug!(
+            "failed to set azure resource-id tag. failed when parsing WEBSITE_OWNER_NAME env var"
+        );
         return;
     }
 
-    let resource_group = &website_owner_name[(index_after_subscription_id + 1)..index_after_resource_group];
-    
+    let resource_group =
+        &website_owner_name[(index_after_subscription_id + 1)..index_after_resource_group];
+
     let resource_id = format!("/subscriptions/{subscription_id}/resourcegroups/{resource_group}/providers/microsoft.web/sites/{site_name}");
 
-    span.meta.insert("azurefunction.resource.id".to_string(), resource_id.to_string());
-    span.meta.insert("azurefunction.resource.group".to_string(), resource_group.to_string());
-    span.meta.insert("azurefunction.subscription.id".to_string(), subscription_id.to_string());
-    span.meta.insert("azurefunction.site.name".to_string(), site_name.to_string());
-    span.meta.insert("azurefunction.environment.os".to_string(), os.to_lowercase());
+    span.meta.insert(
+        "azurefunction.resource.id".to_string(),
+        resource_id,
+    );
+    span.meta.insert(
+        "azurefunction.resource.group".to_string(),
+        resource_group.to_string(),
+    );
+    span.meta.insert(
+        "azurefunction.subscription.id".to_string(),
+        subscription_id.to_string(),
+    );
+    span.meta
+        .insert("azurefunction.site.name".to_string(), site_name);
+    span.meta.insert(
+        "azurefunction.environment.os".to_string(),
+        os.to_lowercase(),
+    );
 }
 
 pub fn update_tracer_top_level(span: &mut pb::Span) {
@@ -603,7 +635,10 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{get_root_span_index, set_serverless_root_span_tags};
-    use crate::{trace_test_utils::create_test_span, trace_utils::{self, process_azure_env_vars_and_set_tags}};
+    use crate::{
+        trace_test_utils::create_test_span,
+        trace_utils::{self, process_azure_env_vars_and_set_tags},
+    };
     use datadog_trace_protobuf::pb;
 
     #[tokio::test]
