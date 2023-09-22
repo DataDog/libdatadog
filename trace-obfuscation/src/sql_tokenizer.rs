@@ -114,7 +114,8 @@ pub struct SqlTokenizerScanResult {
 
 pub struct SqlTokenizer {
     cur_char: char,        // the current char
-    offset: Option<usize>, // the index of the current char
+    offset: usize, // the index of the current char
+    has_started: bool,
     index_of_last_read: usize,
     query: Vec<char>,               // the sql query we are parsing
     curlys: i32, // number of active open curly braces in top-level sql escape sequences
@@ -129,7 +130,8 @@ impl SqlTokenizer {
         SqlTokenizer {
             cur_char: ' ',
             query: query.trim().chars().collect(),
-            offset: None,
+            offset: 0,
+            has_started: false,
             index_of_last_read: 0,
             err: None,
             curlys: 0,
@@ -144,7 +146,7 @@ impl SqlTokenizer {
     }
 
     pub fn scan(&mut self) -> SqlTokenizerScanResult {
-        if self.offset.is_none() {
+        if !self.has_started {
             self.next();
             if self.done {
                 // query is empty
@@ -269,7 +271,7 @@ impl SqlTokenizer {
                     }
                     // if the next char after a period is not a digit, revert back a character
                     self.cur_char = '.';
-                    self.offset = Some(self.offset.unwrap() - 1);
+                    self.offset -= 1;
                 }
                 SqlTokenizerScanResult {
                     token_kind: TokenKind::Char,
@@ -385,7 +387,7 @@ impl SqlTokenizer {
                 }
             }
             '{' => {
-                if self.offset.unwrap_or_default() == 1 || self.curlys > 0 {
+                if self.offset == 1 || self.curlys > 0 {
                     // A closing curly brace has no place outside an in-progress top-level SQL escape sequence
                     // started by the '{' switch-case.
                     self.curlys += 1;
@@ -431,8 +433,7 @@ impl SqlTokenizer {
     }
 
     fn set_error(&mut self, err: &str) {
-        let pos = self.offset.unwrap_or_default();
-        self.err = Some(anyhow::anyhow!("at position {:?}: {}", pos, err));
+        self.err = Some(anyhow::anyhow!("at position {:?}: {}", self.offset, err));
     }
 
     fn set_unexpected_char_error_and_return(&mut self) -> SqlTokenizerScanResult {
@@ -647,7 +648,7 @@ impl SqlTokenizer {
                 if self.cur_char == delim && !self.done {
                     // doubling the delimiter is the default way to embed the delimiter within a string
                     self.next();
-                } else if self.done && self.offset.unwrap() > self.query.len() {
+                } else if self.done && self.offset > self.query.len() {
                     // edge case where we start scanning for a string at the very end of the query
                     self.set_error("unexpected EOF in string");
                     return SqlTokenizerScanResult {
@@ -772,33 +773,30 @@ impl SqlTokenizer {
     // gets the substring of the query that were advanced since the last time this function
     // was called
     fn get_advanced_chars(&mut self) -> String {
-        if self.offset.is_none() {
+        if !self.has_started {
             return String::new();
         }
 
-        let end_index = self.offset.unwrap();
-
-        if end_index > self.query.len() {
+        if self.offset > self.query.len() {
             return String::new();
         }
 
-        let return_val: String = self.query[self.index_of_last_read..end_index]
+        let return_val: String = self.query[self.index_of_last_read..self.offset]
             .iter()
             .collect();
 
-        self.index_of_last_read = self.offset.unwrap();
+        self.index_of_last_read = self.offset;
         return_val.trim().to_string()
     }
 
     fn next(&mut self) {
-        if let Some(offset) = self.offset {
-            self.offset = Some(offset + 1);
+        if self.has_started {
+            self.offset += 1;
         } else {
-            self.offset = Some(0);
+            self.has_started = true;
         }
-        let offset = self.offset.unwrap();
-        if offset < self.query.len() {
-            self.cur_char = self.query[offset];
+        if self.offset < self.query.len() {
+            self.cur_char = self.query[self.offset];
             return;
         }
         self.done = true;
