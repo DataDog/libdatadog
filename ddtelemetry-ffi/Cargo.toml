@@ -3,8 +3,10 @@
 
 [package]
 name = "ddtelemetry-ffi"
-version = "4.0.0"
-edition = "2021"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]
