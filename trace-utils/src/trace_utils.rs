@@ -499,10 +499,8 @@ fn process_azure_env_vars_and_set_tags(
 
     let resource_id = format!("/subscriptions/{subscription_id}/resourcegroups/{resource_group}/providers/microsoft.web/sites/{site_name}");
 
-    span.meta.insert(
-        "azurefunction.resource.id".to_string(),
-        resource_id,
-    );
+    span.meta
+        .insert("azurefunction.resource.id".to_string(), resource_id);
     span.meta.insert(
         "azurefunction.resource.group".to_string(),
         resource_group.to_string(),
