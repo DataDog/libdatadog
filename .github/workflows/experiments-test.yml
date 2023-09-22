@@ -4,10 +4,6 @@ on:
     paths:
       - 'experimental/**' # Only run action when experiments have changed
 
-defaults:
-  run:
-    working-directory: ./experimental
-
 env: 
   CARGO_TERM_COLOR: always
 
@@ -15,6 +11,9 @@ jobs:
   test:
     name: "cargo test --workspace #${{ matrix.platform }} ${{ matrix.rust_version }}"
     runs-on: ${{ matrix.platform }}
+    defaults:
+      run:
+        working-directory: ./experimental
     strategy:
       matrix:
         platform: [windows-latest, ubuntu-latest, macos-12]
