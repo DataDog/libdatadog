@@ -2,9 +2,10 @@
 name = "datadog-profiling-replayer"
 authors = ["Levi Morrison <levi.morrison@datadoghq.com>"]
 description = "Takes a pprof file and 'replays' it using libdatadog commands."
-version = "4.0.0"
-edition = "2021"
-license = "Apache-2.0"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
 
 [dependencies]
 anyhow = "1.0"
