@@ -1,0 +1,58 @@
+name: Build the Serverless Agent
+on: push
+
+jobs:
+  build-linux-musl:
+    name: Build Linux Musl
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Install musl dependencies
+        run: rustup target add x86_64-unknown-linux-musl && sudo apt-get install musl-tools
+      - name: Build project
+        run: cargo build --release -p datadog-serverless-trace-mini-agent --target x86_64-unknown-linux-musl
+      - name: Upload artifacts for release step
+        uses: actions/upload-artifact@v3
+        with:
+          name: datadog-serverless-agent-linux-amd64
+          path: target/x86_64-unknown-linux-musl/release/datadog-serverless-trace-mini-agent
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Build project
+        run: cargo build --release -p datadog-serverless-trace-mini-agent
+      - name: Upload artifacts for release step
+        uses: actions/upload-artifact@v3
+        with:
+          name: datadog-serverless-agent-windows-amd64
+          path: target/release/datadog-serverless-trace-mini-agent.exe
+  upload:
+    name: Upload
+    needs: [build-windows, build-linux-musl]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Download artifacts from build step
+        uses: actions/download-artifact@v3
+        with:
+          path: target/release/binaries
+      - name: UPX compress binaries
+        run: |
+          for file in target/release/binaries/*/*
+          do
+            chmod +x "$file"
+            upx "$file" --lzma
+          done
+      - name: Zip binaries
+        run: zip -r datadog-serverless-agent.zip *
+        working-directory: target/release/binaries
+      - name: Upload
+        uses: actions/upload-artifact@v3
+        with:
+            name: datadog-serverless-trace-mini-agent
+            path: target/release/binaries/datadog-serverless-agent.zip
