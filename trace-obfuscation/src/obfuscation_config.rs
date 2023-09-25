@@ -14,6 +14,7 @@ pub struct ObfuscationConfig {
     pub http_remove_query_string: bool,
     pub http_remove_path_digits: bool,
     pub obfuscate_memcached: bool,
+    pub obfuscate_sql: bool,
     pub sql_replace_digits: bool,
     pub sql_literal_escapes: bool,
 }
@@ -41,6 +42,7 @@ impl ObfuscationConfig {
         let obfuscate_memcached =
             parse_env::bool("DD_APM_OBFUSCATION_MEMCACHED_ENABLED").unwrap_or(false);
 
+        let obfuscate_sql = parse_env::bool("DD_APM_OBFUSCATION_SQL_ENABLED").unwrap_or(true);
         let sql_replace_digits =
             parse_env::bool("DD_APM_OBFUSCATION_SQL_REPLACE_DIGITS").unwrap_or(false);
 
@@ -52,6 +54,7 @@ impl ObfuscationConfig {
             http_remove_query_string,
             http_remove_path_digits,
             obfuscate_memcached,
+            obfuscate_sql,
             sql_replace_digits,
             sql_literal_escapes,
         })
