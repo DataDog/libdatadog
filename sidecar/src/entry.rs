@@ -109,9 +109,11 @@ where
     #[cfg(feature = "tokio-console")]
     console_subscriber::init();
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
+    #[cfg(unix)]
+    let mut builder = tokio::runtime::Builder::new_current_thread();
+    #[cfg(windows)]
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    let runtime = builder.enable_all().build()?;
     let _g = runtime.enter();
 
     let (listener, cancel) = acquire_listener()?;
