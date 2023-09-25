@@ -20,6 +20,7 @@ int main(void) {
   if (new_result.tag != DDOG_PROF_PROFILE_NEW_RESULT_OK) {
     ddog_CharSlice message = ddog_Error_message(&new_result.err);
     fprintf(stderr, "%*s", (int)message.len, message.ptr);
+    ddog_Error_drop(&new_result.err);
     exit(EXIT_FAILURE);
   }
 
