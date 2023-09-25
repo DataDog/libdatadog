@@ -44,6 +44,8 @@ int main(int argc, char *argv[]) {
       ddog_prof_Profile_new(sample_types, &period, nullptr);
   if (profile_new_result.tag != DDOG_PROF_PROFILE_NEW_RESULT_OK) {
     print_error("Failed to make new profile: ", profile_new_result.err);
+    ddog_Error_drop(&profile_new_result.err);
+    exit(EXIT_FAILURE);
   }
   std::unique_ptr<ddog_prof_Profile, Deleter> profile{&profile_new_result.ok};
 
