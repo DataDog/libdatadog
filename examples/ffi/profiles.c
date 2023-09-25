@@ -6,6 +6,7 @@
 #include <datadog/common.h>
 #include <datadog/profiling.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 int main(void) {
   const ddog_prof_ValueType wall_time = {
@@ -15,7 +16,15 @@ int main(void) {
   const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
   const ddog_prof_Period period = {wall_time, 60};
 
-  ddog_prof_Profile profile = ddog_prof_Profile_new(sample_types, &period, NULL);
+  ddog_prof_Profile_NewResult new_result = ddog_prof_Profile_new(sample_types, &period, NULL);
+  if (new_result.tag != DDOG_PROF_PROFILE_NEW_RESULT_OK) {
+    ddog_CharSlice message = ddog_Error_message(&new_result.err);
+    fprintf(stderr, "%*s", (int)message.len, message.ptr);
+    ddog_Error_drop(&new_result.err);
+    exit(EXIT_FAILURE);
+  }
+
+  ddog_prof_Profile *profile = &new_result.ok;
 
   ddog_prof_Location root_location = {
       // yes, a zero-initialized mapping is valid
@@ -40,7 +49,7 @@ int main(void) {
   for (int i = 0; i < 10000000; i++) {
     label.num = i;
 
-    ddog_prof_Profile_Result add_result = ddog_prof_Profile_add(&profile, sample, 0);
+    ddog_prof_Profile_Result add_result = ddog_prof_Profile_add(profile, sample, 0);
     if (add_result.tag != DDOG_PROF_PROFILE_RESULT_OK) {
       ddog_CharSlice message = ddog_Error_message(&add_result.err);
       fprintf(stderr, "%*s", (int)message.len, message.ptr);
@@ -51,13 +60,13 @@ int main(void) {
   //   printf("Press any key to reset and drop...");
   //   getchar();
 
-  ddog_prof_Profile_Result reset_result = ddog_prof_Profile_reset(&profile, NULL);
+  ddog_prof_Profile_Result reset_result = ddog_prof_Profile_reset(profile, NULL);
   if (reset_result.tag != DDOG_PROF_PROFILE_RESULT_OK) {
     ddog_CharSlice message = ddog_Error_message(&reset_result.err);
     fprintf(stderr, "%*s", (int)message.len, message.ptr);
     ddog_Error_drop(&reset_result.err);
   }
-  ddog_prof_Profile_drop(&profile);
+  ddog_prof_Profile_drop(profile);
 
   printf("Press any key to exit...");
   getchar();
