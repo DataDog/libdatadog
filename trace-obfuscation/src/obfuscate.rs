@@ -57,6 +57,8 @@ mod tests {
             http_remove_query_string: true,
             http_remove_path_digits: true,
             obfuscate_memcached: false,
+            sql_replace_digits: false,
+            sql_literal_escapes: false,
         };
         obfuscate_span(&mut span, &obf_config);
         assert_eq!(
@@ -80,6 +82,8 @@ mod tests {
             http_remove_query_string: false,
             http_remove_path_digits: false,
             obfuscate_memcached: false,
+            sql_replace_digits: false,
+            sql_literal_escapes: false,
         };
 
         obfuscate_span(&mut span, &obf_config);
