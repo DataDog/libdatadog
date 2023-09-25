@@ -19,6 +19,8 @@ pub fn obfuscate_sql_string(s: &str, config: &ObfuscationConfig) -> AttemptSqlOb
         return result;
     }
 
+    // TODO: We're going to want to store this in a mutex eventually, 
+    // so that future obfuscation attempts start with the correct literal escape config
     tokenizer = SqlTokenizer::new(s, !use_literal_escapes);
     attempt_sql_obfuscation(tokenizer, config.sql_replace_digits)
 }
