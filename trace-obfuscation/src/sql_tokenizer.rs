@@ -141,10 +141,6 @@ impl SqlTokenizer {
         }
     }
 
-    pub fn set_literal_escapes(&mut self, literal_escapes: bool) {
-        self.literal_escapes = literal_escapes
-    }
-
     pub fn scan(&mut self) -> SqlTokenizerScanResult {
         if !self.has_started {
             self.next();
