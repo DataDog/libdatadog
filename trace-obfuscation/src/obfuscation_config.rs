@@ -41,13 +41,19 @@ impl ObfuscationConfig {
         let obfuscate_memcached =
             parse_env::bool("DD_APM_OBFUSCATION_MEMCACHED_ENABLED").unwrap_or(false);
 
+        let sql_replace_digits =
+            parse_env::bool("DD_APM_OBFUSCATION_SQL_REPLACE_DIGITS").unwrap_or(false);
+
+        let sql_literal_escapes =
+            parse_env::bool("DD_APM_OBFUSCATION_SQL_LITERAL_ESCAPES").unwrap_or(false);
+
         Ok(ObfuscationConfig {
             tag_replace_rules,
             http_remove_query_string,
             http_remove_path_digits,
             obfuscate_memcached,
-            sql_replace_digits: false,
-            sql_literal_escapes: false,
+            sql_replace_digits,
+            sql_literal_escapes,
         })
     }
 }
