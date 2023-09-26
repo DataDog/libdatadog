@@ -1,27 +1,16 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-pub mod api;
-pub mod internal;
-pub mod pprof;
-pub mod profiled_endpoints;
-
+use self::api::UpscalingInfo;
+use super::*;
+use crate::api;
+use crate::collections::identifiable::*;
+use crate::internal::ProfiledEndpointsStats;
+use crate::pprof::sliced_proto::*;
+use crate::serializer::CompressedProtobufSerializer;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::num::NonZeroI64;
 use std::time::{Duration, SystemTime};
-
-use crate::collections::identifiable::*;
-use crate::serializer::CompressedProtobufSerializer;
-use internal::*;
-use pprof::sliced_proto::*;
-use profiled_endpoints::ProfiledEndpointsStats;
-use prost::EncodeError;
-
-use self::api::UpscalingInfo;
-
-pub type Timestamp = NonZeroI64;
-pub type TimestampedObservation = (Timestamp, Box<[i64]>);
 
 pub struct Profile {
     endpoints: Endpoints,
@@ -38,63 +27,6 @@ pub struct Profile {
     strings: FxIndexSet<String>,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
-}
-
-#[derive(Default)]
-pub struct ProfileBuilder<'a> {
-    period: Option<api::Period<'a>>,
-    sample_types: Vec<api::ValueType<'a>>,
-    start_time: Option<SystemTime>,
-}
-
-impl<'a> ProfileBuilder<'a> {
-    pub const fn new() -> Self {
-        ProfileBuilder {
-            period: None,
-            sample_types: Vec::new(),
-            start_time: None,
-        }
-    }
-
-    pub fn period(mut self, period: Option<api::Period<'a>>) -> Self {
-        self.period = period;
-        self
-    }
-
-    pub fn sample_types(mut self, sample_types: Vec<api::ValueType<'a>>) -> Self {
-        self.sample_types = sample_types;
-        self
-    }
-
-    pub fn start_time(mut self, start_time: Option<SystemTime>) -> Self {
-        self.start_time = start_time;
-        self
-    }
-
-    pub fn build(self) -> Profile {
-        let mut profile = Profile::new(self.start_time.unwrap_or_else(SystemTime::now));
-
-        profile.sample_types = self
-            .sample_types
-            .iter()
-            .map(|vt| ValueType {
-                r#type: profile.intern(vt.r#type),
-                unit: profile.intern(vt.unit),
-            })
-            .collect();
-
-        if let Some(period) = self.period {
-            profile.period = Some((
-                period.value,
-                ValueType {
-                    r#type: profile.intern(period.r#type.r#type),
-                    unit: profile.intern(period.r#type.unit),
-                },
-            ));
-        };
-
-        profile
-    }
 }
 
 pub struct EncodedProfile {
@@ -128,7 +60,11 @@ impl Profile {
     ///  - "local root span id"
     ///  - "trace endpoint"
     /// All other fields are default.
-    pub fn new(start_time: SystemTime) -> Self {
+    pub fn new(
+        start_time: SystemTime,
+        sample_types: &[api::ValueType],
+        period: Option<api::Period>,
+    ) -> Self {
         /* Do not use Profile's default() impl here or it will cause a stack
          * overflow, since that default impl calls this method.
          */
@@ -156,6 +92,25 @@ impl Profile {
         profile.endpoints.local_root_span_id_label = profile.intern("local root span id");
         profile.endpoints.endpoint_label = profile.intern("trace endpoint");
         profile.timestamp_key = profile.intern("end_timestamp_ns");
+
+        profile.sample_types = sample_types
+            .iter()
+            .map(|vt| ValueType {
+                r#type: profile.intern(vt.r#type),
+                unit: profile.intern(vt.unit),
+            })
+            .collect();
+
+        if let Some(period) = period {
+            profile.period = Some((
+                period.value,
+                ValueType {
+                    r#type: profile.intern(period.r#type.r#type),
+                    unit: profile.intern(period.r#type.unit),
+                },
+            ));
+        };
+
         profile
     }
 
@@ -181,10 +136,6 @@ impl Profile {
             }
         };
         StringId::from_offset(index)
-    }
-
-    pub fn builder<'a>() -> ProfileBuilder<'a> {
-        ProfileBuilder::new()
     }
 
     fn add_stacktrace(&mut self, locations: Vec<LocationId>) -> StackTraceId {
@@ -333,11 +284,8 @@ impl Profile {
             value: t.0,
         });
 
-        let mut profile = ProfileBuilder::new()
-            .sample_types(sample_types)
-            .period(period)
-            .start_time(start_time)
-            .build();
+        let start_time = start_time.unwrap_or_else(SystemTime::now);
+        let mut profile = Profile::new(start_time, &sample_types, period);
 
         std::mem::swap(&mut *self, &mut profile);
         Ok(profile)
@@ -594,7 +542,7 @@ mod api_test {
             r#type: "samples",
             unit: "count",
         }];
-        let mut profiles = Profile::builder().sample_types(sample_types).build();
+        let mut profiles = Profile::new(SystemTime::now(), &sample_types, None);
 
         let expected_id = StringId::from_offset(profiles.interned_strings_count());
 
@@ -648,7 +596,7 @@ mod api_test {
             },
         ];
 
-        let mut profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile = Profile::new(SystemTime::now(), &sample_types, None);
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
 
         profile
@@ -732,7 +680,7 @@ mod api_test {
             labels,
         };
 
-        let mut profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile = Profile::new(SystemTime::now(), &sample_types, None);
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
 
         profile
@@ -930,7 +878,7 @@ mod api_test {
             unit: "nanoseconds",
         }];
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let id_label = api::Label {
             key: "local root span id",
@@ -961,7 +909,7 @@ mod api_test {
             },
         ];
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let id_label = api::Label {
             key: "local root span id",
@@ -1075,7 +1023,7 @@ mod api_test {
             },
         ];
 
-        let profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let encoded_profile = profile
             .serialize_into_compressed_pprof(None, None)
@@ -1098,7 +1046,7 @@ mod api_test {
             },
         ];
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let one_endpoint = "my endpoint";
         profile.add_endpoint_count(Cow::from(one_endpoint), 1);
@@ -1129,7 +1077,7 @@ mod api_test {
             unit: "nanoseconds",
         }];
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let labels = vec![
             api::Label {
@@ -1168,7 +1116,7 @@ mod api_test {
             },
         ];
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let id_label = api::Label {
             key: "my label",
@@ -1224,7 +1172,7 @@ mod api_test {
     fn test_upscaling_by_value_a_zero_value() {
         let sample_types = create_samples_types();
 
-        let mut profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1252,7 +1200,7 @@ mod api_test {
     fn test_upscaling_by_value_on_one_value() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1280,7 +1228,7 @@ mod api_test {
     fn test_upscaling_by_value_on_one_value_with_poisson() {
         let sample_types = create_samples_types();
 
-        let mut profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1312,7 +1260,7 @@ mod api_test {
     fn test_upscaling_by_value_on_zero_value_with_poisson() {
         let sample_types = create_samples_types();
 
-        let mut profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1344,7 +1292,7 @@ mod api_test {
     fn test_cannot_add_a_rule_with_invalid_poisson_info() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1391,7 +1339,7 @@ mod api_test {
     fn test_upscaling_by_value_on_two_values() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1448,7 +1396,7 @@ mod api_test {
     fn test_upscaling_by_value_on_two_value_with_two_rules() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1513,7 +1461,7 @@ mod api_test {
     fn test_no_upscaling_by_label_if_no_match() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let id_label = create_label("my_label", Some("coco"));
 
@@ -1569,7 +1517,7 @@ mod api_test {
     fn test_upscaling_by_label_on_one_value() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let id_label = create_label("my label", Some("coco"));
 
@@ -1604,7 +1552,7 @@ mod api_test {
     fn test_upscaling_by_label_on_only_sample_out_of_two() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let id_label = create_label("my label", Some("coco"));
 
@@ -1666,7 +1614,7 @@ mod api_test {
     fn test_upscaling_by_label_with_two_different_rules_on_two_different_sample() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let id_no_match_label = create_label("another label", Some("do not care"));
 
@@ -1750,7 +1698,7 @@ mod api_test {
     fn test_upscaling_by_label_on_two_values() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let id_label = create_label("my label", Some("coco"));
 
@@ -1786,7 +1734,7 @@ mod api_test {
     fn test_upscaling_by_value_and_by_label_different_values() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let id_label = create_label("my label", Some("coco"));
 
@@ -1829,7 +1777,7 @@ mod api_test {
     fn test_add_same_byvalue_rule_twice() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         // adding same offsets
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
@@ -1866,7 +1814,7 @@ mod api_test {
     fn test_add_two_bylabel_rules_with_overlap_on_values() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         // adding same offsets
         let mut value_offsets: Vec<usize> = vec![0, 2];
@@ -1916,7 +1864,7 @@ mod api_test {
     fn test_fail_if_bylabel_rule_and_by_value_rule_with_overlap_on_values() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         // adding same offsets
         let mut value_offsets: Vec<usize> = vec![0, 2];
@@ -1970,7 +1918,7 @@ mod api_test {
     fn test_add_rule_with_offset_out_of_bound() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         // adding same offsets
         let by_value_offsets: Vec<usize> = vec![0, 4];
@@ -1989,7 +1937,7 @@ mod api_test {
     fn test_add_rule_with_offset_out_of_bound_poisson_function() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         // adding same offsets
         let by_value_offsets: Vec<usize> = vec![0, 4];
@@ -2012,7 +1960,7 @@ mod api_test {
     fn test_add_rule_with_offset_out_of_bound_poisson_function2() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         // adding same offsets
         let by_value_offsets: Vec<usize> = vec![0, 4];
@@ -2035,7 +1983,7 @@ mod api_test {
     fn test_add_rule_with_offset_out_of_bound_poisson_function3() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         // adding same offsets
         let by_value_offsets: Vec<usize> = vec![0, 4];
@@ -2058,7 +2006,7 @@ mod api_test {
     fn test_fails_when_adding_byvalue_rule_collinding_on_offset_with_existing_bylabel_rule() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let id_label = create_label("my label", Some("coco"));
 
@@ -2104,7 +2052,7 @@ mod api_test {
             },
         ];
 
-        let mut profile: Profile = Profile::builder().sample_types(sample_types).build();
+        let mut profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let id_label = api::Label {
             key: "local root span id",

@@ -2,7 +2,9 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use crate::Timespec;
-use datadog_profiling::profile::{self, api, profiled_endpoints};
+use datadog_profiling::api;
+use datadog_profiling::internal;
+use datadog_profiling::internal::ProfiledEndpointsStats;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
 use ddcommon_ffi::Error;
 use std::convert::{TryFrom, TryInto};
@@ -16,17 +18,17 @@ use std::time::{Duration, SystemTime};
 pub struct Profile {
     // This may possibly be null, but will be a valid pointer to an owned
     // Profile otherwise.
-    inner: *mut profile::Profile,
+    inner: *mut internal::Profile,
 }
 
 impl Profile {
-    fn new(profile: profile::Profile) -> Self {
+    fn new(profile: internal::Profile) -> Self {
         Profile {
             inner: Box::into_raw(Box::new(profile)),
         }
     }
 
-    fn take(&mut self) -> Option<Box<profile::Profile>> {
+    fn take(&mut self) -> Option<Box<internal::Profile>> {
         // Leaving a null will help with double-free issues that can
         // arise in C. Of course, it's best to never get there in the
         // first place!
@@ -349,13 +351,12 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
     start_time: Option<&Timespec>,
 ) -> ProfileNewResult {
     let types: Vec<api::ValueType> = sample_types.into_slice().iter().map(Into::into).collect();
+    let start_time = start_time.map_or_else(SystemTime::now, SystemTime::from);
+    let period = period.map(Into::into);
 
-    let builder = profile::Profile::builder()
-        .period(period.map(Into::into))
-        .sample_types(types)
-        .start_time(start_time.map(SystemTime::from));
-
-    ProfileNewResult::Ok(Profile::new(builder.build()))
+    let internal_profile = internal::Profile::new(start_time, &types, period);
+    let ffi_profile = Profile::new(internal_profile);
+    ProfileNewResult::Ok(ffi_profile)
 }
 
 /// # Safety
@@ -433,7 +434,7 @@ unsafe fn ddog_prof_profile_add_impl(
 
 unsafe fn profile_ptr_to_inner<'a>(
     profile_ptr: *mut Profile,
-) -> anyhow::Result<&'a mut profile::Profile> {
+) -> anyhow::Result<&'a mut internal::Profile> {
     match profile_ptr.as_mut() {
         None => anyhow::bail!("profile pointer was null"),
         Some(inner_ptr) => match inner_ptr.inner.as_mut() {
@@ -618,7 +619,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_proportional(
 }
 
 unsafe fn add_upscaling_rule(
-    profile: &mut profile::Profile,
+    profile: &mut internal::Profile,
     offset_values: Slice<usize>,
     label_name: CharSlice,
     label_value: CharSlice,
@@ -642,7 +643,7 @@ pub struct EncodedProfile {
     start: Timespec,
     end: Timespec,
     buffer: ddcommon_ffi::Vec<u8>,
-    endpoints_stats: Box<profiled_endpoints::ProfiledEndpointsStats>,
+    endpoints_stats: Box<ProfiledEndpointsStats>,
 }
 
 /// # Safety
@@ -659,8 +660,8 @@ pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(profile: Option<&mut Enco
     }
 }
 
-impl From<profile::EncodedProfile> for EncodedProfile {
-    fn from(value: profile::EncodedProfile) -> Self {
+impl From<internal::EncodedProfile> for EncodedProfile {
+    fn from(value: internal::EncodedProfile) -> Self {
         let start = value.start.into();
         let end = value.end.into();
         let buffer = value.buffer.into();

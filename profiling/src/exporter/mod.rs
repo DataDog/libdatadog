@@ -28,7 +28,7 @@ pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
 #[cfg(windows)]
 pub use connector::named_pipe::{named_pipe_path_from_uri, named_pipe_path_to_uri};
 
-use crate::profile::profiled_endpoints::ProfiledEndpointsStats;
+use crate::internal::ProfiledEndpointsStats;
 
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
 
