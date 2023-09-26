@@ -401,6 +401,7 @@ impl TelemetryWorker {
                 points,
                 common: context.common,
                 _type: context.metric_type,
+                interval: MetricBuckets::METRICS_FLUSH_INTERVAL.as_secs(),
             });
         }
 
@@ -790,7 +791,7 @@ impl TelemetryWorkerBuilder {
             client,
             deadlines: scheduler::Scheduler::new(vec![
                 (
-                    time::Duration::from_secs(10),
+                    MetricBuckets::METRICS_FLUSH_INTERVAL,
                     LifecycleAction::FlushMetricAggr,
                 ),
                 (telemetry_hearbeat_interval, LifecycleAction::FlushData),
