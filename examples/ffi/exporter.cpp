@@ -40,8 +40,14 @@ int main(int argc, char *argv[]) {
 
   const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
   const ddog_prof_Period period = {wall_time, 60};
-  std::unique_ptr<ddog_prof_Profile, Deleter> profile{
-      ddog_prof_Profile_new(sample_types, &period, nullptr)};
+  ddog_prof_Profile_NewResult profile_new_result =
+      ddog_prof_Profile_new(sample_types, &period, nullptr);
+  if (profile_new_result.tag != DDOG_PROF_PROFILE_NEW_RESULT_OK) {
+    print_error("Failed to make new profile: ", profile_new_result.err);
+    ddog_Error_drop(&profile_new_result.err);
+    exit(EXIT_FAILURE);
+  }
+  std::unique_ptr<ddog_prof_Profile, Deleter> profile{&profile_new_result.ok};
 
   ddog_prof_Location root_location = {
       // yes, a zero-initialized mapping is valid
@@ -63,8 +69,8 @@ int main(int argc, char *argv[]) {
       .values = {&value, 1},
       .labels = {&label, 1},
   };
-  auto add_result = ddog_prof_Profile_add(profile.get(), sample);
-  if (add_result.tag != DDOG_PROF_PROFILE_ADD_RESULT_OK) {
+  auto add_result = ddog_prof_Profile_add(profile.get(), sample, 0);
+  if (add_result.tag != DDOG_PROF_PROFILE_RESULT_OK) {
     print_error("Failed to add sample to profile: ", add_result.err);
     ddog_Error_drop(&add_result.err);
     return 1;
@@ -77,7 +83,7 @@ int main(int argc, char *argv[]) {
   auto upscaling_addresult = ddog_prof_Profile_add_upscaling_rule_proportional(
       profile.get(), offsets_slice, empty_charslice, empty_charslice, 1, 1);
 
-  if (upscaling_addresult.tag == DDOG_PROF_PROFILE_UPSCALING_RULE_ADD_RESULT_ERR) {
+  if (upscaling_addresult.tag == DDOG_PROF_PROFILE_RESULT_ERR) {
     print_error("Failed to add an upscaling rule: ", upscaling_addresult.err);
     ddog_Error_drop(&upscaling_addresult.err);
     // in this specific case, we want to fail the execution. But in general, we should not
@@ -85,7 +91,7 @@ int main(int argc, char *argv[]) {
   }
 
   ddog_prof_Profile_SerializeResult serialize_result =
-      ddog_prof_Profile_serialize(profile.get(), nullptr, nullptr);
+      ddog_prof_Profile_serialize(profile.get(), nullptr, nullptr, nullptr);
   if (serialize_result.tag == DDOG_PROF_PROFILE_SERIALIZE_RESULT_ERR) {
     print_error("Failed to serialize profile: ", serialize_result.err);
     ddog_Error_drop(&serialize_result.err);
@@ -119,18 +125,23 @@ int main(int argc, char *argv[]) {
 
   auto exporter = exporter_new_result.ok;
 
-  ddog_prof_Exporter_File files_[] = {{
+  ddog_prof_Exporter_File files_to_compress_and_export_[] = {{
       .name = DDOG_CHARSLICE_C("auto.pprof"),
       .file = ddog_Vec_U8_as_slice(&encoded_profile->buffer),
   }};
+  ddog_prof_Exporter_Slice_File files_to_compress_and_export = {
+      .ptr = files_to_compress_and_export_,
+      .len = sizeof files_to_compress_and_export_ / sizeof *files_to_compress_and_export_,
+  };
 
-  ddog_prof_Exporter_Slice_File files = {.ptr = files_, .len = sizeof files_ / sizeof *files_};
+  ddog_prof_Exporter_Slice_File files_to_export_unmodified = ddog_prof_Exporter_Slice_File_empty();
+
   ddog_CharSlice internal_metadata_example = DDOG_CHARSLICE_C(
       "{\"no_signals_workaround_enabled\": \"true\", \"execution_trace_enabled\": \"false\"}");
 
-  ddog_prof_Exporter_Request_BuildResult build_result =
-      ddog_prof_Exporter_Request_build(exporter, encoded_profile->start, encoded_profile->end,
-                                       files, nullptr, nullptr, &internal_metadata_example, 30000);
+  ddog_prof_Exporter_Request_BuildResult build_result = ddog_prof_Exporter_Request_build(
+      exporter, encoded_profile->start, encoded_profile->end, files_to_compress_and_export,
+      files_to_export_unmodified, nullptr, nullptr, &internal_metadata_example, 30000);
   ddog_prof_EncodedProfile_drop(encoded_profile);
 
   if (build_result.tag == DDOG_PROF_EXPORTER_REQUEST_BUILD_RESULT_ERR) {

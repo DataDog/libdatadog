@@ -2,12 +2,11 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use ddcommon::Endpoint;
-use log::{debug, error};
 use std::borrow::Cow;
 use std::env;
 use std::str::FromStr;
 
-use datadog_trace_obfuscation::replacer::{self, ReplaceRule};
+use datadog_trace_obfuscation::obfuscation_config;
 use datadog_trace_utils::config_utils::{
     read_cloud_env, trace_intake_url, trace_intake_url_prefixed, trace_stats_url,
     trace_stats_url_prefixed,
@@ -29,7 +28,7 @@ pub struct Config {
     pub trace_intake: Endpoint,
     pub trace_stats_intake: Endpoint,
     pub dd_site: String,
-    pub tag_replace_rules: Option<Vec<ReplaceRule>>,
+    pub obfuscation_config: obfuscation_config::ObfuscationConfig,
 }
 
 impl Config {
@@ -55,19 +54,11 @@ impl Config {
             trace_stats_intake_url = trace_stats_url_prefixed(&endpoint_prefix);
         };
 
-        let tag_replace_rules: Option<Vec<ReplaceRule>> = match env::var("DD_APM_REPLACE_TAGS") {
-            Ok(replace_rules_str) => match replacer::parse_rules_from_string(&replace_rules_str) {
-                Ok(res) => {
-                    debug!("Successfully parsed DD_APM_REPLACE_TAGS: {res:?}");
-                    Some(res)
-                }
-                Err(e) => {
-                    error!("Failed to parse DD_APM_REPLACE_TAGS: {e}");
-                    None
-                }
-            },
-            Err(_) => None,
-        };
+        let obfuscation_config = obfuscation_config::ObfuscationConfig::new().map_err(|err| {
+            anyhow::anyhow!(
+                "Error creating obfuscation config, Mini Agent will not start. Error: {err}",
+            )
+        })?;
 
         Ok(Config {
             function_name: Some(function_name),
@@ -86,7 +77,7 @@ impl Config {
                 url: hyper::Uri::from_str(&trace_stats_intake_url).unwrap(),
                 api_key: Some(api_key),
             },
-            tag_replace_rules,
+            obfuscation_config,
         })
     }
 }

@@ -71,6 +71,8 @@ pub struct MetricBuckets {
 }
 
 impl MetricBuckets {
+    pub const METRICS_FLUSH_INTERVAL: time::Duration = time::Duration::from_secs(10);
+
     pub fn flush_agregates(&mut self) {
         let timestamp = unix_timestamp_now();
         for (key, bucket) in self.buckets.drain() {

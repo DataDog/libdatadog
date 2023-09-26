@@ -6,16 +6,20 @@
 mod linux {
     use std::io::{Seek, Write};
 
-    use crate::TRAMPOLINE_BIN;
-    pub(crate) fn write_trampoline() -> anyhow::Result<memfd::Memfd> {
+    pub(crate) fn write_memfd(name: &str, contents: &[u8]) -> anyhow::Result<memfd::Memfd> {
         let opts = memfd::MemfdOptions::default();
-        let mfd = opts.create("spawn_worker_trampoline")?;
+        let mfd = opts.create(name)?;
 
-        mfd.as_file().set_len(TRAMPOLINE_BIN.len() as u64)?;
-        mfd.as_file().write_all(TRAMPOLINE_BIN)?;
+        mfd.as_file().set_len(contents.len() as u64)?;
+        mfd.as_file().write_all(contents)?;
         mfd.as_file().rewind()?;
 
         Ok(mfd)
+    }
+
+    use crate::TRAMPOLINE_BIN;
+    pub(crate) fn write_trampoline() -> anyhow::Result<memfd::Memfd> {
+        write_memfd("spawn_worker_trampoline", TRAMPOLINE_BIN)
     }
 }
 
@@ -379,23 +383,44 @@ impl SpawnWorker {
         };
 
         let mut temp_files = vec![];
+        #[cfg(target_os = "linux")]
+        let mut temp_memfds = vec![];
         for dep in &self.shared_lib_dependencies {
             match dep {
                 LibDependency::Path(path) => {
                     argv.push(CString::new(path.to_string_lossy().to_string())?)
                 }
                 LibDependency::Binary(bin) => {
-                    let path = CString::new(
-                        write_to_tmp_file(bin)?
-                            .into_temp_path()
-                            .keep()? // ensure the file is not auto cleaned in parent process
-                            .as_os_str()
-                            .to_str()
-                            .ok_or_else(|| anyhow::format_err!("can't convert tmp file path"))?,
-                    )?;
-                    temp_files.push(path.clone());
-                    argv.push(CString::new("-")?);
-                    argv.push(path);
+                    let mut tempfile = || -> anyhow::Result<()> {
+                        let path = CString::new(
+                            write_to_tmp_file(bin)?
+                                .into_temp_path()
+                                .keep()? // ensure the file is not auto cleaned in parent process
+                                .as_os_str()
+                                .to_str()
+                                .ok_or_else(|| {
+                                    anyhow::format_err!("can't convert tmp file path")
+                                })?,
+                        )?;
+                        temp_files.push(path.clone());
+                        argv.push(CString::new("-")?);
+                        argv.push(path);
+                        Ok(())
+                    };
+                    #[cfg(target_os = "linux")]
+                    if matches!(spawn_method, SpawnMethod::FdExec) {
+                        let memfd = linux::write_memfd("trampoline_dependencies.so", bin)?;
+                        let basefds = if fd_to_pass.is_some() { 4 } else { 3 };
+                        argv.push(CString::new(format!(
+                            "/proc/self/fd/{}",
+                            temp_memfds.len() + basefds
+                        ))?);
+                        temp_memfds.push(memfd);
+                    } else {
+                        tempfile()?;
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    tempfile()?;
                 }
             }
         }
@@ -512,12 +537,23 @@ impl SpawnWorker {
             unsafe { libc::dup2(fd, libc::STDERR_FILENO) };
         }
 
-        let close_range = if let Some(fd) = fd_to_pass {
+        #[allow(unused_mut)]
+        let mut close_range = if let Some(fd) = fd_to_pass {
             unsafe { libc::dup2(fd.as_raw_fd(), 3) };
             4..=i32::MAX
         } else {
             3..=i32::MAX
         };
+
+        #[cfg(target_os = "linux")]
+        {
+            let mut fdnum = *close_range.start();
+            for fd in temp_memfds {
+                unsafe { libc::dup2(fd.as_raw_fd(), fdnum) };
+                fdnum += 1;
+            }
+            close_range = fdnum..=i32::MAX;
+        }
 
         if let Err(_e) = close_fd_range(close_range, skip_close_fd) {
             // What do we do here?

@@ -1,11 +1,12 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-use super::{StringId, ValueType};
+use super::*;
 use crate::profile::api::UpscalingInfo;
 use crate::profile::pprof;
 use crate::profile::FxIndexMap;
 
+#[derive(Debug)]
 pub struct UpscalingRule {
     upscaling_info: UpscalingInfo,
     values_offset: Vec<usize>,
@@ -50,8 +51,28 @@ pub struct UpscalingRules {
 }
 
 impl UpscalingRules {
-    pub fn add(&mut self, label_name_id: StringId, label_value_id: StringId, rule: UpscalingRule) {
-        // fill the bitmap for by-label rules
+    pub fn add(
+        &mut self,
+        values_offset: &[usize],
+        label_name: (&str, StringId),
+        label_value: (&str, StringId),
+        upscaling_info: UpscalingInfo,
+        max_offset: usize,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            values_offset.iter().all(|x| *x < max_offset),
+            "Invalid offset. Highest expected offset: {max_offset}",
+        );
+
+        let mut new_values_offset = values_offset.to_vec();
+        new_values_offset.sort_unstable();
+
+        self.check_collisions(&new_values_offset, label_name, label_value, &upscaling_info)?;
+        upscaling_info.check_validity(max_offset)?;
+        let rule: UpscalingRule = UpscalingRule::new(new_values_offset, upscaling_info);
+
+        let label_name_id = label_name.1;
+        let label_value_id = label_value.1;
         if !label_name_id.is_zero() || !label_value_id.is_zero() {
             rule.values_offset.iter().for_each(|offset| {
                 self.offset_modified_by_bylabel_rule.set(*offset, true);
@@ -69,10 +90,11 @@ impl UpscalingRules {
                     .expect("Already existing rules");
                 rules.push(rule);
             }
-        }
+        };
+        Ok(())
     }
 
-    pub fn check_collisions(
+    fn check_collisions(
         &self,
         values_offset: &[usize],
         label_name: (&str, StringId),
@@ -83,12 +105,10 @@ impl UpscalingRules {
         fn is_overlapping(v1: &[usize], v2: &[usize]) -> bool {
             v1.iter().any(|x| v2.contains(x))
         }
+        let (label_name_str, label_name_id) = label_name;
+        let (label_value_str, label_value_id) = label_value;
 
-        fn vec_to_string(v: &[usize]) -> String {
-            format!("{:?}", v)
-        }
-
-        let colliding_rule = match self.rules.get(&(label_name.1, label_value.1)) {
+        let colliding_rule = match self.rules.get(&(label_name_id, label_value_id)) {
             Some(rules) => rules
                 .iter()
                 .find(|rule| is_overlapping(&rule.values_offset, values_offset)),
@@ -97,12 +117,9 @@ impl UpscalingRules {
 
         anyhow::ensure!(
             colliding_rule.is_none(),
-            "There are dupicated by-label rules for the same label name: {} and label value: {} with at least one value offset in common.\n\
-            Existing values offset(s) {}, new rule values offset(s) {}.\n\
-            Existing upscaling info: {}, new rule upscaling info: {}",
-            vec_to_string(&colliding_rule.unwrap().values_offset), vec_to_string(values_offset),
-            label_name.0, label_value.0,
-            upscaling_info, colliding_rule.unwrap().upscaling_info
+            "There are duplicated by-label rules for the same label name: {label_name_str} with at least one value offset in common.\n\
+            Existing rule {colliding_rule:?}\n\
+            New rule {label_name_str} {label_value_str} {values_offset:?} {upscaling_info:?}"
         );
 
         // if we are adding a by-value rule, we need to check against
@@ -114,20 +131,16 @@ impl UpscalingRules {
 
             anyhow::ensure!(
                 collision_offset.is_none(),
-                "The by-value rule is collinding with at least one by-label rule at offset {}\n\
-                by-value rule values offset(s) {}",
-                collision_offset.unwrap(),
-                vec_to_string(values_offset)
+                "The by-value rule is colliding with at least one by-label rule at offset {collision_offset:?}\n\
+                by-value rule values offset(s) {values_offset:?}",
             )
         } else if let Some(rules) = self.rules.get(&(StringId::ZERO, StringId::ZERO)) {
             let collide_with_byvalue_rule = rules
                 .iter()
                 .find(|rule| is_overlapping(&rule.values_offset, values_offset));
             anyhow::ensure!(collide_with_byvalue_rule.is_none(),
-                "The by-label rule (label name {}, label value {}) is colliding with a by-value rule on values offsets\n\
-                Existing values offset(s) {}, new rule values offset(s) {}",
-                label_name.0, label_value.0, vec_to_string(&collide_with_byvalue_rule.unwrap().values_offset),
-                vec_to_string(values_offset))
+                "The by-label rule (label name {label_name_str}, label value {label_value_str}) is colliding with a by-value rule on values offsets\n\
+                Existing values offset(s) {collide_with_byvalue_rule:?}, new rule values offset(s) {values_offset:?}");
         }
         Ok(())
     }
@@ -143,15 +156,10 @@ impl UpscalingRules {
     // TODO: Consider whether to use the internal Label here instead
     pub fn upscale_values(
         &self,
-        values: &[i64],
+        values: &mut [i64],
         labels: &[pprof::Label],
-        sample_types: &Vec<ValueType>,
-    ) -> anyhow::Result<Vec<i64>> {
-        let mut new_values = values.to_vec();
-
+    ) -> anyhow::Result<()> {
         if !self.is_empty() {
-            let mut values_to_update: Vec<usize> = vec![0; sample_types.len()];
-
             // get bylabel rules first (if any)
             let mut group_of_rules = labels
                 .iter()
@@ -163,30 +171,16 @@ impl UpscalingRules {
                 group_of_rules.push(byvalue_rules);
             }
 
-            // check for collision(s)
-            group_of_rules.iter().for_each(|rules| {
-                rules.iter().for_each(|rule| {
-                    rule.values_offset
-                        .iter()
-                        .for_each(|offset| values_to_update[*offset] += 1)
-                })
-            });
-
-            anyhow::ensure!(
-                values_to_update.iter().all(|v| *v < 2),
-                "Multiple rules modifying the same offset for this sample"
-            );
-
             group_of_rules.iter().for_each(|rules| {
                 rules.iter().for_each(|rule| {
                     let scale = rule.compute_scale(values);
                     rule.values_offset.iter().for_each(|offset| {
-                        new_values[*offset] = (new_values[*offset] as f64 * scale).round() as i64
+                        values[*offset] = (values[*offset] as f64 * scale).round() as i64
                     })
                 })
             });
         }
 
-        Ok(new_values)
+        Ok(())
     }
 }

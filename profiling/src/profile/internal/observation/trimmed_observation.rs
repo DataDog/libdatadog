@@ -37,6 +37,12 @@ pub(super) struct TrimmedObservation {
     data: *mut i64,
 }
 
+/// # Safety
+/// Since [TrimmedObservation] is essentially Box<[i64]> that's been shrunk
+/// down in size with no other semantic changes, and that type is [Send], then
+/// so is [TrimmedObservation].
+unsafe impl Send for TrimmedObservation {}
+
 impl TrimmedObservation {
     /// Safety: the ObservationLength must have come from the same profile as the Observation
     pub unsafe fn as_mut_slice(&mut self, len: ObservationLength) -> &mut [i64] {
@@ -88,6 +94,18 @@ impl TrimmedObservation {
                 len.0,
             );
             Box::from_raw(s)
+        }
+    }
+
+    /// Safety: the ObservationLength must have come from the same profile as the Observation
+    pub(super) unsafe fn into_vec(mut self, len: ObservationLength) -> Vec<i64> {
+        unsafe {
+            // We built this from a vec.  Put it back together again.
+            Vec::from_raw_parts(
+                mem::replace(&mut self.data, std::ptr::null_mut()),
+                len.0,
+                len.0,
+            )
         }
     }
 }
@@ -162,6 +180,18 @@ mod test {
         unsafe {
             assert_eq!(t.as_slice(o), &vec![1, 2]);
             let b = t.into_boxed_slice(o);
+            assert_eq!(*b, vec![1, 2]);
+        }
+    }
+
+    #[test]
+    fn into_vec_test() {
+        let v = vec![1, 2];
+        let o = ObservationLength::new(2);
+        let t = TrimmedObservation::new(v, o);
+        unsafe {
+            assert_eq!(t.as_slice(o), &vec![1, 2]);
+            let b = t.into_vec(o);
             assert_eq!(*b, vec![1, 2]);
         }
     }

@@ -21,6 +21,10 @@ pub struct Vec<T: Sized> {
     _marker: PhantomData<T>,
 }
 
+unsafe impl<T: Send> Send for Vec<T> {}
+
+unsafe impl<T: Sync> Sync for Vec<T> {}
+
 impl<T: PartialEq> PartialEq for Vec<T> {
     fn eq(&self, other: &Self) -> bool {
         self.len() == other.len() && self.iter().zip(other.iter()).all(|(s, o)| s == o)

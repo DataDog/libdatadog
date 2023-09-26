@@ -20,10 +20,12 @@ fn multipart(exporter: &ProfileExporter, internal_metadata: Option<serde_json::V
     let small_pprof_name = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/profile.pprof");
     let buffer = open(small_pprof_name).expect("to open file and read its bytes");
 
-    let files: &[File] = &[File {
+    let files_to_compress_and_export: &[File] = &[File {
         name: "profile.pprof",
         bytes: buffer.as_slice(),
     }];
+
+    let files_to_export_unmodified = &[];
 
     let now = chrono::Utc::now();
     let start = now.sub(chrono::Duration::seconds(60));
@@ -32,7 +34,16 @@ fn multipart(exporter: &ProfileExporter, internal_metadata: Option<serde_json::V
     let timeout = std::time::Duration::from_secs(10);
 
     let request = exporter
-        .build(start, end, files, None, None, internal_metadata, timeout)
+        .build(
+            start,
+            end,
+            files_to_compress_and_export,
+            files_to_export_unmodified,
+            None,
+            None,
+            internal_metadata,
+            timeout,
+        )
         .expect("request to be built");
 
     let actual_timeout = request.timeout().expect("timeout to exist");
@@ -73,6 +84,9 @@ mod tests {
     }
 
     #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
     fn multipart_agent() {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
@@ -119,6 +133,9 @@ mod tests {
     }
 
     #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
     fn including_internal_metadata() {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
@@ -145,6 +162,9 @@ mod tests {
     }
 
     #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
     fn multipart_agentless() {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";

@@ -7,19 +7,18 @@ pub mod pprof;
 pub mod profiled_endpoints;
 
 use std::borrow::Cow;
-use std::convert::TryInto;
-use std::hash::BuildHasherDefault;
+use std::collections::HashMap;
 use std::num::NonZeroI64;
 use std::time::{Duration, SystemTime};
 
+use crate::collections::identifiable::*;
+use crate::serializer::CompressedProtobufSerializer;
 use internal::*;
+use pprof::sliced_proto::*;
 use profiled_endpoints::ProfiledEndpointsStats;
-use prost::{EncodeError, Message};
+use prost::EncodeError;
 
 use self::api::UpscalingInfo;
-
-pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<rustc_hash::FxHasher>>;
-pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::FxHasher>>;
 
 pub type Timestamp = NonZeroI64;
 pub type TimestampedObservation = (Timestamp, Box<[i64]>);
@@ -96,29 +95,6 @@ impl<'a> ProfileBuilder<'a> {
 
         profile
     }
-}
-
-trait Dedup<T: Item> {
-    /// Deduplicate the Item and return its associated Id.
-    /// # Panics
-    /// Panics if the number of items overflows the storage capabilities of
-    /// the associated Id type.
-    fn dedup(&mut self, item: T) -> <T as Item>::Id;
-}
-
-impl<T: Item> Dedup<T> for FxIndexSet<T> {
-    fn dedup(&mut self, item: T) -> <T as Item>::Id {
-        let (id, _) = self.insert_full(item);
-        <T as Item>::Id::from_offset(id)
-    }
-}
-
-fn to_pprof_vec<T: PprofItem>(collection: &FxIndexSet<T>) -> Vec<T::PprofMessage> {
-    collection
-        .iter()
-        .enumerate()
-        .map(|(index, item)| item.to_pprof(<T as Item>::Id::from_offset(index)))
-        .collect()
 }
 
 pub struct EncodedProfile {
@@ -259,7 +235,7 @@ impl Profile {
         })
     }
 
-    pub fn add(&mut self, sample: api::Sample) -> anyhow::Result<()> {
+    pub fn add(&mut self, sample: api::Sample, timestamp: Option<Timestamp>) -> anyhow::Result<()> {
         anyhow::ensure!(
             sample.values.len() == self.sample_types.len(),
             "expected {} sample types, but sample had {} sample types",
@@ -267,7 +243,25 @@ impl Profile {
             sample.values.len(),
         );
 
-        let (labels, timestamp) = self.extract_sample_labels(&sample)?;
+        self.validate_sample_labels(&sample)?;
+        let labels: Vec<_> = sample
+            .labels
+            .iter()
+            .map(|label| {
+                let key = self.intern(label.key);
+                let internal_label = if let Some(s) = label.str {
+                    let str = self.intern(s);
+                    Label::str(key, str)
+                } else {
+                    let num = label.num;
+                    let num_unit = label.num_unit.map(|s| self.intern(s));
+                    Label::num(key, num, num_unit)
+                };
+
+                self.labels.dedup(internal_label)
+            })
+            .collect();
+        let labels = self.label_sets.dedup(LabelSet::new(labels));
 
         let locations = sample
             .locations
@@ -281,103 +275,50 @@ impl Profile {
         Ok(())
     }
 
-    /// Validates labels and converts them to the internal representation.
-    /// Extracts out the timestamp label, if it exists.
-    fn extract_timestamp(&mut self, sample: &api::Sample) -> anyhow::Result<Option<Timestamp>> {
-        if let Some(label) = sample
-            .labels
-            .iter()
-            .find(|label| label.key == "end_timestamp_ns")
-        {
-            anyhow::ensure!(
-                label.str.is_none(),
-                "the label \"{}\" must be sent as a number, not string {}",
-                label.str.unwrap(),
-                label.key
-            );
-            anyhow::ensure!(label.num != 0, "the label \"{}\" must not be 0", label.key);
-            anyhow::ensure!(label.num_unit.is_none(), "Timestamps with label '{}' are always nanoseconds and do not take a unit: found '{}'", label.key, label.num_unit.unwrap());
-
-            Ok(Some(NonZeroI64::new(label.num).unwrap()))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Validates labels and converts them to the internal representation.
-    /// Extracts out the timestamp label, if it exists.
-    fn extract_sample_labels(
-        &mut self,
-        sample: &api::Sample,
-    ) -> anyhow::Result<(LabelSetId, Option<Timestamp>)> {
-        let timestamp = self.extract_timestamp(sample)?;
-
-        let mut labels: Vec<LabelId> = Vec::with_capacity(if timestamp.is_some() {
-            sample.labels.len() - 1
-        } else {
-            sample.labels.len()
-        });
-        let mut local_root_span_id_label = None;
+    /// Validates labels
+    fn validate_sample_labels(&mut self, sample: &api::Sample) -> anyhow::Result<()> {
+        let mut seen: HashMap<&str, &api::Label> = HashMap::new();
 
         for label in sample.labels.iter() {
-            if label.key == "end_timestamp_ns" {
-                continue;
+            if let Some(duplicate) = seen.insert(label.key, label) {
+                anyhow::bail!("Duplicate label on sample: {:?} {:?}", duplicate, label);
             }
 
-            let key = self.intern(label.key);
-            let internal_label = if let Some(s) = label.str {
-                let str = self.intern(s);
-                Label::str(key, str)
-            } else {
-                let num = label.num;
-                let num_unit = label.num_unit.map(|s| self.intern(s));
-                Label::num(key, num, num_unit)
-            };
-
-            let label_id = self.labels.dedup(internal_label);
-
-            if key == self.endpoints.local_root_span_id_label {
+            if label.key == "local root span id" {
                 anyhow::ensure!(
-                    local_root_span_id_label.is_none(),
-                    "only one label per sample can have the key \"local root span id\", found two: {:?}, {:?}",
-                    self.get_label(local_root_span_id_label.unwrap()), label
+                    label.str.is_none() && label.num != 0,
+                    "Invalid \"local root span id\" label: {:?}",
+                    label
                 );
-
-                // Panic: if the label.str isn't 0, then str must have been provided.
-                anyhow::ensure!(
-                    label.str.is_none(),
-                    "the label \"local root span id\" must be sent as a number, not string {}",
-                    label.str.unwrap()
-                );
-                anyhow::ensure!(
-                    label.num != 0,
-                    "the label \"local root span id\" must not be 0"
-                );
-                local_root_span_id_label = Some(label_id);
             }
 
-            labels.push(label_id);
+            anyhow::ensure!(
+                label.key != "end_timestamp_ns",
+                "Timestamp should not be passed as a label {:?}",
+                label
+            );
         }
-
-        let label_set_id = self.label_sets.dedup(LabelSet::new(labels));
-
-        Ok((label_set_id, timestamp))
+        Ok(())
     }
 
-    fn extract_api_sample_types(&self) -> Option<Vec<api::ValueType>> {
-        let mut sample_types: Vec<api::ValueType> = Vec::with_capacity(self.sample_types.len());
-        for sample_type in self.sample_types.iter() {
-            sample_types.push(api::ValueType {
+    fn extract_api_sample_types(&self) -> anyhow::Result<Vec<api::ValueType>> {
+        let sample_types = self
+            .sample_types
+            .iter()
+            .map(|sample_type| api::ValueType {
                 r#type: self.get_string(sample_type.r#type),
                 unit: self.get_string(sample_type.unit),
             })
-        }
-        Some(sample_types)
+            .collect();
+        Ok(sample_types)
     }
 
-    /// Resets all data except the sample types and period. Returns the
-    /// previous Profile on success.
-    pub fn reset(&mut self, start_time: Option<SystemTime>) -> Option<Profile> {
+    /// Resets all data except the sample types and period.
+    /// Returns the previous Profile on success.
+    pub fn reset_and_return_previous(
+        &mut self,
+        start_time: Option<SystemTime>,
+    ) -> anyhow::Result<Profile> {
         /* We have to map over the types because the order of the strings is
          * not generally guaranteed, so we can't just copy the underlying
          * structures.
@@ -399,7 +340,7 @@ impl Profile {
             .build();
 
         std::mem::swap(&mut *self, &mut profile);
-        Some(profile)
+        Ok(profile)
     }
 
     /// Add the endpoint data to the endpoint mappings.
@@ -425,31 +366,15 @@ impl Profile {
         label_value: &str,
         upscaling_info: UpscalingInfo,
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            offset_values.iter().all(|x| x < &self.sample_types.len()),
-            "Invalid offset. Highest expected offset: {}",
-            self.sample_types.len() - 1
-        );
-
         let label_name_id = self.intern(label_name);
         let label_value_id = self.intern(label_value);
-
-        let mut new_values_offset = offset_values.to_vec();
-        new_values_offset.sort_unstable();
-
-        self.upscaling_rules.check_collisions(
-            &new_values_offset,
+        self.upscaling_rules.add(
+            offset_values,
             (label_name, label_name_id),
             (label_value, label_value_id),
-            &upscaling_info,
+            upscaling_info,
+            self.sample_types.len(),
         )?;
-
-        upscaling_info.check_validity(self.sample_types.len())?;
-
-        let rule = UpscalingRule::new(new_values_offset, upscaling_info);
-
-        self.upscaling_rules
-            .add(label_name_id, label_value_id, rule);
 
         Ok(())
     }
@@ -462,16 +387,15 @@ impl Profile {
     ///                conditions this may fail as system clocks can be adjusted. The programmer
     ///                may also accidentally pass an earlier time. The duration will be set to zero
     ///                these cases.
-    pub fn serialize(
-        &self,
+    pub fn serialize_into_compressed_pprof(
+        mut self,
         end_time: Option<SystemTime>,
         duration: Option<Duration>,
     ) -> anyhow::Result<EncodedProfile> {
         let end = end_time.unwrap_or_else(SystemTime::now);
         let start = self.start_time;
-        let mut profile: pprof::Profile = self.try_into()?;
-
-        profile.duration_nanos = duration
+        let endpoints_stats = std::mem::take(&mut self.endpoints.stats);
+        let duration_nanos = duration
             .unwrap_or_else(|| {
                 end.duration_since(start).unwrap_or({
                     // Let's not throw away the whole profile just because the clocks were wrong.
@@ -481,15 +405,91 @@ impl Profile {
             })
             .as_nanos()
             .min(i64::MAX as u128) as i64;
+        let (period, period_type) = match self.period {
+            Some(tuple) => (tuple.0, Some(tuple.1.into())),
+            None => (0, None),
+        };
 
-        let mut buffer: Vec<u8> = Vec::new();
-        profile.encode(&mut buffer)?;
+        // On 2023-08-23, we analyzed the uploaded tarball size per language.
+        // These tarballs include 1 or more profiles, but for most languages
+        // using libdatadog (all?) there is only 1 profile, so this is a good
+        // proxy for the compressed, final size of the profiles.
+        // We found that for all languages using libdatadog, the average
+        // tarball was at least 18 KiB. Since these archives are compressed,
+        // and because profiles compress well, especially ones with timeline
+        // enabled (over 9x for some analyzed timeline profiles), this initial
+        // size of 32KiB should definitely out-perform starting at zero for
+        // time consumed, allocator pressure, and allocator fragmentation.
+        const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
+        let mut encoder = CompressedProtobufSerializer::with_capacity(INITIAL_PPROF_BUFFER_SIZE);
+
+        for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
+            let labels = self.translate_and_enrich_sample_labels(sample, timestamp)?;
+            let location_ids: Vec<_> = self
+                .get_stacktrace(sample.stacktrace)
+                .locations
+                .iter()
+                .map(Id::to_raw_id)
+                .collect();
+            self.upscaling_rules.upscale_values(&mut values, &labels)?;
+
+            let item = pprof::Sample {
+                location_ids,
+                values,
+                labels,
+            };
+
+            encoder.encode(ProfileSamplesEntry::from(item))?;
+        }
+
+        // `Sample`s must be emitted before `SampleTypes` since we consume
+        // fields as we convert (using `into_iter`).  This allows Rust to
+        // release memory faster, reducing our peak RSS, but means that we
+        // must process fields in dependency order, regardless of the numeric
+        // field index in the `pprof` protobuf.
+        // It is valid to emit protobuf fields out of order. See example in:
+        // https://protobuf.dev/programming-guides/encoding/#optional
+        //
+        // In this case, we use `sample_types` during upscaling of `samples`,
+        // so we must serialize `Sample` before `SampleType`.
+        for sample_type in self.sample_types.into_iter() {
+            let item: pprof::ValueType = sample_type.into();
+            encoder.encode(ProfileSampleTypesEntry::from(item))?;
+        }
+
+        for item in into_pprof_iter(self.mappings) {
+            encoder.encode(ProfileMappingsEntry::from(item))?;
+        }
+
+        for item in into_pprof_iter(self.locations) {
+            encoder.encode(ProfileLocationsEntry::from(item))?;
+        }
+
+        for item in into_pprof_iter(self.functions) {
+            encoder.encode(ProfileFunctionsEntry::from(item))?;
+        }
+
+        for item in self.strings.into_iter() {
+            encoder.encode(ProfileStringTableEntry::from(item))?;
+        }
+
+        encoder.encode(ProfileSimpler {
+            time_nanos: self
+                .start_time
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |duration| {
+                    duration.as_nanos().min(i64::MAX as u128) as i64
+                }),
+            duration_nanos,
+            period_type,
+            period,
+        })?;
 
         Ok(EncodedProfile {
             start,
             end,
-            buffer,
-            endpoints_stats: self.endpoints.stats.clone(),
+            buffer: encoder.finish()?,
+            endpoints_stats,
         })
     }
 
@@ -582,68 +582,6 @@ impl Profile {
     }
 }
 
-impl TryFrom<&Profile> for pprof::Profile {
-    type Error = anyhow::Error;
-
-    fn try_from(profile: &Profile) -> anyhow::Result<pprof::Profile> {
-        let (period, period_type) = match profile.period {
-            Some(tuple) => (tuple.0, Some(tuple.1)),
-            None => (0, None),
-        };
-
-        /* Rust pattern: inverting Vec<Result<T,E>> into Result<Vec<T>, E> error with .collect:
-         * https://doc.rust-lang.org/rust-by-example/error/iter_result.html#fail-the-entire-operation-with-collect
-         */
-
-        let samples: anyhow::Result<Vec<pprof::Sample>> = profile
-            .observations
-            .iter()
-            .map(|(sample, timestamp, values)| {
-                let labels = profile.translate_and_enrich_sample_labels(sample, timestamp)?;
-                let location_ids: Vec<_> = profile
-                    .get_stacktrace(sample.stacktrace)
-                    .locations
-                    .iter()
-                    .map(Id::to_raw_id)
-                    .collect();
-                let values = profile.upscaling_rules.upscale_values(
-                    values,
-                    &labels,
-                    &profile.sample_types,
-                )?;
-
-                Ok(pprof::Sample {
-                    location_ids,
-                    values,
-                    labels,
-                })
-            })
-            .collect();
-        let samples = samples?;
-        Ok(pprof::Profile {
-            sample_types: profile
-                .sample_types
-                .iter()
-                .map(pprof::ValueType::from)
-                .collect(),
-            samples,
-            mappings: to_pprof_vec(&profile.mappings),
-            locations: to_pprof_vec(&profile.locations),
-            functions: to_pprof_vec(&profile.functions),
-            string_table: profile.strings.iter().map(Into::into).collect(),
-            time_nanos: profile
-                .start_time
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map_or(0, |duration| {
-                    duration.as_nanos().min(i64::MAX as u128) as i64
-                }),
-            period,
-            period_type: period_type.map(pprof::ValueType::from),
-            ..Default::default()
-        })
-    }
-}
-
 #[cfg(test)]
 mod api_test {
 
@@ -714,11 +652,14 @@ mod api_test {
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
 
         profile
-            .add(api::Sample {
-                locations,
-                values: vec![1, 10000],
-                labels: vec![],
-            })
+            .add(
+                api::Sample {
+                    locations,
+                    values: vec![1, 10000],
+                    labels: vec![],
+                },
+                None,
+            )
             .expect("add to succeed");
 
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
@@ -767,7 +708,7 @@ mod api_test {
         }];
 
         let values: Vec<i64> = vec![1];
-        let mut labels = vec![api::Label {
+        let labels = vec![api::Label {
             key: "pid",
             num: 101,
             ..Default::default()
@@ -785,11 +726,6 @@ mod api_test {
             labels: labels.clone(),
         };
 
-        labels.push(api::Label {
-            key: "end_timestamp_ns",
-            num: 42,
-            ..Default::default()
-        });
         let timestamp_sample = api::Sample {
             locations: timestamp_locations,
             values,
@@ -799,15 +735,19 @@ mod api_test {
         let mut profile = Profile::builder().sample_types(sample_types).build();
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
 
-        profile.add(main_sample).expect("profile to not be full");
+        profile
+            .add(main_sample, None)
+            .expect("profile to not be full");
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
 
-        profile.add(test_sample).expect("profile to not be full");
+        profile
+            .add(test_sample, None)
+            .expect("profile to not be full");
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 2);
 
         assert_eq!(profile.only_for_testing_num_timestamped_samples(), 0);
         profile
-            .add(timestamp_sample)
+            .add(timestamp_sample, Timestamp::new(42))
             .expect("profile to not be full");
         assert_eq!(profile.only_for_testing_num_timestamped_samples(), 1);
         profile
@@ -816,7 +756,7 @@ mod api_test {
     #[test]
     fn impl_from_profile_for_pprof_profile() {
         let locations = provide_distinct_locations();
-        let profile = pprof::Profile::try_from(&locations).unwrap();
+        let profile = pprof::roundtrip_to_pprof(locations).unwrap();
 
         assert_eq!(profile.samples.len(), 3);
         assert_eq!(profile.mappings.len(), 1);
@@ -931,7 +871,9 @@ mod api_test {
         assert!(profile.endpoints.mappings.is_empty());
         assert!(profile.endpoints.stats.is_empty());
 
-        let prev = profile.reset(None).expect("reset to succeed");
+        let prev = profile
+            .reset_and_return_previous(None)
+            .expect("reset to succeed");
 
         // These should all be empty now
         assert!(profile.functions.is_empty());
@@ -968,7 +910,9 @@ mod api_test {
         );
         profile.period = Some(period);
 
-        let prev = profile.reset(None).expect("reset to succeed");
+        let prev = profile
+            .reset_and_return_previous(None)
+            .expect("reset to succeed");
         assert_eq!(Some(period), prev.period);
 
         // Resolve the string values to check that they match (their string
@@ -1001,7 +945,7 @@ mod api_test {
             labels: vec![id_label],
         };
 
-        assert!(profile.add(sample).is_err());
+        assert!(profile.add(sample, None).is_err());
     }
 
     #[test]
@@ -1052,13 +996,13 @@ mod api_test {
             labels: vec![id2_label, other_label],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add(sample1, None).expect("add to success");
 
-        profile.add(sample2).expect("add to success");
+        profile.add(sample2, None).expect("add to success");
 
         profile.add_endpoint(10, Cow::from("my endpoint"));
 
-        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         assert_eq!(serialized_profile.samples.len(), 2);
         let samples = serialized_profile.sorted_samples();
 
@@ -1134,7 +1078,7 @@ mod api_test {
         let profile: Profile = Profile::builder().sample_types(sample_types).build();
 
         let encoded_profile = profile
-            .serialize(None, None)
+            .serialize_into_compressed_pprof(None, None)
             .expect("Unable to encode/serialize the profile");
 
         let endpoints_stats = encoded_profile.endpoints_stats;
@@ -1164,7 +1108,7 @@ mod api_test {
         profile.add_endpoint_count(Cow::from(second_endpoint), 1);
 
         let encoded_profile = profile
-            .serialize(None, None)
+            .serialize_into_compressed_pprof(None, None)
             .expect("Unable to encode/serialize the profile");
 
         let endpoints_stats = encoded_profile.endpoints_stats;
@@ -1208,7 +1152,7 @@ mod api_test {
             labels,
         };
 
-        profile.add(sample).unwrap_err();
+        profile.add(sample, None).unwrap_err();
     }
 
     #[test]
@@ -1239,9 +1183,9 @@ mod api_test {
             labels: vec![id_label],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add(sample1, None).expect("add to success");
 
-        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -1288,7 +1232,7 @@ mod api_test {
             labels: vec![],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add(sample1, None).expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
         let values_offset = vec![0];
@@ -1296,7 +1240,7 @@ mod api_test {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -1316,7 +1260,7 @@ mod api_test {
             labels: vec![],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add(sample1, None).expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.7 };
         let values_offset = vec![0];
@@ -1324,7 +1268,7 @@ mod api_test {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -1344,7 +1288,7 @@ mod api_test {
             labels: vec![],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add(sample1, None).expect("add to success");
 
         let upscaling_info = UpscalingInfo::Poisson {
             sum_value_offset: 1,
@@ -1356,7 +1300,7 @@ mod api_test {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -1376,7 +1320,7 @@ mod api_test {
             labels: vec![],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add(sample1, None).expect("add to success");
 
         let upscaling_info = UpscalingInfo::Poisson {
             sum_value_offset: 1,
@@ -1388,7 +1332,7 @@ mod api_test {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -1408,7 +1352,7 @@ mod api_test {
             labels: vec![],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add(sample1, None).expect("add to success");
 
         // invalid sampling_distance vaue
         let upscaling_info = UpscalingInfo::Poisson {
@@ -1478,8 +1422,8 @@ mod api_test {
             labels: vec![],
         };
 
-        profile.add(sample1).expect("add to success");
-        profile.add(sample2).expect("add to success");
+        profile.add(sample1, None).expect("add to success");
+        profile.add(sample2, None).expect("add to success");
 
         // upscale the first value and the last one
         let values_offset: Vec<usize> = vec![0, 2];
@@ -1489,7 +1433,7 @@ mod api_test {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         let samples = serialized_profile.sorted_samples();
         let first = samples.get(0).expect("first sample");
 
@@ -1534,8 +1478,8 @@ mod api_test {
             labels: vec![],
         };
 
-        profile.add(sample1).expect("add to success");
-        profile.add(sample2).expect("add to success");
+        profile.add(sample1, None).expect("add to success");
+        profile.add(sample2, None).expect("add to success");
 
         let mut values_offset: Vec<usize> = vec![0];
 
@@ -1554,7 +1498,7 @@ mod api_test {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info2)
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         let samples = serialized_profile.sorted_samples();
         let first = samples.get(0).expect("first sample");
 
@@ -1579,7 +1523,7 @@ mod api_test {
             labels: vec![id_label],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add(sample1, None).expect("add to success");
 
         let values_offset: Vec<usize> = vec![0];
 
@@ -1613,7 +1557,7 @@ mod api_test {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -1635,7 +1579,7 @@ mod api_test {
             labels: vec![id_label],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add(sample1, None).expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
         let values_offset: Vec<usize> = vec![0];
@@ -1648,7 +1592,7 @@ mod api_test {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -1692,8 +1636,8 @@ mod api_test {
             labels: vec![],
         };
 
-        profile.add(sample1).expect("add to success");
-        profile.add(sample2).expect("add to success");
+        profile.add(sample1, None).expect("add to success");
+        profile.add(sample2, None).expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
         let values_offset: Vec<usize> = vec![0];
@@ -1706,7 +1650,7 @@ mod api_test {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         let samples = serialized_profile.sorted_samples();
 
         let first = samples.get(0).expect("one sample");
@@ -1763,8 +1707,8 @@ mod api_test {
             labels: vec![id_no_match_label, id_label2],
         };
 
-        profile.add(sample1).expect("add to success");
-        profile.add(sample2).expect("add to success");
+        profile.add(sample1, None).expect("add to success");
+        profile.add(sample2, None).expect("add to success");
 
         // add rule for the first sample on the 1st value
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
@@ -1791,7 +1735,7 @@ mod api_test {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         let samples = serialized_profile.sorted_samples();
         let first = samples.get(0).expect("one sample");
 
@@ -1816,7 +1760,7 @@ mod api_test {
             labels: vec![id_label],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add(sample1, None).expect("add to success");
 
         // upscale samples and wall-time values
         let values_offset: Vec<usize> = vec![0, 1];
@@ -1831,7 +1775,7 @@ mod api_test {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -1852,7 +1796,7 @@ mod api_test {
             labels: vec![id_label],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add(sample1, None).expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
         let mut value_offsets: Vec<usize> = vec![0];
@@ -1873,7 +1817,7 @@ mod api_test {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.get(0).expect("one sample");
@@ -2124,7 +2068,7 @@ mod api_test {
             labels: vec![id_label],
         };
 
-        profile.add(sample1).expect("add to success");
+        profile.add(sample1, None).expect("add to success");
 
         let mut value_offsets: Vec<usize> = vec![0, 1];
         // Add by-label rule first
@@ -2192,13 +2136,13 @@ mod api_test {
             labels: vec![id2_label],
         };
 
-        profile.add(sample1).expect("add to success");
-        profile.add(sample2).expect("add to success");
+        profile.add(sample1, None).expect("add to success");
+        profile.add(sample2, None).expect("add to success");
 
         profile.add_endpoint(10, Cow::from("endpoint 10"));
         profile.add_endpoint(large_span_id, Cow::from("large endpoint"));
 
-        let serialized_profile = pprof::Profile::try_from(&profile).unwrap();
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         assert_eq!(serialized_profile.samples.len(), 2);
 
         // Find common label strings in the string table.
