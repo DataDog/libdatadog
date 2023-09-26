@@ -13,6 +13,7 @@ pub struct Serie {
     pub common: bool,
     #[serde(rename = "type")]
     pub _type: MetricType,
+    pub interval: u64,
 }
 
 #[derive(Serialize, Debug, Clone, Copy)]

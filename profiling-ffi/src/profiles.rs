@@ -60,6 +60,14 @@ pub enum ProfileResult {
     Err(Error),
 }
 
+/// Returned by [ddog_prof_Profile_new].
+#[repr(C)]
+pub enum ProfileNewResult {
+    Ok(Profile),
+    #[allow(dead_code)]
+    Err(Error),
+}
+
 #[repr(C)]
 pub enum SerializeResult {
     Ok(EncodedProfile),
@@ -341,13 +349,14 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
     start_time: Option<&Timespec>,
-) -> Profile {
-    let sample_types: Vec<api::ValueType> =
-        sample_types.into_slice().iter().map(Into::into).collect();
-    let period = period.map(Into::into);
+) -> ProfileNewResult {
+    let types: Vec<api::ValueType> = sample_types.into_slice().iter().map(Into::into).collect();
     let start_time = start_time.map_or_else(SystemTime::now, SystemTime::from);
-    let inner = internal::Profile::new(start_time, &sample_types, period);
-    Profile::new(inner)
+    let period = period.map(Into::into);
+
+    let internal_profile = internal::Profile::new(start_time, &types, period);
+    let ffi_profile = Profile::new(internal_profile);
+    ProfileNewResult::Ok(ffi_profile)
 }
 
 /// # Safety
@@ -363,11 +372,21 @@ pub unsafe extern "C" fn ddog_prof_Profile_drop(profile: *mut Profile) {
 }
 
 #[cfg(test)]
-impl From<ProfileResult> for Result<(), String> {
+impl From<ProfileResult> for Result<(), Error> {
     fn from(result: ProfileResult) -> Self {
         match result {
             ProfileResult::Ok(_) => Ok(()),
-            ProfileResult::Err(err) => Err(err.into()),
+            ProfileResult::Err(err) => Err(err),
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<ProfileNewResult> for Result<Profile, Error> {
+    fn from(result: ProfileNewResult) -> Self {
+        match result {
+            ProfileNewResult::Ok(p) => Ok(p),
+            ProfileNewResult::Err(err) => Err(err),
         }
     }
 }
@@ -757,19 +776,28 @@ mod test {
     use super::*;
 
     #[test]
-    fn ctor_and_dtor() {
+    fn ctor_and_dtor() -> Result<(), Error> {
         unsafe {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
-            let mut profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
+            let mut profile = Result::from(ddog_prof_Profile_new(
+                Slice::new(sample_type, 1),
+                None,
+                None,
+            ))?;
             ddog_prof_Profile_drop(&mut profile);
+            Ok(())
         }
     }
 
     #[test]
-    fn add_failure() {
+    fn add_failure() -> Result<(), Error> {
         unsafe {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
-            let mut profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
+            let mut profile = Result::from(ddog_prof_Profile_new(
+                Slice::new(sample_type, 1),
+                None,
+                None,
+            ))?;
 
             // wrong number of values (doesn't match sample types)
             let values: &[i64] = &[];
@@ -783,6 +811,7 @@ mod test {
             let result = Result::from(ddog_prof_Profile_add(&mut profile, sample, None));
             result.unwrap_err();
             ddog_prof_Profile_drop(&mut profile);
+            Ok(())
         }
     }
 
@@ -793,7 +822,11 @@ mod test {
     fn aggregate_samples() -> anyhow::Result<()> {
         unsafe {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
-            let mut profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
+            let mut profile = Result::from(ddog_prof_Profile_new(
+                Slice::new(sample_type, 1),
+                None,
+                None,
+            ))?;
 
             let mapping = Mapping {
                 filename: "php".into(),
@@ -823,7 +856,7 @@ mod test {
                 labels: Slice::from(&labels),
             };
 
-            Result::from(ddog_prof_Profile_add(&mut profile, sample, None)).unwrap();
+            Result::from(ddog_prof_Profile_add(&mut profile, sample, None))?;
             assert_eq!(
                 profile
                     .inner
@@ -833,7 +866,7 @@ mod test {
                 1
             );
 
-            Result::from(ddog_prof_Profile_add(&mut profile, sample, None)).unwrap();
+            Result::from(ddog_prof_Profile_add(&mut profile, sample, None))?;
             assert_eq!(
                 profile
                     .inner
@@ -850,7 +883,12 @@ mod test {
 
     unsafe fn provide_distinct_locations_ffi() -> Profile {
         let sample_type: *const ValueType = &ValueType::new("samples", "count");
-        let mut profile = ddog_prof_Profile_new(Slice::new(sample_type, 1), None, None);
+        let mut profile = Result::from(ddog_prof_Profile_new(
+            Slice::new(sample_type, 1),
+            None,
+            None,
+        ))
+        .unwrap();
 
         let mapping = Mapping {
             filename: "php".into(),
