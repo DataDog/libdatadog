@@ -94,6 +94,8 @@ pub struct ProfileStringTableEntry<'a> {
     pub string_table_entry: &'a str,
 }
 
+const STRING_TABLE_PROTO_TAG: u32 = 6;
+
 impl<'a> ::prost::Message for ProfileStringTableEntry<'a> {
     fn encode_raw<B>(&self, buf: &mut B)
     where
@@ -102,7 +104,7 @@ impl<'a> ::prost::Message for ProfileStringTableEntry<'a> {
     {
         let value = self.string_table_entry;
         // See prost::encoding::string::encode
-        prost::encoding::encode_key(6, WireType::LengthDelimited, buf);
+        prost::encoding::encode_key(STRING_TABLE_PROTO_TAG, WireType::LengthDelimited, buf);
         prost::encoding::encode_varint(value.len() as u64, buf);
         buf.put_slice(value.as_bytes());
     }
@@ -126,7 +128,7 @@ impl<'a> ::prost::Message for ProfileStringTableEntry<'a> {
     fn encoded_len(&self) -> usize {
         // see prost::encoding::string::encoded_len (which is in a macro)
         let value = self.string_table_entry;
-        prost::encoding::key_len(6)
+        prost::encoding::key_len(STRING_TABLE_PROTO_TAG)
             + prost::encoding::encoded_len_varint(value.len() as u64)
             + value.len()
     }
