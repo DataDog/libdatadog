@@ -74,8 +74,8 @@ impl StringTable {
     /// So, what remains is choosing how many pages to reserve up front. From
     /// one perspective, it would be nice to use a size that goes directly to
     /// `mmap` on Linux by a given malloc implementation, but if a certain
-    /// number of profiles don't reach that number, than that's wasteful. We
-    /// don't currently have metrics on this.
+    /// number of profiles don't reach that number, than that's wasteful. That
+    /// is, unless we use mmap directly and let it lazily populate.
     ///
     /// So... for now, the selected number of pages is arbitrarily chosen.
     pub const GOOD_INITIAL_CAPACITY: usize = 4 * Self::PAGE_SIZE - Self::BUMP_OVERHEAD;
