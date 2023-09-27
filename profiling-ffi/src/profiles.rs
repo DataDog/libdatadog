@@ -423,7 +423,7 @@ unsafe fn ddog_prof_profile_add_impl(
 ) -> anyhow::Result<()> {
     let profile = profile_ptr_to_inner(profile_ptr)?;
 
-    match sample.try_into().map(|s| profile.add(s, timestamp)) {
+    match sample.try_into().map(|s| profile.add_sample(s, timestamp)) {
         Ok(r) => match r {
             Ok(_) => Ok(()),
             Err(err) => Err(err),

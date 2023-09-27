@@ -183,7 +183,7 @@ fn main() -> anyhow::Result<()> {
 
     let before = Instant::now();
     for (timestamp, sample) in samples {
-        outprof.add(sample, timestamp)?;
+        outprof.add_sample(sample, timestamp)?;
     }
     let duration = before.elapsed();
 
