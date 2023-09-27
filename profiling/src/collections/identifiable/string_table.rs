@@ -78,7 +78,7 @@ impl StringTable {
     /// don't currently have metrics on this.
     ///
     /// So... for now, the selected number of pages is arbitrarily chosen.
-    pub const GOOD_INITIAL_CAPACITY: usize = 8 * Self::PAGE_SIZE - Self::BUMP_OVERHEAD;
+    pub const GOOD_INITIAL_CAPACITY: usize = 4 * Self::PAGE_SIZE - Self::BUMP_OVERHEAD;
 
     #[inline]
     pub fn new() -> Self {
