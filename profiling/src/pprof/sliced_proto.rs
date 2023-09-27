@@ -54,6 +54,9 @@
 //! semantics.
 
 use super::*;
+use bytes::{Buf, BufMut};
+use prost::encoding::{DecodeContext, WireType};
+use prost::DecodeError;
 
 #[derive(Eq, Hash, PartialEq, ::prost::Message)]
 pub struct ProfileSampleTypesEntry {
@@ -85,10 +88,52 @@ pub struct ProfileFunctionsEntry {
     pub functions_entry: Function,
 }
 
-#[derive(Eq, Hash, PartialEq, ::prost::Message)]
-pub struct ProfileStringTableEntry {
-    #[prost(string, required, tag = "6")]
-    pub string_table_entry: String,
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub struct ProfileStringTableEntry<'a> {
+    // #[prost(string, required, tag = "6")]
+    pub string_table_entry: &'a str,
+}
+
+impl<'a> ::prost::Message for ProfileStringTableEntry<'a> {
+    fn encode_raw<B>(&self, buf: &mut B)
+    where
+        B: BufMut,
+        Self: Sized,
+    {
+        let value = self.string_table_entry;
+        // See prost::encoding::string::encode
+        prost::encoding::encode_key(6, WireType::LengthDelimited, buf);
+        prost::encoding::encode_varint(value.len() as u64, buf);
+        buf.put_slice(value.as_bytes());
+    }
+
+    fn merge_field<B>(
+        &mut self,
+        _tag: u32,
+        _wire_type: WireType,
+        _buf: &mut B,
+        _ctx: DecodeContext,
+    ) -> Result<(), DecodeError>
+    where
+        B: Buf,
+        Self: Sized,
+    {
+        Err(DecodeError::new(
+            "Sliced ProfileStringTableEntry is not meant to be decoded, only encoded",
+        ))
+    }
+
+    fn encoded_len(&self) -> usize {
+        // see prost::encoding::string::encoded_len (which is in a macro)
+        let value = self.string_table_entry;
+        prost::encoding::key_len(6)
+            + prost::encoding::encoded_len_varint(value.len() as u64)
+            + value.len()
+    }
+
+    fn clear(&mut self) {
+        self.string_table_entry = "";
+    }
 }
 
 // These fields are not repeated so we can just make a combined struct for them.
@@ -144,8 +189,8 @@ impl From<Function> for ProfileFunctionsEntry {
     }
 }
 
-impl From<String> for ProfileStringTableEntry {
-    fn from(item: String) -> Self {
+impl<'a> From<&'a str> for ProfileStringTableEntry<'a> {
+    fn from(item: &'a str) -> Self {
         Self {
             string_table_entry: item,
         }
