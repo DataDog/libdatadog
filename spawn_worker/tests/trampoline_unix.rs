@@ -2,7 +2,6 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 #![cfg(unix)]
 use std::{
-    ffi::CString,
     fs::File,
     io::{Read, Seek},
 };
@@ -23,13 +22,13 @@ fn test_spawning_trampoline_worker() {
     let mut stderr = tempfile::tempfile().unwrap();
 
     let child = unsafe { SpawnWorker::new() }
-        .target(Target::Manual(
-            CString::new("__dummy_mirror_test").unwrap(),
-            CString::new("symbol_name").unwrap(),
+        .target(Target::ManualTrampoline(
+            "__dummy_mirror_test".to_string(),
+            "symbol_name".to_string(),
         ))
         .stdin(Stdio::Null)
-        .stdout(stdout.try_clone().unwrap())
-        .stderr(stderr.try_clone().unwrap())
+        .stdout(&stdout)
+        .stderr(&stderr)
         .spawn()
         .unwrap();
 

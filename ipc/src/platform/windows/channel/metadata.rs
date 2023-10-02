@@ -92,7 +92,7 @@ impl Debug for ProcessHandle {
 pub struct ChannelMetadata {
     handles_to_send: Vec<PlatformHandle<OwnedHandle>>,
     handles_received: HashMap<u64, u64>,
-    process_handle: ProcessHandle
+    process_handle: ProcessHandle,
 }
 
 impl ChannelMetadata {
@@ -115,10 +115,7 @@ impl ChannelMetadata {
         Ok(item)
     }
 
-    pub fn create_message<T>(
-        &mut self,
-        item: T,
-    ) -> Result<Message<T>, io::Error>
+    pub fn create_message<T>(&mut self, item: T) -> Result<Message<T>, io::Error>
     where
         T: TransferHandles,
     {
@@ -128,7 +125,8 @@ impl ChannelMetadata {
         for handle in self.handles_to_send.drain(..) {
             handle_map.insert(
                 handle.fd as u64,
-                self.process_handle.send_file_handle(handle.as_raw_handle())? as u64,
+                self.process_handle
+                    .send_file_handle(handle.as_raw_handle())? as u64,
             );
         }
 

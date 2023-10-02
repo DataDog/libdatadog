@@ -1,13 +1,14 @@
+// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+use crate::platform::PlatformHandle;
+use io_lifetimes::{
+    views::{SocketlikeView, SocketlikeViewType},
+    AsSocketlike,
+};
 use std::io;
 use std::marker::PhantomData;
-use io_lifetimes::{
-    views::{FilelikeView, FilelikeViewType, SocketlikeView, SocketlikeViewType},
-    AsFilelike, AsSocketlike,
-};
-use crate::platform::PlatformHandle;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::sync::Arc;
-
 
 impl<T> FromRawFd for PlatformHandle<T> {
     /// Creates PlatformHandle instance from supplied RawFd
@@ -26,8 +27,8 @@ impl<T> FromRawFd for PlatformHandle<T> {
 }
 
 impl<T> From<T> for PlatformHandle<T>
-    where
-        T: IntoRawFd,
+where
+    T: IntoRawFd,
 {
     fn from(src: T) -> Self {
         unsafe { PlatformHandle::from_raw_fd(src.into_raw_fd()) }
@@ -44,20 +45,10 @@ impl<T> AsRawFd for PlatformHandle<T> {
 }
 
 impl<T> PlatformHandle<T>
-    where
-        T: FilelikeViewType,
-{
-    pub fn as_filelike_view(&self) -> io::Result<FilelikeView<'_, T>> {
-        Ok(self.as_owned_fd()?.as_filelike_view())
-    }
-}
-
-impl<T> PlatformHandle<T>
-    where
-        T: SocketlikeViewType,
+where
+    T: SocketlikeViewType,
 {
     pub fn as_socketlike_view(&self) -> io::Result<SocketlikeView<T>> {
         Ok(self.as_owned_fd()?.as_socketlike_view())
     }
 }
-

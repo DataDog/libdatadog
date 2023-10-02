@@ -108,11 +108,7 @@ impl Default for SharedDirLiaison {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use std::{
-        io,
-        os::unix::net::UnixListener,
-        path::PathBuf,
-    };
+    use std::{io, os::unix::net::UnixListener, path::PathBuf};
 
     use spawn_worker::getpid;
 
@@ -128,7 +124,9 @@ mod linux {
 
     impl Liaison for AbstractUnixSocketLiaison {
         fn connect_to_server(&self) -> io::Result<Channel> {
-            Ok(Channel::from(platform::sockets::connect_abstract(&self.path)?))
+            Ok(Channel::from(platform::sockets::connect_abstract(
+                &self.path,
+            )?))
         }
 
         fn attempt_listen(&self) -> io::Result<Option<UnixListener>> {

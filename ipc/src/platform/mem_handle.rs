@@ -4,12 +4,9 @@
 use crate::handles::{HandlesTransport, TransferHandles};
 use crate::platform::{mmap_handle, munmap_handle, OwnedFileHandle, PlatformHandle};
 use serde::{Deserialize, Serialize};
-use std::{
-    ffi::CString,
-    io,
-};
 #[cfg(unix)]
 use std::os::unix::prelude::AsRawFd;
+use std::{ffi::CString, io};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ShmHandle {

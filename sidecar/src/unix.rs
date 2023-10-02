@@ -3,17 +3,16 @@
 
 use spawn_worker::{getpid, SpawnWorker, Stdio};
 
-use std::fs::File;
 use std::os::unix::net::UnixListener as StdUnixListener;
 
+use crate::config::Config;
+use crate::enter_listener_loop;
 use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
 use nix::sys::socket::{shutdown, Shutdown};
+use std::io;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::time::Instant;
-use std::io;
 use tokio::net::{UnixListener, UnixStream};
-use crate::config::{self, Config};
-use crate::enter_listener_loop;
 
 #[no_mangle]
 pub extern "C" fn ddog_daemon_entry_point() {
@@ -77,29 +76,10 @@ pub fn setup_daemon_process(
     spawn_cfg: &mut SpawnWorker,
 ) -> io::Result<()> {
     spawn_cfg
-        .shared_lib_dependencies(cfg.library_dependencies.clone())
+        .shared_lib_dependencies(cfg.library_dependencies)
         .daemonize(true)
         .pass_fd(unsafe { OwnedFd::from_raw_fd(listener.into_raw_fd()) })
         .stdin(Stdio::Null);
-
-    match cfg.log_method {
-        config::LogMethod::File(path) => {
-            let file = File::options()
-                .write(true)
-                .append(true)
-                .truncate(false)
-                .create(true)
-                .open(path)?;
-            let (out, err) = (Stdio::Fd(file.try_clone()?.into()), Stdio::Fd(file.into()));
-            spawn_cfg.stdout(out);
-            spawn_cfg.stderr(err);
-        }
-        config::LogMethod::Disabled => {
-            spawn_cfg.stdout(Stdio::Null);
-            spawn_cfg.stderr(Stdio::Null);
-        }
-        _ => {}
-    }
 
     Ok(())
 }

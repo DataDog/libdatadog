@@ -3,19 +3,20 @@
 #![cfg(unix)]
 use std::{
     io::Write,
-    os::unix::net::UnixStream as StdUnixStream,
+    os::unix::net::UnixStream,
     time::{Duration, Instant},
 };
 
-use tokio::{net::UnixStream, runtime};
+use tokio::runtime;
 
 use datadog_ipc::example_interface::{
     ExampleInterfaceRequest, ExampleInterfaceResponse, ExampleServer, ExampleTransport,
 };
+use datadog_ipc::platform::Channel;
 
 #[test]
 fn test_blocking_client() {
-    let (sock_a, sock_b) = StdUnixStream::pair().unwrap();
+    let (sock_a, sock_b) = UnixStream::pair().unwrap();
     // Setup async server
     let rt = runtime::Builder::new_multi_thread()
         .worker_threads(1)
@@ -27,7 +28,7 @@ fn test_blocking_client() {
         let _g = rt.enter();
         sock_a.set_nonblocking(true).unwrap();
 
-        let socket = UnixStream::from_std(sock_a).unwrap();
+        let socket = Channel::from(sock_a);
         let server = ExampleServer::default();
 
         rt.spawn(server.accept_connection(socket));

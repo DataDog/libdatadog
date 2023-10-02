@@ -5,8 +5,10 @@
 //noinspection RsUnusedImport
 use crate::platform::{deserialize_rawhandle, serialize_rawhandle};
 
-use std::{io, marker::PhantomData, sync::Arc};
+use io_lifetimes::views::{FilelikeView, FilelikeViewType};
+use io_lifetimes::AsFilelike;
 use serde::{Deserialize, Serialize};
+use std::{io, marker::PhantomData, sync::Arc};
 
 use crate::handles::TransferHandles;
 
@@ -56,7 +58,6 @@ impl<T> Clone for PlatformHandle<T> {
     }
 }
 
-#[cfg(unix)]
 impl<T> PlatformHandle<T> {
     pub(crate) fn as_owned_fd(&self) -> io::Result<&Arc<OwnedFileHandle>> {
         match &self.inner {
@@ -132,12 +133,17 @@ impl<T> TransferHandles for PlatformHandle<T> {
     }
 }
 
+impl<T> PlatformHandle<T>
+where
+    T: FilelikeViewType,
+{
+    pub fn as_filelike_view(&self) -> io::Result<FilelikeView<'_, T>> {
+        Ok(self.as_owned_fd()?.as_filelike_view())
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use io_lifetimes::{
-        views::{FilelikeView, FilelikeViewType, SocketlikeView, SocketlikeViewType},
-        AsFilelike, AsSocketlike,
-    };
     use std::{fs::File, io::Write, thread};
 
     use super::PlatformHandle;

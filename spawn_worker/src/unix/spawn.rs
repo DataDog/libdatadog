@@ -188,9 +188,9 @@ impl Stdio {
     }
 }
 
-impl From<File> for Stdio {
-    fn from(val: File) -> Self {
-        Stdio::Fd(val.into())
+impl From<&File> for Stdio {
+    fn from(val: &File) -> Self {
+        Stdio::Fd(val.try_clone().unwrap().into())
     }
 }
 

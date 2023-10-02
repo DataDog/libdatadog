@@ -1,13 +1,14 @@
+// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 use crate::config::Config;
+use crate::enter_listener_loop;
 use crate::setup::pid_shm_path;
-use crate::{config, enter_listener_loop};
 use datadog_ipc::platform::{
     named_pipe_name_from_raw_handle, FileBackedHandle, MappedMem, NamedShmHandle,
 };
 use futures::FutureExt;
 use manual_future::ManualFuture;
 use spawn_worker::{SpawnWorker, Stdio};
-use std::fs::File;
 use std::io;
 use std::os::windows::io::{AsRawHandle, IntoRawHandle, OwnedHandle};
 use std::sync::{Arc, Mutex};
@@ -95,31 +96,10 @@ async fn accept_socket_loop(
 
 pub fn setup_daemon_process(
     listener: OwnedHandle,
-    cfg: Config,
+    _: Config,
     spawn_cfg: &mut SpawnWorker,
 ) -> io::Result<()> {
-    spawn_cfg
-        .pass_handle(listener)
-        .stdin(Stdio::Null);
-
-    match cfg.log_method {
-        config::LogMethod::File(path) => {
-            let file = File::options()
-                .write(true)
-                .append(true)
-                .truncate(false)
-                .create(true)
-                .open(path)?;
-            let (out, err) = (Stdio::from(&file), Stdio::from(&file));
-            spawn_cfg.stdout(out);
-            spawn_cfg.stderr(err);
-        },
-        config::LogMethod::Disabled => {
-            spawn_cfg.stdout(Stdio::Null);
-            spawn_cfg.stderr(Stdio::Null);
-        },
-        _ => {},
-    }
+    spawn_cfg.pass_handle(listener).stdin(Stdio::Null);
 
     Ok(())
 }

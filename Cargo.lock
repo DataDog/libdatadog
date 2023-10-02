@@ -603,7 +603,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -634,7 +634,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-ffi"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -650,7 +650,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -766,7 +766,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "2.1.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "datadog-trace-protobuf",
@@ -776,20 +776,25 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "2.1.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "criterion",
  "datadog-trace-protobuf",
+ "datadog-trace-utils",
+ "ddcommon",
  "duplicate",
+ "log",
+ "percent-encoding",
  "regex",
  "serde",
  "serde_json",
+ "url",
 ]
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "2.1.0"
+version = "4.0.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -800,7 +805,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-utils"
-version = "2.1.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "datadog-trace-normalization",
@@ -820,7 +825,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -845,7 +850,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-ffi"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "ddcommon",
@@ -854,7 +859,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "ddcommon",
@@ -878,7 +883,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry-ffi"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "ddcommon",
  "ddcommon-ffi",
@@ -1007,6 +1012,15 @@ name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
+
+[[package]]
+name = "form_urlencoded"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a62bc1cf6f830c2ec14a513a9fb124d0a213a629668a4186f329db21fe045652"
+dependencies = [
+ "percent-encoding",
+]
 
 [[package]]
 name = "futures"
@@ -1341,6 +1355,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "idna"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d20d6b07bfbc108882d88ed8e37d39636dcc260e15e30c45e6ba089610b917c"
+dependencies = [
+ "unicode-bidi",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -2730,6 +2754,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyvec"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87cc5ceb3875bb20c2890005a4e226a4651264a5c75edb2421b52861a0a0cb50"
+dependencies = [
+ "tinyvec_macros",
+]
+
+[[package]]
+name = "tinyvec_macros"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
 name = "tokio"
 version = "1.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2867,7 +2906,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "0.1.0"
+version = "4.0.0"
 dependencies = [
  "lazy_static",
  "regex",
@@ -3022,16 +3061,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "unicode-bidi"
+version = "0.3.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92888ba5573ff080736b3648696b70cafad7d250551175acbaa4e0385b3e1460"
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "301abaae475aa91687eb82514b328ab47a211a533026cb25fc3e519b86adfc3c"
 
 [[package]]
+name = "unicode-normalization"
+version = "0.1.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c5713f0fc4b5db668a2ac63cdb7bb4469d8c9fed047b1d0292cc7b0ce2ba921"
+dependencies = [
+ "tinyvec",
+]
+
+[[package]]
 name = "untrusted"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
+
+[[package]]
+name = "url"
+version = "2.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "143b538f18257fac9cad154828a57c6bf5157e1aa604d4816b5995bf6de87ae5"
+dependencies = [
+ "form_urlencoded",
+ "idna",
+ "percent-encoding",
+]
 
 [[package]]
 name = "utf8parse"

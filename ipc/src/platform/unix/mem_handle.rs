@@ -1,11 +1,15 @@
-use std::ffi::CString;
-use crate::platform::{FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle, PlatformHandle, ShmHandle, ShmPath};
-use libc::off_t;
+// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+use crate::platform::{
+    FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle, PlatformHandle, ShmHandle, ShmPath,
+};
 use io_lifetimes::OwnedFd;
+use libc::off_t;
 use nix::fcntl::OFlag;
 use nix::sys::mman::{mmap, munmap, shm_open, shm_unlink, MapFlags, ProtFlags};
 use nix::sys::stat::Mode;
 use nix::unistd::ftruncate;
+use std::ffi::CString;
 use std::fs::File;
 use std::io;
 use std::num::NonZeroUsize;
@@ -38,7 +42,7 @@ pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {
 }
 
 #[cfg(not(target_os = "linux"))]
-static ANON_SHM_ID: AtomicI32 = AtomicI32::default();
+static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
 
 impl ShmHandle {
     #[cfg(target_os = "linux")]

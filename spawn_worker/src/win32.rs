@@ -1,18 +1,34 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use anyhow::Context;
+use kernel32::{CreateFileA, WaitForSingleObject};
 use std::ffi::{c_void, OsStr, OsString};
-use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle, RawHandle};
-use std::{env, io::{Seek, Write}, io};
 use std::fs::File;
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle, RawHandle};
 use std::os::windows::process::ExitStatusExt;
 use std::process::ExitStatus;
 use std::ptr::null_mut;
-use anyhow::Context;
-use kernel32::{CreateFileA, WaitForSingleObject};
-use winapi::{DWORD, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE, LPCSTR, OPEN_EXISTING, SECURITY_ATTRIBUTES, WAIT_OBJECT_0};
-use windows::Win32::System::Threading::{CREATE_DEFAULT_ERROR_MODE, CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DETACHED_PROCESS, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, STARTUPINFOW_FLAGS, UpdateProcThreadAttribute};
+use std::{
+    env, io,
+    io::{Seek, Write},
+};
+use winapi::{
+    DWORD, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE,
+    LPCSTR, OPEN_EXISTING, SECURITY_ATTRIBUTES, WAIT_OBJECT_0,
+};
+use windows::core::{PCWSTR, PWSTR};
+use windows::Win32::Foundation::{
+    DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE, INVALID_HANDLE_VALUE,
+};
+use windows::Win32::System::Threading::{
+    CreateProcessW, GetCurrentProcess, GetExitCodeProcess, InitializeProcThreadAttributeList,
+    UpdateProcThreadAttribute, CREATE_DEFAULT_ERROR_MODE, CREATE_NEW_PROCESS_GROUP,
+    CREATE_UNICODE_ENVIRONMENT, DETACHED_PROCESS, EXTENDED_STARTUPINFO_PRESENT, INFINITE,
+    LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, STARTUPINFOW_FLAGS,
+};
 use windows::{
     core::PCSTR,
     Win32::{
@@ -23,8 +39,6 @@ use windows::{
         },
     },
 };
-use windows::core::{PCWSTR, PWSTR};
-use windows::Win32::Foundation::{DUPLICATE_SAME_ACCESS, DuplicateHandle, HANDLE, INVALID_HANDLE_VALUE};
 
 use crate::{Target, ENV_PASS_FD_KEY};
 
@@ -60,7 +74,15 @@ impl From<&File> for Stdio {
             } else {
                 let mut ret: HANDLE = Default::default();
                 let cur_proc = GetCurrentProcess();
-                DuplicateHandle(cur_proc, HANDLE(handle as isize), cur_proc, &mut ret as *mut HANDLE, 0, true, DUPLICATE_SAME_ACCESS);
+                DuplicateHandle(
+                    cur_proc,
+                    HANDLE(handle as isize),
+                    cur_proc,
+                    &mut ret as *mut HANDLE,
+                    0,
+                    true,
+                    DUPLICATE_SAME_ACCESS,
+                );
                 ret.0 as RawHandle
             })
         })
@@ -182,15 +204,17 @@ impl SpawnWorker {
             lpSecurityDescriptor: null_mut(),
             bInheritHandle: 1,
         };
-        HANDLE(unsafe { CreateFileA(
-            "NUL\0".as_ptr() as LPCSTR,
-            if read { GENERIC_READ } else { GENERIC_WRITE },
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            &mut sa,
-            OPEN_EXISTING,
-            0,
-            null_mut(),
-        ) } as isize)
+        HANDLE(unsafe {
+            CreateFileA(
+                "NUL\0".as_ptr() as LPCSTR,
+                if read { GENERIC_READ } else { GENERIC_WRITE },
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                &mut sa,
+                OPEN_EXISTING,
+                0,
+                null_mut(),
+            )
+        } as isize)
     }
 
     fn raw_handle_from_stdio(stdio: Stdio, read: bool) -> HANDLE {
@@ -205,7 +229,7 @@ impl SpawnWorker {
         drop(f);
 
         let mut envs = self.env.clone();
-        let mut inherited_handles= vec![];
+        let mut inherited_handles = vec![];
 
         let mut args = vec![];
         args.push("".to_string());
@@ -219,16 +243,20 @@ impl SpawnWorker {
             Target::ManualTrampoline(path, symbol_name) => {
                 args.push(path.clone());
                 args.push(symbol_name.clone());
-            },
+            }
             Target::Noop => todo!(),
         };
 
         if let Some(ref handle) = self.passed_handle {
-            envs.push((ENV_PASS_FD_KEY.parse().unwrap(), (handle.as_raw_handle() as u64).to_string().parse().unwrap()));
+            envs.push((
+                ENV_PASS_FD_KEY.parse().unwrap(),
+                (handle.as_raw_handle() as u64).to_string().parse().unwrap(),
+            ));
             inherited_handles.push(HANDLE(handle.as_raw_handle() as isize));
         }
 
-        let (stdin_val, stdout_val, stderr_val) = (self.stdin.take(), self.stdout.take(), self.stderr.take());
+        let (stdin_val, stdout_val, stderr_val) =
+            (self.stdin.take(), self.stdout.take(), self.stderr.take());
         let stdin = Self::raw_handle_from_stdio(stdin_val.unwrap_or(Stdio::Null), true);
         let stdout = Self::raw_handle_from_stdio(stdout_val.unwrap_or(Stdio::Null), false);
         let stderr = Self::raw_handle_from_stdio(stderr_val.unwrap_or(Stdio::Null), false);
@@ -238,11 +266,29 @@ impl SpawnWorker {
         inherited_handles.push(stderr);
 
         let mut size: usize = 0;
-        unsafe { InitializeProcThreadAttributeList(LPPROC_THREAD_ATTRIBUTE_LIST(null_mut()), 1, 0, &mut size) };
+        unsafe {
+            InitializeProcThreadAttributeList(
+                LPPROC_THREAD_ATTRIBUTE_LIST(null_mut()),
+                1,
+                0,
+                &mut size,
+            )
+        };
         let mut attribute_list_vec: Vec<u8> = Vec::with_capacity(size);
-        let attribute_list = LPPROC_THREAD_ATTRIBUTE_LIST(attribute_list_vec.as_mut_ptr() as *mut c_void);
+        let attribute_list =
+            LPPROC_THREAD_ATTRIBUTE_LIST(attribute_list_vec.as_mut_ptr() as *mut c_void);
         unsafe { InitializeProcThreadAttributeList(attribute_list, 1, 0, &mut size) };
-        unsafe { UpdateProcThreadAttribute(attribute_list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize, Some(inherited_handles.as_mut_ptr() as *mut c_void), inherited_handles.len() * std::mem::size_of::<HANDLE>(), None, None) };
+        unsafe {
+            UpdateProcThreadAttribute(
+                attribute_list,
+                0,
+                PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
+                Some(inherited_handles.as_mut_ptr() as *mut c_void),
+                inherited_handles.len() * std::mem::size_of::<HANDLE>(),
+                None,
+                None,
+            )
+        };
 
         let mut pi = Self::zeroed_process_information();
         let mut si = STARTUPINFOEXW {
@@ -254,7 +300,6 @@ impl SpawnWorker {
         si.StartupInfo.hStdInput = stdin;
         si.StartupInfo.hStdOutput = stdout;
         si.StartupInfo.hStdError = stderr;
-
 
         let mut cmd: Vec<u16> = Vec::new();
         cmd.push(b'"' as u16);
@@ -269,9 +314,9 @@ impl SpawnWorker {
             cmd.push(b'"' as u16);
         }
         cmd.push(0);
-        
+
         let mut envp: Vec<u16> = Vec::new();
-        
+
         for (key, val) in envs {
             envp.extend(key.encode_wide());
             envp.push('=' as u16);
@@ -284,25 +329,41 @@ impl SpawnWorker {
         program.extend(path.as_os_str().encode_wide());
         program.push(0);
 
-        if unsafe { CreateProcessW(
-            PCWSTR(program.as_ptr()),
-            PWSTR(cmd.as_mut_ptr()),
-            None,
-            None,
-            true,
-            CREATE_UNICODE_ENVIRONMENT | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_DEFAULT_ERROR_MODE | EXTENDED_STARTUPINFO_PRESENT,
-            Some(envp.as_mut_ptr() as *mut c_void),
-            PCWSTR::null(),
-            &mut si.StartupInfo,
-            &mut pi,
-        ) }.0 == 0 {
-            return Err(io::Error::last_os_error()).context(format!("Tried to spawn {} with args {}", path.display(), args.join(", ")));
+        if unsafe {
+            CreateProcessW(
+                PCWSTR(program.as_ptr()),
+                PWSTR(cmd.as_mut_ptr()),
+                None,
+                None,
+                true,
+                CREATE_UNICODE_ENVIRONMENT
+                    | DETACHED_PROCESS
+                    | CREATE_NEW_PROCESS_GROUP
+                    | CREATE_DEFAULT_ERROR_MODE
+                    | EXTENDED_STARTUPINFO_PRESENT,
+                Some(envp.as_mut_ptr() as *mut c_void),
+                PCWSTR::null(),
+                &mut si.StartupInfo,
+                &mut pi,
+            )
+        }
+        .0 == 0
+        {
+            return Err(io::Error::last_os_error()).context(format!(
+                "Tried to spawn {} with args {}",
+                path.display(),
+                args.join(", ")
+            ));
         }
 
         unsafe {
             Ok(Child {
-                handle: OwnedHandle::from_raw_handle(RawHandle::from(pi.hProcess.to_owned().0 as *mut c_void)),
-                main_thread_handle: OwnedHandle::from_raw_handle(RawHandle::from(pi.hThread.to_owned().0 as *mut c_void)),
+                handle: OwnedHandle::from_raw_handle(RawHandle::from(
+                    pi.hProcess.to_owned().0 as *mut c_void,
+                )),
+                main_thread_handle: OwnedHandle::from_raw_handle(RawHandle::from(
+                    pi.hThread.to_owned().0 as *mut c_void,
+                )),
             })
         }
     }
@@ -356,11 +417,14 @@ pub struct Child {
 }
 
 impl Child {
-    pub fn wait(&mut self) -> io::Result<ExitStatus> {
+    pub fn wait(&self) -> io::Result<ExitStatus> {
         unsafe {
             let res = WaitForSingleObject(self.handle.as_raw_handle(), INFINITE);
             let mut status = 0;
-            if res != WAIT_OBJECT_0 || GetExitCodeProcess(HANDLE(self.handle.as_raw_handle() as isize), &mut status).0 == 0 {
+            if res != WAIT_OBJECT_0
+                || GetExitCodeProcess(HANDLE(self.handle.as_raw_handle() as isize), &mut status).0
+                    == 0
+            {
                 return Err(io::Error::last_os_error());
             }
             Ok(ExitStatus::from_raw(status))

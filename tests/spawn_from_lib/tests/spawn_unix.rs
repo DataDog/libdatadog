@@ -28,8 +28,8 @@ fn test_spawning_trampoline_worker() {
 
     let child = build()
         .stdin(Stdio::Null)
-        .stdout(stdout.try_clone().unwrap())
-        .stderr(stderr.try_clone().unwrap())
+        .stdout(&stdout)
+        .stderr(&stderr)
         .pass_fd(shared_file.try_clone().unwrap())
         .spawn()
         .unwrap();

@@ -1,11 +1,13 @@
+// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 use crate::handles::HandlesTransport;
 use crate::platform::metadata::ChannelMetadata;
 use crate::platform::PlatformHandle;
 use std::io;
-#[cfg(windows)]
-use std::os::windows::io::AsRawHandle;
 #[cfg(unix)]
 use std::os::unix::prelude::AsRawFd;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
 
 impl HandlesTransport for &mut ChannelMetadata {
     type Error = io::Error;

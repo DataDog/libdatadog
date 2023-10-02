@@ -3,10 +3,8 @@
 // #![cfg(feature = "prefer-dynamic")]
 // use test_spawn_from_lib::spawn_self;
 
-use std::{
-    io::{Read, Seek},
-    process::Stdio,
-};
+use spawn_worker::Stdio;
+use std::io::{Read, Seek};
 
 fn rewind_and_read(file: &mut std::fs::File) -> anyhow::Result<String> {
     file.rewind()?;
@@ -24,23 +22,26 @@ fn test_spawning_trampoline_worker() {
     let mut stderr = tempfile::tempfile().unwrap();
 
     let child = test_spawn_from_lib::build()
-        .stdin(Stdio::null())
-        .stdout(stdout.try_clone().unwrap())
-        .stderr(stderr.try_clone().unwrap())
+        .stdin(Stdio::Null)
+        .stdout(&stdout)
+        .stderr(&stderr)
         .spawn()
         .unwrap();
 
-    let output = child.wait_with_output().unwrap();
-
-    if !output.status.success() {
-        eprintln!("{}", String::from_utf8_lossy(output.stderr.as_slice()));
-        panic!("unexpected exit status = {:?}", output.status)
-    }
+    let status = child.wait().unwrap();
 
     let stderr = rewind_and_read(&mut stderr).unwrap();
     let stdout = rewind_and_read(&mut stdout).unwrap();
 
-    assert_eq!(Some(0), output.status.code());
+    #[cfg(unix)]
+    let success = matches!(status, spawn_worker::WaitStatus::Exited(_, 0));
+    #[cfg(windows)]
+    let success = status.success();
+
+    if !success {
+        eprintln!("{}", stderr);
+        panic!("unexpected exit status = {:?}", status)
+    }
 
     assert_eq!("stderr_works_as_expected", stderr.trim());
     assert_eq!("stdout_works_as_expected", stdout.trim());

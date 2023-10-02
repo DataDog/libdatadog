@@ -1,7 +1,6 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
-#![cfg(unix)]
-use datadog_sidecar_ffi::unix::*;
+use datadog_sidecar_ffi::*;
 
 macro_rules! assert_maybe_no_error {
     ($maybe_erroring:expr) => {
@@ -21,12 +20,13 @@ macro_rules! assert_maybe_no_error {
 }
 
 use ddcommon::Endpoint;
+use std::time::Duration;
+#[cfg(unix)]
 use std::{
     ffi::CString,
     fs::File,
     io::Write,
     os::unix::prelude::{AsRawFd, FromRawFd},
-    time::Duration,
 };
 
 fn set_sidecar_per_process() {
@@ -34,6 +34,7 @@ fn set_sidecar_per_process() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_ddog_ph_file_handling() {
     let fname = CString::new(std::env::temp_dir().join("test_file").to_str().unwrap()).unwrap();
     let mode = CString::new("a+").unwrap();
@@ -53,6 +54,7 @@ fn test_ddog_ph_file_handling() {
 
 #[test]
 #[ignore] // run all tests that can fork in a separate run, to avoid any race conditions with default rust test harness
+#[cfg(not(windows))] // something seems to be fundamentally wrong when dynamically loading the test-sidecar on Windows: The very first call to an external function invoked by the sidecar blows up, currently that is GetProcessHeap() from kernel32.dll
 fn test_ddog_sidecar_connection() {
     set_sidecar_per_process();
 
@@ -66,6 +68,7 @@ fn test_ddog_sidecar_connection() {
 
 #[test]
 #[ignore = "TODO: ci-flaky can't reproduce locally"]
+#[cfg(not(windows))] // same issue
 fn test_ddog_sidecar_register_app() {
     set_sidecar_per_process();
 

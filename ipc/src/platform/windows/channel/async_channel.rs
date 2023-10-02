@@ -1,6 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use crate::platform::metadata::ProcessHandle;
 use crate::platform::Channel;
 use pin_project::pin_project;
 use std::fmt::Debug;
@@ -15,7 +16,6 @@ use tokio::net::windows::named_pipe::{NamedPipeClient, NamedPipeServer};
 use winapi::shared::wtypesbase::ULONG;
 use winapi::um::winbase::{GetNamedPipeClientProcessId, GetNamedPipeServerProcessId};
 use winapi::um::winnt::HANDLE;
-use crate::platform::metadata::ProcessHandle;
 
 use super::ChannelMetadata;
 
@@ -47,7 +47,9 @@ impl AsyncChannel {
     pub fn from_raw_and_process(pipe: NamedPipe, process_handle: ProcessHandle) -> AsyncChannel {
         AsyncChannel {
             inner: pipe,
-            metadata: Arc::new(Mutex::new(ChannelMetadata::from_process_handle(process_handle))),
+            metadata: Arc::new(Mutex::new(ChannelMetadata::from_process_handle(
+                process_handle,
+            ))),
         }
     }
 
@@ -140,4 +142,3 @@ impl AsyncRead for AsyncChannel {
         pipe_inner!(self, poll_read(cx, buf))
     }
 }
-

@@ -1,6 +1,5 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
-// #![cfg(unix)]
 
 use std::io::Write;
 
@@ -16,7 +15,7 @@ pub extern "C" fn exported_entrypoint() {
     eprintln!("stderr_works_as_expected");
     #[cfg(not(target_os = "windows"))]
     if let Some(fd) = recv_passed_fd() {
-        let mut shared_file: File = fd.into();
+        let mut shared_file: std::fs::File = fd.into();
         writeln!(shared_file, "shared_file_works_as_expected").unwrap();
     }
     std::io::stdout().flush().unwrap();
@@ -24,6 +23,7 @@ pub extern "C" fn exported_entrypoint() {
 }
 
 pub fn build() -> SpawnWorker {
+    #[allow(unused_unsafe)]
     let mut worker = unsafe { SpawnWorker::new() };
 
     worker.target(entrypoint!(exported_entrypoint));

@@ -1,7 +1,9 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use spawn_worker::entrypoint;
+use anyhow::Context;
+use spawn_worker::{entrypoint, Stdio};
+use std::fs::File;
 use std::future::Future;
 use std::{
     io,
@@ -11,7 +13,6 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use anyhow::Context;
 use tokio::sync::mpsc;
 
 use crate::interface::blocking::SidecarTransport;
@@ -135,6 +136,25 @@ pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
         spawn_cfg.append_env(env, val);
     }
 
+    match cfg.log_method {
+        config::LogMethod::File(ref path) => {
+            let file = File::options()
+                .write(true)
+                .append(true)
+                .truncate(false)
+                .create(true)
+                .open(path)?;
+            let (out, err) = (Stdio::from(&file), Stdio::from(&file));
+            spawn_cfg.stdout(out);
+            spawn_cfg.stderr(err);
+        }
+        config::LogMethod::Disabled => {
+            spawn_cfg.stdout(Stdio::Null);
+            spawn_cfg.stderr(Stdio::Null);
+        }
+        _ => {}
+    }
+
     setup_daemon_process(listener, cfg, &mut spawn_cfg)?;
 
     spawn_cfg
@@ -155,12 +175,15 @@ pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTranspo
         Ok(Some(listener)) => {
             daemonize(listener, cfg)?;
             None
-        },
+        }
         Ok(None) => None,
-        err@ _ => err.context("Error starting sidecar").err(),
+        err => err.context("Error starting sidecar").err(),
     };
 
-    Ok(liaison.connect_to_server().map_err(|e| err.unwrap_or(e.into()))?.into())
+    Ok(liaison
+        .connect_to_server()
+        .map_err(|e| err.unwrap_or(e.into()))?
+        .into())
 }
 
 #[cfg(feature = "tracing")]

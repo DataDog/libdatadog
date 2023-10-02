@@ -1,8 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 #![cfg(windows)]
-use std::{fs, fs::File};
 use std::fs::OpenOptions;
+use std::{fs, fs::File};
 
 use spawn_worker::{SpawnWorker, Stdio, Target};
 
@@ -17,8 +17,20 @@ fn test_spawning_trampoline_worker() {
             String::from("symbol_name"),
         ))
         .stdin(Stdio::Null)
-        .stdout(&OpenOptions::new().read(true).write(true).open(&stdout).unwrap())
-        .stderr(&OpenOptions::new().read(true).write(true).open(&stderr).unwrap())
+        .stdout(
+            &OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&stdout)
+                .unwrap(),
+        )
+        .stderr(
+            &OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&stderr)
+                .unwrap(),
+        )
         .spawn()
         .unwrap()
         .wait()
