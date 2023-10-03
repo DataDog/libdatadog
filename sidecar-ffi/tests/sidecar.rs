@@ -53,8 +53,10 @@ fn test_ddog_ph_file_handling() {
 }
 
 #[test]
-#[ignore] // run all tests that can fork in a separate run, to avoid any race conditions with default rust test harness
-#[cfg(not(windows))] // something seems to be fundamentally wrong when dynamically loading the test-sidecar on Windows: The very first call to an external function invoked by the sidecar blows up, currently that is GetProcessHeap() from kernel32.dll
+#[cfg_attr(not(windows), ignore)] // run all tests that can fork in a separate run, to avoid any race conditions with default rust test harness
+/// run with: RUSTFLAGS="-C prefer-dynamic" cargo test --package test_spawn_from_lib --features prefer-dynamic -- --ignored
+#[cfg_attr(windows, ignore = "requires -C prefer-dynamic")]
+#[cfg_attr(windows, cfg(feature = "prefer_dynamic"))]
 fn test_ddog_sidecar_connection() {
     set_sidecar_per_process();
 
@@ -68,7 +70,6 @@ fn test_ddog_sidecar_connection() {
 
 #[test]
 #[ignore = "TODO: ci-flaky can't reproduce locally"]
-#[cfg(not(windows))] // same issue
 fn test_ddog_sidecar_register_app() {
     set_sidecar_per_process();
 
