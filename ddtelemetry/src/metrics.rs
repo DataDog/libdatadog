@@ -7,10 +7,11 @@ use std::{
     time,
 };
 
+use datadog_ddsketch::DDSketch;
 use ddcommon::tag::Tag;
 use serde::{Deserialize, Serialize};
 
-use crate::data;
+use crate::data::{self, metrics};
 
 fn unix_timestamp_now() -> u64 {
     time::SystemTime::now()
@@ -31,15 +32,6 @@ enum MetricAggreg {
 }
 
 impl MetricBucket {
-    fn new(metric_type: data::metrics::MetricType) -> Self {
-        Self {
-            aggreg: match metric_type {
-                data::metrics::MetricType::Count => MetricAggreg::Count { count: 0.0 },
-                data::metrics::MetricType::Gauge => MetricAggreg::Gauge { value: 0.0 },
-            },
-        }
-    }
-
     fn add_point(&mut self, point: f64) {
         match &mut self.aggreg {
             MetricAggreg::Count { count } => *count += point,
@@ -56,7 +48,15 @@ impl MetricBucket {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
-pub struct ContextKey(usize);
+pub struct ContextKey(u32, metrics::MetricType);
+
+#[repr(u8)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
+enum MetricType {
+    Count,
+    Gauge,
+    Sketches,
+}
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 struct BucketKey {
@@ -68,6 +68,7 @@ struct BucketKey {
 pub struct MetricBuckets {
     buckets: HashMap<BucketKey, MetricBucket>,
     series: HashMap<BucketKey, Vec<(u64, f64)>>,
+    sketches: HashMap<BucketKey, DDSketch>,
 }
 
 impl MetricBuckets {
@@ -97,24 +98,47 @@ impl MetricBuckets {
         )
     }
 
-    pub fn add_point(
+    pub fn flush_sketches(
         &mut self,
-        context_key: ContextKey,
-        contexts: &MetricContexts,
-        point: f64,
-        extra_tags: Vec<Tag>,
-    ) {
+    ) -> impl Iterator<Item = (ContextKey, Vec<Tag>, DDSketch)> + '_ {
+        self.sketches.drain().map(
+            |(
+                BucketKey {
+                    context_key,
+                    extra_tags,
+                },
+                points,
+            )| (context_key, extra_tags, points),
+        )
+    }
+
+    pub fn add_point(&mut self, context_key: ContextKey, point: f64, extra_tags: Vec<Tag>) {
         let bucket_key = BucketKey {
             context_key,
             extra_tags,
         };
-        self.buckets
-            .entry(bucket_key)
-            .or_insert_with(|| {
-                let metric_type = contexts.get_metric_type(context_key).unwrap();
-                MetricBucket::new(metric_type)
-            })
-            .add_point(point)
+        match context_key.1 {
+            metrics::MetricType::Count => self
+                .buckets
+                .entry(bucket_key)
+                .or_insert_with(|| MetricBucket {
+                    aggreg: MetricAggreg::Count { count: 0.0 },
+                })
+                .add_point(point),
+            metrics::MetricType::Gauge => self
+                .buckets
+                .entry(bucket_key)
+                .or_insert_with(|| MetricBucket {
+                    aggreg: MetricAggreg::Gauge { value: 0.0 },
+                })
+                .add_point(point),
+            metrics::MetricType::Distribution => {
+                self.sketches
+                    .entry(bucket_key)
+                    .or_insert_with(|| DDSketch::default())
+                    .add(point);
+            }
+        }
     }
 }
 
@@ -129,12 +153,11 @@ pub struct MetricContext {
 
 pub struct MetricContextGuard<'a> {
     guard: MutexGuard<'a, InnerMetricContexts>,
-    key: ContextKey,
 }
 
 impl<'a> MetricContextGuard<'a> {
-    pub fn read(&self) -> Option<&MetricContext> {
-        self.guard.store.get(self.key.0)
+    pub fn read(&self, key: ContextKey) -> Option<&MetricContext> {
+        self.guard.store.get(key.0 as usize)
     }
 }
 
@@ -158,7 +181,7 @@ impl MetricContexts {
         namespace: data::metrics::MetricNamespace,
     ) -> ContextKey {
         let mut contexts = self.inner.lock().unwrap();
-        let key = ContextKey(contexts.store.len());
+        let key = ContextKey(contexts.store.len() as u32, metric_type);
         contexts.store.push(MetricContext {
             name,
             tags,
@@ -169,17 +192,9 @@ impl MetricContexts {
         key
     }
 
-    fn get_metric_type(&self, key: ContextKey) -> Option<data::metrics::MetricType> {
-        let guard = self.inner.lock().unwrap();
-        // Safe if the Vec is never popped, because the only way to obtain to get a ContextKey is to call register_metric_context
-        let MetricContext { metric_type, .. } = guard.store.get(key.0)?;
-        Some(*metric_type)
-    }
-
-    pub fn get_context(&self, key: ContextKey) -> MetricContextGuard<'_> {
+    pub fn lock(&self) -> MetricContextGuard<'_> {
         MetricContextGuard {
             guard: self.inner.as_ref().lock().unwrap(),
-            key,
         }
     }
 }
@@ -247,22 +262,22 @@ mod test {
         );
         let extra_tags = vec![Tag::from_value("service:foobar").unwrap()];
 
-        buckets.add_point(context_key_1, &contexts, 0.1, Vec::new());
-        buckets.add_point(context_key_1, &contexts, 0.2, Vec::new());
+        buckets.add_point(context_key_1, 0.1, Vec::new());
+        buckets.add_point(context_key_1, 0.2, Vec::new());
         assert_eq!(buckets.buckets.len(), 1);
 
-        buckets.add_point(context_key_2, &contexts, 0.3, Vec::new());
+        buckets.add_point(context_key_2, 0.3, Vec::new());
         assert_eq!(buckets.buckets.len(), 2);
 
-        buckets.add_point(context_key_2, &contexts, 0.4, extra_tags.clone());
+        buckets.add_point(context_key_2, 0.4, extra_tags.clone());
         assert_eq!(buckets.buckets.len(), 3);
 
         buckets.flush_agregates();
         assert_eq!(buckets.buckets.len(), 0);
         assert_eq!(buckets.series.len(), 3);
 
-        buckets.add_point(context_key_1, &contexts, 0.5, Vec::new());
-        buckets.add_point(context_key_2, &contexts, 0.6, extra_tags);
+        buckets.add_point(context_key_1, 0.5, Vec::new());
+        buckets.add_point(context_key_2, 0.6, extra_tags);
         assert_eq!(buckets.buckets.len(), 2);
 
         buckets.flush_agregates();
@@ -273,8 +288,6 @@ mod test {
         assert_eq!(buckets.buckets.len(), 0);
         assert_eq!(buckets.series.len(), 0);
         assert_eq!(series.len(), 3);
-
-        dbg!(&series);
 
         check_iter(
             series.iter(),
