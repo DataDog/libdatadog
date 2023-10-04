@@ -557,6 +557,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-ddsketch"
+version = "4.0.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+]
+
+[[package]]
 name = "datadog-ipc"
 version = "0.1.0"
 dependencies = [
@@ -850,6 +859,8 @@ name = "ddtelemetry"
 version = "5.0.0"
 dependencies = [
  "anyhow",
+ "base64 0.21.4",
+ "datadog-ddsketch",
  "ddcommon",
  "futures",
  "hashbrown 0.12.3",
