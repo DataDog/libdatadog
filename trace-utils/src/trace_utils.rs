@@ -541,6 +541,7 @@ mod tests {
     use datadog_trace_protobuf::pb;
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_get_traces_from_request_body() {
         let pairs = vec![
             (

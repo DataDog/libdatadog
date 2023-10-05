@@ -190,6 +190,7 @@ mod tests {
     use super::Liaison;
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_shared_dir_can_connect_to_socket() -> anyhow::Result<()> {
         let tmpdir = tempdir().unwrap();
         let liaison = super::SharedDirLiaison::new(tmpdir.path());

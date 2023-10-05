@@ -100,6 +100,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_request_content_length_missing() {
         let verify_result = verify_request_content_length(&HeaderMap::new(), 1, "Test Prefix");
         assert!(verify_result.is_some());
@@ -113,6 +114,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_request_content_length_cant_convert_to_str() {
         let verify_result = verify_request_content_length(
             &create_test_headers_with_content_length("❤❤❤❤❤❤❤"),
@@ -130,6 +132,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_request_content_length_cant_convert_to_usize() {
         let verify_result = verify_request_content_length(
             &create_test_headers_with_content_length("not_an_int"),
@@ -147,6 +150,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_request_content_length_too_long() {
         let verify_result = verify_request_content_length(
             &create_test_headers_with_content_length("100"),

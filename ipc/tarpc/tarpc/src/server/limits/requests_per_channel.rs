@@ -192,6 +192,7 @@ mod tests {
     use tracing::Span;
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn throttler_in_flight_requests() {
         let throttler = MaxRequests {
             max_in_flight_requests: 0,
@@ -320,6 +321,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn throttler_start_send() {
         let throttler = MaxRequests {
             max_in_flight_requests: 0,

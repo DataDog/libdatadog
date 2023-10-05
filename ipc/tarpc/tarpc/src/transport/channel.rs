@@ -170,6 +170,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn integration() -> anyhow::Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
 

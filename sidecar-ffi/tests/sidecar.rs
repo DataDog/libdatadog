@@ -34,6 +34,7 @@ fn set_sidecar_per_process() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_ddog_ph_file_handling() {
     let fname = CString::new(std::env::temp_dir().join("test_file").to_str().unwrap()).unwrap();
     let mode = CString::new("a+").unwrap();
