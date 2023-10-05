@@ -5,7 +5,6 @@ mod profile_index;
 mod replayer;
 
 use clap::{command, Arg, ArgAction};
-use datadog_profiling::profile;
 use prost::Message;
 use std::borrow::Cow;
 use std::io::Cursor;
@@ -144,15 +143,15 @@ fn main() -> anyhow::Result<()> {
         std::fs::read(input)?
     };
 
-    let pprof = profile::pprof::Profile::decode(&mut Cursor::new(source))?;
+    let pprof = datadog_profiling::pprof::Profile::decode(&mut Cursor::new(source))?;
 
     let mut replayer = Replayer::try_from(&pprof)?;
 
-    let mut outprof = profile::Profile::builder()
-        .start_time(Some(replayer.start_time))
-        .sample_types(replayer.sample_types.clone())
-        .period(replayer.period)
-        .build();
+    let mut outprof = datadog_profiling::internal::Profile::new(
+        replayer.start_time,
+        &replayer.sample_types,
+        replayer.period,
+    );
 
     // Before benchmarking, let's calculate some statistics.
     // No point doing that if there aren't at least 4 samples though.
@@ -184,7 +183,7 @@ fn main() -> anyhow::Result<()> {
 
     let before = Instant::now();
     for (timestamp, sample) in samples {
-        outprof.add(sample, timestamp)?;
+        outprof.add_sample(sample, timestamp)?;
     }
     let duration = before.elapsed();
 
