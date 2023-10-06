@@ -30,6 +30,7 @@ libc = "0.2"
 lz4_flex = { version = "0.9", default-features = false, features = ["std", "safe-encode", "frame"] }
 mime = "0.3.16"
 mime_guess = {version = "2.0", default-features = false}
+nix = { version = "0.27.1", features = ["signal"] }
 percent-encoding = "2.1"
 prost = "0.11"
 rustc-hash = { version = "1.1", default-features = false }

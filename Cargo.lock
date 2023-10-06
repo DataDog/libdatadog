@@ -615,6 +615,7 @@ dependencies = [
  "lz4_flex",
  "mime",
  "mime_guess",
+ "nix 0.27.1",
  "percent-encoding",
  "prost",
  "rustc-hash",
