@@ -62,7 +62,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     handle.add_point(1.0, &ping_metric, Vec::new()).unwrap();
 
-    handle.add_point(1.5, &dist_metric, Vec::new()).unwrap();
+    handle.add_point(1.0, &dist_metric, Vec::new()).unwrap();
+    handle.add_point(2.0, &dist_metric, Vec::new()).unwrap();
 
     let tags = vec![Tag::from_value("foo:bar").unwrap()];
     handle.add_point(2.0, &ping_metric, tags.clone()).unwrap();

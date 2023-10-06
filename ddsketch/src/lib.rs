@@ -213,7 +213,7 @@ impl LogMapping {
 
 impl Default for LogMapping {
     fn default() -> Self {
-        const RELATIVE_ACCURACY: f64 = 0.01;
+        const RELATIVE_ACCURACY: f64 = 0.007751937984496124;
         const GAMMA: f64 = (1.0 + RELATIVE_ACCURACY) / (1.0 - RELATIVE_ACCURACY);
 
         const BACKEND_SKETCH_MIN_VALUE: f64 = 1e-9;
