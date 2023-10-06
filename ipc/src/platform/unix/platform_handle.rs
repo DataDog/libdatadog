@@ -185,6 +185,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_platform_handles_fd_handling() {
         let mut file = tempfile::tempfile().unwrap();
         assert_file_is_open_for_writing!(file);
@@ -205,6 +206,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_platform_handle_fd_borrowing() {
         let mut file = tempfile::tempfile().unwrap();
         assert_file_is_open_for_writing!(file);

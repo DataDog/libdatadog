@@ -629,6 +629,7 @@ mod tests {
     use tracing::Span;
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn response_completes_request_future() {
         let (mut dispatch, mut _channel, mut server_channel) = set_up();
         let cx = &mut Context::from_waker(noop_waker_ref());
@@ -650,6 +651,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn dispatch_response_cancels_on_drop() {
         let (cancellation, mut canceled_requests) = cancellations();
         let (_, mut response) = oneshot::channel();
@@ -665,6 +667,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn dispatch_response_doesnt_cancel_after_complete() {
         let (cancellation, mut canceled_requests) = cancellations();
         let (tx, mut response) = oneshot::channel();
@@ -689,6 +692,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn stage_request() {
         let (mut dispatch, mut channel, _server_channel) = set_up();
         let cx = &mut Context::from_waker(noop_waker_ref());
@@ -707,6 +711,7 @@ mod tests {
 
     // Regression test for  https://github.com/google/tarpc/issues/220
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn stage_request_channel_dropped_doesnt_panic() {
         let (mut dispatch, mut channel, mut server_channel) = set_up();
         let cx = &mut Context::from_waker(noop_waker_ref());
@@ -729,6 +734,7 @@ mod tests {
 
     #[allow(unstable_name_collisions)]
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn stage_request_response_future_dropped_is_canceled_before_sending() {
         let (mut dispatch, mut channel, _server_channel) = set_up();
         let cx = &mut Context::from_waker(noop_waker_ref());
@@ -745,6 +751,7 @@ mod tests {
 
     #[allow(unstable_name_collisions)]
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn stage_request_response_future_dropped_is_canceled_after_sending() {
         let (mut dispatch, mut channel, _server_channel) = set_up();
         let cx = &mut Context::from_waker(noop_waker_ref());
@@ -766,6 +773,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn stage_request_response_closed_skipped() {
         let (mut dispatch, mut channel, _server_channel) = set_up();
         let cx = &mut Context::from_waker(noop_waker_ref());

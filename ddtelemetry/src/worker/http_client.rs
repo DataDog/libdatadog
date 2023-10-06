@@ -105,6 +105,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_mock_client() {
         let output: Vec<u8> = Vec::new();
         let c = MockClient {

@@ -36,6 +36,7 @@ impl Service for Server {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn sequential() -> anyhow::Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
@@ -58,6 +59,7 @@ async fn sequential() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn dropped_channel_aborts_in_flight_requests() -> anyhow::Result<()> {
     #[tarpc_plugins::service]
     trait Loop {
@@ -108,6 +110,7 @@ async fn dropped_channel_aborts_in_flight_requests() -> anyhow::Result<()> {
 
 #[cfg(all(feature = "serde-transport", feature = "tcp"))]
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn serde_tcp() -> anyhow::Result<()> {
     use tarpc::serde_transport;
     use tokio_serde::formats::Json;
@@ -138,6 +141,7 @@ async fn serde_tcp() -> anyhow::Result<()> {
 
 #[cfg(all(feature = "serde-transport", feature = "unix", unix))]
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn serde_uds() -> anyhow::Result<()> {
     use tarpc::serde_transport;
     use tokio_serde::formats::Json;
@@ -168,6 +172,7 @@ async fn serde_uds() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn concurrent() -> anyhow::Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
@@ -192,6 +197,7 @@ async fn concurrent() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn concurrent_join() -> anyhow::Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
@@ -217,6 +223,7 @@ async fn concurrent_join() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn concurrent_join_all() -> anyhow::Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
@@ -240,6 +247,7 @@ async fn concurrent_join_all() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn counter() -> anyhow::Result<()> {
     #[tarpc::service]
     trait Counter {
