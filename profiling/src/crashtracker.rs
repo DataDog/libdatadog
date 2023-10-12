@@ -12,12 +12,20 @@ use std::process::{Command, Stdio};
 use std::ptr;
 
 static mut RECEIVER: Option<std::process::Child> = None;
+static mut OLD_HANDLER: Option<SigAction> = None;
 
 extern "C" fn handle_sigsegv(n: i32) {
     let child = unsafe { RECEIVER.as_mut().unwrap() };
     let pipe = child.stdin.as_mut().unwrap();
     writeln!(pipe, "Crashed {}", n).unwrap();
-    //let current_backtrace = backtrace::Backtrace::new();
+    // Getting a backtrace on rust is not guaranteed to be signal safe
+    // https://github.com/rust-lang/backtrace-rs/issues/414
+    // let current_backtrace = backtrace::Backtrace::new();
+    // In fact, if we look into the code here, we see mallocs.
+    // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
+    // We could walk the stack ourselves to try to avoid this, but in my 
+    // experiements doing so with the backtrace crate, we fail in the same 
+    // cases where the stdlib does.
     let current_backtrace = std::backtrace::Backtrace::force_capture();
     writeln!(pipe, "{:?}", current_backtrace).unwrap();
     pipe.flush().unwrap();
@@ -26,8 +34,13 @@ extern "C" fn handle_sigsegv(n: i32) {
     // This helps avoid deadlock: it ensures that the child does not block waiting
     // for input from the parent, while the parent waits for the child to exit.
     unsafe { RECEIVER.as_mut().unwrap().wait().unwrap() };
-    // TODO, revert to the default handler https://github.com/iximeow/rust/blob/28eeea630faf1e7514da96c5eedd67e330fe8571/src/libstd/sys/unix/stack_overflow.rs#L105
-    std::process::abort();
+
+    // Restore the old handler, and return to it.
+    // Although this is technically UB, this is what Rust does in the same case.
+    // https://github.com/rust-lang/rust/blob/master/library/std/src/sys/unix/stack_overflow.rs#L75
+    let old_handler = unsafe { OLD_HANDLER.as_ref().unwrap() };
+    unsafe { signal::sigaction(signal::SIGSEGV, old_handler).unwrap() };
+    // return to old handler (chain)
 }
 
 //TODO, get other signals than segv?
@@ -38,25 +51,16 @@ fn register_crash_handler() -> anyhow::Result<()> {
         signal::SigSet::empty(),
     );
     unsafe {
-        set_alt_stack(0)?;
-        // TODO, check if there was a previous handler?
-        // TODO, store it in global variable, then restore it when our handler finishes?
-        signal::sigaction(signal::SIGSEGV, &sig_action)?;
+        set_alt_stack()?;
+        let old = signal::sigaction(signal::SIGSEGV, &sig_action)?;
+        OLD_HANDLER = Some(old);
     }
     Ok(())
 }
 
-unsafe fn get_stack() -> anyhow::Result<libc::stack_t> {
-    Ok(libc::stack_t {
-        ss_sp: get_stackp()?,
-        ss_flags: 0,
-        ss_size: SIGSTKSZ,
-    })
-}
-
 /// Allocates a signal altstack, and puts a guard page at the end.
 /// Inspired by https://github.com/rust-lang/rust/pull/69969/files
-unsafe fn get_stackp() -> anyhow::Result<*mut libc::c_void> {
+unsafe fn set_alt_stack() -> anyhow::Result<()> {
     let page_size = page_size::get();
     let stackp = mmap(
         ptr::null_mut(),
@@ -75,13 +79,13 @@ unsafe fn get_stackp() -> anyhow::Result<*mut libc::c_void> {
         guard_result == 0,
         "failed to set up alternative stack guard page"
     );
-    Ok(stackp.add(page_size))
-}
+    let stackp = stackp.add(page_size);
 
-// https://github.com/iximeow/rust/blob/28eeea630faf1e7514da96c5eedd67e330fe8571/src/libstd/sys/unix/stack_overflow.rs#L140
-// https://github.com/rust-lang/rust/pull/69969/files
-unsafe fn set_alt_stack(_size: usize) -> anyhow::Result<()> {
-    let stack = get_stack()?;
+    let stack = libc::stack_t {
+        ss_sp: stackp,
+        ss_flags: 0,
+        ss_size: SIGSTKSZ,
+    };
     let rval = sigaltstack(&stack, ptr::null_mut());
     anyhow::ensure!(rval == 0, "sigaltstack failed {rval}");
     Ok(())
