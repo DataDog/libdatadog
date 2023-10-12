@@ -689,8 +689,8 @@ impl SidecarServer {
         &self,
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMeta,
-        service_name: &String,
-        env_name: &String,
+        service_name: &str,
+        env_name: &str,
         inital_actions: Vec<TelemetryActions>,
     ) -> Option<AppInstance> {
         let rt_info = self.get_runtime(instance_id);
@@ -701,13 +701,13 @@ impl SidecarServer {
         }
 
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
-            service_name.clone(),
+            service_name.to_owned(),
             runtime_meta.language_name.clone(),
             runtime_meta.language_version.clone(),
             runtime_meta.tracer_version.clone(),
         );
         builder.runtime_id = Some(instance_id.runtime_id.clone());
-        builder.application.env = Some(env_name.clone());
+        builder.application.env = Some(env_name.to_owned());
         let session_info = self.get_session(&instance_id.session_id);
         let config = session_info
             .session_config
