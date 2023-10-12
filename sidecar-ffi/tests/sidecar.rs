@@ -118,7 +118,8 @@ fn test_ddog_sidecar_register_app() {
             &instance_id,
             &queue_id,
             &meta,
-            "service_name".into()
+            "service_name".into(),
+            "env_name".into()
         ));
         // reset session config - and cause shutdown of all existing instances
         ddog_sidecar_session_set_config(
