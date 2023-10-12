@@ -276,20 +276,23 @@ impl RuntimeInfo {
     #[allow(clippy::type_complexity)]
     fn get_app(
         &self,
-        service_name: &String,
-        env_name: &String,
+        service_name: &str,
+        env_name: &str,
     ) -> (
         Shared<ManualFuture<Option<AppInstance>>>,
         Option<ManualFutureCompleter<Option<AppInstance>>>,
     ) {
         let mut apps = self.apps.lock().unwrap();
-        let key = (service_name.clone(), env_name.clone());
+        let key = (service_name.to_owned(), env_name.to_owned());
         if let Some(found) = apps.get(&key) {
             (found.clone(), None)
         } else {
             let (future, completer) = ManualFuture::new();
             let shared = future.shared();
-            apps.insert((service_name.clone(), env_name.clone()), shared.clone());
+            apps.insert(
+                (service_name.to_owned(), env_name.to_owned()),
+                shared.clone(),
+            );
             (shared, Some(completer))
         }
     }
@@ -879,7 +882,13 @@ impl SidecarInterface for SidecarServer {
 
             tokio::spawn(async move {
                 if let Some(app) = self
-                    .get_app(&instance_id, &runtime_meta, &service_name, &env_name, actions)
+                    .get_app(
+                        &instance_id,
+                        &runtime_meta,
+                        &service_name,
+                        &env_name,
+                        actions,
+                    )
                     .await
                 {
                     let actions: Vec<_> = std::mem::take(&mut enqueued_data.actions);
