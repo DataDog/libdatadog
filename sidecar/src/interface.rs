@@ -65,6 +65,7 @@ pub trait SidecarInterface {
         queue_id: QueueId,
         meta: RuntimeMeta,
         service_name: String,
+        env_name: String,
     );
     async fn set_session_config(session_id: String, config: SessionConfig);
     async fn shutdown_runtime(instance_id: InstanceId);
@@ -260,14 +261,14 @@ impl SessionInfo {
 
 #[allow(clippy::large_enum_variant)]
 enum AppOrQueue {
-    App(Shared<ManualFuture<String>>),
+    App(Shared<ManualFuture<(String, String)>>),
     Queue(EnqueuedTelemetryData),
 }
 
 #[allow(clippy::type_complexity)]
 #[derive(Clone, Default)]
 struct RuntimeInfo {
-    apps: Arc<Mutex<HashMap<String, Shared<ManualFuture<Option<AppInstance>>>>>>,
+    apps: Arc<Mutex<HashMap<(String, String), Shared<ManualFuture<Option<AppInstance>>>>>>,
     app_or_actions: Arc<Mutex<HashMap<QueueId, AppOrQueue>>>,
 }
 
@@ -276,17 +277,19 @@ impl RuntimeInfo {
     fn get_app(
         &self,
         service_name: &String,
+        env_name: &String,
     ) -> (
         Shared<ManualFuture<Option<AppInstance>>>,
         Option<ManualFutureCompleter<Option<AppInstance>>>,
     ) {
         let mut apps = self.apps.lock().unwrap();
-        if let Some(found) = apps.get(service_name) {
+        let key = (service_name.clone(), env_name.clone());
+        if let Some(found) = apps.get(&key) {
             (found.clone(), None)
         } else {
             let (future, completer) = ManualFuture::new();
             let shared = future.shared();
-            apps.insert(service_name.clone(), shared.clone());
+            apps.insert((service_name.clone(), env_name.clone()), shared.clone());
             (shared, Some(completer))
         }
     }
@@ -687,11 +690,12 @@ impl SidecarServer {
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMeta,
         service_name: &String,
+        env_name: &String,
         inital_actions: Vec<TelemetryActions>,
     ) -> Option<AppInstance> {
         let rt_info = self.get_runtime(instance_id);
 
-        let (app_future, completer) = rt_info.get_app(service_name);
+        let (app_future, completer) = rt_info.get_app(service_name, env_name);
         if completer.is_none() {
             return app_future.await;
         }
@@ -703,7 +707,7 @@ impl SidecarServer {
             runtime_meta.tracer_version.clone(),
         );
         builder.runtime_id = Some(instance_id.runtime_id.clone());
-
+        builder.application.env = Some(env_name.clone());
         let session_info = self.get_session(&instance_id.session_id);
         let config = session_info
             .session_config
@@ -854,6 +858,7 @@ impl SidecarInterface for SidecarServer {
         queue_id: QueueId,
         runtime_meta: RuntimeMeta,
         service_name: String,
+        env_name: String,
     ) -> Self::RegisterServiceAndFlushQueuedActionsFut {
         // We need a channel to have enqueuing code await
         let (future, completer) = ManualFuture::new();
@@ -874,7 +879,7 @@ impl SidecarInterface for SidecarServer {
 
             tokio::spawn(async move {
                 if let Some(app) = self
-                    .get_app(&instance_id, &runtime_meta, &service_name, actions)
+                    .get_app(&instance_id, &runtime_meta, &service_name, &env_name, actions)
                     .await
                 {
                     let actions: Vec<_> = std::mem::take(&mut enqueued_data.actions);
@@ -891,7 +896,7 @@ impl SidecarInterface for SidecarServer {
 
                     app.telemetry.send_msgs(actions).await.ok();
                     // Ok, we dequeued all messages, now new enqueue_actions calls can handle it
-                    completer.complete(service_name).await;
+                    completer.complete((service_name, env_name)).await;
                 }
             });
         }
@@ -1056,6 +1061,7 @@ pub mod blocking {
         queue_id: &QueueId,
         runtime_metadata: &RuntimeMeta,
         service_name: Cow<str>,
+        env_name: Cow<str>,
     ) -> io::Result<()> {
         transport.send(
             SidecarInterfaceRequest::RegisterServiceAndFlushQueuedActions {
@@ -1063,6 +1069,7 @@ pub mod blocking {
                 queue_id: *queue_id,
                 meta: runtime_metadata.clone(),
                 service_name: service_name.into_owned(),
+                env_name: env_name.into_owned(),
             },
         )
     }
