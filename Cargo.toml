@@ -4,6 +4,7 @@
 [workspace]
 members = [
   "profiling",
+  "profiling-crashtracking-receiver",
   "profiling-ffi",
   "profiling-replayer",
   "ddcommon",

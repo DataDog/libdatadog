@@ -302,13 +302,15 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "chrono"
-version = "0.4.30"
+version = "0.4.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "defd4e7873dbddba6c7c91e199c7fcb946abc4a6a4ac3195400bcfb01b5de877"
+checksum = "7f2c685bad3eb3d45a01354cedb7d5faa66194d1d58ba6e267a8de788f79db38"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
+ "js-sys",
  "num-traits",
+ "wasm-bindgen",
  "windows-targets",
 ]
 
@@ -570,7 +572,7 @@ dependencies = [
  "libc",
  "memfd",
  "nix 0.26.4",
- "page_size",
+ "page_size 0.5.0",
  "pin-project",
  "pretty_assertions",
  "sendfd",
@@ -616,6 +618,7 @@ dependencies = [
  "mime",
  "mime_guess",
  "nix 0.27.1",
+ "page_size 0.6.0",
  "percent-encoding",
  "prost",
  "rustc-hash",
@@ -1826,6 +1829,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "page_size"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30d5b2194ed13191c1999ae0704b7839fb18384fa22e49b57eeaa97d79ce40da"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1997,6 +2010,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d433d9f1a3e8c1263d9456598b16fec66f4acc9a74dacffd35c7bb09b3a1328"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "profiling-crashtracking-receiver"
+version = "5.0.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "uuid",
 ]
 
 [[package]]

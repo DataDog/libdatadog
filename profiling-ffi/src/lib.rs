@@ -6,6 +6,7 @@ use std::time::SystemTime;
 
 use chrono::{DateTime, TimeZone, Utc};
 
+mod crashtracker;
 mod exporter;
 mod profiles;
 
