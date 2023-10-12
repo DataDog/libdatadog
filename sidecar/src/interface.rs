@@ -289,10 +289,7 @@ impl RuntimeInfo {
         } else {
             let (future, completer) = ManualFuture::new();
             let shared = future.shared();
-            apps.insert(
-                (service_name.to_owned(), env_name.to_owned()),
-                shared.clone(),
-            );
+            apps.insert(key, shared.clone());
             (shared, Some(completer))
         }
     }
