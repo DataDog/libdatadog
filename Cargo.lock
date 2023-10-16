@@ -600,6 +600,7 @@ name = "datadog-profiling"
 version = "5.0.0"
 dependencies = [
  "anyhow",
+ "backtrace",
  "bitmaps",
  "bytes",
  "chrono",
@@ -820,6 +821,7 @@ name = "ddcommon"
 version = "5.0.0"
 dependencies = [
  "anyhow",
+ "backtrace",
  "futures",
  "futures-core",
  "futures-util",

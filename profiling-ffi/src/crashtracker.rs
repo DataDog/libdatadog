@@ -11,6 +11,7 @@ use std::ffi::CStr;
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_crashtracker_init(
     path_to_reciever_binary: *const c_char,
+    //TODO: key/value pairs to pass to the receiver
 ) -> ProfileResult {
     match crashtracker_init_impl(path_to_reciever_binary) {
         Ok(_) => ProfileResult::Ok(true),
