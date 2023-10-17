@@ -36,7 +36,13 @@ fn emit_backtrace_by_frames(w: &mut impl Write, resolve_frames: bool) -> anyhow:
     writeln!(w, "BEGIN backtrace")?;
     backtrace::trace(|frame| {
         let ip = frame.ip();
-        writeln!(w, "{ip:?}").unwrap();
+        let mba = frame.module_base_address();
+        let sp = frame.sp();
+        let sa = frame.symbol_address();
+        writeln!(w, "ip: {ip:?}").unwrap();
+        writeln!(w, "module_base_address: {mba:?}").unwrap();
+        writeln!(w, "sp: {sp:?}").unwrap();
+        writeln!(w, "symbol_address: {sa:?}").unwrap();
 
         if resolve_frames {
             backtrace::resolve_frame(frame, |symbol| {
