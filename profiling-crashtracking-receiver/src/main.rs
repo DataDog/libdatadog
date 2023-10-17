@@ -15,7 +15,8 @@ fn _print_to_file(data: &[u8]) -> anyhow::Result<()> {
 }
 
 fn upload_to_dd(data: &[u8]) -> anyhow::Result<hyper::Response<hyper::Body>> {
-    let site = "intake.profile.datad0g.com/api/v2/profile";
+    //let site = "intake.profile.datad0g.com/api/v2/profile";
+    let site = "datad0g.com";
     let api_key = std::env::var("DD_API_KEY")?;
     let endpoint = exporter::config::agentless(site, api_key)?;
     let profiling_library_name = "dd_trace_py";
