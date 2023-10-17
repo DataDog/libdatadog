@@ -33,31 +33,38 @@ fn _emit_backtrace_std(w: &mut impl Write) {
 // to bo ok for Python, but resolving the frames crashes.
 fn emit_backtrace_by_frames(w: &mut impl Write, resolve_frames: bool) -> anyhow::Result<()> {
     // https://docs.rs/backtrace/latest/backtrace/index.html
-    writeln!(w, "BEGIN backtrace")?;
+    writeln!(w, "\"backtrace\":[")?;
     backtrace::trace(|frame| {
-        let ip = frame.ip();
-        let mba = frame.module_base_address();
-        let sp = frame.sp();
-        let sa = frame.symbol_address();
-        writeln!(w, "ip: {ip:?}").unwrap();
-        writeln!(w, "module_base_address: {mba:?}").unwrap();
-        writeln!(w, "sp: {sp:?}").unwrap();
-        writeln!(w, "symbol_address: {sa:?}").unwrap();
+        // Write the values we can get without resolving, since these seem to
+        // be crash safe in my experiments.
+        write! {w, "{{"}.unwrap();
+        write!(w, "\"ip\": \"{:?}\", ", frame.ip()).unwrap();
+        write!(
+            w,
+            "\"module_base_address\": \"{:?}\", ",
+            frame.module_base_address()
+        )
+        .unwrap();
+        write!(w, "\"sp\": \"{:?}\", ", frame.sp()).unwrap();
+        write!(w, "\"symbol_address\": \"{:?}\", ", frame.symbol_address()).unwrap();
 
         if resolve_frames {
-            backtrace::resolve_frame(frame, |symbol| {
-                if let Some(name) = symbol.name() {
-                    writeln!(w, "name: {}", name).unwrap();
-                }
-                if let Some(filename) = symbol.filename() {
-                    writeln!(w, "filename: {:?}", filename).unwrap();
-                }
-            });
+            unsafe {
+                backtrace::resolve_frame_unsynchronized(frame, |symbol| {
+                    if let Some(name) = symbol.name() {
+                        writeln!(w, "name: {}", name).unwrap();
+                    }
+                    if let Some(filename) = symbol.filename() {
+                        writeln!(w, "filename: {:?}", filename).unwrap();
+                    }
+                });
+            }
         }
+        writeln! {w, "}},"}.unwrap();
 
         true // keep going to the next frame
     });
-    writeln!(w, "END backtrace")?;
+    writeln!(w, "],")?;
     Ok(())
 }
 
@@ -67,7 +74,7 @@ fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
     const BUFFER_LEN: usize = 512;
     let mut buffer = [0u8; BUFFER_LEN];
 
-    writeln!(w, "BEGIN /proc/self/maps")?;
+    writeln!(w, "\"proc_self_maps\": [\"")?;
 
     loop {
         let read_count = file.read(&mut buffer)?;
@@ -77,7 +84,7 @@ fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
             break;
         }
     }
-    writeln!(w, "\nEND /proc/self/maps")?;
+    writeln!(w, "\"],")?;
     Ok(())
 }
 

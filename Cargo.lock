@@ -2020,6 +2020,8 @@ version = "5.0.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "datadog-profiling",
+ "hyper",
  "uuid",
 ]
 

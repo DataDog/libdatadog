@@ -11,3 +11,5 @@ license.workspace = true
 anyhow = "1.0.75"
 chrono = "0.4.31"
 uuid = { version = "1.4.1", features = ["v4"] }
+datadog-profiling = { path = "../profiling"}
+hyper = "0.14.27"
