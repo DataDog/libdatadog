@@ -12,6 +12,13 @@ use std::io::prelude::*;
 use std::process::{Command, Stdio};
 use std::ptr;
 
+pub const DD_CRASHTRACK_BEGIN_FILE: &str = "DD_CRASHTRACK_BEGIN_FILE";
+pub const DD_CRASHTRACK_BEGIN_SIGINFO: &str = "DD_CRASHTRACK_BEGIN_SIGINFO";
+pub const DD_CRASHTRACK_BEGIN_STACKTRACE: &str = "DD_CRASHTRACK_BEGIN_STACKTRACE";
+pub const DD_CRASHTRACK_END_FILE: &str = "DD_CRASHTRACK_END_FILE";
+pub const DD_CRASHTRACK_END_STACKTRACE: &str = "DD_CRASHTRACK_END_STACKTRACE";
+pub const DD_CRASHTRACK_END_SIGINFO: &str = "DD_CRASHTRACK_END_SIGINFO";
+
 static mut RECEIVER: Option<std::process::Child> = None;
 static mut OLD_HANDLER: Option<SigAction> = None;
 // https://github.com/nix-rust/nix/issues/1051
@@ -33,11 +40,11 @@ fn _emit_backtrace_std(w: &mut impl Write) {
 // to bo ok for Python, but resolving the frames crashes.
 fn emit_backtrace_by_frames(w: &mut impl Write, resolve_frames: bool) -> anyhow::Result<()> {
     // https://docs.rs/backtrace/latest/backtrace/index.html
-    writeln!(w, "\"backtrace\":[")?;
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
     backtrace::trace(|frame| {
         // Write the values we can get without resolving, since these seem to
         // be crash safe in my experiments.
-        write! {w, "{{"}.unwrap();
+        write!{w, "{{"}.unwrap();
         write!(w, "\"ip\": \"{:?}\", ", frame.ip()).unwrap();
         write!(
             w,
@@ -46,35 +53,33 @@ fn emit_backtrace_by_frames(w: &mut impl Write, resolve_frames: bool) -> anyhow:
         )
         .unwrap();
         write!(w, "\"sp\": \"{:?}\", ", frame.sp()).unwrap();
-        write!(w, "\"symbol_address\": \"{:?}\", ", frame.symbol_address()).unwrap();
+        write!(w, "\"symbol_address\": \"{:?}\"", frame.symbol_address()).unwrap();
 
         if resolve_frames {
             unsafe {
                 backtrace::resolve_frame_unsynchronized(frame, |symbol| {
                     if let Some(name) = symbol.name() {
-                        writeln!(w, "name: {}", name).unwrap();
+                        writeln!(w, ", name: {}", name).unwrap();
                     }
                     if let Some(filename) = symbol.filename() {
-                        writeln!(w, "filename: {:?}", filename).unwrap();
+                        writeln!(w, ", filename: {:?}", filename).unwrap();
                     }
                 });
             }
         }
-        writeln! {w, "}},"}.unwrap();
-
+        writeln!(w, "}}").unwrap();
         true // keep going to the next frame
     });
-    writeln!(w, "],")?;
+    writeln! {w, "{DD_CRASHTRACK_END_STACKTRACE}"}.unwrap();
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
-fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
-    let mut file = File::open("/proc/self/maps")?;
+fn emit_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
+    let mut file = File::open(path)?;
     const BUFFER_LEN: usize = 512;
     let mut buffer = [0u8; BUFFER_LEN];
 
-    writeln!(w, "\"proc_self_maps\": [\"")?;
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_FILE} \"{path}\"")?;
 
     loop {
         let read_count = file.read(&mut buffer)?;
@@ -84,11 +89,17 @@ fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
             break;
         }
     }
-    writeln!(w, "\"],")?;
+    writeln!(w, "\n{DD_CRASHTRACK_END_FILE} \"{path}\"")?;
     Ok(())
 }
 
-fn handle_sigv_info_impl(
+#[cfg(target_os = "linux")]
+fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
+    emit_file(w, "/proc/self/maps")?;
+    Ok(())
+}
+
+fn _handle_sigv_info_impl(
     signum: libc::c_int,
     info: *mut libc::siginfo_t,
     data: *mut libc::c_void, // actually ucontext_t
@@ -130,7 +141,7 @@ extern "C" fn _handle_sigsegv_info(
     // behaviour.  Do this first to prevent recursive activation if this handler
     // itself crases (e.g. while calculating stacktrace)
     let _ = unsafe { restore_old_handler() };
-    let _ = handle_sigv_info_impl(signum, info, data);
+    let _ = _handle_sigv_info_impl(signum, info, data);
 
     // return to old handler (chain).  See comments on `restore_old_handler`.
 }
@@ -144,10 +155,12 @@ unsafe fn restore_old_handler() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_segv_impl(n: i32) -> anyhow::Result<()> {
+fn handle_segv_impl(signum: i32) -> anyhow::Result<()> {
     let child: &mut std::process::Child = unsafe { RECEIVER.as_mut().unwrap() };
     let pipe = child.stdin.as_mut().unwrap();
-    writeln!(pipe, "Crashed {}", n)?;
+    writeln!(pipe, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
+    writeln!(pipe, "\"signum\": {signum}")?;
+    writeln!(pipe, "{DD_CRASHTRACK_END_SIGINFO}")?;
 
     // Getting a backtrace on rust is not guaranteed to be signal safe
     // https://github.com/rust-lang/backtrace-rs/issues/414
