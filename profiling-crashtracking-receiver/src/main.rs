@@ -1,4 +1,5 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
+//use clap::Parser;
 use datadog_profiling::exporter::{self, Tag};
 use std::fs::File;
 use std::io::prelude::*;
@@ -40,25 +41,28 @@ fn upload_to_dd(data: &[u8]) -> anyhow::Result<hyper::Response<hyper::Body>> {
         tags,
         endpoint,
     )?;
-    let request = exporter.build(
-        time.clone(),
-        time,
-        &[crash_file],
-        &[],
-        None,
-        None,
-        None,
-        timeout,
-    )?;
+    let request = exporter.build(time, time, &[crash_file], &[], None, None, None, timeout)?;
     let response = exporter.send(request, None)?;
     Ok(response)
 }
+
+// #[derive(Parser, Debug)]
+// struct Args {
+//     #[arg(long)]
+//     family: String,
+//     #[arg(long)]
+//     profiling_library_name: String,
+//     #[arg(long)]
+//     profiling_library_version: String,
+// }
 
 /// Recieves data on stdin, and forwards it to somewhere its useful
 /// For now, just sent to a file.
 /// Future enhancement: set of key/value pairs sent over pipe to setup
 /// Future enhancement: publish to DD endpoint
 pub fn main() -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    emit_proc_self_stack()?;
     let uuid = Uuid::new_v4();
     let mut buf = vec![];
     let stdin = std::io::stdin();
@@ -69,5 +73,16 @@ pub fn main() -> anyhow::Result<()> {
     }
     _print_to_file(&buf)?;
     upload_to_dd(&buf)?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn emit_proc_self_stack() -> anyhow::Result<()> {
+    let file = File::open("/proc/self/maps")?;
+    let mut reader = std::io::BufReader::new(f);
+
+    for line in reader.lines() {
+        println!("{line}");
+    }
     Ok(())
 }

@@ -88,11 +88,51 @@ fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn handle_sigv_info_impl(
+    signum: libc::c_int,
+    info: *mut libc::siginfo_t,
+    data: *mut libc::c_void, // actually ucontext_t
+) -> anyhow::Result<()> {
+    let child: &mut std::process::Child = unsafe { RECEIVER.as_mut().unwrap() };
+    let pipe = child.stdin.as_mut().unwrap();
+    writeln!(pipe, "\"signum\": {signum},")?;
+    writeln!(pipe, "\"siginfo\": {:?}", unsafe { *info })?;
+    let ucontext = data as *mut libc::ucontext_t;
+    writeln!(pipe, "\"ucontext\": {:?}", unsafe { *ucontext })?;
+
+    // Getting a backtrace on rust is not guaranteed to be signal safe
+    // https://github.com/rust-lang/backtrace-rs/issues/414
+    // let current_backtrace = backtrace::Backtrace::new();
+    // In fact, if we look into the code here, we see mallocs.
+    // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
+    // We could walk the stack ourselves to try to avoid this, but in my
+    // experiements doing so with the backtrace crate, we fail in the same
+    // cases where the stdlib does.
+    emit_backtrace_by_frames(pipe, false)?;
+    #[cfg(target_os = "linux")]
+    emit_proc_self_maps(pipe)?;
+
+    pipe.flush()?;
+    // https://doc.rust-lang.org/std/process/struct.Child.html#method.wait
+    // The stdin handle to the child process, if any, will be closed before waiting.
+    // This helps avoid deadlock: it ensures that the child does not block waiting
+    // for input from the parent, while the parent waits for the child to exit.
+    unsafe { RECEIVER.as_mut().unwrap().wait()? };
+    Ok(())
+}
+
 extern "C" fn _handle_sigsegv_info(
-    _signum: libc::c_int,
-    _info: *mut libc::siginfo_t,
-    _data: *mut libc::c_void, // actually ucontext_t
+    signum: libc::c_int,
+    info: *mut libc::siginfo_t,
+    data: *mut libc::c_void, // actually ucontext_t
 ) {
+    // Safety: We've already crashed, this is a best effort to chain to the old
+    // behaviour.  Do this first to prevent recursive activation if this handler
+    // itself crases (e.g. while calculating stacktrace)
+    let _ = unsafe { restore_old_handler() };
+    let _ = handle_sigv_info_impl(signum, info, data);
+
+    // return to old handler (chain).  See comments on `restore_old_handler`.
 }
 
 unsafe fn restore_old_handler() -> anyhow::Result<()> {
@@ -143,6 +183,7 @@ extern "C" fn handle_sigsegv(n: i32) {
 //TODO, get other signals than segv?
 fn register_crash_handler() -> anyhow::Result<()> {
     let sig_action = SigAction::new(
+        //SigHandler::SigAction(_handle_sigsegv_info),
         SigHandler::Handler(handle_sigsegv),
         SaFlags::SA_NODEFER | SaFlags::SA_ONSTACK,
         signal::SigSet::empty(),
