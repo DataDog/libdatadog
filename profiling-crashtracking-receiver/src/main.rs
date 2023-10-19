@@ -162,6 +162,27 @@ fn emit_json_suffix(w: &mut impl Write) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn _try_to_print_stacktrace() -> anyhow::Result<()> {
+    if std::env::args().count() > 1 {
+        // Child
+        let ppid = std::os::unix::process::parent_id();
+        let cpid = std::process::id();
+        println!("Child {ppid} {cpid}");
+        _emit_file(&format!("/proc/{ppid}/stack"))?;
+    } else {
+        // parent
+        let exe = std::env::current_exe()?;
+        let mut child = std::process::Command::new(exe).arg("child").spawn()?;
+        let cpid = child.id();
+        let ppid = std::process::id();
+        println!("parent {ppid} {cpid}");
+        set_ptracer(cpid)?;
+        child.wait()?;
+    }
+    Ok(())
+}
+
 /// Recieves data on stdin, and forwards it to somewhere its useful
 /// For now, just sent to a file.
 /// Future enhancement: set of key/value pairs sent over pipe to setup
@@ -184,13 +205,28 @@ pub fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn _emit_proc_self_stack() -> anyhow::Result<()> {
-    let file = File::open("/proc/self/stack")?;
+fn _emit_file(filename: &str) -> anyhow::Result<()> {
+    println!("printing {filename}");
+    let file = File::open(filename)?;
+    println!("{file:?}");
     let reader = std::io::BufReader::new(file);
 
     for line in reader.lines() {
         let line = line?;
         println!("{line}");
+    }
+    println!("printed {filename}");
+
+    Ok(())
+}
+
+//https://github.com/sfackler/rstack/blob/master/rstack-self/src/lib.rs
+#[cfg(target_os = "linux")]
+fn set_ptracer(pid: u32) -> anyhow::Result<()> {
+    use libc::{c_ulong, getppid, prctl, PR_SET_PTRACER};
+    unsafe {
+        let r = prctl(PR_SET_PTRACER, pid as c_ulong, 0, 0, 0);
+        anyhow::ensure!(r == 0, std::io::Error::last_os_error());
     }
     Ok(())
 }

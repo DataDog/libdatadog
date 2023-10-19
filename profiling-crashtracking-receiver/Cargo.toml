@@ -13,3 +13,5 @@ chrono = "0.4.31"
 uuid = { version = "1.4.1", features = ["v4"] }
 datadog-profiling = { path = "../profiling"}
 hyper = "0.14.27"
+libc = "0.2.149"
+nix = { version = "0.27.1", features = ["process"] }
