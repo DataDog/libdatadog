@@ -1,52 +1,14 @@
-use chrono::Utc;
+// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+
+mod experiments;
+mod exporters;
+
 //use clap::Parser;
-use datadog_profiling::exporter::{self, Tag};
-use std::fs::File;
-use std::io::prelude::*;
-use std::path::Path;
-use uuid::Uuid;
-
 use datadog_profiling::crashtracker::*;
-
-fn _print_to_file(data: &[u8]) -> anyhow::Result<()> {
-    let now = Utc::now().to_rfc3339();
-    let path = format!("{now}.txt");
-    let path = Path::new(&path);
-    let mut file = File::create(path)?;
-    file.write_all(data)?;
-    Ok(())
-}
-
-fn upload_to_dd(data: &[u8]) -> anyhow::Result<hyper::Response<hyper::Body>> {
-    //let site = "intake.profile.datad0g.com/api/v2/profile";
-    let site = "datad0g.com";
-    let api_key = std::env::var("DD_API_KEY")?;
-    let endpoint = exporter::config::agentless(site, api_key)?;
-    let profiling_library_name = "dd_trace_py";
-    let profiling_library_version = "1.2.3";
-    let family = "";
-    let tag = match Tag::new("service", "local-crash-test-upload") {
-        Ok(tag) => tag,
-        Err(e) => anyhow::bail!("{}", e),
-    };
-    let tags = Some(vec![tag]);
-    let time = Utc::now();
-    let timeout = std::time::Duration::from_secs(30);
-    let crash_file = exporter::File {
-        name: "crash-info.json",
-        bytes: data,
-    };
-    let exporter = exporter::ProfileExporter::new(
-        profiling_library_name,
-        profiling_library_version,
-        family,
-        tags,
-        endpoint,
-    )?;
-    let request = exporter.build(time, time, &[crash_file], &[], None, None, None, timeout)?;
-    let response = exporter.send(request, None)?;
-    Ok(response)
-}
+use exporters::*;
+use std::io::prelude::*;
+use uuid::Uuid;
 
 // #[derive(Parser, Debug)]
 // struct Args {
@@ -91,7 +53,7 @@ fn process_line(w: &mut impl Write, line: String, state: StdinState) -> anyhow::
         }
         StdinState::Waiting => {
             if line.starts_with(DD_CRASHTRACK_BEGIN_FILE) {
-                let (_, filename) = line.split_once(" ").unwrap_or(("", "MISSING_FILENAME"));
+                let (_, filename) = line.split_once(' ').unwrap_or(("", "MISSING_FILENAME"));
                 writeln!(w, ",")?;
                 writeln!(w, "{filename} : [")?;
                 StdinState::File {
@@ -162,27 +124,6 @@ fn emit_json_suffix(w: &mut impl Write) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
-fn _try_to_print_stacktrace() -> anyhow::Result<()> {
-    if std::env::args().count() > 1 {
-        // Child
-        let ppid = std::os::unix::process::parent_id();
-        let cpid = std::process::id();
-        println!("Child {ppid} {cpid}");
-        _emit_file(&format!("/proc/{ppid}/stack"))?;
-    } else {
-        // parent
-        let exe = std::env::current_exe()?;
-        let mut child = std::process::Command::new(exe).arg("child").spawn()?;
-        let cpid = child.id();
-        let ppid = std::process::id();
-        println!("parent {ppid} {cpid}");
-        set_ptracer(cpid)?;
-        child.wait()?;
-    }
-    Ok(())
-}
-
 /// Recieves data on stdin, and forwards it to somewhere its useful
 /// For now, just sent to a file.
 /// Future enhancement: set of key/value pairs sent over pipe to setup
@@ -202,31 +143,5 @@ pub fn main() -> anyhow::Result<()> {
     //std::io::stdout().write_all(&buf)?;
     _print_to_file(&buf)?;
     //upload_to_dd(&buf)?;
-    Ok(())
-}
-
-fn _emit_file(filename: &str) -> anyhow::Result<()> {
-    println!("printing {filename}");
-    let file = File::open(filename)?;
-    println!("{file:?}");
-    let reader = std::io::BufReader::new(file);
-
-    for line in reader.lines() {
-        let line = line?;
-        println!("{line}");
-    }
-    println!("printed {filename}");
-
-    Ok(())
-}
-
-//https://github.com/sfackler/rstack/blob/master/rstack-self/src/lib.rs
-#[cfg(target_os = "linux")]
-fn set_ptracer(pid: u32) -> anyhow::Result<()> {
-    use libc::{c_ulong, getppid, prctl, PR_SET_PTRACER};
-    unsafe {
-        let r = prctl(PR_SET_PTRACER, pid as c_ulong, 0, 0, 0);
-        anyhow::ensure!(r == 0, std::io::Error::last_os_error());
-    }
     Ok(())
 }
