@@ -1,3 +1,5 @@
+use ddcommon::tag::Tag;
+use ddcommon::Endpoint;
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 use libc::{
@@ -6,7 +8,7 @@ use libc::{
 };
 use nix::sys::signal;
 use nix::sys::signal::{SaFlags, SigAction, SigHandler};
-use std::ffi::OsStr;
+use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::prelude::*;
 use std::process::{Command, Stdio};
@@ -18,6 +20,45 @@ pub const DD_CRASHTRACK_BEGIN_STACKTRACE: &str = "DD_CRASHTRACK_BEGIN_STACKTRACE
 pub const DD_CRASHTRACK_END_FILE: &str = "DD_CRASHTRACK_END_FILE";
 pub const DD_CRASHTRACK_END_STACKTRACE: &str = "DD_CRASHTRACK_END_STACKTRACE";
 pub const DD_CRASHTRACK_END_SIGINFO: &str = "DD_CRASHTRACK_END_SIGINFO";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Metadata {
+    pub profiling_library_name: String,
+    pub profiling_library_version: String,
+    pub family: String,
+    pub tags: Option<Vec<Tag>>,
+}
+
+impl Metadata {
+    pub fn new(
+        profiling_library_name: String,
+        profiling_library_version: String,
+        family: String,
+        tags: Option<Vec<Tag>>,
+    ) -> Self {
+        Self {
+            profiling_library_name,
+            profiling_library_version,
+            family,
+            tags,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Configuration {
+    pub endpoint: Endpoint,
+    pub path_to_reciever_binary: String,
+}
+
+impl Configuration {
+    pub fn new(endpoint: Endpoint, path_to_reciever_binary: String) -> Self {
+        Self {
+            endpoint,
+            path_to_reciever_binary,
+        }
+    }
+}
 
 static mut RECEIVER: Option<std::process::Child> = None;
 static mut OLD_HANDLER: Option<SigAction> = None;
@@ -44,7 +85,7 @@ fn emit_backtrace_by_frames(w: &mut impl Write, resolve_frames: bool) -> anyhow:
     backtrace::trace(|frame| {
         // Write the values we can get without resolving, since these seem to
         // be crash safe in my experiments.
-        write!{w, "{{"}.unwrap();
+        write! {w, "{{"}.unwrap();
         write!(w, "\"ip\": \"{:?}\", ", frame.ip()).unwrap();
         write!(
             w,
@@ -74,7 +115,7 @@ fn emit_backtrace_by_frames(w: &mut impl Write, resolve_frames: bool) -> anyhow:
     Ok(())
 }
 
-fn emit_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
+fn _emit_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
     let mut file = File::open(path)?;
     const BUFFER_LEN: usize = 512;
     let mut buffer = [0u8; BUFFER_LEN];
@@ -243,14 +284,26 @@ unsafe fn set_alt_stack() -> anyhow::Result<()> {
 }
 
 //TODO pass key/value pairs to the reciever.
-pub fn init(path_to_reciever_binary: impl AsRef<OsStr>) -> anyhow::Result<()> {
+pub fn init(config: Configuration, metadata: Metadata) -> anyhow::Result<()> {
+    let receiver = Command::new(&config.path_to_reciever_binary)
+        .arg("reciever")
+        .stdin(Stdio::piped())
+        .spawn()?;
+
+    // Write the args into the reciever.
+    // Use the pipe to avoid secrets ending up on the commandline
+    writeln!(
+        receiver.stdin.as_ref().unwrap(),
+        "{}",
+        serde_json::to_string(&config)?
+    )?;
+    writeln!(
+        receiver.stdin.as_ref().unwrap(),
+        "{}",
+        serde_json::to_string(&metadata)?
+    )?;
     unsafe {
-        RECEIVER = Some(
-            Command::new(path_to_reciever_binary)
-                .arg("reciever")
-                .stdin(Stdio::piped())
-                .spawn()?,
-        );
+        RECEIVER = Some(receiver);
     }
     register_crash_handler()?;
     Ok(())

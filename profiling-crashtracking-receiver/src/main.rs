@@ -111,9 +111,17 @@ fn process_line(w: &mut impl Write, line: String, state: StdinState) -> anyhow::
     Ok(next)
 }
 
-fn emit_json_prefix(w: &mut impl Write, uuid: &Uuid) -> anyhow::Result<()> {
+fn emit_json_prefix(w: &mut impl Write, uuid: &Uuid, metadata: &Metadata) -> anyhow::Result<()> {
     writeln!(w, "{{")?;
-    write!(w, "\"uuid\": \"{uuid}\"")?;
+
+    // uuid
+    writeln!(w, "\"uuid\": \"{uuid}\",")?;
+
+    // OS info
+    let info = os_info::get();
+    writeln!(w, "\"os_info\": {},", serde_json::to_string(&info)?)?;
+    // No trailing comma or newline on final entry
+    write!(w, "\"metadata\": {}", serde_json::to_string(&metadata)?)?;
 
     Ok(())
 }
@@ -129,19 +137,26 @@ fn emit_json_suffix(w: &mut impl Write) -> anyhow::Result<()> {
 /// Future enhancement: set of key/value pairs sent over pipe to setup
 /// Future enhancement: publish to DD endpoint
 pub fn main() -> anyhow::Result<()> {
+    let mut config = String::new();
+    std::io::stdin().lock().read_line(&mut config)?;
+    let config: Configuration = serde_json::from_str(&config)?;
+
+    let mut metadata = String::new();
+    std::io::stdin().lock().read_line(&mut metadata)?;
+    let metadata: Metadata = serde_json::from_str(&metadata)?;
+
     let uuid = Uuid::new_v4();
     let mut buf = vec![];
-    let stdin = std::io::stdin();
-
-    emit_json_prefix(&mut buf, &uuid)?;
+    emit_json_prefix(&mut buf, &uuid, &metadata)?;
     let mut stdin_state = StdinState::Waiting;
-    for line in stdin.lock().lines() {
+    for line in std::io::stdin().lock().lines() {
         let line = line?;
         stdin_state = process_line(&mut buf, line, stdin_state)?;
     }
     emit_json_suffix(&mut buf)?;
     //std::io::stdout().write_all(&buf)?;
     _print_to_file(&buf)?;
-    //upload_to_dd(&buf)?;
+
+    upload_to_dd(&buf, &config, &metadata).unwrap();
     Ok(())
 }
