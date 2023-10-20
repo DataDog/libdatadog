@@ -115,7 +115,7 @@ fn emit_backtrace_by_frames(w: &mut impl Write, resolve_frames: bool) -> anyhow:
     Ok(())
 }
 
-fn _emit_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
+fn emit_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
     let mut file = File::open(path)?;
     const BUFFER_LEN: usize = 512;
     let mut buffer = [0u8; BUFFER_LEN];
