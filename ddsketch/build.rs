@@ -1,3 +1,8 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0. This product includes software
+// developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
+// Datadog, Inc.
+
 use std::error::Error;
 
 #[cfg(feature = "generate-protobuf")]
@@ -22,6 +27,10 @@ const HEADER: &str =
 fn main() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "generate-protobuf")]
     {
+        // protoc is required to compile proto files. This uses protobuf_src to compile protoc
+        // from the source, setting the env var to tell prost_build where to find it.
+        std::env::set_var("PROTOC", protoc_bin_vendored::protoc_bin_path().unwrap());
+
         let mut config = prost_build::Config::new();
 
         let cur_working_dir = env::var("CARGO_MANIFEST_DIR")?;

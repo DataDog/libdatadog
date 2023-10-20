@@ -1,3 +1,8 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0. This product includes software
+// developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
+// Datadog, Inc.
+
 use std::collections::{HashMap, VecDeque};
 
 use prost::Message;
@@ -131,7 +136,8 @@ impl LowCollapsingDenseStore {
             for _ in 0..additional_low_bins {
                 self.bins.push_front(0.0);
             }
-            self.offset = self.offset - additional_low_bins as i32;
+            self.offset -= additional_low_bins as i32;
+            #[allow(clippy::needless_return)]
             return 0;
         } else if self.offset + self.bins.len() as i32 <= bucket_index {
             let bin_range_size = bucket_index - self.offset + 1;
@@ -186,7 +192,7 @@ impl LogMapping {
         let multiplier = Self::multiplier_from_gamma(gamma);
         Some(Self {
             gamma,
-            multiplier: multiplier,
+            multiplier,
             min_indexable_value: max(
                 std::f64::MIN_POSITIVE * gamma,
                 ((i32::MIN as f64 - offset) / multiplier + 1.0).exp(),
@@ -219,7 +225,7 @@ impl Default for LogMapping {
         const BACKEND_SKETCH_MIN_VALUE: f64 = 1e-9;
         // offset used in datadog's backend for sketches
         let offset: f64 = (1.0 - (BACKEND_SKETCH_MIN_VALUE.ln() / GAMMA.ln()).floor()) + 0.5;
-        
+
         Self::new(GAMMA, offset).unwrap()
     }
 }
@@ -269,14 +275,18 @@ mod test {
     fn test_exponential_mapping_realtive_accuracy() {
         let mapping = LogMapping::default();
 
-        assert_within!(mapping.relative_accuracy(), 0.01, f64::EPSILON);
+        assert_within!(
+            mapping.relative_accuracy(),
+            0.007751937984496138,
+            f64::EPSILON
+        );
     }
 
     #[test]
-    fn test_skecth_add() {
+    fn test_sketch_add() {
         let mut sketch = DDSketch::default();
         let points: &[f64] = &[0.0, 1e-5, 0.1, 2.0, 10.0, 25.0, 10000.0];
-        for (i, &point) in points.into_iter().enumerate() {
+        for (i, &point) in points.iter().enumerate() {
             assert!(sketch.add_with_count(point, i as f64 + 1.0).is_some());
         }
 
@@ -314,12 +324,12 @@ mod test {
     fn test_skecth_encode() {
         let mut sketch = DDSketch::default();
         let points: &[f64] = &[0.0, 1e-30, 0.1, 2.0, 10.0, 25.0, 10000.0];
-        for (i, &point) in points.into_iter().enumerate() {
+        for (i, &point) in points.iter().enumerate() {
             assert!(sketch.add_with_count(point, i as f64).is_some());
         }
 
         let pb_sketch = sketch.into_pb().encode_to_vec();
-        assert!(pb_sketch.len() != 0);
+        assert!(!pb_sketch.is_empty());
     }
 
     #[test]

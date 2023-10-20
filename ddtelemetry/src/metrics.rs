@@ -133,10 +133,7 @@ impl MetricBuckets {
                 })
                 .add_point(point),
             metrics::MetricType::Distribution => {
-                self.sketches
-                    .entry(bucket_key)
-                    .or_insert_with(|| DDSketch::default())
-                    .add(point);
+                self.sketches.entry(bucket_key).or_default().add(point);
             }
         }
     }

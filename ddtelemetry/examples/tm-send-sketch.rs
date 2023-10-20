@@ -1,3 +1,8 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0. This product includes software
+// developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
+// Datadog, Inc.
+
 use std::{
     borrow::Cow,
     sync::atomic::{AtomicU64, Ordering},
@@ -80,16 +85,18 @@ async fn async_main() {
     let host = build_host();
 
     let mut sketch = datadog_ddsketch::DDSketch::default();
-    sketch.add(0.0).unwrap();
-    sketch.add(1.0).unwrap();
-    sketch.add(2.0).unwrap();
+    for i in 0..1000 {
+        for j in 0..1000 {
+            sketch.add((i + j) as f64 / 1000.0).unwrap();
+        }
+    }
 
     let payload = data::Payload::Sketches(data::Sketches {
         series: vec![Sketch {
-            namespace: data::metrics::MetricNamespace::General,
+            namespace: data::metrics::MetricNamespace::Telemetry,
             tags: Vec::new(),
             common: true,
-            metric: "test_sketch_distribution".to_owned(),
+            metric: "telemetry_api.ms".to_owned(),
             sketch: data::metrics::SerializedSketch::B64 {
                 sketch_b64: base64::Engine::encode(
                     &base64::engine::general_purpose::STANDARD,
@@ -103,6 +110,12 @@ async fn async_main() {
 
     let req = build_request(&app, &host, &payload);
 
-    let config = Config::get().clone();
+    let mut config = Config::get().clone();
+    config.endpoint = Some(Endpoint {
+        url: Uri::from_static(
+            "https://instrumentation-telemetry-intake.datad0g.com/api/v2/apmtelemetry",
+        ),
+        api_key: Some(Cow::Owned(std::env::var("DD_API_KEY").unwrap())),
+    });
     push_telemetry(&config, &req).await.unwrap();
 }

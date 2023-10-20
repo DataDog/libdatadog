@@ -371,12 +371,7 @@ impl TelemetryWorker {
         let context_guard = self.data.metric_contexts.lock();
         for (context_key, extra_tags, points) in self.data.metric_buckets.flush_sketches() {
             let Some(context) = context_guard.read(context_key) else {
-                telemetry_worker_log!(
-                    self,
-                    ERROR,
-                    "Context not found for key {:?}",
-                    context_key
-                );
+                telemetry_worker_log!(self, ERROR, "Context not found for key {:?}", context_key);
                 continue;
             };
             let mut tags = extra_tags;
@@ -404,12 +399,7 @@ impl TelemetryWorker {
         let context_guard = self.data.metric_contexts.lock();
         for (context_key, extra_tags, points) in self.data.metric_buckets.flush_series() {
             let Some(context) = context_guard.read(context_key) else {
-                telemetry_worker_log!(
-                    self,
-                    ERROR,
-                    "Context not found for key {:?}",
-                    context_key
-                );
+                telemetry_worker_log!(self, ERROR, "Context not found for key {:?}", context_key);
                 continue;
             };
 
