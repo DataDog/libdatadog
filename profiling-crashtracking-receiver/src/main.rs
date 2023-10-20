@@ -23,6 +23,9 @@ use uuid::Uuid;
 // The Bools track if we need a comma preceding the next item
 #[derive(Debug)]
 enum StdinState {
+    Counters {
+        comma_needed: bool,
+    },
     SigInfo {
         comma_needed: bool,
     },
@@ -51,6 +54,18 @@ fn process_line(w: &mut impl Write, line: String, state: StdinState) -> anyhow::
                 StdinState::SigInfo { comma_needed: true }
             }
         }
+        StdinState::Counters { comma_needed } => {
+            if line.starts_with(DD_CRASHTRACK_END_COUNTERS) {
+                write!(w, "\n}}")?;
+                StdinState::Waiting
+            } else {
+                if comma_needed {
+                    writeln!(w, ",")?;
+                }
+                write!(w, "\t{line}")?;
+                StdinState::Counters { comma_needed: true }
+            }
+        }
         StdinState::Waiting => {
             if line.starts_with(DD_CRASHTRACK_BEGIN_FILE) {
                 let (_, filename) = line.split_once(' ').unwrap_or(("", "MISSING_FILENAME"));
@@ -70,6 +85,12 @@ fn process_line(w: &mut impl Write, line: String, state: StdinState) -> anyhow::
                 writeln!(w, ",")?;
                 writeln!(w, "\"siginfo\": {{")?;
                 StdinState::SigInfo {
+                    comma_needed: false,
+                }
+            } else if line.starts_with(DD_CRASHTRACK_BEGIN_COUNTERS) {
+                writeln!(w, ",")?;
+                writeln!(w, "\"counters\": {{")?;
+                StdinState::Counters {
                     comma_needed: false,
                 }
             } else {

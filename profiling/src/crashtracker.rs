@@ -13,6 +13,8 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::process::{Command, Stdio};
 use std::ptr;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::SeqCst;
 
 pub const DD_CRASHTRACK_BEGIN_FILE: &str = "DD_CRASHTRACK_BEGIN_FILE";
 pub const DD_CRASHTRACK_BEGIN_SIGINFO: &str = "DD_CRASHTRACK_BEGIN_SIGINFO";
@@ -20,6 +22,8 @@ pub const DD_CRASHTRACK_BEGIN_STACKTRACE: &str = "DD_CRASHTRACK_BEGIN_STACKTRACE
 pub const DD_CRASHTRACK_END_FILE: &str = "DD_CRASHTRACK_END_FILE";
 pub const DD_CRASHTRACK_END_STACKTRACE: &str = "DD_CRASHTRACK_END_STACKTRACE";
 pub const DD_CRASHTRACK_END_SIGINFO: &str = "DD_CRASHTRACK_END_SIGINFO";
+pub const DD_CRASHTRACK_BEGIN_COUNTERS: &str = "DD_CRASHTRACK_BEGIN_COUNTERS";
+pub const DD_CRASHTRACK_END_COUNTERS: &str = "DD_CRASHTRACK_END_COUNTERS";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Metadata {
@@ -58,6 +62,80 @@ impl Configuration {
             path_to_reciever_binary,
         }
     }
+}
+
+// TODO, add more as needed
+/// This is a list of possible operations a profiler might be in, to help us
+/// know
+/// 1. Whether the profiler was running when the crash happened
+/// 2. What it was doing at a broad level
+/// This could also be used to track wall clock time, if that's not too expensive
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ProfilingOpTypes {
+    NotProfiling = 0,
+    CollectingSample,
+    Unwinding,
+    Serializing,
+    SIZE,
+}
+
+impl ProfilingOpTypes {
+    pub fn name(i: usize) -> anyhow::Result<&'static str> {
+        let rval = match i {
+            0 => "not_profiling",
+            1 => "collecting_sample",
+            2 => "unwinding",
+            3 => "serializing",
+            _ => anyhow::bail!("invalid enum val {i}"),
+        };
+        Ok(rval)
+    }
+}
+
+#[allow(clippy::declare_interior_mutable_const)]
+const ATOMIC_ZERO: AtomicUsize = AtomicUsize::new(0);
+
+static NUM_THREADS_DOING_PROFILING: AtomicUsize = ATOMIC_ZERO;
+static PROFILING_OP_COUNTERS: [AtomicUsize; ProfilingOpTypes::SIZE as usize] =
+    [ATOMIC_ZERO; ProfilingOpTypes::SIZE as usize];
+
+pub fn begin_profiling_op(op: ProfilingOpTypes) -> anyhow::Result<()> {
+    NUM_THREADS_DOING_PROFILING.fetch_add(1, SeqCst);
+    PROFILING_OP_COUNTERS[op as usize].fetch_add(1, SeqCst);
+    // this can technically wrap around, but if we hit 2^64 ops we're doing
+    // something else wrong.
+    Ok(())
+}
+
+pub fn end_profiling_op(op: ProfilingOpTypes) -> anyhow::Result<()> {
+    let old = NUM_THREADS_DOING_PROFILING.fetch_sub(1, SeqCst);
+    anyhow::ensure!(
+        old > 0,
+        "attempted to end profiling op '{op:?}' while global count was 0"
+    );
+    let old = PROFILING_OP_COUNTERS[op as usize].fetch_sub(1, SeqCst);
+    anyhow::ensure!(
+        old > 0,
+        "attempted to end profiling op '{op:?}' while op count was 0"
+    );
+    Ok(())
+}
+
+fn emit_counters(w: &mut impl Write) -> anyhow::Result<()> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_COUNTERS}")?;
+    writeln!(
+        w,
+        "\"num_threads_doing_profiling\": {}",
+        NUM_THREADS_DOING_PROFILING.load(SeqCst)
+    )?;
+
+    for (i, c) in PROFILING_OP_COUNTERS.iter().enumerate() {
+        writeln!(w, "\"{}\": {}", ProfilingOpTypes::name(i)?, c.load(SeqCst))?;
+    }
+
+    writeln!(w, "{DD_CRASHTRACK_END_COUNTERS}")?;
+    Ok(())
 }
 
 static mut RECEIVER: Option<std::process::Child> = None;
@@ -203,6 +281,7 @@ fn handle_segv_impl(signum: i32) -> anyhow::Result<()> {
     writeln!(pipe, "\"signum\": {signum}")?;
     writeln!(pipe, "{DD_CRASHTRACK_END_SIGINFO}")?;
 
+    emit_counters(pipe)?;
     // Getting a backtrace on rust is not guaranteed to be signal safe
     // https://github.com/rust-lang/backtrace-rs/issues/414
     // let current_backtrace = backtrace::Backtrace::new();

@@ -12,6 +12,34 @@ use libc::c_char;
 use std::borrow::Cow;
 use std::ffi::CStr;
 
+pub use datadog_profiling::crashtracker::ProfilingOpTypes;
+
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_prof_crashtracker_begin_profiling_op(
+    op: ProfilingOpTypes,
+) -> ProfileResult {
+    match crashtracker::begin_profiling_op(op) {
+        Ok(_) => ProfileResult::Ok(true),
+        Err(err) => ProfileResult::Err(Error::from(
+            err.context("ddog_prof_crashtracker_init failed"),
+        )),
+    }
+}
+
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_prof_crashtracker_end_profiling_op(
+    op: ProfilingOpTypes,
+) -> ProfileResult {
+    match crashtracker::end_profiling_op(op) {
+        Ok(_) => ProfileResult::Ok(true),
+        Err(err) => ProfileResult::Err(Error::from(
+            err.context("ddog_prof_crashtracker_init failed"),
+        )),
+    }
+}
+
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_crashtracker_init_full(
