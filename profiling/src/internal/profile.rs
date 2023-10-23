@@ -22,6 +22,7 @@ pub struct Profile {
     observations: Observations,
     period: Option<(i64, ValueType)>,
     sample_types: Vec<ValueType>,
+    stack_id_key: StringId,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: FxIndexSet<String>,
@@ -148,6 +149,7 @@ impl Profile {
             observations: Default::default(),
             period: None,
             sample_types: vec![],
+            stack_id_key: Default::default(),
             stack_traces: Default::default(),
             start_time,
             strings: Default::default(),
@@ -162,6 +164,7 @@ impl Profile {
         profile.endpoints.local_root_span_id_label = profile.intern("local root span id");
         profile.endpoints.endpoint_label = profile.intern("trace endpoint");
         profile.timestamp_key = profile.intern("end_timestamp_ns");
+        profile.stack_id_key = profile.intern("dd_stack_id");
 
         profile.sample_types = sample_types
             .iter()
@@ -484,6 +487,14 @@ impl Profile {
                     .map(pprof::Label::from),
             )
             .chain(timestamp.map(|ts| Label::num(self.timestamp_key, ts.get(), None).into()))
+            .chain(std::iter::once(
+                Label::num(
+                    self.stack_id_key,
+                    sample.stacktrace.into_raw_id().try_into()?,
+                    None,
+                )
+                .into(),
+            ))
             .collect();
 
         Ok(labels)
@@ -736,7 +747,7 @@ mod api_test {
         let samples = profile.sorted_samples();
 
         let sample = samples.get(0).expect("index 0 to exist");
-        assert_eq!(sample.labels.len(), 1);
+        assert_eq!(sample.labels.len(), 2);
         let label = sample.labels.get(0).expect("index 0 to exist");
         let key = profile
             .string_table
@@ -756,7 +767,7 @@ mod api_test {
         assert_eq!(num_unit, "");
 
         let sample = samples.get(1).expect("index 1 to exist");
-        assert_eq!(sample.labels.len(), 1);
+        assert_eq!(sample.labels.len(), 2);
         let label = sample.labels.get(0).expect("index 0 to exist");
         let key = profile
             .string_table
@@ -776,7 +787,7 @@ mod api_test {
         assert_eq!(num_unit, "");
 
         let sample = samples.get(2).expect("index 2 to exist");
-        assert_eq!(sample.labels.len(), 2);
+        assert_eq!(sample.labels.len(), 3);
         let label = sample.labels.get(0).expect("index 0 to exist");
         let key = profile
             .string_table
@@ -968,7 +979,7 @@ mod api_test {
         let s1 = samples.get(0).expect("sample");
 
         // The trace endpoint label should be added to the first sample
-        assert_eq!(s1.labels.len(), 3);
+        assert_eq!(s1.labels.len(), 4);
 
         let l1 = s1.labels.get(0).expect("label");
 
@@ -1018,7 +1029,7 @@ mod api_test {
         let s2 = samples.get(1).expect("sample");
 
         // The trace endpoint label shouldn't be added to second sample because the span id doesn't match
-        assert_eq!(s2.labels.len(), 2);
+        assert_eq!(s2.labels.len(), 3);
     }
 
     #[test]
@@ -2123,7 +2134,7 @@ mod api_test {
 
         let local_root_span_id = locate_string("local root span id");
         let trace_endpoint = locate_string("trace endpoint");
-
+        let stack_id = locate_string("dd_stack_id");
         // Set up the expected labels per sample
         let expected_labels = [
             [
@@ -2134,6 +2145,12 @@ mod api_test {
                     num_unit: 0,
                 },
                 pprof::Label::str(trace_endpoint, locate_string("large endpoint")),
+                pprof::Label {
+                    key: stack_id,
+                    str: 0,
+                    num: 0,
+                    num_unit: 0,
+                },
             ],
             [
                 pprof::Label {
@@ -2143,6 +2160,12 @@ mod api_test {
                     num_unit: 0,
                 },
                 pprof::Label::str(trace_endpoint, locate_string("endpoint 10")),
+                pprof::Label {
+                    key: stack_id,
+                    str: 0,
+                    num: 0,
+                    num_unit: 0,
+                },
             ],
         ];
 
@@ -2153,6 +2176,118 @@ mod api_test {
             .zip(expected_labels.iter())
         {
             assert_eq!(sample.labels, labels);
+        }
+    }
+
+    #[test]
+    fn stack_id_labels() {
+        let sample_types = vec![api::ValueType {
+            r#type: "samples",
+            unit: "count",
+        }];
+
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+
+        let id_label = api::Label {
+            key: "test label",
+            str: None,
+            num: 10,
+            num_unit: None,
+        };
+
+        let mapping = api::Mapping {
+            filename: "php",
+            ..Default::default()
+        };
+
+        let main_locations = vec![api::Location {
+            mapping,
+            function: api::Function {
+                name: "{main}",
+                system_name: "{main}",
+                filename: "index.php",
+                ..Default::default()
+            },
+            ..Default::default()
+        }];
+        let test_locations = vec![api::Location {
+            mapping,
+            function: api::Function {
+                name: "test",
+                system_name: "test",
+                filename: "index.php",
+                start_line: 3,
+            },
+            ..Default::default()
+        }];
+
+        let sample1 = api::Sample {
+            locations: main_locations.clone(),
+            values: vec![1],
+            labels: vec![id_label],
+        };
+
+        let sample2 = api::Sample {
+            locations: test_locations.clone(),
+            values: vec![2],
+            labels: vec![],
+        };
+
+        let sample3 = api::Sample {
+            locations: main_locations,
+            values: vec![3],
+            labels: vec![],
+        };
+
+        profile.add_sample(sample1, None).expect("add to success");
+        profile.add_sample(sample2, None).expect("add to success");
+        profile
+            .add_sample(sample3, Timestamp::new(42))
+            .expect("add to success");
+
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+        assert_eq!(serialized_profile.samples.len(), 3);
+
+        // Find common label strings in the string table.
+        let locate_string = |string: &str| -> i64 {
+            // The table is supposed to be unique, so we shouldn't have to worry about duplicates.
+            serialized_profile
+                .string_table
+                .iter()
+                .enumerate()
+                .find_map(|(offset, str)| {
+                    if str == string {
+                        Some(offset as i64)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap()
+        };
+
+        let test_label_key = locate_string("test label");
+        let stack_id_key = locate_string("dd_stack_id");
+        let timestamp_key = locate_string("end_timestamp_ns");
+        for sample in &serialized_profile.samples {
+            match sample.values[0] {
+                1 => {
+                    assert_eq!(sample.labels[0].key, test_label_key);
+                    assert_eq!(sample.labels[0].num, 10);
+                    assert_eq!(sample.labels[1].key, stack_id_key);
+                    assert_eq!(sample.labels[1].num, 0);
+                }
+                2 => {
+                    assert_eq!(sample.labels[0].key, stack_id_key);
+                    assert_eq!(sample.labels[0].num, 1);
+                }
+                3 => {
+                    assert_eq!(sample.labels[0].key, timestamp_key);
+                    assert_eq!(sample.labels[0].num, 42);
+                    assert_eq!(sample.labels[1].key, stack_id_key);
+                    assert_eq!(sample.labels[1].num, 0);
+                }
+                _ => panic!("Unexpected sample {:?}", sample),
+            }
         }
     }
 }
