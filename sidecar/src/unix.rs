@@ -276,7 +276,7 @@ fn daemonize(listener: StdUnixListener, cfg: Config) -> io::Result<()> {
         }
         config::LogMethod::Disabled => {
             spawn_cfg.stdout(Stdio::Null);
-            spawn_cfg.stdout(Stdio::Null);
+            spawn_cfg.stderr(Stdio::Null);
         }
         _ => {}
     }
