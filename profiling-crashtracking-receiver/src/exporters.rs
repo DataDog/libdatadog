@@ -31,6 +31,8 @@ pub fn upload_to_dd(
     };
     let tags: Option<Vec<Tag>> = Some(vec![tag]);
     let time = Utc::now();
+    // TODO make this configurable
+    // Comment that this is to prevent us waiting forever and keeping the container alive forever
     let timeout = std::time::Duration::from_secs(30);
     let crash_file = exporter::File {
         name: "crash-info.json",
@@ -45,5 +47,6 @@ pub fn upload_to_dd(
     )?;
     let request = exporter.build(time, time, &[crash_file], &[], None, None, None, timeout)?;
     let response = exporter.send(request, None)?;
+    //TODO, do we need to wait a bit for the agent to finish upload?
     Ok(response)
 }

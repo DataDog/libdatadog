@@ -178,6 +178,7 @@ pub fn main() -> anyhow::Result<()> {
     //std::io::stdout().write_all(&buf)?;
     _print_to_file(&buf)?;
 
+    //TODO, only upload if the crash was seen
     upload_to_dd(&buf, &config, &metadata).unwrap();
     Ok(())
 }

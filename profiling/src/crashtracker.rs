@@ -177,6 +177,7 @@ fn emit_backtrace_by_frames(w: &mut impl Write, resolve_frames: bool) -> anyhow:
         if resolve_frames {
             unsafe {
                 backtrace::resolve_frame_unsynchronized(frame, |symbol| {
+                    //TODO, make this write! not writeln!
                     if let Some(name) = symbol.name() {
                         writeln!(w, ", name: {}", name).unwrap();
                     }
@@ -193,6 +194,7 @@ fn emit_backtrace_by_frames(w: &mut impl Write, resolve_frames: bool) -> anyhow:
     Ok(())
 }
 
+// TODO comment why I do this by block not line
 fn emit_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
     let mut file = File::open(path)?;
     const BUFFER_LEN: usize = 512;
@@ -275,6 +277,7 @@ unsafe fn restore_old_handler() -> anyhow::Result<()> {
 }
 
 fn handle_segv_impl(signum: i32) -> anyhow::Result<()> {
+    // TODO could be a `take``
     let child: &mut std::process::Child = unsafe { RECEIVER.as_mut().unwrap() };
     let pipe = child.stdin.as_mut().unwrap();
     writeln!(pipe, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
@@ -299,6 +302,7 @@ fn handle_segv_impl(signum: i32) -> anyhow::Result<()> {
     // The stdin handle to the child process, if any, will be closed before waiting.
     // This helps avoid deadlock: it ensures that the child does not block waiting
     // for input from the parent, while the parent waits for the child to exit.
+    //TODO, use a polling mechanism that could recover from a crashing child
     unsafe { RECEIVER.as_mut().unwrap().wait()? };
     Ok(())
 }
@@ -364,6 +368,8 @@ unsafe fn set_alt_stack() -> anyhow::Result<()> {
 
 //TODO pass key/value pairs to the reciever.
 pub fn init(config: Configuration, metadata: Metadata) -> anyhow::Result<()> {
+    //TODO, do something to stderr/stdout eventually
+    //TODO, figure out what happens on fork. 
     let receiver = Command::new(&config.path_to_reciever_binary)
         .arg("reciever")
         .stdin(Stdio::piped())
