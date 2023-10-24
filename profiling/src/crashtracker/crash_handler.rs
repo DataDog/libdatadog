@@ -14,14 +14,17 @@ use libc::{
 use nix::sys::signal;
 use nix::sys::signal::{SaFlags, SigAction, SigHandler};
 
-enum GlobalVarState<T> {
+enum GlobalVarState<T>
+where
+    T: std::fmt::Debug,
+{
     Unassigned,
     Some(T),
     Taken,
 }
 
-static mut RECEIVER: Option<std::process::Child> = None;
-static mut OLD_HANDLER: Option<SigAction> = None;
+static mut RECEIVER: GlobalVarState<std::process::Child> = GlobalVarState::Unassigned;
+static mut OLD_HANDLER: GlobalVarState<SigAction> = GlobalVarState::Unassigned;
 
 extern "C" fn handle_sigsegv(signum: i32) {
     // Safety: We've already crashed, this is a best effort to chain to the old
@@ -34,9 +37,13 @@ extern "C" fn handle_sigsegv(signum: i32) {
 }
 
 fn handle_sigsegv_impl(signum: i32) -> anyhow::Result<()> {
-    // TODO could be a `take``
-    let child: &mut std::process::Child = unsafe { RECEIVER.as_mut().unwrap() };
-    let pipe = child.stdin.as_mut().unwrap();
+    let mut receiver = match std::mem::replace(unsafe { &mut RECEIVER }, GlobalVarState::Taken) {
+        GlobalVarState::Some(r) => r,
+        GlobalVarState::Unassigned => anyhow::bail!("Cannot find receiver: Unassigned"),
+        GlobalVarState::Taken => anyhow::bail!("Cannot receiver: Taken"),
+    };
+
+    let pipe = receiver.stdin.as_mut().unwrap();
     writeln!(pipe, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
     writeln!(pipe, "\"signum\": {signum}")?;
     writeln!(pipe, "{DD_CRASHTRACK_END_SIGINFO}")?;
@@ -60,14 +67,14 @@ fn handle_sigsegv_impl(signum: i32) -> anyhow::Result<()> {
     // This helps avoid deadlock: it ensures that the child does not block waiting
     // for input from the parent, while the parent waits for the child to exit.
     //TODO, use a polling mechanism that could recover from a crashing child
-    unsafe { RECEIVER.as_mut().unwrap().wait()? };
+    receiver.wait()?;
     Ok(())
 }
 
 //TODO, get other signals than segv?
 pub fn register_crash_handler(receiver: std::process::Child) -> anyhow::Result<()> {
     unsafe {
-        RECEIVER = Some(receiver);
+        RECEIVER = GlobalVarState::Some(receiver);
     }
 
     let sig_action = SigAction::new(
@@ -79,7 +86,7 @@ pub fn register_crash_handler(receiver: std::process::Child) -> anyhow::Result<(
     unsafe {
         set_alt_stack()?;
         let old = signal::sigaction(signal::SIGSEGV, &sig_action)?;
-        OLD_HANDLER = Some(old);
+        OLD_HANDLER = GlobalVarState::Some(old);
     }
     Ok(())
 }
@@ -88,8 +95,11 @@ unsafe fn restore_old_handler() -> anyhow::Result<()> {
     // Restore the old handler, so that the current handler can return to it.
     // Although this is technically UB, this is what Rust does in the same case.
     // https://github.com/rust-lang/rust/blob/master/library/std/src/sys/unix/stack_overflow.rs#L75
-    let old_handler = unsafe { OLD_HANDLER.as_ref().unwrap() };
-    signal::sigaction(signal::SIGSEGV, old_handler)?;
+    match std::mem::replace(unsafe { &mut OLD_HANDLER }, GlobalVarState::Taken) {
+        GlobalVarState::Some(old_handler) => signal::sigaction(signal::SIGSEGV, &old_handler)?,
+        GlobalVarState::Unassigned => anyhow::bail!("Cannot restore signal handler: Unassigned"),
+        GlobalVarState::Taken => anyhow::bail!("Cannot restore signal handler: Taken"),
+    };
     Ok(())
 }
 
