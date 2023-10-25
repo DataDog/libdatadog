@@ -16,6 +16,7 @@ pub struct Profile {
     endpoints: Endpoints,
     functions: FxIndexSet<Function>,
     labels: FxIndexSet<Label>,
+    label_set_start_key: StringId,
     label_sets: FxIndexSet<LabelSet>,
     locations: FxIndexSet<Location>,
     mappings: FxIndexSet<Mapping>,
@@ -143,6 +144,7 @@ impl Profile {
             functions: Default::default(),
             labels: Default::default(),
             label_sets: Default::default(),
+            label_set_start_key: Default::default(),
             locations: Default::default(),
             mappings: Default::default(),
             observations: Default::default(),
@@ -162,6 +164,7 @@ impl Profile {
         profile.endpoints.local_root_span_id_label = profile.intern("local root span id");
         profile.endpoints.endpoint_label = profile.intern("trace endpoint");
         profile.timestamp_key = profile.intern("end_timestamp_ns");
+        profile.label_set_start_key = profile.intern("dd_following_labels_belong_to_set");
 
         profile.sample_types = sample_types
             .iter()
@@ -475,17 +478,28 @@ impl Profile {
         sample: Sample,
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<Vec<pprof::Label>> {
-        let labels: Vec<_> = self
+        let ts_label = timestamp
+            .iter()
+            .map(|ts| Label::num(self.timestamp_key, ts.get(), None).into());
+        let label_set_prefix = std::iter::once(
+            Label::num(
+                self.label_set_start_key,
+                sample.labels.into_raw_id().try_into()?,
+                None,
+            )
+            .into(),
+        );
+
+        let label_set = self
             .get_label_set(sample.labels)
             .iter()
             .map(|l| self.get_label(*l).into())
             .chain(
                 self.get_endpoint_for_labels(sample.labels)?
                     .map(pprof::Label::from),
-            )
-            .chain(timestamp.map(|ts| Label::num(self.timestamp_key, ts.get(), None).into()))
-            .collect();
+            );
 
+        let labels = ts_label.chain(label_set_prefix).chain(label_set).collect();
         Ok(labels)
     }
 
@@ -546,6 +560,35 @@ mod api_test {
 
     use super::*;
     use std::{borrow::Cow, collections::HashMap};
+
+    fn check_label_prefix(profile: &pprof::Profile, label: &pprof::Label, num: i64) {
+        check_num_label(profile, label, "dd_following_labels_belong_to_set", num);
+    }
+
+    fn check_label(
+        profile: &pprof::Profile,
+        label: &pprof::Label,
+        key: &str,
+        num: i64,
+        num_unit: &str,
+        str: &str,
+    ) {
+        assert_eq!(profile.string_table.get(label.key as usize).unwrap(), key);
+        assert_eq!(profile.string_table.get(label.str as usize).unwrap(), str);
+        assert_eq!(label.num, num);
+        assert_eq!(
+            profile.string_table.get(label.num_unit as usize).unwrap(),
+            num_unit
+        );
+    }
+
+    fn check_num_label(profile: &pprof::Profile, label: &pprof::Label, key: &str, num: i64) {
+        check_label(profile, label, key, num, "", "");
+    }
+
+    fn check_str_label(profile: &pprof::Profile, label: &pprof::Label, key: &str, str: &str) {
+        check_label(profile, label, key, 0, "", str);
+    }
 
     #[test]
     fn interning() {
@@ -736,81 +779,25 @@ mod api_test {
         let samples = profile.sorted_samples();
 
         let sample = samples.get(0).expect("index 0 to exist");
-        assert_eq!(sample.labels.len(), 1);
-        let label = sample.labels.get(0).expect("index 0 to exist");
-        let key = profile
-            .string_table
-            .get(label.key as usize)
-            .expect("index to exist");
-        let str = profile
-            .string_table
-            .get(label.str as usize)
-            .expect("index to exist");
-        let num_unit = profile
-            .string_table
-            .get(label.num_unit as usize)
-            .expect("index to exist");
-        assert_eq!(key, "pid");
-        assert_eq!(label.num, 101);
-        assert_eq!(str, "");
-        assert_eq!(num_unit, "");
+        assert_eq!(sample.labels.len(), 2);
+        check_label_prefix(&profile, sample.labels.get(0).unwrap(), 0);
+        check_num_label(&profile, sample.labels.get(1).unwrap(), "pid", 101);
 
         let sample = samples.get(1).expect("index 1 to exist");
-        assert_eq!(sample.labels.len(), 1);
-        let label = sample.labels.get(0).expect("index 0 to exist");
-        let key = profile
-            .string_table
-            .get(label.key as usize)
-            .expect("index to exist");
-        let str = profile
-            .string_table
-            .get(label.str as usize)
-            .expect("index to exist");
-        let num_unit = profile
-            .string_table
-            .get(label.num_unit as usize)
-            .expect("index to exist");
-        assert_eq!(key, "pid");
-        assert_eq!(label.num, 101);
-        assert_eq!(str, "");
-        assert_eq!(num_unit, "");
+        assert_eq!(sample.labels.len(), 2);
+        check_label_prefix(&profile, sample.labels.get(0).unwrap(), 0);
+        check_num_label(&profile, sample.labels.get(1).unwrap(), "pid", 101);
 
         let sample = samples.get(2).expect("index 2 to exist");
-        assert_eq!(sample.labels.len(), 2);
-        let label = sample.labels.get(0).expect("index 0 to exist");
-        let key = profile
-            .string_table
-            .get(label.key as usize)
-            .expect("index to exist");
-        let str = profile
-            .string_table
-            .get(label.str as usize)
-            .expect("index to exist");
-        let num_unit = profile
-            .string_table
-            .get(label.num_unit as usize)
-            .expect("index to exist");
-        assert_eq!(key, "pid");
-        assert_eq!(label.num, 101);
-        assert_eq!(str, "");
-        assert_eq!(num_unit, "");
-        let label = sample.labels.get(1).expect("index 1 to exist");
-        let key = profile
-            .string_table
-            .get(label.key as usize)
-            .expect("index to exist");
-        let str = profile
-            .string_table
-            .get(label.str as usize)
-            .expect("index to exist");
-        let num_unit = profile
-            .string_table
-            .get(label.num_unit as usize)
-            .expect("index to exist");
-        assert_eq!(key, "end_timestamp_ns");
-        assert_eq!(label.num, 42);
-        assert_eq!(str, "");
-        assert_eq!(num_unit, "");
+        assert_eq!(sample.labels.len(), 3);
+        check_num_label(
+            &profile,
+            sample.labels.get(0).unwrap(),
+            "end_timestamp_ns",
+            42,
+        );
+        check_label_prefix(&profile, sample.labels.get(1).unwrap(), 0);
+        check_num_label(&profile, sample.labels.get(2).unwrap(), "pid", 101);
     }
 
     #[test]
@@ -968,20 +955,18 @@ mod api_test {
         let s1 = samples.get(0).expect("sample");
 
         // The trace endpoint label should be added to the first sample
-        assert_eq!(s1.labels.len(), 3);
-
-        let l1 = s1.labels.get(0).expect("label");
-
-        assert_eq!(
-            serialized_profile
-                .string_table
-                .get(l1.key as usize)
-                .unwrap(),
-            "local root span id"
+        assert_eq!(s1.labels.len(), 4);
+        check_label_prefix(&serialized_profile, s1.labels.get(0).unwrap(), 0);
+        check_label(
+            &serialized_profile,
+            s1.labels.get(1).unwrap(),
+            "local root span id",
+            10,
+            "",
+            "",
         );
-        assert_eq!(l1.num, 10);
 
-        let l2 = s1.labels.get(1).expect("label");
+        let l2 = s1.labels.get(2).expect("label");
 
         assert_eq!(
             serialized_profile
@@ -998,7 +983,7 @@ mod api_test {
             "test"
         );
 
-        let l3 = s1.labels.get(2).expect("label");
+        let l3 = s1.labels.get(3).expect("label");
 
         assert_eq!(
             serialized_profile
@@ -1018,7 +1003,7 @@ mod api_test {
         let s2 = samples.get(1).expect("sample");
 
         // The trace endpoint label shouldn't be added to second sample because the span id doesn't match
-        assert_eq!(s2.labels.len(), 2);
+        assert_eq!(s2.labels.len(), 3);
     }
 
     #[test]
