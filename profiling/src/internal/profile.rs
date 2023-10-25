@@ -586,7 +586,7 @@ mod api_test {
         check_label(profile, label, key, num, "", "");
     }
 
-    fn check_str_label(profile: &pprof::Profile, label: &pprof::Label, key: &str, str: &str) {
+    fn _check_str_label(profile: &pprof::Profile, label: &pprof::Label, key: &str, str: &str) {
         check_label(profile, label, key, 0, "", str);
     }
 
@@ -2108,19 +2108,17 @@ mod api_test {
 
         let local_root_span_id = locate_string("local root span id");
         let trace_endpoint = locate_string("trace endpoint");
+        let dd_following_labels_belong_to_set = locate_string("dd_following_labels_belong_to_set");
 
         // Set up the expected labels per sample
         let expected_labels = [
             [
                 pprof::Label {
-                    key: local_root_span_id,
+                    key: dd_following_labels_belong_to_set,
                     str: 0,
-                    num: large_num,
+                    num: 0,
                     num_unit: 0,
                 },
-                pprof::Label::str(trace_endpoint, locate_string("large endpoint")),
-            ],
-            [
                 pprof::Label {
                     key: local_root_span_id,
                     str: 0,
@@ -2128,6 +2126,21 @@ mod api_test {
                     num_unit: 0,
                 },
                 pprof::Label::str(trace_endpoint, locate_string("endpoint 10")),
+            ],
+            [
+                pprof::Label {
+                    key: dd_following_labels_belong_to_set,
+                    str: 0,
+                    num: 1,
+                    num_unit: 0,
+                },
+                pprof::Label {
+                    key: local_root_span_id,
+                    str: 0,
+                    num: large_num,
+                    num_unit: 0,
+                },
+                pprof::Label::str(trace_endpoint, locate_string("large endpoint")),
             ],
         ];
 
