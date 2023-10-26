@@ -166,8 +166,8 @@ impl Profile {
         profile.endpoints.local_root_span_id_label = profile.intern("local root span id");
         profile.endpoints.endpoint_label = profile.intern("trace endpoint");
         profile.timestamp_key = profile.intern("end_timestamp_ns");
-        profile.label_set_start_key = profile.intern("dd_following_labels_belong_to_set");
-        profile.stack_id_key = profile.intern("dd_stack_id");
+        profile.label_set_start_key = profile.intern("datadog following labels belong to set");
+        profile.stack_id_key = profile.intern("datadog stack id");
 
         profile.sample_types = sample_types
             .iter()
@@ -578,11 +578,16 @@ mod api_test {
     use std::{borrow::Cow, collections::HashMap};
 
     fn check_label_prefix(profile: &pprof::Profile, label: &pprof::Label, num: i64) {
-        check_num_label(profile, label, "dd_following_labels_belong_to_set", num);
+        check_num_label(
+            profile,
+            label,
+            "datadog following labels belong to set",
+            num,
+        );
     }
 
     fn check_stacktrace_label(profile: &pprof::Profile, label: &pprof::Label, num: i64) {
-        check_num_label(profile, label, "dd_stack_id", num);
+        check_num_label(profile, label, "datadog stack id", num);
     }
 
     fn check_label(
@@ -2106,8 +2111,9 @@ mod api_test {
 
         let local_root_span_id = locate_string("local root span id");
         let trace_endpoint = locate_string("trace endpoint");
-        let dd_following_labels_belong_to_set = locate_string("dd_following_labels_belong_to_set");
-        let stack_id_key = locate_string("dd_stack_id");
+        let dd_following_labels_belong_to_set =
+            locate_string("datadog following labels belong to set");
+        let stack_id_key = locate_string("datadog stack id");
 
         // Set up the expected labels per sample
         let expected_labels = [
@@ -2252,10 +2258,10 @@ mod api_test {
         };
 
         let test_label_key = locate_string("test label");
-        let stack_id_key = locate_string("dd_stack_id");
+        let stack_id_key = locate_string("datadog stack id");
         let timestamp_key = locate_string("end_timestamp_ns");
         let dd_following_labels_belong_to_set_key =
-            locate_string("dd_following_labels_belong_to_set");
+            locate_string("datadog following labels belong to set");
 
         for sample in &serialized_profile.samples {
             match sample.values[0] {
