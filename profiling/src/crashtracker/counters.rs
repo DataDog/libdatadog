@@ -46,7 +46,7 @@ static PROFILING_OP_COUNTERS: [AtomicIsize; ProfilingOpTypes::SIZE as usize] =
 pub fn begin_profiling_op(op: ProfilingOpTypes) -> anyhow::Result<()> {
     NUM_THREADS_DOING_PROFILING.fetch_add(1, SeqCst);
     PROFILING_OP_COUNTERS[op as usize].fetch_add(1, SeqCst);
-    // this can technically wrap around, but if we hit 2^64 ops we're doing
+    // this can technically wrap around, but if we hit 2^63 ops we're doing
     // something else wrong.
     Ok(())
 }
@@ -56,6 +56,11 @@ pub fn end_profiling_op(op: ProfilingOpTypes) -> anyhow::Result<()> {
     anyhow::ensure!(
         old > 0,
         "attempted to end profiling op '{op:?}' while global count was 0"
+    );
+    let old = PROFILING_OP_COUNTERS[op as usize].fetch_sub(1, SeqCst);
+    anyhow::ensure!(
+        old > 0,
+        "attempted to end profiling op '{op:?}' while op count was 0"
     );
     Ok(())
 }
