@@ -3,155 +3,12 @@
 
 mod experiments;
 mod exporters;
+mod recieve_report;
 
-//use clap::Parser;
 use datadog_profiling::crashtracker::*;
-use exporters::*;
+use exporters::{_print_to_file, upload_to_dd};
+use recieve_report::receive_report;
 use std::io::prelude::*;
-use uuid::Uuid;
-
-// #[derive(Parser, Debug)]
-// struct Args {
-//     #[arg(long)]
-//     family: String,
-//     #[arg(long)]
-//     profiling_library_name: String,
-//     #[arg(long)]
-//     profiling_library_version: String,
-// }
-
-// The Bools track if we need a comma preceding the next item
-#[derive(Debug)]
-enum StdinState {
-    Counters {
-        comma_needed: bool,
-    },
-    SigInfo {
-        comma_needed: bool,
-    },
-    StackTrace {
-        comma_needed: bool,
-    },
-    Waiting,
-    File {
-        comma_needed: bool,
-        filename: String,
-    },
-}
-
-// // TODO, add commas as needed
-fn process_line(w: &mut impl Write, line: String, state: StdinState) -> anyhow::Result<StdinState> {
-    let next = match state {
-        StdinState::SigInfo { comma_needed } => {
-            if line.starts_with(DD_CRASHTRACK_END_SIGINFO) {
-                write!(w, "\n}}")?;
-                StdinState::Waiting
-            } else {
-                if comma_needed {
-                    writeln!(w, ",")?;
-                }
-                write!(w, "\t{line}")?;
-                StdinState::SigInfo { comma_needed: true }
-            }
-        }
-        StdinState::Counters { comma_needed } => {
-            if line.starts_with(DD_CRASHTRACK_END_COUNTERS) {
-                write!(w, "\n}}")?;
-                StdinState::Waiting
-            } else {
-                if comma_needed {
-                    writeln!(w, ",")?;
-                }
-                write!(w, "\t{line}")?;
-                StdinState::Counters { comma_needed: true }
-            }
-        }
-        StdinState::Waiting => {
-            if line.starts_with(DD_CRASHTRACK_BEGIN_FILE) {
-                let (_, filename) = line.split_once(' ').unwrap_or(("", "MISSING_FILENAME"));
-                writeln!(w, ",")?;
-                writeln!(w, "{filename} : [")?;
-                StdinState::File {
-                    comma_needed: false,
-                    filename: filename.to_string(),
-                }
-            } else if line.starts_with(DD_CRASHTRACK_BEGIN_STACKTRACE) {
-                writeln!(w, ",")?;
-                writeln!(w, "\"stacktrace\": [")?;
-                StdinState::StackTrace {
-                    comma_needed: false,
-                }
-            } else if line.starts_with(DD_CRASHTRACK_BEGIN_SIGINFO) {
-                writeln!(w, ",")?;
-                writeln!(w, "\"siginfo\": {{")?;
-                StdinState::SigInfo {
-                    comma_needed: false,
-                }
-            } else if line.starts_with(DD_CRASHTRACK_BEGIN_COUNTERS) {
-                writeln!(w, ",")?;
-                writeln!(w, "\"counters\": {{")?;
-                StdinState::Counters {
-                    comma_needed: false,
-                }
-            } else {
-                eprint!("Unexpected line: {line}");
-                StdinState::Waiting
-            }
-        }
-        StdinState::File {
-            comma_needed,
-            filename,
-        } => {
-            if line.starts_with(DD_CRASHTRACK_END_FILE) {
-                write!(w, "\n]")?;
-                StdinState::Waiting
-            } else {
-                if comma_needed {
-                    writeln!(w, ",")?;
-                }
-                write!(w, "\t\"{line}\"")?;
-                StdinState::File {
-                    comma_needed: true,
-                    filename,
-                }
-            }
-        }
-        StdinState::StackTrace { comma_needed } => {
-            if line.starts_with(DD_CRASHTRACK_END_STACKTRACE) {
-                write!(w, "]")?;
-                StdinState::Waiting
-            } else {
-                if comma_needed {
-                    writeln!(w, ",")?;
-                }
-                write!(w, "\t{line}")?;
-                StdinState::StackTrace { comma_needed: true }
-            }
-        }
-    };
-    Ok(next)
-}
-
-fn emit_json_prefix(w: &mut impl Write, uuid: &Uuid, metadata: &Metadata) -> anyhow::Result<()> {
-    writeln!(w, "{{")?;
-
-    // uuid
-    writeln!(w, "\"uuid\": \"{uuid}\",")?;
-
-    // OS info
-    let info = os_info::get();
-    writeln!(w, "\"os_info\": {},", serde_json::to_string(&info)?)?;
-    // No trailing comma or newline on final entry
-    write!(w, "\"metadata\": {}", serde_json::to_string(&metadata)?)?;
-
-    Ok(())
-}
-
-fn emit_json_suffix(w: &mut impl Write) -> anyhow::Result<()> {
-    writeln!(w, "\n}}")?;
-
-    Ok(())
-}
 
 /// Recieves data on stdin, and forwards it to somewhere its useful
 /// For now, just sent to a file.
@@ -166,19 +23,13 @@ pub fn main() -> anyhow::Result<()> {
     std::io::stdin().lock().read_line(&mut metadata)?;
     let metadata: Metadata = serde_json::from_str(&metadata)?;
 
-    let uuid = Uuid::new_v4();
-    let mut buf = vec![];
-    emit_json_prefix(&mut buf, &uuid, &metadata)?;
-    let mut stdin_state = StdinState::Waiting;
-    for line in std::io::stdin().lock().lines() {
-        let line = line?;
-        stdin_state = process_line(&mut buf, line, stdin_state)?;
+    match receive_report(&metadata)? {
+        recieve_report::CrashReportStatus::NoCrash => Ok(()),
+        recieve_report::CrashReportStatus::CrashReport(buf) => {
+            _print_to_file(&buf)?;
+            upload_to_dd(&buf, &config, &metadata)?;
+            Ok(())
+        }
+        recieve_report::CrashReportStatus::PartialCrashReport(_) => todo!(),
     }
-    emit_json_suffix(&mut buf)?;
-    //std::io::stdout().write_all(&buf)?;
-    _print_to_file(&buf)?;
-
-    //TODO, only upload if the crash was seen
-    upload_to_dd(&buf, &config, &metadata).unwrap();
-    Ok(())
 }
