@@ -25,11 +25,16 @@ pub fn upload_to_dd(
     //let site = "intake.profile.datad0g.com/api/v2/profile";
     //let site = "datad0g.com";
     //let api_key = std::env::var("DD_API_KEY")?;
-    let tag = match Tag::new("service", "local-crash-test-upload") {
+
+    let service_tag = match Tag::new("service", "local-crash-test-upload") {
         Ok(tag) => tag,
         Err(e) => anyhow::bail!("{}", e),
     };
-    let tags: Option<Vec<Tag>> = Some(vec![tag]);
+    let is_crash_tag = match Tag::new("is_crash", "yes") {
+        Ok(tag) => tag,
+        Err(e) => anyhow::bail!("{}", e),
+    };
+    let tags: Option<Vec<Tag>> = Some(vec![service_tag, is_crash_tag]);
     let time = Utc::now();
     // TODO make this configurable
     // Comment that this is to prevent us waiting forever and keeping the container alive forever
