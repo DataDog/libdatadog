@@ -4,7 +4,7 @@
 use std::io::Write;
 use std::ptr;
 
-use super::collectors::emit_backtrace_by_frames;
+use super::collectors::{emit_backtrace_by_frames, emit_proc_self_maps};
 use super::constants::*;
 use super::counters::emit_counters;
 use libc::{
