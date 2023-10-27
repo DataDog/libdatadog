@@ -4,7 +4,7 @@
 use super::constants::*;
 use std::{
     io::Write,
-    sync::atomic::{AtomicUsize, Ordering::SeqCst},
+    sync::atomic::{AtomicIsize, Ordering::SeqCst},
 };
 
 // TODO, add more as needed
@@ -37,10 +37,10 @@ impl ProfilingOpTypes {
 }
 
 #[allow(clippy::declare_interior_mutable_const)]
-const ATOMIC_ZERO: AtomicUsize = AtomicUsize::new(0);
+const ATOMIC_ZERO: AtomicIsize = AtomicIsize::new(0);
 
-static NUM_THREADS_DOING_PROFILING: AtomicUsize = ATOMIC_ZERO;
-static PROFILING_OP_COUNTERS: [AtomicUsize; ProfilingOpTypes::SIZE as usize] =
+static NUM_THREADS_DOING_PROFILING: AtomicIsize = ATOMIC_ZERO;
+static PROFILING_OP_COUNTERS: [AtomicIsize; ProfilingOpTypes::SIZE as usize] =
     [ATOMIC_ZERO; ProfilingOpTypes::SIZE as usize];
 
 pub fn begin_profiling_op(op: ProfilingOpTypes) -> anyhow::Result<()> {
@@ -56,11 +56,6 @@ pub fn end_profiling_op(op: ProfilingOpTypes) -> anyhow::Result<()> {
     anyhow::ensure!(
         old > 0,
         "attempted to end profiling op '{op:?}' while global count was 0"
-    );
-    let old = PROFILING_OP_COUNTERS[op as usize].fetch_sub(1, SeqCst);
-    anyhow::ensure!(
-        old > 0,
-        "attempted to end profiling op '{op:?}' while op count was 0"
     );
     Ok(())
 }

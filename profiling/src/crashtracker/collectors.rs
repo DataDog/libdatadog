@@ -79,7 +79,6 @@ pub fn emit_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 pub fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
     emit_file(w, "/proc/self/maps")?;
     Ok(())

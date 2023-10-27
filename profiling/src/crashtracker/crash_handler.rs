@@ -4,6 +4,7 @@
 use std::io::Write;
 use std::ptr;
 
+use super::api::{Configuration, Metadata};
 use super::collectors::{emit_backtrace_by_frames, emit_proc_self_maps};
 use super::constants::*;
 use super::counters::emit_counters;
@@ -13,7 +14,9 @@ use libc::{
 };
 use nix::sys::signal;
 use nix::sys::signal::{SaFlags, SigAction, SigHandler};
+use std::process::{Command, Stdio};
 
+#[derive(Debug)]
 enum GlobalVarState<T>
 where
     T: std::fmt::Debug,
@@ -26,11 +29,80 @@ where
 static mut RECEIVER: GlobalVarState<std::process::Child> = GlobalVarState::Unassigned;
 static mut OLD_HANDLER: GlobalVarState<SigAction> = GlobalVarState::Unassigned;
 
+fn make_reciever(
+    config: &Configuration,
+    metadata: &Metadata,
+) -> anyhow::Result<std::process::Child> {
+    let receiver = Command::new(&config.path_to_reciever_binary)
+        .arg("reciever")
+        .stdin(Stdio::piped())
+        .spawn()?;
+
+    // Write the args into the reciever.
+    // Use the pipe to avoid secrets ending up on the commandline
+    writeln!(
+        receiver.stdin.as_ref().unwrap(),
+        "{}",
+        serde_json::to_string(&config)?
+    )?;
+    writeln!(
+        receiver.stdin.as_ref().unwrap(),
+        "{}",
+        serde_json::to_string(&metadata)?
+    )?;
+    Ok(receiver)
+}
+
+pub fn setup_receiver(config: &Configuration, metadata: &Metadata) -> anyhow::Result<()> {
+    let new_reciever = make_reciever(config, metadata)?;
+    let old_reciever =
+        unsafe { std::mem::replace(&mut RECEIVER, GlobalVarState::Some(new_reciever)) };
+    anyhow::ensure!(
+        matches!(old_reciever, GlobalVarState::Unassigned),
+        "Error registering crash handler reciever: reciever already existed {old_reciever:?}"
+    );
+
+    Ok(())
+}
+
+pub fn replace_receiver(config: &Configuration, metadata: &Metadata) -> anyhow::Result<()> {
+    let new_reciever = make_reciever(config, metadata)?;
+    let old_reciever =
+        unsafe { std::mem::replace(&mut RECEIVER, GlobalVarState::Some(new_reciever)) };
+    if let GlobalVarState::Some(mut old_reciever) = old_reciever {
+        // Close the stdin handle so we don't have two open copies
+        // TODO: dropping the old reciever at the end of this function might do this automatically?
+        drop(old_reciever.stdin.take());
+        drop(old_reciever.stdout.take());
+        drop(old_reciever.stderr.take());
+        // Leave the old one running, since its being used by another fork
+    } else {
+        anyhow::bail!(
+            "Error updating crash handler reciever: reciever did not already exist {old_reciever:?}"
+        );
+    }
+
+    Ok(())
+}
+
+pub fn shutdown_receiver() -> anyhow::Result<()> {
+    let old_reciever = unsafe { std::mem::replace(&mut RECEIVER, GlobalVarState::Taken) };
+    if let GlobalVarState::Some(mut old_reciever) = old_reciever {
+        old_reciever.kill()?;
+        old_reciever.wait()?;
+    } else {
+        anyhow::bail!(
+            "Error shutting down crash handler reciever: reciever did not already exist {old_reciever:?}"
+        );
+    }
+    Ok(())
+}
+
 extern "C" fn handle_sigsegv(signum: i32) {
     // Safety: We've already crashed, this is a best effort to chain to the old
     // behaviour.  Do this first to prevent recursive activation if this handler
     // itself crases (e.g. while calculating stacktrace)
-    let _ = unsafe { restore_old_handler() };
+    let _ = restore_old_handler();
     let _ = handle_sigsegv_impl(signum);
 
     // return to old handler (chain).  See comments on `restore_old_handler`.
@@ -72,11 +144,7 @@ fn handle_sigsegv_impl(signum: i32) -> anyhow::Result<()> {
 }
 
 //TODO, get other signals than segv?
-pub fn register_crash_handler(receiver: std::process::Child) -> anyhow::Result<()> {
-    unsafe {
-        RECEIVER = GlobalVarState::Some(receiver);
-    }
-
+pub fn register_crash_handler() -> anyhow::Result<()> {
     let sig_action = SigAction::new(
         //SigHandler::SigAction(_handle_sigsegv_info),
         SigHandler::Handler(handle_sigsegv),
@@ -86,19 +154,24 @@ pub fn register_crash_handler(receiver: std::process::Child) -> anyhow::Result<(
     unsafe {
         set_alt_stack()?;
         let old = signal::sigaction(signal::SIGSEGV, &sig_action)?;
-        OLD_HANDLER = GlobalVarState::Some(old);
+        let prev_old_handler = std::mem::replace(&mut OLD_HANDLER, GlobalVarState::Some(old));
+        anyhow::ensure!(
+            matches!(prev_old_handler, GlobalVarState::Unassigned),
+            "Error registering crash handler: old_handler already existed {prev_old_handler:?}"
+        );
     }
     Ok(())
 }
 
-unsafe fn restore_old_handler() -> anyhow::Result<()> {
+pub fn restore_old_handler() -> anyhow::Result<()> {
     // Restore the old handler, so that the current handler can return to it.
     // Although this is technically UB, this is what Rust does in the same case.
     // https://github.com/rust-lang/rust/blob/master/library/std/src/sys/unix/stack_overflow.rs#L75
     match std::mem::replace(unsafe { &mut OLD_HANDLER }, GlobalVarState::Taken) {
-        GlobalVarState::Some(old_handler) => signal::sigaction(signal::SIGSEGV, &old_handler)?,
-        GlobalVarState::Unassigned => anyhow::bail!("Cannot restore signal handler: Unassigned"),
-        GlobalVarState::Taken => anyhow::bail!("Cannot restore signal handler: Taken"),
+        GlobalVarState::Some(old_handler) => {
+            unsafe { signal::sigaction(signal::SIGSEGV, &old_handler) }?
+        }
+        x => anyhow::bail!("Cannot restore signal handler: {x:?}"),
     };
     Ok(())
 }

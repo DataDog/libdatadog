@@ -42,6 +42,61 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_end_profiling_op(
 
 #[no_mangle]
 #[must_use]
+pub unsafe extern "C" fn ddog_prof_crashtracker_shutdown() -> ProfileResult {
+    match crashtracker::shutdown_crash_handler() {
+        Ok(_) => ProfileResult::Ok(true),
+        Err(err) => ProfileResult::Err(Error::from(
+            err.context("ddog_prof_crashtracker_init failed"),
+        )),
+    }
+}
+
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
+    profiling_library_name: CharSlice,
+    profiling_library_version: CharSlice,
+    family: CharSlice,
+    tags: Option<&ddcommon_ffi::Vec<Tag>>,
+    endpoint: Endpoint,
+    path_to_reciever_binary: CharSlice,
+) -> ProfileResult {
+    match ddog_prof_crashtracker_update_on_fork_impl(
+        profiling_library_name,
+        profiling_library_version,
+        family,
+        tags,
+        endpoint,
+        path_to_reciever_binary,
+    ) {
+        Ok(_) => ProfileResult::Ok(true),
+        Err(err) => ProfileResult::Err(Error::from(
+            err.context("ddog_prof_crashtracker_init failed"),
+        )),
+    }
+}
+
+unsafe fn ddog_prof_crashtracker_update_on_fork_impl(
+    profiling_library_name: CharSlice,
+    profiling_library_version: CharSlice,
+    family: CharSlice,
+    tags: Option<&ddcommon_ffi::Vec<Tag>>,
+    endpoint: Endpoint,
+    path_to_reciever_binary: CharSlice,
+) -> anyhow::Result<()> {
+    let (config, metadata) = process_args(
+        profiling_library_name,
+        profiling_library_version,
+        family,
+        tags,
+        endpoint,
+        path_to_reciever_binary,
+    )?;
+    crashtracker::on_fork(config, metadata)
+}
+
+#[no_mangle]
+#[must_use]
 pub unsafe extern "C" fn ddog_prof_crashtracker_init_full(
     profiling_library_name: CharSlice,
     profiling_library_version: CharSlice,
@@ -73,6 +128,25 @@ unsafe fn ddog_prof_crashtracker_init_full_impl(
     endpoint: Endpoint,
     path_to_reciever_binary: CharSlice,
 ) -> anyhow::Result<()> {
+    let (config, metadata) = process_args(
+        profiling_library_name,
+        profiling_library_version,
+        family,
+        tags,
+        endpoint,
+        path_to_reciever_binary,
+    )?;
+    crashtracker::init(config, metadata)
+}
+
+unsafe fn process_args(
+    profiling_library_name: CharSlice,
+    profiling_library_version: CharSlice,
+    family: CharSlice,
+    tags: Option<&ddcommon_ffi::Vec<Tag>>,
+    endpoint: Endpoint,
+    path_to_reciever_binary: CharSlice,
+) -> anyhow::Result<(crashtracker::Configuration, crashtracker::Metadata)> {
     let profiling_library_name = profiling_library_name.to_utf8_lossy().into_owned();
     let profiling_library_version = profiling_library_version.to_utf8_lossy().into_owned();
     let family = family.to_utf8_lossy().into_owned();
@@ -86,7 +160,7 @@ unsafe fn ddog_prof_crashtracker_init_full_impl(
         family,
         tags,
     );
-    crashtracker::init(config, metadata)
+    Ok((config, metadata))
 }
 
 #[no_mangle]
