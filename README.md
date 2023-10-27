@@ -1,5 +1,7 @@
 # `libdatadog`
 
+DUMMY CHANGE, IGNORE THIS! I don't plan on merging this pr!
+
 `libdatadog` provides a shared library containing common code used in the implementation of Datadog's libraries,
 including [Continuous Profilers](https://docs.datadoghq.com/tracing/profiler/).
 
