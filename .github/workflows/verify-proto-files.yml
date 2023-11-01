@@ -1,5 +1,7 @@
 name: 'Verify trace-protobuf'
-on: [push]
+on:
+  pull_request:
+    types: [ opened, synchronize, reopened ]
 
 jobs:
   verify-proto-files:
@@ -24,7 +26,7 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           outcome: ${{ steps.agent_payload_proto.outcome }}
-          test-id: agent_payload_proto
+          test-id: Verify trace-protobuf agent_payload_proto
       - name: diff tracer_payload.proto
         working-directory: trace-protobuf/src/pb
         continue-on-error: true
@@ -39,7 +41,7 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           outcome: ${{ steps.tracer_payload_proto.outcome }}
-          test-id: tracer_payload_proto
+          test-id: Verify trace-protobuf tracer_payload_proto
       - name: diff stats.proto
         working-directory: trace-protobuf/src/pb
         continue-on-error: true
@@ -54,7 +56,7 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           outcome: ${{ steps.stats_proto.outcome }}
-          test-id: stats_proto
+          test-id: Verify trace-protobuf stats_proto
       - name: diff span.proto
         working-directory: trace-protobuf/src/pb
         continue-on-error: true
@@ -69,4 +71,4 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           outcome: ${{ steps.span_proto.outcome }}
-          test-id: span_proto
+          test-id: Verify trace-protobuf span_proto
