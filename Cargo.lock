@@ -832,6 +832,7 @@ dependencies = [
  "rustls",
  "rustls-native-certs",
  "serde",
+ "thiserror",
  "tokio",
  "tokio-rustls",
 ]

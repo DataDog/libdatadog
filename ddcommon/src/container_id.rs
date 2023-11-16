@@ -6,7 +6,9 @@ use regex::Regex;
 use std::error;
 use std::fmt;
 use std::fs::File;
+use std::io;
 use std::io::{BufRead, BufReader};
+use std::os::unix::fs::MetadataExt as _;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -39,6 +41,7 @@ Following environments are supported:
 */
 
 const DEFAULT_CGROUP_PATH: &str = "/proc/self/cgroup";
+const DEFAULT_SYS_CGROUP_PATH: &str = "/sys/fs/cgroup/";
 
 /// stores overridable cgroup path - used in end-to-end testing to "stub" cgroup values
 static mut TESTING_CGROUP_PATH: Option<String> = None;
@@ -56,8 +59,18 @@ lazy_static! {
     .unwrap();
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum ContainerIdError {
+    #[error(transparent)]
+    IdNotFound(#[from] ContainerIdNotFoundError),
+    #[error("Can't access file {path}")]
+    ErrorAccessingFile { path: PathBuf, source: io::Error },
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
 #[derive(Debug, Clone)]
-struct ContainerIdNotFoundError;
+pub struct ContainerIdNotFoundError;
 
 impl fmt::Display for ContainerIdNotFoundError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -107,10 +120,45 @@ pub fn get_container_id() -> Option<&'static str> {
     // cache container id in a static to avoid recomputing it at each call
 
     lazy_static! {
-        static ref CONTAINER_ID: Option<String> =
-            extract_container_id(get_cgroup_path().as_path()).ok();
+        static ref CONTAINER_ID: Option<String> = {
+            let old_id = extract_container_id(get_cgroup_path().as_path()).ok();
+            // fallback to the new Id retrieval mechanism
+            old_id.or_else(|| CGroupSurrogateId::read().ok().map(|i| i.as_header_value()) )
+        };
     }
     CONTAINER_ID.as_deref()
+}
+
+pub struct CGroupSurrogateId {
+    pub device: u64,
+    pub inode: u64,
+}
+
+impl CGroupSurrogateId {
+    fn read_from_path<P: AsRef<Path>>(path: P) -> Result<Self, ContainerIdError> {
+        let path = path.as_ref();
+        let meta = std::fs::metadata(path).map_err(|e| ContainerIdError::ErrorAccessingFile {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
+
+        let inode = meta.ino();
+        let device = meta.dev();
+
+        Ok(CGroupSurrogateId {
+            device: device,
+            inode: inode,
+        })
+    }
+
+    pub fn read() -> Result<Self, ContainerIdError> {
+        Self::read_from_path(DEFAULT_SYS_CGROUP_PATH)
+    }
+
+    pub fn as_header_value(&self) -> String {
+        let Self { device, inode } = self;
+        format!("id_v2://{device:x}h/{device}d {inode}")
+    }
 }
 
 #[cfg(test)]
@@ -211,5 +259,19 @@ mod tests {
                 "testing file {filename}"
             );
         }
+    }
+
+    #[test]
+    fn sys_fs_id_retrieval() {
+        let value = CGroupSurrogateId::read().unwrap().as_header_value();
+
+        assert!( value.starts_with("id_v2://") );
+    }
+
+    #[test]
+    fn sys_fs_id_rendering() {
+        let value = CGroupSurrogateId{ device: 100, inode: 600 }.as_header_value();
+
+        assert_eq!( "id_v2://64h/100d 600", value);
     }
 }
