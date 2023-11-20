@@ -1,42 +1,74 @@
-name: Test
-on: [push]
+name: 'Verify trace-protobuf'
+on:
+  pull_request:
+    types: [ opened, synchronize, reopened ]
 
 jobs:
   verify-proto-files:
     name: "Verify trace-protobuf .proto files are in sync with datadog-agent"
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
     steps:
       - name: Checkout sources
         uses: actions/checkout@v3
       - name: diff agent_payload.proto
         working-directory: trace-protobuf/src/pb
+        continue-on-error: true
+        id: agent_payload_proto
         run: |
           GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/main/pkg/proto/datadog/trace/agent_payload.proto")
           FIX_IMPORT_PATH=$(echo "$GO_AGENT_PROTO" | sed -e "s/datadog\/trace\/tracer_payload.proto/tracer_payload.proto/g")
           FIX_PACKAGE_NAME=$(echo "$FIX_IMPORT_PATH" | sed -e "s/datadog.trace/pb/g")
 
           echo "$FIX_PACKAGE_NAME" | diff agent_payload.proto -
+      - uses: mainmatter/continue-on-error-comment@b2606cc5ef2525ec21692999676a19f047e3e082 # v1.2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          outcome: ${{ steps.agent_payload_proto.outcome }}
+          test-id: Verify trace-protobuf agent_payload_proto
       - name: diff tracer_payload.proto
         working-directory: trace-protobuf/src/pb
+        continue-on-error: true
+        id: tracer_payload_proto
         run: |
           GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/main/pkg/proto/datadog/trace/tracer_payload.proto")
           FIX_IMPORT_PATH=$(echo "$GO_AGENT_PROTO" | sed -e "s/datadog\/trace\/span.proto/span.proto/g")
           FIX_PACKAGE_NAME=$(echo "$FIX_IMPORT_PATH" | sed -e "s/datadog.trace/pb/g")
 
           echo "$FIX_PACKAGE_NAME" | diff tracer_payload.proto -
+      - uses: mainmatter/continue-on-error-comment@b2606cc5ef2525ec21692999676a19f047e3e082 # v1.2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          outcome: ${{ steps.tracer_payload_proto.outcome }}
+          test-id: Verify trace-protobuf tracer_payload_proto
       - name: diff stats.proto
         working-directory: trace-protobuf/src/pb
+        continue-on-error: true
+        id: stats_proto
         run: |
           GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/main/pkg/proto/datadog/trace/stats.proto")
           FIX_IMPORT_PATH=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
           FIX_PACKAGE_NAME=$(echo "$FIX_IMPORT_PATH" | sed -e "s/datadog.trace/pb/g")
 
           echo "$FIX_PACKAGE_NAME" | diff stats.proto -
+      - uses: mainmatter/continue-on-error-comment@b2606cc5ef2525ec21692999676a19f047e3e082 # v1.2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          outcome: ${{ steps.stats_proto.outcome }}
+          test-id: Verify trace-protobuf stats_proto
       - name: diff span.proto
         working-directory: trace-protobuf/src/pb
+        continue-on-error: true
+        id: span_proto
         run: |
           GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/main/pkg/proto/datadog/trace/span.proto")
           FIX_IMPORT_PATH=$(echo "$GO_AGENT_PROTO" | sed -e "s/github.com\/gogo\/protobuf\/gogoproto\/gogo.proto/gogo.proto/g")
           FIX_PACKAGE_NAME=$(echo "$FIX_IMPORT_PATH" | sed -e "s/datadog.trace/pb/g")
 
           echo "$FIX_PACKAGE_NAME" | diff span.proto -
+      - uses: mainmatter/continue-on-error-comment@b2606cc5ef2525ec21692999676a19f047e3e082 # v1.2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          outcome: ${{ steps.span_proto.outcome }}
+          test-id: Verify trace-protobuf span_proto
