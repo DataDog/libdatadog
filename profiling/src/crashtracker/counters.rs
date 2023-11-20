@@ -53,6 +53,8 @@ pub fn begin_profiling_op(op: ProfilingOpTypes) -> anyhow::Result<()> {
     Ok(())
 }
 
+// TODO: I'm making everything SeqCst for now.  Could gain some performance by
+// using a weaker ordering.
 pub fn end_profiling_op(op: ProfilingOpTypes) -> anyhow::Result<()> {
     if op != ProfilingOpTypes::NotProfiling {
         let old = NUM_THREADS_DOING_PROFILING.fetch_sub(1, SeqCst);
@@ -82,5 +84,17 @@ pub fn emit_counters(w: &mut impl Write) -> anyhow::Result<()> {
     }
 
     writeln!(w, "{DD_CRASHTRACK_END_COUNTERS}")?;
+    Ok(())
+}
+
+/// Resets all counters to 0.
+/// Expected to be used after a fork, to reset the counters on the child
+/// Safety: This is NOT ATOMIC.  Should only be used when no conflicting updates
+/// can occur, e.g. after a fork but before profiling ops start on the child.
+pub fn reset_counters() -> anyhow::Result<()> {
+    NUM_THREADS_DOING_PROFILING.store(0, SeqCst);
+    for c in PROFILING_OP_COUNTERS.iter() {
+        c.store(0, SeqCst);
+    }
     Ok(())
 }

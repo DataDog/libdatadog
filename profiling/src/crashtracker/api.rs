@@ -1,9 +1,12 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-use super::crash_handler::{
-    register_crash_handler, replace_receiver, restore_old_handler, setup_receiver,
-    shutdown_receiver,
+use super::{
+    counters::reset_counters,
+    crash_handler::{
+        register_crash_handlers, replace_receiver, restore_old_handlers, setup_receiver,
+        shutdown_receiver,
+    },
 };
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
@@ -49,13 +52,16 @@ impl Configuration {
 }
 
 pub fn shutdown_crash_handler() -> anyhow::Result<()> {
-    restore_old_handler()?;
+    restore_old_handlers()?;
     shutdown_receiver()?;
     Ok(())
 }
 
 // Would you prefer this to cache the configuration and metadata?
+/// Safety: This is not atomic.  There should be no other profiler operations
+/// occuring while this is running.
 pub fn on_fork(config: Configuration, metadata: Metadata) -> anyhow::Result<()> {
+    reset_counters()?;
     // Leave the old signal handler in place
     replace_receiver(&config, &metadata)?;
     Ok(())
@@ -64,6 +70,6 @@ pub fn on_fork(config: Configuration, metadata: Metadata) -> anyhow::Result<()> 
 //TODO pass key/value pairs to the reciever.
 pub fn init(config: Configuration, metadata: Metadata) -> anyhow::Result<()> {
     setup_receiver(&config, &metadata)?;
-    register_crash_handler()?;
+    register_crash_handlers()?;
     Ok(())
 }

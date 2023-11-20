@@ -27,7 +27,8 @@ where
 }
 
 static mut RECEIVER: GlobalVarState<std::process::Child> = GlobalVarState::Unassigned;
-static mut OLD_HANDLER: GlobalVarState<SigAction> = GlobalVarState::Unassigned;
+static mut OLD_SIGBUS_HANDLER: GlobalVarState<SigAction> = GlobalVarState::Unassigned;
+static mut OLD_SIGSEGV_HANDLER: GlobalVarState<SigAction> = GlobalVarState::Unassigned;
 
 fn make_reciever(
     config: &Configuration,
@@ -98,21 +99,21 @@ pub fn shutdown_receiver() -> anyhow::Result<()> {
     Ok(())
 }
 
-extern "C" fn handle_sigsegv(signum: i32) {
+extern "C" fn handle_posix_signal(signum: i32) {
     // Safety: We've already crashed, this is a best effort to chain to the old
     // behaviour.  Do this first to prevent recursive activation if this handler
     // itself crases (e.g. while calculating stacktrace)
-    let _ = restore_old_handler();
-    let _ = handle_sigsegv_impl(signum);
+    let _ = restore_old_handlers();
+    let _ = handle_posix_signal_impl(signum);
 
     // return to old handler (chain).  See comments on `restore_old_handler`.
 }
 
-fn handle_sigsegv_impl(signum: i32) -> anyhow::Result<()> {
+fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     let mut receiver = match std::mem::replace(unsafe { &mut RECEIVER }, GlobalVarState::Taken) {
         GlobalVarState::Some(r) => r,
-        GlobalVarState::Unassigned => anyhow::bail!("Cannot find receiver: Unassigned"),
-        GlobalVarState::Taken => anyhow::bail!("Cannot receiver: Taken"),
+        GlobalVarState::Unassigned => anyhow::bail!("Cannot acquire receiver: Unassigned"),
+        GlobalVarState::Taken => anyhow::bail!("Cannot acquire receiver: Taken"),
     };
 
     let pipe = receiver.stdin.as_mut().unwrap();
@@ -144,35 +145,63 @@ fn handle_sigsegv_impl(signum: i32) -> anyhow::Result<()> {
 }
 
 //TODO, get other signals than segv?
-pub fn register_crash_handler() -> anyhow::Result<()> {
-    let sig_action = SigAction::new(
-        //SigHandler::SigAction(_handle_sigsegv_info),
-        SigHandler::Handler(handle_sigsegv),
-        SaFlags::SA_NODEFER | SaFlags::SA_ONSTACK,
-        signal::SigSet::empty(),
-    );
+pub fn register_crash_handlers() -> anyhow::Result<()> {
     unsafe {
         set_alt_stack()?;
-        let old = signal::sigaction(signal::SIGSEGV, &sig_action)?;
-        let prev_old_handler = std::mem::replace(&mut OLD_HANDLER, GlobalVarState::Some(old));
-        anyhow::ensure!(
-            matches!(prev_old_handler, GlobalVarState::Unassigned),
-            "Error registering crash handler: old_handler already existed {prev_old_handler:?}"
-        );
+        register_signal_handler(signal::SIGBUS)?;
+        register_signal_handler(signal::SIGSEGV)?;
     }
     Ok(())
 }
 
-pub fn restore_old_handler() -> anyhow::Result<()> {
+unsafe fn register_signal_handler(signal_type: signal::Signal) -> anyhow::Result<()> {
+    let slot = match signal_type {
+        signal::SIGBUS => unsafe { &mut OLD_SIGBUS_HANDLER },
+        signal::SIGSEGV => unsafe { &mut OLD_SIGSEGV_HANDLER },
+        _ => anyhow::bail!("unexpected signal {signal_type}"),
+    };
+
+    let sig_action = SigAction::new(
+        //SigHandler::SigAction(_handle_sigsegv_info),
+        SigHandler::Handler(handle_posix_signal),
+        SaFlags::SA_NODEFER | SaFlags::SA_ONSTACK,
+        signal::SigSet::empty(),
+    );
+
+    let old_handler = signal::sigaction(signal_type, &sig_action)?;
+    let should_be_empty = std::mem::replace(slot, GlobalVarState::Some(old_handler));
+    anyhow::ensure!(
+        matches!(should_be_empty, GlobalVarState::Unassigned),
+        "Error registering crash handler: old_handler already existed {should_be_empty:?}"
+    );
+
+    Ok(())
+}
+
+unsafe fn replace_signal_handler(signal_type: signal::Signal) -> anyhow::Result<()> {
+    let slot = match signal_type {
+        signal::SIGBUS => unsafe { &mut OLD_SIGBUS_HANDLER },
+        signal::SIGSEGV => unsafe { &mut OLD_SIGSEGV_HANDLER },
+        _ => anyhow::bail!("unexpected signal {signal_type}"),
+    };
+
+    match std::mem::replace(slot, GlobalVarState::Taken) {
+        GlobalVarState::Some(old_handler) => unsafe {
+            signal::sigaction(signal_type, &old_handler)?
+        },
+        x => anyhow::bail!("Cannot restore signal handler for {signal_type}: {x:?}"),
+    };
+    Ok(())
+}
+
+pub fn restore_old_handlers() -> anyhow::Result<()> {
     // Restore the old handler, so that the current handler can return to it.
     // Although this is technically UB, this is what Rust does in the same case.
     // https://github.com/rust-lang/rust/blob/master/library/std/src/sys/unix/stack_overflow.rs#L75
-    match std::mem::replace(unsafe { &mut OLD_HANDLER }, GlobalVarState::Taken) {
-        GlobalVarState::Some(old_handler) => {
-            unsafe { signal::sigaction(signal::SIGSEGV, &old_handler) }?
-        }
-        x => anyhow::bail!("Cannot restore signal handler: {x:?}"),
-    };
+    unsafe {
+        replace_signal_handler(signal::SIGSEGV)?;
+        replace_signal_handler(signal::SIGBUS)?;
+    }
     Ok(())
 }
 
