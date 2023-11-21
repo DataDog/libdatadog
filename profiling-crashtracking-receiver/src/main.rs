@@ -25,11 +25,12 @@ pub fn main() -> anyhow::Result<()> {
 
     match receive_report(&metadata)? {
         recieve_report::CrashReportStatus::NoCrash => Ok(()),
-        recieve_report::CrashReportStatus::CrashReport(buf) => {
+        recieve_report::CrashReportStatus::CrashReport(crash_info) => {
+            let buf = serde_json::to_vec(&crash_info)?;
             _print_to_file(&buf)?;
             upload_to_dd(&buf, &config, &metadata)?;
             Ok(())
         }
-        recieve_report::CrashReportStatus::PartialCrashReport(_) => todo!(),
+        recieve_report::CrashReportStatus::PartialCrashReport(_, _) => todo!(),
     }
 }

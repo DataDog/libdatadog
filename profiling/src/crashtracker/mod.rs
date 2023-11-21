@@ -6,7 +6,9 @@ mod collectors;
 mod constants;
 mod counters;
 mod crash_handler;
+mod crash_info;
 
 pub use api::*;
 pub use constants::*;
 pub use counters::{begin_profiling_op, end_profiling_op, ProfilingOpTypes};
+pub use crash_info::*;

@@ -619,6 +619,7 @@ dependencies = [
  "mime",
  "mime_guess",
  "nix 0.27.1",
+ "os_info",
  "page_size 0.6.0",
  "percent-encoding",
  "prost",
@@ -627,6 +628,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-util 0.7.8",
+ "uuid",
 ]
 
 [[package]]
@@ -3198,6 +3200,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "79daa5ed5740825c40b389c5e50312b9c86df53fccd33f281df655642b43869d"
 dependencies = [
  "getrandom",
+ "serde",
 ]
 
 [[package]]
