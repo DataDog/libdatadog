@@ -75,7 +75,7 @@ pub fn emit_counters(w: &mut impl Write) -> anyhow::Result<()> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_COUNTERS}")?;
     writeln!(
         w,
-        "\"num_threads_doing_profiling\": {}",
+        "{{\"num_threads_doing_profiling\": {}}}",
         NUM_THREADS_DOING_PROFILING.load(SeqCst)
     )?;
 
