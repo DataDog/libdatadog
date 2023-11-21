@@ -2,7 +2,11 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use datadog_profiling::crashtracker::*;
-use std::io::prelude::*;
+use std::{
+    fs::File,
+    io::{prelude::*, BufReader},
+    path::Path,
+};
 use uuid::Uuid;
 
 // The Bools track if we need a comma preceding the next item
@@ -55,7 +59,7 @@ fn process_line(w: &mut impl Write, line: String, state: StdinState) -> anyhow::
             if line.starts_with(DD_CRASHTRACK_BEGIN_FILE) {
                 let (_, filename) = line.split_once(' ').unwrap_or(("", "MISSING_FILENAME"));
                 writeln!(w, ",")?;
-                writeln!(w, "{filename} : [")?;
+                writeln!(w, "{filename}: [")?;
                 StdinState::File {
                     comma_needed: false,
                     filename: filename.to_string(),
@@ -117,6 +121,24 @@ fn process_line(w: &mut impl Write, line: String, state: StdinState) -> anyhow::
     Ok(next)
 }
 
+fn emit_text_file_as_json(w: &mut impl Write, filename: &str) -> anyhow::Result<()> {
+    let file = File::open(filename)?;
+    writeln!(w, ",")?;
+    writeln!(w, "{filename}: [")?;
+
+    let mut comma_needed = false;
+    for line in BufReader::new(file).lines() {
+        let line = line?;
+        if comma_needed {
+            writeln!(w, ",")?;
+        }
+        write!(w, "\t\"{line}\"")?;
+        comma_needed = true;
+    }
+    writeln!(w, "]")?;
+    Ok(())
+}
+
 fn emit_json_prefix(w: &mut impl Write, uuid: &Uuid, metadata: &Metadata) -> anyhow::Result<()> {
     writeln!(w, "{{")?;
 
@@ -128,6 +150,12 @@ fn emit_json_prefix(w: &mut impl Write, uuid: &Uuid, metadata: &Metadata) -> any
     writeln!(w, "\"os_info\": {},", serde_json::to_string(&info)?)?;
     // No trailing comma or newline on final entry
     write!(w, "\"metadata\": {}", serde_json::to_string(&metadata)?)?;
+
+    #[cfg(target_os = "linux")]
+    emit_text_file_as_json(w, "/proc/meminfo")?;
+
+    #[cfg(target_os = "linux")]
+    emit_text_file_as_json(w, "/proc/cpuinfo")?;
 
     Ok(())
 }
