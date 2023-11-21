@@ -6,12 +6,13 @@ use std::io::BufRead;
 use std::{collections::HashMap, fs::File, io::BufReader};
 use uuid::Uuid;
 
+/// All fields are hex encoded integers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StackFrame {
-    ip: Option<usize>,
-    module_base_address: Option<usize>,
-    sp: Option<usize>,
-    symbol_address: Option<usize>,
+    ip: Option<String>,
+    module_base_address: Option<String>,
+    sp: Option<String>,
+    symbol_address: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -21,7 +22,7 @@ pub struct SigInfo {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashInfo {
-    counters: HashMap<String, isize>,
+    counters: HashMap<String, i64>,
     files: HashMap<String, Vec<String>>,
     metadata: Metadata,
     os_info: os_info::Info,
@@ -51,7 +52,7 @@ impl CrashInfo {
         }
     }
 
-    pub fn add_counter(&mut self, name: &str, val: isize) -> anyhow::Result<()> {
+    pub fn add_counter(&mut self, name: &str, val: i64) -> anyhow::Result<()> {
         let old = self.counters.insert(name.to_string(), val);
         anyhow::ensure!(old.is_none(), "Double insert of counter {name}");
         Ok(())

@@ -80,7 +80,12 @@ pub fn emit_counters(w: &mut impl Write) -> anyhow::Result<()> {
     )?;
 
     for (i, c) in PROFILING_OP_COUNTERS.iter().enumerate() {
-        writeln!(w, "\"{}\": {}", ProfilingOpTypes::name(i)?, c.load(SeqCst))?;
+        writeln!(
+            w,
+            "{{\"{}\": {}}}",
+            ProfilingOpTypes::name(i)?,
+            c.load(SeqCst)
+        )?;
     }
 
     writeln!(w, "{DD_CRASHTRACK_END_COUNTERS}")?;
