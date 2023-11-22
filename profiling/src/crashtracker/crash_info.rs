@@ -8,8 +8,6 @@ use std::io::BufRead;
 use std::{collections::HashMap, fs::File, io::BufReader};
 use uuid::Uuid;
 
-use super::Configuration;
-
 /// All fields are hex encoded integers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StackFrame {

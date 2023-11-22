@@ -4,7 +4,6 @@
 mod experiments;
 mod recieve_report;
 
-use chrono::Utc;
 use datadog_profiling::crashtracker::*;
 use recieve_report::receive_report;
 use std::io::prelude::*;

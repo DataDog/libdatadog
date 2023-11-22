@@ -58,8 +58,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
     profiling_library_version: CharSlice,
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoint: Option<Endpoint>,
-    output_filename: Option<String>,
+    endpoint: Endpoint,
     path_to_reciever_binary: CharSlice,
 ) -> ProfileResult {
     match ddog_prof_crashtracker_update_on_fork_impl(
@@ -67,8 +66,8 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
         profiling_library_version,
         family,
         tags,
-        endpoint,
-        output_filename,
+        Some(endpoint),
+        None,
         path_to_reciever_binary,
     ) {
         Ok(_) => ProfileResult::Ok(true),
@@ -106,8 +105,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_init_full(
     profiling_library_version: CharSlice,
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoint: Option<Endpoint>,
-    output_filename: Option<String>,
+    endpoint: Endpoint,
     path_to_reciever_binary: CharSlice,
 ) -> ProfileResult {
     match ddog_prof_crashtracker_init_full_impl(
@@ -115,8 +113,8 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_init_full(
         profiling_library_version,
         family,
         tags,
-        endpoint,
-        output_filename,
+        Some(endpoint),
+        None,
         path_to_reciever_binary,
     ) {
         Ok(_) => ProfileResult::Ok(true),
@@ -161,11 +159,7 @@ unsafe fn process_args(
     let family = family.to_utf8_lossy().into_owned();
     let path_to_reciever_binary = path_to_reciever_binary.to_utf8_lossy().into_owned();
     let tags = tags.map(|tags| tags.iter().cloned().collect());
-    let endpoint = if let Some(e) = endpoint {
-        Some(exporter::try_to_endpoint(e)?)
-    } else {
-        None
-    };
+    let endpoint = endpoint.map(|e| exporter::try_to_endpoint(e)).transpose()?;
     let config =
         crashtracker::Configuration::new(endpoint, output_filename, path_to_reciever_binary);
     let metadata = crashtracker::Metadata::new(

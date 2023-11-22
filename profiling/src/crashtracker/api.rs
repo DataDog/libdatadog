@@ -1,8 +1,6 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-use crate::crashtracker::begin_profiling_op;
-
 use super::{
     counters::reset_counters,
     crash_handler::{
@@ -85,6 +83,7 @@ pub fn init(config: Configuration, metadata: Metadata) -> anyhow::Result<()> {
 #[ignore]
 #[test]
 fn test_crash() {
+    use crate::crashtracker::begin_profiling_op;
     use chrono::Utc;
 
     let endpoint = None;
