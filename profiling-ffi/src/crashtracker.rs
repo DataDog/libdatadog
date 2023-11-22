@@ -58,7 +58,8 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
     profiling_library_version: CharSlice,
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoint: Endpoint,
+    endpoint: Option<Endpoint>,
+    output_filename: Option<String>,
     path_to_reciever_binary: CharSlice,
 ) -> ProfileResult {
     match ddog_prof_crashtracker_update_on_fork_impl(
@@ -67,6 +68,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
         family,
         tags,
         endpoint,
+        output_filename,
         path_to_reciever_binary,
     ) {
         Ok(_) => ProfileResult::Ok(true),
@@ -81,7 +83,8 @@ unsafe fn ddog_prof_crashtracker_update_on_fork_impl(
     profiling_library_version: CharSlice,
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoint: Endpoint,
+    endpoint: Option<Endpoint>,
+    output_filename: Option<String>,
     path_to_reciever_binary: CharSlice,
 ) -> anyhow::Result<()> {
     let (config, metadata) = process_args(
@@ -90,6 +93,7 @@ unsafe fn ddog_prof_crashtracker_update_on_fork_impl(
         family,
         tags,
         endpoint,
+        output_filename,
         path_to_reciever_binary,
     )?;
     crashtracker::on_fork(config, metadata)
@@ -102,7 +106,8 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_init_full(
     profiling_library_version: CharSlice,
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoint: Endpoint,
+    endpoint: Option<Endpoint>,
+    output_filename: Option<String>,
     path_to_reciever_binary: CharSlice,
 ) -> ProfileResult {
     match ddog_prof_crashtracker_init_full_impl(
@@ -111,6 +116,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_init_full(
         family,
         tags,
         endpoint,
+        output_filename,
         path_to_reciever_binary,
     ) {
         Ok(_) => ProfileResult::Ok(true),
@@ -125,7 +131,8 @@ unsafe fn ddog_prof_crashtracker_init_full_impl(
     profiling_library_version: CharSlice,
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoint: Endpoint,
+    endpoint: Option<Endpoint>,
+    output_filename: Option<String>,
     path_to_reciever_binary: CharSlice,
 ) -> anyhow::Result<()> {
     let (config, metadata) = process_args(
@@ -134,6 +141,7 @@ unsafe fn ddog_prof_crashtracker_init_full_impl(
         family,
         tags,
         endpoint,
+        output_filename,
         path_to_reciever_binary,
     )?;
     crashtracker::init(config, metadata)
@@ -144,7 +152,8 @@ unsafe fn process_args(
     profiling_library_version: CharSlice,
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoint: Endpoint,
+    endpoint: Option<Endpoint>,
+    output_filename: Option<String>,
     path_to_reciever_binary: CharSlice,
 ) -> anyhow::Result<(crashtracker::Configuration, crashtracker::Metadata)> {
     let profiling_library_name = profiling_library_name.to_utf8_lossy().into_owned();
@@ -152,8 +161,13 @@ unsafe fn process_args(
     let family = family.to_utf8_lossy().into_owned();
     let path_to_reciever_binary = path_to_reciever_binary.to_utf8_lossy().into_owned();
     let tags = tags.map(|tags| tags.iter().cloned().collect());
-    let endpoint = exporter::try_to_endpoint(endpoint)?;
-    let config = crashtracker::Configuration::new(endpoint, path_to_reciever_binary);
+    let endpoint = if let Some(e) = endpoint {
+        Some(exporter::try_to_endpoint(e)?)
+    } else {
+        None
+    };
+    let config =
+        crashtracker::Configuration::new(endpoint, output_filename, path_to_reciever_binary);
     let metadata = crashtracker::Metadata::new(
         profiling_library_name,
         profiling_library_version,
@@ -189,7 +203,7 @@ fn crashtracker_init_impl(path_to_reciever_binary: *const c_char) -> anyhow::Res
     let api_key = Cow::from(std::env::var("DD_API_KEY")?);
     let endpoint = config::agentless("datad0g.com", api_key)?;
 
-    let config = crashtracker::Configuration::new(endpoint, path_to_reciever_binary);
+    let config = crashtracker::Configuration::new(Some(endpoint), None, path_to_reciever_binary);
     let metadata = crashtracker::Metadata::new(
         profiling_library_name,
         profiling_library_version,

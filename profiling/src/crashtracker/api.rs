@@ -40,14 +40,20 @@ impl Metadata {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Configuration {
-    pub endpoint: Endpoint,
+    pub endpoint: Option<Endpoint>,
+    pub output_filename: Option<String>,
     pub path_to_reciever_binary: String,
 }
 
 impl Configuration {
-    pub fn new(endpoint: Endpoint, path_to_reciever_binary: String) -> Self {
+    pub fn new(
+        endpoint: Option<Endpoint>,
+        output_filename: Option<String>,
+        path_to_reciever_binary: String,
+    ) -> Self {
         Self {
             endpoint,
+            output_filename,
             path_to_reciever_binary,
         }
     }
@@ -79,11 +85,12 @@ pub fn init(config: Configuration, metadata: Metadata) -> anyhow::Result<()> {
 #[ignore]
 #[test]
 fn test_crash() {
-    let url = hyper::Uri::default();
-    let api_key = None;
-    let endpoint = Endpoint { url, api_key };
+    use chrono::Utc;
+
+    let endpoint = None;
+    let output_filename = Some(format!("/tmp/crashreports/{}.txt", Utc::now().to_rfc3339()));
     let path_to_binary = "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/target/debug/profiling-crashtracking-receiver".to_string();
-    let config = Configuration::new(endpoint, path_to_binary);
+    let config = Configuration::new(endpoint, output_filename, path_to_binary);
     let metadata = Metadata::new(
         "libname".to_string(),
         "version".to_string(),

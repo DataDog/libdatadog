@@ -108,10 +108,7 @@ impl CrashInfo {
         Ok(())
     }
 
-    pub fn upload_to_dd(
-        &self,
-        config: &Configuration,
-    ) -> anyhow::Result<hyper::Response<hyper::Body>> {
+    pub fn upload_to_dd(&self, endpoint: Endpoint) -> anyhow::Result<hyper::Response<hyper::Body>> {
         //let site = "intake.profile.datad0g.com/api/v2/profile";
         //let site = "datad0g.com";
         //let api_key = std::env::var("DD_API_KEY")?;
@@ -140,7 +137,7 @@ impl CrashInfo {
             metadata.profiling_library_version.clone(),
             metadata.family.clone(),
             tags,
-            config.endpoint.clone(),
+            endpoint,
         )?;
         let request = exporter.build(time, time, &[crash_file], &[], None, None, None, timeout)?;
         let response = exporter.send(request, None)?;
