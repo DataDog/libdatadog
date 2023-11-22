@@ -4,8 +4,11 @@
 use std::io::Write;
 use std::ptr;
 
+#[cfg(target_os = "linux")]
+use super::collectors::emit_proc_self_maps;
+
 use super::api::{Configuration, Metadata};
-use super::collectors::{emit_backtrace_by_frames, emit_proc_self_maps};
+use super::collectors::emit_backtrace_by_frames;
 use super::constants::*;
 use super::counters::emit_counters;
 use libc::{
@@ -122,17 +125,20 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     writeln!(pipe, "{DD_CRASHTRACK_END_SIGINFO}")?;
 
     emit_counters(pipe)?;
+
+    #[cfg(target_os = "linux")]
+    emit_proc_self_maps(pipe)?;
+
     // Getting a backtrace on rust is not guaranteed to be signal safe
     // https://github.com/rust-lang/backtrace-rs/issues/414
     // let current_backtrace = backtrace::Backtrace::new();
     // In fact, if we look into the code here, we see mallocs.
     // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
     // We could walk the stack ourselves to try to avoid this, but in my
-    // experiements doing so with the backtrace crate, we fail in the same
+    // experiments doing so with the backtrace crate, we fail in the same
     // cases where the stdlib does.
+    // Do this last, so even if it crashes, we still get the other info.
     emit_backtrace_by_frames(pipe, false)?;
-    #[cfg(target_os = "linux")]
-    emit_proc_self_maps(pipe)?;
 
     pipe.flush()?;
     // https://doc.rust-lang.org/std/process/struct.Child.html#method.wait
@@ -144,7 +150,6 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     Ok(())
 }
 
-//TODO, get other signals than segv?
 pub fn register_crash_handlers() -> anyhow::Result<()> {
     unsafe {
         set_alt_stack()?;
@@ -154,12 +159,19 @@ pub fn register_crash_handlers() -> anyhow::Result<()> {
     Ok(())
 }
 
-unsafe fn register_signal_handler(signal_type: signal::Signal) -> anyhow::Result<()> {
+unsafe fn get_slot(
+    signal_type: signal::Signal,
+) -> anyhow::Result<&'static mut GlobalVarState<SigAction>> {
     let slot = match signal_type {
         signal::SIGBUS => unsafe { &mut OLD_SIGBUS_HANDLER },
         signal::SIGSEGV => unsafe { &mut OLD_SIGSEGV_HANDLER },
         _ => anyhow::bail!("unexpected signal {signal_type}"),
     };
+    Ok(slot)
+}
+
+unsafe fn register_signal_handler(signal_type: signal::Signal) -> anyhow::Result<()> {
+    let slot = get_slot(signal_type)?;
 
     let sig_action = SigAction::new(
         //SigHandler::SigAction(_handle_sigsegv_info),
@@ -179,11 +191,7 @@ unsafe fn register_signal_handler(signal_type: signal::Signal) -> anyhow::Result
 }
 
 unsafe fn replace_signal_handler(signal_type: signal::Signal) -> anyhow::Result<()> {
-    let slot = match signal_type {
-        signal::SIGBUS => unsafe { &mut OLD_SIGBUS_HANDLER },
-        signal::SIGSEGV => unsafe { &mut OLD_SIGSEGV_HANDLER },
-        _ => anyhow::bail!("unexpected signal {signal_type}"),
-    };
+    let slot = get_slot(signal_type)?;
 
     match std::mem::replace(slot, GlobalVarState::Taken) {
         GlobalVarState::Some(old_handler) => unsafe {

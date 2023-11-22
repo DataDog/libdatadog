@@ -1,12 +1,11 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use super::constants::*;
 use std::{
     fs::File,
     io::{Read, Write},
 };
-
-use super::constants::*;
 
 // Getting a backtrace on rust is not guaranteed to be signal safe
 // https://github.com/rust-lang/backtrace-rs/issues/414
@@ -79,6 +78,7 @@ pub fn emit_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 pub fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
     emit_file(w, "/proc/self/maps")?;
     Ok(())
