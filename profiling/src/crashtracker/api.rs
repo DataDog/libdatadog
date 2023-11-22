@@ -88,8 +88,12 @@ fn test_crash() {
 
     let endpoint = None;
     let output_filename = Some(format!("/tmp/crashreports/{}.txt", Utc::now().to_rfc3339()));
-    //let path_to_binary = "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/target/debug/profiling-crashtracking-receiver".to_string();
+
+    #[cfg(target_os = "macos")]
+    let path_to_binary = "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/target/debug/profiling-crashtracking-receiver".to_string();
+    #[cfg(target_os = "linux")]
     let path_to_binary = "/tmp/libdatadog/debug/profiling-crashtracking-receiver".to_string();
+    
     let config = Configuration::new(endpoint, output_filename, path_to_binary);
     let metadata = Metadata::new(
         "libname".to_string(),

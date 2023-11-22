@@ -47,6 +47,7 @@ fn process_line(
         StdinState::SigInfo => {
             let siginfo = serde_json::from_str(&line)?;
             crashinfo.set_siginfo(siginfo)?;
+            crashinfo.set_timestamp_to_now()?;
             StdinState::SigInfo
         }
 

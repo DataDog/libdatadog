@@ -3,7 +3,8 @@
 use crate::crashtracker::Metadata;
 use crate::exporter::{self, Endpoint, Tag};
 use anyhow::Context;
-use chrono::Utc;
+use chrono::serde::ts_seconds_option;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 use std::{collections::HashMap, fs::File, io::BufReader};
@@ -31,6 +32,7 @@ pub struct CrashInfo {
     os_info: os_info::Info,
     siginfo: Option<SigInfo>,
     stacktrace: Vec<StackFrame>,
+    timestamp: Option<DateTime<Utc>>,
     uuid: Uuid,
 }
 
@@ -57,6 +59,7 @@ impl CrashInfo {
             os_info,
             siginfo: None,
             stacktrace: vec![],
+            timestamp: None,
             uuid,
         }
     }
@@ -96,6 +99,12 @@ impl CrashInfo {
     pub fn set_stacktrace(&mut self, stacktrace: Vec<StackFrame>) -> anyhow::Result<()> {
         anyhow::ensure!(self.stacktrace.is_empty());
         self.stacktrace = stacktrace;
+        Ok(())
+    }
+
+    pub fn set_timestamp_to_now(&mut self) -> anyhow::Result<()> {
+        anyhow::ensure!(self.timestamp.is_none());
+        self.timestamp = Some(Utc::now());
         Ok(())
     }
 }
