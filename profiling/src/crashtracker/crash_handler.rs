@@ -118,7 +118,7 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
 
     let pipe = receiver.stdin.as_mut().unwrap();
     writeln!(pipe, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
-    writeln!(pipe, "\"signum\": {signum}")?;
+    writeln!(pipe, "{{\"signum\": {signum}}}")?;
     writeln!(pipe, "{DD_CRASHTRACK_END_SIGINFO}")?;
 
     emit_counters(pipe)?;

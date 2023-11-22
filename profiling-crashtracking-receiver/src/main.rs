@@ -2,11 +2,10 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 mod experiments;
-mod exporters;
 mod recieve_report;
 
+use chrono::Utc;
 use datadog_profiling::crashtracker::*;
-use exporters::{_print_to_file, upload_to_dd};
 use recieve_report::receive_report;
 use std::io::prelude::*;
 
@@ -17,7 +16,7 @@ use std::io::prelude::*;
 pub fn main() -> anyhow::Result<()> {
     let mut config = String::new();
     std::io::stdin().lock().read_line(&mut config)?;
-    let config: Configuration = serde_json::from_str(&config)?;
+    let _config: Configuration = serde_json::from_str(&config)?;
 
     let mut metadata = String::new();
     std::io::stdin().lock().read_line(&mut metadata)?;
@@ -26,9 +25,9 @@ pub fn main() -> anyhow::Result<()> {
     match receive_report(&metadata)? {
         recieve_report::CrashReportStatus::NoCrash => Ok(()),
         recieve_report::CrashReportStatus::CrashReport(crash_info) => {
-            let buf = serde_json::to_vec(&crash_info)?;
-            _print_to_file(&buf)?;
-            upload_to_dd(&buf, &config, &metadata)?;
+            let path = format!("/tmp/crashreports/{}.txt", Utc::now().to_rfc3339());
+            crash_info.to_file(&path)?;
+            //crash_info.upload_to_dd(&config)?;
             Ok(())
         }
         recieve_report::CrashReportStatus::PartialCrashReport(_, _) => todo!(),

@@ -1,9 +1,9 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-use std::io::BufRead;
-use datadog_profiling::crashtracker::*;
 use anyhow::Context;
+use datadog_profiling::crashtracker::*;
+use std::io::BufRead;
 // The Bools track if we need a comma preceding the next item
 #[derive(Debug)]
 pub enum StdinState {
@@ -22,11 +22,14 @@ fn process_line(
     let next = match state {
         StdinState::Counters if line.starts_with(DD_CRASHTRACK_END_COUNTERS) => StdinState::Waiting,
         StdinState::Counters => {
-            let v : serde_json::Value = serde_json::from_str(&line)?;
+            let v: serde_json::Value = serde_json::from_str(&line)?;
             let map = v.as_object().context("Expected map type value")?;
             anyhow::ensure!(map.len() == 1);
-            let (key, val) = map.iter().next().context("we know there is one value here")?;
-            let val = val.as_i64().context("Vals are ints");
+            let (key, val) = map
+                .iter()
+                .next()
+                .context("we know there is one value here")?;
+            let val = val.as_i64().context("Vals are ints")?;
             crashinfo.add_counter(key, val)?;
             StdinState::Counters
         }
@@ -95,7 +98,9 @@ pub fn receive_report(metadata: &Metadata) -> anyhow::Result<CrashReportStatus> 
         return Ok(CrashReportStatus::NoCrash);
     }
 
+    #[cfg(target_os = "linux")]
     crashinfo.add_file("/proc/meminfo")?;
+    #[cfg(target_os = "linux")]
     crashinfo.add_file("/proc/cpuinfo")?;
 
     if matches!(stdin_state, StdinState::Waiting) {

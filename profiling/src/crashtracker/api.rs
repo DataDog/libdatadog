@@ -1,6 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
+use crate::crashtracker::begin_profiling_op;
+
 use super::{
     counters::reset_counters,
     crash_handler::{
@@ -72,4 +74,26 @@ pub fn init(config: Configuration, metadata: Metadata) -> anyhow::Result<()> {
     setup_receiver(&config, &metadata)?;
     register_crash_handlers()?;
     Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_crash() {
+    let url = hyper::Uri::default();
+    let api_key = None;
+    let endpoint = Endpoint { url, api_key };
+    let path_to_binary = "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/target/debug/profiling-crashtracking-receiver".to_string();
+    let config = Configuration::new(endpoint, path_to_binary);
+    let metadata = Metadata::new(
+        "libname".to_string(),
+        "version".to_string(),
+        "family".to_string(),
+        None,
+    );
+    init(config, metadata).expect("not to fail");
+    begin_profiling_op(crate::crashtracker::ProfilingOpTypes::CollectingSample)
+        .expect("Not to fail");
+    let p: *const u32 = std::ptr::null();
+    let q = unsafe { *p };
+    assert_eq!(q, 3);
 }
