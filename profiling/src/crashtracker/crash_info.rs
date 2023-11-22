@@ -2,6 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 use crate::crashtracker::Metadata;
 use crate::exporter::{self, Endpoint, Tag};
+use anyhow::Context;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
@@ -67,7 +68,7 @@ impl CrashInfo {
     }
 
     pub fn add_file(&mut self, filename: &str) -> anyhow::Result<()> {
-        let file = File::open(filename)?;
+        let file = File::open(filename).with_context(|| filename.to_string())?;
         let lines: std::io::Result<Vec<_>> = BufReader::new(file).lines().collect();
         self.add_file_with_contents(filename, lines?)?;
         Ok(())

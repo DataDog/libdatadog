@@ -1,6 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use anyhow::Context;
+
 use super::constants::*;
 use std::{
     fs::File,
@@ -60,11 +62,11 @@ pub fn _emit_backtrace_std(w: &mut impl Write) {
 
 // TODO comment why I do this by block not line
 pub fn emit_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
-    let mut file = File::open(path)?;
+    let mut file = File::open(path).with_context(|| path.to_string())?;
     const BUFFER_LEN: usize = 512;
     let mut buffer = [0u8; BUFFER_LEN];
 
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_FILE} \"{path}\"")?;
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_FILE} {path}")?;
 
     loop {
         let read_count = file.read(&mut buffer)?;
