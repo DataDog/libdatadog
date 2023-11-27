@@ -9,13 +9,20 @@ use std::io::BufRead;
 use std::{collections::HashMap, fs::File, io::BufReader};
 use uuid::Uuid;
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StackFrameNames {
+    colno: Option<u32>,
+    filename: Option<String>,
+    lineno: Option<u32>,
+    name: Option<String>,
+}
+
 /// All fields are hex encoded integers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StackFrame {
-    filename: Option<String>,
     ip: Option<String>,
     module_base_address: Option<String>,
-    name: Option<String>,
+    names: Vec<StackFrameNames>,
     sp: Option<String>,
     symbol_address: Option<String>,
 }

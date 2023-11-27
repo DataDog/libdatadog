@@ -31,25 +31,52 @@ pub unsafe fn emit_backtrace_by_frames(
         write!(w, "\"symbol_address\": \"{:?}\"", frame.symbol_address()).unwrap();
 
         if resolve_frames {
-            let mut duplicate = false;
+            write!(w, ", \"names\": [").unwrap();
+
+            let mut first = true;
             // TODO: Figure out why this can give multiple answers.
             // This looks like it might be related to use of closures/inline?
-            // For now, just take the first. Another option would be to output
-            // an array with both.
+            // For now, just print all resolved names/locations.
             unsafe {
                 backtrace::resolve_frame_unsynchronized(frame, |symbol| {
-                    if !duplicate {
-                        if let Some(name) = symbol.name() {
-                            write!(w, ", \"name\": \"{}\"", name).unwrap();
-                        }
-                        if let Some(filename) = symbol.filename() {
-                            write!(w, ", \"filename\": {:?}", filename).unwrap();
-                        }
-
-                        duplicate = true;
+                    if !first {
+                        write!(w, ", ").unwrap();
                     }
+                    write!(w, "{{").unwrap();
+                    let mut comma_needed = false;
+                    if let Some(name) = symbol.name() {
+                        write!(w, "\"name\": \"{}\"", name).unwrap();
+                        comma_needed = true;
+                    }
+                    if let Some(filename) = symbol.filename() {
+                        if comma_needed {
+                            write!(w, ", ").unwrap();
+                        }
+                        write!(w, "\"filename\": {:?}", filename).unwrap();
+                        comma_needed = true;
+                    }
+                    if let Some(colno) = symbol.colno() {
+                        if comma_needed {
+                            write!(w, ", ").unwrap();
+                        }
+                        write!(w, "\"colno\": {}", colno).unwrap();
+                        comma_needed = true;
+                    }
+
+                    if let Some(lineno) = symbol.lineno() {
+                        if comma_needed {
+                            write!(w, ", ").unwrap();
+                        }
+                        write!(w, "\"lineno\": {}", lineno).unwrap();
+                        comma_needed = true;
+                    }
+
+                    write!(w, "}}").unwrap();
+
+                    first = false;
                 });
             }
+            write!(w, "]").unwrap();
         }
         writeln!(w, "}}").unwrap();
         true // keep going to the next frame
