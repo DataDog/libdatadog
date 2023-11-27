@@ -100,7 +100,7 @@ unsafe fn ddog_prof_crashtracker_update_on_fork_impl(
 
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_prof_crashtracker_init_full(
+pub unsafe extern "C" fn ddog_prof_crashtracker_init(
     profiling_library_name: CharSlice,
     profiling_library_version: CharSlice,
     family: CharSlice,
@@ -108,7 +108,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_init_full(
     endpoint: Endpoint,
     path_to_reciever_binary: CharSlice,
 ) -> ProfileResult {
-    match ddog_prof_crashtracker_init_full_impl(
+    match ddog_prof_crashtracker_init_impl(
         profiling_library_name,
         profiling_library_version,
         family,
@@ -124,7 +124,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_init_full(
     }
 }
 
-unsafe fn ddog_prof_crashtracker_init_full_impl(
+unsafe fn ddog_prof_crashtracker_init_impl(
     profiling_library_name: CharSlice,
     profiling_library_version: CharSlice,
     family: CharSlice,
@@ -169,40 +169,4 @@ unsafe fn process_args(
         tags,
     );
     Ok((config, metadata))
-}
-
-#[no_mangle]
-#[must_use]
-pub unsafe extern "C" fn ddog_prof_crashtracker_init(
-    path_to_reciever_binary: *const c_char,
-    //TODO: key/value pairs to pass to the receiver
-) -> ProfileResult {
-    match crashtracker_init_impl(path_to_reciever_binary) {
-        Ok(_) => ProfileResult::Ok(true),
-        Err(err) => ProfileResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_init failed"),
-        )),
-    }
-}
-
-//TODO, for now just hardcoding these values
-fn crashtracker_init_impl(path_to_reciever_binary: *const c_char) -> anyhow::Result<()> {
-    let path_to_reciever_binary = unsafe { CStr::from_ptr(path_to_reciever_binary) };
-    let path_to_reciever_binary = path_to_reciever_binary.to_str()?.to_string();
-    let profiling_library_name = "profiling_library_name".to_string();
-    let profiling_library_version = "profiling_library_version".to_string();
-    let family = "family".to_string();
-    let tags = None;
-
-    let api_key = Cow::from(std::env::var("DD_API_KEY")?);
-    let endpoint = config::agentless("datad0g.com", api_key)?;
-
-    let config = crashtracker::Configuration::new(Some(endpoint), None, path_to_reciever_binary);
-    let metadata = crashtracker::Metadata::new(
-        profiling_library_name,
-        profiling_library_version,
-        family,
-        tags,
-    );
-    crashtracker::init(config, metadata)
 }
