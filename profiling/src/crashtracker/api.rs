@@ -87,7 +87,6 @@ pub fn init(config: Configuration, metadata: Metadata) -> anyhow::Result<()> {
 }
 
 #[ignore]
-#[cfg_attr(miri, ignore)]
 #[test]
 fn test_crash() {
     use crate::crashtracker::begin_profiling_op;
@@ -99,7 +98,7 @@ fn test_crash() {
     #[cfg(target_os = "macos")]
     let path_to_reciever_binary = "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/target/debug/profiling-crashtracking-receiver".to_string();
     #[cfg(target_os = "linux")]
-    let path_to_binary = "/tmp/libdatadog/debug/profiling-crashtracking-receiver".to_string();
+    let path_to_reciever_binary = "/tmp/libdatadog/debug/profiling-crashtracking-receiver".to_string();
     let create_alt_stack = true;
     let resolve_frames = true;
     let config = Configuration::new(
