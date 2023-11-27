@@ -87,6 +87,7 @@ pub fn init(config: Configuration, metadata: Metadata) -> anyhow::Result<()> {
 }
 
 #[ignore]
+#[cfg_attr(miri, ignore)]
 #[test]
 fn test_crash() {
     use crate::crashtracker::begin_profiling_op;
