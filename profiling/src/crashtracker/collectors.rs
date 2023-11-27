@@ -68,7 +68,6 @@ pub unsafe fn emit_backtrace_by_frames(
                             write!(w, ", ").unwrap();
                         }
                         write!(w, "\"lineno\": {}", lineno).unwrap();
-                        comma_needed = true;
                     }
 
                     write!(w, "}}").unwrap();
