@@ -34,9 +34,9 @@ pub unsafe fn emit_backtrace_by_frames(
             write!(w, ", \"names\": [").unwrap();
 
             let mut first = true;
-            // TODO: Figure out why this can give multiple answers.
-            // This looks like it might be related to use of closures/inline?
-            // For now, just print all resolved names/locations.
+            // This can give multiple answers in the case of inlined functions
+            // https://docs.rs/backtrace/latest/backtrace/fn.resolve.html
+            // Store them all into an array of names
             unsafe {
                 backtrace::resolve_frame_unsynchronized(frame, |symbol| {
                     if !first {

@@ -120,9 +120,17 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
         GlobalVarState::Taken => anyhow::bail!("Cannot acquire receiver: Taken"),
     };
 
+    let signame = if signum == libc::SIGSEGV {
+        "SIGSEGV"
+    } else if signum == libc::SIGBUS {
+        "SIGBUS"
+    } else {
+        "UNKNOWN"
+    };
+
     let pipe = receiver.stdin.as_mut().unwrap();
     writeln!(pipe, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
-    writeln!(pipe, "{{\"signum\": {signum}}}")?;
+    writeln!(pipe, "{{\"signum\": {signum}, \"signame\": \"{signame}\"}}")?;
     writeln!(pipe, "{DD_CRASHTRACK_END_SIGINFO}")?;
 
     emit_counters(pipe)?;
