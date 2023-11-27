@@ -4,13 +4,9 @@
 use crate::exporter::{self, Endpoint};
 use crate::profiles::ProfileResult;
 use datadog_profiling::crashtracker;
-use datadog_profiling::exporter::config;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use ddcommon_ffi::Error;
-use libc::c_char;
-use std::borrow::Cow;
-use std::ffi::CStr;
 
 pub use datadog_profiling::crashtracker::ProfilingOpTypes;
 
@@ -60,6 +56,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: Endpoint,
     path_to_reciever_binary: CharSlice,
+    create_alt_stack: bool,
 ) -> ProfileResult {
     match ddog_prof_crashtracker_update_on_fork_impl(
         profiling_library_name,
@@ -69,6 +66,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
         Some(endpoint),
         None,
         path_to_reciever_binary,
+        create_alt_stack,
     ) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
@@ -85,6 +83,7 @@ unsafe fn ddog_prof_crashtracker_update_on_fork_impl(
     endpoint: Option<Endpoint>,
     output_filename: Option<String>,
     path_to_reciever_binary: CharSlice,
+    create_alt_stack: bool,
 ) -> anyhow::Result<()> {
     let (config, metadata) = process_args(
         profiling_library_name,
@@ -94,6 +93,7 @@ unsafe fn ddog_prof_crashtracker_update_on_fork_impl(
         endpoint,
         output_filename,
         path_to_reciever_binary,
+        create_alt_stack,
     )?;
     crashtracker::on_fork(config, metadata)
 }
@@ -107,6 +107,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_init(
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: Endpoint,
     path_to_reciever_binary: CharSlice,
+    create_alt_stack: bool,
 ) -> ProfileResult {
     match ddog_prof_crashtracker_init_impl(
         profiling_library_name,
@@ -116,6 +117,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_init(
         Some(endpoint),
         None,
         path_to_reciever_binary,
+        create_alt_stack,
     ) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
@@ -132,6 +134,7 @@ unsafe fn ddog_prof_crashtracker_init_impl(
     endpoint: Option<Endpoint>,
     output_filename: Option<String>,
     path_to_reciever_binary: CharSlice,
+    create_alt_stack: bool,
 ) -> anyhow::Result<()> {
     let (config, metadata) = process_args(
         profiling_library_name,
@@ -141,6 +144,7 @@ unsafe fn ddog_prof_crashtracker_init_impl(
         endpoint,
         output_filename,
         path_to_reciever_binary,
+        create_alt_stack,
     )?;
     crashtracker::init(config, metadata)
 }
@@ -153,6 +157,7 @@ unsafe fn process_args(
     endpoint: Option<Endpoint>,
     output_filename: Option<String>,
     path_to_reciever_binary: CharSlice,
+    create_alt_stack: bool,
 ) -> anyhow::Result<(crashtracker::Configuration, crashtracker::Metadata)> {
     let profiling_library_name = profiling_library_name.to_utf8_lossy().into_owned();
     let profiling_library_version = profiling_library_version.to_utf8_lossy().into_owned();
@@ -160,8 +165,12 @@ unsafe fn process_args(
     let path_to_reciever_binary = path_to_reciever_binary.to_utf8_lossy().into_owned();
     let tags = tags.map(|tags| tags.iter().cloned().collect());
     let endpoint = endpoint.map(|e| exporter::try_to_endpoint(e)).transpose()?;
-    let config =
-        crashtracker::Configuration::new(endpoint, output_filename, path_to_reciever_binary);
+    let config = crashtracker::Configuration::new(
+        create_alt_stack,
+        endpoint,
+        output_filename,
+        path_to_reciever_binary,
+    );
     let metadata = crashtracker::Metadata::new(
         profiling_library_name,
         profiling_library_version,

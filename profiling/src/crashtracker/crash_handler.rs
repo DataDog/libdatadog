@@ -150,9 +150,11 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn register_crash_handlers() -> anyhow::Result<()> {
+pub fn register_crash_handlers(should_create_alt_stack: bool) -> anyhow::Result<()> {
     unsafe {
-        set_alt_stack()?;
+        if should_create_alt_stack {
+            set_alt_stack()?;
+        }
         register_signal_handler(signal::SIGBUS)?;
         register_signal_handler(signal::SIGSEGV)?;
     }
@@ -173,6 +175,15 @@ unsafe fn get_slot(
 unsafe fn register_signal_handler(signal_type: signal::Signal) -> anyhow::Result<()> {
     let slot = get_slot(signal_type)?;
 
+    // https://www.gnu.org/software/libc/manual/html_node/Flags-for-Sigaction.html
+    // ===============
+    // If this flag is set for a particular signal number, the system uses the
+    // signal stack when delivering that kind of signal.
+    // See Using a Separate Signal Stack.
+    // If a signal with this flag arrives and you have not set a signal stack,
+    // the normal user stack is used instead, as if the flag had not been set.
+    // ===============
+    // This implies that it is always safe to set SA_ONSTACK.
     let sig_action = SigAction::new(
         //SigHandler::SigAction(_handle_sigsegv_info),
         SigHandler::Handler(handle_posix_signal),

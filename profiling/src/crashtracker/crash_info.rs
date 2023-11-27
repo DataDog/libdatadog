@@ -3,7 +3,6 @@
 use crate::crashtracker::Metadata;
 use crate::exporter::{self, Endpoint, Tag};
 use anyhow::Context;
-use chrono::serde::ts_seconds_option;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;

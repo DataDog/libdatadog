@@ -38,6 +38,7 @@ impl Metadata {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Configuration {
+    pub create_alt_stack: bool,
     pub endpoint: Option<Endpoint>,
     pub output_filename: Option<String>,
     pub path_to_reciever_binary: String,
@@ -45,11 +46,13 @@ pub struct Configuration {
 
 impl Configuration {
     pub fn new(
+        create_alt_stack: bool,
         endpoint: Option<Endpoint>,
         output_filename: Option<String>,
         path_to_reciever_binary: String,
     ) -> Self {
         Self {
+            create_alt_stack,
             endpoint,
             output_filename,
             path_to_reciever_binary,
@@ -76,7 +79,7 @@ pub fn on_fork(config: Configuration, metadata: Metadata) -> anyhow::Result<()> 
 //TODO pass key/value pairs to the reciever.
 pub fn init(config: Configuration, metadata: Metadata) -> anyhow::Result<()> {
     setup_receiver(&config, &metadata)?;
-    register_crash_handlers()?;
+    register_crash_handlers(config.create_alt_stack)?;
     Ok(())
 }
 
@@ -93,8 +96,9 @@ fn test_crash() {
     let path_to_binary = "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/target/debug/profiling-crashtracking-receiver".to_string();
     #[cfg(target_os = "linux")]
     let path_to_binary = "/tmp/libdatadog/debug/profiling-crashtracking-receiver".to_string();
+    let create_alt_stack = false;
 
-    let config = Configuration::new(endpoint, output_filename, path_to_binary);
+    let config = Configuration::new(create_alt_stack, endpoint, output_filename, path_to_binary);
     let metadata = Metadata::new(
         "libname".to_string(),
         "version".to_string(),
