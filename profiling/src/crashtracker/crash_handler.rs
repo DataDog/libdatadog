@@ -32,6 +32,7 @@ where
 static mut RECEIVER: GlobalVarState<std::process::Child> = GlobalVarState::Unassigned;
 static mut OLD_SIGBUS_HANDLER: GlobalVarState<SigAction> = GlobalVarState::Unassigned;
 static mut OLD_SIGSEGV_HANDLER: GlobalVarState<SigAction> = GlobalVarState::Unassigned;
+static mut RESOLVE_FRAMES: bool = false;
 
 fn make_reciever(
     config: &Configuration,
@@ -138,7 +139,7 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     // experiments doing so with the backtrace crate, we fail in the same
     // cases where the stdlib does.
     // Do this last, so even if it crashes, we still get the other info.
-    emit_backtrace_by_frames(pipe, false)?;
+    unsafe { emit_backtrace_by_frames(pipe, RESOLVE_FRAMES)? };
 
     pipe.flush()?;
     // https://doc.rust-lang.org/std/process/struct.Child.html#method.wait
@@ -150,9 +151,11 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn register_crash_handlers(should_create_alt_stack: bool) -> anyhow::Result<()> {
+pub fn register_crash_handlers(config: &Configuration) -> anyhow::Result<()> {
     unsafe {
-        if should_create_alt_stack {
+        RESOLVE_FRAMES = config.resolve_frames;
+
+        if config.create_alt_stack {
             set_alt_stack()?;
         }
         register_signal_handler(signal::SIGBUS)?;

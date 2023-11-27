@@ -57,6 +57,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
     endpoint: Endpoint,
     path_to_reciever_binary: CharSlice,
     create_alt_stack: bool,
+    resolve_frames: bool,
 ) -> ProfileResult {
     match ddog_prof_crashtracker_update_on_fork_impl(
         profiling_library_name,
@@ -67,6 +68,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
         None,
         path_to_reciever_binary,
         create_alt_stack,
+        resolve_frames,
     ) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
@@ -84,6 +86,7 @@ unsafe fn ddog_prof_crashtracker_update_on_fork_impl(
     output_filename: Option<String>,
     path_to_reciever_binary: CharSlice,
     create_alt_stack: bool,
+    resolve_frames: bool,
 ) -> anyhow::Result<()> {
     let (config, metadata) = process_args(
         profiling_library_name,
@@ -94,6 +97,7 @@ unsafe fn ddog_prof_crashtracker_update_on_fork_impl(
         output_filename,
         path_to_reciever_binary,
         create_alt_stack,
+        resolve_frames,
     )?;
     crashtracker::on_fork(config, metadata)
 }
@@ -108,6 +112,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_init(
     endpoint: Endpoint,
     path_to_reciever_binary: CharSlice,
     create_alt_stack: bool,
+    resolve_frames: bool,
 ) -> ProfileResult {
     match ddog_prof_crashtracker_init_impl(
         profiling_library_name,
@@ -118,6 +123,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_init(
         None,
         path_to_reciever_binary,
         create_alt_stack,
+        resolve_frames,
     ) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
@@ -135,6 +141,7 @@ unsafe fn ddog_prof_crashtracker_init_impl(
     output_filename: Option<String>,
     path_to_reciever_binary: CharSlice,
     create_alt_stack: bool,
+    resolve_frames: bool,
 ) -> anyhow::Result<()> {
     let (config, metadata) = process_args(
         profiling_library_name,
@@ -145,6 +152,7 @@ unsafe fn ddog_prof_crashtracker_init_impl(
         output_filename,
         path_to_reciever_binary,
         create_alt_stack,
+        resolve_frames,
     )?;
     crashtracker::init(config, metadata)
 }
@@ -158,6 +166,7 @@ unsafe fn process_args(
     output_filename: Option<String>,
     path_to_reciever_binary: CharSlice,
     create_alt_stack: bool,
+    resolve_frames: bool,
 ) -> anyhow::Result<(crashtracker::Configuration, crashtracker::Metadata)> {
     let profiling_library_name = profiling_library_name.to_utf8_lossy().into_owned();
     let profiling_library_version = profiling_library_version.to_utf8_lossy().into_owned();
@@ -170,6 +179,7 @@ unsafe fn process_args(
         endpoint,
         output_filename,
         path_to_reciever_binary,
+        resolve_frames,
     );
     let metadata = crashtracker::Metadata::new(
         profiling_library_name,

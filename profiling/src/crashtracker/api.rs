@@ -42,6 +42,7 @@ pub struct Configuration {
     pub endpoint: Option<Endpoint>,
     pub output_filename: Option<String>,
     pub path_to_reciever_binary: String,
+    pub resolve_frames: bool,
 }
 
 impl Configuration {
@@ -50,12 +51,14 @@ impl Configuration {
         endpoint: Option<Endpoint>,
         output_filename: Option<String>,
         path_to_reciever_binary: String,
+        resolve_frames: bool,
     ) -> Self {
         Self {
             create_alt_stack,
             endpoint,
             output_filename,
             path_to_reciever_binary,
+            resolve_frames,
         }
     }
 }
@@ -79,7 +82,7 @@ pub fn on_fork(config: Configuration, metadata: Metadata) -> anyhow::Result<()> 
 //TODO pass key/value pairs to the reciever.
 pub fn init(config: Configuration, metadata: Metadata) -> anyhow::Result<()> {
     setup_receiver(&config, &metadata)?;
-    register_crash_handlers(config.create_alt_stack)?;
+    register_crash_handlers(&config)?;
     Ok(())
 }
 
@@ -93,12 +96,18 @@ fn test_crash() {
     let output_filename = Some(format!("/tmp/crashreports/{}.txt", Utc::now().to_rfc3339()));
 
     #[cfg(target_os = "macos")]
-    let path_to_binary = "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/target/debug/profiling-crashtracking-receiver".to_string();
+    let path_to_reciever_binary = "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/target/debug/profiling-crashtracking-receiver".to_string();
     #[cfg(target_os = "linux")]
     let path_to_binary = "/tmp/libdatadog/debug/profiling-crashtracking-receiver".to_string();
-    let create_alt_stack = false;
-
-    let config = Configuration::new(create_alt_stack, endpoint, output_filename, path_to_binary);
+    let create_alt_stack = true;
+    let resolve_frames = true;
+    let config = Configuration::new(
+        create_alt_stack,
+        endpoint,
+        output_filename,
+        path_to_reciever_binary,
+        resolve_frames,
+    );
     let metadata = Metadata::new(
         "libname".to_string(),
         "version".to_string(),

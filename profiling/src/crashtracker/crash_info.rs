@@ -12,8 +12,10 @@ use uuid::Uuid;
 /// All fields are hex encoded integers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StackFrame {
+    filename: Option<String>,
     ip: Option<String>,
     module_base_address: Option<String>,
+    name: Option<String>,
     sp: Option<String>,
     symbol_address: Option<String>,
 }

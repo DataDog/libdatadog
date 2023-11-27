@@ -56,7 +56,7 @@ fn process_line(
             StdinState::Waiting
         }
         StdinState::StackTrace(mut stacktrace) => {
-            let frame = serde_json::from_str(&line)?;
+            let frame = serde_json::from_str(&line).context(line)?;
             stacktrace.push(frame);
             StdinState::StackTrace(stacktrace)
         }

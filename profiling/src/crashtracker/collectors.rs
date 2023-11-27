@@ -13,32 +13,40 @@ use std::{
 // https://github.com/rust-lang/backtrace-rs/issues/414
 // My experiemnts show that just calculating the `ip` of the frames seems
 // to bo ok for Python, but resolving the frames crashes.
-pub fn emit_backtrace_by_frames(w: &mut impl Write, resolve_frames: bool) -> anyhow::Result<()> {
+pub unsafe fn emit_backtrace_by_frames(
+    w: &mut impl Write,
+    resolve_frames: bool,
+) -> anyhow::Result<()> {
     // https://docs.rs/backtrace/latest/backtrace/index.html
     writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
-    backtrace::trace(|frame| {
+    backtrace::trace_unsynchronized(|frame| {
         // Write the values we can get without resolving, since these seem to
         // be crash safe in my experiments.
         write! {w, "{{"}.unwrap();
         write!(w, "\"ip\": \"{:?}\", ", frame.ip()).unwrap();
-        write!(
-            w,
-            "\"module_base_address\": \"{:?}\", ",
-            frame.module_base_address()
-        )
-        .unwrap();
+        if let Some(module_base_address) = frame.module_base_address() {
+            write!(w, "\"module_base_address\": \"{module_base_address:?}\", ",).unwrap();
+        }
         write!(w, "\"sp\": \"{:?}\", ", frame.sp()).unwrap();
         write!(w, "\"symbol_address\": \"{:?}\"", frame.symbol_address()).unwrap();
 
         if resolve_frames {
+            let mut duplicate = false;
+            // TODO: Figure out why this can give multiple answers.
+            // This looks like it might be related to use of closures/inline?
+            // For now, just take the first. Another option would be to output
+            // an array with both.
             unsafe {
                 backtrace::resolve_frame_unsynchronized(frame, |symbol| {
-                    //TODO, make this write! not writeln!
-                    if let Some(name) = symbol.name() {
-                        writeln!(w, ", name: {}", name).unwrap();
-                    }
-                    if let Some(filename) = symbol.filename() {
-                        writeln!(w, ", filename: {:?}", filename).unwrap();
+                    if !duplicate {
+                        if let Some(name) = symbol.name() {
+                            write!(w, ", \"name\": \"{}\"", name).unwrap();
+                        }
+                        if let Some(filename) = symbol.filename() {
+                            write!(w, ", \"filename\": {:?}", filename).unwrap();
+                        }
+
+                        duplicate = true;
                     }
                 });
             }
