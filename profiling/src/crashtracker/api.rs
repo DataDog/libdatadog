@@ -41,7 +41,7 @@ pub struct Configuration {
     pub create_alt_stack: bool,
     pub endpoint: Option<Endpoint>,
     pub output_filename: Option<String>,
-    pub path_to_reciever_binary: String,
+    pub path_to_receiver_binary: String,
     pub resolve_frames: bool,
 }
 
@@ -50,14 +50,14 @@ impl Configuration {
         create_alt_stack: bool,
         endpoint: Option<Endpoint>,
         output_filename: Option<String>,
-        path_to_reciever_binary: String,
+        path_to_receiver_binary: String,
         resolve_frames: bool,
     ) -> Self {
         Self {
             create_alt_stack,
             endpoint,
             output_filename,
-            path_to_reciever_binary,
+            path_to_receiver_binary,
             resolve_frames,
         }
     }
@@ -79,7 +79,7 @@ pub fn on_fork(config: Configuration, metadata: Metadata) -> anyhow::Result<()> 
     Ok(())
 }
 
-//TODO pass key/value pairs to the reciever.
+//TODO pass key/value pairs to the receiver.
 pub fn init(config: Configuration, metadata: Metadata) -> anyhow::Result<()> {
     setup_receiver(&config, &metadata)?;
     register_crash_handlers(&config)?;
@@ -96,9 +96,9 @@ fn test_crash() {
     let output_filename = Some(format!("/tmp/crashreports/{}.txt", Utc::now().to_rfc3339()));
 
     #[cfg(target_os = "macos")]
-    let path_to_reciever_binary = "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/target/debug/profiling-crashtracking-receiver".to_string();
+    let path_to_receiver_binary = "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/target/debug/profiling-crashtracking-receiver".to_string();
     #[cfg(target_os = "linux")]
-    let path_to_reciever_binary =
+    let path_to_receiver_binary =
         "/tmp/libdatadog/debug/profiling-crashtracking-receiver".to_string();
     let create_alt_stack = true;
     let resolve_frames = true;
@@ -106,7 +106,7 @@ fn test_crash() {
         create_alt_stack,
         endpoint,
         output_filename,
-        path_to_reciever_binary,
+        path_to_receiver_binary,
         resolve_frames,
     );
     let metadata = Metadata::new(

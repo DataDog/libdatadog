@@ -55,7 +55,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: Endpoint,
-    path_to_reciever_binary: CharSlice,
+    path_to_receiver_binary: CharSlice,
     create_alt_stack: bool,
     resolve_frames: bool,
 ) -> ProfileResult {
@@ -66,7 +66,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
         tags,
         Some(endpoint),
         None,
-        path_to_reciever_binary,
+        path_to_receiver_binary,
         create_alt_stack,
         resolve_frames,
     ) {
@@ -84,7 +84,7 @@ unsafe fn ddog_prof_crashtracker_update_on_fork_impl(
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: Option<Endpoint>,
     output_filename: Option<String>,
-    path_to_reciever_binary: CharSlice,
+    path_to_receiver_binary: CharSlice,
     create_alt_stack: bool,
     resolve_frames: bool,
 ) -> anyhow::Result<()> {
@@ -95,7 +95,7 @@ unsafe fn ddog_prof_crashtracker_update_on_fork_impl(
         tags,
         endpoint,
         output_filename,
-        path_to_reciever_binary,
+        path_to_receiver_binary,
         create_alt_stack,
         resolve_frames,
     )?;
@@ -110,7 +110,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_init(
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: Endpoint,
-    path_to_reciever_binary: CharSlice,
+    path_to_receiver_binary: CharSlice,
     create_alt_stack: bool,
     resolve_frames: bool,
 ) -> ProfileResult {
@@ -121,7 +121,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_init(
         tags,
         Some(endpoint),
         None,
-        path_to_reciever_binary,
+        path_to_receiver_binary,
         create_alt_stack,
         resolve_frames,
     ) {
@@ -139,7 +139,7 @@ unsafe fn ddog_prof_crashtracker_init_impl(
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: Option<Endpoint>,
     output_filename: Option<String>,
-    path_to_reciever_binary: CharSlice,
+    path_to_receiver_binary: CharSlice,
     create_alt_stack: bool,
     resolve_frames: bool,
 ) -> anyhow::Result<()> {
@@ -150,7 +150,7 @@ unsafe fn ddog_prof_crashtracker_init_impl(
         tags,
         endpoint,
         output_filename,
-        path_to_reciever_binary,
+        path_to_receiver_binary,
         create_alt_stack,
         resolve_frames,
     )?;
@@ -164,21 +164,21 @@ unsafe fn process_args(
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: Option<Endpoint>,
     output_filename: Option<String>,
-    path_to_reciever_binary: CharSlice,
+    path_to_receiver_binary: CharSlice,
     create_alt_stack: bool,
     resolve_frames: bool,
 ) -> anyhow::Result<(crashtracker::Configuration, crashtracker::Metadata)> {
     let profiling_library_name = profiling_library_name.to_utf8_lossy().into_owned();
     let profiling_library_version = profiling_library_version.to_utf8_lossy().into_owned();
     let family = family.to_utf8_lossy().into_owned();
-    let path_to_reciever_binary = path_to_reciever_binary.to_utf8_lossy().into_owned();
+    let path_to_receiver_binary = path_to_receiver_binary.to_utf8_lossy().into_owned();
     let tags = tags.map(|tags| tags.iter().cloned().collect());
     let endpoint = endpoint.map(|e| exporter::try_to_endpoint(e)).transpose()?;
     let config = crashtracker::Configuration::new(
         create_alt_stack,
         endpoint,
         output_filename,
-        path_to_reciever_binary,
+        path_to_receiver_binary,
         resolve_frames,
     );
     let metadata = crashtracker::Metadata::new(

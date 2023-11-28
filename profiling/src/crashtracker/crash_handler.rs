@@ -34,16 +34,16 @@ static mut OLD_SIGBUS_HANDLER: GlobalVarState<SigAction> = GlobalVarState::Unass
 static mut OLD_SIGSEGV_HANDLER: GlobalVarState<SigAction> = GlobalVarState::Unassigned;
 static mut RESOLVE_FRAMES: bool = false;
 
-fn make_reciever(
+fn make_receiver(
     config: &Configuration,
     metadata: &Metadata,
 ) -> anyhow::Result<std::process::Child> {
-    let receiver = Command::new(&config.path_to_reciever_binary)
-        .arg("reciever")
+    let receiver = Command::new(&config.path_to_receiver_binary)
+        .arg("receiver")
         .stdin(Stdio::piped())
         .spawn()?;
 
-    // Write the args into the reciever.
+    // Write the args into the receiver.
     // Use the pipe to avoid secrets ending up on the commandline
     writeln!(
         receiver.stdin.as_ref().unwrap(),
@@ -59,31 +59,31 @@ fn make_reciever(
 }
 
 pub fn setup_receiver(config: &Configuration, metadata: &Metadata) -> anyhow::Result<()> {
-    let new_reciever = make_reciever(config, metadata)?;
-    let old_reciever =
-        unsafe { std::mem::replace(&mut RECEIVER, GlobalVarState::Some(new_reciever)) };
+    let new_receiver = make_receiver(config, metadata)?;
+    let old_receiver =
+        unsafe { std::mem::replace(&mut RECEIVER, GlobalVarState::Some(new_receiver)) };
     anyhow::ensure!(
-        matches!(old_reciever, GlobalVarState::Unassigned),
-        "Error registering crash handler reciever: reciever already existed {old_reciever:?}"
+        matches!(old_receiver, GlobalVarState::Unassigned),
+        "Error registering crash handler receiver: receiver already existed {old_receiver:?}"
     );
 
     Ok(())
 }
 
 pub fn replace_receiver(config: &Configuration, metadata: &Metadata) -> anyhow::Result<()> {
-    let new_reciever = make_reciever(config, metadata)?;
-    let old_reciever =
-        unsafe { std::mem::replace(&mut RECEIVER, GlobalVarState::Some(new_reciever)) };
-    if let GlobalVarState::Some(mut old_reciever) = old_reciever {
+    let new_receiver = make_receiver(config, metadata)?;
+    let old_receiver =
+        unsafe { std::mem::replace(&mut RECEIVER, GlobalVarState::Some(new_receiver)) };
+    if let GlobalVarState::Some(mut old_receiver) = old_receiver {
         // Close the stdin handle so we don't have two open copies
-        // TODO: dropping the old reciever at the end of this function might do this automatically?
-        drop(old_reciever.stdin.take());
-        drop(old_reciever.stdout.take());
-        drop(old_reciever.stderr.take());
+        // TODO: dropping the old receiver at the end of this function might do this automatically?
+        drop(old_receiver.stdin.take());
+        drop(old_receiver.stdout.take());
+        drop(old_receiver.stderr.take());
         // Leave the old one running, since its being used by another fork
     } else {
         anyhow::bail!(
-            "Error updating crash handler reciever: reciever did not already exist {old_reciever:?}"
+            "Error updating crash handler receiver: receiver did not already exist {old_receiver:?}"
         );
     }
 
@@ -91,13 +91,13 @@ pub fn replace_receiver(config: &Configuration, metadata: &Metadata) -> anyhow::
 }
 
 pub fn shutdown_receiver() -> anyhow::Result<()> {
-    let old_reciever = unsafe { std::mem::replace(&mut RECEIVER, GlobalVarState::Taken) };
-    if let GlobalVarState::Some(mut old_reciever) = old_reciever {
-        old_reciever.kill()?;
-        old_reciever.wait()?;
+    let old_receiver = unsafe { std::mem::replace(&mut RECEIVER, GlobalVarState::Taken) };
+    if let GlobalVarState::Some(mut old_receiver) = old_receiver {
+        old_receiver.kill()?;
+        old_receiver.wait()?;
     } else {
         anyhow::bail!(
-            "Error shutting down crash handler reciever: reciever did not already exist {old_reciever:?}"
+            "Error shutting down crash handler receiver: receiver did not already exist {old_receiver:?}"
         );
     }
     Ok(())
