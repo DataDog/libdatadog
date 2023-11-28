@@ -106,7 +106,7 @@ pub fn shutdown_receiver() -> anyhow::Result<()> {
 extern "C" fn handle_posix_signal(signum: i32) {
     // Safety: We've already crashed, this is a best effort to chain to the old
     // behaviour.  Do this first to prevent recursive activation if this handler
-    // itself crases (e.g. while calculating stacktrace)
+    // itself crashes (e.g. while calculating stacktrace)
     let _ = restore_old_handlers();
     let _ = handle_posix_signal_impl(signum);
 
@@ -143,9 +143,6 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     // let current_backtrace = backtrace::Backtrace::new();
     // In fact, if we look into the code here, we see mallocs.
     // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
-    // We could walk the stack ourselves to try to avoid this, but in my
-    // experiments doing so with the backtrace crate, we fail in the same
-    // cases where the stdlib does.
     // Do this last, so even if it crashes, we still get the other info.
     unsafe { emit_backtrace_by_frames(pipe, RESOLVE_FRAMES)? };
 

@@ -9,10 +9,18 @@ use std::{
     io::{Read, Write},
 };
 
-// Getting a backtrace on rust is not guaranteed to be signal safe
-// https://github.com/rust-lang/backtrace-rs/issues/414
-// My experiemnts show that just calculating the `ip` of the frames seems
-// to bo ok for Python, but resolving the frames crashes.
+/// Emit a stacktrace onto the given handle as formatted json.
+/// SAFETY:
+///     Crash-tracking functions are not reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function is not atomic. A crash during its execution may lead to
+///     unexpected crash-handling behaviour.
+/// SIGNAL SAFETY:
+///     Getting a backtrace on rust is not guaranteed to be signal safe.
+///     https://github.com/rust-lang/backtrace-rs/issues/414
+///     Calculating the `ip` of the frames seems safe, but resolving the frames
+///     sometimes crashes.
 pub unsafe fn emit_backtrace_by_frames(
     w: &mut impl Write,
     resolve_frames: bool,
@@ -84,19 +92,32 @@ pub unsafe fn emit_backtrace_by_frames(
     Ok(())
 }
 
-// Getting a backtrace on rust is not guaranteed to be signal safe
-// https://github.com/rust-lang/backtrace-rs/issues/414
-// let current_backtrace = backtrace::Backtrace::new();
-// In fact, if we look into the code here, we see mallocs.
-// https://doc.rust-lang.org/src/std/backtrace.rs.html#332
-pub fn _emit_backtrace_std(w: &mut impl Write) {
-    let current_backtrace = std::backtrace::Backtrace::force_capture();
-    writeln!(w, "{:?}", current_backtrace).unwrap();
-}
-
-// TODO comment why I do this by block not line
+/// Emit a file onto the given handle.
+/// The file will be emitted in the format
+/// ```ignore
+/// DD_CRASHTRACK_BEGIN_FILE
+/// <FILE BYTES>
+/// DD_CRASHTRACK_END_FILE
+/// ```
+/// PRECONDITIONS:
+///     This function assumes that the crash-tracker is initialized.
+/// SAFETY:
+///     Crash-tracking functions are not reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function is not atomic. A crash during its execution may lead to
+///     unexpected crash-handling behaviour.
+/// SIGNAL SAFETY:
+///     This function is careful to only write to the handle, without doing any
+///     unnecessary mutexes or memory allocation.
 pub fn emit_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
+    // open is signal safe
+    // https://man7.org/linux/man-pages/man7/signal-safety.7.html
     let mut file = File::open(path).with_context(|| path.to_string())?;
+
+    // Reading the file into a fixed buffer is signal safe.
+    // Doing anything more complicated may involve allocation which is not.
+    // So, just read it in, and then immediately push it out to the pipe.
     const BUFFER_LEN: usize = 512;
     let mut buffer = [0u8; BUFFER_LEN];
 
@@ -104,9 +125,8 @@ pub fn emit_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
 
     loop {
         let read_count = file.read(&mut buffer)?;
-        w.write_all(&buffer)?;
-
-        if read_count != BUFFER_LEN {
+        w.write_all(&buffer[..read_count])?;
+        if read_count == 0 {
             break;
         }
     }
