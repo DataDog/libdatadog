@@ -1,16 +1,21 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-mod recieve_report;
+mod receive_report;
 
 use datadog_profiling::crashtracker::*;
-use recieve_report::receive_report;
-use std::io::prelude::*;
+use receive_report::receive_report;
+use std::{io::prelude::*, time::Duration};
 
-/// Recieves data on stdin, and forwards it to somewhere its useful
-/// For now, just sent to a file.
-/// Future enhancement: set of key/value pairs sent over pipe to setup
-/// Future enhancement: publish to DD endpoint
+/// Receives data from a crash collector via a pipe on `stdin`, formats it into
+/// `CrashInfo` json, and emits it to the endpoint/file defined in `config`.
+///
+/// At a high-level, this exists because doing anything in a
+/// signal handler is dangerous, so we fork a sidecar to do the stuff we aren't
+/// allowed to do in the handler.
+///
+/// See comments in [profiling/crashtracker/mod.rs] for a full architecture
+/// description.
 pub fn main() -> anyhow::Result<()> {
     let mut config = String::new();
     std::io::stdin().lock().read_line(&mut config)?;
@@ -21,16 +26,18 @@ pub fn main() -> anyhow::Result<()> {
     let metadata: Metadata = serde_json::from_str(&metadata)?;
 
     match receive_report(&metadata)? {
-        recieve_report::CrashReportStatus::NoCrash => Ok(()),
-        recieve_report::CrashReportStatus::CrashReport(crash_info) => {
+        receive_report::CrashReportStatus::NoCrash => Ok(()),
+        receive_report::CrashReportStatus::CrashReport(crash_info) => {
             if let Some(path) = config.output_filename {
                 crash_info.to_file(&path)?;
             }
             if let Some(endpoint) = config.endpoint {
-                crash_info.upload_to_dd(endpoint)?;
+                // Don't keep the endpoint waiting forever.
+                // TODO Experiment to see if 30 is the right number.
+                crash_info.upload_to_dd(endpoint, Duration::from_secs(30))?;
             }
             Ok(())
         }
-        recieve_report::CrashReportStatus::PartialCrashReport(_, _) => todo!(),
+        receive_report::CrashReportStatus::PartialCrashReport(_, _) => todo!(),
     }
 }

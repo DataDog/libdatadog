@@ -6,6 +6,7 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
+use std::time::Duration;
 use std::{collections::HashMap, fs::File, io::BufReader};
 use uuid::Uuid;
 
@@ -119,13 +120,26 @@ impl CrashInfo {
 }
 
 impl CrashInfo {
+    /// Emit the CrashInfo as structured json in file `path`.
+    /// SIGNAL SAFETY:
+    ///     I believe but have not verified this is signal safe.
     pub fn to_file(&self, path: &str) -> anyhow::Result<()> {
         let file = File::create(path)?;
         serde_json::to_writer_pretty(file, self)?;
         Ok(())
     }
 
-    pub fn upload_to_dd(&self, endpoint: Endpoint) -> anyhow::Result<hyper::Response<hyper::Body>> {
+    /// Package the CrashInfo as a json file `crash_info.json` associated with
+    /// an empty profile, and upload it to the profiling endpoint given in
+    /// `endpoint`.
+    /// SIGNAL SAFETY:
+    ///     Uploading the data involve both allocation and synchronization and
+    ///     should not be done inside a signal handler.
+    pub fn upload_to_dd(
+        &self,
+        endpoint: Endpoint,
+        timeout: Duration,
+    ) -> anyhow::Result<hyper::Response<hyper::Body>> {
         //let site = "intake.profile.datad0g.com/api/v2/profile";
         //let site = "datad0g.com";
         //let api_key = std::env::var("DD_API_KEY")?;
@@ -142,9 +156,6 @@ impl CrashInfo {
         };
         let tags: Option<Vec<Tag>> = Some(vec![service_tag, is_crash_tag]);
         let time = Utc::now();
-        // TODO make this configurable
-        // Comment that this is to prevent us waiting forever and keeping the container alive forever
-        let timeout = std::time::Duration::from_secs(30);
         let crash_file = exporter::File {
             name: "crash-info.json",
             bytes: &data,
