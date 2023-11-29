@@ -4,7 +4,11 @@
 use anyhow::Context;
 use datadog_profiling::crashtracker::*;
 use std::io::BufRead;
-// The Bools track if we need a comma preceding the next item
+
+/// The crashtracker collector sends data in blocks.
+/// This enum tracks which block we're currently in, and, for multi-line blocks,
+/// collects the partial data until the block is closed and it can be appended
+/// to the CrashReport.
 #[derive(Debug)]
 pub enum StdinState {
     Counters,
@@ -14,6 +18,10 @@ pub enum StdinState {
     Waiting,
 }
 
+/// A state machine that processes data from the crash-tracker collector line by
+/// line.  The crashtracker collector sends data in blocks, so we use a `state`
+/// variable to track which block we're in and collect partial data.
+/// Once we reach the end of a block, append the block's data to `crashinfo`.
 fn process_line(
     crashinfo: &mut CrashInfo,
     line: String,
@@ -87,9 +95,17 @@ pub enum CrashReportStatus {
     PartialCrashReport(CrashInfo, StdinState),
 }
 
+/// Listens to `stdin`, reading it line by line, until
+/// 1. A crash-report is received, in which case it is processed for upload
+/// 2. `stdin` closes without a crash report (i.e. if the parent terminated
+///    normally)
+/// In the case where the parent failed to transfer a full crash-report
+/// (for instance if it crashed while calculating the crash-report), we return
+/// a PartialCrashReport.
 pub fn receive_report(metadata: &Metadata) -> anyhow::Result<CrashReportStatus> {
     let mut crashinfo = CrashInfo::new(metadata.clone());
     let mut stdin_state = StdinState::Waiting;
+    //TODO: This assumes that the input is valid UTF-8.
     for line in std::io::stdin().lock().lines() {
         let line = line?;
         stdin_state = process_line(&mut crashinfo, line, stdin_state)?;
@@ -104,6 +120,8 @@ pub fn receive_report(metadata: &Metadata) -> anyhow::Result<CrashReportStatus> 
     #[cfg(target_os = "linux")]
     crashinfo.add_file("/proc/cpuinfo")?;
 
+    // If we were waiting for data when stdin closed, let our caller know that
+    // we only have partial data.
     if matches!(stdin_state, StdinState::Waiting) {
         Ok(CrashReportStatus::CrashReport(crashinfo))
     } else {

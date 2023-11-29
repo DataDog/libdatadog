@@ -101,6 +101,7 @@ pub unsafe fn emit_backtrace_by_frames(
 /// ```
 /// PRECONDITIONS:
 ///     This function assumes that the crash-tracker is initialized.
+///     The receiver expects the file to contain valid UTF-8 compatible text.
 /// SAFETY:
 ///     Crash-tracking functions are not reentrant.
 ///     No other crash-handler functions should be called concurrently.
@@ -110,7 +111,7 @@ pub unsafe fn emit_backtrace_by_frames(
 /// SIGNAL SAFETY:
 ///     This function is careful to only write to the handle, without doing any
 ///     unnecessary mutexes or memory allocation.
-pub fn emit_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
+pub fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
     // open is signal safe
     // https://man7.org/linux/man-pages/man7/signal-safety.7.html
     let mut file = File::open(path).with_context(|| path.to_string())?;
@@ -135,7 +136,10 @@ pub fn emit_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
+/// `/proc/self/maps` is very useful for debugging, and difficult to get from
+/// the child process (permissions issues on Linux).  Emit it directly onto the
+/// pipe to get around this.
 pub fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
-    emit_file(w, "/proc/self/maps")?;
+    emit_text_file(w, "/proc/self/maps")?;
     Ok(())
 }
