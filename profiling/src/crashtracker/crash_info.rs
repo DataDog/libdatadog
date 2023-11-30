@@ -23,7 +23,7 @@ pub struct StackFrameNames {
 pub struct StackFrame {
     ip: Option<String>,
     module_base_address: Option<String>,
-    names: Vec<StackFrameNames>,
+    names: Option<Vec<StackFrameNames>>,
     sp: Option<String>,
     symbol_address: Option<String>,
 }

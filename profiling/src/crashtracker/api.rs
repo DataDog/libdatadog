@@ -147,7 +147,7 @@ fn test_crash() {
     let path_to_receiver_binary =
         "/tmp/libdatadog/debug/profiling-crashtracking-receiver".to_string();
     let create_alt_stack = true;
-    let resolve_frames = true;
+    let resolve_frames = false;
     let config = Configuration::new(
         create_alt_stack,
         endpoint,
