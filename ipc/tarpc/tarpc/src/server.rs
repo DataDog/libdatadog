@@ -760,7 +760,9 @@ impl<Req, Res> InFlightRequest<Req, Res> {
         let method = serve.method(&message);
         // TODO(https://github.com/rust-lang/rust-clippy/issues/9111)
         // remove when clippy is fixed
+        #[allow(unknown_lints)]
         #[allow(clippy::needless_borrow)]
+        #[allow(clippy::needless_borrows_for_generic_args)]
         span.record("otel.name", &method.unwrap_or(""));
         let _ = Abortable::new(
             async move {

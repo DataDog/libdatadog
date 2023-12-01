@@ -170,8 +170,7 @@ pub fn serialize_proto_payload<T>(payload: &T) -> anyhow::Result<Vec<u8>>
 where
     T: prost::Message,
 {
-    let mut buf = Vec::new();
-    buf.reserve(payload.encoded_len());
+    let mut buf = Vec::with_capacity(payload.encoded_len());
     payload.encode(&mut buf)?;
     Ok(buf)
 }
