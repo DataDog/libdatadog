@@ -75,6 +75,10 @@ pub struct Log {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub stack_trace: Option<String>,
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub tags: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub is_sensitive: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]

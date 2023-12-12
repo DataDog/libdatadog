@@ -18,6 +18,7 @@ bitmaps = "3.2.0"
 bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock", "serde"]}
 ddcommon = {path = "../ddcommon"}
+ddtelemetry = {path = "../ddtelemetry"}
 derivative = "2.2.0"
 futures = { version = "0.3", default-features = false }
 futures-core = {version = "0.3.0", default-features = false}
@@ -43,3 +44,6 @@ serde_json = {version = "1.0"}
 tokio = {version = "1.23", features = ["rt", "macros"]}
 tokio-util = "0.7.1"
 uuid = { version = "1.4.1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = { version = "3.3" }

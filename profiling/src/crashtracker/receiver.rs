@@ -23,6 +23,8 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
     std::io::stdin().lock().read_line(&mut metadata)?;
     let metadata: CrashtrackerMetadata = serde_json::from_str(&metadata)?;
 
+    let telemetry_uploader = telemetry::TelemetryCrashUploader::new(&metadata, &config).ok();
+
     match receive_report(&metadata)? {
         CrashReportStatus::NoCrash => Ok(()),
         CrashReportStatus::CrashReport(crash_info) => {
@@ -33,6 +35,9 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
                 // Don't keep the endpoint waiting forever.
                 // TODO Experiment to see if 30 is the right number.
                 crash_info.upload_to_endpoint(endpoint, Duration::from_secs(30))?;
+            }
+            if let Some(uploader) = telemetry_uploader {
+                uploader.upload_to_telemetry(&crash_info, Duration::from_secs(30))?;
             }
             Ok(())
         }
