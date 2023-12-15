@@ -56,8 +56,15 @@ impl Configuration {
         resolve_frames: bool,
         stderr_filename: Option<String>,
         stdout_filename: Option<String>,
-    ) -> Self {
-        Self {
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            !path_to_receiver_binary.is_empty(),
+            "Expected a receiver binary"
+        );
+        anyhow::ensure!(stderr_filename.is_none() && stdout_filename.is_none() || stderr_filename != stdout_filename,
+        "Can't give the same filename for stderr and stdout, they will conflict with each other"
+    );
+        Ok(Self {
             create_alt_stack,
             endpoint,
             output_filename,
@@ -65,7 +72,7 @@ impl Configuration {
             resolve_frames,
             stderr_filename,
             stdout_filename,
-        }
+        })
     }
 }
 
@@ -145,7 +152,9 @@ fn test_crash() {
     use chrono::Utc;
 
     let endpoint = None;
-    let output_filename = Some(format!("/tmp/crashreports/{}.txt", Utc::now().to_rfc3339()));
+    let time = Utc::now().to_rfc3339();
+    let dir = "/tmp/crashreports/";
+    let output_filename = Some(format!("{dir}/{time}.txt"));
 
     #[cfg(target_os = "macos")]
     let path_to_receiver_binary = "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/target/debug/profiling-crashtracking-receiver".to_string();
@@ -154,15 +163,19 @@ fn test_crash() {
         "/tmp/libdatadog/debug/profiling-crashtracking-receiver".to_string();
     let create_alt_stack = true;
     let resolve_frames = false;
+    let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
+    let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
+
     let config = Configuration::new(
         create_alt_stack,
         endpoint,
         output_filename,
         path_to_receiver_binary,
         resolve_frames,
-        None,
-        None,
-    );
+        stderr_filename,
+        stdout_filename,
+    )
+    .expect("not to fail");
     let metadata = Metadata::new(
         "libname".to_string(),
         "version".to_string(),

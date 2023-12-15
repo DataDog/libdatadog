@@ -35,15 +35,11 @@ impl<'a> TryFrom<Configuration<'a>> for crashtracker::Configuration {
         let output_filename = option_from_char_slice(value.output_filename)?;
         let path_to_receiver_binary =
             unsafe { value.path_to_receiver_binary.try_to_utf8()?.to_string() };
-        anyhow::ensure!(
-            !path_to_receiver_binary.is_empty(),
-            "Expected path to receiver binary"
-        );
         let resolve_frames = value.resolve_frames;
         let stderr_filename = option_from_char_slice(value.stderr_filename)?;
         let stdout_filename = option_from_char_slice(value.stdout_filename)?;
 
-        Ok(crashtracker::Configuration::new(
+        crashtracker::Configuration::new(
             create_alt_stack,
             endpoint,
             output_filename,
@@ -51,7 +47,7 @@ impl<'a> TryFrom<Configuration<'a>> for crashtracker::Configuration {
             resolve_frames,
             stderr_filename,
             stdout_filename,
-        ))
+        )
     }
 }
 

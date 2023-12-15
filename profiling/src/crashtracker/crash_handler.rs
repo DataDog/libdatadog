@@ -17,6 +17,7 @@ use libc::{
 };
 use nix::sys::signal;
 use nix::sys::signal::{SaFlags, SigAction, SigHandler};
+use std::fs::File;
 use std::process::{Command, Stdio};
 
 #[derive(Debug)]
@@ -38,11 +39,25 @@ fn make_receiver(
     config: &Configuration,
     metadata: &Metadata,
 ) -> anyhow::Result<std::process::Child> {
+
+    // TODO: currently create the file in write mode.  Would append make more sense?
+    let stderr = if let Some(filename) = &config.stderr_filename {
+        File::create(filename)?.into()
+    } else {
+        Stdio::null()
+    };
+
+    let stdout = if let Some(filename) = &config.stdout_filename {
+        File::create(filename)?.into()
+    } else {
+        Stdio::null()
+    };
+
     let receiver = Command::new(&config.path_to_receiver_binary)
         .arg("receiver")
         .stdin(Stdio::piped())
-        .stderr(Stdio::null())
-        .stdout(Stdio::null())
+        .stderr(stderr)
+        .stdout(stdout)
         .spawn()?;
 
     // Write the args into the receiver.
