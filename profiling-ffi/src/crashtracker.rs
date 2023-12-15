@@ -7,8 +7,79 @@ use datadog_profiling::crashtracker;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use ddcommon_ffi::Error;
+use std::ops::Not;
 
 pub use datadog_profiling::crashtracker::ProfilingOpTypes;
+
+#[repr(C)]
+pub struct Configuration<'a> {
+    pub create_alt_stack: bool,
+    pub endpoint: Endpoint<'a>,
+    pub output_filename: CharSlice<'a>,
+    pub path_to_receiver_binary: CharSlice<'a>,
+    pub resolve_frames: bool,
+    pub stderr_filename: CharSlice<'a>,
+    pub stdout_filename: CharSlice<'a>,
+}
+
+impl<'a> TryFrom<Configuration<'a>> for crashtracker::Configuration {
+    type Error = anyhow::Error;
+    fn try_from(value: Configuration<'a>) -> anyhow::Result<Self> {
+        fn option_from_char_slice(s: CharSlice) -> anyhow::Result<Option<String>> {
+            let s = unsafe { s.try_to_utf8()?.to_string() };
+            Ok(s.is_empty().not().then_some(s))
+        }
+
+        let create_alt_stack = value.create_alt_stack;
+        let endpoint = unsafe { Some(exporter::try_to_endpoint(value.endpoint)?) };
+        let output_filename = option_from_char_slice(value.output_filename)?;
+        let path_to_receiver_binary =
+            unsafe { value.path_to_receiver_binary.try_to_utf8()?.to_string() };
+        anyhow::ensure!(
+            !path_to_receiver_binary.is_empty(),
+            "Expected path to receiver binary"
+        );
+        let resolve_frames = value.resolve_frames;
+        let stderr_filename = option_from_char_slice(value.stderr_filename)?;
+        let stdout_filename = option_from_char_slice(value.stdout_filename)?;
+
+        Ok(crashtracker::Configuration::new(
+            create_alt_stack,
+            endpoint,
+            output_filename,
+            path_to_receiver_binary,
+            resolve_frames,
+            stderr_filename,
+            stdout_filename,
+        ))
+    }
+}
+
+#[repr(C)]
+pub struct Metadata<'a> {
+    pub profiling_library_name: CharSlice<'a>,
+    pub profiling_library_version: CharSlice<'a>,
+    pub family: CharSlice<'a>,
+    pub tags: Option<&'a ddcommon_ffi::Vec<Tag>>,
+}
+
+impl<'a> TryFrom<Metadata<'a>> for crashtracker::Metadata {
+    type Error = anyhow::Error;
+    fn try_from(value: Metadata<'a>) -> anyhow::Result<Self> {
+        let profiling_library_name =
+            unsafe { value.profiling_library_name.try_to_utf8()?.to_string() };
+        let profiling_library_version =
+            unsafe { value.profiling_library_version.try_to_utf8()?.to_string() };
+        let family = unsafe { value.family.try_to_utf8()?.to_string() };
+        let tags = value.tags.map(|tags| tags.iter().cloned().collect());
+        Ok(crashtracker::Metadata::new(
+            profiling_library_name,
+            profiling_library_version,
+            family,
+            tags,
+        ))
+    }
+}
 
 #[no_mangle]
 #[must_use]
@@ -50,26 +121,10 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_shutdown() -> ProfileResult {
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
-    profiling_library_name: CharSlice,
-    profiling_library_version: CharSlice,
-    family: CharSlice,
-    tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoint: Endpoint,
-    path_to_receiver_binary: CharSlice,
-    create_alt_stack: bool,
-    resolve_frames: bool,
+    config: Configuration,
+    metadata: Metadata,
 ) -> ProfileResult {
-    match ddog_prof_crashtracker_update_on_fork_impl(
-        profiling_library_name,
-        profiling_library_version,
-        family,
-        tags,
-        Some(endpoint),
-        None,
-        path_to_receiver_binary,
-        create_alt_stack,
-        resolve_frames,
-    ) {
+    match ddog_prof_crashtracker_update_on_fork_impl(config, metadata) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
             err.context("ddog_prof_crashtracker_init failed"),
@@ -78,53 +133,21 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
 }
 
 unsafe fn ddog_prof_crashtracker_update_on_fork_impl(
-    profiling_library_name: CharSlice,
-    profiling_library_version: CharSlice,
-    family: CharSlice,
-    tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoint: Option<Endpoint>,
-    output_filename: Option<String>,
-    path_to_receiver_binary: CharSlice,
-    create_alt_stack: bool,
-    resolve_frames: bool,
+    config: Configuration,
+    metadata: Metadata,
 ) -> anyhow::Result<()> {
-    let (config, metadata) = process_args(
-        profiling_library_name,
-        profiling_library_version,
-        family,
-        tags,
-        endpoint,
-        output_filename,
-        path_to_receiver_binary,
-        create_alt_stack,
-        resolve_frames,
-    )?;
+    let config = config.try_into()?;
+    let metadata = metadata.try_into()?;
     crashtracker::on_fork(config, metadata)
 }
 
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_crashtracker_init(
-    profiling_library_name: CharSlice,
-    profiling_library_version: CharSlice,
-    family: CharSlice,
-    tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoint: Endpoint,
-    path_to_receiver_binary: CharSlice,
-    create_alt_stack: bool,
-    resolve_frames: bool,
+    config: Configuration,
+    metadata: Metadata,
 ) -> ProfileResult {
-    match ddog_prof_crashtracker_init_impl(
-        profiling_library_name,
-        profiling_library_version,
-        family,
-        tags,
-        Some(endpoint),
-        None,
-        path_to_receiver_binary,
-        create_alt_stack,
-        resolve_frames,
-    ) {
+    match ddog_prof_crashtracker_init_impl(config, metadata) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
             err.context("ddog_prof_crashtracker_init failed"),
@@ -133,59 +156,10 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_init(
 }
 
 unsafe fn ddog_prof_crashtracker_init_impl(
-    profiling_library_name: CharSlice,
-    profiling_library_version: CharSlice,
-    family: CharSlice,
-    tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoint: Option<Endpoint>,
-    output_filename: Option<String>,
-    path_to_receiver_binary: CharSlice,
-    create_alt_stack: bool,
-    resolve_frames: bool,
+    config: Configuration,
+    metadata: Metadata,
 ) -> anyhow::Result<()> {
-    let (config, metadata) = process_args(
-        profiling_library_name,
-        profiling_library_version,
-        family,
-        tags,
-        endpoint,
-        output_filename,
-        path_to_receiver_binary,
-        create_alt_stack,
-        resolve_frames,
-    )?;
+    let config = config.try_into()?;
+    let metadata = metadata.try_into()?;
     crashtracker::init(config, metadata)
-}
-
-unsafe fn process_args(
-    profiling_library_name: CharSlice,
-    profiling_library_version: CharSlice,
-    family: CharSlice,
-    tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoint: Option<Endpoint>,
-    output_filename: Option<String>,
-    path_to_receiver_binary: CharSlice,
-    create_alt_stack: bool,
-    resolve_frames: bool,
-) -> anyhow::Result<(crashtracker::Configuration, crashtracker::Metadata)> {
-    let profiling_library_name = profiling_library_name.to_utf8_lossy().into_owned();
-    let profiling_library_version = profiling_library_version.to_utf8_lossy().into_owned();
-    let family = family.to_utf8_lossy().into_owned();
-    let path_to_receiver_binary = path_to_receiver_binary.to_utf8_lossy().into_owned();
-    let tags = tags.map(|tags| tags.iter().cloned().collect());
-    let endpoint = endpoint.map(|e| exporter::try_to_endpoint(e)).transpose()?;
-    let config = crashtracker::Configuration::new(
-        create_alt_stack,
-        endpoint,
-        output_filename,
-        path_to_receiver_binary,
-        resolve_frames,
-    );
-    let metadata = crashtracker::Metadata::new(
-        profiling_library_name,
-        profiling_library_version,
-        family,
-        tags,
-    );
-    Ok((config, metadata))
 }

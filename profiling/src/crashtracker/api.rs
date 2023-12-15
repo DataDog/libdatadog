@@ -43,6 +43,8 @@ pub struct Configuration {
     pub output_filename: Option<String>,
     pub path_to_receiver_binary: String,
     pub resolve_frames: bool,
+    pub stderr_filename: Option<String>,
+    pub stdout_filename: Option<String>,
 }
 
 impl Configuration {
@@ -52,6 +54,8 @@ impl Configuration {
         output_filename: Option<String>,
         path_to_receiver_binary: String,
         resolve_frames: bool,
+        stderr_filename: Option<String>,
+        stdout_filename: Option<String>,
     ) -> Self {
         Self {
             create_alt_stack,
@@ -59,6 +63,8 @@ impl Configuration {
             output_filename,
             path_to_receiver_binary,
             resolve_frames,
+            stderr_filename,
+            stdout_filename,
         }
     }
 }
@@ -154,6 +160,8 @@ fn test_crash() {
         output_filename,
         path_to_receiver_binary,
         resolve_frames,
+        None,
+        None,
     );
     let metadata = Metadata::new(
         "libname".to_string(),

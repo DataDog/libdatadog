@@ -41,6 +41,8 @@ fn make_receiver(
     let receiver = Command::new(&config.path_to_receiver_binary)
         .arg("receiver")
         .stdin(Stdio::piped())
+        .stderr(Stdio::null())
+        .stdout(Stdio::null())
         .spawn()?;
 
     // Write the args into the receiver.
