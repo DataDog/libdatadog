@@ -17,7 +17,8 @@ pub struct Configuration<'a> {
     pub endpoint: Endpoint<'a>,
     pub output_filename: CharSlice<'a>,
     pub path_to_receiver_binary: CharSlice<'a>,
-    pub resolve_frames: bool,
+    pub resolve_frames_in_process: bool,
+    pub resolve_frames_in_receiver: bool,
     pub stderr_filename: CharSlice<'a>,
     pub stdout_filename: CharSlice<'a>,
 }
@@ -35,7 +36,8 @@ impl<'a> TryFrom<Configuration<'a>> for crashtracker::Configuration {
         let output_filename = option_from_char_slice(value.output_filename)?;
         let path_to_receiver_binary =
             unsafe { value.path_to_receiver_binary.try_to_utf8()?.to_string() };
-        let resolve_frames = value.resolve_frames;
+        let resolve_frames_in_process = value.resolve_frames_in_process;
+        let resolve_frames_in_receiver = value.resolve_frames_in_receiver;
         let stderr_filename = option_from_char_slice(value.stderr_filename)?;
         let stdout_filename = option_from_char_slice(value.stdout_filename)?;
 
@@ -44,7 +46,8 @@ impl<'a> TryFrom<Configuration<'a>> for crashtracker::Configuration {
             endpoint,
             output_filename,
             path_to_receiver_binary,
-            resolve_frames,
+            resolve_frames_in_process,
+            resolve_frames_in_receiver,
             stderr_filename,
             stdout_filename,
         )

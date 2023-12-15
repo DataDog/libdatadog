@@ -39,7 +39,6 @@ fn make_receiver(
     config: &Configuration,
     metadata: &Metadata,
 ) -> anyhow::Result<std::process::Child> {
-
     // TODO: currently create the file in write mode.  Would append make more sense?
     let stderr = if let Some(filename) = &config.stderr_filename {
         File::create(filename)?.into()
@@ -175,7 +174,7 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
 
 pub fn register_crash_handlers(config: &Configuration) -> anyhow::Result<()> {
     unsafe {
-        RESOLVE_FRAMES = config.resolve_frames;
+        RESOLVE_FRAMES = config.resolve_frames_in_process;
 
         if config.create_alt_stack {
             set_alt_stack()?;

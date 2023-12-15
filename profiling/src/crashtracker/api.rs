@@ -42,7 +42,8 @@ pub struct Configuration {
     pub endpoint: Option<Endpoint>,
     pub output_filename: Option<String>,
     pub path_to_receiver_binary: String,
-    pub resolve_frames: bool,
+    pub resolve_frames_in_process: bool,
+    pub resolve_frames_in_receiver: bool,
     pub stderr_filename: Option<String>,
     pub stdout_filename: Option<String>,
 }
@@ -53,7 +54,8 @@ impl Configuration {
         endpoint: Option<Endpoint>,
         output_filename: Option<String>,
         path_to_receiver_binary: String,
-        resolve_frames: bool,
+        resolve_frames_in_process: bool,
+        resolve_frames_in_receiver: bool,
         stderr_filename: Option<String>,
         stdout_filename: Option<String>,
     ) -> anyhow::Result<Self> {
@@ -69,7 +71,8 @@ impl Configuration {
             endpoint,
             output_filename,
             path_to_receiver_binary,
-            resolve_frames,
+            resolve_frames_in_process,
+            resolve_frames_in_receiver,
             stderr_filename,
             stdout_filename,
         })
@@ -162,7 +165,8 @@ fn test_crash() {
     let path_to_receiver_binary =
         "/tmp/libdatadog/debug/profiling-crashtracking-receiver".to_string();
     let create_alt_stack = true;
-    let resolve_frames = false;
+    let resolve_frames_in_process = false;
+    let resolve_frames_in_receiver = false;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
 
@@ -171,7 +175,8 @@ fn test_crash() {
         endpoint,
         output_filename,
         path_to_receiver_binary,
-        resolve_frames,
+        resolve_frames_in_process,
+        resolve_frames_in_receiver,
         stderr_filename,
         stdout_filename,
     )

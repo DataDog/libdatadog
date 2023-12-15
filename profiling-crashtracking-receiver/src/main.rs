@@ -27,7 +27,11 @@ pub fn main() -> anyhow::Result<()> {
 
     match receive_report(&metadata)? {
         receive_report::CrashReportStatus::NoCrash => Ok(()),
-        receive_report::CrashReportStatus::CrashReport(crash_info) => {
+        receive_report::CrashReportStatus::CrashReport(mut crash_info) => {
+            if config.resolve_frames_in_receiver {
+                let ppid = std::os::unix::process::parent_id();
+                crash_info.add_names(ppid)?;
+            }
             if let Some(path) = config.output_filename {
                 crash_info.to_file(&path)?;
             }
