@@ -194,3 +194,12 @@ fn test_crash() {
     let q = unsafe { *p };
     assert_eq!(q, 3);
 }
+
+// To test on docker:
+// docker run -it --rm -v $DATADOG_ROOT:/code -w/code ubuntu
+// apt update && apt upgrade
+// apt install build-essential curl
+// curl https://sh.rustup.rs -sSf | sh
+// source "$HOME/.cargo/env"
+// cargo build --target-dir /tmp/libdatadog/
+// mkdir /tmp/crashreports/

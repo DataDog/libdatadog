@@ -182,7 +182,6 @@ impl CrashInfo {
                 }
             }
         }
-        panic!("fadfd");
         Ok(())
     }
 }
