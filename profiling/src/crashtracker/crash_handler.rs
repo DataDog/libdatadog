@@ -19,6 +19,7 @@ use nix::sys::signal;
 use nix::sys::signal::{SaFlags, SigAction, SigHandler};
 use std::fs::File;
 use std::process::{Command, Stdio};
+use anyhow::Context;
 
 #[derive(Debug)]
 enum GlobalVarState<T>
@@ -57,7 +58,11 @@ fn make_receiver(
         .stdin(Stdio::piped())
         .stderr(stderr)
         .stdout(stdout)
-        .spawn()?;
+        .spawn()
+        .context(format!(
+            "Unable to start process: {}",
+            &config.path_to_receiver_binary
+        ))?;
 
     // Write the args into the receiver.
     // Use the pipe to avoid secrets ending up on the commandline

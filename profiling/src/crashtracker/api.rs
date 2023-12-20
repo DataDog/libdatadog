@@ -196,10 +196,40 @@ fn test_crash() {
 }
 
 // To test on docker:
-// docker run -it --rm -v $DATADOG_ROOT:/code -w/code ubuntu
-// apt update && apt upgrade
-// apt install build-essential curl
-// curl https://sh.rustup.rs -sSf | sh
-// source "$HOME/.cargo/env"
-// cargo build --target-dir /tmp/libdatadog/
-// mkdir /tmp/crashreports/
+/*
+docker run -it --rm -v $DATADOG_ROOT:/code -w/code ubuntu
+apt update && apt upgrade
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+build-essential \
+ca-certificates \
+curl \
+git \
+libbz2-dev \
+libffi-dev \
+liblzma-dev \
+libncurses5-dev \
+libncursesw5-dev \
+libreadline-dev \
+libsqlite3-dev \
+libssl-dev \
+libxml2-dev \
+libxmlsec1-dev \
+llvm \
+make \
+mecab-ipadic-utf8 \
+tk-dev \
+tzdata \
+wget \
+xz-utils \
+zlib1g-dev
+
+curl https://sh.rustup.rs -sSf | sh
+source "$HOME/.cargo/env"
+cargo install cbindgen
+cargo build --target-dir /tmp/libdatadog/
+mkdir /tmp/crashreports/
+git clone https://github.com/DataDog/libdatadog.git
+cd libdatadog
+git checkout dsn/crash-handler-api
+cargo test test_crash -- --ignored
+*/
