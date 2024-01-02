@@ -139,9 +139,13 @@ int main(int argc, char *argv[]) {
   ddog_CharSlice internal_metadata_example = DDOG_CHARSLICE_C(
       "{\"no_signals_workaround_enabled\": \"true\", \"execution_trace_enabled\": \"false\"}");
 
+  ddog_CharSlice system_info_example = DDOG_CHARSLICE_C(
+      "{\"application\": {\"start-time\": \"2023-09-08 13:45:29.415742 UTC\"}, \"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
+
   ddog_prof_Exporter_Request_BuildResult build_result = ddog_prof_Exporter_Request_build(
       exporter, encoded_profile->start, encoded_profile->end, files_to_compress_and_export,
-      files_to_export_unmodified, nullptr, nullptr, &internal_metadata_example, 30000);
+      files_to_export_unmodified, nullptr, nullptr, &internal_metadata_example, &system_info_example,
+      30000);
   ddog_prof_EncodedProfile_drop(encoded_profile);
 
   if (build_result.tag == DDOG_PROF_EXPORTER_REQUEST_BUILD_RESULT_ERR) {

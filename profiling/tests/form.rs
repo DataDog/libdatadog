@@ -16,7 +16,11 @@ fn open<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(buffer)
 }
 
-fn multipart(exporter: &ProfileExporter, internal_metadata: Option<serde_json::Value>) -> Request {
+fn multipart(
+    exporter: &ProfileExporter,
+    internal_metadata: Option<serde_json::Value>,
+    system_info: Option<serde_json::Value>,
+) -> Request {
     let small_pprof_name = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/profile.pprof");
     let buffer = open(small_pprof_name).expect("to open file and read its bytes");
 
@@ -42,6 +46,7 @@ fn multipart(exporter: &ProfileExporter, internal_metadata: Option<serde_json::V
             None,
             None,
             internal_metadata,
+            system_info,
             timeout,
         )
         .expect("request to be built");
@@ -101,7 +106,7 @@ mod tests {
         )
         .expect("exporter to construct");
 
-        let request = multipart(&exporter, None);
+        let request = multipart(&exporter, None, None);
 
         assert_eq!(
             request.uri().to_string(),
@@ -155,10 +160,50 @@ mod tests {
             "execution_trace_enabled": "false",
             "extra object": {"key": [1, 2, true]}
         });
-        let request = multipart(&exporter, Some(internal_metadata.clone()));
+        let request = multipart(&exporter, Some(internal_metadata.clone()), None);
         let parsed_event_json = parsed_event_json(request);
 
         assert_eq!(parsed_event_json["internal"], internal_metadata);
+    }
+
+    #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
+    fn including_system_info() {
+        let profiling_library_name = "dd-trace-foo";
+        let profiling_library_version = "1.2.3";
+        let base_url = "http://localhost:8126".parse().expect("url to parse");
+        let endpoint = config::agent(base_url).expect("endpoint to construct");
+        let exporter = ProfileExporter::new(
+            profiling_library_name,
+            profiling_library_version,
+            "php",
+            Some(default_tags()),
+            endpoint,
+        )
+        .expect("exporter to construct");
+
+        let system_info = json!({
+            "application": {
+                "start_time": "2023-09-08 13:45:29.415742 UTC",
+                "env": "test"
+            },
+            "runtime": {
+                "engine": "ruby",
+                "version": "3.2.0",
+                "platform": "arm64-darwin22"
+            },
+            "profiler": {
+                "version": "1.32.0",
+                "libdatadog": "1.2.3-darwin",
+                "settings": {}
+            }
+        });
+        let request = multipart(&exporter, None, Some(system_info.clone()));
+        let parsed_event_json = parsed_event_json(request);
+
+        assert_eq!(parsed_event_json["info"], system_info);
     }
 
     #[test]
@@ -179,7 +224,7 @@ mod tests {
         )
         .expect("exporter to construct");
 
-        let request = multipart(&exporter, None);
+        let request = multipart(&exporter, None, None);
 
         assert_eq!(
             request.uri().to_string(),
