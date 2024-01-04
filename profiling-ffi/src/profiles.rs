@@ -48,6 +48,31 @@ impl Drop for Profile {
     }
 }
 
+#[repr(C)]
+pub struct StackTraceId {
+    opaque: [u8; core::mem::size_of::<u32>()],
+}
+
+impl From<api::StackTraceId> for StackTraceId {
+    fn from(value: api::StackTraceId) -> Self {
+        // SAFETY: field is repr(C) and it's documented that this is relied on
+        // in the FFI.
+        let bytes = unsafe { core::mem::transmute::<api::StackTraceId, u32>(value) };
+        Self {
+            opaque: u32::to_ne_bytes(bytes),
+        }
+    }
+}
+
+impl From<StackTraceId> for api::StackTraceId {
+    fn from(value: StackTraceId) -> Self {
+        let bytes = u32::from_ne_bytes(value.opaque);
+        // SAFETY: field is repr(C) and it's documented that this is relied on
+        // in the FFI.
+        unsafe { core::mem::transmute::<u32, api::StackTraceId>(bytes) }
+    }
+}
+
 /// A generic result type for when a profiling operation may fail, but there's
 /// nothing to return in the case of success.
 #[repr(C)]
@@ -57,6 +82,13 @@ pub enum ProfileResult {
         /// Rust -> C code generation.
         bool,
     ),
+    Err(Error),
+}
+
+/// Returned by [ddog_prof_Profile_add_stack_trace].
+#[repr(C)]
+pub enum ProfileAddStackTraceResult {
+    Ok(StackTraceId),
     Err(Error),
 }
 
@@ -423,13 +455,97 @@ unsafe fn ddog_prof_profile_add_impl(
 ) -> anyhow::Result<()> {
     let profile = profile_ptr_to_inner(profile_ptr)?;
 
-    match sample.try_into().map(|s| profile.add_sample(s, timestamp)) {
+    match api::Sample::try_from(sample).map(|s| profile.add_sample(s, timestamp)) {
         Ok(r) => match r {
             Ok(_) => Ok(()),
             Err(err) => Err(err),
         },
         Err(err) => Err(anyhow::Error::from(err)),
     }
+}
+
+// todo: test this API.
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_add_stack_trace(
+    profile: *mut Profile,
+    locations: Slice<Location>,
+) -> ProfileAddStackTraceResult {
+    match ddog_prof_profile_add_stack_trace_impl(profile, locations) {
+        Ok(stack_trace_id) => ProfileAddStackTraceResult::Ok(StackTraceId::from(stack_trace_id)),
+        Err(err) => ProfileAddStackTraceResult::Err(Error::from(
+            err.context("ddog_prof_Profile_add_stack_trace failed"),
+        )),
+    }
+}
+
+unsafe fn ddog_prof_profile_add_stack_trace_impl(
+    profile_ptr: *mut Profile,
+    locations: Slice<Location>,
+) -> anyhow::Result<api::StackTraceId> {
+    let profile = profile_ptr_to_inner(profile_ptr)?;
+    let maybe_locations: Result<Vec<_>, _> = locations
+        .into_slice()
+        .iter()
+        .map(api::Location::try_from)
+        .collect();
+    Ok(profile.add_stack_trace(&maybe_locations?))
+}
+
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_add_observation(
+    profile: *mut Profile,
+    stack_trace_id: StackTraceId,
+    values: Slice<i64>,
+    labels: Slice<Label>,
+    timestamp: Option<&Timespec>,
+) -> ProfileResult {
+    match ddog_prof_profile_add_observation_impl(profile, stack_trace_id, values, labels, timestamp)
+    {
+        Ok(_) => ProfileResult::Ok(true),
+        Err(err) => ProfileResult::Err(Error::from(
+            err.context("ddog_prof_Profile_add_observation failed"),
+        )),
+    }
+}
+
+unsafe fn ddog_prof_profile_add_observation_impl(
+    profile_ptr: *mut Profile,
+    stack_trace_id: StackTraceId,
+    values: Slice<i64>,
+    labels: Slice<Label>,
+    timestamp: Option<&Timespec>,
+) -> anyhow::Result<()> {
+    let profile = profile_ptr_to_inner(profile_ptr)?;
+    let stack_trace_id = api::StackTraceId::from(stack_trace_id);
+
+    let maybe_labels: Result<Vec<_>, _> = labels
+        .into_slice()
+        .iter()
+        .map(api::Label::try_from)
+        .collect();
+
+    let timestamp = match timestamp {
+        None => None,
+        Some(ts) => match checked_timespec_into_nanos(ts) {
+            None => anyhow::bail!("converting timestamp into nanoseconds as i64 overflowed"),
+            Some(nanos) => api::Timestamp::new(nanos),
+        },
+    };
+
+    profile.add_observation(
+        stack_trace_id,
+        values.into_slice(),
+        &maybe_labels?,
+        timestamp,
+    )
+}
+
+fn checked_timespec_into_nanos(ts: &Timespec) -> Option<i64> {
+    ts.seconds
+        .checked_mul(1000000000)?
+        .checked_add(ts.nanoseconds as i64)
 }
 
 unsafe fn profile_ptr_to_inner<'a>(

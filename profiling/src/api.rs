@@ -5,6 +5,9 @@ use crate::pprof;
 use std::ops::{Add, Sub};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+// Re-export certain internal items
+pub use crate::internal::{StackTraceId, Timestamp};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ValueType<'a> {
     pub r#type: &'a str,

@@ -54,48 +54,37 @@ impl Profile {
             .add_endpoint_count(endpoint.into_owned(), value);
     }
 
+    /// TODO: before merging, document why this exists.
+    pub fn add_observation(
+        &mut self,
+        stacktrace_id: StackTraceId,
+        values: &[i64],
+        labels: &[api::Label],
+        timestamp: Option<api::Timestamp>,
+    ) -> anyhow::Result<()> {
+        self.validate_values(values)?;
+        let labels = self.add_label_set(labels)?;
+        self.observations.add(
+            Sample::new(labels, stacktrace_id),
+            timestamp,
+            Vec::from(values),
+        );
+        Ok(())
+    }
+
     pub fn add_sample(
         &mut self,
         sample: api::Sample,
-        timestamp: Option<Timestamp>,
+        timestamp: Option<api::Timestamp>,
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            sample.values.len() == self.sample_types.len(),
-            "expected {} sample types, but sample had {} sample types",
-            self.sample_types.len(),
-            sample.values.len(),
-        );
+        let stacktrace = self.add_stack_trace(&sample.locations);
+        self.add_observation(stacktrace, &sample.values, &sample.labels, timestamp)
+    }
 
-        self.validate_sample_labels(&sample)?;
-        let labels: Vec<_> = sample
-            .labels
-            .iter()
-            .map(|label| {
-                let key = self.intern(label.key);
-                let internal_label = if let Some(s) = label.str {
-                    let str = self.intern(s);
-                    Label::str(key, str)
-                } else {
-                    let num = label.num;
-                    let num_unit = label.num_unit.map(|s| self.intern(s));
-                    Label::num(key, num, num_unit)
-                };
-
-                self.labels.dedup(internal_label)
-            })
-            .collect();
-        let labels = self.label_sets.dedup(LabelSet::new(labels));
-
-        let locations = sample
-            .locations
-            .iter()
-            .map(|l| self.add_location(l))
-            .collect();
-
-        let stacktrace = self.add_stacktrace(locations);
-        self.observations
-            .add(Sample::new(labels, stacktrace), timestamp, sample.values);
-        Ok(())
+    /// TODO: before merging, document why this exists publicly.
+    pub fn add_stack_trace(&mut self, locations: &[api::Location]) -> StackTraceId {
+        let locations = locations.iter().map(|l| self.add_location(l)).collect();
+        self.stack_traces.dedup(StackTrace { locations })
     }
 
     pub fn add_upscaling_rule(
@@ -342,6 +331,28 @@ impl Profile {
         })
     }
 
+    fn add_label_set(&mut self, labels: &[api::Label]) -> anyhow::Result<LabelSetId> {
+        self.validate_labels(labels)?;
+        let labels: Vec<_> = labels
+            .iter()
+            .map(|label| {
+                let key = self.intern(label.key);
+                let internal_label = if let Some(s) = label.str {
+                    let str = self.intern(s);
+                    Label::str(key, str)
+                } else {
+                    let num = label.num;
+                    let num_unit = label.num_unit.map(|s| self.intern(s));
+                    Label::num(key, num, num_unit)
+                };
+
+                self.labels.dedup(internal_label)
+            })
+            .collect();
+        let labels = self.label_sets.dedup(LabelSet::new(labels));
+        Ok(labels)
+    }
+
     fn add_location(&mut self, location: &api::Location) -> LocationId {
         let mapping_id = self.add_mapping(&location.mapping);
         let function_id = self.add_function(&location.function);
@@ -364,10 +375,6 @@ impl Profile {
             filename,
             build_id,
         })
-    }
-
-    fn add_stacktrace(&mut self, locations: Vec<LocationId>) -> StackTraceId {
-        self.stack_traces.dedup(StackTrace { locations })
     }
 
     fn extract_api_sample_types(&self) -> anyhow::Result<Vec<api::ValueType>> {
@@ -473,7 +480,7 @@ impl Profile {
     fn translate_and_enrich_sample_labels(
         &self,
         sample: Sample,
-        timestamp: Option<Timestamp>,
+        timestamp: Option<api::Timestamp>,
     ) -> anyhow::Result<Vec<pprof::Label>> {
         let labels: Vec<_> = self
             .get_label_set(sample.labels)
@@ -490,10 +497,10 @@ impl Profile {
     }
 
     /// Validates labels
-    fn validate_sample_labels(&mut self, sample: &api::Sample) -> anyhow::Result<()> {
+    fn validate_labels(&mut self, labels: &[api::Label]) -> anyhow::Result<()> {
         let mut seen: HashMap<&str, &api::Label> = HashMap::new();
 
-        for label in sample.labels.iter() {
+        for label in labels.iter() {
             if let Some(duplicate) = seen.insert(label.key, label) {
                 anyhow::bail!("Duplicate label on sample: {:?} {:?}", duplicate, label);
             }
@@ -512,6 +519,16 @@ impl Profile {
                 label
             );
         }
+        Ok(())
+    }
+
+    fn validate_values(&self, values: &[i64]) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            values.len() == self.sample_types.len(),
+            "expected {} sample types, but sample had {} sample types",
+            self.sample_types.len(),
+            values.len(),
+        );
         Ok(())
     }
 }
@@ -535,7 +552,7 @@ impl Profile {
 
     pub fn only_for_testing_num_timestamped_samples(&self) -> usize {
         use std::collections::HashSet;
-        let sample_set: HashSet<Timestamp> =
+        let sample_set: HashSet<api::Timestamp> =
             HashSet::from_iter(self.observations.iter().filter_map(|(_, ts, _)| ts));
         sample_set.len()
     }
