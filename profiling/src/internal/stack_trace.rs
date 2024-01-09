@@ -14,6 +14,8 @@ impl Item for StackTrace {
     type Id = StackTraceId;
 }
 
+/// An identifier for a stack trace. The representation detail is used
+/// internally by the FFI, so if you change it, change the FFI to match.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
 pub struct StackTraceId(u32);

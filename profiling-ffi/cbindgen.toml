@@ -34,6 +34,7 @@ renaming_overrides_prefixing = true
 
 "ExporterNewResult" = "ddog_prof_Exporter_NewResult"
 "File" = "ddog_prof_Exporter_File"
+"ProfileAddStackTraceResult" = "ddog_prof_Profile_AddStackTraceResult"
 "ProfileExporter" = "ddog_prof_Exporter"
 "ProfileNewResult" = "ddog_prof_Profile_NewResult"
 "ProfileResult" = "ddog_prof_Profile_Result"
