@@ -44,7 +44,7 @@ impl ExampleServer {
     pub async fn accept_connection(self, socket: UnixStream) {
         let server = tarpc::server::BaseChannel::new(
             tarpc::server::Config::default(),
-            Transport::try_from(AsyncChannel::from(socket)).unwrap(),
+            Transport::from(AsyncChannel::from(socket)),
         );
 
         server.execute(self.serve()).await
