@@ -24,7 +24,7 @@ pub struct Profile {
     sample_types: Vec<ValueType>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
-    strings: FxIndexSet<String>,
+    strings: StringTable,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
 }
@@ -119,9 +119,7 @@ impl Profile {
     }
 
     pub fn get_string(&self, id: StringId) -> &str {
-        self.strings
-            .get_index(id.to_offset())
-            .expect("StringId to have a valid interned index")
+        self.strings.get_id(id)
     }
 
     /// Creates a profile with `start_time`.
@@ -301,9 +299,10 @@ impl Profile {
             encoder.encode(ProfileFunctionsEntry::from(item))?;
         }
 
-        for item in self.strings.into_iter() {
+        for item in self.strings.iter() {
             encoder.encode(ProfileStringTableEntry::from(item))?;
         }
+        drop(self.strings);
 
         encoder.encode(ProfileSimpler {
             time_nanos: self
@@ -454,20 +453,7 @@ impl Profile {
     /// Interns the `str` as a string, returning the id in the string table.
     /// The empty string is guaranteed to have an id of [StringId::ZERO].
     fn intern(&mut self, item: &str) -> StringId {
-        // For performance, delay converting the [&str] to a [String] until
-        // after it has been determined to not exist in the set. This avoids
-        // temporary allocations.
-        let index = match self.strings.get_index_of(item) {
-            Some(index) => index,
-            None => {
-                let (index, _inserted) = self.strings.insert_full(item.into());
-                // This wouldn't make any sense; the item couldn't be found so
-                // we try to insert it, but suddenly it exists now?
-                debug_assert!(_inserted);
-                index
-            }
-        };
-        StringId::from_offset(index)
+        self.strings.insert(item)
     }
 
     fn translate_and_enrich_sample_labels(

@@ -2,9 +2,13 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 mod string_id;
+mod string_table;
 
 use std::hash::{BuildHasherDefault, Hash};
 use std::num::NonZeroU32;
+
+pub use string_id::*;
+pub use string_table::*;
 
 pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<rustc_hash::FxHasher>>;
 pub type FxIndexSet<K> = indexmap::IndexSet<K, BuildHasherDefault<rustc_hash::FxHasher>>;
