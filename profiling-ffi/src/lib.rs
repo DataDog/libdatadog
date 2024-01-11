@@ -9,6 +9,15 @@ use chrono::{DateTime, TimeZone, Utc};
 mod exporter;
 mod profiles;
 
+
+#[allow(non_camel_case_types)]
+mod symbolize;
+
+use std::ptr::NonNull;
+use std::slice;
+
+pub use symbolize::*;
+
 /// Represents time since the Unix Epoch in seconds plus nanoseconds.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]

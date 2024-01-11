@@ -11,6 +11,16 @@ use std::convert::{TryFrom, TryInto};
 use std::num::NonZeroI64;
 use std::str::Utf8Error;
 use std::time::{Duration, SystemTime};
+// use blazesym::symbolize::{Input, Process, Source, Sym, Symbolized, Symbolizer};
+// use blazesym::Addr;
+
+
+/// C ABI compatible version of [`blazesym::symbolize::Symbolizer`].
+///
+/// It is returned by [`blaze_symbolizer_new`] and should be free by
+/// [`blaze_symbolizer_free`].
+// pub type BlazeSymbolizer = Symbolizer;
+
 
 /// Represents a profile. Do not access its member for any reason, only use
 /// the C API functions on this struct.
@@ -94,6 +104,14 @@ impl<'a> ValueType<'a> {
 pub struct Period<'a> {
     pub type_: ValueType<'a>,
     pub value: i64,
+}
+
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct SourcedAddress<'a> {
+    pub source_file: CharSlice<'a>,
+    pub address: u64,
 }
 
 #[repr(C)]
@@ -199,6 +217,26 @@ pub struct Sample<'a> {
     /// things like a thread id, allocation size, etc
     pub labels: Slice<'a, Label<'a>>,
 }
+
+// temp changes to propose an API that symbolizes 
+
+// pub struct SampleNoSymbols<'a> {
+//     /// The leaf is at addresses[0].
+//     pub addresses: Slice<'a, SourcedAddress<'a>>,
+
+//     /// The type and unit of each value is defined by the corresponding
+//     /// entry in Profile.sample_type. All samples must have the same
+//     /// number of values, the same as the length of Profile.sample_type.
+//     /// When aggregating multiple samples into a single sample, the
+//     /// result has a list of values that is the element-wise sum of the
+//     /// lists of the originals.
+//     pub values: Slice<'a, i64>,
+
+//     /// label includes additional context for this sample. It can include
+//     /// things like a thread id, allocation size, etc
+//     pub labels: Slice<'a, Label<'a>>,
+// }
+
 
 impl<'a> TryFrom<&'a Mapping<'a>> for api::Mapping<'a> {
     type Error = Utf8Error;
@@ -431,6 +469,48 @@ unsafe fn ddog_prof_profile_add_impl(
         Err(err) => Err(anyhow::Error::from(err)),
     }
 }
+
+// fn symbolize_addresses(symbolizer: *mut BlazeSymbolizer,
+//                        addresses: Vec<Addr>) {
+//     for addr in addresses {
+//         let symbolized = symbolizer.symbolize(addr); // Symbolize the address
+
+//         // Assuming `symbolized` is a `Result<Symbolized, Error>` or similar
+//         match symbolized {
+//             Ok(sym) => {
+//                 let name = sym.name().unwrap_or("<unknown>");
+//                 let addr_info = Some((addr, sym.addr(), sym.offset()));
+//                 let code_info = sym.code_info(); // Retrieve `CodeInfo`
+
+//                 print_frame(name, addr_info, &code_info);
+//             },
+//             Err(e) => {
+//                 println!("Error symbolizing address {:#x}: {}", addr, e);
+//             }
+//         }
+//     }
+// }
+
+
+// pub fn symbolize_and_add_profile(
+//     symbolizer: *mut BlazeSymbolizer,
+//     profile: *mut Profile,
+//     sample_no_symbols: SampleNoSymbols,
+//     timestamp: Option<NonZeroI64>,
+// ) -> ProfileResult {
+//     // Step 1: Symbolize addresses
+//     let input = Input::VirtOffset(sample_no_symbols.addresses);
+//     let symbolized_locations = symbolize_addresses(symbolizer, sample_no_symbols.addresses);
+
+//     // Step 2: Construct the original Sample structure
+//     let sample = construct_sample(symbolized_locations, sample_no_symbols.values, sample_no_symbols.labels);
+
+//     // Step 3: Call the original API
+//     unsafe {
+//         ddog_prof_Profile_add(profile, sample, timestamp)
+//     }
+// }
+
 
 unsafe fn profile_ptr_to_inner<'a>(
     profile_ptr: *mut Profile,
