@@ -162,4 +162,16 @@ cbindgen --crate "${datadog_profiling_ffi}" \
     --output "$destdir/include/datadog/profiling.h"
 "$CARGO_TARGET_DIR"/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h"
 
+echo "Building binaries"
+export CRASHTRACKER_BUILD_DIR=$CARGO_TARGET_DIR/build/crashtracker-receiver
+export CRASHTRACKER_SRC_DIR=$PWD/profiling-crashtracking-receiver
+mkdir -p $CRASHTRACKER_BUILD_DIR
+cd $CRASHTRACKER_BUILD_DIR
+# always do a clean
+rm -r *
+cmake -S $CRASHTRACKER_SRC_DIR -DDatadog_ROOT=$destdir
+cmake --build .
+mkdir -p $destdir/bin
+cp ddog-crashtracking-receiver $destdir/bin
+
 echo "Done."

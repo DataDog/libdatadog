@@ -161,7 +161,8 @@ fn test_crash() {
 
     #[cfg(target_os = "macos")]
     //let path_to_receiver_binary = "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/target/debug/profiling-crashtracking-receiver".to_string();
-    let path_to_receiver_binary = "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/profiling-crashtracking-receiver/build/ddog-crashtracking-receiver".to_string();
+    // let path_to_receiver_binary = "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/profiling-crashtracking-receiver/build/ddog-crashtracking-receiver".to_string();
+    let path_to_receiver_binary = "/tmp/libdatadog/bin/ddog-crashtracking-receiver".to_string();
     #[cfg(target_os = "linux")]
     let path_to_receiver_binary =
         "/tmp/libdatadog/debug/profiling-crashtracking-receiver".to_string();
