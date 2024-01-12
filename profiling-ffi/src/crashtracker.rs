@@ -142,6 +142,17 @@ unsafe fn ddog_prof_crashtracker_update_on_fork_impl(
 
 #[no_mangle]
 #[must_use]
+pub unsafe extern "C" fn ddog_prof_crashtracker_receiver_entry_point() -> ProfileResult {
+    match crashtracker::receiver_entry_point() {
+        Ok(_) => ProfileResult::Ok(true),
+        Err(err) => ProfileResult::Err(Error::from(
+            err.context("ddog_prof_crashtracker_receiver_entry_point failed"),
+        )),
+    }
+}
+
+#[no_mangle]
+#[must_use]
 pub unsafe extern "C" fn ddog_prof_crashtracker_init(
     config: Configuration,
     metadata: Metadata,

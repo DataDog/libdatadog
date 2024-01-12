@@ -1,16 +1,55 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
+use super::*;
 use anyhow::Context;
-use datadog_profiling::crashtracker::*;
-use std::io::BufRead;
+use std::{io::BufRead, time::Duration};
+
+/// Receives data from a crash collector via a pipe on `stdin`, formats it into
+/// `CrashInfo` json, and emits it to the endpoint/file defined in `config`.
+///
+/// At a high-level, this exists because doing anything in a
+/// signal handler is dangerous, so we fork a sidecar to do the stuff we aren't
+/// allowed to do in the handler.
+///
+/// See comments in [profiling/crashtracker/mod.rs] for a full architecture
+/// description.
+pub fn receiver_entry_point() -> anyhow::Result<()> {
+    let mut config = String::new();
+    std::io::stdin().lock().read_line(&mut config)?;
+    let config: Configuration = serde_json::from_str(&config)?;
+
+    let mut metadata = String::new();
+    std::io::stdin().lock().read_line(&mut metadata)?;
+    let metadata: Metadata = serde_json::from_str(&metadata)?;
+
+    match receive_report(&metadata)? {
+        CrashReportStatus::NoCrash => Ok(()),
+        CrashReportStatus::CrashReport(mut crash_info) => {
+            if config.resolve_frames_in_receiver {
+                let ppid = std::os::unix::process::parent_id();
+                crash_info.add_names(ppid)?;
+            }
+            if let Some(path) = config.output_filename {
+                crash_info.to_file(&path)?;
+            }
+            if let Some(endpoint) = config.endpoint {
+                // Don't keep the endpoint waiting forever.
+                // TODO Experiment to see if 30 is the right number.
+                crash_info.upload_to_dd(endpoint, Duration::from_secs(30))?;
+            }
+            Ok(())
+        }
+        CrashReportStatus::PartialCrashReport(_, _) => todo!(),
+    }
+}
 
 /// The crashtracker collector sends data in blocks.
 /// This enum tracks which block we're currently in, and, for multi-line blocks,
 /// collects the partial data until the block is closed and it can be appended
 /// to the CrashReport.
 #[derive(Debug)]
-pub enum StdinState {
+enum StdinState {
     Counters,
     File(String, Vec<String>),
     SigInfo,
@@ -89,7 +128,7 @@ fn process_line(
     Ok(next)
 }
 
-pub enum CrashReportStatus {
+enum CrashReportStatus {
     NoCrash,
     CrashReport(CrashInfo),
     PartialCrashReport(CrashInfo, StdinState),
@@ -102,7 +141,7 @@ pub enum CrashReportStatus {
 /// In the case where the parent failed to transfer a full crash-report
 /// (for instance if it crashed while calculating the crash-report), we return
 /// a PartialCrashReport.
-pub fn receive_report(metadata: &Metadata) -> anyhow::Result<CrashReportStatus> {
+fn receive_report(metadata: &Metadata) -> anyhow::Result<CrashReportStatus> {
     let mut crashinfo = CrashInfo::new(metadata.clone());
     let mut stdin_state = StdinState::Waiting;
     //TODO: This assumes that the input is valid UTF-8.

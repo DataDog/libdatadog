@@ -11,6 +11,7 @@ use super::api::{Configuration, Metadata};
 use super::collectors::emit_backtrace_by_frames;
 use super::constants::*;
 use super::counters::emit_counters;
+use anyhow::Context;
 use libc::{
     mmap, sigaltstack, MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE, PROT_READ, PROT_WRITE,
     SIGSTKSZ,
@@ -19,7 +20,6 @@ use nix::sys::signal;
 use nix::sys::signal::{SaFlags, SigAction, SigHandler};
 use std::fs::File;
 use std::process::{Command, Stdio};
-use anyhow::Context;
 
 #[derive(Debug)]
 enum GlobalVarState<T>

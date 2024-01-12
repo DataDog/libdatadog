@@ -320,10 +320,8 @@ checksum = "7f2c685bad3eb3d45a01354cedb7d5faa66194d1d58ba6e267a8de788f79db38"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
- "js-sys",
  "num-traits",
  "serde",
- "wasm-bindgen",
  "windows-targets",
 ]
 
@@ -2070,14 +2068,7 @@ name = "profiling-crashtracking-receiver"
 version = "5.0.0"
 dependencies = [
  "anyhow",
- "chrono",
  "datadog-profiling",
- "hyper",
- "libc",
- "nix 0.27.1",
- "os_info",
- "serde_json",
- "uuid",
 ]
 
 [[package]]
