@@ -1,3 +1,7 @@
+// mkdir build
+// cd build
+// cmake -S .. -DDatadog_ROOT=/tmp/libdatadog
+// cmake --build . 
 #include <datadog/common.h>
 #include <datadog/profiling.h>
 #include <stdio.h>
