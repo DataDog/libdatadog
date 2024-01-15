@@ -24,4 +24,4 @@ libc = "0.2"
 tokio-util = "0.7.1"
 serde_json = {version = "1.0"}
 futures = { version = "0.3", default-features = false }
-blazesym = "0.2.0-alpha.9"
+symbolizer-ffi = { path = "../symbolizer-ffi" }

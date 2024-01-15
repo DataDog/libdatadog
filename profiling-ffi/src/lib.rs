@@ -1,6 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+pub use symbolizer_ffi::*;
+
 use std::fmt::Debug;
 use std::time::SystemTime;
 
@@ -8,15 +10,6 @@ use chrono::{DateTime, TimeZone, Utc};
 
 mod exporter;
 mod profiles;
-
-
-#[allow(non_camel_case_types)]
-mod symbolize;
-
-use std::ptr::NonNull;
-use std::slice;
-
-pub use symbolize::*;
 
 /// Represents time since the Unix Epoch in seconds plus nanoseconds.
 #[repr(C)]

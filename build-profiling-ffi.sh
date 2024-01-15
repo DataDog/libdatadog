@@ -157,6 +157,9 @@ echo "Generating $destdir/include/libdatadog headers..."
 cbindgen --crate ddcommon-ffi \
     --config ddcommon-ffi/cbindgen.toml \
     --output "$destdir/include/datadog/common.h"
+cbindgen --crate symbolizer-ffi \
+    --config symbolizer-ffi/cbindgen.toml \
+    --output "$destdir/include/datadog/symbolizer.h"
 cbindgen --crate "${datadog_profiling_ffi}" \
     --config profiling-ffi/cbindgen.toml \
     --output "$destdir/include/datadog/profiling.h"

@@ -644,7 +644,6 @@ name = "datadog-profiling-ffi"
 version = "5.0.0"
 dependencies = [
  "anyhow",
- "blazesym",
  "chrono",
  "datadog-profiling",
  "ddcommon",
@@ -653,6 +652,7 @@ dependencies = [
  "hyper",
  "libc",
  "serde_json",
+ "symbolizer-ffi",
  "tokio-util 0.7.10",
 ]
 
@@ -2599,6 +2599,13 @@ name = "strsim"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
+
+[[package]]
+name = "symbolizer-ffi"
+version = "5.0.0"
+dependencies = [
+ "blazesym",
+]
 
 [[package]]
 name = "syn"
