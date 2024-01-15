@@ -110,6 +110,8 @@ jobs:
           cd examples/ffi/build
           cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling
           cmake --build .
+          ./symbolizer
+
   cross-centos7:
     name: build and test using cross - on centos7
     runs-on: ubuntu-latest

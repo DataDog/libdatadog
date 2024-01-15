@@ -14,3 +14,6 @@ endif()
 
 add_executable(profiles profiles.c)
 target_link_libraries(profiles PRIVATE Datadog::Profiling)
+
+add_executable(symbolizer symbolizer.cpp)
+target_link_libraries(symbolizer PRIVATE Datadog::Profiling)
