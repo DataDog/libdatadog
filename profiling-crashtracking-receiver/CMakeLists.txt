@@ -3,5 +3,5 @@ project(datadog_profiling_crashtracking_reciever LANGUAGES C CXX)
 
 find_package(Datadog REQUIRED)
 
-add_executable(ddog-crashtracking-receiver profiling-crashtracking-receiver.c)
-target_link_libraries(ddog-crashtracking-receiver PRIVATE Datadog::Profiling)
+add_executable(libdatadog-crashtracking-receiver libdatadog-crashtracking-receiver.c)
+target_link_libraries(libdatadog-crashtracking-receiver PRIVATE Datadog::Profiling)
