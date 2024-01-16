@@ -4,6 +4,11 @@
 # under the Apache License Version 2.0. This product includes software developed
 # at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+get_abs_filename() {
+  # $1 : relative filename
+  echo "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+}
+
 # Location to place all artifacts
 if [ -z $CARGO_TARGET_DIR ] ; then
     export CARGO_TARGET_DIR=$PWD/target
@@ -163,15 +168,16 @@ cbindgen --crate "${datadog_profiling_ffi}" \
 "$CARGO_TARGET_DIR"/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h"
 
 echo "Building binaries"
+export ABS_DESTDIR=$(get_abs_filename $destdir)
 export CRASHTRACKER_BUILD_DIR=$CARGO_TARGET_DIR/build/crashtracker-receiver
 export CRASHTRACKER_SRC_DIR=$PWD/profiling-crashtracking-receiver
+# Always start with a clean directory
+[ -d $CRASHTRACKER_BUILD_DIR ] && rm -r $CRASHTRACKER_BUILD_DIR
 mkdir -p $CRASHTRACKER_BUILD_DIR
 cd $CRASHTRACKER_BUILD_DIR
-# always do a clean
-rm -r *
-cmake -S $CRASHTRACKER_SRC_DIR -DDatadog_ROOT=$destdir
+cmake -S $CRASHTRACKER_SRC_DIR -DDatadog_ROOT=$ABS_DESTDIR
 cmake --build .
-mkdir -p $destdir/bin
-cp ddog-crashtracking-receiver $destdir/bin
+mkdir -p $ABS_DESTDIR/bin
+cp ddog-crashtracking-receiver $ABS_DESTDIR/bin
 
 echo "Done."
