@@ -22,6 +22,7 @@ static_library_suffix=".a"
 library_prefix="lib"
 remove_rpath=0
 fix_macos_rpath=0
+build_symbolizer=0
 
 # Rust provides this note about the link libraries:
 # note: Link against the following native artifacts when linking against this
@@ -38,6 +39,7 @@ case "$target" in
         native_static_libs=" -lssp_nonshared -lc"
         # on alpine musl, Rust adds some weird runpath to cdylibs
         remove_rpath=1
+        build_symbolizer=1
         ;;
 
     "x86_64-apple-darwin"|"aarch64-apple-darwin")
@@ -52,6 +54,7 @@ case "$target" in
     "x86_64-unknown-linux-gnu"|"aarch64-unknown-linux-gnu")
         expected_native_static_libs=" -ldl -lrt -lpthread -lgcc_s -lc -lm -lrt -lpthread -lutil -ldl -lutil"
         native_static_libs=" -ldl -lrt -lpthread -lc -lm -lrt -lpthread -lutil -ldl -lutil"
+        build_symbolizer=1
         ;;
 
     "x86_64-pc-windows-msvc")
@@ -157,9 +160,11 @@ echo "Generating $destdir/include/libdatadog headers..."
 cbindgen --crate ddcommon-ffi \
     --config ddcommon-ffi/cbindgen.toml \
     --output "$destdir/include/datadog/common.h"
-cbindgen --crate symbolizer-ffi \
-    --config symbolizer-ffi/cbindgen.toml \
-    --output "$destdir/include/datadog/symbolizer.h"
+if [[ "$build_symbolizer" -eq 1 ]]; then
+    cbindgen --crate symbolizer-ffi \
+        --config symbolizer-ffi/cbindgen.toml \
+        --output "$destdir/include/datadog/symbolizer.h"
+fi
 cbindgen --crate "${datadog_profiling_ffi}" \
     --config profiling-ffi/cbindgen.toml \
     --output "$destdir/include/datadog/profiling.h"
