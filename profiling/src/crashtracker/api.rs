@@ -158,7 +158,16 @@ pub fn init(
 }
 
 #[ignore]
-#[test]
+#[allow(dead_code)]
+// Ignored tests are still run in CI.
+// To test, uncomment the line below than run manually
+// We can't run this in the main test runner because it (deliberately) crashes,
+// and would make all following tests unrunable.
+// To run this test,
+// ./build-profiling-ffi /tmp/libdatadog
+// mkdir /tmp/crashreports
+// look in /tmp/crashreports for the crash reports and output files
+//#[test]
 fn test_crash() {
     use crate::crashtracker::begin_profiling_op;
     use chrono::Utc;
