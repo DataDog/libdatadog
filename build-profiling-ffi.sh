@@ -95,13 +95,10 @@ export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
 datadog_profiling_ffi="datadog-profiling-ffi"
 
-FEATURES=""
+FEATURES="--no-default-features"
 if [[ "$build_symbolizer" -eq 1 ]]; then
     FEATURES="--features build_symbolizer"
-echo "Building the ${datadog_profiling_ffi} crate (may take some time)..."
-fi
-if [[ ! -z "${FEATURES}" ]]; then
-    echo "Building with features: ${FEATURES}"
+echo "Building the ${datadog_profiling_ffi} crate (may take some time). Features = ${FEATURES}..."
 fi
 cargo build ${FEATURES} --package="${datadog_profiling_ffi}" --release --target "${target}"
 

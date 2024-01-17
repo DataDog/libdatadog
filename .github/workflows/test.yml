@@ -106,11 +106,11 @@ jobs:
       - name: "Test building C bindings"
         shell: bash
         run: |
+          set -e
           mkdir examples/ffi/build
           cd examples/ffi/build
           cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling
           cmake --build .
-          ./symbolizer
 
   cross-centos7:
     name: build and test using cross - on centos7
