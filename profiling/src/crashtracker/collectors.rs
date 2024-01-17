@@ -111,6 +111,7 @@ pub unsafe fn emit_backtrace_by_frames(
 /// SIGNAL SAFETY:
 ///     This function is careful to only write to the handle, without doing any
 ///     unnecessary mutexes or memory allocation.
+#[allow(dead_code)]
 pub fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
     // open is signal safe
     // https://man7.org/linux/man-pages/man7/signal-safety.7.html

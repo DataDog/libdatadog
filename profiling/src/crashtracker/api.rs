@@ -13,14 +13,14 @@ use ddcommon::Endpoint;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Metadata {
+pub struct CrashtrackerMetadata {
     pub profiling_library_name: String,
     pub profiling_library_version: String,
     pub family: String,
     pub tags: Option<Vec<Tag>>,
 }
 
-impl Metadata {
+impl CrashtrackerMetadata {
     pub fn new(
         profiling_library_name: String,
         profiling_library_version: String,
@@ -36,26 +36,31 @@ impl Metadata {
     }
 }
 
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CrashtrackerResolveFrames {
+    Never,
+    /// Resolving frames is experimental, and can fail/crash
+    ExperimentalInProcess,
+    ExperimentalInReceiver,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Configuration {
+pub struct CrashtrackerConfiguration {
     pub create_alt_stack: bool,
     pub endpoint: Option<Endpoint>,
-    pub output_filename: Option<String>,
     pub path_to_receiver_binary: String,
-    pub resolve_frames_in_process: bool,
-    pub resolve_frames_in_receiver: bool,
+    pub resolve_frames: CrashtrackerResolveFrames,
     pub stderr_filename: Option<String>,
     pub stdout_filename: Option<String>,
 }
 
-impl Configuration {
+impl CrashtrackerConfiguration {
     pub fn new(
         create_alt_stack: bool,
         endpoint: Option<Endpoint>,
-        output_filename: Option<String>,
         path_to_receiver_binary: String,
-        resolve_frames_in_process: bool,
-        resolve_frames_in_receiver: bool,
+        resolve_frames: CrashtrackerResolveFrames,
         stderr_filename: Option<String>,
         stdout_filename: Option<String>,
     ) -> anyhow::Result<Self> {
@@ -69,10 +74,8 @@ impl Configuration {
         Ok(Self {
             create_alt_stack,
             endpoint,
-            output_filename,
             path_to_receiver_binary,
-            resolve_frames_in_process,
-            resolve_frames_in_receiver,
+            resolve_frames,
             stderr_filename,
             stdout_filename,
         })
@@ -118,7 +121,10 @@ pub fn shutdown_crash_handler() -> anyhow::Result<()> {
 /// ATOMICITY:
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
-pub fn on_fork(config: Configuration, metadata: Metadata) -> anyhow::Result<()> {
+pub fn on_fork(
+    config: CrashtrackerConfiguration,
+    metadata: CrashtrackerMetadata,
+) -> anyhow::Result<()> {
     reset_counters()?;
     // Leave the old signal handler in place: they are unaffected by fork.
     // https://man7.org/linux/man-pages/man2/sigaction.2.html
@@ -140,7 +146,10 @@ pub fn on_fork(config: Configuration, metadata: Metadata) -> anyhow::Result<()> 
 /// ATOMICITY:
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
-pub fn init(config: Configuration, metadata: Metadata) -> anyhow::Result<()> {
+pub fn init(
+    config: CrashtrackerConfiguration,
+    metadata: CrashtrackerMetadata,
+) -> anyhow::Result<()> {
     // Setup the receiver first, so that if there is a crash detected it has
     // somewhere to go.
     setup_receiver(&config, &metadata)?;
@@ -153,37 +162,34 @@ pub fn init(config: Configuration, metadata: Metadata) -> anyhow::Result<()> {
 fn test_crash() {
     use crate::crashtracker::begin_profiling_op;
     use chrono::Utc;
+    use ddcommon::parse_uri;
 
-    let endpoint = None;
     let time = Utc::now().to_rfc3339();
     let dir = "/tmp/crashreports/";
-    let output_filename = Some(format!("{dir}/{time}.txt"));
+    let output_url = format!("file://{dir}{time}.txt");
 
-    #[cfg(target_os = "macos")]
-    //let path_to_receiver_binary = "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/target/debug/profiling-crashtracking-receiver".to_string();
-    // let path_to_receiver_binary = "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/profiling-crashtracking-receiver/build/ddog-crashtracking-receiver".to_string();
-    let path_to_receiver_binary = "/tmp/libdatadog/bin/ddog-crashtracking-receiver".to_string();
-    #[cfg(target_os = "linux")]
+    let endpoint = Some(Endpoint {
+        url: parse_uri(&output_url).unwrap(),
+        api_key: None,
+    });
+
     let path_to_receiver_binary =
-        "/tmp/libdatadog/debug/profiling-crashtracking-receiver".to_string();
+        "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
     let create_alt_stack = true;
-    let resolve_frames_in_process = false;
-    let resolve_frames_in_receiver = false;
+    let resolve_frames = CrashtrackerResolveFrames::Never;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
 
-    let config = Configuration::new(
+    let config = CrashtrackerConfiguration::new(
         create_alt_stack,
         endpoint,
-        output_filename,
         path_to_receiver_binary,
-        resolve_frames_in_process,
-        resolve_frames_in_receiver,
+        resolve_frames,
         stderr_filename,
         stdout_filename,
     )
     .expect("not to fail");
-    let metadata = Metadata::new(
+    let metadata = CrashtrackerMetadata::new(
         "libname".to_string(),
         "version".to_string(),
         "family".to_string(),

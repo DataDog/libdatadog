@@ -7,7 +7,7 @@ use std::ptr;
 #[cfg(target_os = "linux")]
 use super::collectors::emit_proc_self_maps;
 
-use super::api::{Configuration, Metadata};
+use super::api::{CrashtrackerConfiguration, CrashtrackerMetadata, CrashtrackerResolveFrames};
 use super::collectors::emit_backtrace_by_frames;
 use super::constants::*;
 use super::counters::emit_counters;
@@ -37,8 +37,8 @@ static mut OLD_SIGSEGV_HANDLER: GlobalVarState<SigAction> = GlobalVarState::Unas
 static mut RESOLVE_FRAMES: bool = false;
 
 fn make_receiver(
-    config: &Configuration,
-    metadata: &Metadata,
+    config: &CrashtrackerConfiguration,
+    metadata: &CrashtrackerMetadata,
 ) -> anyhow::Result<std::process::Child> {
     // TODO: currently create the file in write mode.  Would append make more sense?
     let stderr = if let Some(filename) = &config.stderr_filename {
@@ -79,7 +79,10 @@ fn make_receiver(
     Ok(receiver)
 }
 
-pub fn setup_receiver(config: &Configuration, metadata: &Metadata) -> anyhow::Result<()> {
+pub fn setup_receiver(
+    config: &CrashtrackerConfiguration,
+    metadata: &CrashtrackerMetadata,
+) -> anyhow::Result<()> {
     let new_receiver = make_receiver(config, metadata)?;
     let old_receiver =
         unsafe { std::mem::replace(&mut RECEIVER, GlobalVarState::Some(new_receiver)) };
@@ -91,7 +94,10 @@ pub fn setup_receiver(config: &Configuration, metadata: &Metadata) -> anyhow::Re
     Ok(())
 }
 
-pub fn replace_receiver(config: &Configuration, metadata: &Metadata) -> anyhow::Result<()> {
+pub fn replace_receiver(
+    config: &CrashtrackerConfiguration,
+    metadata: &CrashtrackerMetadata,
+) -> anyhow::Result<()> {
     let new_receiver = make_receiver(config, metadata)?;
     let old_receiver =
         unsafe { std::mem::replace(&mut RECEIVER, GlobalVarState::Some(new_receiver)) };
@@ -177,9 +183,9 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn register_crash_handlers(config: &Configuration) -> anyhow::Result<()> {
+pub fn register_crash_handlers(config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
     unsafe {
-        RESOLVE_FRAMES = config.resolve_frames_in_process;
+        RESOLVE_FRAMES = config.resolve_frames == CrashtrackerResolveFrames::ExperimentalInProcess;
 
         if config.create_alt_stack {
             set_alt_stack()?;

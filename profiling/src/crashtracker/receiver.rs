@@ -17,26 +17,23 @@ use std::{io::BufRead, time::Duration};
 pub fn receiver_entry_point() -> anyhow::Result<()> {
     let mut config = String::new();
     std::io::stdin().lock().read_line(&mut config)?;
-    let config: Configuration = serde_json::from_str(&config)?;
+    let config: CrashtrackerConfiguration = serde_json::from_str(&config)?;
 
     let mut metadata = String::new();
     std::io::stdin().lock().read_line(&mut metadata)?;
-    let metadata: Metadata = serde_json::from_str(&metadata)?;
+    let metadata: CrashtrackerMetadata = serde_json::from_str(&metadata)?;
 
     match receive_report(&metadata)? {
         CrashReportStatus::NoCrash => Ok(()),
         CrashReportStatus::CrashReport(mut crash_info) => {
-            if config.resolve_frames_in_receiver {
+            if config.resolve_frames == CrashtrackerResolveFrames::ExperimentalInReceiver {
                 let ppid = std::os::unix::process::parent_id();
                 crash_info.add_names(ppid)?;
-            }
-            if let Some(path) = config.output_filename {
-                crash_info.to_file(&path)?;
             }
             if let Some(endpoint) = config.endpoint {
                 // Don't keep the endpoint waiting forever.
                 // TODO Experiment to see if 30 is the right number.
-                crash_info.upload_to_dd(endpoint, Duration::from_secs(30))?;
+                crash_info.upload_to_endpoint(endpoint, Duration::from_secs(30))?;
             }
             Ok(())
         }
@@ -141,7 +138,7 @@ enum CrashReportStatus {
 /// In the case where the parent failed to transfer a full crash-report
 /// (for instance if it crashed while calculating the crash-report), we return
 /// a PartialCrashReport.
-fn receive_report(metadata: &Metadata) -> anyhow::Result<CrashReportStatus> {
+fn receive_report(metadata: &CrashtrackerMetadata) -> anyhow::Result<CrashReportStatus> {
     let mut crashinfo = CrashInfo::new(metadata.clone());
     let mut stdin_state = StdinState::Waiting;
     //TODO: This assumes that the input is valid UTF-8.

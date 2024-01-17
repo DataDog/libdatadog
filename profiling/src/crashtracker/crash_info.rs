@@ -1,6 +1,6 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
-use crate::crashtracker::Metadata;
+use crate::crashtracker::CrashtrackerMetadata;
 use crate::exporter::{self, Endpoint, Tag};
 use anyhow::Context;
 use blazesym::symbolize::{Input, Process, Source, Sym, Symbolized, Symbolizer};
@@ -37,14 +37,7 @@ impl StackFrame {
             .with_context(|| format!("failed to parse address: {addr_str}"))?;
         let input = Input::VirtOffset(ip_addr);
         match symbolizer.symbolize_single(src, input)? {
-            Symbolized::Sym(Sym {
-                name,
-                addr,
-                offset,
-                code_info,
-                inlined,
-                ..
-            }) => Ok(name.to_string()),
+            Symbolized::Sym(Sym { name, .. }) => Ok(name.to_string()),
             Symbolized::Unknown => Ok("UNKNOWN".to_string()),
         }
     }
@@ -60,7 +53,7 @@ pub struct SigInfo {
 pub struct CrashInfo {
     counters: HashMap<String, i64>,
     files: HashMap<String, Vec<String>>,
-    metadata: Metadata,
+    metadata: CrashtrackerMetadata,
     os_info: os_info::Info,
     siginfo: Option<SigInfo>,
     stacktrace: Vec<StackFrame>,
@@ -74,14 +67,14 @@ impl CrashInfo {
         self.siginfo.is_some()
     }
 
-    pub fn get_metadata(&self) -> &Metadata {
+    pub fn get_metadata(&self) -> &CrashtrackerMetadata {
         &self.metadata
     }
 }
 
 /// Constructor and setters
 impl CrashInfo {
-    pub fn new(metadata: Metadata) -> Self {
+    pub fn new(metadata: CrashtrackerMetadata) -> Self {
         let os_info = os_info::get();
         let uuid = Uuid::new_v4();
         Self {
@@ -238,5 +231,21 @@ impl CrashInfo {
         let response = exporter.send(request, None)?;
         //TODO, do we need to wait a bit for the agent to finish upload?
         Ok(response)
+    }
+
+    pub fn upload_to_endpoint(
+        &self,
+        endpoint: Endpoint,
+        timeout: Duration,
+    ) -> anyhow::Result<Option<hyper::Response<hyper::Body>>> {
+        // Using scheme "file" currently fails:
+        // error trying to connect: Unsupported scheme file
+        // Instead, manually support it.
+        if Some("file") == endpoint.url.scheme_str() {
+            self.to_file(endpoint.url.path())?;
+            Ok(None)
+        } else {
+            Ok(Some(self.upload_to_dd(endpoint, timeout)?))
+        }
     }
 }
