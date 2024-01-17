@@ -42,7 +42,6 @@ pub unsafe fn slice_from_user_array<'t, T>(items: *const T, num_items: usize) ->
     unsafe { slice::from_raw_parts(items, num_items) }
 }
 
-
 /// The parameters to load symbols and debug information from an ELF.
 ///
 /// Describes the path and address of an ELF file loaded in a
@@ -72,7 +71,6 @@ impl From<&blaze_symbolize_src_elf> for Elf {
         }
     }
 }
-
 
 /// The parameters to load symbols and debug information from a kernel.
 ///
@@ -116,7 +114,6 @@ impl From<&blaze_symbolize_src_kernel> for Kernel {
     }
 }
 
-
 /// The parameters to load symbols and debug information from a process.
 ///
 /// Load all ELF files in a process as the sources of symbols and debug
@@ -145,7 +142,6 @@ impl From<&blaze_symbolize_src_process> for Process {
     }
 }
 
-
 /// The parameters to load symbols and debug information from "raw" Gsym data.
 #[repr(C)]
 #[derive(Debug)]
@@ -165,7 +161,6 @@ impl From<&blaze_symbolize_src_gsym_data> for GsymData<'_> {
         }
     }
 }
-
 
 /// The parameters to load symbols and debug information from a Gsym file.
 #[repr(C)]
@@ -211,7 +206,6 @@ pub struct blaze_symbolize_code_info {
     pub column: u16,
 }
 
-
 /// Data about an inlined function call.
 #[repr(C)]
 #[derive(Debug)]
@@ -221,7 +215,6 @@ pub struct blaze_symbolize_inlined_fn {
     /// Source code location information for the inlined function.
     pub code_info: blaze_symbolize_code_info,
 }
-
 
 /// The result of symbolization of an address.
 ///
@@ -285,7 +278,6 @@ unsafe fn from_cstr(cstr: *const c_char) -> PathBuf {
     .to_path_buf()
 }
 
-
 /// Options for configuring `blaze_symbolizer` objects.
 #[repr(C)]
 #[derive(Debug)]
@@ -303,7 +295,6 @@ pub struct blaze_symbolizer_opts {
     /// the underlying language does not mangle symbols (such as C).
     pub demangle: bool,
 }
-
 
 /// Create an instance of a symbolizer.
 #[no_mangle]
@@ -419,7 +410,7 @@ fn convert_symbolizedresults_to_c(results: Vec<Symbolized>) -> *const blaze_resu
     let raw_buf_with_sz =
         unsafe { alloc(Layout::from_size_align(buf_size + mem::size_of::<u64>(), 8).unwrap()) };
     if raw_buf_with_sz.is_null() {
-        return ptr::null()
+        return ptr::null();
     }
 
     // prepend an u64 to keep the size of the buffer.
@@ -530,7 +521,6 @@ unsafe fn blaze_symbolize_impl(
     }
 }
 
-
 /// Symbolize a list of process virtual addresses.
 ///
 /// Return an array of [`blaze_result`] with the same size as the
@@ -553,7 +543,6 @@ pub unsafe extern "C" fn blaze_symbolize_process_virt_addrs(
     let src = Source::from(Process::from(unsafe { &*src }));
     unsafe { blaze_symbolize_impl(symbolizer, src, Input::AbsAddr(addrs), addr_cnt) }
 }
-
 
 /// Symbolize a list of kernel virtual addresses.
 ///
@@ -578,7 +567,6 @@ pub unsafe extern "C" fn blaze_symbolize_kernel_virt_addrs(
     unsafe { blaze_symbolize_impl(symbolizer, src, Input::AbsAddr(addrs), addr_cnt) }
 }
 
-
 /// Symbolize file addresses in an ELF file.
 ///
 /// Return an array of [`blaze_result`] with the same size as the
@@ -601,7 +589,6 @@ pub unsafe extern "C" fn blaze_symbolize_elf_file_addrs(
     let src = Source::from(Elf::from(unsafe { &*src }));
     unsafe { blaze_symbolize_impl(symbolizer, src, Input::VirtOffset(addrs), addr_cnt) }
 }
-
 
 /// Symbolize file addresses using "raw" Gsym data.
 ///
@@ -628,7 +615,6 @@ pub unsafe extern "C" fn blaze_symbolize_gsym_data_file_addrs(
     unsafe { blaze_symbolize_impl(symbolizer, src, Input::VirtOffset(addrs), addr_cnt) }
 }
 
-
 /// Symbolize file addresses in a Gsym file.
 ///
 /// Return an array of [`blaze_result`] with the same size as the
@@ -652,7 +638,6 @@ pub unsafe extern "C" fn blaze_symbolize_gsym_file_file_addrs(
     unsafe { blaze_symbolize_impl(symbolizer, src, Input::VirtOffset(addrs), addr_cnt) }
 }
 
-
 /// Free an array returned by any of the `blaze_symbolize_*` variants.
 ///
 /// # Safety
@@ -661,14 +646,13 @@ pub unsafe extern "C" fn blaze_symbolize_gsym_file_file_addrs(
 #[no_mangle]
 pub unsafe extern "C" fn blaze_result_free(results: *const blaze_result) {
     if results.is_null() {
-        return
+        return;
     }
 
     let raw_buf_with_sz = unsafe { (results as *mut u8).offset(-(mem::size_of::<u64>() as isize)) };
     let sz = unsafe { *(raw_buf_with_sz as *mut u64) } as usize + mem::size_of::<u64>();
     unsafe { dealloc(raw_buf_with_sz, Layout::from_size_align(sz, 8).unwrap()) };
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -683,7 +667,6 @@ mod tests {
     use std::slice;
 
     use blazesym::inspect;
-
 
     /// Exercise the `Debug` representation of various types.
     #[test]
@@ -1074,7 +1057,7 @@ mod tests {
             if sym.inlined_cnt == 0 {
                 let () = unsafe { blaze_result_free(result) };
                 let () = unsafe { blaze_symbolizer_free(symbolizer) };
-                return Err(())
+                return Err(());
             }
 
             assert_eq!(sym.inlined_cnt, 1);
@@ -1110,7 +1093,6 @@ mod tests {
                 unsafe { CStr::from_ptr(sym.name) },
                 CStr::from_bytes_with_nul(b"test::test_function\0").unwrap()
             );
-
 
             assert_eq!(sym.inlined_cnt, 1);
             assert_eq!(
@@ -1152,7 +1134,7 @@ mod tests {
         let size = result.size.unwrap() as u64;
         for inst_addr in addr..addr + size {
             if test(&test_dwarf, inst_addr).is_ok() {
-                return
+                return;
             }
         }
 

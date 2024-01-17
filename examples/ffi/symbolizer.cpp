@@ -24,7 +24,7 @@ void symbolize_and_print(blaze_symbolizer* symbolizer, uintptr_t addr) {
     bool found = false;
     for (size_t i = 0; i < addrs.size(); ++i) {
         std::cout << "Address: " << addrs[i] << ", Symbolized: " << results->syms[i].name << std::endl;
-        if (std::string(results->syms[i].name).Contains("test_symbolizer")){
+        if (std::string(results->syms[i].name).find("test_symbolizer") != std::string::npos){
             found = true;
         }
     }

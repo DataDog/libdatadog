@@ -94,8 +94,16 @@ cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
 datadog_profiling_ffi="datadog-profiling-ffi"
+
+FEATURES=""
+if [[ "$build_symbolizer" -eq 1 ]]; then
+    FEATURES="--features build_symbolizer"
 echo "Building the ${datadog_profiling_ffi} crate (may take some time)..."
-cargo build --package="${datadog_profiling_ffi}" --release --target "${target}"
+fi
+if [[ ! -z "${FEATURES}" ]]; then
+    echo "Building with features: ${FEATURES}"
+fi
+cargo build ${FEATURES} --package="${datadog_profiling_ffi}" --release --target "${target}"
 
 # Remove _ffi suffix when copying
 shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"
