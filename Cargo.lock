@@ -2605,6 +2605,8 @@ name = "symbolizer-ffi"
 version = "5.0.0"
 dependencies = [
  "blazesym",
+ "env_logger",
+ "libc",
 ]
 
 [[package]]
