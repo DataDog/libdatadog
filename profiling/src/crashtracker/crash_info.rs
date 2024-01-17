@@ -200,21 +200,28 @@ impl CrashInfo {
         endpoint: Endpoint,
         timeout: Duration,
     ) -> anyhow::Result<hyper::Response<hyper::Body>> {
+        fn make_tag(key: &str, value: &str) -> anyhow::Result<Tag> {
+            match Tag::new(key, value) {
+                Ok(tag) => Ok(tag),
+                Err(e) => anyhow::bail!("{}", e),
+            }
+        }
+
         //let site = "intake.profile.datad0g.com/api/v2/profile";
         //let site = "datad0g.com";
         //let api_key = std::env::var("DD_API_KEY")?;
         let data = serde_json::to_vec(self)?;
         let metadata = self.get_metadata();
 
-        let service_tag = match Tag::new("service", "local-crash-test-upload") {
-            Ok(tag) => tag,
-            Err(e) => anyhow::bail!("{}", e),
-        };
-        let is_crash_tag = match Tag::new("is_crash", "yes") {
-            Ok(tag) => tag,
-            Err(e) => anyhow::bail!("{}", e),
-        };
-        let tags: Option<Vec<Tag>> = Some(vec![service_tag, is_crash_tag]);
+        let is_crash_tag = make_tag("is_crash", "yes")?;
+        let tags = Some(
+            metadata
+                .tags
+                .iter()
+                .cloned()
+                .chain([is_crash_tag])
+                .collect(),
+        );
         let time = Utc::now();
         let crash_file = exporter::File {
             name: "crash-info.json",

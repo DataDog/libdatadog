@@ -57,6 +57,7 @@ pub struct CrashtrackerMetadata<'a> {
     pub profiling_library_name: CharSlice<'a>,
     pub profiling_library_version: CharSlice<'a>,
     pub family: CharSlice<'a>,
+    /// Should include "service", "environment", etc
     pub tags: Option<&'a ddcommon_ffi::Vec<Tag>>,
 }
 
@@ -68,7 +69,10 @@ impl<'a> TryFrom<CrashtrackerMetadata<'a>> for crashtracker::CrashtrackerMetadat
         let profiling_library_version =
             unsafe { value.profiling_library_version.try_to_utf8()?.to_string() };
         let family = unsafe { value.family.try_to_utf8()?.to_string() };
-        let tags = value.tags.map(|tags| tags.iter().cloned().collect());
+        let tags = value
+            .tags
+            .map(|tags| tags.iter().cloned().collect())
+            .unwrap_or_default();
         Ok(crashtracker::CrashtrackerMetadata::new(
             profiling_library_name,
             profiling_library_version,

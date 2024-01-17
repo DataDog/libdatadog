@@ -17,7 +17,8 @@ pub struct CrashtrackerMetadata {
     pub profiling_library_name: String,
     pub profiling_library_version: String,
     pub family: String,
-    pub tags: Option<Vec<Tag>>,
+    // Should include "service", "environment", etc
+    pub tags: Vec<Tag>,
 }
 
 impl CrashtrackerMetadata {
@@ -25,7 +26,7 @@ impl CrashtrackerMetadata {
         profiling_library_name: String,
         profiling_library_version: String,
         family: String,
-        tags: Option<Vec<Tag>>,
+        tags: Vec<Tag>,
     ) -> Self {
         Self {
             profiling_library_name,
@@ -167,7 +168,7 @@ pub fn init(
 // ./build-profiling-ffi /tmp/libdatadog
 // mkdir /tmp/crashreports
 // look in /tmp/crashreports for the crash reports and output files
-//#[test]
+#[test]
 fn test_crash() {
     use crate::crashtracker::begin_profiling_op;
     use chrono::Utc;
@@ -185,7 +186,7 @@ fn test_crash() {
     let path_to_receiver_binary =
         "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
     let create_alt_stack = true;
-    let resolve_frames = CrashtrackerResolveFrames::Never;
+    let resolve_frames = CrashtrackerResolveFrames::ExperimentalInReceiver;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
 
