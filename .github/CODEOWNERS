@@ -1,8 +1,8 @@
+*                       @Datadog/libdatadog-core
 build-profiling-ffi.sh  @Datadog/libdatadog-profiling
 profiling*/             @Datadog/libdatadog-profiling
-ddtelemetry/            @Datadog/libdatadog-telemetry
+ddtelemetry*/           @Datadog/libdatadog-telemetry
 ruby/                   @Datadog/libdatadog-ruby
-*                       @Datadog/libdatadog-core
 Cargo.*                 @Datadog/libdatadog
 .gitignore              @Datadog/libdatadog
 .gitlab-ci.yaml         @Datadog/libdatadog

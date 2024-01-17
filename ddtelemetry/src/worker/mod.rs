@@ -97,18 +97,13 @@ pub struct LogIdentifier {
     indentifier: u64,
 }
 
-struct UnfluhsedLogEntry {
-    number_received: u32,
-    log: Log,
-}
-
 // Holds the current state of the telemetry worker
 struct TelemetryWorkerData {
     started: bool,
     dependencies: store::Store<Dependency>,
     configurations: store::Store<data::Configuration>,
     integrations: store::Store<data::Integration>,
-    logs: store::QueueHashMap<LogIdentifier, UnfluhsedLogEntry>,
+    logs: store::QueueHashMap<LogIdentifier, Log>,
     metric_contexts: MetricContexts,
     metric_buckets: MetricBuckets,
     host: Host,
@@ -204,16 +199,7 @@ impl TelemetryWorker {
             AddIntegration(integration) => self.data.integrations.insert(integration),
             AddConfig(cfg) => self.data.configurations.insert(cfg),
             AddLog((identifier, log)) => {
-                self.data
-                    .logs
-                    .get_mut_or_insert(
-                        identifier,
-                        UnfluhsedLogEntry {
-                            number_received: 0,
-                            log,
-                        },
-                    )
-                    .number_received += 1;
+                self.data.logs.get_mut_or_insert(identifier, log).count += 1;
             }
             AddPoint((point, key, extra_tags)) => self.data.metric_buckets.add_point(
                 key,
@@ -452,24 +438,8 @@ impl TelemetryWorker {
     }
 
     fn build_logs(&self) -> Vec<Log> {
-        let logs = self
-            .data
-            .logs
-            .iter()
-            .map(|(_, e)| {
-                use std::fmt::Write;
-                let mut log = e.log.clone();
-                if e.number_received > 1 {
-                    write!(
-                        &mut log.message,
-                        "\nSkipped {} messages",
-                        e.number_received - 1
-                    )
-                    .unwrap();
-                }
-                log
-            })
-            .collect();
+        // TODO: change the data model to take a &[Log] so don't have to clone data here
+        let logs = self.data.logs.iter().map(|(_, l)| l.clone()).collect();
         logs
     }
 
@@ -675,6 +645,7 @@ impl TelemetryWorkerHandle {
                 message,
                 level,
                 stack_trace,
+                count: 1,
             },
         )))?;
         Ok(())

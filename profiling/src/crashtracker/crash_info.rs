@@ -38,7 +38,7 @@ impl StackFrame {
         let input = Input::VirtOffset(ip_addr);
         match symbolizer.symbolize_single(src, input)? {
             Symbolized::Sym(Sym { name, .. }) => Ok(name.to_string()),
-            Symbolized::Unknown => Ok("UNKNOWN".to_string()),
+            Symbolized::Unknown(_) => Ok("UNKNOWN".to_string()),
         }
     }
 }
@@ -169,7 +169,7 @@ impl CrashInfo {
                     // TODO, what if there are already names?
                     frame.names = Some(vec![frame_info]);
                 }
-                Symbolized::Unknown => {
+                Symbolized::Unknown(_) => {
                     println!("UNKNOWN");
                     // Do nothing
                 }

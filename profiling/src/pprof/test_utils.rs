@@ -1,7 +1,6 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-#[cfg(test)]
 pub fn deserialize_compressed_pprof(encoded: &[u8]) -> anyhow::Result<super::Profile> {
     use prost::Message;
     use std::io::Read;
@@ -13,7 +12,6 @@ pub fn deserialize_compressed_pprof(encoded: &[u8]) -> anyhow::Result<super::Pro
     Ok(profile)
 }
 
-#[cfg(test)]
 pub fn roundtrip_to_pprof(profile: crate::internal::Profile) -> anyhow::Result<super::Profile> {
     let encoded = profile.serialize_into_compressed_pprof(None, None)?;
     deserialize_compressed_pprof(&encoded.buffer)

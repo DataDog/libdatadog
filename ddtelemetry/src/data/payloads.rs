@@ -70,7 +70,10 @@ pub struct GenerateMetrics {
 pub struct Log {
     pub message: String,
     pub level: LogLevel,
+    pub count: u32,
+
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub stack_trace: Option<String>,
 }
 
