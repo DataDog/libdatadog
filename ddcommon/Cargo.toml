@@ -38,7 +38,6 @@ rustls-native-certs = { version = "0.6" }
 tokio = { version = "1.23", features = ["rt", "macros"] }
 tokio-rustls = { version = "0.23" }
 serde = { version = "1.0", features = ["derive"] }
-backtrace = "0.3.69"
 
 [dev-dependencies]
 indexmap = "1.8"
