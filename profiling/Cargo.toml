@@ -15,7 +15,6 @@ crate-type = ["lib"]
 anyhow = "1.0"
 backtrace = "0.3.69"
 bitmaps = "3.2.0"
-blazesym = "0.2.0-alpha.9"
 bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock", "serde"]}
 ddcommon = {path = "../ddcommon"}

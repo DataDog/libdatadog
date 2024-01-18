@@ -3,8 +3,6 @@
 use crate::crashtracker::CrashtrackerMetadata;
 use crate::exporter::{self, Endpoint, Tag};
 use anyhow::Context;
-use blazesym::symbolize::{Input, Process, Source, Sym, Symbolized, Symbolizer};
-use blazesym::Addr;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
@@ -28,19 +26,6 @@ pub struct StackFrame {
     names: Option<Vec<StackFrameNames>>,
     sp: Option<String>,
     symbol_address: Option<String>,
-}
-
-impl StackFrame {
-    pub fn get_name(&self, symbolizer: &Symbolizer, src: &Source) -> anyhow::Result<String> {
-        let addr_str = self.ip.as_ref().context("Can't resolve name if no ip")?;
-        let ip_addr = Addr::from_str_radix(addr_str.trim_start_matches("0x"), 16)
-            .with_context(|| format!("failed to parse address: {addr_str}"))?;
-        let input = Input::VirtOffset(ip_addr);
-        match symbolizer.symbolize_single(src, input)? {
-            Symbolized::Sym(Sym { name, .. }) => Ok(name.to_string()),
-            Symbolized::Unknown(_) => Ok("UNKNOWN".to_string()),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -135,51 +120,6 @@ impl CrashInfo {
     pub fn set_timestamp_to_now(&mut self) -> anyhow::Result<()> {
         anyhow::ensure!(self.timestamp.is_none());
         self.timestamp = Some(Utc::now());
-        Ok(())
-    }
-}
-
-impl CrashInfo {
-    pub fn add_names(&mut self, pid: u32) -> anyhow::Result<()> {
-        println!("foo");
-        let symbolizer = Symbolizer::new();
-        let src = Source::Process(Process::new(pid.into()));
-        let addrs: anyhow::Result<Vec<_>> = self
-            .stacktrace
-            .iter()
-            .map(|frame| {
-                let addr_str = frame.ip.as_ref().context("Can't resolve name if no ip")?;
-                let ip_addr = Addr::from_str_radix(addr_str.trim_start_matches("0x"), 16)
-                    .with_context(|| format!("failed to parse address: {addr_str}"))?;
-                Ok(ip_addr)
-            })
-            .collect();
-        let addrs = addrs?;
-        let syms = symbolizer.symbolize(&src, Input::AbsAddr(&addrs))?;
-        for (frame, sym) in self.stacktrace.iter_mut().zip(syms) {
-            match sym {
-                Symbolized::Sym(Sym {
-                    name,
-                    // addr,
-                    // offset,
-                    // code_info,
-                    // inlined,
-                    ..
-                }) => {
-                    let name = name.to_string();
-                    let frame_info = StackFrameNames {
-                        name: Some(name),
-                        ..StackFrameNames::default()
-                    };
-                    // TODO, what if there are already names?
-                    frame.names = Some(vec![frame_info]);
-                }
-                Symbolized::Unknown(_) => {
-                    println!("UNKNOWN");
-                    // Do nothing
-                }
-            }
-        }
         Ok(())
     }
 }

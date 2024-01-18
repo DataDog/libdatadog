@@ -25,10 +25,9 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
 
     match receive_report(&metadata)? {
         CrashReportStatus::NoCrash => Ok(()),
-        CrashReportStatus::CrashReport(mut crash_info) => {
+        CrashReportStatus::CrashReport(crash_info) => {
             if config.resolve_frames == CrashtrackerResolveFrames::ExperimentalInReceiver {
-                let ppid = std::os::unix::process::parent_id();
-                crash_info.add_names(ppid)?;
+                todo!("Processing names in the receiver is WIP");
             }
             if let Some(endpoint) = config.endpoint {
                 // Don't keep the endpoint waiting forever.
