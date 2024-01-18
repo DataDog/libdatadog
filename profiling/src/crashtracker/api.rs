@@ -168,7 +168,7 @@ pub fn init(
 // ./build-profiling-ffi /tmp/libdatadog
 // mkdir /tmp/crashreports
 // look in /tmp/crashreports for the crash reports and output files
-#[test]
+//#[test]
 fn test_crash() {
     use crate::crashtracker::begin_profiling_op;
     use chrono::Utc;
@@ -203,7 +203,7 @@ fn test_crash() {
         "libname".to_string(),
         "version".to_string(),
         "family".to_string(),
-        None,
+        vec![],
     );
     init(config, metadata).expect("not to fail");
     begin_profiling_op(crate::crashtracker::ProfilingOpTypes::CollectingSample)
