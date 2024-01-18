@@ -167,18 +167,21 @@ cbindgen --crate "${datadog_profiling_ffi}" \
     --output "$destdir/include/datadog/profiling.h"
 "$CARGO_TARGET_DIR"/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h"
 
-echo "Building binaries"
-# $destdir might be relative. Get an absolute path that will work when we cd
-export ABS_DESTDIR=$(get_abs_filename $destdir)
-export CRASHTRACKER_BUILD_DIR=$CARGO_TARGET_DIR/build/crashtracker-receiver
-export CRASHTRACKER_SRC_DIR=$PWD/profiling-crashtracking-receiver
-# Always start with a clean directory
-[ -d $CRASHTRACKER_BUILD_DIR ] && rm -r $CRASHTRACKER_BUILD_DIR
-mkdir -p $CRASHTRACKER_BUILD_DIR
-cd $CRASHTRACKER_BUILD_DIR
-cmake -S $CRASHTRACKER_SRC_DIR -DDatadog_ROOT=$ABS_DESTDIR
-cmake --build .
-mkdir -p $ABS_DESTDIR/bin
-cp libdatadog-crashtracking-receiver $ABS_DESTDIR/bin
+# Don't build the crashtracker on windows
+if [[ "$target" != "x86_64-pc-windows-msvc" ]]; then
+    echo "Building binaries"
+    # $destdir might be relative. Get an absolute path that will work when we cd
+    export ABS_DESTDIR=$(get_abs_filename $destdir)
+    export CRASHTRACKER_BUILD_DIR=$CARGO_TARGET_DIR/build/crashtracker-receiver
+    export CRASHTRACKER_SRC_DIR=$PWD/profiling-crashtracking-receiver
+    # Always start with a clean directory
+    [ -d $CRASHTRACKER_BUILD_DIR ] && rm -r $CRASHTRACKER_BUILD_DIR
+    mkdir -p $CRASHTRACKER_BUILD_DIR
+    cd $CRASHTRACKER_BUILD_DIR
+    cmake -S $CRASHTRACKER_SRC_DIR -DDatadog_ROOT=$ABS_DESTDIR
+    cmake --build .
+    mkdir -p $ABS_DESTDIR/bin
+    cp libdatadog-crashtracking-receiver $ABS_DESTDIR/bin
+fi
 
 echo "Done."
