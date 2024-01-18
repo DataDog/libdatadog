@@ -51,12 +51,15 @@ pub struct SigInfo {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashInfo {
+    additional_stacktraces: HashMap<String, Vec<StackFrame>>,
     counters: HashMap<String, i64>,
     files: HashMap<String, Vec<String>>,
     metadata: CrashtrackerMetadata,
     os_info: os_info::Info,
     siginfo: Option<SigInfo>,
     stacktrace: Vec<StackFrame>,
+    /// Any additional data goes here
+    tags: HashMap<String, String>,
     timestamp: Option<DateTime<Utc>>,
     uuid: Uuid,
 }
@@ -78,12 +81,14 @@ impl CrashInfo {
         let os_info = os_info::get();
         let uuid = Uuid::new_v4();
         Self {
+            additional_stacktraces: HashMap::new(),
             counters: HashMap::new(),
             files: HashMap::new(),
             metadata,
             os_info,
             siginfo: None,
             stacktrace: vec![],
+            tags: HashMap::new(),
             timestamp: None,
             uuid,
         }
