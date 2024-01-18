@@ -109,9 +109,15 @@ jobs:
           set -e
           mkdir examples/ffi/build
           cd examples/ffi/build
-          cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling
-          cmake --build .
-
+          # Add BUILD_SYMBOLIZER variable only for Linux platforms
+          if [[ "${{ matrix.platform }}" == "ubuntu-latest" ]]; then
+            cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DBUILD_SYMBOLIZER=true
+            cmake --build  .
+            ./symbolizer
+          else
+            cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling
+            cmake --build .
+          fi
   cross-centos7:
     name: build and test using cross - on centos7
     runs-on: ubuntu-latest

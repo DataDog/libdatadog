@@ -11,8 +11,10 @@ license.workspace = true
 crate-type = ["lib"]
 
 [dependencies]
-blazesym = "0.2.0-alpha.9"
+blazesym = {version = "=0.2.0-alpha.10", features = ["apk", "demangle", "dwarf", "gsym"]}
 
 [dev-dependencies]
 env_logger = "0.10"
 libc = "0.2.137"
+test-log = {version = "0.2.13", default-features = false, features = ["trace"]}
+tracing-subscriber = {version = "0.3", default-features = false, features = ["env-filter", "fmt"]}

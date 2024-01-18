@@ -2140,7 +2140,7 @@ third_party_libraries:
   - license: MPL-2.0+
     text: NOT FOUND
 - package_name: blazesym
-  package_version: 0.2.0-alpha.9
+  package_version: 0.2.0-alpha.10
   license: BSD-3-Clause
   licenses:
   - license: BSD-3-Clause
