@@ -78,14 +78,14 @@ pub fn end_profiling_op(op: ProfilingOpTypes) -> anyhow::Result<()> {
 
 /// Emits the counters as structured json to the given writer.
 /// In particular, a series of lines:
-/// ```ignore
+///
 /// DD_CRASHTRACK_BEGIN_COUNTERS
 /// {"counter_1_name": counter_1_value}
 /// {"counter_2_name": counter_2_value}
 /// ...
 /// {"counter_n_name": counter_n_value}
 /// DD_CRASHTRACK_END_COUNTERS
-/// ```
+///
 /// PRECONDITIONS:
 ///     This function assumes that the crash-tracker is initialized.
 /// ATOMICITY:

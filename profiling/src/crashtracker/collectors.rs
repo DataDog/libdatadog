@@ -94,11 +94,11 @@ pub unsafe fn emit_backtrace_by_frames(
 
 /// Emit a file onto the given handle.
 /// The file will be emitted in the format
-/// ```ignore
+///
 /// DD_CRASHTRACK_BEGIN_FILE
 /// <FILE BYTES>
 /// DD_CRASHTRACK_END_FILE
-/// ```
+///
 /// PRECONDITIONS:
 ///     This function assumes that the crash-tracker is initialized.
 ///     The receiver expects the file to contain valid UTF-8 compatible text.
