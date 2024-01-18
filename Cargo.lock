@@ -1989,14 +1989,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "profiling-crashtracking-receiver"
-version = "5.0.0"
-dependencies = [
- "anyhow",
- "datadog-profiling",
-]
-
-[[package]]
 name = "prost"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
