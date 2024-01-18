@@ -47,6 +47,7 @@
 //!    
 //! Handling of forks
 //! Safety issues
+#![cfg(unix)]
 
 mod api;
 mod collectors;
