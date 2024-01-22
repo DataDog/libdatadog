@@ -10,7 +10,7 @@ license.workspace = true
 [lib]
 crate-type = ["lib"]
 
-[dependencies]
+[target.'cfg(not(target_os = "windows"))'.dependencies]
 blazesym = {version = "=0.2.0-alpha.10", features = ["apk", "demangle", "dwarf", "gsym"] }
 
 [dev-dependencies]
