@@ -32,11 +32,12 @@ use blazesym::Addr;
 use std::ptr::NonNull;
 use std::slice;
 
-/// "Safely" create a slice from a user provided array.
+/// # Safety
+/// This function is unsafe because it creates a slice from a raw pointer.
+/// The caller must ensure that `items` points to a valid memory location
+/// and `num_items` does not exceed the number of elements `items` points to.
 pub unsafe fn slice_from_user_array<'t, T>(items: *const T, num_items: usize) -> &'t [T] {
     let items = if items.is_null() {
-        // `slice::from_raw_parts` requires a properly aligned non-NULL pointer.
-        // Craft one.
         NonNull::dangling().as_ptr()
     } else {
         items
@@ -477,7 +478,7 @@ fn convert_symbolizedresults_to_c(results: Vec<Symbolized>) -> *const blaze_resu
                 // fields set to zero.
                 // SAFETY: `syms_last` is pointing to a writable and properly
                 //         aligned `blaze_sym` object.
-                let () = unsafe { syms_last.write_bytes(0, 1) };
+                unsafe { syms_last.write_bytes(0, 1) };
             }
         }
 

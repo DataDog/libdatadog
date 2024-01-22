@@ -18,7 +18,7 @@
 void symbolize_and_print(blaze_symbolizer* symbolizer, uintptr_t addr) {
     std::vector<uintptr_t> addrs = {addr};
     blaze_symbolize_src_process src = { static_cast<uint32_t>(getpid()), false};
-    const blaze_result* results = blaze_symbolize_process_virt_addrs(
+    const blaze_result* results = blaze_symbolize_process_abs_addrs(
         symbolizer, &src, addrs.data(), addrs.size());
     assert(results);
     bool found = false;

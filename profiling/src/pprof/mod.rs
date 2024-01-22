@@ -6,4 +6,5 @@ pub mod sliced_proto;
 pub mod test_utils;
 
 pub use proto::*;
+#[allow(unused_imports)]
 pub use test_utils::*;
