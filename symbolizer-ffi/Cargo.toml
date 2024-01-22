@@ -10,11 +10,8 @@ license.workspace = true
 [lib]
 crate-type = ["lib"]
 
-[features]
-build_symbolizer = ["blazesym"]
-
 [dependencies]
-blazesym = {version = "=0.2.0-alpha.10", features = ["apk", "demangle", "dwarf", "gsym"], optional = true }
+blazesym = {version = "=0.2.0-alpha.10", features = ["apk", "demangle", "dwarf", "gsym"] }
 
 [dev-dependencies]
 env_logger = "0.10"

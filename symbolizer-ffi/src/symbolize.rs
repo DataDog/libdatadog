@@ -1,8 +1,4 @@
-#![cfg(feature = "build_symbolizer")]
-
 // This file is a forward of the ffi interface of blazesym::symbolize.
-// Today, we can not compose cbindgen APIs (hence the duplication).
-// The aim will also to integrate the symbolization APIs with the pprof APIs
 use std::alloc::alloc;
 use std::alloc::dealloc;
 use std::alloc::Layout;
