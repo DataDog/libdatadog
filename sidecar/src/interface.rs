@@ -575,7 +575,7 @@ impl SidecarServer {
             datadog_ipc::tarpc::server::Config {
                 pending_response_buffer: 10000,
             },
-            Transport::try_from(AsyncChannel::from(socket)).unwrap(),
+            Transport::from(AsyncChannel::from(socket)),
         );
 
         let mut executor = datadog_ipc::sequential::execute_sequential(

@@ -118,7 +118,7 @@ pub(crate) fn is_valid_status_code(sc: &str) -> bool {
 /// * returns an error if there is a trace ID discrepancy between 2 spans
 /// * returns an error if at least one span cannot be normalized
 pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
-    let first_trace_id = match trace.get(0) {
+    let first_trace_id = match trace.first() {
         Some(first_span) => first_span.trace_id,
         None => anyhow::bail!("Normalize Trace Error: Trace is empty"),
     };

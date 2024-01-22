@@ -2,9 +2,11 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 mod proto;
-pub mod sliced_proto;
-pub mod test_utils;
 
+pub mod sliced_proto;
 pub use proto::*;
-#[allow(unused_imports)]
+
+#[cfg(test)]
+pub mod test_utils;
+#[cfg(test)]
 pub use test_utils::*;
