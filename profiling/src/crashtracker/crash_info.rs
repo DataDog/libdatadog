@@ -179,7 +179,7 @@ impl CrashInfo {
             tags,
             endpoint,
         )?;
-        let request = exporter.build(time, time, &[crash_file], &[], None, None, None, timeout)?;
+        let request = exporter.build(time, time, &[crash_file], &[], None, None, None, None, timeout)?;
         let response = exporter.send(request, None)?;
         //TODO, do we need to wait a bit for the agent to finish upload?
         Ok(response)

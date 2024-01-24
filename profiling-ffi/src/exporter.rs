@@ -213,14 +213,14 @@ impl From<RequestBuildResult> for Result<Box<Request>, String> {
 /// If you use this parameter, please update the RFC with your use-case, so we can keep track of how this
 /// is getting used.
 ///
-/// For details on the `optional_system_info_json`, please reference the Datadog-internal
+/// For details on the `optional_info_json`, please reference the Datadog-internal
 /// "RFC: Pprof System Info Support".
 ///
 /// # Safety
 /// The `exporter`, `optional_additional_stats`, and `optional_endpoint_stats` args should be
 /// valid objects created by this module.
 /// NULL is allowed for `optional_additional_tags`, `optional_endpoints_stats`,
-/// `optional_internal_metadata_json` and `optional_system_info_json`.
+/// `optional_internal_metadata_json` and `optional_info_json`.
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
@@ -232,7 +232,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     optional_additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
     optional_endpoints_stats: Option<&ProfiledEndpointsStats>,
     optional_internal_metadata_json: Option<&CharSlice>,
-    optional_system_info_json: Option<&CharSlice>,
+    optional_info_json: Option<&CharSlice>,
     timeout_ms: u64,
 ) -> RequestBuildResult {
     match exporter {
@@ -244,12 +244,12 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
             let tags = optional_additional_tags.map(|tags| tags.iter().cloned().collect());
 
             let internal_metadata =
-                match parse_internal_metadata_json(optional_internal_metadata_json) {
+                match parse_json("internal_metadata", optional_internal_metadata_json) {
                     Ok(parsed) => parsed,
                     Err(err) => return RequestBuildResult::Err(err.into()),
                 };
 
-            let system_info = match parse_system_info_json(optional_system_info_json) {
+            let info = match parse_json("info", optional_info_json) {
                 Ok(parsed) => parsed,
                 Err(err) => return RequestBuildResult::Err(err.into()),
             };
@@ -262,7 +262,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
                 tags.as_ref(),
                 optional_endpoints_stats,
                 internal_metadata,
-                system_info,
+                info,
                 timeout,
             ) {
                 Ok(request) => {
@@ -274,36 +274,19 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     }
 }
 
-unsafe fn parse_internal_metadata_json(
-    internal_metadata_json: Option<&CharSlice>,
+unsafe fn parse_json(
+    string_id: &str,
+    json_string: Option<&CharSlice>,
 ) -> anyhow::Result<Option<serde_json::Value>> {
-    match internal_metadata_json {
+    match json_string {
         None => Ok(None),
-        Some(internal_metadata_json) => {
-            let json = internal_metadata_json.try_to_utf8()?;
+        Some(json_string) => {
+            let json = json_string.try_to_utf8()?;
             match serde_json::from_str(json) {
                 Ok(parsed) => Ok(Some(parsed)),
                 Err(error) => Err(anyhow::anyhow!(
-                    "Failed to parse contents of internal_metadata json string (`{}`): {}.",
-                    json,
-                    error
-                )),
-            }
-        }
-    }
-}
-
-unsafe fn parse_system_info_json(
-    system_info_json: Option<&CharSlice>,
-) -> anyhow::Result<Option<serde_json::Value>> {
-    match system_info_json {
-        None => Ok(None),
-        Some(system_info_json) => {
-            let json = system_info_json.try_to_utf8()?;
-            match serde_json::from_str(json) {
-                Ok(parsed) => Ok(Some(parsed)),
-                Err(error) => Err(anyhow::anyhow!(
-                    "Failed to parse contents of system_info json string (`{}`): {}.",
+                    "Failed to parse contents of {} json string (`{}`): {}.",
+                    string_id,
                     json,
                     error
                 )),
@@ -740,7 +723,7 @@ mod test {
     // This test invokes an external function SecTrustSettingsCopyCertificates
     // which Miri cannot evaluate.
     #[cfg_attr(miri, ignore)]
-    fn test_build_with_system_info() {
+    fn test_build_with_info() {
         let exporter_result = unsafe {
             ddog_prof_Exporter_new(
                 profiling_library_name(),
@@ -771,11 +754,11 @@ mod test {
         };
         let timeout_milliseconds = 90;
 
-        let raw_system_info = CharSlice::from(
+        let raw_info = CharSlice::from(
             r#"
             {
                 "application": {
-                  "start_time": "2023-09-08 13:45:29.415742 UTC",
+                  "start_time": "2024-01-24T11:17:22+0000",
                   "env": "test"
                 },
                 "platform": {
@@ -812,7 +795,7 @@ mod test {
                 None,
                 None,
                 None,
-                Some(&raw_system_info),
+                Some(&raw_info),
                 timeout_milliseconds,
             )
         };
@@ -823,7 +806,7 @@ mod test {
             parsed_event_json["info"],
             json!({
                 "application": {
-                  "start_time": "2023-09-08 13:45:29.415742 UTC",
+                  "start_time": "2024-01-24T11:17:22+0000",
                   "env": "test",
                 },
                 "platform": {
@@ -854,7 +837,7 @@ mod test {
     // This test invokes an external function SecTrustSettingsCopyCertificates
     // which Miri cannot evaluate.
     #[cfg_attr(miri, ignore)]
-    fn test_build_with_invalid_system_info() {
+    fn test_build_with_invalid_info() {
         let exporter_result = unsafe {
             ddog_prof_Exporter_new(
                 profiling_library_name(),
@@ -885,7 +868,7 @@ mod test {
         };
         let timeout_milliseconds = 90;
 
-        let raw_system_info = CharSlice::from("this is not a valid json string");
+        let raw_info = CharSlice::from("this is not a valid json string");
 
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
@@ -897,7 +880,7 @@ mod test {
                 None,
                 None,
                 None,
-                Some(&raw_system_info),
+                Some(&raw_info),
                 timeout_milliseconds,
             )
         };
@@ -905,7 +888,7 @@ mod test {
         match build_result {
             RequestBuildResult::Ok(_) => panic!("Should not happen!"),
             RequestBuildResult::Err(message) => assert!(String::from(message).starts_with(
-                r#"Failed to parse contents of system_info json string (`this is not a valid json string`)"#
+                r#"Failed to parse contents of info json string (`this is not a valid json string`)"#
             )),
         }
     }

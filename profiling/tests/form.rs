@@ -19,7 +19,7 @@ fn open<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, Box<dyn Error>> {
 fn multipart(
     exporter: &ProfileExporter,
     internal_metadata: Option<serde_json::Value>,
-    system_info: Option<serde_json::Value>,
+    info: Option<serde_json::Value>,
 ) -> Request {
     let small_pprof_name = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/profile.pprof");
     let buffer = open(small_pprof_name).expect("to open file and read its bytes");
@@ -46,7 +46,7 @@ fn multipart(
             None,
             None,
             internal_metadata,
-            system_info,
+            info,
             timeout,
         )
         .expect("request to be built");
@@ -170,7 +170,7 @@ mod tests {
     // This test invokes an external function SecTrustSettingsCopyCertificates
     // which Miri cannot evaluate.
     #[cfg_attr(miri, ignore)]
-    fn including_system_info() {
+    fn including_info() {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
         let base_url = "http://localhost:8126".parse().expect("url to parse");
@@ -184,9 +184,9 @@ mod tests {
         )
         .expect("exporter to construct");
 
-        let system_info = json!({
+        let info = json!({
             "application": {
-                "start_time": "2023-09-08 13:45:29.415742 UTC",
+                "start_time": "2024-01-24T11:17:22+0000",
                 "env": "test"
             },
             "runtime": {
@@ -200,10 +200,10 @@ mod tests {
                 "settings": {}
             }
         });
-        let request = multipart(&exporter, None, Some(system_info.clone()));
+        let request = multipart(&exporter, None, Some(info.clone()));
         let parsed_event_json = parsed_event_json(request);
 
-        assert_eq!(parsed_event_json["info"], system_info);
+        assert_eq!(parsed_event_json["info"], info);
     }
 
     #[test]
