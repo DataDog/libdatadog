@@ -387,6 +387,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     flush_interval_milliseconds: u64,
     force_flush_size: usize,
     force_drop_size: usize,
+    log_level: ffi::CharSlice,
 ) -> MaybeError {
     try_c!(blocking::set_session_config(
         transport,
@@ -396,6 +397,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             flush_interval: Duration::from_millis(flush_interval_milliseconds),
             force_flush_size,
             force_drop_size,
+            log_level: log_level.to_utf8_lossy().into(),
         },
     ));
 
