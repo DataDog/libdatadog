@@ -82,6 +82,7 @@ pub trait SidecarInterface {
         headers: SerializedTracerHeaderTags,
     );
     async fn ping();
+    async fn dump() -> String;
 }
 
 pub trait RequestIdentification {
@@ -1044,6 +1045,12 @@ impl SidecarInterface for SidecarServer {
 
         no_response()
     }
+
+    type DumpFut = Pin<Box<dyn Send + futures::Future<Output = String>>>;
+
+    fn dump(self, _: Context) -> Self::DumpFut {
+        Box::pin(crate::dump::dump())
+    }
 }
 
 pub mod blocking {
@@ -1149,6 +1156,17 @@ pub mod blocking {
             handle,
             headers,
         })
+    }
+
+    pub fn dump(
+        transport: &mut SidecarTransport,
+    ) -> io::Result<String> {
+        let res = transport.call(SidecarInterfaceRequest::Dump {})?;
+        if let SidecarInterfaceResponse::Dump(dump) = res {
+            Ok(dump)
+        } else {
+            Ok("".to_string())
+        }
     }
 
     pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {

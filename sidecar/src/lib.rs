@@ -16,6 +16,8 @@ mod tracer;
 #[cfg(feature = "tracing")]
 pub mod log;
 
+mod dump;
+
 #[cfg(unix)]
 mod unix;
 

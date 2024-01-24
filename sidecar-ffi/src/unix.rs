@@ -11,7 +11,7 @@ use ddcommon_ffi as ffi;
 use libc::c_char;
 use std::ffi::c_void;
 use std::time::Duration;
-use std::{fs::File, os::unix::prelude::FromRawFd};
+use std::{fs::File, os::unix::prelude::FromRawFd, slice};
 
 use datadog_sidecar::interface::{
     blocking::{self, SidecarTransport},
@@ -468,4 +468,20 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
     ));
 
     MaybeError::None
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_dump(
+    transport: &mut Box<SidecarTransport>,
+) -> ffi::CharSlice {
+    let str = match blocking::dump(transport) {
+        Ok(dump) => dump,
+        Err(e) => format!("{:?}", e),
+    };
+    let size = str.len();
+    let malloced = libc::malloc(size) as *mut u8;
+    let buf = slice::from_raw_parts_mut(malloced, size);
+    buf.copy_from_slice(str.as_bytes());
+    ffi::CharSlice::new(malloced, size)
 }

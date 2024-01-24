@@ -39,7 +39,7 @@ rmp-serde = "1.1.1"
 spawn_worker = { path = "../spawn_worker" }
 zwohash = "0.1.2"
 sys-info = { version = "0.9.0" }
-tokio = { version = "1.23", features = ["sync", "io-util", "signal"] }
+tokio = { version = "1.35.1", features = ["sync", "io-util", "signal"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 
 prctl = "1.0.0"
