@@ -25,7 +25,9 @@ pub struct CrashtrackerConfiguration<'a> {
     pub resolve_frames: CrashtrackerResolveFrames,
 }
 
-impl<'a> TryFrom<CrashtrackerConfiguration<'a>> for datadog_crashtracker::CrashtrackerConfiguration {
+impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
+    for datadog_crashtracker::CrashtrackerConfiguration
+{
     type Error = anyhow::Error;
     fn try_from(value: CrashtrackerConfiguration<'a>) -> anyhow::Result<Self> {
         fn option_from_char_slice(s: CharSlice) -> anyhow::Result<Option<String>> {
