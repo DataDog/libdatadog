@@ -7,6 +7,9 @@ version.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[lib]
+crate-type = ["lib"]
+
 [dependencies]
 anyhow = "1.0"
 backtrace = "0.3.69"
