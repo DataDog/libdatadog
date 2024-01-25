@@ -599,6 +599,7 @@ version = "5.0.0"
 dependencies = [
  "anyhow",
  "bitmaps",
+ "byteorder",
  "bytes",
  "chrono",
  "ddcommon",
