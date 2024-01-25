@@ -4,13 +4,13 @@
 
 use crate::exporter::{self, Endpoint};
 use crate::profiles::ProfileResult;
-use datadog_profiling::crashtracker;
+use datadog_crashtracker as crashtracker;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use ddcommon_ffi::Error;
 use std::ops::Not;
 
-pub use datadog_profiling::crashtracker::{CrashtrackerResolveFrames, ProfilingOpTypes};
+pub use crashtracker::{CrashtrackerResolveFrames, ProfilingOpTypes};
 
 #[repr(C)]
 pub struct CrashtrackerConfiguration<'a> {
