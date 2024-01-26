@@ -20,8 +20,8 @@ use std::{
     },
     time::Duration,
 };
-use tracing::{error, info};
 use tokio::select;
+use tracing::{error, info};
 
 use tokio::net::UnixListener;
 use tokio::sync::mpsc::{self, Receiver};

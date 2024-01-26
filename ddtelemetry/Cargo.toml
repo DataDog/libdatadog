@@ -29,3 +29,6 @@ io-lifetimes = { version = "1.0" }
 tracing = { version = "0.1", default-features = false }
 uuid = { version = "1.3", features = ["v4"] }
 hashbrown = { version = "0.12", features = ["raw"] }
+
+[dev-dependencies]
+tracing-subscriber = "0.3.18"

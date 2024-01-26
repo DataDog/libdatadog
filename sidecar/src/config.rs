@@ -2,8 +2,8 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use http::uri::{PathAndQuery, Scheme};
-use std::{collections::HashMap, path::PathBuf, time::Duration};
 use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use ddcommon::{parse_uri, Endpoint};
 use spawn_worker::LibDependency;

@@ -49,8 +49,8 @@ use ddtelemetry::{
     },
 };
 
-use crate::{config, log, tracer};
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
+use crate::{config, log, tracer};
 
 #[datadog_sidecar_macros::extract_request_id]
 #[datadog_ipc_macros::impl_transfer_handles]
@@ -187,8 +187,14 @@ impl SessionInfo {
                 runtimes.insert(runtime_id.clone(), runtime.clone());
                 #[cfg(feature = "tracing")]
                 if enabled!(Level::INFO) {
-                    runtime.instance_id = InstanceId { session_id: self.session_id.clone(), runtime_id: runtime_id.clone() };
-                    info!("Registering runtime_id {} for session {}", runtime_id, self.session_id);
+                    runtime.instance_id = InstanceId {
+                        session_id: self.session_id.clone(),
+                        runtime_id: runtime_id.clone(),
+                    };
+                    info!(
+                        "Registering runtime_id {} for session {}",
+                        runtime_id, self.session_id
+                    );
                 }
                 runtime
             }
@@ -308,7 +314,10 @@ impl RuntimeInfo {
 
     async fn shutdown(self) {
         #[cfg(feature = "tracing")]
-        info!("Shutting down runtime_id {} for session {}", self.instance_id.runtime_id, self.instance_id.session_id);
+        info!(
+            "Shutting down runtime_id {} for session {}",
+            self.instance_id.runtime_id, self.instance_id.session_id
+        );
 
         let instance_futures: Vec<_> = self
             .apps
@@ -336,7 +345,10 @@ impl RuntimeInfo {
         future::join_all(instances_shutting_down).await;
 
         #[cfg(feature = "tracing")]
-        debug!("Successfully shut down runtime_id {} for session {}", self.instance_id.runtime_id, self.instance_id.session_id);
+        debug!(
+            "Successfully shut down runtime_id {} for session {}",
+            self.instance_id.runtime_id, self.instance_id.session_id
+        );
     }
 }
 
@@ -405,7 +417,10 @@ struct TraceSendData {
 impl TraceSendData {
     pub fn flush(&mut self) {
         if let Some(force_flush) = self.force_flush.take() {
-            debug!("Emitted flush for traces with {} bytes in send_data buffer", self.send_data_size);
+            debug!(
+                "Emitted flush for traces with {} bytes in send_data buffer",
+                self.send_data_size
+            );
             tokio::spawn(async move {
                 force_flush.complete(()).await;
             });
@@ -486,7 +501,10 @@ impl TraceFlusher {
                     _ = force_flush => {},
                 }
 
-                debug!("Start flushing {} bytes worth of traces", self.inner.lock().unwrap().traces.send_data_size);
+                debug!(
+                    "Start flushing {} bytes worth of traces",
+                    self.inner.lock().unwrap().traces.send_data_size
+                );
 
                 let (new_force_flush, completer) = ManualFuture::new();
                 force_flush = new_force_flush;
@@ -745,30 +763,29 @@ impl SidecarServer {
             .unwrap_or_else(ddtelemetry::config::Config::from_env);
 
         // TODO: log errors
-        let instance_option =
-            match builder.spawn_with_config(config.clone()).await {
-                Ok((handle, worker_join)) => {
-                    info!("spawning telemetry worker {config:?}");
+        let instance_option = match builder.spawn_with_config(config.clone()).await {
+            Ok((handle, worker_join)) => {
+                info!("spawning telemetry worker {config:?}");
 
-                    let instance = AppInstance {
-                        telemetry: handle,
-                        telemetry_worker_shutdown: worker_join.map(Result::ok).boxed().shared(),
-                    };
+                let instance = AppInstance {
+                    telemetry: handle,
+                    telemetry_worker_shutdown: worker_join.map(Result::ok).boxed().shared(),
+                };
 
-                    instance.telemetry.send_msgs(inital_actions).await.ok();
+                instance.telemetry.send_msgs(inital_actions).await.ok();
 
-                    instance
-                        .telemetry
-                        .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                        .await
-                        .ok();
-                    Some(instance)
-                }
-                Err(e) => {
-                    error!("could not spawn telemetry worker {:?}", e);
-                    None
-                }
-            };
+                instance
+                    .telemetry
+                    .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
+                    .await
+                    .ok();
+                Some(instance)
+            }
+            Err(e) => {
+                error!("could not spawn telemetry worker {:?}", e);
+                None
+            }
+        };
         completer.unwrap().complete(instance_option).await;
         app_future.await
     }
@@ -975,7 +992,10 @@ impl SidecarInterface for SidecarServer {
             .min_force_drop_size
             .store(config.force_drop_size as u32, Ordering::Relaxed);
 
-        session.log_guard.lock().unwrap().replace((log::MULTI_LOG_FILTER.add(config.log_level), log::MULTI_LOG_WRITER.add(config.log_file)));
+        session.log_guard.lock().unwrap().replace((
+            log::MULTI_LOG_FILTER.add(config.log_level),
+            log::MULTI_LOG_WRITER.add(config.log_file),
+        ));
 
         if let Some(completer) = self.self_telemetry_config.lock().unwrap().take() {
             let config = session
@@ -1159,9 +1179,7 @@ pub mod blocking {
         })
     }
 
-    pub fn dump(
-        transport: &mut SidecarTransport,
-    ) -> io::Result<String> {
+    pub fn dump(transport: &mut SidecarTransport) -> io::Result<String> {
         let res = transport.call(SidecarInterfaceRequest::Dump {})?;
         if let SidecarInterfaceResponse::Dump(dump) = res {
             Ok(dump)

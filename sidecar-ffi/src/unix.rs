@@ -7,13 +7,13 @@ use datadog_ipc::platform::{
 use datadog_sidecar::agent_remote_config::{
     new_reader, reader_from_shm, AgentRemoteConfigEndpoint, AgentRemoteConfigWriter,
 };
+use datadog_sidecar::config;
+use datadog_sidecar::config::LogMethod;
 use ddcommon_ffi as ffi;
 use libc::c_char;
 use std::ffi::c_void;
 use std::time::Duration;
 use std::{fs::File, os::unix::prelude::FromRawFd, slice};
-use datadog_sidecar::config;
-use datadog_sidecar::config::LogMethod;
 
 use datadog_sidecar::interface::{
     blocking::{self, SidecarTransport},
@@ -401,7 +401,11 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             force_flush_size,
             force_drop_size,
             log_level: log_level.to_utf8_lossy().into(),
-            log_file: if log_path.len() > 0 { LogMethod::File(String::from(log_path.to_utf8_lossy()).into()) } else { config::FromEnv::log_method() }
+            log_file: if log_path.is_empty() {
+                config::FromEnv::log_method()
+            } else {
+                LogMethod::File(String::from(log_path.to_utf8_lossy()).into())
+            }
         },
     ));
 
@@ -487,5 +491,5 @@ pub unsafe extern "C" fn ddog_sidecar_dump(
     let malloced = libc::malloc(size) as *mut u8;
     let buf = slice::from_raw_parts_mut(malloced, size);
     buf.copy_from_slice(str.as_bytes());
-    ffi::CharSlice::new(malloced, size)
+    ffi::CharSlice::new(malloced as *mut c_char, size)
 }
