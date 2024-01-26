@@ -49,8 +49,8 @@ use ddtelemetry::{
     },
 };
 
-use crate::{log, tracer};
-use crate::log::MultiEnvFilterGuard;
+use crate::{config, log, tracer};
+use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 
 #[datadog_sidecar_macros::extract_request_id]
 #[datadog_ipc_macros::impl_transfer_handles]
@@ -172,7 +172,7 @@ struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
     session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
-    log_level_guard: Arc<Mutex<Option<MultiEnvFilterGuard<'static>>>>,
+    log_guard: Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
     #[cfg(feature = "tracing")]
     session_id: String,
 }
@@ -812,6 +812,7 @@ pub struct SessionConfig {
     pub force_flush_size: usize,
     pub force_drop_size: usize,
     pub log_level: String,
+    pub log_file: config::LogMethod,
 }
 
 impl SidecarInterface for SidecarServer {
@@ -974,7 +975,7 @@ impl SidecarInterface for SidecarServer {
             .min_force_drop_size
             .store(config.force_drop_size as u32, Ordering::Relaxed);
 
-        session.log_level_guard.lock().unwrap().replace(log::MULTI_LOG_FILTER.add_log_level(config.log_level));
+        session.log_guard.lock().unwrap().replace((log::MULTI_LOG_FILTER.add(config.log_level), log::MULTI_LOG_WRITER.add(config.log_file)));
 
         if let Some(completer) = self.self_telemetry_config.lock().unwrap().take() {
             let config = session

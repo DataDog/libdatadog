@@ -12,6 +12,8 @@ use libc::c_char;
 use std::ffi::c_void;
 use std::time::Duration;
 use std::{fs::File, os::unix::prelude::FromRawFd, slice};
+use datadog_sidecar::config;
+use datadog_sidecar::config::LogMethod;
 
 use datadog_sidecar::interface::{
     blocking::{self, SidecarTransport},
@@ -388,6 +390,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     force_flush_size: usize,
     force_drop_size: usize,
     log_level: ffi::CharSlice,
+    log_path: ffi::CharSlice,
 ) -> MaybeError {
     try_c!(blocking::set_session_config(
         transport,
@@ -398,6 +401,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             force_flush_size,
             force_drop_size,
             log_level: log_level.to_utf8_lossy().into(),
+            log_file: if log_path.len() > 0 { LogMethod::File(String::from(log_path.to_utf8_lossy()).into()) } else { config::FromEnv::log_method() }
         },
     ));
 

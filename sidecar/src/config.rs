@@ -3,6 +3,7 @@
 
 use http::uri::{PathAndQuery, Scheme};
 use std::{collections::HashMap, path::PathBuf, time::Duration};
+use serde::{Deserialize, Serialize};
 
 use ddcommon::{parse_uri, Endpoint};
 use spawn_worker::LibDependency;
@@ -45,7 +46,7 @@ impl ToString for IpcMode {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum LogMethod {
     Stdout,
     Stderr,
@@ -115,7 +116,7 @@ impl FromEnv {
         }
     }
 
-    fn log_method() -> LogMethod {
+    pub fn log_method() -> LogMethod {
         let method = std::env::var(ENV_SIDECAR_LOG_METHOD).unwrap_or_default();
 
         match method.as_str() {
