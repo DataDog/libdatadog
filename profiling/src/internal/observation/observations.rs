@@ -28,10 +28,9 @@ impl Observations {
         if let Some(_inner) = &self.inner {
             panic!("Should never happen!");
         } else {
-            // // Create buffer, pre-touch all elements to avoid any laziness
-            let mut timestamped_data_buffer: Vec<u8> = vec![0; 1_048_576];
-            timestamped_data_buffer.clear();
-            // let mut timestamped_data_buffer: Vec<u8> = vec![];
+            // Create buffer with a big capacity to avoid lots of small allocations for growing it
+            let timestamped_data_buffer: Vec<u8> = Vec::with_capacity(1_048_576);
+            // let timestamped_data_buffer: Vec<u8> = vec![];
 
             self.inner = Some(NonEmptyObservations {
                 aggregated_data: Default::default(),
