@@ -4,7 +4,7 @@
 #include <unistd.h>
 #include <cassert>
 
-#include "datadog/symbolizer.h"
+#include "datadog/blazesym.h"
 
 #define _THIS_IP_                                                              \
   ({                                                                           \

@@ -11,10 +11,4 @@ license.workspace = true
 crate-type = ["lib"]
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
-blazesym = {version = "=0.2.0-alpha.10", features = ["apk", "demangle", "dwarf", "gsym"] }
-
-[dev-dependencies]
-env_logger = "0.10"
-libc = "0.2.137"
-test-log = {version = "0.2.13", default-features = false, features = ["trace"]}
-tracing-subscriber = {version = "0.3", default-features = false, features = ["env-filter", "fmt"]}
+blazesym-c = { git = "https://github.com/libbpf/blazesym.git", rev = "ab769859339aab7ecb8de57d7accc93d021b628a" }

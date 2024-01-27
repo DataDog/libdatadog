@@ -171,9 +171,7 @@ cbindgen --crate ddcommon-ffi \
     --config ddcommon-ffi/cbindgen.toml \
     --output "$destdir/include/datadog/common.h"
 if [[ "$build_symbolizer" -eq 1 ]]; then
-    cbindgen --crate symbolizer-ffi \
-        --config symbolizer-ffi/cbindgen.toml \
-        --output "$destdir/include/datadog/symbolizer.h"
+    cp ./symbolizer-ffi/src/blazesym.h "$destdir/include/datadog/blazesym.h"
 fi
 cbindgen --crate "${datadog_profiling_ffi}" \
     --config profiling-ffi/cbindgen.toml \

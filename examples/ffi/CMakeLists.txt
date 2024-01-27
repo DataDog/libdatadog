@@ -3,6 +3,9 @@ project(datadog_profiling_ffi_examples LANGUAGES C CXX)
 
 find_package(Datadog REQUIRED)
 
+# Uncomment to debug build commands
+# set(CMAKE_VERBOSE_MAKEFILE ON)
+
 add_executable(exporter exporter.cpp)
 # needed for designated initializers
 target_compile_features(exporter PRIVATE cxx_std_20)
