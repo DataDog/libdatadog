@@ -35,6 +35,7 @@ fn set_sidecar_per_process() {
 
 #[test]
 #[cfg(unix)]
+#[cfg_attr(miri, ignore)]
 fn test_ddog_ph_file_handling() {
     let fname = CString::new(std::env::temp_dir().join("test_file").to_str().unwrap()).unwrap();
     let mode = CString::new("a+").unwrap();
@@ -121,7 +122,8 @@ fn test_ddog_sidecar_register_app() {
             &instance_id,
             &queue_id,
             &meta,
-            "service_name".into()
+            "service_name".into(),
+            "env_name".into()
         ));
         // reset session config - and cause shutdown of all existing instances
         ddog_sidecar_session_set_config(

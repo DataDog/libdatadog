@@ -760,7 +760,9 @@ impl<Req, Res> InFlightRequest<Req, Res> {
         let method = serve.method(&message);
         // TODO(https://github.com/rust-lang/rust-clippy/issues/9111)
         // remove when clippy is fixed
+        #[allow(unknown_lints)]
         #[allow(clippy::needless_borrow)]
+        #[allow(clippy::needless_borrows_for_generic_args)]
         span.record("otel.name", &method.unwrap_or(""));
         let _ = Abortable::new(
             async move {
@@ -896,6 +898,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn base_channel_start_send_duplicate_request_returns_error() {
         let (mut channel, _tx) = test_channel::<(), ()>();
 
@@ -918,6 +921,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn base_channel_poll_next_aborts_multiple_requests() {
         let (mut channel, _tx) = test_channel::<(), ()>();
 
@@ -949,6 +953,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn base_channel_poll_next_aborts_canceled_request() {
         let (mut channel, mut tx) = test_channel::<(), ()>();
 
@@ -978,6 +983,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn base_channel_with_closed_transport_and_in_flight_request_returns_pending() {
         let (mut channel, tx) = test_channel::<(), ()>();
 
@@ -999,6 +1005,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn base_channel_with_closed_transport_and_no_in_flight_requests_returns_closed() {
         let (mut channel, tx) = test_channel::<(), ()>();
         drop(tx);
@@ -1009,6 +1016,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn base_channel_poll_next_yields_request() {
         let (mut channel, mut tx) = test_channel::<(), ()>();
         tx.send(fake_request(())).await.unwrap();
@@ -1020,6 +1028,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn base_channel_poll_next_aborts_request_and_yields_request() {
         let (mut channel, mut tx) = test_channel::<(), ()>();
 
@@ -1044,6 +1053,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn base_channel_start_send_removes_in_flight_request() {
         let (mut channel, _tx) = test_channel::<(), ()>();
 
@@ -1067,6 +1077,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn in_flight_request_drop_cancels_request() {
         let (mut requests, mut tx) = test_requests::<(), ()>();
         tx.send(fake_request(())).await.unwrap();
@@ -1087,6 +1098,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn in_flight_requests_successful_execute_doesnt_cancel_request() {
         let (mut requests, mut tx) = test_requests::<(), ()>();
         tx.send(fake_request(())).await.unwrap();
@@ -1105,6 +1117,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn requests_poll_next_response_returns_pending_when_buffer_full() {
         let (mut requests, _tx) = test_bounded_requests::<(), ()>(0);
 
@@ -1156,6 +1169,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn requests_pump_write_returns_pending_when_buffer_full() {
         let (mut requests, _tx) = test_bounded_requests::<(), ()>(0);
 
@@ -1211,6 +1225,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn requests_pump_read() {
         let (mut requests, mut tx) = test_requests::<(), ()>();
 

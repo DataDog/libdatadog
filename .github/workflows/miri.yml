@@ -3,7 +3,7 @@ on:
   push:
 
 jobs:
-  profiler-test:
+  run-miri:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
@@ -13,7 +13,6 @@ jobs:
         toolchain: nightly
         override: true
         components: miri
-    - run: cd ${GITHUB_WORKSPACE}/profiling && MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test
-    - run: cd ${GITHUB_WORKSPACE}/profiling-ffi && MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test
+    - run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test
     # We need to disable isolation because 
     # "unsupported operation: `clock_gettime` with `REALTIME` clocks not available when isolation is enabled" 

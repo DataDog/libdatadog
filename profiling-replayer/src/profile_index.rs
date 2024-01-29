@@ -2,7 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use anyhow::Result;
-use datadog_profiling::profile::pprof::{Function, Location, Mapping, Profile};
+use datadog_profiling::pprof::{Function, Location, Mapping, Profile};
 use std::collections::HashMap;
 
 pub struct ProfileIndex<'pprof> {

@@ -21,6 +21,7 @@ fn rewind_and_read(file: &mut File) -> anyhow::Result<String> {
 /// to test the FdExec/Exec trampolining
 /// additionally run: RUSTFLAGS="-C prefer-dynamic" cargo test --package tests/spawn_from_lib
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_spawning_trampoline_worker() {
     let mut stdout = tempfile::tempfile().unwrap();
     let mut stderr = tempfile::tempfile().unwrap();

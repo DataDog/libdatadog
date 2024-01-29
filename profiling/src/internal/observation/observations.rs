@@ -5,7 +5,7 @@
 
 use super::super::Sample;
 use super::trimmed_observation::{ObservationLength, TrimmedObservation};
-use crate::profile::Timestamp;
+use crate::internal::Timestamp;
 use std::collections::HashMap;
 
 struct NonEmptyObservations {
@@ -134,7 +134,7 @@ impl Drop for NonEmptyObservations {
 mod test {
     use super::*;
     use crate::collections::identifiable::*;
-    use crate::profile::{LabelSetId, StackTraceId};
+    use crate::internal::{LabelSetId, StackTraceId};
     use std::num::NonZeroI64;
 
     #[test]

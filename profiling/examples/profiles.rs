@@ -1,9 +1,11 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use datadog_profiling::profile::{api, Profile};
+use datadog_profiling::api;
+use datadog_profiling::internal::Profile;
 use std::io::Write;
 use std::process::exit;
+use std::time::SystemTime;
 
 // Keep this in-sync with profiles.c
 fn main() {
@@ -54,13 +56,10 @@ fn main() {
         labels: vec![],
     };
 
-    // Not setting .start_time intentionally to use the current time.
-    let mut profile: Profile = Profile::builder()
-        .sample_types(sample_types)
-        .period(Some(period))
-        .build();
+    // Intentionally use the current time.
+    let mut profile = Profile::new(SystemTime::now(), &sample_types, Some(period));
 
-    match profile.add(sample, None) {
+    match profile.add_sample(sample, None) {
         Ok(_) => {}
         Err(_) => exit(1),
     }

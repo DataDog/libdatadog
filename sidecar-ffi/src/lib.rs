@@ -286,9 +286,8 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
     dependency_name: ffi::CharSlice,
     dependency_version: ffi::CharSlice,
 ) -> MaybeError {
-    let version = dependency_version
-        .is_empty()
-        .then(|| dependency_version.to_utf8_lossy().into_owned());
+    let version =
+        (!dependency_version.is_empty()).then(|| dependency_version.to_utf8_lossy().into_owned());
 
     let dependency = TelemetryActions::AddDependecy(Dependency {
         name: dependency_name.to_utf8_lossy().into_owned(),
@@ -315,9 +314,8 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
     integration_version: ffi::CharSlice,
     integration_enabled: bool,
 ) -> MaybeError {
-    let version = integration_version
-        .is_empty()
-        .then(|| integration_version.to_utf8_lossy().into_owned());
+    let version =
+        (!integration_version.is_empty()).then(|| integration_version.to_utf8_lossy().into_owned());
 
     let integration = TelemetryActions::AddIntegration(Integration {
         name: integration_name.to_utf8_lossy().into_owned(),
@@ -345,6 +343,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
     queue_id: &QueueId,
     runtime_meta: &RuntimeMeta,
     service_name: ffi::CharSlice,
+    env_name: ffi::CharSlice,
 ) -> MaybeError {
     try_c!(blocking::register_service_and_flush_queued_actions(
         transport,
@@ -352,6 +351,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
         queue_id,
         runtime_meta,
         service_name.to_utf8_lossy(),
+        env_name.to_utf8_lossy(),
     ));
 
     MaybeError::None

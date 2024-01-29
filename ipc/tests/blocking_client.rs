@@ -15,6 +15,7 @@ use datadog_ipc::example_interface::{
 use datadog_ipc::platform::Channel;
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_blocking_client() {
     let (sock_a, sock_b) = UnixStream::pair().unwrap();
     // Setup async server

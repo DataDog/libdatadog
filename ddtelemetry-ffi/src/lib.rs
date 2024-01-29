@@ -118,6 +118,7 @@ mod test_c_ffi {
     use ddcommon::{parse_uri, Endpoint};
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_set_builder_str_param() {
         let mut builder = std::ptr::null_mut();
 
@@ -176,6 +177,7 @@ mod test_c_ffi {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_set_builder_enum_param() {
         let mut builder = std::ptr::null_mut();
 
@@ -226,6 +228,7 @@ mod test_c_ffi {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_worker_run() {
         unsafe {
             let mut builder = std::ptr::null_mut();
