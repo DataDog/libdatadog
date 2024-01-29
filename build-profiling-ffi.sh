@@ -184,7 +184,7 @@ if [[ "$target" != "x86_64-pc-windows-msvc" ]]; then
     # $destdir might be relative. Get an absolute path that will work when we cd
     export ABS_DESTDIR=$(get_abs_filename $destdir)
     export CRASHTRACKER_BUILD_DIR=$CARGO_TARGET_DIR/build/crashtracker-receiver
-    export CRASHTRACKER_SRC_DIR=$PWD/profiling-crashtracking-receiver
+    export CRASHTRACKER_SRC_DIR=$PWD/crashtracker
     # Always start with a clean directory
     [ -d $CRASHTRACKER_BUILD_DIR ] && rm -r $CRASHTRACKER_BUILD_DIR
     mkdir -p $CRASHTRACKER_BUILD_DIR

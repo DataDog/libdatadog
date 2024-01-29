@@ -56,4 +56,5 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["ddcommon", "ddcommon-ffi", "datadog-profiling", "symbolizer-ffi", "ux"]
+include = ["ddcommon", "ddcommon-ffi", "datadog-profiling", "datadog-crashtracker", "ux"]
+

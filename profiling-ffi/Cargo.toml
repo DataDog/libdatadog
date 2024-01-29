@@ -19,6 +19,7 @@ build_symbolizer = ["symbolizer-ffi"]
 [dependencies]
 anyhow = "1.0"
 chrono = {version = "0.4", default-features = false}
+datadog-crashtracker = { path = "../crashtracker"}
 datadog-profiling = { path = "../profiling"}
 hyper = {version = "0.14", default-features = false}
 ddcommon = { path = "../ddcommon"}

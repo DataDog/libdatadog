@@ -171,7 +171,7 @@ pub fn init(
 // look in /tmp/crashreports for the crash reports and output files
 //#[test]
 fn test_crash() {
-    use crate::crashtracker::begin_profiling_op;
+    use crate::begin_profiling_op;
     use chrono::Utc;
     use ddcommon::parse_uri;
 
@@ -207,8 +207,7 @@ fn test_crash() {
         vec![],
     );
     init(config, metadata).expect("not to fail");
-    begin_profiling_op(crate::crashtracker::ProfilingOpTypes::CollectingSample)
-        .expect("Not to fail");
+    begin_profiling_op(crate::ProfilingOpTypes::CollectingSample).expect("Not to fail");
     let p: *const u32 = std::ptr::null();
     let q = unsafe { *p };
     assert_eq!(q, 3);

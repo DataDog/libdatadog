@@ -571,6 +571,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-crashtracker"
+version = "5.0.0"
+dependencies = [
+ "anyhow",
+ "backtrace",
+ "chrono",
+ "datadog-profiling",
+ "ddcommon",
+ "hyper",
+ "libc",
+ "nix 0.27.1",
+ "os_info",
+ "page_size 0.6.0",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "datadog-ipc"
 version = "0.1.0"
 dependencies = [
@@ -650,6 +669,7 @@ version = "5.0.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "datadog-crashtracker",
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
