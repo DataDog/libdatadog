@@ -404,7 +404,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2895653b4d9f1538a83970077cb01dfc77a4810524e51a110944688e916b18e"
 dependencies = [
- "prost",
+ "prost 0.11.9",
  "prost-types",
  "tonic",
  "tracing-core",
@@ -626,7 +626,7 @@ dependencies = [
  "os_info",
  "page_size 0.6.0",
  "percent-encoding",
- "prost",
+ "prost 0.12.3",
  "rustc-hash",
  "serde",
  "serde_json",
@@ -659,7 +659,7 @@ dependencies = [
  "anyhow",
  "clap",
  "datadog-profiling",
- "prost",
+ "prost 0.12.3",
  "sysinfo",
 ]
 
@@ -796,7 +796,7 @@ dependencies = [
 name = "datadog-trace-protobuf"
 version = "5.0.0"
 dependencies = [
- "prost",
+ "prost 0.11.9",
  "prost-build",
  "protoc-bin-vendored",
  "serde",
@@ -816,7 +816,7 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "log",
- "prost",
+ "prost 0.11.9",
  "rmp-serde",
  "serde",
  "serde_json",
@@ -2015,7 +2015,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b82eaa1d779e9a4bc1c3217db8ffbeabaae1dca241bf70183242128d48681cd"
 dependencies = [
  "bytes",
- "prost-derive",
+ "prost-derive 0.11.9",
+]
+
+[[package]]
+name = "prost"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "146c289cda302b98a28d40c8b3b90498d6e526dd24ac2ecea73e4e491685b94a"
+dependencies = [
+ "bytes",
+ "prost-derive 0.12.3",
 ]
 
 [[package]]
@@ -2032,7 +2042,7 @@ dependencies = [
  "multimap",
  "petgraph",
  "prettyplease",
- "prost",
+ "prost 0.11.9",
  "prost-types",
  "regex",
  "syn 1.0.109",
@@ -2054,12 +2064,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "prost-derive"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "efb6c9a1dd1def8e2124d17e83a20af56f1570d6c2d2bd9e266ccb768df3840e"
+dependencies = [
+ "anyhow",
+ "itertools",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.48",
+]
+
+[[package]]
 name = "prost-types"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "213622a1460818959ac1181aaeb2dc9c7f63df720db7d788b3e24eacd1983e13"
 dependencies = [
- "prost",
+ "prost 0.11.9",
 ]
 
 [[package]]
@@ -2918,7 +2941,7 @@ dependencies = [
  "hyper-timeout",
  "percent-encoding",
  "pin-project",
- "prost",
+ "prost 0.11.9",
  "tokio",
  "tokio-stream",
  "tower",
