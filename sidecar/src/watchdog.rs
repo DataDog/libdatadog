@@ -12,19 +12,20 @@ use ddtelemetry::{
     worker::{LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle},
 };
 use futures::{
-    future::{BoxFuture, Shared},
-    Future, FutureExt,
+    future::{BoxFuture, Shared}, FutureExt,
 };
-use manual_future::ManualFuture;
-use tokio::{select, sync::mpsc::Receiver, task::JoinHandle, time::Interval};
+
+use tokio::{select, sync::mpsc::Receiver};
 
 use crate::interface::SidecarServer;
 
 struct MetricData<'a> {
     worker: &'a TelemetryWorkerHandle,
+    sidecar_watchdog: &'a WatchdogHandle,
     server: &'a SidecarServer,
     submitted_payloads: ContextKey,
     active_sessions: ContextKey,
+    memory_usage: ContextKey,
 }
 impl<'a> MetricData<'a> {
     async fn send(&self, key: ContextKey, value: f64) {
@@ -44,6 +45,10 @@ impl<'a> MetricData<'a> {
                 self.active_sessions,
                 self.server.active_session_count() as f64,
             ),
+            self.send(
+                self.memory_usage,
+                self.sidecar_watchdog.mem_usage_bytes.load(Ordering::Relaxed) as f64,
+            )
         ])
         .await;
     }
@@ -93,6 +98,7 @@ impl Watchdog {
 
                         if current_mem_usage_bytes > self.max_memory_usage_bytes {
                             std::thread::spawn(||{
+                                // TODO: we should trigger manual flush and submission here
                                 // wait 5 seconds to give metrics a chance to flush - then kill the process
                                 std::thread::sleep(Duration::from_secs(5)); 
                                 std::process::exit(1);
@@ -138,7 +144,7 @@ impl SelfTelemetry {
         {
             Ok(r) => r,
             Err(_err) => {
-                self.watchdog_handle.wait_for_shutdown();
+                self.watchdog_handle.wait_for_shutdown().await;
                 return;
             }
         };
@@ -146,6 +152,7 @@ impl SelfTelemetry {
         let metrics = MetricData {
             worker: &worker,
             server: &self.server,
+            sidecar_watchdog: &self.watchdog_handle,
             submitted_payloads: worker.register_metric_context(
                 "server.submitted_payloads".to_string(),
                 vec![],
@@ -160,6 +167,13 @@ impl SelfTelemetry {
                 true,
                 MetricNamespace::Sidecar,
             ),
+            memory_usage: worker.register_metric_context(
+                "server.memory_usage".to_string(),
+                vec![],
+                MetricType::Gauge,
+                true, // TODO: make sure its a common metric
+                MetricNamespace::Sidecar,
+            )
         };
 
         let _ = worker
@@ -181,12 +195,4 @@ impl SelfTelemetry {
             }
         }
     }
-}
-
-struct SelfTelemetryWorker {}
-
-impl SelfTelemetryWorker {
-    // pub async fn setup_with_config(config: ddtelemetry::config::Config) -> anyhow::Result<Self> {
-
-    // }
 }
