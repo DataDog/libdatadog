@@ -41,7 +41,7 @@ pub struct TemporarilyRetainedMap<K, V>
 where
     K: TemporarilyRetainedKeyParser<V> + Clone + Eq + Hash,
 {
-    maps: RwLock<HashMap<K, V>>,
+    pub maps: RwLock<HashMap<K, V>>,
     live_counter: Mutex<HashMap<K, i32>>,
     pending_removal: Mutex<PriorityQueue<K, Instant>>,
     pub expire_after: Duration,
@@ -86,7 +86,7 @@ where
 
         let mut pending = self.pending_removal.lock().unwrap();
         while let Some((_, time)) = pending.peek() {
-            if *time > Instant::now().sub(self.expire_after) {
+            if *time < Instant::now().sub(self.expire_after) {
                 let (log_level, _) = pending.pop().unwrap();
                 self.maps.write().unwrap().remove(&log_level);
                 <K as TemporarilyRetainedKeyParser<V>>::disable();
