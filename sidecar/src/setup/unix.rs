@@ -11,9 +11,9 @@ use std::{
 };
 
 #[cfg(feature = "logging")]
-use log::debug;
+use log::{debug, warn};
 #[cfg(not(feature = "logging"))]
-use tracing::debug;
+use tracing::{debug, warn};
 
 use datadog_ipc::platform::{self, locks::FLock};
 
@@ -63,7 +63,7 @@ impl Liaison for SharedDirLiaison {
             // failing to acquire lock
             // means that another process is creating the socket
             Err(err) => {
-                debug!("failed_locking");
+                warn!("failed_locking");
                 return Err(err);
             }
         };
