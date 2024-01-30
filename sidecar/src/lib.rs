@@ -8,6 +8,9 @@ pub mod one_way_shared_memory;
 mod self_telemetry;
 pub mod setup;
 mod tracer;
+#[cfg(feature = "tracing")]
+pub mod log;
+mod dump;
 
 pub use entry::*;
 

@@ -7,6 +7,8 @@ use datadog_ipc::platform::{
 use datadog_sidecar::agent_remote_config::{
     new_reader, reader_from_shm, AgentRemoteConfigEndpoint, AgentRemoteConfigWriter,
 };
+use datadog_sidecar::config;
+use datadog_sidecar::config::LogMethod;
 use ddcommon_ffi as ffi;
 use libc::c_char;
 use std::ffi::c_void;
@@ -388,6 +390,8 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     flush_interval_milliseconds: u64,
     force_flush_size: usize,
     force_drop_size: usize,
+    log_level: ffi::CharSlice,
+    log_path: ffi::CharSlice,
 ) -> MaybeError {
     try_c!(blocking::set_session_config(
         transport,
@@ -397,6 +401,12 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             flush_interval: Duration::from_millis(flush_interval_milliseconds),
             force_flush_size,
             force_drop_size,
+            log_level: log_level.to_utf8_lossy().into(),
+            log_file: if log_path.is_empty() {
+                config::FromEnv::log_method()
+            } else {
+                LogMethod::File(String::from(log_path.to_utf8_lossy()).into())
+            }
         },
     ));
 
@@ -467,4 +477,20 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
     ));
 
     MaybeError::None
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_dump(
+    transport: &mut Box<SidecarTransport>,
+) -> ffi::CharSlice {
+    let str = match blocking::dump(transport) {
+        Ok(dump) => dump,
+        Err(e) => format!("{:?}", e),
+    };
+    let size = str.len();
+    let malloced = libc::malloc(size) as *mut u8;
+    let buf = std::slice::from_raw_parts_mut(malloced, size);
+    buf.copy_from_slice(str.as_bytes());
+    ffi::CharSlice::new(malloced as *mut c_char, size)
 }

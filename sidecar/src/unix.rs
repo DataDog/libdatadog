@@ -13,23 +13,25 @@ use std::io;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::time::Instant;
 use tokio::net::{UnixListener, UnixStream};
+use tracing::{error, info};
 
 #[no_mangle]
 pub extern "C" fn ddog_daemon_entry_point() {
+    #[cfg(feature = "tracing")]
+    crate::log::enable_logging().ok();
+
     if let Err(err) = nix::unistd::setsid() {
-        tracing::error!("Error calling setsid(): {err}")
+        error!("Error calling setsid(): {err}")
     }
 
     #[cfg(target_os = "linux")]
     let _ = prctl::set_name("dd-ipc-helper");
 
-    #[cfg(feature = "tracing")]
-    crate::enable_tracing().ok();
     let now = Instant::now();
 
     if let Some(fd) = spawn_worker::recv_passed_fd() {
         let listener: StdUnixListener = fd.into();
-        tracing::info!("Starting sidecar, pid: {}", getpid());
+        info!("Starting sidecar, pid: {}", getpid());
         let acquire_listener = move || {
             listener.set_nonblocking(true)?;
             let listener = UnixListener::from_std(listener)?;
@@ -49,11 +51,11 @@ pub extern "C" fn ddog_daemon_entry_point() {
             Ok((|handler| accept_socket_loop(listener, handler), cancel))
         };
         if let Err(err) = enter_listener_loop(acquire_listener) {
-            tracing::error!("Error: {err}")
+            error!("Error: {err}")
         }
     }
 
-    tracing::info!(
+    info!(
         "shutting down sidecar, pid: {}, total runtime: {:.3}s",
         getpid(),
         now.elapsed().as_secs_f64()

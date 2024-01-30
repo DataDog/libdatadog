@@ -31,7 +31,7 @@ jobs:
           rust_version: ${{ matrix.rust_version }}
       - name: Install ${{ matrix.version }} toolchain and clippy
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }} && rustup component add clippy
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.69.0 ] && echo -Aunknown-lints)
   licensecheck:
     runs-on: ubuntu-latest
     name: "Presence of licence headers"

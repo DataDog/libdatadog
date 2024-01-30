@@ -19,7 +19,8 @@ use tokio::select;
 #[no_mangle]
 pub extern "C" fn ddog_daemon_entry_point() {
     #[cfg(feature = "tracing")]
-    crate::enable_tracing().ok();
+    crate::log::enable_logging().ok();
+
     let now = Instant::now();
 
     let pid = unsafe { libc::getpid() };

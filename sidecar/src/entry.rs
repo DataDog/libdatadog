@@ -185,27 +185,3 @@ pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTranspo
         .map_err(|e| err.unwrap_or(e.into()))?
         .into())
 }
-
-#[cfg(feature = "tracing")]
-pub fn enable_tracing() -> anyhow::Result<()> {
-    let subscriber = tracing_subscriber::fmt();
-
-    match Config::get().log_method {
-        config::LogMethod::Stdout => subscriber.with_writer(io::stdout).init(),
-        config::LogMethod::Stderr => subscriber.with_writer(io::stderr).init(),
-        config::LogMethod::File(path) => {
-            let log_file = std::fs::File::options()
-                .create(true)
-                .truncate(false)
-                .write(true)
-                .append(true)
-                .open(path)?;
-            tracing_subscriber::fmt()
-                .with_writer(std::sync::Mutex::new(log_file))
-                .init()
-        }
-        config::LogMethod::Disabled => return Ok(()),
-    };
-
-    Ok(())
-}

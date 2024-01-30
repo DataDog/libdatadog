@@ -31,7 +31,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tokio::select;
 use tokio::task::{JoinError, JoinHandle};
-use tracing::{error, info};
+use tracing::{debug, enabled, error, info, Level};
 
 use crate::agent_remote_config::AgentRemoteConfigWriter;
 use crate::config::get_product_endpoint;
@@ -48,7 +48,8 @@ use ddtelemetry::{
     },
 };
 
-use crate::tracer;
+use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
+use crate::{config, log, tracer};
 
 #[datadog_sidecar_macros::extract_request_id]
 #[datadog_ipc_macros::impl_transfer_handles]
@@ -80,6 +81,7 @@ pub trait SidecarInterface {
         headers: SerializedTracerHeaderTags,
     );
     async fn ping();
+    async fn dump() -> String;
 }
 
 pub trait RequestIdentification {
@@ -169,6 +171,9 @@ struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
     session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
+    log_guard: Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
+    #[cfg(feature = "tracing")]
+    session_id: String,
 }
 
 impl SessionInfo {
@@ -177,8 +182,19 @@ impl SessionInfo {
         match runtimes.get(runtime_id) {
             Some(runtime) => runtime.clone(),
             None => {
-                let runtime = RuntimeInfo::default();
+                let mut runtime = RuntimeInfo::default();
                 runtimes.insert(runtime_id.clone(), runtime.clone());
+                #[cfg(feature = "tracing")]
+                if enabled!(Level::INFO) {
+                    runtime.instance_id = InstanceId {
+                        session_id: self.session_id.clone(),
+                        runtime_id: runtime_id.clone(),
+                    };
+                    info!(
+                        "Registering runtime_id {} for session {}",
+                        runtime_id, self.session_id
+                    );
+                }
                 runtime
             }
         }
@@ -269,6 +285,8 @@ enum AppOrQueue {
 struct RuntimeInfo {
     apps: Arc<Mutex<HashMap<(String, String), Shared<ManualFuture<Option<AppInstance>>>>>>,
     app_or_actions: Arc<Mutex<HashMap<QueueId, AppOrQueue>>>,
+    #[cfg(feature = "tracing")]
+    instance_id: InstanceId,
 }
 
 impl RuntimeInfo {
@@ -294,6 +312,12 @@ impl RuntimeInfo {
     }
 
     async fn shutdown(self) {
+        #[cfg(feature = "tracing")]
+        info!(
+            "Shutting down runtime_id {} for session {}",
+            self.instance_id.runtime_id, self.instance_id.session_id
+        );
+
         let instance_futures: Vec<_> = self
             .apps
             .lock()
@@ -318,6 +342,12 @@ impl RuntimeInfo {
             })
             .collect();
         future::join_all(instances_shutting_down).await;
+
+        #[cfg(feature = "tracing")]
+        debug!(
+            "Successfully shut down runtime_id {} for session {}",
+            self.instance_id.runtime_id, self.instance_id.session_id
+        );
     }
 }
 
@@ -386,6 +416,10 @@ struct TraceSendData {
 impl TraceSendData {
     pub fn flush(&mut self) {
         if let Some(force_flush) = self.force_flush.take() {
+            debug!(
+                "Emitted flush for traces with {} bytes in send_data buffer",
+                self.send_data_size
+            );
             tokio::spawn(async move {
                 force_flush.complete(()).await;
             });
@@ -465,6 +499,11 @@ impl TraceFlusher {
                     )) => {},
                     _ = force_flush => {},
                 }
+
+                debug!(
+                    "Start flushing {} bytes worth of traces",
+                    self.inner.lock().unwrap().traces.send_data_size
+                );
 
                 let (new_force_flush, completer) = ManualFuture::new();
                 force_flush = new_force_flush;
@@ -663,7 +702,12 @@ impl SidecarServer {
         match sessions.get(session_id) {
             Some(session) => session.clone(),
             None => {
-                let session = SessionInfo::default();
+                let mut session = SessionInfo::default();
+                #[cfg(feature = "tracing")]
+                if enabled!(Level::INFO) {
+                    session.session_id = session_id.clone();
+                    info!("Initializing new session: {}", session_id);
+                }
                 sessions.insert(session_id.clone(), session.clone());
                 session
             }
@@ -681,7 +725,9 @@ impl SidecarServer {
             None => return,
         };
 
-        session.shutdown().await
+        info!("Shutting down session: {}", session_id);
+        session.shutdown().await;
+        debug!("Successfully shut down session: {}", session_id);
     }
 
     async fn get_app(
@@ -716,9 +762,9 @@ impl SidecarServer {
             .unwrap_or_else(ddtelemetry::config::Config::from_env);
 
         // TODO: log errors
-        let instance_option =
-            if let Ok((handle, worker_join)) = builder.spawn_with_config(config.clone()).await {
-                info!("spawning worker {config:?}");
+        let instance_option = match builder.spawn_with_config(config.clone()).await {
+            Ok((handle, worker_join)) => {
+                info!("spawning telemetry worker {config:?}");
 
                 let instance = AppInstance {
                     telemetry: handle,
@@ -733,9 +779,12 @@ impl SidecarServer {
                     .await
                     .ok();
                 Some(instance)
-            } else {
+            }
+            Err(e) => {
+                error!("could not spawn telemetry worker {:?}", e);
                 None
-            };
+            }
+        };
         completer.unwrap().complete(instance_option).await;
         app_future.await
     }
@@ -778,6 +827,8 @@ pub struct SessionConfig {
     pub flush_interval: Duration,
     pub force_flush_size: usize,
     pub force_drop_size: usize,
+    pub log_level: String,
+    pub log_file: config::LogMethod,
 }
 
 impl SidecarInterface for SidecarServer {
@@ -940,6 +991,11 @@ impl SidecarInterface for SidecarServer {
             .min_force_drop_size
             .store(config.force_drop_size as u32, Ordering::Relaxed);
 
+        session.log_guard.lock().unwrap().replace((
+            log::MULTI_LOG_FILTER.add(config.log_level),
+            log::MULTI_LOG_WRITER.add(config.log_file),
+        ));
+
         if let Some(completer) = self.self_telemetry_config.lock().unwrap().take() {
             let config = session
                 .session_config
@@ -1008,6 +1064,12 @@ impl SidecarInterface for SidecarServer {
         }
 
         no_response()
+    }
+
+    type DumpFut = Pin<Box<dyn Send + futures::Future<Output = String>>>;
+
+    fn dump(self, _: Context) -> Self::DumpFut {
+        Box::pin(crate::dump::dump())
     }
 }
 
@@ -1114,6 +1176,15 @@ pub mod blocking {
             handle,
             headers,
         })
+    }
+
+    pub fn dump(transport: &mut SidecarTransport) -> io::Result<String> {
+        let res = transport.call(SidecarInterfaceRequest::Dump {})?;
+        if let SidecarInterfaceResponse::Dump(dump) = res {
+            Ok(dump)
+        } else {
+            Ok("".to_string())
+        }
     }
 
     pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
