@@ -28,6 +28,7 @@ use tokio::task::JoinHandle;
 
 use crate::interface::blocking::SidecarTransport;
 use crate::interface::SidecarServer;
+use crate::watchdog::{SelfTelemetry, Watchdog, WatchdogHandle};
 use datadog_ipc::platform::Channel as IpcChannel;
 use ddtelemetry::data::metrics::{MetricNamespace, MetricType};
 use ddtelemetry::metrics::ContextKey;
@@ -39,39 +40,10 @@ use crate::setup::{self, Liaison};
 
 use crate::config::{self, Config};
 
-struct MetricData<'a> {
-    worker: &'a TelemetryWorkerHandle,
-    server: &'a SidecarServer,
-    submitted_payloads: ContextKey,
-    active_sessions: ContextKey,
-}
-impl<'a> MetricData<'a> {
-    async fn send(&self, key: ContextKey, value: f64) {
-        let _ = self
-            .worker
-            .send_msg(TelemetryActions::AddPoint((value, key, vec![])))
-            .await;
-    }
-
-    async fn collect_and_send(&self) {
-        future::join_all(vec![
-            self.send(
-                self.submitted_payloads,
-                self.server.submitted_payloads.swap(0, Ordering::Relaxed) as f64,
-            ),
-            self.send(
-                self.active_sessions,
-                self.server.active_session_count() as f64,
-            ),
-        ])
-        .await;
-    }
-}
-
-fn self_telemetry(server: SidecarServer, mut shutdown_receiver: Receiver<()>) -> JoinHandle<()> {
+fn self_telemetry(server: SidecarServer, watchdog_handle: WatchdogHandle) -> JoinHandle<()> {
     if !Config::get().self_telemetry {
         return tokio::spawn(async move {
-            shutdown_receiver.recv().await;
+            watchdog_handle.wait_for_shutdown().await;
         });
     }
 
@@ -81,61 +53,15 @@ fn self_telemetry(server: SidecarServer, mut shutdown_receiver: Receiver<()>) ->
         .lock()
         .unwrap()
         .replace(completer);
+
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        let submission_interval = tokio::time::interval(Duration::from_secs(60));
 
         select! {
-            _ = shutdown_receiver.recv() => { },
+            _ = watchdog_handle.wait_for_shutdown() => { },
             config = future => {
-                if let Ok((worker, join_handle)) = TelemetryWorkerBuilder::new_fetch_host(
-                    "datadog-ipc-helper".to_string(),
-                    "php".to_string(),
-                    "SIDECAR".to_string(),
-                    env!("CARGO_PKG_VERSION").to_string(),
-                )
-                .spawn_with_config(config)
-                .await
-                {
-                    let metrics = MetricData {
-                        worker: &worker,
-                        server: &server,
-                        submitted_payloads: worker.register_metric_context(
-                            "server.submitted_payloads".to_string(),
-                            vec![],
-                            MetricType::Count,
-                            true,
-                            MetricNamespace::Sidecar,
-                        ),
-                        active_sessions: worker.register_metric_context(
-                            "server.active_sessions".to_string(),
-                            vec![],
-                            MetricType::Gauge,
-                            true,
-                            MetricNamespace::Sidecar,
-                        ),
-                    };
-
-                    let _ = worker
-                        .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                        .await;
-                    loop {
-                        select! {
-                            _ = interval.tick() => {
-                                metrics.collect_and_send().await;
-                                let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushMetricAggr)).await;
-                                let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData)).await;
-                            },
-                            _ = shutdown_receiver.recv() => {
-                                metrics.collect_and_send().await;
-                                let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop)).await;
-                                let _ = join_handle.await;
-                                return
-                            },
-                        }
-                    }
-                } else {
-                    shutdown_receiver.recv().await;
-                }
+                let worker_cfg = SelfTelemetry { submission_interval, watchdog_handle, config, server };
+                worker_cfg.spawn_worker().await
             },
         }
     })
@@ -183,7 +109,9 @@ async fn main_loop(listener: UnixListener) -> tokio::io::Result<()> {
 
     let server = SidecarServer::default();
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
-    let telemetry_handle = self_telemetry(server.clone(), shutdown_complete_rx);
+    let watchdog_handle = Watchdog::from_receiver(shutdown_complete_rx).spawn_watchdog();
+
+    let telemetry_handle = self_telemetry(server.clone(), watchdog_handle);
 
     while let Ok((socket, _)) = listener.accept().await {
         tracing::info!("connection accepted");

@@ -697,6 +697,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "manual_future",
+ "memory-stats",
  "nix 0.26.4",
  "pin-project",
  "prctl",

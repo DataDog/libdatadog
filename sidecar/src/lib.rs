@@ -13,6 +13,9 @@ pub mod setup;
 #[cfg(not(windows))]
 mod tracer;
 
+#[cfg(not(windows))]
+mod watchdog;
+
 #[cfg(unix)]
 mod unix;
 
