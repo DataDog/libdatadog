@@ -35,6 +35,8 @@ fn create_logfile(path: &PathBuf) -> anyhow::Result<std::fs::File> {
     Ok(log_file)
 }
 
+/// A map which refcounts a computed value given a key.
+/// It will retain a reference to that value for expire_after before dropping&disabling it.
 pub struct TemporarilyRetainedMap<K, V>
 where
     K: TemporarilyRetainedKeyParser<V> + Clone + Eq + Hash,
@@ -42,6 +44,7 @@ where
     maps: RwLock<HashMap<K, V>>,
     live_counter: Mutex<HashMap<K, i32>>,
     pending_removal: Mutex<PriorityQueue<K, Instant>>,
+    pub expire_after: Duration,
 }
 
 impl<K, V> Default for TemporarilyRetainedMap<K, V>
@@ -53,6 +56,7 @@ where
             maps: RwLock::new(HashMap::new()),
             live_counter: Mutex::new(HashMap::new()),
             pending_removal: Mutex::new(PriorityQueue::new()),
+            expire_after: Duration::from_secs(5),
         }
     }
 }
@@ -82,7 +86,7 @@ where
 
         let mut pending = self.pending_removal.lock().unwrap();
         while let Some((_, time)) = pending.peek() {
-            if *time > Instant::now().sub(Duration::from_secs(5)) {
+            if *time > Instant::now().sub(self.expire_after) {
                 let (log_level, _) = pending.pop().unwrap();
                 self.maps.write().unwrap().remove(&log_level);
                 <K as TemporarilyRetainedKeyParser<V>>::disable();
@@ -129,6 +133,10 @@ where
     }
 }
 
+/// Group EnvFilters for efficiency (to avoid checking 100s of log filters on each request and
+/// recomputing call site interest all the time.
+/// Ensure that the log level stays the same for at least a few seconds after session disconnect
+/// in order to continue logging the sending of data submitted by the session.
 pub type MultiEnvFilter = TemporarilyRetainedMap<String, EnvFilter>;
 pub type MultiEnvFilterGuard<'a> = TemporarilyRetainedMapGuard<'a, String, EnvFilter>;
 
@@ -137,6 +145,7 @@ impl TemporarilyRetainedKeyParser<EnvFilter> for String {
         EnvFilter::builder().parse_lossy(self)
     }
 
+    // On change, rebuild it, according to https://docs.rs/tracing-core/0.1.32/tracing_core/callsite/fn.rebuild_interest_cache.html
     fn enable() {
         tracing::callsite::rebuild_interest_cache();
     }
@@ -233,6 +242,8 @@ impl Default for LogFormatter {
     }
 }
 
+// Note: specific formatter to stay in line with other ddtrace-php logs.
+// May need to be adapted for other sidecar users in future.
 impl<S, N> FormatEvent<S, N> for LogFormatter
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -254,6 +265,8 @@ where
     }
 }
 
+/// Have exactly one log writer per target file.
+/// Ensure that we can write for at least a few seconds after session disconnect.
 pub type MultiWriter = TemporarilyRetainedMap<config::LogMethod, Box<dyn io::Write>>;
 pub type MultiWriterGuard<'a> =
     TemporarilyRetainedMapGuard<'a, config::LogMethod, Box<dyn io::Write>>;
