@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use ddcommon::{parse_uri, Endpoint};
-#[cfg(unix)]
 use spawn_worker::LibDependency;
 
 const ENV_SIDECAR_IPC_MODE: &str = "_DD_DEBUG_SIDECAR_IPC_MODE";
@@ -78,7 +77,6 @@ pub struct Config {
     pub log_method: LogMethod,
     pub idle_linger_time: Duration,
     pub self_telemetry: bool,
-    #[cfg(unix)]
     pub library_dependencies: Vec<LibDependency>,
     pub child_env: HashMap<std::ffi::OsString, std::ffi::OsString>,
 }
@@ -164,7 +162,6 @@ impl FromEnv {
             log_method: Self::log_method(),
             idle_linger_time: Self::idle_linger_time(),
             self_telemetry: Self::self_telemetry(),
-            #[cfg(unix)]
             library_dependencies: vec![],
             child_env: std::env::vars_os().collect(),
         }

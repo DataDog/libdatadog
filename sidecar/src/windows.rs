@@ -1,6 +1,5 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
-use crate::config::Config;
 use crate::enter_listener_loop;
 use crate::setup::pid_shm_path;
 use datadog_ipc::platform::{
@@ -97,7 +96,6 @@ async fn accept_socket_loop(
 
 pub fn setup_daemon_process(
     listener: OwnedHandle,
-    _: Config,
     spawn_cfg: &mut SpawnWorker,
 ) -> io::Result<()> {
     spawn_cfg.pass_handle(listener).stdin(Stdio::Null);

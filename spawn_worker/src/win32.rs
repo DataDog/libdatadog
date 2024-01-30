@@ -40,7 +40,7 @@ use windows::{
     },
 };
 
-use crate::{Target, ENV_PASS_FD_KEY};
+use crate::{LibDependency, Target, ENV_PASS_FD_KEY};
 
 pub(crate) fn write_trampoline(
     process_name: &Option<String>,
@@ -97,6 +97,7 @@ pub struct SpawnWorker {
     env: Vec<(OsString, OsString)>,
     process_name: Option<String>,
     passed_handle: Option<OwnedHandle>,
+    shared_lib_dependencies: Vec<LibDependency>,
 }
 
 impl Default for SpawnWorker {
@@ -115,7 +116,13 @@ impl SpawnWorker {
             env: env::vars_os().into_iter().collect(),
             process_name: None,
             passed_handle: None,
+            shared_lib_dependencies: vec![],
         }
+    }
+
+    pub fn shared_lib_dependencies(&mut self, deps: Vec<LibDependency>) -> &mut Self {
+        self.shared_lib_dependencies = deps;
+        self
     }
 
     pub fn target<T: Into<Target>>(&mut self, target: T) -> &mut Self {
@@ -234,18 +241,28 @@ impl SpawnWorker {
         let mut args = vec![];
         args.push("".to_string());
 
-        match &self.target {
+        let entrypoint_symbol_name = match &self.target {
             Target::Entrypoint(f) => {
                 let path = get_trampoline_target_data(f.ptr as *const u8)?;
                 args.push(path);
-                args.push(f.symbol_name.to_string_lossy().into_owned());
+                f.symbol_name.to_string_lossy().into_owned()
             }
             Target::ManualTrampoline(path, symbol_name) => {
                 args.push(path.clone());
-                args.push(symbol_name.clone());
+                symbol_name.clone()
             }
             Target::Noop => todo!(),
         };
+
+        for dep in &self.shared_lib_dependencies {
+            match dep {
+                LibDependency::Path(path) => {
+                    args.push(path.to_string_lossy().into_owned());
+                }
+            }
+        }
+
+        args.push(entrypoint_symbol_name);
 
         if let Some(ref handle) = self.passed_handle {
             envs.push((

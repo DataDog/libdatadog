@@ -92,7 +92,7 @@ pub enum SpawnMethod {
     Exec,
 }
 
-use crate::Target;
+use crate::{LibDependency, Target};
 
 impl Target {
     /// TODO: ld_preload type trampoline is not yet supported on osx
@@ -192,12 +192,6 @@ impl From<&File> for Stdio {
     fn from(val: &File) -> Self {
         Stdio::Fd(val.try_clone().unwrap().into())
     }
-}
-
-#[derive(Clone, Debug)]
-pub enum LibDependency {
-    Path(PathBuf),
-    Binary(&'static [u8]),
 }
 
 pub struct SpawnWorker {

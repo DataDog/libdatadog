@@ -74,11 +74,9 @@ async fn accept_socket_loop(
 
 pub fn setup_daemon_process(
     listener: StdUnixListener,
-    cfg: Config,
     spawn_cfg: &mut SpawnWorker,
 ) -> io::Result<()> {
     spawn_cfg
-        .shared_lib_dependencies(cfg.library_dependencies)
         .daemonize(true)
         .pass_fd(unsafe { OwnedFd::from_raw_fd(listener.into_raw_fd()) })
         .stdin(Stdio::Null);

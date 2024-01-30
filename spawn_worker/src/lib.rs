@@ -26,6 +26,8 @@ mod win32;
 pub use win32::*;
 
 use std::ffi::CString;
+use std::path::PathBuf;
+
 pub struct Entrypoint {
     pub ptr: extern "C" fn(),
     pub symbol_name: CString,
@@ -35,6 +37,14 @@ pub enum Target {
     ManualTrampoline(String, String),
     Noop,
 }
+
+#[derive(Clone, Debug)]
+pub enum LibDependency {
+    Path(PathBuf),
+    #[cfg(not(windows))]
+    Binary(&'static [u8]),
+}
+
 
 impl From<Entrypoint> for Target {
     fn from(entrypoint: Entrypoint) -> Self {

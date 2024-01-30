@@ -13,6 +13,17 @@
 #define unlink _unlink
 #endif
 
+static inline FILE *error_fd() {
+    char *log_env = getenv("DD_TRACE_LOG_FILE");
+    if (log_env) {
+        FILE *file = fopen(log_env, "a");
+        if (file) {
+            return file;
+        }
+    }
+    return stderr;
+}
+
 int main(int argc, char *argv[]) {
   if (argc > 3) {
     // remove the temp file of this trampoline
@@ -29,8 +40,10 @@ int main(int argc, char *argv[]) {
       printf("%s %s", library_path, symbol_name);
       return 0;
     }
-#ifndef _WIN32
+
     int additional_shared_libraries_args = argc - 4;
+
+#ifndef _WIN32
     void **handles = NULL;
 
     if (additional_shared_libraries_args > 0) {
@@ -46,7 +59,7 @@ int main(int argc, char *argv[]) {
           continue;
       }
       if (!(handles[additional_shared_libraries_count++] = dlopen(lib_path, RTLD_LAZY | RTLD_GLOBAL))) {
-          fputs(dlerror(), stderr);
+          fputs(dlerror(), error_fd());
           return 9;
       }
       if (unlink_next) {
@@ -57,7 +70,7 @@ int main(int argc, char *argv[]) {
 
     void *handle = dlopen(library_path, RTLD_LAZY);
     if (!handle) {
-      fputs(dlerror(), stderr);
+      fputs(dlerror(), error_fd());
       return 10;
     }
 
@@ -65,7 +78,7 @@ int main(int argc, char *argv[]) {
     char *error = NULL;
 
     if ((error = dlerror()) != NULL) {
-      fputs(error, stderr);
+      fputs(error, error_fd());
       return 11;
     }
     (*fn)();
@@ -78,10 +91,20 @@ int main(int argc, char *argv[]) {
       free(handles);
     }
 #else
+    for (int i = 0; i < additional_shared_libraries_args; i++) {
+        const char *lib_path = argv[3 + i];
+        HINSTANCE handle = LoadLibrary(lib_path);
+        if (!handle) {
+            DWORD res = GetLastError();
+            fprintf(error_fd(), "error: %lu, could not load dependent shared library %s\n", res, lib_path);
+            return 9;
+        }
+    }
+
     HINSTANCE handle = LoadLibrary(library_path);
     if (!handle) {
         DWORD res = GetLastError();
-        fprintf(stderr, "error: %i, could not load shared library\n", res);
+        fprintf(error_fd(), "error: %lu, could not load shared library %s\n", res, library_path);
         return 10;
     } 
 
@@ -89,14 +112,16 @@ int main(int argc, char *argv[]) {
 
     if (!fn) {
         DWORD res = GetLastError();
-        fprintf(stderr, "error: %i loading symbol: %s from: %s\n", res, symbol_name, library_path);
+        fprintf(error_fd(), "error: %lu loading symbol: %s from: %s\n", res, symbol_name, library_path);
         return 11;
     }
 
     (*fn)();
+
+    // TODO: create shell process to cleanup temp file
 #endif
     return 0;
   }
 
-  return 9;
+  return 12;
 }
