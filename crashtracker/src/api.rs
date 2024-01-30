@@ -2,6 +2,8 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 #![cfg(unix)]
 
+use crate::update_metadata;
+
 use super::{
     counters::reset_counters,
     crash_handler::{
@@ -169,6 +171,7 @@ pub fn init(
 // ./build-profiling-ffi /tmp/libdatadog
 // mkdir /tmp/crashreports
 // look in /tmp/crashreports for the crash reports and output files
+// Commented out since `ignore` doesn't work in CI.
 //#[test]
 fn test_crash() {
     use crate::begin_profiling_op;
@@ -187,7 +190,7 @@ fn test_crash() {
     let path_to_receiver_binary =
         "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
     let create_alt_stack = true;
-    let resolve_frames = CrashtrackerResolveFrames::ExperimentalInReceiver;
+    let resolve_frames = CrashtrackerResolveFrames::Never;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
 
@@ -208,6 +211,16 @@ fn test_crash() {
     );
     init(config, metadata).expect("not to fail");
     begin_profiling_op(crate::ProfilingOpTypes::CollectingSample).expect("Not to fail");
+
+    let tag = Tag::new("apple", "banana").expect("tag");
+    let metadata2 = CrashtrackerMetadata::new(
+        "libname".to_string(),
+        "version".to_string(),
+        "family".to_string(),
+        vec![tag],
+    );
+    update_metadata(&metadata2).expect("metadata");
+
     let p: *const u32 = std::ptr::null();
     let q = unsafe { *p };
     assert_eq!(q, 3);

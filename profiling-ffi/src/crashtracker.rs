@@ -123,6 +123,26 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_shutdown() -> ProfileResult {
 
 #[no_mangle]
 #[must_use]
+pub unsafe extern "C" fn ddog_prof_crashtracker_update_metadata(
+    metadata: CrashtrackerMetadata,
+) -> ProfileResult {
+    match ddog_prof_crashtracker_update_metadata_impl(metadata) {
+        Ok(_) => ProfileResult::Ok(true),
+        Err(err) => ProfileResult::Err(Error::from(
+            err.context("ddog_prof_crashtracker_update_metadata failed"),
+        )),
+    }
+}
+
+unsafe fn ddog_prof_crashtracker_update_metadata_impl(
+    metadata: CrashtrackerMetadata,
+) -> anyhow::Result<()> {
+    let metadata = metadata.try_into()?;
+    datadog_crashtracker::update_metadata(&metadata)
+}
+
+#[no_mangle]
+#[must_use]
 pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
     config: CrashtrackerConfiguration,
     metadata: CrashtrackerMetadata,
@@ -130,7 +150,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
     match ddog_prof_crashtracker_update_on_fork_impl(config, metadata) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_init failed"),
+            err.context("ddog_prof_crashtracker_update_on_fork failed"),
         )),
     }
 }

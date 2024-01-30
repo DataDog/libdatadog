@@ -19,11 +19,7 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
     std::io::stdin().lock().read_line(&mut config)?;
     let config: CrashtrackerConfiguration = serde_json::from_str(&config)?;
 
-    let mut metadata = String::new();
-    std::io::stdin().lock().read_line(&mut metadata)?;
-    let metadata: CrashtrackerMetadata = serde_json::from_str(&metadata)?;
-
-    match receive_report(&metadata)? {
+    match receive_report()? {
         CrashReportStatus::NoCrash => Ok(()),
         CrashReportStatus::CrashReport(crash_info) => {
             if config.resolve_frames == CrashtrackerResolveFrames::ExperimentalInReceiver {
@@ -48,6 +44,7 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
 enum StdinState {
     Counters,
     File(String, Vec<String>),
+    Metadata,
     SigInfo,
     StackTrace(Vec<StackFrame>),
     Waiting,
@@ -86,6 +83,12 @@ fn process_line(
             StdinState::File(name, contents)
         }
 
+        StdinState::Metadata if line.starts_with(DD_CRASHTRACK_END_METADATA) => StdinState::Waiting,
+        StdinState::Metadata => {
+            let metadata = serde_json::from_str(&line)?;
+            crashinfo.set_metadata(metadata)?;
+            StdinState::Metadata
+        }
         StdinState::SigInfo if line.starts_with(DD_CRASHTRACK_END_SIGINFO) => StdinState::Waiting,
         StdinState::SigInfo => {
             let siginfo = serde_json::from_str(&line)?;
@@ -110,6 +113,9 @@ fn process_line(
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_FILE) => {
             let (_, filename) = line.split_once(' ').unwrap_or(("", "MISSING_FILENAME"));
             StdinState::File(filename.to_string(), vec![])
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_METADATA) => {
+            StdinState::Metadata
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SIGINFO) => StdinState::SigInfo,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_STACKTRACE) => {
@@ -137,8 +143,9 @@ enum CrashReportStatus {
 /// In the case where the parent failed to transfer a full crash-report
 /// (for instance if it crashed while calculating the crash-report), we return
 /// a PartialCrashReport.
-fn receive_report(metadata: &CrashtrackerMetadata) -> anyhow::Result<CrashReportStatus> {
-    let mut crashinfo = CrashInfo::new(metadata.clone());
+// TODO: Make this take a buffer, rather than assuming input on stdin
+fn receive_report() -> anyhow::Result<CrashReportStatus> {
+    let mut crashinfo = CrashInfo::new();
     let mut stdin_state = StdinState::Waiting;
     //TODO: This assumes that the input is valid UTF-8.
     for line in std::io::stdin().lock().lines() {

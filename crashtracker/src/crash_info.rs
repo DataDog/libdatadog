@@ -39,7 +39,7 @@ pub struct CrashInfo {
     additional_stacktraces: HashMap<String, Vec<StackFrame>>,
     counters: HashMap<String, i64>,
     files: HashMap<String, Vec<String>>,
-    metadata: CrashtrackerMetadata,
+    metadata: Option<CrashtrackerMetadata>,
     os_info: os_info::Info,
     siginfo: Option<SigInfo>,
     stacktrace: Vec<StackFrame>,
@@ -54,22 +54,24 @@ impl CrashInfo {
     pub fn crash_seen(&self) -> bool {
         self.siginfo.is_some()
     }
+}
 
-    pub fn get_metadata(&self) -> &CrashtrackerMetadata {
-        &self.metadata
+impl Default for CrashInfo {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 /// Constructor and setters
 impl CrashInfo {
-    pub fn new(metadata: CrashtrackerMetadata) -> Self {
+    pub fn new() -> Self {
         let os_info = os_info::get();
         let uuid = Uuid::new_v4();
         Self {
             additional_stacktraces: HashMap::new(),
             counters: HashMap::new(),
             files: HashMap::new(),
-            metadata,
+            metadata: None,
             os_info,
             siginfo: None,
             stacktrace: vec![],
@@ -105,6 +107,11 @@ impl CrashInfo {
         Ok(())
     }
 
+    pub fn set_metadata(&mut self, metadata: CrashtrackerMetadata) -> anyhow::Result<()> {
+        anyhow::ensure!(self.metadata.is_none());
+        self.metadata = Some(metadata);
+        Ok(())
+    }
     pub fn set_siginfo(&mut self, siginfo: SigInfo) -> anyhow::Result<()> {
         anyhow::ensure!(self.siginfo.is_none());
         self.siginfo = Some(siginfo);
@@ -156,7 +163,7 @@ impl CrashInfo {
         //let site = "datad0g.com";
         //let api_key = std::env::var("DD_API_KEY")?;
         let data = serde_json::to_vec(self)?;
-        let metadata = self.get_metadata();
+        let metadata = &self.metadata.as_ref().context("Missing metadata")?;
 
         let is_crash_tag = make_tag("is_crash", "yes")?;
         let tags = Some(

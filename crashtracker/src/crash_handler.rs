@@ -37,6 +37,7 @@ static mut RECEIVER: GlobalVarState<std::process::Child> = GlobalVarState::Unass
 static mut OLD_SIGBUS_HANDLER: GlobalVarState<SigAction> = GlobalVarState::Unassigned;
 static mut OLD_SIGSEGV_HANDLER: GlobalVarState<SigAction> = GlobalVarState::Unassigned;
 static mut RESOLVE_FRAMES: bool = false;
+static mut METADATA_STRING: Option<String> = None;
 
 fn make_receiver(
     config: &CrashtrackerConfiguration,
@@ -73,12 +74,27 @@ fn make_receiver(
         "{}",
         serde_json::to_string(&config)?
     )?;
-    writeln!(
-        receiver.stdin.as_ref().unwrap(),
-        "{}",
-        serde_json::to_string(&metadata)?
-    )?;
+
+    update_metadata(metadata)?;
     Ok(receiver)
+}
+
+/// Updates the crashtracker metadata for this process
+/// Metadata is stored in a global variable and sent to the crashtracking
+/// receiver when a crash occurs.
+///
+/// PRECONDITIONS:
+///     None
+/// SAFETY:
+///     Crash-tracking functions are not reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function is not atomic. A crash during its execution may lead to
+///     unexpected crash-handling behaviour.
+pub fn update_metadata(metadata: &CrashtrackerMetadata) -> anyhow::Result<()> {
+    let metadata_string = serde_json::to_string(&metadata)?;
+    unsafe { METADATA_STRING = Some(metadata_string) };
+    Ok(())
 }
 
 pub fn setup_receiver(
@@ -142,6 +158,17 @@ extern "C" fn handle_posix_signal(signum: i32) {
     // return to old handler (chain).  See comments on `restore_old_handler`.
 }
 
+fn emit_metadata(w: &mut impl Write) -> anyhow::Result<()> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_METADATA}")?;
+
+    let metadata = unsafe { &METADATA_STRING.as_ref().context("Expected metadata")? };
+    writeln!(w, "{}", metadata)?;
+
+    writeln!(w, "{DD_CRASHTRACK_END_METADATA}")?;
+
+    Ok(())
+}
+
 fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     let mut receiver = match std::mem::replace(unsafe { &mut RECEIVER }, GlobalVarState::Taken) {
         GlobalVarState::Some(r) => r,
@@ -158,6 +185,9 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     };
 
     let pipe = receiver.stdin.as_mut().unwrap();
+
+    emit_metadata(pipe)?;
+
     writeln!(pipe, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
     writeln!(pipe, "{{\"signum\": {signum}, \"signame\": \"{signame}\"}}")?;
     writeln!(pipe, "{DD_CRASHTRACK_END_SIGINFO}")?;
