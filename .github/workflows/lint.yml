@@ -53,7 +53,7 @@ jobs:
   # have diverged in more than a few words. You should verify that the licence
   #  text is in fact correct in these cases.
   #
-  # If this job fails, you need to regenerate the license, e.g.
+  # If this job fails, you probably need to regenerate the license, e.g.
   # CARGO_HOME=/tmp/dd-cargo cargo bundle-licenses --format yaml --output LICENSE-3rdparty.yml
   license-3rdparty:
     runs-on: ubuntu-latest
@@ -82,7 +82,8 @@ jobs:
             --format yaml \
             --output /tmp/CI.yaml \
             --previous LICENSE-3rdparty.yml \
-            --check-previous 
+            --check-previous \
+          || diff /tmp/CI.yaml LICENSE-3rdparty.yml
       - name: export the generated license file on failure
         if: ${{ failure() }}
         uses: actions/upload-artifact@v3
