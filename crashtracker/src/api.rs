@@ -187,7 +187,7 @@ fn test_crash() {
     let path_to_receiver_binary =
         "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
     let create_alt_stack = true;
-    let resolve_frames = CrashtrackerResolveFrames::ExperimentalInReceiver;
+    let resolve_frames = CrashtrackerResolveFrames::Never;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
 
