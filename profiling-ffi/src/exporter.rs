@@ -156,9 +156,9 @@ fn ddog_prof_exporter_new_impl(
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: Endpoint,
 ) -> anyhow::Result<ProfileExporter> {
-    let library_name = unsafe { profiling_library_name.to_utf8_lossy() }.into_owned();
-    let library_version = unsafe { profiling_library_version.to_utf8_lossy() }.into_owned();
-    let family = unsafe { family.to_utf8_lossy() }.into_owned();
+    let library_name = profiling_library_name.to_utf8_lossy().into_owned();
+    let library_version = profiling_library_version.to_utf8_lossy().into_owned();
+    let family = family.to_utf8_lossy().into_owned();
     let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
     let tags = tags.map(|tags| tags.iter().cloned().collect());
     ProfileExporter::new(
