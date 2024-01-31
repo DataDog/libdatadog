@@ -2,6 +2,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use http::uri::{PathAndQuery, Scheme};
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use ddcommon::{parse_uri, Endpoint};
@@ -45,7 +46,7 @@ impl ToString for IpcMode {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum LogMethod {
     Stdout,
     Stderr,
@@ -115,7 +116,7 @@ impl FromEnv {
         }
     }
 
-    fn log_method() -> LogMethod {
+    pub fn log_method() -> LogMethod {
         let method = std::env::var(ENV_SIDECAR_LOG_METHOD).unwrap_or_default();
 
         match method.as_str() {
