@@ -4,17 +4,18 @@
 //! See the mod.rs file comment for why this module and file exists.
 
 use super::super::Sample;
+use super::timestamped_observations::TimestampedObservations;
 use super::trimmed_observation::{ObservationLength, TrimmedObservation};
 use crate::internal::Timestamp;
 use std::collections::HashMap;
-use crate::collections::identifiable::*;
-use lz4_flex::frame::FrameEncoder;
-use std::io::Write;
 
 struct NonEmptyObservations {
+    // Samples with no timestamps are aggregated in-place as each observation is added
     aggregated_data: HashMap<Sample, TrimmedObservation>,
-    compressed_timestamped_data: FrameEncoder<Vec<u8>>,
+    // Samples with timestamps are all separately kept (so we can know the exact values at the given timestamp)
+    timestamped_data: Option<TimestampedObservations>,
     obs_len: ObservationLength,
+    timestamped_samples_count: usize,
 }
 
 #[derive(Default)]
@@ -24,27 +25,22 @@ pub struct Observations {
 
 /// Public API
 impl Observations {
-    pub fn init_timeline(&mut self, values_size: usize) {
-        if let Some(_inner) = &self.inner {
-            panic!("Should never happen!");
-        } else {
-            // Create buffer with a big capacity to avoid lots of small allocations for growing it
-            let timestamped_data_buffer: Vec<u8> = Vec::with_capacity(1_048_576);
-            // let timestamped_data_buffer: Vec<u8> = vec![];
+    pub fn initialize(&mut self, observations_len: usize) {
+        assert_eq!(self.inner.is_none(), true);
 
-            self.inner = Some(NonEmptyObservations {
-                aggregated_data: Default::default(),
-                compressed_timestamped_data: FrameEncoder::new(timestamped_data_buffer),
-                obs_len: ObservationLength::new(values_size),
-            });
-        };
+        self.inner = Some(NonEmptyObservations {
+            aggregated_data: Default::default(),
+            timestamped_data: Some(TimestampedObservations::new(observations_len)),
+            obs_len: ObservationLength::new(observations_len),
+            timestamped_samples_count: 0,
+        });
     }
 
     pub fn add(&mut self, sample: Sample, timestamp: Option<Timestamp>, values: Vec<i64>) {
         if let Some(inner) = &self.inner {
             inner.obs_len.assert_eq(values.len());
         } else {
-            panic!("Should never happen!");
+            self.initialize(values.len());
         };
 
         // SAFETY: we just ensured it has an item above.
@@ -52,12 +48,12 @@ impl Observations {
         let obs_len = observations.obs_len;
 
         if let Some(ts) = timestamp {
-            observations.compressed_timestamped_data.write_all(&(Id::into_raw_id(sample.stacktrace) as u32).to_ne_bytes()).unwrap();
-            observations.compressed_timestamped_data.write(&(Id::into_raw_id(sample.labels) as u32).to_ne_bytes()).unwrap();
-            observations.compressed_timestamped_data.write(&i64::from(ts).to_ne_bytes()).unwrap();
-            values.iter().for_each(|v| { observations.compressed_timestamped_data.write(&(*v).to_ne_bytes()).unwrap(); });
-
-            // println!("Recorded timestamped data");
+            observations
+                .timestamped_data
+                .as_mut()
+                .unwrap()
+                .add(sample, ts, values);
+            observations.timestamped_samples_count += 1;
         } else if let Some(v) = observations.aggregated_data.get_mut(&sample) {
             // SAFETY: This method is only way to build one of these, and at
             // the top we already checked the length matches.
@@ -72,40 +68,22 @@ impl Observations {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.inner.is_none()
+        self.inner.is_none() ||
+            (self.aggregated_samples_count() == 0 && self.timestamped_samples_count() == 0)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (Sample, Option<Timestamp>, &[i64])> {
-        self.inner.iter().flat_map(|observations| {
-            let obs_len = observations.obs_len;
-            let aggregated_data = observations
-                .aggregated_data
-                .iter()
-                .map(move |(sample, obs)| (sample, None, obs));
-            // let timestamped_data = observations
-            //     .timestamped_data
-            //     .iter()
-            //     .map(move |(sample, ts, obs)| (sample, Some(*ts), obs));
-            aggregated_data
-                // .chain(timestamped_data)
-                .map(move |(sample, ts, obs)| {
-                    // SAFETY: The only way to build one of these is through
-                    // [Self::add], which already checked that the length was correct.
-                    (*sample, ts, unsafe { obs.as_slice(obs_len) })
-                })
-        })
+    pub fn aggregated_samples_count(&self) -> usize {
+        self.inner
+            .as_ref()
+            .map(|o| o.aggregated_data.len())
+            .unwrap_or(0)
     }
 
-    pub fn timestamped_data(&mut self) -> Vec<u8> {
-        if let Some(_inner) = &self.inner {
-        } else {
-            return vec![];
-        };
-
-        let observations = unsafe { self.inner.as_mut().unwrap_unchecked() };
-
-        let encoder = std::mem::replace(&mut observations.compressed_timestamped_data, FrameEncoder::new(vec![]));
-        encoder.finish().unwrap()
+    pub fn timestamped_samples_count(&self) -> usize {
+        self.inner
+            .as_ref()
+            .map(|o| o.timestamped_samples_count)
+            .unwrap_or(0)
     }
 }
 
@@ -126,10 +104,15 @@ impl IntoIterator for Observations {
 
     fn into_iter(self) -> Self::IntoIter {
         let it = self.inner.into_iter().flat_map(|mut observations| {
-            std::mem::take(&mut observations.aggregated_data)
+            let timestamped_data_it = std::mem::take(&mut observations.timestamped_data)
+                .unwrap()
+                .into_iter()
+                .map(|(s, t, o)| (s, Some(t), o));
+            let aggregated_data_it = std::mem::take(&mut observations.aggregated_data)
                 .into_iter()
                 .map(|(s, o)| (s, None, o))
-                .map(move |(s, t, o)| (s, t, unsafe { o.into_vec(observations.obs_len) }))
+                .map(move |(s, t, o)| (s, t, unsafe { o.into_vec(observations.obs_len) }));
+            timestamped_data_it.chain(aggregated_data_it)
         });
         ObservationsIntoIter { it: Box::new(it) }
     }
@@ -156,7 +139,6 @@ mod test {
     #[test]
     fn add_and_iter_test() {
         let mut o = Observations::default();
-        o.init_timeline(3);
         // These are only for test purposes. The only thing that matters is that
         // they differ
         let s1 = Sample {
@@ -177,50 +159,15 @@ mod test {
         o.add(s1, None, vec![1, 2, 3]);
         o.add(s1, None, vec![4, 5, 6]);
         o.add(s2, None, vec![7, 8, 9]);
-        o.iter().for_each(|(k, ts, v)| {
-            assert!(ts.is_none());
-            if k == s1 {
-                assert_eq!(v, vec![5, 7, 9]);
-            } else if k == s2 {
-                assert_eq!(v, vec![7, 8, 9]);
-            } else {
-                panic!("Unexpected key");
-            }
-        });
-        // Iter twice to make sure there are no issues doing that
-        o.iter().for_each(|(k, ts, v)| {
-            assert!(ts.is_none());
-            if k == s1 {
-                assert_eq!(v, vec![5, 7, 9]);
-            } else if k == s2 {
-                assert_eq!(v, vec![7, 8, 9]);
-            } else {
-                panic!("Unexpected key");
-            }
-        });
         o.add(s3, t1, vec![10, 11, 12]);
-
-        o.iter().for_each(|(k, ts, v)| {
-            if k == s1 {
-                assert_eq!(v, vec![5, 7, 9]);
-                assert!(ts.is_none());
-            } else if k == s2 {
-                assert_eq!(v, vec![7, 8, 9]);
-                assert!(ts.is_none());
-            } else if k == s3 {
-                assert_eq!(v, vec![10, 11, 12]);
-                assert_eq!(ts, t1);
-            } else {
-                panic!("Unexpected key");
-            }
-        });
-
         o.add(s2, t2, vec![13, 14, 15]);
-        o.iter().for_each(|(k, ts, v)| {
+
+        o.into_iter().for_each(|(k, ts, v)| {
             if k == s1 {
+                // Observations without timestamp, these are aggregated together
                 assert_eq!(v, vec![5, 7, 9]);
-                assert!(ts.is_none());
             } else if k == s2 {
+                // Same stack with and without timestamp
                 if ts.is_some() {
                     assert_eq!(v, vec![13, 14, 15]);
                     assert_eq!(ts, t2);
@@ -229,6 +176,7 @@ mod test {
                     assert!(ts.is_none());
                 }
             } else if k == s3 {
+                // Observation with timestamp
                 assert_eq!(v, vec![10, 11, 12]);
                 assert_eq!(ts, t1);
             } else {
@@ -346,7 +294,6 @@ mod test {
     #[test]
     fn into_iter_test() {
         let mut o = Observations::default();
-        o.init_timeline(3);
         // These are only for test purposes. The only thing that matters is that
         // they differ
         let s1 = Sample {
@@ -385,7 +332,6 @@ mod test {
             }
         });
         // Two of the samples were aggregated, so three total samples at the end
-        // FIXME: moved to 2 as we don't yet have iteration on timestamp
-        assert_eq!(count, 2);
+        assert_eq!(count, 3);
     }
 }
