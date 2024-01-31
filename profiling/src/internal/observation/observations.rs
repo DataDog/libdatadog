@@ -25,22 +25,24 @@ pub struct Observations {
 
 /// Public API
 impl Observations {
-    pub fn initialize(&mut self, observations_len: usize) {
-        assert_eq!(self.inner.is_none(), true);
+    pub fn new(observations_len: usize) -> Self {
+        Observations { inner: Some(Self::initialize(observations_len)) }
+    }
 
-        self.inner = Some(NonEmptyObservations {
+    fn initialize(observations_len: usize) -> NonEmptyObservations {
+        NonEmptyObservations {
             aggregated_data: Default::default(),
             timestamped_data: Some(TimestampedObservations::new(observations_len)),
             obs_len: ObservationLength::new(observations_len),
             timestamped_samples_count: 0,
-        });
+        }
     }
 
     pub fn add(&mut self, sample: Sample, timestamp: Option<Timestamp>, values: Vec<i64>) {
         if let Some(inner) = &self.inner {
             inner.obs_len.assert_eq(values.len());
         } else {
-            self.initialize(values.len());
+            self.inner = Some(Self::initialize(values.len()));
         };
 
         // SAFETY: we just ensured it has an item above.

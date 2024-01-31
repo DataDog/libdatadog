@@ -145,7 +145,7 @@ impl Profile {
             label_sets: Default::default(),
             locations: Default::default(),
             mappings: Default::default(),
-            observations: Default::default(),
+            observations: Observations::new(sample_types.len()),
             period: None,
             sample_types: vec![],
             stack_traces: Default::default(),
@@ -180,8 +180,6 @@ impl Profile {
                 },
             ));
         };
-
-        profile.observations.initialize(profile.sample_types.len());
 
         profile
     }
