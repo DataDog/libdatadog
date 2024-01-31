@@ -489,5 +489,5 @@ pub unsafe extern "C" fn ddog_sidecar_dump(
     let malloced = libc::malloc(size) as *mut u8;
     let buf = slice::from_raw_parts_mut(malloced, size);
     buf.copy_from_slice(str.as_bytes());
-    ffi::CharSlice::new(malloced as *mut c_char, size)
+    ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
 }
