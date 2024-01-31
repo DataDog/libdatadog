@@ -91,6 +91,8 @@ fn test_ddog_sidecar_register_app() {
             1000,
             1000000,
             10000000,
+            "".into(),
+            "".into(),
         );
 
         let meta = ddog_sidecar_runtimeMeta_build(
@@ -132,6 +134,8 @@ fn test_ddog_sidecar_register_app() {
             1000,
             1000000,
             10000000,
+            "".into(),
+            "".into(),
         );
 
         //TODO: Shutdown the service
