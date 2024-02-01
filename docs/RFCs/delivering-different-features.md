@@ -26,41 +26,54 @@ The issue is that we have several features:
 - crash tracking
 - symbolization (ongoing).
 
-Not every profiler / tracer needs every feature, so we need it here way of Building and delivering exactly what we need.
+Not every profiler / tracer needs every feature, so we need it a way of pulling in exactly what we need.
 
 ## Not a solution
 
-### Delivering different libraries
+### Splitting features in several libraries
 
-By delivering features in several libraries, we expose ourselves to duplicated Rust runtimes (with possibly different versions and behaviours).
+You could imagine delivering several libraries:
+- telemetry library
+- profiling library 
+- symbolization library
+
+However by doing so, we expose ourselves to duplicated Rust runtimes (with possibly different versions and behaviours). We can also imagine symbol and ABI issues resulting from such a build pipeline.
 
 ## Proposed solution
 
-### Building everything together 
+### 1 Building everything together 
 
 Building a single static library with all features bundled. This means that downstream builds would be in charge of removing the parts that are not required.
 By linking against a static library, the compiler will remove the parts that are not needed.
 
 Cons
-- Longer build times
 - Cross team dependencies to deliver artifacts (flaky tests)
-- Shared libraries are no longer an option
+- Shared libraries need an extra step (refer to option 3)
 A shared library with everything in it will be too big. You need to link against a static library to remove the unused parts of the library.
-- Longer build times 
+- Longer build times when linking against static libraries
 Some profilers / tracers require compiling from source. Building against static libraries means longer build times.
 
 Pros
 + Simple build pipeline
 + Easier to experiment with a new feature (it is already availalbe locally)
 
-### Features
+### 2 Features
 
 Create new pipelines with a select amount of features.
 For languages that need shared libraries, we should make sure we are able to select the features we publish.
 
-The way this would work:
+Cons
+- More CI pipelines
+- A slightly weird pattern (shell crate)
 
-#### Build
+Pros
++ Easy to select the features you want to build
++ More modular and controlled usage of dependencies
+
+#### Illustration
+
+*Build step*
+
 We have as "shell" crate that pulls in all of the libdatadog features.
 We select what we want at build time.
 
@@ -68,11 +81,36 @@ We select what we want at build time.
 cargo build --features symbolizer telemetry crash-tracking
 ```
 
-#### Delivery
+*Delivery step*
 
 CI pipelines are created with the required features.
 
+### 3 Intermediate builds to produce shared libraries
+
+For the languages that need shared libraries, we can add an intermediate build step, which selects the APIs that need to be kept and published.
+This intermediate build step can be either in the per-language CIs or within the libdatadog distribution steps.
+
+Pros
++ Fine grain control over what is delivered
+
+Cons
+- Additional complexity (slower iterations to produce artifacts)
+
+#### Example through Ruby
+
+*Current state*
+
+- Libdatadog release builds a static and a dynamic library for profiling, which gets uploaded as a tarball to GitHub.
+- The scripts in the ruby/ folder in the libdatadog repository take the GitHub release, keeps only the dynamic library, adds a few Ruby helpers, packages and uploads it as the "libdatadog" gem to rubygems.org.
+- Downstream dd-trace-rb consumes the "libdatadog" gem, using the shared library inside.
+
+*Proposed change*
+
+- Libdatadog release builds only a static library with all features. This gets released.
+- We update the scripts in the ruby folder to take as an input the static library and to repackage it as a dynamic library containing only the APIs that Ruby makes use of. That dynamic library gets uploaded as the "libdatadog" gem to rubygems.org
+- Same as above -- no changes needed.
+
 ## Recommended
 
-I think we can do both proposed solutions. For the languages that require shared libraries, we can have the feature solution.
-We can deliver a large static library for languages that link against a static library.
+I would recommend a mix of solution 1 and 2. For the languages that require shared libraries, we can use the feature solution (solution 2).
+We can deliver a single static library (with all features) for languages that can link against a static library.
