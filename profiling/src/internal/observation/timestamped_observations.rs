@@ -15,6 +15,7 @@ use lz4_flex::frame::FrameEncoder;
 use std::io::Cursor;
 use std::io::Write;
 
+#[derive(Debug)]
 pub struct TimestampedObservations {
     compressed_timestamped_data: FrameEncoder<Vec<u8>>,
     sample_types_len: usize,
