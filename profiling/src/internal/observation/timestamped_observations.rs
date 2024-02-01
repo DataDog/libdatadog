@@ -78,16 +78,13 @@ impl Iterator for TimestampedObservationsIter {
     fn next(&mut self) -> Option<Self::Item> {
         // In here we read the bytes in the same order as in add above
 
-        let stacktrace = match self.decoder.read_u32::<NativeEndian>() {
-            Ok(value) => value,
-            Err(_) => return None,
-        };
+        let stacktrace = self.decoder.read_u32::<NativeEndian>().ok()?;
         let labels = self.decoder.read_u32::<NativeEndian>().ok()?;
         let ts = self.decoder.read_i64::<NativeEndian>().ok()?;
         let mut values = Vec::with_capacity(self.sample_types_len);
-        (0..self.sample_types_len).for_each(|_| {
-            values.push(self.decoder.read_i64::<NativeEndian>().unwrap());
-        });
+        for _ in 0..self.sample_types_len {
+            values.push(self.decoder.read_i64::<NativeEndian>().ok()?);
+        }
         Some((
             Sample {
                 stacktrace: StackTraceId::from_offset(stacktrace as usize),
