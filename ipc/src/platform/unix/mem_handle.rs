@@ -92,7 +92,7 @@ impl NamedShmHandle {
         Self::new(fd, Some(path), size)
     }
 
-    pub fn open(path: CString) -> io::Result<NamedShmHandle> {
+    pub fn open(path: &CString) -> io::Result<NamedShmHandle> {
         let fd = shm_open(path.as_bytes(), OFlag::O_RDWR, Mode::empty())?;
         let file: File = unsafe { OwnedFd::from_raw_fd(fd) }.into();
         let size = file.metadata()?.size() as usize;

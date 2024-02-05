@@ -3,7 +3,7 @@
 
 use arrayref::array_ref;
 use datadog_ipc::platform::metadata::ProcessHandle;
-use datadog_ipc::platform::{Channel, FileBackedHandle, NamedShmHandle, PIPE_PATH};
+use datadog_ipc::platform::{Channel, PIPE_PATH};
 use kernel32::{CreateFileA, CreateNamedPipeA, WTSGetActiveConsoleSessionId};
 use std::ffi::CString;
 use std::os::windows::io::{FromRawHandle, OwnedHandle};
@@ -12,12 +12,14 @@ use std::time::{Duration, Instant};
 use std::{env, io, mem};
 use libc::getpid;
 use tokio::net::windows::named_pipe::NamedPipeServer;
+use tracing::warn;
 use winapi::{
     DWORD, ERROR_ACCESS_DENIED, ERROR_PIPE_BUSY, FILE_FLAG_FIRST_PIPE_INSTANCE,
     FILE_FLAG_OVERLAPPED, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, LPSECURITY_ATTRIBUTES,
     OPEN_EXISTING, PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
     PIPE_UNLIMITED_INSTANCES, SECURITY_ATTRIBUTES,
 };
+use crate::one_way_shared_memory::open_named_shm;
 
 use crate::setup::Liaison;
 
@@ -69,17 +71,21 @@ impl Liaison for NamedPipeLiaison {
             ProcessHandle::Getter(Box::new(move || {
                 // Await the shared memory handle which will contain the pid of the sidecar - it may not be immediately available during startup
                 let timeout_end = Instant::now() + Duration::from_secs(2);
+                let mut last_error = None;
+                let pid_path = pid_shm_path(&String::from_utf8_lossy(socket_path.as_bytes()));
                 loop {
-                    if let Ok(shm) = NamedShmHandle::open(pid_shm_path(&String::from_utf8_lossy(
-                        socket_path.as_bytes(),
-                    ))) {
-                        let shm = shm.map()?;
-                        let pid = u32::from_ne_bytes(*array_ref![shm.as_slice(), 0, 4]);
-                        if pid != 0 {
-                            return Ok(ProcessHandle::Pid(pid));
-                        }
+                    match open_named_shm(&pid_path) {
+                        Ok(shm) => {
+                            let pid = u32::from_ne_bytes(*array_ref![shm.as_slice(), 0, 4]);
+                            if pid != 0 {
+                                return Ok(ProcessHandle::Pid(pid));
+                            }
+                        },
+                        Err(e) => last_error = Some(e),
                     }
                     if Instant::now() > timeout_end {
+                        warn!("Reading the sidecar pid from {} timed out after {:?}. (last error: {:?})",
+                            pid_path.to_string_lossy(), timeout_end, last_error);
                         return Err(io::Error::from(io::ErrorKind::TimedOut));
                     }
                     std::thread::yield_now();

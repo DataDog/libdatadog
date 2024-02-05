@@ -102,7 +102,7 @@ impl ShmHandle {
 }
 
 impl NamedShmHandle {
-    fn format_name(path: CString) -> CString {
+    fn format_name(path: &CString) -> CString {
         // Global\ namespace is reserved for Session ID 0. We cannot rely on our PHP process having permissions to write to Global\.
         // This requires us to have one sidecar per Session ID. That's good enough though.
         CString::new(format!(
@@ -113,7 +113,7 @@ impl NamedShmHandle {
     }
 
     pub fn create(path: CString, size: usize) -> io::Result<NamedShmHandle> {
-        let name = Self::format_name(path);
+        let name = Self::format_name(&path);
         Self::new(
             alloc_shm(name.as_ptr() as LPCSTR)?,
             name,
@@ -121,7 +121,7 @@ impl NamedShmHandle {
         )
     }
 
-    pub fn open(path: CString) -> io::Result<NamedShmHandle> {
+    pub fn open(path: &CString) -> io::Result<NamedShmHandle> {
         let name = Self::format_name(path);
         let handle = unsafe { OpenFileMappingA(FILE_MAP_WRITE, 0, name.as_ptr() as LPCSTR) };
         if handle == null_mut() {

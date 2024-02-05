@@ -33,7 +33,7 @@ impl Drop for WrappedHANDLE {
 pub enum ProcessHandle {
     Handle(WrappedHANDLE),
     Pid(ULONG),
-    Getter(Box<dyn FnOnce() -> io::Result<ProcessHandle>>),
+    Getter(Box<dyn Fn() -> io::Result<ProcessHandle>>),
 }
 
 unsafe impl Send for ProcessHandle {}
@@ -52,7 +52,7 @@ impl ProcessHandle {
                 *self = ProcessHandle::Handle(WrappedHANDLE(handle));
             }
             ProcessHandle::Getter(getter) => {
-                *self = std::mem::replace(getter, Box::new(|| unreachable!()))()?
+                *self = getter()?
             }
         };
         return self.get();
