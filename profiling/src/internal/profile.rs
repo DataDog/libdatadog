@@ -24,7 +24,7 @@ pub struct Profile {
     sample_types: Vec<ValueType>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
-    strings: FxIndexSet<String>,
+    strings: FxIndexSet<Box<str>>,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
 }
@@ -302,7 +302,7 @@ impl Profile {
         }
 
         for item in self.strings.into_iter() {
-            encoder.encode(ProfileStringTableEntry::from(item))?;
+            encoder.encode_str(item)?;
         }
 
         encoder.encode(ProfileSimpler {
