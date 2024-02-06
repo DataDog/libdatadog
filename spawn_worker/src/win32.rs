@@ -6,14 +6,18 @@ use kernel32::{CreateFileA, WaitForSingleObject};
 use std::ffi::{c_void, OsStr, OsString};
 use std::fs::{File, OpenOptions};
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle, RawHandle};
 use std::os::windows::process::ExitStatusExt;
+use std::path::PathBuf;
 use std::process::ExitStatus;
 use std::ptr::null_mut;
 use std::{env, fs, io, io::Write};
-use std::os::windows::fs::OpenOptionsExt;
-use std::path::PathBuf;
-use winapi::{DWORD, FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_DELETE_ON_CLOSE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE, LPCSTR, OPEN_EXISTING, SECURITY_ATTRIBUTES, WAIT_OBJECT_0};
+use winapi::{
+    DWORD, FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_DELETE_ON_CLOSE, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE, LPCSTR, OPEN_EXISTING, SECURITY_ATTRIBUTES,
+    WAIT_OBJECT_0,
+};
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
     DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE, INVALID_HANDLE_VALUE,
@@ -38,9 +42,7 @@ use windows::{
 
 use crate::{LibDependency, Target, ENV_PASS_FD_KEY};
 
-fn write_trampoline(
-    process_name: &Option<String>,
-) -> io::Result<(PathBuf, File)> {
+fn write_trampoline(process_name: &Option<String>) -> io::Result<(PathBuf, File)> {
     let path = if let Some(process_name) = process_name {
         let path = env::temp_dir().join(process_name);
 
@@ -52,7 +54,11 @@ fn write_trampoline(
         path
     } else {
         loop {
-            let path = env::temp_dir().join(std::iter::repeat_with(fastrand::alphanumeric).take(6).collect::<String>());
+            let path = env::temp_dir().join(
+                std::iter::repeat_with(fastrand::alphanumeric)
+                    .take(6)
+                    .collect::<String>(),
+            );
             if !path.exists() {
                 break path;
             }

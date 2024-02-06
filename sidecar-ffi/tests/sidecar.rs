@@ -54,7 +54,8 @@ fn test_ddog_ph_file_handling() {
 }
 
 #[test]
-#[cfg_attr(not(windows), ignore)] // run all tests that can fork in a separate run, to avoid any race conditions with default rust test harness
+#[cfg_attr(not(windows), ignore)]
+// run all tests that can fork in a separate run, to avoid any race conditions with default rust test harness
 /// run with: RUSTFLAGS="-C prefer-dynamic" cargo test --package test_spawn_from_lib --features prefer-dynamic -- --ignored
 #[cfg_attr(windows, ignore = "requires -C prefer-dynamic")]
 #[cfg_attr(windows, cfg(feature = "prefer_dynamic"))]

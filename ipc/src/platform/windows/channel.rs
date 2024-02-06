@@ -199,7 +199,7 @@ impl Write for Channel {
             if Some(ERROR_IO_PENDING as i32) == error.raw_os_error() {
                 self.wait_io_overlapped(self.inner.write_timeout)
             } else {
-               Err(error)
+                Err(error)
             }
         }
     }

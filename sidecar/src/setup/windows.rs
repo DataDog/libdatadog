@@ -1,16 +1,17 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use crate::one_way_shared_memory::open_named_shm;
 use arrayref::array_ref;
 use datadog_ipc::platform::metadata::ProcessHandle;
 use datadog_ipc::platform::{Channel, PIPE_PATH};
 use kernel32::{CreateFileA, CreateNamedPipeA, WTSGetActiveConsoleSessionId};
+use libc::getpid;
 use std::ffi::CString;
 use std::os::windows::io::{FromRawHandle, OwnedHandle};
 use std::ptr::null_mut;
 use std::time::{Duration, Instant};
 use std::{env, io, mem};
-use libc::getpid;
 use tokio::net::windows::named_pipe::NamedPipeServer;
 use tracing::warn;
 use winapi::{
@@ -19,7 +20,6 @@ use winapi::{
     OPEN_EXISTING, PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
     PIPE_UNLIMITED_INSTANCES, SECURITY_ATTRIBUTES,
 };
-use crate::one_way_shared_memory::open_named_shm;
 
 use crate::setup::Liaison;
 
@@ -80,7 +80,7 @@ impl Liaison for NamedPipeLiaison {
                             if pid != 0 {
                                 return Ok(ProcessHandle::Pid(pid));
                             }
-                        },
+                        }
                         Err(e) => last_error = Some(e),
                     }
                     if Instant::now() > timeout_end {
@@ -172,11 +172,11 @@ pub type DefaultLiason = NamedPipeLiaison;
 #[cfg(test)]
 mod tests {
     use futures::future;
+    use kernel32::CloseHandle;
     use rand::distributions::Alphanumeric;
     use rand::{thread_rng, Rng};
     use std::io::Write;
     use std::os::windows::io::IntoRawHandle;
-    use kernel32::CloseHandle;
     use tokio::io::AsyncReadExt;
     use tokio::net::windows::named_pipe::NamedPipeServer;
 

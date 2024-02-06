@@ -51,9 +51,7 @@ impl ProcessHandle {
                 }
                 *self = ProcessHandle::Handle(WrappedHANDLE(handle));
             }
-            ProcessHandle::Getter(getter) => {
-                *self = getter()?
-            }
+            ProcessHandle::Getter(getter) => *self = getter()?,
         };
         return self.get();
     }

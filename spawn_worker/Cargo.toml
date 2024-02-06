@@ -31,5 +31,8 @@ memfd = { version = "0.6" }
 nix = { version = "0.24" }
 tempfile = { version = "3.3" }
 
+[target.'cfg(windows)'.dev-dependencies]
+tempfile = { version = "3.3" }
+
 [target.'cfg(not(windows))'.dev-dependencies]
 rlimit = {version = "0.9"}

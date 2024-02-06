@@ -45,7 +45,6 @@ pub enum LibDependency {
     Binary(&'static [u8]),
 }
 
-
 impl From<Entrypoint> for Target {
     fn from(entrypoint: Entrypoint) -> Self {
         Target::Entrypoint(entrypoint)

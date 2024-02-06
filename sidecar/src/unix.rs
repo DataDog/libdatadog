@@ -5,7 +5,6 @@ use spawn_worker::{getpid, SpawnWorker, Stdio};
 
 use std::os::unix::net::UnixListener as StdUnixListener;
 
-use crate::config::Config;
 use crate::enter_listener_loop;
 use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
 use nix::sys::socket::{shutdown, Shutdown};

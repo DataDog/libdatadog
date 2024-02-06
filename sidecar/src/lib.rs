@@ -2,15 +2,15 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 pub mod agent_remote_config;
 pub mod config;
+mod dump;
 pub mod entry;
 pub mod interface;
+#[cfg(feature = "tracing")]
+pub mod log;
 pub mod one_way_shared_memory;
 mod self_telemetry;
 pub mod setup;
 mod tracer;
-#[cfg(feature = "tracing")]
-pub mod log;
-mod dump;
 
 pub use entry::*;
 
