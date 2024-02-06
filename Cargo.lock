@@ -247,7 +247,7 @@ checksum = "703642b98a00b3b90513279a8ede3fcfa479c126c5fb46e78f3051522f021403"
 [[package]]
 name = "blazesym"
 version = "0.2.0-alpha.10"
-source = "git+https://github.com/libbpf/blazesym.git?rev=ab769859339aab7ecb8de57d7accc93d021b628a#ab769859339aab7ecb8de57d7accc93d021b628a"
+source = "git+https://github.com/libbpf/blazesym.git?rev=db01d98008ad09c2683490ae21eedba218f91aa2#db01d98008ad09c2683490ae21eedba218f91aa2"
 dependencies = [
  "cpp_demangle",
  "gimli",
@@ -258,9 +258,10 @@ dependencies = [
 [[package]]
 name = "blazesym-c"
 version = "0.0.0"
-source = "git+https://github.com/libbpf/blazesym.git?rev=ab769859339aab7ecb8de57d7accc93d021b628a#ab769859339aab7ecb8de57d7accc93d021b628a"
+source = "git+https://github.com/libbpf/blazesym.git?rev=db01d98008ad09c2683490ae21eedba218f91aa2#db01d98008ad09c2683490ae21eedba218f91aa2"
 dependencies = [
  "blazesym",
+ "memoffset 0.9.0",
 ]
 
 [[package]]
@@ -1190,7 +1191,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4271d37baee1b8c7e4b708028c57d816cf9d2434acb33a549475f78c181f6253"
 dependencies = [
  "fallible-iterator",
- "indexmap 2.1.0",
+ "indexmap 2.2.1",
  "stable_deref_trait",
 ]
 

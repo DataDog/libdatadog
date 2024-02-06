@@ -17,7 +17,14 @@
 // This is slightly surprising considering self maps should be readable
 void symbolize_and_print(blaze_symbolizer* symbolizer, uintptr_t addr) {
     std::vector<uintptr_t> addrs = {addr};
-    blaze_symbolize_src_process src = { static_cast<uint32_t>(getpid()), false};
+    
+    blaze_symbolize_src_process src = {
+      .type_size = sizeof(blaze_symbolize_src_process),
+      .pid = static_cast<uint32_t>(getpid()),
+      .debug_syms = false,
+      .perf_map = false,
+      .reserved = {},
+    };
     const blaze_result* results = blaze_symbolize_process_abs_addrs(
         symbolizer, &src, addrs.data(), addrs.size());
     assert(results);

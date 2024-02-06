@@ -8,11 +8,27 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+/* Helper macro to declare and initialize a blazesym input struct.
+ *
+ * Inspired by `LIBBPF_OPTS` macro provided by libbpf.
+ */
+#define BLAZE_INPUT(TYPE, NAME, ...)        \
+  struct TYPE NAME = ({                     \
+    (struct TYPE) {                         \
+      .type_size = sizeof(struct TYPE),     \
+      __VA_ARGS__                           \
+    };                                      \
+  })
+
 
 /**
  * The type of a symbol.
  */
-typedef enum blaze_sym_type {
+enum blaze_sym_type
+#ifdef __cplusplus
+  : uint8_t
+#endif // __cplusplus
+ {
   /**
    * The symbol type is unspecified or unknown.
    *
@@ -20,7 +36,7 @@ typedef enum blaze_sym_type {
    * other variants (functions and variables), whereas in output
    * contexts it means that the type is not known.
    */
-  BLAZE_SYM_UNDEFINED,
+  BLAZE_SYM_UNDEF,
   /**
    * The symbol is a function.
    */
@@ -29,7 +45,10 @@ typedef enum blaze_sym_type {
    * The symbol is a variable.
    */
   BLAZE_SYM_VAR,
-} blaze_sym_type;
+};
+#ifndef __cplusplus
+typedef uint8_t blaze_sym_type;
+#endif // __cplusplus
 
 /**
  * The valid variant kind in [`blaze_user_meta`].
@@ -76,7 +95,11 @@ typedef struct blaze_sym_info {
   /**
    * See [`inspect::SymInfo::sym_type`].
    */
-  enum blaze_sym_type sym_type;
+  blaze_sym_type sym_type;
+  /**
+   * Unused member available for future expansion.
+   */
+  uint8_t reserved[15];
 } blaze_sym_info;
 
 /**
@@ -91,6 +114,13 @@ typedef struct blaze_inspector blaze_inspector;
  */
 typedef struct blaze_inspect_elf_src {
   /**
+   * The size of this object's type.
+   *
+   * Make sure to initialize it to `sizeof(<type>)`. This member is used to
+   * ensure compatibility in the presence of member additions.
+   */
+  size_t type_size;
+  /**
    * The path to the ELF file. This member is always present.
    */
   const char *path;
@@ -99,12 +129,40 @@ typedef struct blaze_inspect_elf_src {
    * (if present).
    */
   bool debug_syms;
+  /**
+   * Unused member available for future expansion. Must be initialized
+   * to zero.
+   */
+  uint8_t reserved[7];
 } blaze_inspect_elf_src;
 
 /**
  * C ABI compatible version of [`blazesym::normalize::Normalizer`].
  */
 typedef struct blaze_normalizer blaze_normalizer;
+
+/**
+ * Options for configuring [`blaze_normalizer`] objects.
+ */
+typedef struct blaze_normalizer_opts {
+  /**
+   * The size of this object's type.
+   *
+   * Make sure to initialize it to `sizeof(<type>)`. This member is used to
+   * ensure compatibility in the presence of member additions.
+   */
+  size_t type_size;
+  /**
+   * Whether to read and report build IDs as part of the normalization
+   * process.
+   */
+  bool build_ids;
+  /**
+   * Unused member available for future expansion. Must be initialized
+   * to zero.
+   */
+  uint8_t reserved[7];
+} blaze_normalizer_opts;
 
 /**
  * C compatible version of [`Apk`].
@@ -115,6 +173,10 @@ typedef struct blaze_user_meta_apk {
    * This member is always present.
    */
   char *path;
+  /**
+   * Unused member available for future expansion.
+   */
+  uint8_t reserved[8];
 } blaze_user_meta_apk;
 
 /**
@@ -133,6 +195,10 @@ typedef struct blaze_user_meta_elf {
    * The optional build ID of the ELF file, if found.
    */
   uint8_t *build_id;
+  /**
+   * Unused member available for future expansion.
+   */
+  uint8_t reserved[8];
 } blaze_user_meta_elf;
 
 /**
@@ -140,9 +206,9 @@ typedef struct blaze_user_meta_elf {
  */
 typedef struct blaze_user_meta_unknown {
   /**
-   * This member is unused.
+   * Unused member available for future expansion.
    */
-  uint8_t _unused;
+  uint8_t reserved[8];
 } blaze_user_meta_unknown;
 
 /**
@@ -215,6 +281,10 @@ typedef struct blaze_normalized_user_output {
    * An array of `output_cnt` objects.
    */
   struct blaze_normalized_output *outputs;
+  /**
+   * Unused member available for future expansion.
+   */
+  uint8_t reserved[8];
 } blaze_normalized_user_output;
 
 /**
@@ -226,9 +296,16 @@ typedef struct blaze_normalized_user_output {
 typedef struct blaze_symbolizer blaze_symbolizer;
 
 /**
- * Options for configuring `blaze_symbolizer` objects.
+ * Options for configuring [`blaze_symbolizer`] objects.
  */
 typedef struct blaze_symbolizer_opts {
+  /**
+   * The size of this object's type.
+   *
+   * Make sure to initialize it to `sizeof(<type>)`. This member is used to
+   * ensure compatibility in the presence of member additions.
+   */
+  size_t type_size;
   /**
    * Whether to attempt to gather source code location information.
    *
@@ -247,6 +324,11 @@ typedef struct blaze_symbolizer_opts {
    * the underlying language does not mangle symbols (such as C).
    */
   bool demangle;
+  /**
+   * Unused member available for future expansion. Must be initialized
+   * to zero.
+   */
+  uint8_t reserved[5];
 } blaze_symbolizer_opts;
 
 /**
@@ -275,6 +357,10 @@ typedef struct blaze_symbolize_code_info {
    * code.
    */
   uint16_t column;
+  /**
+   * Unused member available for future expansion.
+   */
+  uint8_t reserved[10];
 } blaze_symbolize_code_info;
 
 /**
@@ -289,6 +375,10 @@ typedef struct blaze_symbolize_inlined_fn {
    * Source code location information for the inlined function.
    */
   struct blaze_symbolize_code_info code_info;
+  /**
+   * Unused member available for future expansion.
+   */
+  uint8_t reserved[8];
 } blaze_symbolize_inlined_fn;
 
 /**
@@ -336,6 +426,10 @@ typedef struct blaze_sym {
    * An array of `inlined_cnt` symbolized inlined function calls.
    */
   const struct blaze_symbolize_inlined_fn *inlined;
+  /**
+   * Unused member available for future expansion.
+   */
+  uint8_t reserved[8];
 } blaze_sym;
 
 /**
@@ -366,6 +460,13 @@ typedef struct blaze_result {
  */
 typedef struct blaze_symbolize_src_process {
   /**
+   * The size of this object's type.
+   *
+   * Make sure to initialize it to `sizeof(<type>)`. This member is used to
+   * ensure compatibility in the presence of member additions.
+   */
+  size_t type_size;
+  /**
    * It is the PID of a process to symbolize.
    *
    * blazesym will parse `/proc/<pid>/maps` and load all the object
@@ -382,6 +483,11 @@ typedef struct blaze_symbolize_src_process {
    * procedure.
    */
   bool perf_map;
+  /**
+   * Unused member available for future expansion. Must be initialized
+   * to zero.
+   */
+  uint8_t reserved[2];
 } blaze_symbolize_src_process;
 
 /**
@@ -391,6 +497,13 @@ typedef struct blaze_symbolize_src_process {
  * debug information.
  */
 typedef struct blaze_symbolize_src_kernel {
+  /**
+   * The size of this object's type.
+   *
+   * Make sure to initialize it to `sizeof(<type>)`. This member is used to
+   * ensure compatibility in the presence of member additions.
+   */
+  size_t type_size;
   /**
    * The path of a copy of kallsyms.
    *
@@ -414,6 +527,11 @@ typedef struct blaze_symbolize_src_kernel {
    * to satisfy the request (if present).
    */
   bool debug_syms;
+  /**
+   * Unused member available for future expansion. Must be initialized
+   * to zero.
+   */
+  uint8_t reserved[7];
 } blaze_symbolize_src_kernel;
 
 /**
@@ -423,6 +541,13 @@ typedef struct blaze_symbolize_src_kernel {
  * process.
  */
 typedef struct blaze_symbolize_src_elf {
+  /**
+   * The size of this object's type.
+   *
+   * Make sure to initialize it to `sizeof(<type>)`. This member is used to
+   * ensure compatibility in the presence of member additions.
+   */
+  size_t type_size;
   /**
    * The path to the ELF file.
    *
@@ -437,12 +562,24 @@ typedef struct blaze_symbolize_src_elf {
    * (if present).
    */
   bool debug_syms;
+  /**
+   * Unused member available for future expansion. Must be initialized
+   * to zero.
+   */
+  uint8_t reserved[7];
 } blaze_symbolize_src_elf;
 
 /**
  * The parameters to load symbols and debug information from "raw" Gsym data.
  */
 typedef struct blaze_symbolize_src_gsym_data {
+  /**
+   * The size of this object's type.
+   *
+   * Make sure to initialize it to `sizeof(<type>)`. This member is used to
+   * ensure compatibility in the presence of member additions.
+   */
+  size_t type_size;
   /**
    * The Gsym data.
    */
@@ -457,6 +594,13 @@ typedef struct blaze_symbolize_src_gsym_data {
  * The parameters to load symbols and debug information from a Gsym file.
  */
 typedef struct blaze_symbolize_src_gsym_file {
+  /**
+   * The size of this object's type.
+   *
+   * Make sure to initialize it to `sizeof(<type>)`. This member is used to
+   * ensure compatibility in the presence of member additions.
+   */
+  size_t type_size;
   /**
    * The path to a gsym file.
    */
@@ -521,10 +665,22 @@ void blaze_inspector_free(blaze_inspector *inspector);
 /**
  * Create an instance of a blazesym normalizer.
  *
- * The returned pointer should be released using
- * [`blaze_normalizer_free`] once it is no longer needed.
+ * The returned pointer should be released using [`blaze_normalizer_free`] once
+ * it is no longer needed.
  */
 blaze_normalizer *blaze_normalizer_new(void);
+
+/**
+ * Create an instance of a blazesym normalizer.
+ *
+ * The returned pointer should be released using [`blaze_normalizer_free`] once
+ * it is no longer needed.
+ *
+ * # Safety
+ * The provided pointer needs to point to a valid [`blaze_normalizer_opts`]
+ * instance.
+ */
+blaze_normalizer *blaze_normalizer_new_opts(const struct blaze_normalizer_opts *opts);
 
 /**
  * Free a blazesym normalizer.
