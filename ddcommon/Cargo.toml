@@ -40,5 +40,5 @@ tokio-rustls = { version = "0.23" }
 serde = { version = "1.0", features = ["derive"] }
 
 [dev-dependencies]
-indexmap = "1.8"
+indexmap = "2.2"
 maplit = "1.0"
