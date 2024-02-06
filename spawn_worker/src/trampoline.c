@@ -117,8 +117,6 @@ int main(int argc, char *argv[]) {
     }
 
     (*fn)();
-
-    // TODO: create shell process to cleanup temp file
 #endif
     return 0;
   }

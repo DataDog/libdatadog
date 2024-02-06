@@ -128,9 +128,7 @@ pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
     #[allow(unused_unsafe)] // the unix method is unsafe
     let mut spawn_cfg = unsafe { spawn_worker::SpawnWorker::new() };
 
-    spawn_cfg
-        .target(entrypoint!(ddog_daemon_entry_point))
-        .process_name("datadog-ipc-helper");
+    spawn_cfg.target(entrypoint!(ddog_daemon_entry_point));
 
     for (env, val) in cfg.to_env().into_iter() {
         spawn_cfg.append_env(env, val);

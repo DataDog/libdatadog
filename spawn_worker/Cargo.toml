@@ -5,16 +5,10 @@ version = "0.0.1"
 
 [dependencies]
 anyhow = { version = "1.0" }
-memfd = { version = "0.6" }
-nix = { version = "0.24" }
-tempfile = { version = "3.3" }
 io-lifetimes = { version = "1.0" }
 
 [build-dependencies]
 cc_utils = {path = "../tools/cc_utils"}
-
-[dev-dependencies]
-tempfile = {version = "3.3"}
 
 [dependencies.windows]
 features = [
@@ -30,6 +24,12 @@ version = "0.48"
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "=0.2.8" }
 kernel32-sys = "0.2.2"
+fastrand = "2.0.1"
+
+[target.'cfg(not(windows))'.dependencies]
+memfd = { version = "0.6" }
+nix = { version = "0.24" }
+tempfile = { version = "3.3" }
 
 [target.'cfg(not(windows))'.dev-dependencies]
 rlimit = {version = "0.9"}

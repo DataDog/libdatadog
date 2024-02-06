@@ -4,20 +4,16 @@
 use anyhow::Context;
 use kernel32::{CreateFileA, WaitForSingleObject};
 use std::ffi::{c_void, OsStr, OsString};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle, RawHandle};
 use std::os::windows::process::ExitStatusExt;
 use std::process::ExitStatus;
 use std::ptr::null_mut;
-use std::{
-    env, io,
-    io::{Seek, Write},
-};
-use winapi::{
-    DWORD, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE,
-    LPCSTR, OPEN_EXISTING, SECURITY_ATTRIBUTES, WAIT_OBJECT_0,
-};
+use std::{env, fs, io, io::Write};
+use std::os::windows::fs::OpenOptionsExt;
+use std::path::PathBuf;
+use winapi::{DWORD, FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_DELETE_ON_CLOSE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE, LPCSTR, OPEN_EXISTING, SECURITY_ATTRIBUTES, WAIT_OBJECT_0};
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
     DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE, INVALID_HANDLE_VALUE,
@@ -42,22 +38,46 @@ use windows::{
 
 use crate::{LibDependency, Target, ENV_PASS_FD_KEY};
 
-pub(crate) fn write_trampoline(
+fn write_trampoline(
     process_name: &Option<String>,
-) -> anyhow::Result<tempfile::NamedTempFile> {
-    let tmp_file = if let Some(process_name) = process_name {
-        tempfile::Builder::new()
-            .prefix(&format!("{}-", process_name))
-            .tempfile()
+) -> io::Result<(PathBuf, File)> {
+    let path = if let Some(process_name) = process_name {
+        let path = env::temp_dir().join(process_name);
+
+        // Attempt to move it just in case it already exists
+        let mut old_path = path.clone();
+        old_path.set_extension("old");
+        let _ = fs::rename(&path, old_path);
+
+        path
     } else {
-        tempfile::NamedTempFile::new()
-    }?;
-    let mut file = tmp_file.as_file();
+        loop {
+            let path = env::temp_dir().join(std::iter::repeat_with(fastrand::alphanumeric).take(6).collect::<String>());
+            if !path.exists() {
+                break path;
+            }
+        }
+    };
+
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .custom_flags(FILE_ATTRIBUTE_TEMPORARY)
+        .open(path.clone())?;
+
     file.set_len(crate::TRAMPOLINE_BIN.len() as u64)?;
     file.write_all(crate::TRAMPOLINE_BIN)?;
-    file.rewind()?;
+    drop(file);
 
-    Ok(tmp_file)
+    // And now open it with FILE_FLAG_DELETE_ON_CLOSE
+    let file = OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_DELETE_ON_CLOSE)
+        .open(path.clone())?;
+
+    Ok((path, file))
 }
 
 pub enum Stdio {
@@ -232,8 +252,7 @@ impl SpawnWorker {
     }
 
     fn do_spawn(&mut self) -> anyhow::Result<Child> {
-        let (f, path) = write_trampoline(&self.process_name)?.keep()?;
-        drop(f);
+        let (path, _file) = write_trampoline(&self.process_name)?;
 
         let mut envs = self.env.clone();
         let mut inherited_handles = vec![];

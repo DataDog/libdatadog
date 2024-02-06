@@ -78,6 +78,7 @@ pub fn setup_daemon_process(
 ) -> io::Result<()> {
     spawn_cfg
         .daemonize(true)
+        .process_name("datadog-ipc-helper")
         .pass_fd(unsafe { OwnedFd::from_raw_fd(listener.into_raw_fd()) })
         .stdin(Stdio::Null);
 
