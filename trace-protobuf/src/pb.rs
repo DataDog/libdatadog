@@ -230,6 +230,10 @@ pub struct StatsPayload {
     pub agent_version: ::prost::alloc::string::String,
     #[prost(bool, tag = "5")]
     pub client_computed: bool,
+    /// splitPayload indicates if the payload is actually one of several payloads split out from a larger payload.
+    /// This field can be used in the backend to signal if re-aggregation is necessary.
+    #[prost(bool, tag = "6")]
+    pub split_payload: bool,
 }
 /// ClientStatsPayload is the first layer of span stats aggregation. It is also
 /// the payload sent by tracers to the agent when stats in tracer are enabled.
@@ -361,12 +365,12 @@ pub struct ClientGroupedStats {
     /// count of top level spans aggregated in the groupedstats
     #[prost(uint64, tag = "13")]
     pub top_level_hits: u64,
-    /// name of the remote service that the `service` communicated with
-    #[prost(string, tag = "14")]
-    #[serde(default)]
-    pub peer_service: ::prost::alloc::string::String,
     /// value of the span.kind tag on the span
     #[prost(string, tag = "15")]
     #[serde(default)]
     pub span_kind: ::prost::alloc::string::String,
+    /// peer_tags are supplementary tags that further describe a peer entity
+    /// E.g., `grpc.target` to describe the name of a gRPC peer, or `db.hostname` to describe the name of peer DB
+    #[prost(string, repeated, tag = "16")]
+    pub peer_tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }

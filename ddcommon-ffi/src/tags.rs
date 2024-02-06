@@ -108,7 +108,7 @@ mod tests {
                 ddog_Vec_Tag_push(&mut tags, CharSlice::from("sound"), CharSlice::from("woof"));
             assert!(matches!(result, PushTagResult::Ok));
             assert_eq!(1, tags.len());
-            assert_eq!("sound:woof", tags.get(0).unwrap().to_string());
+            assert_eq!("sound:woof", tags.first().unwrap().to_string());
         }
     }
 
@@ -119,7 +119,7 @@ mod tests {
         // SAFETY: CharSlices from Rust strings are safe.
         let result = unsafe { ddog_Vec_Tag_parse(CharSlice::from(dd_tags)) };
         assert_eq!(2, result.tags.len());
-        assert_eq!("env:staging:east", result.tags.get(0).unwrap().to_string());
+        assert_eq!("env:staging:east", result.tags.first().unwrap().to_string());
         assert_eq!("env_staging:east", result.tags.get(1).unwrap().to_string());
 
         // 'tags:' cannot end in a semi-colon, so expect an error.
