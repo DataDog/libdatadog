@@ -17,6 +17,7 @@ use std::fs::File;
 use std::os::unix::prelude::FromRawFd;
 #[cfg(windows)]
 use std::os::windows::io::{FromRawHandle, RawHandle};
+use std::slice;
 use std::time::Duration;
 
 use datadog_sidecar::interface::{
@@ -147,7 +148,7 @@ pub extern "C" fn ddog_agent_remote_config_write(
     writer: &AgentRemoteConfigWriter<ShmHandle>,
     data: ffi::CharSlice,
 ) {
-    writer.write(unsafe { data.as_bytes() });
+    writer.write(data.as_bytes());
 }
 
 fn ddog_agent_remote_config_read_generic<'a, T>(
@@ -427,17 +428,15 @@ pub struct TracerHeaderTags<'a> {
 
 impl<'a> From<&'a TracerHeaderTags<'a>> for SerializedTracerHeaderTags {
     fn from(tags: &'a TracerHeaderTags<'a>) -> Self {
-        unsafe {
-            datadog_trace_utils::trace_utils::TracerHeaderTags {
-                lang: &tags.lang.to_utf8_lossy(),
-                lang_version: &tags.lang_version.to_utf8_lossy(),
-                lang_interpreter: &tags.lang_interpreter.to_utf8_lossy(),
-                lang_vendor: &tags.lang_vendor.to_utf8_lossy(),
-                tracer_version: &tags.tracer_version.to_utf8_lossy(),
-                container_id: &tags.container_id.to_utf8_lossy(),
-                client_computed_top_level: tags.client_computed_top_level,
-                client_computed_stats: tags.client_computed_stats,
-            }
+        datadog_trace_utils::trace_utils::TracerHeaderTags {
+            lang: &tags.lang.to_utf8_lossy(),
+            lang_version: &tags.lang_version.to_utf8_lossy(),
+            lang_interpreter: &tags.lang_interpreter.to_utf8_lossy(),
+            lang_vendor: &tags.lang_vendor.to_utf8_lossy(),
+            tracer_version: &tags.tracer_version.to_utf8_lossy(),
+            container_id: &tags.container_id.to_utf8_lossy(),
+            client_computed_top_level: tags.client_computed_top_level,
+            client_computed_stats: tags.client_computed_stats,
         }
         .into()
     }
@@ -490,7 +489,7 @@ pub unsafe extern "C" fn ddog_sidecar_dump(
     };
     let size = str.len();
     let malloced = libc::malloc(size) as *mut u8;
-    let buf = std::slice::from_raw_parts_mut(malloced, size);
+    let buf = slice::from_raw_parts_mut(malloced, size);
     buf.copy_from_slice(str.as_bytes());
-    ffi::CharSlice::new(malloced as *mut c_char, size)
+    ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
 }

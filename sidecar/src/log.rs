@@ -41,7 +41,7 @@ pub struct TemporarilyRetainedMap<K, V>
 where
     K: TemporarilyRetainedKeyParser<V> + Clone + Eq + Hash,
 {
-    maps: RwLock<HashMap<K, V>>,
+    pub maps: RwLock<HashMap<K, V>>,
     live_counter: Mutex<HashMap<K, i32>>,
     pending_removal: Mutex<PriorityQueue<K, Instant>>,
     pub expire_after: Duration,
@@ -86,7 +86,7 @@ where
 
         let mut pending = self.pending_removal.lock().unwrap();
         while let Some((_, time)) = pending.peek() {
-            if *time > Instant::now().sub(self.expire_after) {
+            if *time < Instant::now().sub(self.expire_after) {
                 let (log_level, _) = pending.pop().unwrap();
                 self.maps.write().unwrap().remove(&log_level);
                 <K as TemporarilyRetainedKeyParser<V>>::disable();
@@ -334,4 +334,64 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
     LogTracer::init()?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::{TemporarilyRetainedKeyParser, TemporarilyRetainedMap};
+    use lazy_static::lazy_static;
+    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::time::Duration;
+
+    lazy_static! {
+        static ref ENABLED: AtomicI32 = AtomicI32::default();
+        static ref DISABLED: AtomicI32 = AtomicI32::default();
+    }
+
+    impl TemporarilyRetainedKeyParser<i32> for String {
+        fn parse(&self) -> i32 {
+            str::parse(self).unwrap()
+        }
+
+        fn enable() {
+            ENABLED.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn disable() {
+            DISABLED.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn test_refcounting_temporarily_retained_map() {
+        let map = TemporarilyRetainedMap::<_, i32> {
+            expire_after: Duration::from_millis(10),
+            ..Default::default()
+        };
+        let guard1 = map.add("1".to_string());
+        assert_eq!(1, *map.maps.read().unwrap().get("1").unwrap());
+        assert_eq!(1, ENABLED.load(Ordering::SeqCst));
+
+        drop(map.add("1".to_string()));
+
+        std::thread::sleep(Duration::from_millis(10));
+        let _guard2 = map.add("2".to_string());
+        // still there, even after drop of one occurrence
+        assert_eq!(1, *map.maps.read().unwrap().get("1").unwrap());
+
+        drop(guard1);
+        // Not immediately dropped
+        assert_eq!(1, *map.maps.read().unwrap().get("1").unwrap());
+
+        std::thread::sleep(Duration::from_millis(10));
+        // still there, drop should only happen after first insertion
+        assert_eq!(1, *map.maps.read().unwrap().get("1").unwrap());
+
+        drop(map.add("2".to_string()));
+        // actually dropped
+        assert_eq!(None, map.maps.read().unwrap().get("1"));
+
+        assert_eq!(1, DISABLED.load(Ordering::SeqCst));
+        assert_eq!(2, ENABLED.load(Ordering::SeqCst));
+    }
 }

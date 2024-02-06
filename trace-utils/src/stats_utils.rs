@@ -34,6 +34,7 @@ pub fn construct_stats_payload(stats: Vec<pb::ClientStatsPayload>) -> pb::StatsP
         stats,
         agent_version: "".to_string(),
         client_computed: true,
+        split_payload: false,
     }
 }
 
