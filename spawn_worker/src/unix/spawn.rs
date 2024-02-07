@@ -27,7 +27,6 @@ use std::fs::File;
 
 use std::io;
 use std::ops::RangeInclusive;
-use std::path::PathBuf;
 use std::{
     env,
     ffi::{self, CString, OsString},
@@ -126,7 +125,7 @@ impl Target {
                     "can't find the entrypoint's target path",
                 )
             }),
-            Target::ManualTrampoline(p, _) => Ok(PathBuf::from(p)),
+            Target::ManualTrampoline(p, _) => Ok(std::path::PathBuf::from(p)),
             Target::Noop => return Ok(default_method),
         }?;
         let target_filename = target_path.file_name().ok_or_else(|| {
