@@ -2,3 +2,6 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 pub mod identifiable;
+mod string_table;
+
+pub use string_table::*;

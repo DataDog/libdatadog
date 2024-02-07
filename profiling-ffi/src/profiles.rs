@@ -63,7 +63,6 @@ pub enum ProfileResult {
 #[repr(C)]
 pub enum ProfileNewResult {
     Ok(Profile),
-    #[allow(dead_code)]
     Err(Error),
 }
 
@@ -333,7 +332,7 @@ impl<'a> TryFrom<Sample<'a>> for api::Sample<'a> {
 ///                  time.
 ///
 /// # Safety
-/// All slices must be have pointers that are suitably aligned for their type
+/// All slices must have pointers that are suitably aligned for their type
 /// and must have the correct number of elements for the slice.
 #[no_mangle]
 #[must_use]
@@ -341,14 +340,16 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
     start_time: Option<&Timespec>,
+    string_arena_min_capacity: libc::size_t,
 ) -> ProfileNewResult {
     let types: Vec<api::ValueType> = sample_types.into_slice().iter().map(Into::into).collect();
     let start_time = start_time.map_or_else(SystemTime::now, SystemTime::from);
     let period = period.map(Into::into);
 
-    let internal_profile = internal::Profile::new(start_time, &types, period);
-    let ffi_profile = Profile::new(internal_profile);
-    ProfileNewResult::Ok(ffi_profile)
+    match internal::Profile::new(start_time, &types, period, string_arena_min_capacity) {
+        Ok(internal_profile) => ProfileNewResult::Ok(Profile::new(internal_profile)),
+        Err(err) => ProfileNewResult::Err(Error::from(err.context("ddog_prof_Profile_new failed"))),
+    }
 }
 
 /// # Safety
@@ -468,8 +469,13 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_endpoint(
         }
     };
     let endpoint = endpoint.to_utf8_lossy();
-    profile.add_endpoint(local_root_span_id, endpoint);
-    ProfileResult::Ok(true)
+    if let Err(err) = profile.add_endpoint(local_root_span_id, endpoint) {
+        ProfileResult::Err(Error::from(
+            err.context("ddog_prof_Profile_set_endpoint failed"),
+        ))
+    } else {
+        ProfileResult::Ok(true)
+    }
 }
 
 /// Count the number of times an endpoint has been seen.
@@ -775,6 +781,7 @@ mod test {
                 Slice::from_raw_parts(sample_type, 1),
                 None,
                 None,
+                4096,
             ))?;
             ddog_prof_Profile_drop(&mut profile);
             Ok(())
@@ -789,6 +796,7 @@ mod test {
                 Slice::from_raw_parts(sample_type, 1),
                 None,
                 None,
+                4096,
             ))?;
 
             // wrong number of values (doesn't match sample types)
@@ -818,6 +826,7 @@ mod test {
                 Slice::from_raw_parts(sample_type, 1),
                 None,
                 None,
+                4096,
             ))?;
 
             let mapping = Mapping {
@@ -879,6 +888,7 @@ mod test {
             Slice::from_raw_parts(sample_type, 1),
             None,
             None,
+            4096,
         ))
         .unwrap();
 

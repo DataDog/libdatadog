@@ -27,7 +27,7 @@ pub use sample::*;
 pub use stack_trace::*;
 pub use timestamp::*;
 pub use upscaling::*;
-pub use value_type::*;
+pub(crate) use value_type::*;
 
 use super::pprof;
 use crate::collections::identifiable::*;
