@@ -16,8 +16,7 @@ use std::time::{Duration, SystemTime};
 /// the C API functions on this struct.
 #[repr(C)]
 pub struct Profile {
-    // This may possibly be null, but will be a valid pointer to an owned
-    // Profile otherwise.
+    // This may be null, but if not it will point to a valid Profile.
     inner: *mut internal::Profile,
 }
 
@@ -204,8 +203,8 @@ impl<'a> TryFrom<&'a Mapping<'a>> for api::Mapping<'a> {
     type Error = Utf8Error;
 
     fn try_from(mapping: &'a Mapping<'a>) -> Result<Self, Self::Error> {
-        let filename = unsafe { mapping.filename.try_to_utf8() }?;
-        let build_id = unsafe { mapping.build_id.try_to_utf8() }?;
+        let filename = mapping.filename.try_to_utf8()?;
+        let build_id = mapping.build_id.try_to_utf8()?;
         Ok(Self {
             memory_start: mapping.memory_start,
             memory_limit: mapping.memory_limit,
@@ -218,11 +217,9 @@ impl<'a> TryFrom<&'a Mapping<'a>> for api::Mapping<'a> {
 
 impl<'a> From<&'a ValueType<'a>> for api::ValueType<'a> {
     fn from(vt: &'a ValueType<'a>) -> Self {
-        unsafe {
-            Self {
-                r#type: vt.type_.try_to_utf8().unwrap_or(""),
-                unit: vt.unit.try_to_utf8().unwrap_or(""),
-            }
+        Self {
+            r#type: vt.type_.try_to_utf8().unwrap_or(""),
+            unit: vt.unit.try_to_utf8().unwrap_or(""),
         }
     }
 }
@@ -240,17 +237,15 @@ impl<'a> TryFrom<&'a Function<'a>> for api::Function<'a> {
     type Error = Utf8Error;
 
     fn try_from(function: &'a Function<'a>) -> Result<Self, Self::Error> {
-        unsafe {
-            let name = function.name.try_to_utf8()?;
-            let system_name = function.system_name.try_to_utf8()?;
-            let filename = function.filename.try_to_utf8()?;
-            Ok(Self {
-                name,
-                system_name,
-                filename,
-                start_line: function.start_line,
-            })
-        }
+        let name = function.name.try_to_utf8()?;
+        let system_name = function.system_name.try_to_utf8()?;
+        let filename = function.filename.try_to_utf8()?;
+        Ok(Self {
+            name,
+            system_name,
+            filename,
+            start_line: function.start_line,
+        })
     }
 }
 
@@ -284,24 +279,22 @@ impl<'a> TryFrom<&'a Label<'a>> for api::Label<'a> {
     type Error = Utf8Error;
 
     fn try_from(label: &'a Label<'a>) -> Result<Self, Self::Error> {
-        unsafe {
-            let key = label.key.try_to_utf8()?;
-            let str = label.str.try_to_utf8()?;
-            let str = if str.is_empty() { None } else { Some(str) };
-            let num_unit = label.num_unit.try_to_utf8()?;
-            let num_unit = if num_unit.is_empty() {
-                None
-            } else {
-                Some(num_unit)
-            };
+        let key = label.key.try_to_utf8()?;
+        let str = label.str.try_to_utf8()?;
+        let str = if str.is_empty() { None } else { Some(str) };
+        let num_unit = label.num_unit.try_to_utf8()?;
+        let num_unit = if num_unit.is_empty() {
+            None
+        } else {
+            Some(num_unit)
+        };
 
-            Ok(Self {
-                key,
-                str,
-                num: label.num,
-                num_unit,
-            })
-        }
+        Ok(Self {
+            key,
+            str,
+            num: label.num,
+            num_unit,
+        })
     }
 }
 
@@ -310,24 +303,23 @@ impl<'a> TryFrom<Sample<'a>> for api::Sample<'a> {
 
     fn try_from(sample: Sample<'a>) -> Result<Self, Self::Error> {
         let mut locations: Vec<api::Location> = Vec::with_capacity(sample.locations.len());
-        unsafe {
-            for location in sample.locations.as_slice().iter() {
-                locations.push(location.try_into()?)
-            }
 
-            let values: Vec<i64> = sample.values.into_slice().to_vec();
-
-            let mut labels: Vec<api::Label> = Vec::with_capacity(sample.labels.len());
-            for label in sample.labels.as_slice().iter() {
-                labels.push(label.try_into()?);
-            }
-
-            Ok(Self {
-                locations,
-                values,
-                labels,
-            })
+        for location in sample.locations.as_slice().iter() {
+            locations.push(location.try_into()?)
         }
+
+        let values: Vec<i64> = sample.values.into_slice().to_vec();
+
+        let mut labels: Vec<api::Label> = Vec::with_capacity(sample.labels.len());
+        for label in sample.labels.as_slice().iter() {
+            labels.push(label.try_into()?);
+        }
+
+        Ok(Self {
+            locations,
+            values,
+            labels,
+        })
     }
 }
 
@@ -780,7 +772,7 @@ mod test {
         unsafe {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
             let mut profile = Result::from(ddog_prof_Profile_new(
-                Slice::new(sample_type, 1),
+                Slice::from_raw_parts(sample_type, 1),
                 None,
                 None,
             ))?;
@@ -794,7 +786,7 @@ mod test {
         unsafe {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
             let mut profile = Result::from(ddog_prof_Profile_new(
-                Slice::new(sample_type, 1),
+                Slice::from_raw_parts(sample_type, 1),
                 None,
                 None,
             ))?;
@@ -823,7 +815,7 @@ mod test {
         unsafe {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
             let mut profile = Result::from(ddog_prof_Profile_new(
-                Slice::new(sample_type, 1),
+                Slice::from_raw_parts(sample_type, 1),
                 None,
                 None,
             ))?;
@@ -884,7 +876,7 @@ mod test {
     unsafe fn provide_distinct_locations_ffi() -> Profile {
         let sample_type: *const ValueType = &ValueType::new("samples", "count");
         let mut profile = Result::from(ddog_prof_Profile_new(
-            Slice::new(sample_type, 1),
+            Slice::from_raw_parts(sample_type, 1),
             None,
             None,
         ))

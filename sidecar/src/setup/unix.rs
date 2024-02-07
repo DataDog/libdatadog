@@ -10,6 +10,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(feature = "logging")]
+use log::{debug, warn};
+#[cfg(not(feature = "logging"))]
+use tracing::{debug, warn};
+
 use datadog_ipc::platform::{self, locks::FLock};
 
 /// Implementations of this interface must provide behavior repeatable across processes with the same version
@@ -58,7 +63,7 @@ impl Liaison for SharedDirLiaison {
             // failing to acquire lock
             // means that another process is creating the socket
             Err(err) => {
-                tracing::debug!("failed_locking");
+                warn!("failed_locking");
                 return Err(err);
             }
         };
@@ -66,7 +71,7 @@ impl Liaison for SharedDirLiaison {
         if self.socket_path.exists() {
             // if socket is already listening, then creating listener is not available
             if platform::sockets::is_listening(&self.socket_path)? {
-                tracing::debug!("already_listening");
+                debug!("already_listening");
                 return Ok(None);
             }
             fs::remove_file(&self.socket_path)?;

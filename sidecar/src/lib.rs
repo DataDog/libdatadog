@@ -13,6 +13,13 @@ pub mod setup;
 #[cfg(not(windows))]
 mod tracer;
 
+#[cfg(not(windows))]
+#[cfg(feature = "tracing")]
+pub mod log;
+
+#[cfg(not(windows))]
+mod dump;
+
 #[cfg(unix)]
 mod unix;
 
