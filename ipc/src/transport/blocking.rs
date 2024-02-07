@@ -29,19 +29,6 @@ pub struct BlockingTransport<IncomingItem, OutgoingItem> {
     transport: FramedBlocking<Response<IncomingItem>, ClientMessage<OutgoingItem>>,
 }
 
-/*
-impl<IncomingItem, OutgoingItem> Clone for BlockingTransport<IncomingItem, OutgoingItem> {
-    fn clone(&self) -> Self {
-        Self {
-            #[cfg(unix)]
-            pid: self.pid,
-            requests_id: self.requests_id.clone(),
-            transport: self.transport.clone(),
-        }
-    }
-}
- */
-
 impl<IncomingItem, OutgoingItem> From<Channel> for BlockingTransport<IncomingItem, OutgoingItem> {
     fn from(c: Channel) -> Self {
         BlockingTransport {
@@ -142,19 +129,6 @@ impl<IncomingItem, OutgoingItem> From<Channel> for FramedBlocking<IncomingItem, 
         }
     }
 }
-
-/*
-impl<IncomingItem, OutgoingItem> Clone for FramedBlocking<IncomingItem, OutgoingItem> {
-    fn clone(&self) -> Self {
-        Self {
-            codec: self.codec.clone(),
-            serde_codec: Box::pin(Default::default()),
-            read_buffer: self.read_buffer.clone(),
-            channel: self.channel.clone(),
-        }
-    }
-}
- */
 
 impl<IncomingItem, OutgoingItem> BlockingTransport<IncomingItem, OutgoingItem>
 where
