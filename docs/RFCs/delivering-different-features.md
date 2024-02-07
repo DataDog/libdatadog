@@ -96,6 +96,21 @@ Pros
 Cons
 - Additional complexity (slower iterations to produce artifacts)
 
+### 4 Interdependent shared libraries
+
+Split different features into shared libraries that expose their symbols and depend on each other.
+For example, we can imagine an exporter library on which the profiling aggregation library depends. This same export library is shared by the tracing aggregation.
+
+Pros:
+- Pull in exactly what you need
+- Single CI builds
+
+Cons:
+- Dependencies are harder to maintain. 
+You need to think exactly about what should be published and in what library.
+- Duplication of Rust runtime APIs (example: panic handlers)
+
+
 #### Example through Ruby
 
 *Current state*
@@ -112,5 +127,7 @@ Cons
 
 ## Recommended
 
-I would recommend a mix of solution 1 and 2. For the languages that require shared libraries, we can use the feature solution (solution 2).
-We can deliver a single static library (with all features) for languages that can link against a static library.
+Solution 1 and 2.
+
+We can deliver a single static library (with all features) for languages that can link against a static library (solution 1).
+For the languages that require shared libraries, we will use the feature solution (solution 2). This also allows developers to build and test only what they are currently working on.
