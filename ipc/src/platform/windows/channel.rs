@@ -24,6 +24,7 @@ use windows_sys::Win32::System::Threading::{CreateEventA, WaitForSingleObject};
 use windows_sys::Win32::System::IO::{GetOverlappedResult, OVERLAPPED, OVERLAPPED_0};
 
 pub mod async_channel;
+pub use async_channel::*;
 pub mod metadata;
 
 use self::metadata::ChannelMetadata;

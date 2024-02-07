@@ -15,6 +15,7 @@ use std::{
 };
 
 pub mod async_channel;
+pub use async_channel::*;
 pub mod metadata;
 
 use sendfd::{RecvWithFd, SendWithFd};

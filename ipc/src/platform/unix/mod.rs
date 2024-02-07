@@ -2,10 +2,8 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 mod platform_handle;
-pub use platform_handle::*;
 
 mod channel;
-pub use async_channel::*;
 pub use channel::*;
 
 pub mod locks;
