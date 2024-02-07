@@ -70,7 +70,7 @@ Pros
 + Easy to select the features you want to build
 + More modular and controlled usage of dependencies
 
-#### Illustration
+#### Example
 
 *Build step*
 
@@ -96,21 +96,6 @@ Pros
 Cons
 - Additional complexity (slower iterations to produce artifacts)
 
-### 4 Interdependent shared libraries
-
-Split different features into shared libraries that expose their symbols and depend on each other.
-For example, we can imagine an exporter library on which the profiling aggregation library depends. This same export library is shared by the tracing aggregation.
-
-Pros:
-- Pull in exactly what you need
-- Single CI builds
-
-Cons:
-- Dependencies are harder to maintain. 
-You need to think exactly about what should be published and in what library.
-- Duplication of Rust runtime APIs (example: panic handlers)
-
-
 #### Example through Ruby
 
 *Current state*
@@ -124,6 +109,20 @@ You need to think exactly about what should be published and in what library.
 - Libdatadog release builds only a static library with all features. This gets released.
 - We update the scripts in the ruby folder to take as an input the static library and to repackage it as a dynamic library containing only the APIs that Ruby makes use of. That dynamic library gets uploaded as the "libdatadog" gem to rubygems.org
 - Same as above -- no changes needed.
+
+### 4 Interdependent shared libraries
+
+Split different features into shared libraries that expose their symbols and depend on each other.
+For example, we can imagine an exporter library on which the profiling aggregation library depends. This same export library is shared by the tracing aggregation.
+
+Pros:
+- Pull in exactly what you need
+- Single CI builds
+
+Cons:
+- Dependencies are harder to maintain. 
+You need to think exactly about what should be published and in what library.
+- Duplication of Rust runtime APIs (example: panic handlers)
 
 ## Recommended
 
