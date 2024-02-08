@@ -31,7 +31,9 @@ impl TimestampedObservations {
 
     pub fn new(sample_types_len: usize) -> Self {
         TimestampedObservations {
-            compressed_timestamped_data: FrameEncoder::new(Vec::with_capacity(Self::DEFAULT_BUFFER_SIZE)),
+            compressed_timestamped_data: FrameEncoder::new(Vec::with_capacity(
+                Self::DEFAULT_BUFFER_SIZE,
+            )),
             sample_types_len: sample_types_len,
         }
     }
@@ -54,7 +56,8 @@ impl TimestampedObservations {
             .write_all(&timestamp.to_ne_bytes())?;
 
         for v in values {
-            self.compressed_timestamped_data.write_all(&(v).to_ne_bytes())?;
+            self.compressed_timestamped_data
+                .write_all(&(v).to_ne_bytes())?;
         }
 
         Ok(())

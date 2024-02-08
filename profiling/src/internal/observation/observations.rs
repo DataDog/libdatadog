@@ -27,26 +27,35 @@ pub struct Observations {
 impl Observations {
     pub fn new(observations_len: usize) -> Self {
         Observations {
-            inner: Some(
-                NonEmptyObservations {
-                    aggregated_data: Default::default(),
-                    timestamped_data: Some(TimestampedObservations::new(observations_len)),
-                    obs_len: ObservationLength::new(observations_len),
-                    timestamped_samples_count: 0,
-                }
-            )
+            inner: Some(NonEmptyObservations {
+                aggregated_data: Default::default(),
+                timestamped_data: Some(TimestampedObservations::new(observations_len)),
+                obs_len: ObservationLength::new(observations_len),
+                timestamped_samples_count: 0,
+            }),
         }
     }
 
-    pub fn add(&mut self, sample: Sample, timestamp: Option<Timestamp>, values: Vec<i64>) -> anyhow::Result<()> {
-        anyhow::ensure!(self.inner.is_some(), "Use of add on Observations that were not initialized");
+    pub fn add(
+        &mut self,
+        sample: Sample,
+        timestamp: Option<Timestamp>,
+        values: Vec<i64>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.inner.is_some(),
+            "Use of add on Observations that were not initialized"
+        );
 
         // SAFETY: we just ensured it has an item above.
         let observations = unsafe { self.inner.as_mut().unwrap_unchecked() };
         let obs_len = observations.obs_len;
 
         anyhow::ensure!(
-            obs_len.eq(values.len()), "Observation length mismatch, expected {obs_len:?} values, got {} instead",  values.len());
+            obs_len.eq(values.len()),
+            "Observation length mismatch, expected {obs_len:?} values, got {} instead",
+            values.len()
+        );
 
         if let Some(ts) = timestamp {
             observations
@@ -71,8 +80,8 @@ impl Observations {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.inner.is_none() ||
-            (self.aggregated_samples_count() == 0 && self.timestamped_samples_count() == 0)
+        self.inner.is_none()
+            || (self.aggregated_samples_count() == 0 && self.timestamped_samples_count() == 0)
     }
 
     pub fn aggregated_samples_count(&self) -> usize {
