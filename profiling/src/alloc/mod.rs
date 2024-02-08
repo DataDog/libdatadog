@@ -5,7 +5,6 @@ mod arena;
 mod r#virtual;
 
 pub use arena::*;
-use core::ptr::{self, NonNull};
 use std::sync::Once;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -111,24 +110,6 @@ fn pad_to(bytes: usize, page_size: usize) -> Option<usize> {
         _ => bytes.checked_add(page_size - remainder),
         // By definition, the remainder is less than the divisor, so this
         // page_size - remainder cannot underflow.
-    }
-}
-
-// Keep this as a private trait.
-trait AsNonNull<T> {
-    unsafe fn as_non_null(&self) -> NonNull<T>;
-    unsafe fn as_non_null_slice(&self) -> NonNull<[T]>;
-}
-
-impl AsNonNull<u8> for &[u8] {
-    unsafe fn as_non_null(&self) -> NonNull<u8> {
-        // SAFETY: slice pointers are always non-null, though they may dangle.
-        NonNull::new_unchecked(self.as_ptr() as *mut u8)
-    }
-
-    unsafe fn as_non_null_slice(&self) -> NonNull<[u8]> {
-        let slice = ptr::slice_from_raw_parts_mut(self.as_non_null().as_ptr(), self.len());
-        NonNull::new_unchecked(slice)
     }
 }
 
