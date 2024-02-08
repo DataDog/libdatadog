@@ -22,10 +22,16 @@ pub struct TimestampedObservations {
 }
 
 impl TimestampedObservations {
+    // As documented in the internal Datadog doc "Ruby timeline memory fragmentation impact investigation",
+    // allowing the timeline storage vec to slowly expand creates A LOT of memory fragmentation for apps that
+    // employ multiple threads.
+    // To avoid this, we've picked a default buffer size of 1MB that very rarely needs to grow, and when it does,
+    // is expected to grow in larger steps.
+    const DEFAULT_BUFFER_SIZE: usize = 1_048_576;
+
     pub fn new(sample_types_len: usize) -> Self {
-        // Create buffer with a big capacity to avoid lots of small allocations for growing it
         TimestampedObservations {
-            compressed_timestamped_data: FrameEncoder::new(Vec::with_capacity(1_048_576)),
+            compressed_timestamped_data: FrameEncoder::new(Vec::with_capacity(Self::DEFAULT_BUFFER_SIZE)),
             sample_types_len: sample_types_len,
         }
     }
