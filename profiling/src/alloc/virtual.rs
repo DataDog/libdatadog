@@ -32,14 +32,6 @@ mod unix {
     }
 
     pub fn alloc(min_size: usize) -> io::Result<Mapping> {
-        #[cfg(debug_assertions)]
-        if !min_size.is_power_of_two() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("requested virtual allocation was not a power of two: {min_size}"),
-            ));
-        }
-
         let page_size = page_size();
         match pad_to(min_size, page_size) {
             None => Err(io::Error::new(
@@ -103,14 +95,6 @@ mod windows {
     }
 
     pub fn alloc(min_size: usize) -> io::Result<Mapping> {
-        #[cfg(debug_assertions)]
-        if !min_size.is_power_of_two() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("requested virtual allocation was not a power of two: {min_size}"),
-            ));
-        }
-
         let page_size = page_size();
         match pad_to(min_size, page_size) {
             None => Err(io::Error::new(
