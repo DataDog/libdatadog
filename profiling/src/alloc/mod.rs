@@ -21,6 +21,7 @@ impl std::fmt::Display for AllocError {
 
 mod os {
     use std::io;
+
     #[cfg(unix)]
     pub fn page_size() -> io::Result<usize> {
         let result = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
@@ -41,6 +42,29 @@ mod os {
             } else {
                 Ok(size)
             }
+        }
+    }
+
+    #[cfg(windows)]
+    pub fn page_size() -> io::Result<usize> {
+        use core::mem;
+        use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
+
+        let mut system_info = mem::MaybeUninit::<SYSTEM_INFO>::uninit();
+        // SAFETY: todo
+        unsafe { GetSystemInfo(system_info.as_mut_ptr()) };
+
+        // SAFETY: todo
+        let system_info = unsafe { system_info.assume_init() };
+
+        let size = system_info.dwPageSize;
+        if !size.is_power_of_two() {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("page size was not a power of two: {size}"),
+            ))
+        } else {
+            Ok(size as usize)
         }
     }
 }

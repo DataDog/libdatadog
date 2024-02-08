@@ -10,28 +10,6 @@ pub struct Mapping {
     size: usize,
 }
 
-impl Mapping {
-    pub fn base_non_null_ptr<T>(&self) -> ptr::NonNull<T> {
-        self.base.cast()
-    }
-}
-
-impl core::ops::Deref for Mapping {
-    type Target = [mem::MaybeUninit<u8>];
-
-    fn deref(&self) -> &Self::Target {
-        // SAFETY: todo
-        unsafe { slice::from_raw_parts(self.base.cast().as_ptr(), self.size) }
-    }
-}
-
-impl core::ops::DerefMut for Mapping {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        // SAFETY: todo
-        unsafe { slice::from_raw_parts_mut(self.base.cast().as_ptr(), self.size) }
-    }
-}
-
 #[cfg(unix)]
 mod unix {
     use super::*;
@@ -64,20 +42,21 @@ mod unix {
 
         let page_size = page_size();
         match pad_to(min_size, page_size) {
-            None =>
-                Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("requested virtual allocation {min_size} could not be padded to the page size {page_size} "),
-                )),
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("requested virtual allocation {min_size} could not be padded to the page size {page_size}"),
+            )),
             Some(size) => {
-                let result = unsafe { libc::mmap(
-                    ptr::null_mut(),
-                    size as libc::size_t,
-                    libc::PROT_READ | libc::PROT_WRITE,
-                    libc::MAP_PRIVATE | libc::MAP_ANON,
-                    -1,
-                    0
-                )};
+                let result = unsafe {
+                    libc::mmap(
+                        ptr::null_mut(),
+                        size as libc::size_t,
+                        libc::PROT_READ | libc::PROT_WRITE,
+                        libc::MAP_PRIVATE | libc::MAP_ANON,
+                        -1,
+                        0,
+                    )
+                };
 
                 if result == libc::MAP_FAILED {
                     return Err(io::Error::last_os_error());
@@ -98,5 +77,93 @@ mod unix {
     }
 }
 
+#[cfg(windows)]
+mod windows {
+    use super::*;
+    use std::io;
+    use windows_sys::Win32::System::Memory;
+
+    impl Drop for Mapping {
+        fn drop(&mut self) {
+            // SAFETY: todo
+            // When using MEM_RELEASE, the size should be zero:
+            // https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualfree#parameters
+            let _result =
+                unsafe { Memory::VirtualFree(self.base.as_ptr().cast(), 0, Memory::MEM_RELEASE) };
+
+            // If this fails, there's not much we can do about it. We could panic
+            // but panic in drops are generally frowned on. We compromise: in
+            // debug builds, we panic if it's a -1 but in release builds we just
+            // move on.
+            #[cfg(debug_assertions)]
+            if _result == 0 {
+                panic!("failed to drop mapping: {}", io::Error::last_os_error());
+            }
+        }
+    }
+
+    pub fn alloc(min_size: usize) -> io::Result<Mapping> {
+        #[cfg(debug_assertions)]
+        if !min_size.is_power_of_two() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("requested virtual allocation was not a power of two: {min_size}"),
+            ));
+        }
+
+        let page_size = page_size();
+        match pad_to(min_size, page_size) {
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("requested virtual allocation {min_size} could not be padded to the page size {page_size}"),
+            )),
+            Some(size) => {
+                let result = unsafe {
+                    Memory::VirtualAlloc(
+                        ptr::null(),
+                        size,
+                        Memory::MEM_COMMIT | Memory::MEM_RESERVE,
+                        Memory::PAGE_READWRITE,
+                    )
+                };
+                if result.is_null() {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(Mapping {
+                        // SAFETY: checked that the ptr was not null above.
+                        base: unsafe { ptr::NonNull::new_unchecked(result).cast() },
+                        size,
+                    })
+                }
+            }
+        }
+    }
+}
+
 #[cfg(unix)]
 pub use unix::*;
+
+#[cfg(windows)]
+pub use windows::*;
+
+impl Mapping {
+    pub fn base_non_null_ptr<T>(&self) -> ptr::NonNull<T> {
+        self.base.cast()
+    }
+}
+
+impl core::ops::Deref for Mapping {
+    type Target = [mem::MaybeUninit<u8>];
+
+    fn deref(&self) -> &Self::Target {
+        // SAFETY: todo
+        unsafe { slice::from_raw_parts(self.base.cast().as_ptr(), self.size) }
+    }
+}
+
+impl core::ops::DerefMut for Mapping {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        // SAFETY: todo
+        unsafe { slice::from_raw_parts_mut(self.base.cast().as_ptr(), self.size) }
+    }
+}

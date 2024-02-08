@@ -44,3 +44,11 @@ tokio = {version = "1.23", features = ["rt", "macros"]}
 tokio-util = "0.7.1"
 byteorder = { version = "1.5", features = ["std"] }
 uuid = { version = "1.4.1", features = ["v4", "serde"] }
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = "0.52"
+features = [
+    "Win32_Foundation",
+    "Win32_System_Memory",
+    "Win32_System_SystemInformation",
+]
