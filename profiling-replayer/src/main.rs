@@ -151,7 +151,7 @@ fn main() -> anyhow::Result<()> {
         replayer.start_time,
         &replayer.sample_types,
         replayer.period,
-        128 * 1024,
+        u32::MAX as usize,
     )?;
 
     // Before benchmarking, let's calculate some statistics.
