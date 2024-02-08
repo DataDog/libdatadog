@@ -31,6 +31,12 @@ pub struct Profile {
     upscaling_rules: UpscalingRules,
 }
 
+/// # Safety
+/// The language infers !Send because the value types have length-prefixed
+/// strings inside of them, and these are not Send by themselves. However, if
+/// the whole profile is moved, including the string table, then this is safe.
+unsafe impl Send for Profile {}
+
 pub struct EncodedProfile {
     pub start: SystemTime,
     pub end: SystemTime,
