@@ -10,6 +10,10 @@ pub struct Mapping {
     size: usize,
 }
 
+/// # Safety
+/// A mapping can move to a new thread, no problem. It's not Sync, though.
+unsafe impl Send for Mapping {}
+
 #[cfg(unix)]
 mod unix {
     use super::*;
