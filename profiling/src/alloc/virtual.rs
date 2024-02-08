@@ -17,13 +17,13 @@ mod unix {
 
     impl Drop for Mapping {
         fn drop(&mut self) {
-            // If this fails, there's not much we can do about it. We could panic
-            // but panic in drops are generally frowned on. We compromise: in
-            // debug builds, we panic if it's a -1 but in release builds we just
-            // move on.
             let _result =
                 unsafe { libc::munmap(self.base.as_ptr().cast(), self.size as libc::size_t) };
 
+            // If this fails, there's not much that can be done about it. It
+            // could panic but panic in drops are generally frowned on.
+            // Compromise: in debug builds, panic if it's invalid but in
+            // release builds just move on.
             #[cfg(debug_assertions)]
             if _result == -1 {
                 panic!("failed to drop mapping: {}", io::Error::last_os_error());
@@ -83,10 +83,10 @@ mod windows {
             let _result =
                 unsafe { Memory::VirtualFree(self.base.as_ptr().cast(), 0, Memory::MEM_RELEASE) };
 
-            // If this fails, there's not much we can do about it. We could panic
-            // but panic in drops are generally frowned on. We compromise: in
-            // debug builds, we panic if it's a -1 but in release builds we just
-            // move on.
+            // If this fails, there's not much that can be done about it. It
+            // could panic but panic in drops are generally frowned on.
+            // Compromise: in debug builds, panic if it's invalid but in
+            // release builds just move on.
             #[cfg(debug_assertions)]
             if _result == 0 {
                 panic!("failed to drop mapping: {}", io::Error::last_os_error());
