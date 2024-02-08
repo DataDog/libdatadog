@@ -11,16 +11,16 @@ use std::alloc::{Layout, LayoutError};
 type FxHashMap<K, V> =
     std::collections::HashMap<K, V, hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 
-// Not pub, used to do unsafe things.
+/// Not pub, used to do unsafe things. See [LengthPrefixedStr] for more info.
 #[repr(C)]
 struct LengthPrefixedHeader {
-    // Avoids u16/u32/u64/usize so alignment is always 1.
+    /// Stored as a byte array to avoid alignments greater than 1. This
+    /// prevents wasted bytes in the arena due to alignment.
     len: [u8; mem::size_of::<u16>()],
-    // Intentionally missing the [u8] bytes because dynamically sized types
-    // are a major pain in stable rust. Use thin ptrs with unsafe instead.
 }
 
 impl LengthPrefixedHeader {
+    /// Creates a header for the empty string (len = 0).
     const fn new() -> Self {
         Self {
             len: [0; mem::size_of::<u16>()],
@@ -28,7 +28,25 @@ impl LengthPrefixedHeader {
     }
 }
 
-/// Dangerous type, has a lifetime which has been elided!
+/// Dangerous type, has a lifetime which has been elided! The lifetime is the
+/// lifetime of the arena. It points to a struct which looks like this:
+///
+/// ```
+/// #[repr(C)]
+/// struct LengthPrefixedString {
+///     /// The length of the string, in native byte order as a [u16].
+///     size: [u8; core::mem::size_of::<u16>()],
+///     /// The string data, which is `size` bytes and is not guaranteed to
+///     /// end with the null byte.
+///     data: [u8],
+/// }
+/// ```
+///
+/// In stable Rust at this time, there's no way to use thin-pointers to these
+/// types and then be able to re-constitute the fat-pointer at run-time. This
+/// is why [LengthPrefixedStr] uses a thin-pointer to only the header prefix
+/// of the data and uses unsafe Rust for the rest.
+///
 #[derive(Clone, Copy)]
 pub(crate) struct LengthPrefixedStr {
     header: ptr::NonNull<LengthPrefixedHeader>,
@@ -141,6 +159,8 @@ impl Deref for LengthPrefixedStr {
     }
 }
 
+/// A StringTable holds unique strings in a set. The data of each string is
+/// held in an arena, so individual strings don't hit the system allocator.
 pub struct StringTable {
     arena: ArenaAllocator,
     map: FxHashMap<LengthPrefixedStr, StringId>,
@@ -148,7 +168,10 @@ pub struct StringTable {
 
 #[derive(Debug)]
 pub enum InternError {
+    /// The string is too big. Current limit is [u16::MAX]. Holds the size of
+    /// the string which tried to get allocated.
     LargeString(usize),
+    /// One of the underlying allocators failed to allocate memory.
     AllocError,
 }
 
@@ -164,18 +187,26 @@ impl fmt::Display for InternError {
 impl std::error::Error for InternError {}
 
 impl StringTable {
+    /// Creates a new string table whose arena allocator can hold at least
+    /// `min_capacity` bytes. This will get rounded up to multiple of the OS
+    /// page size. A capacity of 0 is allowed, in which case a virtual
+    /// allocation will not be performed.
     pub fn with_arena_capacity(min_capacity: usize) -> anyhow::Result<Self> {
         let arena = ArenaAllocator::with_capacity(min_capacity.next_power_of_two())?;
         let mut map = FxHashMap::default();
         if let Err(_err) = map.try_reserve(1) {
             anyhow::bail!("failed to acquire memory for string table's hashmap");
         }
-        // Always have the empty string. Note that it doesn't need storage in
+        // Always hold the empty string. Note that it doesn't need storage in
         // the arena as it points to static storage.
         map.insert(LengthPrefixedStr::new(), StringId::ZERO);
         Ok(Self { arena, map })
     }
 
+    /// Like [StringTable::intern], but on success returns a tuple of the
+    /// [LengthPrefixedStr] and [StringId] rather than just a [StringId]. The
+    /// caller needs to be sure to only use the [LengthPrefixedStr] while the
+    /// arena is still valid.
     #[inline(never)]
     pub(crate) fn insert_full<S>(
         &mut self,
@@ -216,6 +247,12 @@ impl StringTable {
         }
     }
 
+    /// Inserts the string into the string table, and returns a [StringId]
+    /// which represents the order in which the string was first inserted into
+    /// the table.
+    ///
+    /// Returns an error if the string is longer than [u16::MAX] or if one of
+    /// the underlying allocator fails to allocate memory.
     #[inline(never)]
     pub fn intern<S>(&mut self, s: &S) -> Result<StringId, InternError>
     where
@@ -257,8 +294,12 @@ impl StringTable {
 
 pub struct StringTableIter<'a> {
     arena: &'a ArenaAllocator,
+    /// Offset from the arena's base pointer for the next item, which is a
+    /// length-prefixed string, see [LengthPrefixedStr] for layout info.
     offset: usize,
+    /// The number of items remaining in the iterator.
     len: usize,
+    /// True if the empty string hasn't been yielded yet.
     has_empty_str: bool,
 }
 

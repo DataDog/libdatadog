@@ -8,6 +8,8 @@ use core::ptr::NonNull;
 use std::alloc::Layout;
 use std::cell::Cell;
 
+/// The ArenaAllocator uses virtual memory to allocate objects which do not
+/// need to be individually deallocated.
 pub struct ArenaAllocator {
     pub(crate) mapping: Option<Mapping>,
     remaining_capacity: Cell<usize>,
@@ -20,6 +22,8 @@ impl Default for ArenaAllocator {
 }
 
 impl ArenaAllocator {
+    /// Creates a new arena allocator which has a capacity of zero. It will
+    /// not request a virtual mapping from the OS.
     pub const fn new() -> Self {
         Self {
             mapping: None,
@@ -54,11 +58,15 @@ impl ArenaAllocator {
         self.remaining_capacity.get()
     }
 
+    /// Allocates the given layout. The memory will always be zeroed because
+    /// of the virtual memory backing. If this property is relied on, the
+    /// caller may want to call [ArenaAllocator::allocate_zeroed] instead.
     #[inline]
     pub fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         self.allocate_zeroed(layout)
     }
 
+    /// Allocates the given layout. It will be zero-initialized.
     pub fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         let layout = layout.pad_to_align();
         let size = layout.size();
