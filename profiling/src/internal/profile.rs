@@ -94,7 +94,7 @@ impl Profile {
 
         let stacktrace = self.add_stacktrace(locations);
         self.observations
-            .add(Sample::new(labels, stacktrace), timestamp, sample.values);
+            .add(Sample::new(labels, stacktrace), timestamp, sample.values)?;
         Ok(())
     }
 

@@ -26,35 +26,34 @@ pub struct Observations {
 /// Public API
 impl Observations {
     pub fn new(observations_len: usize) -> Self {
-        Observations { inner: Some(Self::initialize(observations_len)) }
-    }
-
-    fn initialize(observations_len: usize) -> NonEmptyObservations {
-        NonEmptyObservations {
-            aggregated_data: Default::default(),
-            timestamped_data: Some(TimestampedObservations::new(observations_len)),
-            obs_len: ObservationLength::new(observations_len),
-            timestamped_samples_count: 0,
+        Observations {
+            inner: Some(
+                NonEmptyObservations {
+                    aggregated_data: Default::default(),
+                    timestamped_data: Some(TimestampedObservations::new(observations_len)),
+                    obs_len: ObservationLength::new(observations_len),
+                    timestamped_samples_count: 0,
+                }
+            )
         }
     }
 
-    pub fn add(&mut self, sample: Sample, timestamp: Option<Timestamp>, values: Vec<i64>) {
-        if let Some(inner) = &self.inner {
-            inner.obs_len.assert_eq(values.len());
-        } else {
-            self.inner = Some(Self::initialize(values.len()));
-        };
+    pub fn add(&mut self, sample: Sample, timestamp: Option<Timestamp>, values: Vec<i64>) -> anyhow::Result<()> {
+        anyhow::ensure!(self.inner.is_some(), "Use of add on Observations that were not initialized");
 
         // SAFETY: we just ensured it has an item above.
         let observations = unsafe { self.inner.as_mut().unwrap_unchecked() };
         let obs_len = observations.obs_len;
+
+        anyhow::ensure!(
+            obs_len.eq(values.len()), "Observation length mismatch, expected {obs_len:?} values, got {} instead",  values.len());
 
         if let Some(ts) = timestamp {
             observations
                 .timestamped_data
                 .as_mut()
                 .unwrap()
-                .add(sample, ts, values);
+                .add(sample, ts, values)?;
             observations.timestamped_samples_count += 1;
         } else if let Some(v) = observations.aggregated_data.get_mut(&sample) {
             // SAFETY: This method is only way to build one of these, and at
@@ -67,6 +66,8 @@ impl Observations {
             let trimmed = TrimmedObservation::new(values, obs_len);
             observations.aggregated_data.insert(sample, trimmed);
         }
+
+        Ok(())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -140,7 +141,7 @@ mod test {
 
     #[test]
     fn add_and_iter_test() {
-        let mut o = Observations::default();
+        let mut o = Observations::new(3);
         // These are only for test purposes. The only thing that matters is that
         // they differ
         let s1 = Sample {
@@ -158,11 +159,11 @@ mod test {
         let t1 = Some(Timestamp::new(1).unwrap());
         let t2 = Some(Timestamp::new(2).unwrap());
 
-        o.add(s1, None, vec![1, 2, 3]);
-        o.add(s1, None, vec![4, 5, 6]);
-        o.add(s2, None, vec![7, 8, 9]);
-        o.add(s3, t1, vec![10, 11, 12]);
-        o.add(s2, t2, vec![13, 14, 15]);
+        o.add(s1, None, vec![1, 2, 3]).unwrap();
+        o.add(s1, None, vec![4, 5, 6]).unwrap();
+        o.add(s2, None, vec![7, 8, 9]).unwrap();
+        o.add(s3, t1, vec![10, 11, 12]).unwrap();
+        o.add(s2, t2, vec![13, 14, 15]).unwrap();
 
         o.into_iter().for_each(|(k, ts, v)| {
             if k == s1 {
@@ -202,9 +203,9 @@ mod test {
         };
 
         let mut o = Observations::default();
-        o.add(s1, None, vec![1, 2, 3]);
+        o.add(s1, None, vec![1, 2, 3]).unwrap();
         // This should panic
-        o.add(s2, None, vec![4, 5]);
+        o.add(s2, None, vec![4, 5]).unwrap();
     }
 
     #[test]
@@ -216,9 +217,9 @@ mod test {
         };
 
         let mut o = Observations::default();
-        o.add(s1, None, vec![1, 2, 3]);
+        o.add(s1, None, vec![1, 2, 3]).unwrap();
         // This should panic
-        o.add(s1, None, vec![4, 5]);
+        o.add(s1, None, vec![4, 5]).unwrap();
     }
 
     #[test]
@@ -237,9 +238,9 @@ mod test {
 
         let mut o = Observations::default();
         let ts = NonZeroI64::new(1).unwrap();
-        o.add(s1, Some(ts), vec![1, 2, 3]);
+        o.add(s1, Some(ts), vec![1, 2, 3]).unwrap();
         // This should panic
-        o.add(s2, Some(ts), vec![4, 5]);
+        o.add(s2, Some(ts), vec![4, 5]).unwrap();
     }
 
     #[test]
@@ -252,9 +253,9 @@ mod test {
 
         let mut o = Observations::default();
         let ts = NonZeroI64::new(1).unwrap();
-        o.add(s1, Some(ts), vec![1, 2, 3]);
+        o.add(s1, Some(ts), vec![1, 2, 3]).unwrap();
         // This should panic
-        o.add(s1, Some(ts), vec![4, 5]);
+        o.add(s1, Some(ts), vec![4, 5]).unwrap();
     }
 
     #[test]
@@ -273,9 +274,9 @@ mod test {
 
         let mut o = Observations::default();
         let ts = NonZeroI64::new(1).unwrap();
-        o.add(s1, None, vec![1, 2, 3]);
+        o.add(s1, None, vec![1, 2, 3]).unwrap();
         // This should panic
-        o.add(s2, Some(ts), vec![4, 5]);
+        o.add(s2, Some(ts), vec![4, 5]).unwrap();
     }
 
     #[test]
@@ -286,16 +287,16 @@ mod test {
             stacktrace: StackTraceId::from_offset(1),
         };
 
-        let mut o = Observations::default();
+        let mut o = Observations::new(3);
         let ts = NonZeroI64::new(1).unwrap();
-        o.add(s1, Some(ts), vec![1, 2, 3]);
+        o.add(s1, Some(ts), vec![1, 2, 3]).unwrap();
         // This should panic
-        o.add(s1, None, vec![4, 5]);
+        o.add(s1, None, vec![4, 5]).unwrap();
     }
 
     #[test]
     fn into_iter_test() {
-        let mut o = Observations::default();
+        let mut o = Observations::new(3);
         // These are only for test purposes. The only thing that matters is that
         // they differ
         let s1 = Sample {
@@ -312,10 +313,10 @@ mod test {
         };
         let t1 = Some(Timestamp::new(1).unwrap());
 
-        o.add(s1, None, vec![1, 2, 3]);
-        o.add(s1, None, vec![4, 5, 6]);
-        o.add(s2, None, vec![7, 8, 9]);
-        o.add(s3, t1, vec![1, 1, 2]);
+        o.add(s1, None, vec![1, 2, 3]).unwrap();
+        o.add(s1, None, vec![4, 5, 6]).unwrap();
+        o.add(s2, None, vec![7, 8, 9]).unwrap();
+        o.add(s3, t1, vec![1, 1, 2]).unwrap();
 
         let mut count = 0;
         o.into_iter().for_each(|(k, ts, v)| {

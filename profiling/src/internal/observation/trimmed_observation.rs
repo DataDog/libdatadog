@@ -11,10 +11,14 @@ use std::mem;
 /// these.  This helps to ensure that the lengths given when we rehydrate a
 /// slice are the same as when we trimmed it.
 #[repr(transparent)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Debug)]
 pub(super) struct ObservationLength(usize);
 
 impl ObservationLength {
+    pub fn eq(&self, other: usize) -> bool {
+        self.0 == other
+    }
+
     pub fn assert_eq(&self, other: usize) {
         assert_eq!(self.0, other, "Expected observation lengths to be the same");
     }

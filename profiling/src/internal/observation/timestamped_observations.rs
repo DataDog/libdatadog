@@ -30,7 +30,7 @@ impl TimestampedObservations {
         }
     }
 
-    pub fn add(&mut self, sample: Sample, ts: Timestamp, values: Vec<i64>) {
+    pub fn add(&mut self, sample: Sample, ts: Timestamp, values: Vec<i64>) -> anyhow::Result<()> {
         // We explicitly turn the data into a stream of bytes, feeding it to the compressor.
         // @ivoanjo: I played with introducing a structure to serialize it all-at-once, but it seems to be a lot of
         // boilerplate (of which cost I'm not sure) to basically do the same as these few lines so in the end I came
@@ -41,20 +41,17 @@ impl TimestampedObservations {
         let timestamp = i64::from(ts);
 
         self.compressed_timestamped_data
-            .write_all(&stack_trace_id.to_ne_bytes())
-            .ok();
+            .write_all(&stack_trace_id.to_ne_bytes())?;
         self.compressed_timestamped_data
-            .write_all(&labels_id.to_ne_bytes())
-            .ok();
+            .write_all(&labels_id.to_ne_bytes())?;
         self.compressed_timestamped_data
-            .write_all(&timestamp.to_ne_bytes())
-            .ok();
+            .write_all(&timestamp.to_ne_bytes())?;
 
-        values.iter().for_each(|v| {
-            self.compressed_timestamped_data
-                .write_all(&(*v).to_ne_bytes())
-                .ok();
-        });
+        for v in values {
+            self.compressed_timestamped_data.write_all(&(v).to_ne_bytes())?;
+        }
+
+        Ok(())
     }
 
     pub fn into_iter(self) -> TimestampedObservationsIter {
