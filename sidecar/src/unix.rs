@@ -268,7 +268,6 @@ fn daemonize(listener: StdUnixListener, cfg: Config) -> io::Result<()> {
     match cfg.log_method {
         config::LogMethod::File(path) => {
             let file = File::options()
-                .write(true)
                 .append(true)
                 .truncate(false)
                 .create(true)
