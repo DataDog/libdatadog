@@ -13,9 +13,28 @@
     (unsigned long)&&__here;                                                   \
   })
 
+
+void normalize(blaze_symbolizer* symbolizer, uintptr_t addr) {
+  blaze_normalizer *normalizer = blaze_normalizer_new();
+  std::vector<uintptr_t> addrs = {addr};
+  blaze_normalized_user_output *normalized_output = blaze_normalize_user_addrs(
+                                                                normalizer,
+                                                                getpid(),
+                                                                addrs.data(),
+                                                                addrs.size());
+  assert(normalized_output);
+  if (normalized_output) {
+    for (size_t i = 0; i < addrs.size(); ++i) {
+      std::cout << "Address: " << addrs[i] << ", Normalized: " << normalized_output->outputs << std::endl;
+    }
+    blaze_user_output_free(normalized_output);
+  }
+  blaze_normalizer_free(normalizer);
+}
+
 // Virtual only works as privileged user
 // This is slightly surprising considering self maps should be readable
-void symbolize_and_print(blaze_symbolizer* symbolizer, uintptr_t addr) {
+void symbolize_and_print_abs(blaze_symbolizer* symbolizer, uintptr_t addr) {
     std::vector<uintptr_t> addrs = {addr};
     
     blaze_symbolize_src_process src = {
@@ -43,7 +62,8 @@ void symbolize_and_print(blaze_symbolizer* symbolizer, uintptr_t addr) {
 void test_symbolizer() {
     blaze_symbolizer* symbolizer = blaze_symbolizer_new();
     uintptr_t ip = _THIS_IP_;
-    symbolize_and_print(symbolizer, ip);
+    normalize(symbolizer, ip);
+    symbolize_and_print_abs(symbolizer, ip);
     blaze_symbolizer_free(symbolizer);
 }
 

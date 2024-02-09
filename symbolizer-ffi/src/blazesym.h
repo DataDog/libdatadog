@@ -306,6 +306,12 @@ typedef struct blaze_symbolizer_opts {
    * ensure compatibility in the presence of member additions.
    */
   size_t type_size;
+    /**
+   * Whether or not to automatically reload file system based
+   * symbolization sources that were updated since the last
+   * symbolization operation.
+   */
+  bool auto_reload;
   /**
    * Whether to attempt to gather source code location information.
    *
@@ -328,7 +334,7 @@ typedef struct blaze_symbolizer_opts {
    * Unused member available for future expansion. Must be initialized
    * to zero.
    */
-  uint8_t reserved[5];
+  uint8_t reserved[4];
 } blaze_symbolizer_opts;
 
 /**
