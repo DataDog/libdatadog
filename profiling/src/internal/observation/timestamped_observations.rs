@@ -34,7 +34,7 @@ impl TimestampedObservations {
             compressed_timestamped_data: FrameEncoder::new(Vec::with_capacity(
                 Self::DEFAULT_BUFFER_SIZE,
             )),
-            sample_types_len: sample_types_len,
+            sample_types_len,
         }
     }
 
@@ -103,7 +103,7 @@ impl Iterator for TimestampedObservationsIter {
                 stacktrace: StackTraceId::from_offset(stacktrace as usize),
                 labels: LabelSetId::from_offset(labels as usize),
             },
-            Timestamp::from(std::num::NonZeroI64::new(ts).unwrap()),
+            std::num::NonZeroI64::new(ts)?,
             values,
         ))
     }
