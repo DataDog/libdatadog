@@ -3,6 +3,7 @@
 
 [workspace]
 members = [
+  "crashtracker",
   "profiling",
   "profiling-ffi",
   "profiling-replayer",

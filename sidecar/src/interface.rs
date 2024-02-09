@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use tokio::net::UnixStream;
 use tokio::select;
 use tokio::task::{JoinError, JoinHandle};
-use tracing::{error, info};
+use tracing::{debug, enabled, error, info, Level};
 
 use crate::agent_remote_config::AgentRemoteConfigWriter;
 use crate::config::get_product_endpoint;
@@ -49,7 +49,8 @@ use ddtelemetry::{
     },
 };
 
-use crate::tracer;
+use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
+use crate::{config, log, tracer};
 
 #[datadog_sidecar_macros::extract_request_id]
 #[datadog_ipc_macros::impl_transfer_handles]
@@ -65,6 +66,7 @@ pub trait SidecarInterface {
         queue_id: QueueId,
         meta: RuntimeMeta,
         service_name: String,
+        env_name: String,
     );
     async fn set_session_config(session_id: String, config: SessionConfig);
     async fn shutdown_runtime(instance_id: InstanceId);
@@ -80,6 +82,7 @@ pub trait SidecarInterface {
         headers: SerializedTracerHeaderTags,
     );
     async fn ping();
+    async fn dump() -> String;
 }
 
 pub trait RequestIdentification {
@@ -169,6 +172,9 @@ struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
     session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
+    log_guard: Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
+    #[cfg(feature = "tracing")]
+    session_id: String,
 }
 
 impl SessionInfo {
@@ -177,8 +183,19 @@ impl SessionInfo {
         match runtimes.get(runtime_id) {
             Some(runtime) => runtime.clone(),
             None => {
-                let runtime = RuntimeInfo::default();
+                let mut runtime = RuntimeInfo::default();
                 runtimes.insert(runtime_id.clone(), runtime.clone());
+                #[cfg(feature = "tracing")]
+                if enabled!(Level::INFO) {
+                    runtime.instance_id = InstanceId {
+                        session_id: self.session_id.clone(),
+                        runtime_id: runtime_id.clone(),
+                    };
+                    info!(
+                        "Registering runtime_id {} for session {}",
+                        runtime_id, self.session_id
+                    );
+                }
                 runtime
             }
         }
@@ -260,38 +277,48 @@ impl SessionInfo {
 
 #[allow(clippy::large_enum_variant)]
 enum AppOrQueue {
-    App(Shared<ManualFuture<String>>),
+    App(Shared<ManualFuture<(String, String)>>),
     Queue(EnqueuedTelemetryData),
 }
 
 #[allow(clippy::type_complexity)]
 #[derive(Clone, Default)]
 struct RuntimeInfo {
-    apps: Arc<Mutex<HashMap<String, Shared<ManualFuture<Option<AppInstance>>>>>>,
+    apps: Arc<Mutex<HashMap<(String, String), Shared<ManualFuture<Option<AppInstance>>>>>>,
     app_or_actions: Arc<Mutex<HashMap<QueueId, AppOrQueue>>>,
+    #[cfg(feature = "tracing")]
+    instance_id: InstanceId,
 }
 
 impl RuntimeInfo {
     #[allow(clippy::type_complexity)]
     fn get_app(
         &self,
-        service_name: &String,
+        service_name: &str,
+        env_name: &str,
     ) -> (
         Shared<ManualFuture<Option<AppInstance>>>,
         Option<ManualFutureCompleter<Option<AppInstance>>>,
     ) {
         let mut apps = self.apps.lock().unwrap();
-        if let Some(found) = apps.get(service_name) {
+        let key = (service_name.to_owned(), env_name.to_owned());
+        if let Some(found) = apps.get(&key) {
             (found.clone(), None)
         } else {
             let (future, completer) = ManualFuture::new();
             let shared = future.shared();
-            apps.insert(service_name.clone(), shared.clone());
+            apps.insert(key, shared.clone());
             (shared, Some(completer))
         }
     }
 
     async fn shutdown(self) {
+        #[cfg(feature = "tracing")]
+        info!(
+            "Shutting down runtime_id {} for session {}",
+            self.instance_id.runtime_id, self.instance_id.session_id
+        );
+
         let instance_futures: Vec<_> = self
             .apps
             .lock()
@@ -316,6 +343,12 @@ impl RuntimeInfo {
             })
             .collect();
         future::join_all(instances_shutting_down).await;
+
+        #[cfg(feature = "tracing")]
+        debug!(
+            "Successfully shut down runtime_id {} for session {}",
+            self.instance_id.runtime_id, self.instance_id.session_id
+        );
     }
 }
 
@@ -384,6 +417,10 @@ struct TraceSendData {
 impl TraceSendData {
     pub fn flush(&mut self) {
         if let Some(force_flush) = self.force_flush.take() {
+            debug!(
+                "Emitted flush for traces with {} bytes in send_data buffer",
+                self.send_data_size
+            );
             tokio::spawn(async move {
                 force_flush.complete(()).await;
             });
@@ -463,6 +500,11 @@ impl TraceFlusher {
                     )) => {},
                     _ = force_flush => {},
                 }
+
+                debug!(
+                    "Start flushing {} bytes worth of traces",
+                    self.inner.lock().unwrap().traces.send_data_size
+                );
 
                 let (new_force_flush, completer) = ManualFuture::new();
                 force_flush = new_force_flush;
@@ -572,7 +614,7 @@ impl SidecarServer {
             datadog_ipc::tarpc::server::Config {
                 pending_response_buffer: 10000,
             },
-            Transport::try_from(AsyncChannel::from(socket)).unwrap(),
+            Transport::from(AsyncChannel::from(socket)),
         );
 
         let mut executor = datadog_ipc::sequential::execute_sequential(
@@ -661,7 +703,12 @@ impl SidecarServer {
         match sessions.get(session_id) {
             Some(session) => session.clone(),
             None => {
-                let session = SessionInfo::default();
+                let mut session = SessionInfo::default();
+                #[cfg(feature = "tracing")]
+                if enabled!(Level::INFO) {
+                    session.session_id = session_id.clone();
+                    info!("Initializing new session: {}", session_id);
+                }
                 sessions.insert(session_id.clone(), session.clone());
                 session
             }
@@ -679,31 +726,34 @@ impl SidecarServer {
             None => return,
         };
 
-        session.shutdown().await
+        info!("Shutting down session: {}", session_id);
+        session.shutdown().await;
+        debug!("Successfully shut down session: {}", session_id);
     }
 
     async fn get_app(
         &self,
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMeta,
-        service_name: &String,
+        service_name: &str,
+        env_name: &str,
         inital_actions: Vec<TelemetryActions>,
     ) -> Option<AppInstance> {
         let rt_info = self.get_runtime(instance_id);
 
-        let (app_future, completer) = rt_info.get_app(service_name);
+        let (app_future, completer) = rt_info.get_app(service_name, env_name);
         if completer.is_none() {
             return app_future.await;
         }
 
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
-            service_name.clone(),
+            service_name.to_owned(),
             runtime_meta.language_name.clone(),
             runtime_meta.language_version.clone(),
             runtime_meta.tracer_version.clone(),
         );
         builder.runtime_id = Some(instance_id.runtime_id.clone());
-
+        builder.application.env = Some(env_name.to_owned());
         let session_info = self.get_session(&instance_id.session_id);
         let config = session_info
             .session_config
@@ -713,9 +763,9 @@ impl SidecarServer {
             .unwrap_or_else(ddtelemetry::config::Config::from_env);
 
         // TODO: log errors
-        let instance_option =
-            if let Ok((handle, worker_join)) = builder.spawn_with_config(config.clone()).await {
-                info!("spawning worker {config:?}");
+        let instance_option = match builder.spawn_with_config(config.clone()).await {
+            Ok((handle, worker_join)) => {
+                info!("spawning telemetry worker {config:?}");
 
                 let instance = AppInstance {
                     telemetry: handle,
@@ -730,9 +780,12 @@ impl SidecarServer {
                     .await
                     .ok();
                 Some(instance)
-            } else {
+            }
+            Err(e) => {
+                error!("could not spawn telemetry worker {:?}", e);
                 None
-            };
+            }
+        };
         completer.unwrap().complete(instance_option).await;
         app_future.await
     }
@@ -775,6 +828,8 @@ pub struct SessionConfig {
     pub flush_interval: Duration,
     pub force_flush_size: usize,
     pub force_drop_size: usize,
+    pub log_level: String,
+    pub log_file: config::LogMethod,
 }
 
 impl SidecarInterface for SidecarServer {
@@ -854,6 +909,7 @@ impl SidecarInterface for SidecarServer {
         queue_id: QueueId,
         runtime_meta: RuntimeMeta,
         service_name: String,
+        env_name: String,
     ) -> Self::RegisterServiceAndFlushQueuedActionsFut {
         // We need a channel to have enqueuing code await
         let (future, completer) = ManualFuture::new();
@@ -874,7 +930,13 @@ impl SidecarInterface for SidecarServer {
 
             tokio::spawn(async move {
                 if let Some(app) = self
-                    .get_app(&instance_id, &runtime_meta, &service_name, actions)
+                    .get_app(
+                        &instance_id,
+                        &runtime_meta,
+                        &service_name,
+                        &env_name,
+                        actions,
+                    )
                     .await
                 {
                     let actions: Vec<_> = std::mem::take(&mut enqueued_data.actions);
@@ -891,7 +953,7 @@ impl SidecarInterface for SidecarServer {
 
                     app.telemetry.send_msgs(actions).await.ok();
                     // Ok, we dequeued all messages, now new enqueue_actions calls can handle it
-                    completer.complete(service_name).await;
+                    completer.complete((service_name, env_name)).await;
                 }
             });
         }
@@ -929,6 +991,11 @@ impl SidecarInterface for SidecarServer {
         self.trace_flusher
             .min_force_drop_size
             .store(config.force_drop_size as u32, Ordering::Relaxed);
+
+        session.log_guard.lock().unwrap().replace((
+            log::MULTI_LOG_FILTER.add(config.log_level),
+            log::MULTI_LOG_WRITER.add(config.log_file),
+        ));
 
         if let Some(completer) = self.self_telemetry_config.lock().unwrap().take() {
             let config = session
@@ -999,6 +1066,12 @@ impl SidecarInterface for SidecarServer {
 
         no_response()
     }
+
+    type DumpFut = Pin<Box<dyn Send + futures::Future<Output = String>>>;
+
+    fn dump(self, _: Context) -> Self::DumpFut {
+        Box::pin(crate::dump::dump())
+    }
 }
 
 pub mod blocking {
@@ -1056,6 +1129,7 @@ pub mod blocking {
         queue_id: &QueueId,
         runtime_metadata: &RuntimeMeta,
         service_name: Cow<str>,
+        env_name: Cow<str>,
     ) -> io::Result<()> {
         transport.send(
             SidecarInterfaceRequest::RegisterServiceAndFlushQueuedActions {
@@ -1063,6 +1137,7 @@ pub mod blocking {
                 queue_id: *queue_id,
                 meta: runtime_metadata.clone(),
                 service_name: service_name.into_owned(),
+                env_name: env_name.into_owned(),
             },
         )
     }
@@ -1102,6 +1177,15 @@ pub mod blocking {
             handle,
             headers,
         })
+    }
+
+    pub fn dump(transport: &mut SidecarTransport) -> io::Result<String> {
+        let res = transport.call(SidecarInterfaceRequest::Dump {})?;
+        if let SidecarInterfaceResponse::Dump(dump) = res {
+            Ok(dump)
+        } else {
+            Ok("".to_string())
+        }
     }
 
     pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {

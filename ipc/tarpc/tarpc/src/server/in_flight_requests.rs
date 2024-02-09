@@ -137,6 +137,7 @@ mod tests {
     use futures_test::task::noop_context;
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn start_request_increases_len() {
         let mut in_flight_requests = InFlightRequests::default();
         assert_eq!(in_flight_requests.len(), 0);
@@ -147,6 +148,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn polling_expired_aborts() {
         let mut in_flight_requests = InFlightRequests::default();
         let abort_registration = in_flight_requests
@@ -169,6 +171,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn cancel_request_aborts() {
         let mut in_flight_requests = InFlightRequests::default();
         let abort_registration = in_flight_requests
@@ -185,6 +188,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn remove_request_doesnt_abort() {
         let mut in_flight_requests = InFlightRequests::default();
         assert!(in_flight_requests.deadlines.is_empty());

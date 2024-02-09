@@ -192,6 +192,7 @@ mod tests {
     use tracing::Span;
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn throttler_in_flight_requests() {
         let throttler = MaxRequests {
             max_in_flight_requests: 0,
@@ -255,7 +256,7 @@ mod tests {
         throttler.inner.push_req(1, 1);
         assert!(throttler.as_mut().poll_next(&mut testing::cx()).is_done());
         assert_eq!(throttler.inner.sink.len(), 1);
-        match throttler.inner.sink.get(0).unwrap() {
+        match throttler.inner.sink.front().unwrap() {
             RequestResponse::Response(resp) => {
                 assert_eq!(resp.request_id, 1);
                 assert!(resp.message.is_err());
@@ -320,6 +321,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn throttler_start_send() {
         let throttler = MaxRequests {
             max_in_flight_requests: 0,
@@ -344,7 +346,7 @@ mod tests {
             }))
             .unwrap();
         assert_eq!(throttler.inner.in_flight_requests.len(), 0);
-        match throttler.inner.sink.get(0).unwrap() {
+        match throttler.inner.sink.front().unwrap() {
             RequestResponse::Response(resp) => {
                 assert_eq!(
                     resp,

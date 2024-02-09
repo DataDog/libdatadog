@@ -47,6 +47,8 @@ fn generate_protobuf() {
     config.type_attribute("TracerPayload", "#[derive(Deserialize, Serialize)]");
     config.type_attribute("TraceChunk", "#[derive(Deserialize, Serialize)]");
 
+    config.type_attribute("SpanLink", "#[derive(Deserialize, Serialize)]");
+
     config.type_attribute("Span", "#[derive(Deserialize, Serialize)]");
     config.field_attribute(
         ".pb.Span",

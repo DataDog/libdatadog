@@ -92,7 +92,7 @@ unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
     Ok(hyper::Uri::from_str(str)?)
 }
 
-unsafe fn try_to_endpoint(endpoint: Endpoint) -> anyhow::Result<exporter::Endpoint> {
+pub unsafe fn try_to_endpoint(endpoint: Endpoint) -> anyhow::Result<exporter::Endpoint> {
     // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
     // a failed result is likely to be an error.
     match endpoint {
@@ -156,9 +156,9 @@ fn ddog_prof_exporter_new_impl(
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: Endpoint,
 ) -> anyhow::Result<ProfileExporter> {
-    let library_name = unsafe { profiling_library_name.to_utf8_lossy() }.into_owned();
-    let library_version = unsafe { profiling_library_version.to_utf8_lossy() }.into_owned();
-    let family = unsafe { family.to_utf8_lossy() }.into_owned();
+    let library_name = profiling_library_name.to_utf8_lossy().into_owned();
+    let library_version = profiling_library_version.to_utf8_lossy().into_owned();
+    let family = family.to_utf8_lossy().into_owned();
     let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
     let tags = tags.map(|tags| tags.iter().cloned().collect());
     ProfileExporter::new(
@@ -213,11 +213,14 @@ impl From<RequestBuildResult> for Result<Box<Request>, String> {
 /// If you use this parameter, please update the RFC with your use-case, so we can keep track of how this
 /// is getting used.
 ///
+/// For details on the `optional_info_json`, please reference the Datadog-internal
+/// "RFC: Pprof System Info Support".
+///
 /// # Safety
 /// The `exporter`, `optional_additional_stats`, and `optional_endpoint_stats` args should be
 /// valid objects created by this module.
-/// NULL is allowed for `optional_additional_tags`, `optional_endpoints_stats` and
-/// `optional_internal_metadata_json`.
+/// NULL is allowed for `optional_additional_tags`, `optional_endpoints_stats`,
+/// `optional_internal_metadata_json` and `optional_info_json`.
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
@@ -229,6 +232,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     optional_additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
     optional_endpoints_stats: Option<&ProfiledEndpointsStats>,
     optional_internal_metadata_json: Option<&CharSlice>,
+    optional_info_json: Option<&CharSlice>,
     timeout_ms: u64,
 ) -> RequestBuildResult {
     match exporter {
@@ -240,10 +244,15 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
             let tags = optional_additional_tags.map(|tags| tags.iter().cloned().collect());
 
             let internal_metadata =
-                match parse_internal_metadata_json(optional_internal_metadata_json) {
+                match parse_json("internal_metadata", optional_internal_metadata_json) {
                     Ok(parsed) => parsed,
                     Err(err) => return RequestBuildResult::Err(err.into()),
                 };
+
+            let info = match parse_json("info", optional_info_json) {
+                Ok(parsed) => parsed,
+                Err(err) => return RequestBuildResult::Err(err.into()),
+            };
 
             match exporter.build(
                 start.into(),
@@ -253,6 +262,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
                 tags.as_ref(),
                 optional_endpoints_stats,
                 internal_metadata,
+                info,
                 timeout,
             ) {
                 Ok(request) => {
@@ -264,17 +274,19 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     }
 }
 
-unsafe fn parse_internal_metadata_json(
-    internal_metadata_json: Option<&CharSlice>,
+unsafe fn parse_json(
+    string_id: &str,
+    json_string: Option<&CharSlice>,
 ) -> anyhow::Result<Option<serde_json::Value>> {
-    match internal_metadata_json {
+    match json_string {
         None => Ok(None),
-        Some(internal_metadata_json) => {
-            let json = internal_metadata_json.try_to_utf8()?;
+        Some(json_string) => {
+            let json = json_string.try_to_utf8()?;
             match serde_json::from_str(json) {
                 Ok(parsed) => Ok(Some(parsed)),
                 Err(error) => Err(anyhow::anyhow!(
-                    "Failed to parse contents of internal_metadata json string (`{}`): {}.",
+                    "Failed to parse contents of {} json string (`{}`): {}.",
+                    string_id,
                     json,
                     error
                 )),
@@ -550,6 +562,7 @@ mod test {
                 None,
                 None,
                 None,
+                None,
                 timeout_milliseconds,
             )
         };
@@ -629,6 +642,7 @@ mod test {
                 None,
                 None,
                 Some(&raw_internal_metadata),
+                None,
                 timeout_milliseconds,
             )
         };
@@ -692,6 +706,7 @@ mod test {
                 None,
                 None,
                 Some(&raw_internal_metadata),
+                None,
                 timeout_milliseconds,
             )
         };
@@ -700,6 +715,180 @@ mod test {
             RequestBuildResult::Ok(_) => panic!("Should not happen!"),
             RequestBuildResult::Err(message) => assert!(String::from(message).starts_with(
                 r#"Failed to parse contents of internal_metadata json string (`this is not a valid json string`)"#
+            )),
+        }
+    }
+
+    #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
+    fn test_build_with_info() {
+        let exporter_result = unsafe {
+            ddog_prof_Exporter_new(
+                profiling_library_name(),
+                profiling_library_version(),
+                family(),
+                None,
+                endpoint_agent(endpoint()),
+            )
+        };
+
+        let mut exporter = match exporter_result {
+            ExporterNewResult::Ok(e) => e,
+            ExporterNewResult::Err(_) => panic!("Should not occur!"),
+        };
+
+        let files: &[File] = &[File {
+            name: CharSlice::from("foo.pprof"),
+            file: ByteSlice::from(b"dummy contents" as &[u8]),
+        }];
+
+        let start = Timespec {
+            seconds: 12,
+            nanoseconds: 34,
+        };
+        let finish = Timespec {
+            seconds: 56,
+            nanoseconds: 78,
+        };
+        let timeout_milliseconds = 90;
+
+        let raw_info = CharSlice::from(
+            r#"
+            {
+                "application": {
+                  "start_time": "2024-01-24T11:17:22+0000",
+                  "env": "test"
+                },
+                "platform": {
+                  "kernel": "Darwin Kernel Version 22.5.0",
+                  "hostname": "COMP-XSDF"
+                },
+                "runtime": {
+                  "engine": "ruby",
+                  "version": "3.2.0"
+                },
+                "profiler": {
+                  "version": "1.32.0",
+                  "libdatadog": "1.2.3-darwin",
+                  "settings": {
+                    "profiling": {
+                      "advanced": {
+                        "allocation": true,
+                        "heap": true
+                      }
+                    }
+                  }
+                }
+            }
+        "#,
+        );
+
+        let build_result = unsafe {
+            ddog_prof_Exporter_Request_build(
+                Some(exporter.as_mut()),
+                start,
+                finish,
+                Slice::from(files),
+                Slice::empty(),
+                None,
+                None,
+                None,
+                Some(&raw_info),
+                timeout_milliseconds,
+            )
+        };
+
+        let parsed_event_json = parsed_event_json(build_result);
+
+        assert_eq!(
+            parsed_event_json["info"],
+            json!({
+                "application": {
+                  "start_time": "2024-01-24T11:17:22+0000",
+                  "env": "test",
+                },
+                "platform": {
+                  "kernel": "Darwin Kernel Version 22.5.0",
+                  "hostname": "COMP-XSDF"
+                },
+                "runtime": {
+                  "engine": "ruby",
+                  "version": "3.2.0"
+                },
+                "profiler": {
+                  "version": "1.32.0",
+                  "libdatadog": "1.2.3-darwin",
+                  "settings": {
+                      "profiling": {
+                          "advanced": {
+                              "allocation": true,
+                              "heap": true
+                          }
+                      }
+                  }
+                }
+            })
+        );
+    }
+
+    #[test]
+    // This test invokes an external function SecTrustSettingsCopyCertificates
+    // which Miri cannot evaluate.
+    #[cfg_attr(miri, ignore)]
+    fn test_build_with_invalid_info() {
+        let exporter_result = unsafe {
+            ddog_prof_Exporter_new(
+                profiling_library_name(),
+                profiling_library_version(),
+                family(),
+                None,
+                endpoint_agent(endpoint()),
+            )
+        };
+
+        let mut exporter = match exporter_result {
+            ExporterNewResult::Ok(e) => e,
+            ExporterNewResult::Err(_) => panic!("Should not occur!"),
+        };
+
+        let files: &[File] = &[File {
+            name: CharSlice::from("foo.pprof"),
+            file: ByteSlice::from(b"dummy contents" as &[u8]),
+        }];
+
+        let start = Timespec {
+            seconds: 12,
+            nanoseconds: 34,
+        };
+        let finish = Timespec {
+            seconds: 56,
+            nanoseconds: 78,
+        };
+        let timeout_milliseconds = 90;
+
+        let raw_info = CharSlice::from("this is not a valid json string");
+
+        let build_result = unsafe {
+            ddog_prof_Exporter_Request_build(
+                Some(exporter.as_mut()),
+                start,
+                finish,
+                Slice::from(files),
+                Slice::empty(),
+                None,
+                None,
+                None,
+                Some(&raw_info),
+                timeout_milliseconds,
+            )
+        };
+
+        match build_result {
+            RequestBuildResult::Ok(_) => panic!("Should not happen!"),
+            RequestBuildResult::Err(message) => assert!(String::from(message).starts_with(
+                r#"Failed to parse contents of info json string (`this is not a valid json string`)"#
             )),
         }
     }
@@ -723,6 +912,7 @@ mod test {
                 finish,
                 Slice::empty(),
                 Slice::empty(),
+                None,
                 None,
                 None,
                 None,

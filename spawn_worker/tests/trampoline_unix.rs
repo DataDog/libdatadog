@@ -18,6 +18,7 @@ fn rewind_and_read(file: &mut File) -> anyhow::Result<String> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_spawning_trampoline_worker() {
     let mut stdout = tempfile::tempfile().unwrap();
     let mut stderr = tempfile::tempfile().unwrap();
