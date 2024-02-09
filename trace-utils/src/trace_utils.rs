@@ -571,6 +571,7 @@ mod tests {
                     metrics: HashMap::new(),
                     meta_struct: HashMap::new(),
                     r#type: "".to_string(),
+                    span_links: vec![],
                 }]],
             ),
             (
@@ -597,6 +598,7 @@ mod tests {
                     metrics: HashMap::new(),
                     meta_struct: HashMap::new(),
                     r#type: "".to_string(),
+                    span_links: vec![],
                 }]],
             ),
         ];
