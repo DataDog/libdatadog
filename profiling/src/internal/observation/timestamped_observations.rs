@@ -51,8 +51,8 @@ impl TimestampedObservations {
         // boilerplate (of which cost I'm not sure) to basically do the same as these few lines so in the end I came
         // back to this.
 
-        let stack_trace_id = Id::into_raw_id(sample.stacktrace) as u32;
-        let labels_id = Id::into_raw_id(sample.labels) as u32;
+        let stack_trace_id: u32 = sample.stacktrace.into();
+        let labels_id: u32 = sample.labels.into();
         let timestamp = i64::from(ts);
 
         self.compressed_timestamped_data

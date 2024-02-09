@@ -30,3 +30,9 @@ impl Id for StackTraceId {
         self.0 as Self::RawId
     }
 }
+
+impl From<StackTraceId> for u32 {
+    fn from(value: StackTraceId) -> Self {
+        value.0
+    }
+}
