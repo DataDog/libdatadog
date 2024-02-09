@@ -46,6 +46,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         parent_id: 1111,
         r#type: "http".to_string(),
         meta_struct: HashMap::new(),
+        span_links: vec![],
     };
 
     let mut trace = [span_1];
