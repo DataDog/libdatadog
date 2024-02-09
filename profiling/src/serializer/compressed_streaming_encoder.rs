@@ -1,12 +1,23 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
+use bytes::BufMut;
 use lz4_flex::frame::FrameEncoder;
+use prost::encoding::{encode_key, encode_varint, encoded_len_varint, key_len, WireType};
 use std::io::Write;
 
 pub struct CompressedProtobufSerializer {
     buffer: Vec<u8>,
     zipper: FrameEncoder<Vec<u8>>,
+}
+
+// I've opened a PR for this upstream:
+// https://github.com/tokio-rs/prost/pull/978
+fn encode_str(tag: u32, value: impl AsRef<str>, buf: &mut impl BufMut) {
+    let str = value.as_ref();
+    encode_key(tag, WireType::LengthDelimited, buf);
+    encode_varint(str.len() as u64, buf);
+    buf.put_slice(str.as_bytes());
 }
 
 impl CompressedProtobufSerializer {
@@ -17,18 +28,21 @@ impl CompressedProtobufSerializer {
         Ok(())
     }
 
-    /// Only meant for string table strings.
+    /// Only meant for string table strings. This is essentially an
+    /// implementation of [prost::Message::encode] but for any `AsRef<str>`,
+    /// and specialized for handling the unlikely OOM conditions of writing
+    /// into a `Vec<u8>`.
     pub(crate) fn encode_str(&mut self, item: impl AsRef<str>) -> anyhow::Result<()> {
         let tag = 6u32;
         let str = item.as_ref();
-        let encoded_len = prost::encoding::encoded_len_varint(str.len() as u64);
-        let required = prost::encoding::key_len(tag) + encoded_len + str.len();
+        let encoded_len = encoded_len_varint(str.len() as u64);
+        let required = key_len(tag) + encoded_len + str.len();
         if let Err(err) = self.buffer.try_reserve(required) {
             return Err(anyhow::Error::from(err)
-                .context("failed to encode Protobuf message; insufficient buffer capacity"));
+                .context("failed to encode Protobuf str; insufficient buffer capacity"));
         }
 
-        prost::encoding::string::encode_ref(tag, item, &mut self.buffer);
+        encode_str(tag, item, &mut self.buffer);
         self.zipper.write_all(&self.buffer)?;
         self.buffer.clear();
         Ok(())
