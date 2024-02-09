@@ -13,7 +13,7 @@ struct NonEmptyObservations {
     // Samples with no timestamps are aggregated in-place as each observation is added
     aggregated_data: HashMap<Sample, TrimmedObservation>,
     // Samples with timestamps are all separately kept (so we can know the exact values at the given timestamp)
-    timestamped_data: Option<TimestampedObservations>,
+    timestamped_data: TimestampedObservations,
     obs_len: ObservationLength,
     timestamped_samples_count: usize,
 }
@@ -29,7 +29,7 @@ impl Observations {
         Observations {
             inner: Some(NonEmptyObservations {
                 aggregated_data: Default::default(),
-                timestamped_data: Some(TimestampedObservations::new(observations_len)),
+                timestamped_data: TimestampedObservations::new(observations_len),
                 obs_len: ObservationLength::new(observations_len),
                 timestamped_samples_count: 0,
             }),
@@ -58,11 +58,7 @@ impl Observations {
         );
 
         if let Some(ts) = timestamp {
-            observations
-                .timestamped_data
-                .as_mut()
-                .unwrap()
-                .add(sample, ts, values)?;
+            observations.timestamped_data.add(sample, ts, values)?;
             observations.timestamped_samples_count += 1;
         } else if let Some(v) = observations.aggregated_data.get_mut(&sample) {
             // SAFETY: This method is only way to build one of these, and at
@@ -116,10 +112,12 @@ impl IntoIterator for Observations {
 
     fn into_iter(self) -> Self::IntoIter {
         let it = self.inner.into_iter().flat_map(|mut observations| {
-            let timestamped_data_it = std::mem::take(&mut observations.timestamped_data)
-                .unwrap()
-                .into_iter()
-                .map(|(s, t, o)| (s, Some(t), o));
+            let timestamped_data_it = std::mem::replace(
+                &mut observations.timestamped_data,
+                TimestampedObservations::with_no_backing_store(),
+            )
+            .into_iter()
+            .map(|(s, t, o)| (s, Some(t), o));
             let aggregated_data_it = std::mem::take(&mut observations.aggregated_data)
                 .into_iter()
                 .map(|(s, o)| (s, None, o))

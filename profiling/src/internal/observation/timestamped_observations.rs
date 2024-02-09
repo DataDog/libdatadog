@@ -30,11 +30,18 @@ impl TimestampedObservations {
     const DEFAULT_BUFFER_SIZE: usize = 1_048_576;
 
     pub fn new(sample_types_len: usize) -> Self {
-        TimestampedObservations {
+        Self {
             compressed_timestamped_data: FrameEncoder::new(Vec::with_capacity(
                 Self::DEFAULT_BUFFER_SIZE,
             )),
             sample_types_len: sample_types_len,
+        }
+    }
+
+    pub fn with_no_backing_store() -> Self {
+        Self {
+            compressed_timestamped_data: FrameEncoder::new(vec![]),
+            sample_types_len: 0,
         }
     }
 
