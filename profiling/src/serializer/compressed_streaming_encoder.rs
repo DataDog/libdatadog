@@ -11,13 +11,12 @@ pub struct CompressedProtobufSerializer {
     zipper: FrameEncoder<Vec<u8>>,
 }
 
-// I've opened a PR for this upstream:
+// I've opened a PR for a generic version of this upstream:
 // https://github.com/tokio-rs/prost/pull/978
-fn encode_str(tag: u32, value: impl AsRef<str>, buf: &mut impl BufMut) {
-    let str = value.as_ref();
+fn encode_str(tag: u32, value: &str, buf: &mut Vec<u8>) {
     encode_key(tag, WireType::LengthDelimited, buf);
-    encode_varint(str.len() as u64, buf);
-    buf.put_slice(str.as_bytes());
+    encode_varint(value.len() as u64, buf);
+    buf.put_slice(value.as_bytes());
 }
 
 impl CompressedProtobufSerializer {
@@ -42,7 +41,7 @@ impl CompressedProtobufSerializer {
                 .context("failed to encode Protobuf str; insufficient buffer capacity"));
         }
 
-        encode_str(tag, item, &mut self.buffer);
+        encode_str(tag, str, &mut self.buffer);
         self.zipper.write_all(&self.buffer)?;
         self.buffer.clear();
         Ok(())
