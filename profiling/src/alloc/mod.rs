@@ -2,9 +2,11 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 mod arena;
-mod r#virtual;
+pub mod r#virtual;
 
 pub use arena::*;
+use std::collections::TryReserveError;
+
 use std::sync::Once;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -15,6 +17,12 @@ impl std::error::Error for AllocError {}
 impl std::fmt::Display for AllocError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("memory allocation failed")
+    }
+}
+
+impl From<TryReserveError> for AllocError {
+    fn from(_value: TryReserveError) -> Self {
+        AllocError
     }
 }
 
@@ -85,7 +93,11 @@ pub fn page_size() -> usize {
     }
 }
 
-fn pad_to(bytes: usize, page_size: usize) -> Option<usize> {
+/// Pads `bytes` to the `page_size`, which must be a power of two, and this
+/// is not checked in release builds at all.
+pub fn pad_to(bytes: usize, page_size: usize) -> Option<usize> {
+    debug_assert!(page_size.is_power_of_two());
+
     // Usually, if bytes is evenly divisible by the page size, then use that
     // without bumping to the next size. However, we need to avoid zero.
     let bytes = bytes.max(page_size);

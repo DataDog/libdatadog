@@ -5,13 +5,12 @@ use self::api::UpscalingInfo;
 use super::*;
 use crate::api;
 use crate::collections::identifiable::*;
-use crate::collections::StringTable;
+use crate::collections::{StringAllocator, StringTable};
 use crate::internal::ProfiledEndpointsStats;
 use crate::pprof::sliced_proto::*;
 use crate::serializer::CompressedProtobufSerializer;
 use std::borrow::{Borrow, Cow};
 use std::collections::HashMap;
-use std::ops::Deref;
 use std::time::{Duration, SystemTime};
 
 pub struct Profile {
@@ -210,13 +209,12 @@ impl Profile {
          */
         let sample_types: Vec<api::ValueType> = self.extract_api_sample_types()?;
 
-        let period = self.period.map(|t|
-            // SAFETY: todo
-            unsafe {
+        let period = self.period.map(|t| {
+            let arena = self.strings.arena();
             api::Period {
                 r#type: api::ValueType {
-                    r#type: t.1.r#type.0.to_str_with_arena_lifetime(&self.strings),
-                    unit: t.1.unit.0.to_str_with_arena_lifetime(&self.strings),
+                    r#type: arena.fetch(t.1.r#type.0),
+                    unit: arena.fetch(t.1.unit.0),
                 },
                 value: t.0,
             }
@@ -394,12 +392,13 @@ impl Profile {
     }
 
     fn extract_api_sample_types(&self) -> anyhow::Result<Vec<api::ValueType>> {
+        let arena = self.strings.arena();
         let sample_types = self
             .sample_types
             .iter()
             .map(|sample_type| api::ValueType {
-                r#type: sample_type.r#type.0.deref(),
-                unit: sample_type.unit.0.deref(),
+                r#type: arena.fetch(sample_type.r#type.0),
+                unit: arena.fetch(sample_type.unit.0),
             })
             .collect();
         Ok(sample_types)

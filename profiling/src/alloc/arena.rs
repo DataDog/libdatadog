@@ -2,14 +2,12 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use super::AllocError;
-use crate::alloc::r#virtual::{alloc as virtual_alloc, Mapping};
+use crate::alloc::r#virtual::Mapping;
 use core::ptr;
 use core::ptr::NonNull;
 use std::alloc::Layout;
 use std::cell::Cell;
 
-/// The ArenaAllocator uses virtual memory to allocate objects which do not
-/// need to be individually deallocated.
 pub struct ArenaAllocator {
     pub(crate) mapping: Option<Mapping>,
     remaining_capacity: Cell<usize>,
@@ -47,7 +45,7 @@ impl ArenaAllocator {
             return Ok(Self::new());
         }
 
-        let region = virtual_alloc(capacity)?;
+        let region = Mapping::new(capacity)?;
 
         // SAFETY: we haven't done any unsafe things with the region like give
         // out pointers to its interior bytes.
@@ -56,14 +54,6 @@ impl ArenaAllocator {
 
     pub fn remaining_capacity(&self) -> usize {
         self.remaining_capacity.get()
-    }
-
-    /// Allocates the given layout. The memory will always be zeroed because
-    /// of the virtual memory backing. If this property is relied on, the
-    /// caller may want to call [ArenaAllocator::allocate_zeroed] instead.
-    #[inline]
-    pub fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        self.allocate_zeroed(layout)
     }
 
     /// Allocates the given layout. It will be zero-initialized.
@@ -124,7 +114,7 @@ mod tests {
         let arena = ArenaAllocator::with_capacity(0)?;
 
         // This should fail to allocate, arena no capacity cannot allocate.
-        arena.allocate(Layout::new::<u8>()).unwrap_err();
+        arena.allocate_zeroed(Layout::new::<u8>()).unwrap_err();
         Ok(())
     }
 
@@ -137,10 +127,10 @@ mod tests {
         assert_eq!(expected_size, actual_size);
 
         // This should consume the whole arena.
-        arena.allocate(Layout::from_size_align(expected_size, 1)?)?;
+        arena.allocate_zeroed(Layout::from_size_align(expected_size, 1)?)?;
 
         // This should fail to allocate, zero bytes available.
-        arena.allocate(Layout::new::<u8>()).unwrap_err();
+        arena.allocate_zeroed(Layout::new::<u8>()).unwrap_err();
 
         Ok(())
     }
@@ -161,16 +151,16 @@ mod tests {
         // Four of these should fit.
         let layout = Layout::from_size_align(DISTANCE, DISTANCE)?;
 
-        let first = arena.allocate(layout)?;
-        let second = arena.allocate(layout)?;
-        let third = arena.allocate(layout)?;
-        let fourth = arena.allocate(layout)?;
+        let first = arena.allocate_zeroed(layout)?;
+        let second = arena.allocate_zeroed(layout)?;
+        let third = arena.allocate_zeroed(layout)?;
+        let fourth = arena.allocate_zeroed(layout)?;
 
         // This _may_ fail to allocate, because we're only guaranteed 32 bytes
         // but in practice, it won't fail because it's rounded to a page size,
         // and I've never seen pages that small, even for 16 bit. However, in
         // any case, it should not panic, which is the point of the call.
-        _ = std::hint::black_box(arena.allocate(Layout::new::<u8>()));
+        _ = std::hint::black_box(arena.allocate_zeroed(Layout::new::<u8>()));
 
         expect_distance(first, second, DISTANCE);
         expect_distance(second, third, DISTANCE);
@@ -186,9 +176,9 @@ mod tests {
 
         let layout = Layout::from_size_align(DISTANCE / 2, DISTANCE / 2)?;
 
-        let first = arena.allocate(layout)?;
+        let first = arena.allocate_zeroed(layout)?;
         assert_eq!(DISTANCE / 2, first.len());
-        let second = arena.allocate(layout)?;
+        let second = arena.allocate_zeroed(layout)?;
         assert_eq!(DISTANCE / 2, second.len());
 
         expect_distance(first, second, DISTANCE / 2);
@@ -203,10 +193,10 @@ mod tests {
         let pointer = Layout::new::<*const ()>();
         let bool = Layout::new::<bool>();
 
-        let first = arena.allocate(pointer)?;
-        let second = arena.allocate(bool)?;
+        let first = arena.allocate_zeroed(pointer)?;
+        let second = arena.allocate_zeroed(bool)?;
         // third could be mis-aligned if alignment isn't considered.
-        let third = arena.allocate(pointer)?;
+        let third = arena.allocate_zeroed(pointer)?;
 
         expect_distance(first, second, mem::size_of::<*const ()>());
         expect_distance(second, third, mem::size_of::<*const ()>());

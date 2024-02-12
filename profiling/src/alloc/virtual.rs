@@ -3,71 +3,53 @@
 
 use super::{pad_to, page_size};
 use core::{mem, ptr, slice};
-
-#[repr(C)]
-pub struct Mapping {
-    base: ptr::NonNull<()>,
-    size: usize,
-}
-
-/// # Safety
-/// A mapping can move to a new thread, no problem. It's not Sync, though.
-unsafe impl Send for Mapping {}
+use std::io;
 
 #[cfg(unix)]
 mod unix {
-    use super::*;
-    use std::io;
 
-    impl Drop for Mapping {
-        fn drop(&mut self) {
-            let _result =
-                unsafe { libc::munmap(self.base.as_ptr().cast(), self.size as libc::size_t) };
+    pub mod raw {
+        use std::{io, ptr};
 
-            // If this fails, there's not much that can be done about it. It
-            // could panic but panic in drops are generally frowned on.
-            // Compromise: in debug builds, panic if it's invalid but in
-            // release builds just move on.
-            #[cfg(debug_assertions)]
-            if _result == -1 {
-                panic!("failed to drop mapping: {}", io::Error::last_os_error());
+        /// Allocates virtual memory of the given size, which must be a
+        /// multiple of a page boundary and may not be zero.
+        pub fn virtual_alloc(size: usize) -> io::Result<ptr::NonNull<()>> {
+            let result = unsafe {
+                libc::mmap(
+                    ptr::null_mut(),
+                    size as libc::size_t,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_PRIVATE | libc::MAP_ANON,
+                    -1,
+                    0,
+                )
+            };
+
+            if result == libc::MAP_FAILED {
+                return Err(io::Error::last_os_error());
+            }
+
+            if result.is_null() {
+                unsafe { libc::munmap(result, size as libc::size_t) };
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "mmap returned a null pointer",
+                ))
+            } else {
+                // SAFETY: checked that the ptr was not null above.
+                Ok(unsafe { ptr::NonNull::new_unchecked(result).cast() })
             }
         }
-    }
 
-    pub fn alloc(min_size: usize) -> io::Result<Mapping> {
-        let page_size = page_size();
-        match pad_to(min_size, page_size) {
-            None => Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("requested virtual allocation {min_size} could not be padded to the page size {page_size}"),
-            )),
-            Some(size) => {
-                let result = unsafe {
-                    libc::mmap(
-                        ptr::null_mut(),
-                        size as libc::size_t,
-                        libc::PROT_READ | libc::PROT_WRITE,
-                        libc::MAP_PRIVATE | libc::MAP_ANON,
-                        -1,
-                        0,
-                    )
-                };
-
-                if result == libc::MAP_FAILED {
-                    return Err(io::Error::last_os_error());
-                }
-
-                if result.is_null() {
-                    unsafe { libc::munmap(result, size as libc::size_t) };
-                    Err(io::Error::new(io::ErrorKind::Other, "mmap returned a null pointer"))
-                } else {
-                    Ok(Mapping {
-                        // SAFETY: checked that the ptr was not null above.
-                        base: unsafe { ptr::NonNull::new_unchecked(result).cast() },
-                        size,
-                    })
-                }
+        /// # Safety
+        ///  1. The ptr must have been previously allocated by [virtual_alloc].
+        ///  2. The size should be the exact size it was allocated with.
+        pub unsafe fn virtual_free(ptr: ptr::NonNull<()>, size: usize) -> io::Result<()> {
+            let result = libc::munmap(ptr.as_ptr().cast(), size as libc::size_t);
+            if result == -1 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
             }
         }
     }
@@ -75,25 +57,38 @@ mod unix {
 
 #[cfg(windows)]
 mod windows {
-    use super::*;
-    use std::io;
     use windows_sys::Win32::System::Memory;
 
-    impl Drop for Mapping {
-        fn drop(&mut self) {
-            // SAFETY: todo
-            // When using MEM_RELEASE, the size should be zero:
-            // https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualfree#parameters
-            let _result =
-                unsafe { Memory::VirtualFree(self.base.as_ptr().cast(), 0, Memory::MEM_RELEASE) };
+    pub mod raw {
+        use std::{io, ptr};
+        use windows_sys::Win32::System::Memory;
 
-            // If this fails, there's not much that can be done about it. It
-            // could panic but panic in drops are generally frowned on.
-            // Compromise: in debug builds, panic if it's invalid but in
-            // release builds just move on.
-            #[cfg(debug_assertions)]
-            if _result == 0 {
-                panic!("failed to drop mapping: {}", io::Error::last_os_error());
+        pub fn virtual_alloc(size: usize) -> io::Result<ptr::NonNull<()>> {
+            let result = unsafe {
+                Memory::VirtualAlloc(
+                    ptr::null(),
+                    size,
+                    Memory::MEM_COMMIT | Memory::MEM_RESERVE,
+                    Memory::PAGE_READWRITE,
+                )
+            };
+            if result.is_null() {
+                Err(io::Error::last_os_error())
+            } else {
+                // SAFETY: checked that the ptr was not null above.
+                Ok(unsafe { ptr::NonNull::new_unchecked(result).cast() })
+            }
+        }
+
+        /// # Safety
+        ///  1. The ptr must have been previously allocated by [crate::alloc::r#virtual::raw::virtual_alloc].
+        ///  2. The size should be the exact size it was allocated with.
+        pub unsafe fn virtual_free(ptr: ptr::NonNull<()>, size: usize) -> io::Result<()> {
+            let result = Memory::VirtualFree(ptr.as_ptr().cast(), 0, Memory::MEM_RELEASE);
+            if result == 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
             }
         }
     }
@@ -134,9 +129,54 @@ pub use unix::*;
 #[cfg(windows)]
 pub use windows::*;
 
+#[repr(C)]
+pub struct Mapping {
+    base: ptr::NonNull<()>,
+    size: usize,
+}
+
+/// # Safety
+/// A mapping can move to a new thread, no problem. It's not Sync, though.
+unsafe impl Send for Mapping {}
+
 impl Mapping {
+    pub fn new(min_size: usize) -> io::Result<Mapping> {
+        let page_size = page_size();
+        match pad_to(min_size, page_size) {
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("requested virtual allocation of {min_size} bytes could not be padded to the page size {page_size}"),
+            )),
+            Some(size) => Ok(Mapping {
+                base: raw::virtual_alloc(size)?,
+                size,
+            })
+
+        }
+    }
+
     pub fn base_non_null_ptr<T>(&self) -> ptr::NonNull<T> {
         self.base.cast()
+    }
+
+    pub fn allocation_size(&self) -> usize {
+        self.size
+    }
+}
+
+impl Drop for Mapping {
+    fn drop(&mut self) {
+        // SAFETY: passing ptr and size exactly as received from alloc.
+        let _result = unsafe { raw::virtual_free(self.base, self.size) };
+
+        // If this fails, there's not much that can be done about it. It
+        // could panic but panic in drops are generally frowned on.
+        // Compromise: in debug builds, panic if it's invalid but in
+        // release builds just move on.
+        #[cfg(debug_assertions)]
+        if let Err(err) = _result {
+            panic!("failed to drop mapping: {err}");
+        }
     }
 }
 

@@ -6,8 +6,8 @@ use crate::collections::LengthPrefixedStr;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct ValueType {
-    pub r#type: (LengthPrefixedStr, StringId),
-    pub unit: (LengthPrefixedStr, StringId),
+    pub r#type: (Option<LengthPrefixedStr>, StringId),
+    pub unit: (Option<LengthPrefixedStr>, StringId),
 }
 
 impl From<ValueType> for pprof::ValueType {

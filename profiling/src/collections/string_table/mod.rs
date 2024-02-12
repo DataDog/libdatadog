@@ -7,6 +7,65 @@ use core::borrow::Borrow;
 use core::ops::Deref;
 use core::{fmt, hash, mem, ptr};
 use std::alloc::{Layout, LayoutError};
+use std::collections::TryReserveError;
+
+pub trait StringAllocator {
+    type Handle: Copy + Sized;
+
+    /// Copies the given str into the allocator.
+    fn allocate_str(&self, str: impl AsRef<str>) -> Result<Self::Handle, InternError>;
+
+    fn fetch(&self, handle: Option<Self::Handle>) -> &str;
+
+    fn capacity(&self) -> usize;
+
+    fn convert_handle_to_length_prefixed_str(&self, handle: Self::Handle) -> LengthPrefixedStr;
+    fn convert_length_prefixed_str_to_handle(&self, str: LengthPrefixedStr) -> Self::Handle;
+}
+
+impl StringAllocator for ArenaAllocator {
+    type Handle = LengthPrefixedStr;
+
+    fn allocate_str(&self, value: impl AsRef<str>) -> Result<LengthPrefixedStr, InternError> {
+        let str = value.as_ref();
+        match u16::try_from(str.len()) {
+            Ok(n) => {
+                let layout = match LengthPrefixedStr::layout_of(n) {
+                    Ok(l) => l,
+                    Err(_err) => return Err(InternError::LargeString(str.len())),
+                };
+                let allocation = self.allocate_zeroed(layout)?;
+                Ok(unsafe { LengthPrefixedStr::from_str_in(str, n, allocation) })
+            }
+            Err(_) => Err(InternError::AllocError),
+        }
+    }
+
+    fn fetch(&self, handle: Option<Self::Handle>) -> &str {
+        match handle {
+            None => "",
+
+            // SAFETY: the real lifetime of the LengthPrefixedStr _is_ the
+            // allocator's lifetime.
+            Some(h) => unsafe { mem::transmute(h.deref()) },
+        }
+    }
+
+    fn capacity(&self) -> usize {
+        match &self.mapping {
+            None => 0,
+            Some(mapping) => mapping.allocation_size(),
+        }
+    }
+
+    fn convert_handle_to_length_prefixed_str(&self, handle: Self::Handle) -> LengthPrefixedStr {
+        handle
+    }
+
+    fn convert_length_prefixed_str_to_handle(&self, str: LengthPrefixedStr) -> Self::Handle {
+        str
+    }
+}
 
 type FxHashMap<K, V> =
     std::collections::HashMap<K, V, hash::BuildHasherDefault<rustc_hash::FxHasher>>;
@@ -17,15 +76,6 @@ struct LengthPrefixedHeader {
     /// Stored as a byte array to avoid alignments greater than 1. This
     /// prevents wasted bytes in the arena due to alignment.
     len: [u8; mem::size_of::<u16>()],
-}
-
-impl LengthPrefixedHeader {
-    /// Creates a header for the empty string (len = 0).
-    const fn new() -> Self {
-        Self {
-            len: [0; mem::size_of::<u16>()],
-        }
-    }
 }
 
 /// Dangerous type, has a lifetime which has been elided! The lifetime is the
@@ -47,8 +97,9 @@ impl LengthPrefixedHeader {
 /// is why [LengthPrefixedStr] uses a thin-pointer to only the header prefix
 /// of the data and uses unsafe Rust for the rest.
 ///
+#[repr(C)]
 #[derive(Clone, Copy)]
-pub(crate) struct LengthPrefixedStr {
+pub struct LengthPrefixedStr {
     header: ptr::NonNull<LengthPrefixedHeader>,
 }
 
@@ -82,21 +133,7 @@ impl Borrow<str> for LengthPrefixedStr {
 }
 
 impl LengthPrefixedStr {
-    // private, these are supposed to only be created by string tables.
-    fn new() -> Self {
-        static EMPTY: LengthPrefixedHeader = LengthPrefixedHeader::new();
-        let header = ptr::NonNull::from(&EMPTY);
-        Self { header }
-    }
-
-    pub(crate) unsafe fn to_str_with_arena_lifetime<'a>(
-        self,
-        _string_table: &'a StringTable,
-    ) -> &'a str {
-        mem::transmute::<&str, &'a str>(self.deref())
-    }
-
-    fn layout_of(n: u16) -> Result<Layout, LayoutError> {
+    pub fn layout_of(n: u16) -> Result<Layout, LayoutError> {
         let header = Layout::new::<LengthPrefixedHeader>();
         let array = Layout::array::<u8>(n as usize)?;
         let (layout, offset) = header.extend(array)?;
@@ -105,16 +142,30 @@ impl LengthPrefixedStr {
         Ok(layout)
     }
 
+    pub fn data_ptr(self) -> ptr::NonNull<[u8]> {
+        let header = self.header.as_ptr();
+        // SAFETY: a LengthPrefixedStr always points to a valid header object,
+        // even for an empty string.
+        let len = u16::from_be_bytes(unsafe { &*header }.len) as usize;
+
+        // SAFETY: the data begins immediately after the header.
+        let ptr = unsafe { self.header.as_ptr().add(1) }.cast();
+        let fatptr = ptr::slice_from_raw_parts_mut(ptr, len);
+
+        // SAFETY: the data points inside an allocated object (not null).
+        unsafe { ptr::NonNull::new_unchecked(fatptr) }
+    }
+
     /// The ptr needs to point to a valid length prefixed string.
     unsafe fn from_bytes(ptr: ptr::NonNull<u8>) -> Self {
         Self { header: ptr.cast() }
     }
 
     #[inline]
-    unsafe fn from_str_in_mem(s: &str, n: u16, ptr: ptr::NonNull<[u8]>) -> Self {
+    pub unsafe fn from_str_in(s: &str, n: u16, ptr: ptr::NonNull<[u8]>) -> Self {
         // SAFETY: todo
         let header_src = u16::to_be_bytes(n);
-        debug_assert!(header_src.len() + s.len() <= ptr.len());
+        debug_assert!(header_src.len() + n as usize <= ptr.len());
 
         let header_ptr = ptr.as_ptr() as *mut u8;
         // SAFETY: todo
@@ -122,23 +173,11 @@ impl LengthPrefixedStr {
         // SAFETY: todo
         let bytes_ptr = header_ptr.add(header_src.len());
         // SAFETY: todo
-        ptr::copy_nonoverlapping(s.as_ptr(), bytes_ptr, s.len());
+        ptr::copy_nonoverlapping(s.as_ptr(), bytes_ptr, n as usize);
         Self {
             // SAFETY: todo
             header: ptr::NonNull::new_unchecked(header_ptr.cast()),
         }
-    }
-
-    fn from_str_in(s: &str, arena: &ArenaAllocator) -> Result<Self, AllocError> {
-        let Ok(n) = u16::try_from(s.len()) else {
-            return Err(AllocError {});
-        };
-        let Ok(layout) = Self::layout_of(n) else {
-            return Err(AllocError {});
-        };
-        let ptr = arena.allocate_zeroed(layout)?;
-        // SAFETY: todo
-        Ok(unsafe { Self::from_str_in_mem(s, n, ptr) })
     }
 }
 
@@ -146,23 +185,16 @@ impl Deref for LengthPrefixedStr {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
-        let header = self.header.as_ptr();
+        let fatptr = self.data_ptr();
         // SAFETY: todo
-        let len = u16::from_be_bytes(unsafe { &*header }.len) as usize;
-        let ptr = self.header.as_ptr() as *const u8;
-        // SAFETY: todo
-        let data = unsafe { ptr.add(mem::size_of::<u16>()) };
-        // SAFETY: todo
-        let slice = unsafe { core::slice::from_raw_parts(data, len) };
-        // SAFETY: todo
-        unsafe { core::str::from_utf8_unchecked(slice) }
+        unsafe { core::str::from_utf8_unchecked(fatptr.as_ref()) }
     }
 }
 
 /// A StringTable holds unique strings in a set. The data of each string is
 /// held in an arena, so individual strings don't hit the system allocator.
-pub struct StringTable {
-    arena: ArenaAllocator,
+pub struct StringTable<A: StringAllocator = ArenaAllocator> {
+    arena: A,
     map: FxHashMap<LengthPrefixedStr, StringId>,
 }
 
@@ -186,21 +218,52 @@ impl fmt::Display for InternError {
 
 impl std::error::Error for InternError {}
 
-impl StringTable {
+impl From<AllocError> for InternError {
+    fn from(_value: AllocError) -> Self {
+        InternError::AllocError
+    }
+}
+
+impl From<LayoutError> for InternError {
+    fn from(_value: LayoutError) -> Self {
+        InternError::AllocError
+    }
+}
+
+impl From<TryReserveError> for InternError {
+    fn from(_value: TryReserveError) -> Self {
+        InternError::AllocError
+    }
+}
+
+impl StringTable<ArenaAllocator> {
     /// Creates a new string table whose arena allocator can hold at least
     /// `min_capacity` bytes. This will get rounded up to multiple of the OS
     /// page size. A capacity of 0 is allowed, in which case a virtual
     /// allocation will not be performed.
     pub fn with_arena_capacity(min_capacity: usize) -> anyhow::Result<Self> {
         let arena = ArenaAllocator::with_capacity(min_capacity.next_power_of_two())?;
-        let mut map = FxHashMap::default();
-        if let Err(_err) = map.try_reserve(1) {
-            anyhow::bail!("failed to acquire memory for string table's hashmap");
+        Ok(Self::new_in(arena)?)
+    }
+
+    pub fn iter(&self) -> StringTableIter {
+        StringTableIter {
+            arena: &self.arena,
+            offset: 0,
+            len: self.map.len(),
+            has_empty_str: true,
         }
-        // Always hold the empty string. Note that it doesn't need storage in
-        // the arena as it points to static storage.
-        map.insert(LengthPrefixedStr::new(), StringId::ZERO);
-        Ok(Self { arena, map })
+    }
+}
+
+impl<A: StringAllocator> StringTable<A> {
+    pub fn new_in(arena: A) -> Result<Self, AllocError> {
+        let map = FxHashMap::default();
+        Ok(StringTable { arena, map })
+    }
+
+    pub fn arena(&self) -> &A {
+        &self.arena
     }
 
     /// Like [StringTable::intern], but on success returns a tuple of the
@@ -211,7 +274,7 @@ impl StringTable {
     pub(crate) fn insert_full<S>(
         &mut self,
         s: &S,
-    ) -> Result<(LengthPrefixedStr, StringId), InternError>
+    ) -> Result<(Option<A::Handle>, StringId), InternError>
     where
         S: ?Sized + Borrow<str>,
     {
@@ -221,29 +284,31 @@ impl StringTable {
     pub(crate) fn intern_inner<S>(
         &mut self,
         s: &S,
-    ) -> Result<(LengthPrefixedStr, StringId), InternError>
+    ) -> Result<(Option<A::Handle>, StringId), InternError>
     where
         S: ?Sized + Borrow<str>,
     {
         let str = s.borrow();
+        if str.is_empty() {
+            return Ok((None, StringId::ZERO));
+        }
+
         match self.map.get_key_value(str) {
             None => {
-                if let Err(_err) = u16::try_from(str.len()) {
-                    return Err(InternError::LargeString(str.len()));
-                }
-                if let Err(_err) = self.map.try_reserve(1) {
-                    return Err(InternError::AllocError);
-                }
-
+                self.map.try_reserve(1)?;
                 let string_id = StringId::from_offset(self.map.len());
-                let str = match LengthPrefixedStr::from_str_in(str, &self.arena) {
-                    Ok(s) => s,
-                    Err(_err) => return Err(InternError::AllocError),
-                };
-                self.map.insert(str, string_id);
-                Ok((str, string_id))
+                let arena = &self.arena;
+                let handle = arena.allocate_str(str)?;
+                self.map.insert(
+                    arena.convert_handle_to_length_prefixed_str(handle),
+                    string_id,
+                );
+                Ok((Some(handle), string_id))
             }
-            Some((str, string_id)) => Ok((*str, *string_id)),
+            Some((str, string_id)) => {
+                let handle = self.arena.convert_length_prefixed_str_to_handle(*str);
+                Ok((Some(handle), *string_id))
+            }
         }
     }
 
@@ -264,31 +329,21 @@ impl StringTable {
         }
     }
 
-    pub fn iter(&self) -> StringTableIter {
-        StringTableIter {
-            arena: &self.arena,
-            offset: 0,
-            len: self.map.len(),
-            has_empty_str: true,
-        }
-    }
-
     #[inline]
     pub fn len(&self) -> usize {
-        self.map.len()
+        // + 1 for empty string, which isn't held
+        self.map.len() + 1
     }
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.map.is_empty()
+        // always holds the empty string, is never empty
+        false
     }
 
     #[inline]
     pub fn arena_capacity(&self) -> usize {
-        match self.arena.mapping.as_ref() {
-            None => 0,
-            Some(mapping) => mapping.len(),
-        }
+        self.arena.capacity()
     }
 }
 
@@ -352,7 +407,7 @@ mod tests {
 
         let arena = ArenaAllocator::with_capacity(32)?;
 
-        let str = LengthPrefixedStr::from_str_in("datadog", &arena)?;
+        let str = arena.allocate_str("datadog")?;
 
         assert_eq!(&*str, "datadog");
 
