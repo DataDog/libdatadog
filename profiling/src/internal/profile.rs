@@ -94,7 +94,7 @@ impl Profile {
 
         let stacktrace = self.add_stacktrace(locations);
         self.observations
-            .add(Sample::new(labels, stacktrace), timestamp, sample.values);
+            .add(Sample::new(labels, stacktrace), timestamp, sample.values)?;
         Ok(())
     }
 
@@ -145,7 +145,7 @@ impl Profile {
             label_sets: Default::default(),
             locations: Default::default(),
             mappings: Default::default(),
-            observations: Default::default(),
+            observations: Observations::new(sample_types.len()),
             period: None,
             sample_types: vec![],
             stack_traces: Default::default(),
@@ -527,17 +527,11 @@ impl Profile {
     // code, which would break if we did so. We could try to do something with
     // a test "feature", but this naming scheme is sufficient for now.
     pub fn only_for_testing_num_aggregated_samples(&self) -> usize {
-        self.observations
-            .iter()
-            .filter(|(_, ts, _)| ts.is_none())
-            .count()
+        self.observations.aggregated_samples_count()
     }
 
     pub fn only_for_testing_num_timestamped_samples(&self) -> usize {
-        use std::collections::HashSet;
-        let sample_set: HashSet<Timestamp> =
-            HashSet::from_iter(self.observations.iter().filter_map(|(_, ts, _)| ts));
-        sample_set.len()
+        self.observations.timestamped_samples_count()
     }
 }
 
