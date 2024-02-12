@@ -31,7 +31,11 @@ impl CompressedProtobufSerializer {
     /// implementation of [prost::Message::encode] but for any `AsRef<str>`,
     /// and specialized for handling the unlikely OOM conditions of writing
     /// into a `Vec<u8>`.
-    pub(crate) fn encode_str(&mut self, item: impl AsRef<str>) -> anyhow::Result<()> {
+    pub(crate) fn encode_string_table_entry(
+        &mut self,
+        item: impl AsRef<str>,
+    ) -> anyhow::Result<()> {
+        // In pprof, string tables are tag 6 on the Profile message.
         let tag = 6u32;
         let str = item.as_ref();
         let encoded_len = encoded_len_varint(str.len() as u64);

@@ -302,7 +302,7 @@ impl Profile {
         }
 
         for item in self.strings.into_iter() {
-            encoder.encode_str(item)?;
+            encoder.encode_string_table_entry(item)?;
         }
 
         encoder.encode(ProfileSimpler {
