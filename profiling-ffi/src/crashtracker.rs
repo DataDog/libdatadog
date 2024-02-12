@@ -31,14 +31,13 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
     type Error = anyhow::Error;
     fn try_from(value: CrashtrackerConfiguration<'a>) -> anyhow::Result<Self> {
         fn option_from_char_slice(s: CharSlice) -> anyhow::Result<Option<String>> {
-            let s = unsafe { s.try_to_utf8()?.to_string() };
+            let s = s.try_to_utf8()?.to_string();
             Ok(s.is_empty().not().then_some(s))
         }
 
         let create_alt_stack = value.create_alt_stack;
         let endpoint = unsafe { Some(exporter::try_to_endpoint(value.endpoint)?) };
-        let path_to_receiver_binary =
-            unsafe { value.path_to_receiver_binary.try_to_utf8()?.to_string() };
+        let path_to_receiver_binary = value.path_to_receiver_binary.try_to_utf8()?.to_string();
         let resolve_frames = value.resolve_frames;
         let stderr_filename = option_from_char_slice(value.optional_stderr_filename)?;
         let stdout_filename = option_from_char_slice(value.optional_stdout_filename)?;
@@ -66,11 +65,9 @@ pub struct CrashtrackerMetadata<'a> {
 impl<'a> TryFrom<CrashtrackerMetadata<'a>> for datadog_crashtracker::CrashtrackerMetadata {
     type Error = anyhow::Error;
     fn try_from(value: CrashtrackerMetadata<'a>) -> anyhow::Result<Self> {
-        let profiling_library_name =
-            unsafe { value.profiling_library_name.try_to_utf8()?.to_string() };
-        let profiling_library_version =
-            unsafe { value.profiling_library_version.try_to_utf8()?.to_string() };
-        let family = unsafe { value.family.try_to_utf8()?.to_string() };
+        let profiling_library_name = value.profiling_library_name.try_to_utf8()?.to_string();
+        let profiling_library_version = value.profiling_library_version.try_to_utf8()?.to_string();
+        let family = value.family.try_to_utf8()?.to_string();
         let tags = value
             .tags
             .map(|tags| tags.iter().cloned().collect())

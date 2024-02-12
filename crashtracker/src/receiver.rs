@@ -19,7 +19,7 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
     std::io::stdin().lock().read_line(&mut config)?;
     let config: CrashtrackerConfiguration = serde_json::from_str(&config)?;
 
-    match receive_report()? {
+    match receive_report(std::io::stdin().lock())? {
         CrashReportStatus::NoCrash => Ok(()),
         CrashReportStatus::CrashReport(crash_info) => {
             if config.resolve_frames == CrashtrackerResolveFrames::ExperimentalInReceiver {
@@ -43,6 +43,7 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
 #[derive(Debug)]
 enum StdinState {
     Counters,
+    Done,
     File(String, Vec<String>),
     Metadata,
     SigInfo,
@@ -72,6 +73,11 @@ fn process_line(
             let val = val.as_i64().context("Vals are ints")?;
             crashinfo.add_counter(key, val)?;
             StdinState::Counters
+        }
+
+        StdinState::Done => {
+            eprint!("Unexpected line after crashreport is done: {line}");
+            StdinState::Done
         }
 
         StdinState::File(filename, lines) if line.starts_with(DD_CRASHTRACK_END_FILE) => {
@@ -121,9 +127,10 @@ fn process_line(
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_STACKTRACE) => {
             StdinState::StackTrace(vec![])
         }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => StdinState::Done,
         StdinState::Waiting => {
             //TODO: Do something here?
-            eprint!("Unexpected line: {line}");
+            eprint!("Unexpected line while receiving crashreport: {line}");
             StdinState::Waiting
         }
     };
@@ -144,11 +151,11 @@ enum CrashReportStatus {
 /// (for instance if it crashed while calculating the crash-report), we return
 /// a PartialCrashReport.
 // TODO: Make this take a buffer, rather than assuming input on stdin
-fn receive_report() -> anyhow::Result<CrashReportStatus> {
+fn receive_report(stream: impl std::io::BufRead) -> anyhow::Result<CrashReportStatus> {
     let mut crashinfo = CrashInfo::new();
     let mut stdin_state = StdinState::Waiting;
     //TODO: This assumes that the input is valid UTF-8.
-    for line in std::io::stdin().lock().lines() {
+    for line in stream.lines() {
         let line = line?;
         stdin_state = process_line(&mut crashinfo, line, stdin_state)?;
     }
@@ -164,7 +171,7 @@ fn receive_report() -> anyhow::Result<CrashReportStatus> {
 
     // If we were waiting for data when stdin closed, let our caller know that
     // we only have partial data.
-    if matches!(stdin_state, StdinState::Waiting) {
+    if matches!(stdin_state, StdinState::Done) {
         Ok(CrashReportStatus::CrashReport(crashinfo))
     } else {
         Ok(CrashReportStatus::PartialCrashReport(

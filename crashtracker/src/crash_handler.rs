@@ -204,6 +204,7 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
     // Do this last, so even if it crashes, we still get the other info.
     unsafe { emit_backtrace_by_frames(pipe, RESOLVE_FRAMES)? };
+    writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
 
     pipe.flush()?;
     // https://doc.rust-lang.org/std/process/struct.Child.html#method.wait
