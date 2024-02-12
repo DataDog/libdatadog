@@ -196,7 +196,6 @@ mod test {
     }
 
     #[test]
-    #[should_panic]
     fn different_lengths_panic_different_key_no_ts() {
         // These are only for test purposes. The only thing that matters is that
         // they differ
@@ -209,28 +208,24 @@ mod test {
             stacktrace: StackTraceId::from_offset(2),
         };
 
-        let mut o = Observations::default();
+        let mut o = Observations::new(3);
         o.add(s1, None, vec![1, 2, 3]).unwrap();
-        // This should panic
-        o.add(s2, None, vec![4, 5]).unwrap();
+        o.add(s2, None, vec![4, 5]).unwrap_err();
     }
 
     #[test]
-    #[should_panic]
     fn different_lengths_panic_same_key_no_ts() {
         let s1 = Sample {
             labels: LabelSetId::from_offset(1),
             stacktrace: StackTraceId::from_offset(1),
         };
 
-        let mut o = Observations::default();
+        let mut o = Observations::new(3);
         o.add(s1, None, vec![1, 2, 3]).unwrap();
-        // This should panic
-        o.add(s1, None, vec![4, 5]).unwrap();
+        o.add(s1, None, vec![4, 5]).unwrap_err();
     }
 
     #[test]
-    #[should_panic]
     fn different_lengths_panic_different_key_ts() {
         // These are only for test purposes. The only thing that matters is that
         // they differ
@@ -243,30 +238,26 @@ mod test {
             stacktrace: StackTraceId::from_offset(2),
         };
 
-        let mut o = Observations::default();
+        let mut o = Observations::new(3);
         let ts = NonZeroI64::new(1).unwrap();
         o.add(s1, Some(ts), vec![1, 2, 3]).unwrap();
-        // This should panic
-        o.add(s2, Some(ts), vec![4, 5]).unwrap();
+        o.add(s2, Some(ts), vec![4, 5]).unwrap_err();
     }
 
     #[test]
-    #[should_panic]
     fn different_lengths_panic_same_key_ts() {
         let s1 = Sample {
             labels: LabelSetId::from_offset(1),
             stacktrace: StackTraceId::from_offset(1),
         };
 
-        let mut o = Observations::default();
+        let mut o = Observations::new(3);
         let ts = NonZeroI64::new(1).unwrap();
         o.add(s1, Some(ts), vec![1, 2, 3]).unwrap();
-        // This should panic
-        o.add(s1, Some(ts), vec![4, 5]).unwrap();
+        o.add(s1, Some(ts), vec![4, 5]).unwrap_err();
     }
 
     #[test]
-    #[should_panic]
     fn different_lengths_panic_different_key_mixed() {
         // These are only for test purposes. The only thing that matters is that
         // they differ
@@ -279,11 +270,10 @@ mod test {
             stacktrace: StackTraceId::from_offset(2),
         };
 
-        let mut o = Observations::default();
+        let mut o = Observations::new(3);
         let ts = NonZeroI64::new(1).unwrap();
         o.add(s1, None, vec![1, 2, 3]).unwrap();
-        // This should panic
-        o.add(s2, Some(ts), vec![4, 5]).unwrap();
+        o.add(s2, Some(ts), vec![4, 5]).unwrap_err();
     }
 
     #[test]
