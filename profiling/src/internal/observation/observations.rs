@@ -172,6 +172,11 @@ mod test {
         o.add(s3, t1, vec![10, 11, 12]).unwrap();
         o.add(s2, t2, vec![13, 14, 15]).unwrap();
 
+        // 2 because they aggregate together
+        assert_eq!(2, o.aggregated_samples_count());
+
+        assert_eq!(2, o.timestamped_samples_count());
+
         o.into_iter().for_each(|(k, ts, v)| {
             if k == s1 {
                 // Observations without timestamp, these are aggregated together
