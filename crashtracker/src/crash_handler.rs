@@ -3,14 +3,10 @@
 
 #![cfg(unix)]
 
-use std::io::Write;
-use std::ptr;
-
-#[cfg(target_os = "linux")]
-use super::collectors::emit_proc_self_maps;
-
 use super::api::{CrashtrackerConfiguration, CrashtrackerMetadata, CrashtrackerResolveFrames};
 use super::collectors::emit_backtrace_by_frames;
+#[cfg(target_os = "linux")]
+use super::collectors::emit_proc_self_maps;
 use super::constants::*;
 use super::counters::emit_counters;
 use anyhow::Context;
@@ -21,7 +17,11 @@ use libc::{
 use nix::sys::signal;
 use nix::sys::signal::{SaFlags, SigAction, SigHandler};
 use std::fs::File;
+use std::io::Write;
 use std::process::{Command, Stdio};
+use std::ptr;
+use std::sync::atomic::AtomicPtr;
+use std::sync::atomic::Ordering::SeqCst;
 
 #[derive(Debug)]
 enum GlobalVarState<T>
@@ -33,7 +33,7 @@ where
     Taken,
 }
 
-static mut RECEIVER: GlobalVarState<std::process::Child> = GlobalVarState::Unassigned;
+static RECEIVER: AtomicPtr<std::process::Child> = AtomicPtr::new(ptr::null_mut());
 static mut OLD_SIGBUS_HANDLER: GlobalVarState<SigAction> = GlobalVarState::Unassigned;
 static mut OLD_SIGSEGV_HANDLER: GlobalVarState<SigAction> = GlobalVarState::Unassigned;
 static mut RESOLVE_FRAMES: bool = false;
@@ -101,50 +101,47 @@ pub fn setup_receiver(
     config: &CrashtrackerConfiguration,
     metadata: &CrashtrackerMetadata,
 ) -> anyhow::Result<()> {
-    let new_receiver = make_receiver(config, metadata)?;
-    let old_receiver =
-        unsafe { std::mem::replace(&mut RECEIVER, GlobalVarState::Some(new_receiver)) };
+    let new_receiver = Box::into_raw(Box::new(make_receiver(config, metadata)?));
+    let old_receiver = RECEIVER.swap(new_receiver, SeqCst);
     anyhow::ensure!(
-        matches!(old_receiver, GlobalVarState::Unassigned),
-        "Error registering crash handler receiver: receiver already existed {old_receiver:?}"
+        old_receiver.is_null(),
+        "Error registering crash handler receiver: receiver already existed"
     );
-
     Ok(())
 }
+
 
 pub fn replace_receiver(
     config: &CrashtrackerConfiguration,
     metadata: &CrashtrackerMetadata,
 ) -> anyhow::Result<()> {
-    let new_receiver = make_receiver(config, metadata)?;
-    let old_receiver =
-        unsafe { std::mem::replace(&mut RECEIVER, GlobalVarState::Some(new_receiver)) };
-    if let GlobalVarState::Some(mut old_receiver) = old_receiver {
-        // Close the stdin handle so we don't have two open copies
-        // TODO: dropping the old receiver at the end of this function might do this automatically?
-        drop(old_receiver.stdin.take());
-        drop(old_receiver.stdout.take());
-        drop(old_receiver.stderr.take());
-        // Leave the old one running, since its being used by another fork
-    } else {
-        anyhow::bail!(
-            "Error updating crash handler receiver: receiver did not already exist {old_receiver:?}"
-        );
-    }
+    let new_receiver = Box::into_raw(Box::new(make_receiver(config, metadata)?));
+    let old_receiver: *mut std::process::Child = RECEIVER.swap(new_receiver, SeqCst);
+    anyhow::ensure!(
+        !old_receiver.is_null(),
+        "Error updating crash handler receiver: receiver did not already exist"
+    );
+    let mut old_receiver: Box<std::process::Child> = unsafe { Box::from_raw(old_receiver) };
+    // Close the stdin handle so we don't have two open copies
+    // TODO: dropping the old receiver at the end of this function might do this automatically?
+    drop(old_receiver.stdin.take());
+    drop(old_receiver.stdout.take());
+    drop(old_receiver.stderr.take());
+    // Leave the old one running, since its being used by another fork
 
     Ok(())
 }
 
 pub fn shutdown_receiver() -> anyhow::Result<()> {
-    let old_receiver = unsafe { std::mem::replace(&mut RECEIVER, GlobalVarState::Taken) };
-    if let GlobalVarState::Some(mut old_receiver) = old_receiver {
-        old_receiver.kill()?;
-        old_receiver.wait()?;
-    } else {
-        anyhow::bail!(
-            "Error shutting down crash handler receiver: receiver did not already exist {old_receiver:?}"
-        );
-    }
+    let old_receiver = RECEIVER.swap(ptr::null_mut(), SeqCst);
+    anyhow::ensure!(
+        !old_receiver.is_null(),
+        "Error shutting down crash handler receiver: receiver did not already exist"
+    );
+    let mut old_receiver = unsafe { Box::from_raw(old_receiver) };
+
+    old_receiver.kill()?;
+    old_receiver.wait()?;
     Ok(())
 }
 
@@ -170,11 +167,9 @@ fn emit_metadata(w: &mut impl Write) -> anyhow::Result<()> {
 }
 
 fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
-    let mut receiver = match std::mem::replace(unsafe { &mut RECEIVER }, GlobalVarState::Taken) {
-        GlobalVarState::Some(r) => r,
-        GlobalVarState::Unassigned => anyhow::bail!("Cannot acquire receiver: Unassigned"),
-        GlobalVarState::Taken => anyhow::bail!("Cannot acquire receiver: Taken"),
-    };
+    let receiver = RECEIVER.swap(ptr::null_mut(), SeqCst);
+    anyhow::ensure!(!receiver.is_null(), "No crashtracking receiver");
+    let receiver = unsafe { receiver.as_mut().context("")? };
 
     let signame = if signum == libc::SIGSEGV {
         "SIGSEGV"
@@ -211,8 +206,9 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     // The stdin handle to the child process, if any, will be closed before waiting.
     // This helps avoid deadlock: it ensures that the child does not block waiting
     // for input from the parent, while the parent waits for the child to exit.
-    //TODO, use a polling mechanism that could recover from a crashing child
+    // TODO, use a polling mechanism that could recover from a crashing child
     receiver.wait()?;
+    // Calling "free" in a signal handler is dangerous, so don't do that.
     Ok(())
 }
 
