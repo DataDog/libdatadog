@@ -137,7 +137,6 @@ pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
     match cfg.log_method {
         config::LogMethod::File(ref path) => {
             let file = File::options()
-                .write(true)
                 .append(true)
                 .truncate(false)
                 .create(true)
