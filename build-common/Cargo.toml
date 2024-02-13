@@ -2,16 +2,11 @@
 # This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 [package]
-name = "ddcommon-ffi"
+name = "build_common"
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
-[build-dependencies]
-build_common = { path = "../build-common" }
-
 [dependencies]
-ddcommon = { path = "../ddcommon" }
-anyhow = "1.0"
-hyper = {version = "0.14", default-features = false}
+cbindgen = {version = "0.26"}

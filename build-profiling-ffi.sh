@@ -18,6 +18,11 @@ set -eu
 
 destdir="$1"
 
+if [ $CARGO_TARGET_DIR = $destdir ]; then
+    echo "Error: CARGO_TARGET_DIR and destdir cannot be the same"
+    exit 1
+fi
+
 mkdir -v -p "$destdir/include/datadog" "$destdir/lib/pkgconfig" "$destdir/cmake"
 
 version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < profiling-ffi/Cargo.toml)
@@ -97,7 +102,8 @@ export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
 datadog_profiling_ffi="datadog-profiling-ffi"
 echo "Building the ${datadog_profiling_ffi} crate (may take some time)..."
-cargo build --package="${datadog_profiling_ffi}" --release --target "${target}"
+
+DESTDIR="$destdir" cargo build --package="${datadog_profiling_ffi}" --release --target "${target}"
 
 # Remove _ffi suffix when copying
 shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"
@@ -159,12 +165,6 @@ echo "Building tools"
 cargo build --package tools --bins
 
 echo "Generating $destdir/include/libdatadog headers..."
-cbindgen --crate ddcommon-ffi \
-    --config ddcommon-ffi/cbindgen.toml \
-    --output "$destdir/include/datadog/common.h"
-cbindgen --crate "${datadog_profiling_ffi}" \
-    --config profiling-ffi/cbindgen.toml \
-    --output "$destdir/include/datadog/profiling.h"
 "$CARGO_TARGET_DIR"/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h"
 
 # Don't build the crashtracker on windows
