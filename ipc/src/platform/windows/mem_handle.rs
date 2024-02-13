@@ -86,8 +86,10 @@ static ANON_HANDLE_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 impl ShmHandle {
     pub fn new(size: usize) -> anyhow::Result<ShmHandle> {
-        // If one uses null_mut() for the name, DuplicateHandle will emit a very confusing "The system cannot find the file specified. (os error 2)".
-        // It seems like DuplicateHandle requires a name to re-open the FileMapping within another process. Oh well. Let's generate an unique one.
+        // If one uses null_mut() for the name, DuplicateHandle will emit a very
+        // confusing "The system cannot find the file specified. (os error 2)".
+        // It seems like DuplicateHandle requires a name to re-open the FileMapping
+        // within another process. Oh well. Let's generate an unique one.
         let name = CString::new(format!(
             "libdatadog-anon-{}-{}",
             unsafe { libc::getpid() },
@@ -103,7 +105,8 @@ impl ShmHandle {
 
 impl NamedShmHandle {
     fn format_name(path: &CString) -> CString {
-        // Global\ namespace is reserved for Session ID 0. We cannot rely on our PHP process having permissions to write to Global\.
+        // Global\ namespace is reserved for Session ID 0.
+        // We cannot rely on our PHP process having permissions to have access to Session 0.
         // This requires us to have one sidecar per Session ID. That's good enough though.
         CString::new(format!(
             "Local\\{}",

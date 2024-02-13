@@ -20,6 +20,7 @@ use winapi::um::winnt::HANDLE;
 use super::ChannelMetadata;
 
 #[derive(Debug)]
+// Note: needs to be #[pin] because impls on AsyncChannel require #[pin]
 #[pin_project(project = NamedPipeProject)]
 pub enum NamedPipe {
     Server(#[pin] NamedPipeServer),

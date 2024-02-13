@@ -65,11 +65,13 @@ impl Liaison for NamedPipeLiaison {
         };
 
         let socket_path = self.socket_path.clone();
-        // Have a ProcessHandle::Getter() so that we don't immediately block in case the sidecar is still starting up, but only the first time we want to submit shared memory
+        // Have a ProcessHandle::Getter() so that we don't immediately block in case the sidecar is still starting up,
+        // but only the first time we want to submit shared memory
         Ok(Channel::from_client_handle_and_pid(
             unsafe { OwnedHandle::from_raw_handle(pipe) },
             ProcessHandle::Getter(Box::new(move || {
-                // Await the shared memory handle which will contain the pid of the sidecar - it may not be immediately available during startup
+                // Await the shared memory handle which will contain the pid of the sidecar
+                // As it may not be immediately available during startup
                 let timeout_end = Instant::now() + Duration::from_secs(2);
                 let mut last_error = None;
                 let pid_path = pid_shm_path(&String::from_utf8_lossy(socket_path.as_bytes()));
