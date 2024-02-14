@@ -29,7 +29,6 @@ use datadog_ipc::platform::{FileBackedHandle, NamedShmHandle, ShmHandle};
 use datadog_ipc::tarpc::{context::Context, server::Channel};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use tokio::net::UnixStream;
 use tokio::select;
 use tokio::task::{JoinError, JoinHandle};
 use tracing::{debug, enabled, error, info, Level};
@@ -609,12 +608,12 @@ pub struct SidecarServer {
 }
 
 impl SidecarServer {
-    pub async fn accept_connection(self, socket: UnixStream) {
+    pub async fn accept_connection(self, async_channel: AsyncChannel) {
         let server = datadog_ipc::tarpc::server::BaseChannel::new(
             datadog_ipc::tarpc::server::Config {
                 pending_response_buffer: 10000,
             },
-            Transport::from(AsyncChannel::from(socket)),
+            Transport::from(async_channel),
         );
 
         let mut executor = datadog_ipc::sequential::execute_sequential(

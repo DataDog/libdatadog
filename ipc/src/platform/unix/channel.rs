@@ -1,6 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use crate::handles::TransferHandles;
+use crate::platform::{Message, PlatformHandle};
 use nix::sys::select::FdSet;
 use nix::sys::time::{TimeVal, TimeValLike};
 use std::{
@@ -13,13 +15,14 @@ use std::{
 };
 
 pub mod async_channel;
+pub use async_channel::*;
 pub mod metadata;
 
 use sendfd::{RecvWithFd, SendWithFd};
 
 use self::metadata::ChannelMetadata;
 
-use super::{PlatformHandle, MAX_FDS};
+use super::MAX_FDS;
 
 #[derive(Debug)]
 pub struct Channel {
@@ -59,6 +62,13 @@ impl Channel {
         nix::sys::select::select(None, Some(&mut fds), None, None, Some(&mut TimeVal::zero()))
             .is_err()
             || fds.contains(raw_fd)
+    }
+
+    pub fn create_message<T>(&mut self, item: T) -> Result<Message<T>, io::Error>
+    where
+        T: TransferHandles,
+    {
+        self.metadata.create_message(item)
     }
 }
 
