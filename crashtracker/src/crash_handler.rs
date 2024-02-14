@@ -24,18 +24,14 @@ use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::Ordering::SeqCst;
 
 #[derive(Debug)]
-enum GlobalVarState<T>
-where
-    T: std::fmt::Debug,
-{
-    Unassigned,
-    Some(T),
-    Taken,
+struct OldHandlers {
+    sigbus: SigAction,
+    sigsegv: SigAction,
 }
 
+static OLD_HANDLERS: AtomicPtr<OldHandlers> = AtomicPtr::new(ptr::null_mut());
+
 static RECEIVER: AtomicPtr<std::process::Child> = AtomicPtr::new(ptr::null_mut());
-static mut OLD_SIGBUS_HANDLER: GlobalVarState<SigAction> = GlobalVarState::Unassigned;
-static mut OLD_SIGSEGV_HANDLER: GlobalVarState<SigAction> = GlobalVarState::Unassigned;
 static mut RESOLVE_FRAMES: bool = false;
 static mut METADATA_STRING: Option<String> = None;
 
@@ -109,7 +105,6 @@ pub fn setup_receiver(
     );
     Ok(())
 }
-
 
 pub fn replace_receiver(
     config: &CrashtrackerConfiguration,
@@ -212,33 +207,26 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     Ok(())
 }
 
+// TODO, there is a small race condition here, but we can keep it small
 pub fn register_crash_handlers(config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
+    anyhow::ensure!(OLD_HANDLERS.load(SeqCst).is_null());
     unsafe {
         RESOLVE_FRAMES = config.resolve_frames == CrashtrackerResolveFrames::ExperimentalInProcess;
 
         if config.create_alt_stack {
             set_alt_stack()?;
         }
-        register_signal_handler(signal::SIGBUS)?;
-        register_signal_handler(signal::SIGSEGV)?;
+        let sigbus = register_signal_handler(signal::SIGBUS)?;
+        let sigsegv = register_signal_handler(signal::SIGSEGV)?;
+        let boxed_ptr = Box::into_raw(Box::new(OldHandlers { sigbus, sigsegv }));
+
+        let res = OLD_HANDLERS.compare_exchange(ptr::null_mut(), boxed_ptr, SeqCst, SeqCst);
+        anyhow::ensure!(res.is_ok());
     }
     Ok(())
 }
 
-unsafe fn get_slot(
-    signal_type: signal::Signal,
-) -> anyhow::Result<&'static mut GlobalVarState<SigAction>> {
-    let slot = match signal_type {
-        signal::SIGBUS => unsafe { &mut OLD_SIGBUS_HANDLER },
-        signal::SIGSEGV => unsafe { &mut OLD_SIGSEGV_HANDLER },
-        _ => anyhow::bail!("unexpected signal {signal_type}"),
-    };
-    Ok(slot)
-}
-
-unsafe fn register_signal_handler(signal_type: signal::Signal) -> anyhow::Result<()> {
-    let slot = get_slot(signal_type)?;
-
+unsafe fn register_signal_handler(signal_type: signal::Signal) -> anyhow::Result<SigAction> {
     // https://www.gnu.org/software/libc/manual/html_node/Flags-for-Sigaction.html
     // ===============
     // If this flag is set for a particular signal number, the system uses the
@@ -256,35 +244,18 @@ unsafe fn register_signal_handler(signal_type: signal::Signal) -> anyhow::Result
     );
 
     let old_handler = signal::sigaction(signal_type, &sig_action)?;
-    let should_be_empty = std::mem::replace(slot, GlobalVarState::Some(old_handler));
-    anyhow::ensure!(
-        matches!(should_be_empty, GlobalVarState::Unassigned),
-        "Error registering crash handler: old_handler already existed {should_be_empty:?}"
-    );
-
-    Ok(())
-}
-
-unsafe fn replace_signal_handler(signal_type: signal::Signal) -> anyhow::Result<()> {
-    let slot = get_slot(signal_type)?;
-
-    match std::mem::replace(slot, GlobalVarState::Taken) {
-        GlobalVarState::Some(old_handler) => unsafe {
-            signal::sigaction(signal_type, &old_handler)?
-        },
-        x => anyhow::bail!("Cannot restore signal handler for {signal_type}: {x:?}"),
-    };
-    Ok(())
+    Ok(old_handler)
 }
 
 pub fn restore_old_handlers() -> anyhow::Result<()> {
-    // Restore the old handler, so that the current handler can return to it.
-    // Although this is technically UB, this is what Rust does in the same case.
-    // https://github.com/rust-lang/rust/blob/master/library/std/src/sys/unix/stack_overflow.rs#L75
-    unsafe {
-        replace_signal_handler(signal::SIGSEGV)?;
-        replace_signal_handler(signal::SIGBUS)?;
-    }
+    let prev = OLD_HANDLERS.swap(ptr::null_mut(), SeqCst);
+    anyhow::ensure!(!prev.is_null());
+    // Safety: The only nonnull pointer stored here comes from Box::into_raw()
+    let prev = unsafe { Box::from_raw(prev) };
+    // Safety: The value restored here was returned from a previous sigaction call
+    unsafe { signal::sigaction(signal::SIGBUS, &prev.sigbus)? };
+    unsafe { signal::sigaction(signal::SIGSEGV, &prev.sigsegv)? };
+
     Ok(())
 }
 

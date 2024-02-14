@@ -2,8 +2,6 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 #![cfg(unix)]
 
-use crate::update_metadata;
-
 use super::{
     counters::reset_counters,
     crash_handler::{
@@ -172,9 +170,10 @@ pub fn init(
 // mkdir /tmp/crashreports
 // look in /tmp/crashreports for the crash reports and output files
 // Commented out since `ignore` doesn't work in CI.
-//#[test]
+#[test]
 fn test_crash() {
     use crate::begin_profiling_op;
+    use crate::update_metadata;
     use chrono::Utc;
     use ddcommon::parse_uri;
 
