@@ -104,6 +104,7 @@ impl ImprovedBuild {
 
     pub fn emit_rerun_if_env_changed(&mut self, emit: bool) -> &mut Self {
         self.emit_rerun_if_env_changed = emit;
+        self.cc_build.emit_rerun_if_env_changed(emit);
         self
     }
 
@@ -178,7 +179,9 @@ impl ImprovedBuild {
         }
 
         let compiler = self.cc_build.try_get_compiler()?;
-        let output_path = self.get_out_dir()?.join(output);
+        let output_path = self
+            .get_out_dir()
+            .map_or(output.into(), |path| path.join(output));
 
         let mut cmd = compiler.to_command();
 

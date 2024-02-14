@@ -19,7 +19,7 @@ pub use spawn::*;
 // Reexport nix::WaitStatus
 pub use nix::sys::wait::WaitStatus;
 
-use crate::Entrypoint;
+use crate::{Entrypoint, ENV_PASS_FD_KEY};
 
 /// returns the path of the library from which the symbol pointed to by *addr* was loaded from
 ///
@@ -59,12 +59,6 @@ pub fn getpid() -> libc::pid_t {
     unsafe { libc::getpid() }
 }
 
-impl From<Entrypoint> for spawn::Target {
-    fn from(entrypoint: Entrypoint) -> Self {
-        spawn::Target::Entrypoint(entrypoint)
-    }
-}
-
 impl Entrypoint {
     pub fn get_fs_path(&self) -> Option<PathBuf> {
         let (path, _) = unsafe { get_dl_path_raw(self.ptr as *const libc::c_void) };
@@ -72,8 +66,6 @@ impl Entrypoint {
         Some(PathBuf::from(path?.to_str().ok()?.to_owned()))
     }
 }
-
-pub(crate) static ENV_PASS_FD_KEY: &str = "__DD_INTERNAL_PASSED_FD";
 
 pub fn recv_passed_fd() -> Option<OwnedFd> {
     let val = env::var(ENV_PASS_FD_KEY).ok()?;

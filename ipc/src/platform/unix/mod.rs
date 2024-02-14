@@ -2,21 +2,18 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 mod platform_handle;
-pub use platform_handle::*;
-
-mod mem_handle;
-pub use mem_handle::*;
 
 mod channel;
-pub use async_channel::*;
 pub use channel::*;
 
 pub mod locks;
 pub mod sockets;
 
 mod message;
-
 pub use message::*;
+
+mod mem_handle;
+pub(crate) use mem_handle::*;
 
 #[no_mangle]
 #[cfg(polyfill_glibc_memfd)]
@@ -39,7 +36,7 @@ mod tests {
 
     use crate::platform::{metadata::ChannelMetadata, unix::message::MAX_FDS};
 
-    use super::PlatformHandle;
+    use super::super::PlatformHandle;
 
     fn assert_platform_handle_is_valid_file(
         handle: PlatformHandle<OwnedFd>,

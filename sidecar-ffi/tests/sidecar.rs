@@ -1,7 +1,6 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
-#![cfg(unix)]
-use datadog_sidecar_ffi::unix::*;
+use datadog_sidecar_ffi::*;
 
 macro_rules! assert_maybe_no_error {
     ($maybe_erroring:expr) => {
@@ -21,12 +20,13 @@ macro_rules! assert_maybe_no_error {
 }
 
 use ddcommon::Endpoint;
+use std::time::Duration;
+#[cfg(unix)]
 use std::{
     ffi::CString,
     fs::File,
     io::Write,
     os::unix::prelude::{AsRawFd, FromRawFd},
-    time::Duration,
 };
 
 fn set_sidecar_per_process() {
@@ -34,6 +34,7 @@ fn set_sidecar_per_process() {
 }
 
 #[test]
+#[cfg(unix)]
 #[cfg_attr(miri, ignore)]
 fn test_ddog_ph_file_handling() {
     let fname = CString::new(std::env::temp_dir().join("test_file").to_str().unwrap()).unwrap();
@@ -53,7 +54,11 @@ fn test_ddog_ph_file_handling() {
 }
 
 #[test]
-#[ignore] // run all tests that can fork in a separate run, to avoid any race conditions with default rust test harness
+#[cfg_attr(not(windows), ignore)]
+// run all tests that can fork in a separate run, to avoid any race conditions with default rust test harness
+/// run with: RUSTFLAGS="-C prefer-dynamic" cargo test --package test_spawn_from_lib --features prefer-dynamic -- --ignored
+#[cfg_attr(windows, ignore = "requires -C prefer-dynamic")]
+#[cfg_attr(windows, cfg(feature = "prefer_dynamic"))]
 fn test_ddog_sidecar_connection() {
     set_sidecar_per_process();
 
@@ -91,6 +96,8 @@ fn test_ddog_sidecar_register_app() {
             1000,
             1000000,
             10000000,
+            "".into(),
+            "".into(),
         );
 
         let meta = ddog_sidecar_runtimeMeta_build(
@@ -132,6 +139,8 @@ fn test_ddog_sidecar_register_app() {
             1000,
             1000000,
             10000000,
+            "".into(),
+            "".into(),
         );
 
         //TODO: Shutdown the service

@@ -109,6 +109,7 @@ mod tests {
             parent_id: 1111,
             r#type: "http".to_string(),
             meta_struct: HashMap::new(),
+            span_links: vec![],
         };
         for (key, val) in tags {
             match key {

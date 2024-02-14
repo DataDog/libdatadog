@@ -27,7 +27,6 @@ use std::fs::File;
 
 use std::io;
 use std::ops::RangeInclusive;
-use std::path::PathBuf;
 use std::{
     env,
     ffi::{self, CString, OsString},
@@ -92,11 +91,7 @@ pub enum SpawnMethod {
     Exec,
 }
 
-pub enum Target {
-    Entrypoint(crate::Entrypoint),
-    Manual(CString, CString),
-    Noop,
-}
+use crate::{LibDependency, Target};
 
 impl Target {
     /// TODO: ld_preload type trampoline is not yet supported on osx
@@ -130,10 +125,7 @@ impl Target {
                     "can't find the entrypoint's target path",
                 )
             }),
-            Target::Manual(p, _) => p
-                .to_str()
-                .map(PathBuf::from)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)),
+            Target::ManualTrampoline(p, _) => Ok(std::path::PathBuf::from(p)),
             Target::Noop => return Ok(default_method),
         }?;
         let target_filename = target_path.file_name().ok_or_else(|| {
@@ -195,16 +187,10 @@ impl Stdio {
     }
 }
 
-impl From<File> for Stdio {
-    fn from(val: File) -> Self {
-        Stdio::Fd(val.into())
+impl From<&File> for Stdio {
+    fn from(val: &File) -> Self {
+        Stdio::Fd(val.try_clone().unwrap().into())
     }
-}
-
-#[derive(Clone, Debug)]
-pub enum LibDependency {
-    Path(PathBuf),
-    Binary(&'static [u8]),
 }
 
 pub struct SpawnWorker {
@@ -299,6 +285,21 @@ impl SpawnWorker {
         self
     }
 
+    fn wait_pid(pid: Option<libc::pid_t>) -> anyhow::Result<()> {
+        let pid = match pid {
+            Some(pid) => Pid::from_raw(pid),
+            None => return Ok(()),
+        };
+
+        nix::sys::wait::waitpid(Some(pid), None)?;
+        Ok(())
+    }
+
+    pub fn wait_spawn(&mut self) -> anyhow::Result<()> {
+        let Child { pid } = self.spawn()?;
+        Self::wait_pid(pid)
+    }
+
     pub fn spawn(&mut self) -> anyhow::Result<Child> {
         let pid = self.do_spawn()?;
 
@@ -324,9 +325,9 @@ impl SpawnWorker {
                 argv.push(path);
                 entrypoint.symbol_name.clone()
             }
-            Target::Manual(path, symbol_name) => {
-                argv.push(path.clone());
-                symbol_name.clone()
+            Target::ManualTrampoline(path, symbol_name) => {
+                argv.push(CString::new(path.as_str())?);
+                CString::new(symbol_name.as_str())?
             }
             Target::Noop => return Ok(None),
         };
