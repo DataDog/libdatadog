@@ -9,7 +9,7 @@ use core::{fmt, hash, mem, ptr};
 use std::alloc::{Layout, LayoutError};
 use std::collections::TryReserveError;
 
-pub trait StringAllocator {
+pub trait StringArena: IntoIterator<Item=Option<LengthPrefixedStr>> {
     type Handle: Copy + Sized;
 
     /// Copies the given str into the allocator.
@@ -23,7 +23,16 @@ pub trait StringAllocator {
     fn convert_length_prefixed_str_to_handle(&self, str: LengthPrefixedStr) -> Self::Handle;
 }
 
-impl StringAllocator for ArenaAllocator {
+impl IntoIterator for ArenaAllocator {
+    type Item = Option<LengthPrefixedStr>;
+    type IntoIter = ArenaAllocatorIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        todo!()
+    }
+}
+
+impl StringArena for ArenaAllocator {
     type Handle = LengthPrefixedStr;
 
     fn allocate_str(&self, value: impl AsRef<str>) -> Result<LengthPrefixedStr, InternError> {
@@ -193,9 +202,18 @@ impl Deref for LengthPrefixedStr {
 
 /// A StringTable holds unique strings in a set. The data of each string is
 /// held in an arena, so individual strings don't hit the system allocator.
-pub struct StringTable<A: StringAllocator = ArenaAllocator> {
+pub struct StringTable<A: StringArena = ArenaAllocator> {
     arena: A,
     map: FxHashMap<LengthPrefixedStr, StringId>,
+}
+
+impl IntoIterator for StringTable {
+    type Item = Option<str>;
+    type IntoIter = ();
+
+    fn into_iter(self) -> Self::IntoIter {
+        todo!()
+    }
 }
 
 #[derive(Debug)]
@@ -245,18 +263,9 @@ impl StringTable<ArenaAllocator> {
         let arena = ArenaAllocator::with_capacity(min_capacity.next_power_of_two())?;
         Ok(Self::new_in(arena)?)
     }
-
-    pub fn iter(&self) -> StringTableIter {
-        StringTableIter {
-            arena: &self.arena,
-            offset: 0,
-            len: self.map.len(),
-            has_empty_str: true,
-        }
-    }
 }
 
-impl<A: StringAllocator> StringTable<A> {
+impl<A: StringArena> StringTable<A> {
     pub fn new_in(arena: A) -> Result<Self, AllocError> {
         let map = FxHashMap::default();
         Ok(StringTable { arena, map })
@@ -347,8 +356,8 @@ impl<A: StringAllocator> StringTable<A> {
     }
 }
 
-pub struct StringTableIter<'a> {
-    arena: &'a ArenaAllocator,
+pub struct ArenaAllocatorIter {
+    arena: ArenaAllocator,
     /// Offset from the arena's base pointer for the next item, which is a
     /// length-prefixed string, see [LengthPrefixedStr] for layout info.
     offset: usize,
@@ -358,8 +367,8 @@ pub struct StringTableIter<'a> {
     has_empty_str: bool,
 }
 
-impl<'a> Iterator for StringTableIter<'a> {
-    type Item = &'a str;
+impl Iterator for ArenaAllocatorIter {
+    type Item = Option<LengthPrefixedStr>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.len == 0 {
@@ -367,7 +376,7 @@ impl<'a> Iterator for StringTableIter<'a> {
         } else if self.has_empty_str {
             self.len -= 1;
             self.has_empty_str = false;
-            Some("")
+            Some(None)
         } else {
             let ptr = self
                 .arena
@@ -381,11 +390,11 @@ impl<'a> Iterator for StringTableIter<'a> {
             let str = unsafe {
                 let ptr = ptr.add(self.offset);
                 let ptr = ptr::NonNull::new_unchecked(ptr);
-                mem::transmute::<&str, &'a str>(LengthPrefixedStr::from_bytes(ptr).deref())
+                LengthPrefixedStr::from_bytes(ptr)
             };
             self.len -= 1;
             self.offset += mem::size_of::<u16>() + str.len();
-            Some(str)
+            Some(Some(str))
         }
     }
 

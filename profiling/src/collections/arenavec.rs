@@ -1,12 +1,11 @@
-use super::{InternError, LengthPrefixedStr, StringAllocator};
+use super::{InternError, LengthPrefixedStr, StringArena};
 use crate::alloc::r#virtual::raw::{virtual_alloc, virtual_free};
 use crate::alloc::{pad_to, page_size, AllocError};
 use std::alloc::Layout;
 use std::num::NonZeroU32;
 use std::ops::Deref;
-use std::ptr::{addr_of_mut, NonNull};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::{io, mem, slice};
+use std::{io, mem, ptr, slice};
 
 /// PRIVATE TYPE.
 /// The allocation header for an arena, which tracks information about the
@@ -23,7 +22,7 @@ struct ArenaHeader<T: Copy> {
 #[repr(C)]
 pub struct ArenaSlice<T: Copy> {
     // "borrows" the pointer. It cannot add new items.
-    ptr: Option<NonNull<ArenaHeader<T>>>,
+    ptr: Option<ptr::NonNull<ArenaHeader<T>>>,
 }
 
 impl<T: Copy> Clone for ArenaSlice<T> {
@@ -60,16 +59,11 @@ pub struct ArenaVec<T: Copy> {
     /// "owns" the header, meaning it is allowed to append new items, but it
     /// cannot mutate existing items. When appending, be careful to write the
     /// item before atomically increasing the length.
-    header_ptr: Option<NonNull<ArenaHeader<T>>>,
+    header_ptr: ptr::NonNull<ArenaHeader<T>>,
 
     /// Points to the beginning of the space for items to be stored in the
     /// mapping, properly aligned for a `T`.
-    data_ptr: NonNull<T>,
-
-    /// The number of items in the arena. This is duplicate information but
-    /// makes it nicer for certain functions to not need to interact with
-    /// atomics.
-    length: u32,
+    data_ptr: ptr::NonNull<T>,
 
     /// The total number of `T`s that can be stored in the arena. Unchanged
     /// after creation.
@@ -78,19 +72,17 @@ pub struct ArenaVec<T: Copy> {
 
 impl<T: Copy> Drop for ArenaVec<T> {
     fn drop(&mut self) {
-        if let Some(nonnull) = self.header_ptr.take() {
-            // SAFETY: since the ArenaVec holds a reference to the data, it
-            // will still be alive.
-            let header = unsafe { nonnull.as_ref() };
-            if header.rc.fetch_sub(1, Ordering::SeqCst) == 1 {
-                // Safety: passing pointer and size un-changed.
-                let _result =
-                    unsafe { virtual_free(nonnull.cast(), header.allocation_size as usize) };
+        // SAFETY: since the ArenaVec holds a reference to the data, it will
+        // still be alive.
+        let header = unsafe { self.header_ptr.as_ref() };
+        if header.rc.fetch_sub(1, Ordering::SeqCst) == 1 {
+            // Safety: passing pointer and size un-changed.
+            let _result =
+                unsafe { virtual_free(self.header_ptr.cast(), header.allocation_size as usize) };
 
-                #[cfg(debug_assertions)]
-                if let Err(err) = _result {
-                    panic!("failed to drop ArenaVec: {err:#}");
-                }
+            #[cfg(debug_assertions)]
+            if let Err(err) = _result {
+                panic!("failed to drop ArenaVec: {err:#}");
             }
         }
     }
@@ -101,16 +93,34 @@ impl<T: Copy> Drop for ArenaVec<T> {
 /// it can be moved to another thread without issue.
 unsafe impl<T: Copy> Send for ArenaVec<T> {}
 
+/// Keep in sync with [ArenaHeader].
+#[repr(C)]
+struct StaticArenaHeader {
+    allocation_size: u32,
+    rc: AtomicU32,
+    len: AtomicU32,
+}
+
+static EMPTY_ARENA_HEADER: StaticArenaHeader = StaticArenaHeader {
+    allocation_size: 0,
+    rc: AtomicU32::new(1),
+    len: AtomicU32::new(0),
+};
+
 impl<T: Copy> ArenaVec<T> {
+    pub fn new() -> ArenaVec<T> {
+        let header_ptr = ptr::addr_of_mut!(EMPTY_ARENA_HEADER);
+        ArenaVec {
+            // SAFETY: non-null, and also valid for all ArenaVec of capacity 0.
+            header_ptr: unsafe { ptr::NonNull::new_unchecked(header_ptr.cast()) },
+            data_ptr: ptr::NonNull::dangling(),
+            capacity: 0,
+        }
+    }
+
     pub fn with_capacity_in_bytes(min_bytes: usize) -> io::Result<Self> {
         if min_bytes == 0 {
-            return Ok(Self {
-                header_ptr: None,
-                rc: NonNull::dangling(),
-                len: NonNull::dangling(),
-                data: NonNull::dangling(),
-                capacity: 0,
-            });
+            return Ok(Self::new());
         }
 
         let page_size = page_size();
@@ -132,56 +142,38 @@ impl<T: Copy> ArenaVec<T> {
 
                 let nonnull = virtual_alloc(allocation_size)?.cast::<ArenaHeader<T>>();
                 let header = nonnull.as_ptr();
-                addr_of_mut!((*header).allocation_size).write(unadjusted_capacity);
-                addr_of_mut!((*header).rc).write(AtomicU32::new(1));
-                addr_of_mut!((*header).len).write(AtomicU32::new(0));
+                ptr::addr_of_mut!((*header).allocation_size).write(unadjusted_capacity);
+                ptr::addr_of_mut!((*header).rc).write(AtomicU32::new(1));
+                ptr::addr_of_mut!((*header).len).write(AtomicU32::new(0));
                 // will not underflow, min_bytes was .max'd with size of the header.
                 let capacity = unadjusted_capacity - mem::size_of::<ArenaHeader<T>>() as u32;
 
+                let raw_ptr = ptr::addr_of_mut!((*header).data).cast();
                 Ok(Self {
-                    header_ptr: Some(nonnull),
-                    rc: NonNull::new_unchecked(addr_of_mut!((*header).rc)),
-                    len: NonNull::new_unchecked(addr_of_mut!((*header).len)),
-                    data: NonNull::new_unchecked(addr_of_mut!((*header).data).cast()),
+                    header_ptr: nonnull,
+                    // SAFETY: points inside an allocation (non-null).
+                    data_ptr: unsafe { ptr::NonNull::new_unchecked(raw_ptr) },
                     capacity,
                 })
             }
         }
     }
 
-    fn header(&self) -> Option<&ArenaHeader<T>> {
-        match self.header_ptr.as_ref() {
-            None => None,
-            // SAFETY: ArenaVec holds a reference to the data.
-            Some(ptr) => Some(unsafe { ptr.as_ref() }),
-        }
-    }
-
-    fn try_reserve(&self, additional: u32) -> Result<NonNull<[T]>, AllocError> {
-        if self.header_ptr.is_none() {
+    fn try_reserve(&self, additional: u32) -> Result<ptr::NonNull<[T]>, AllocError> {
+        let len = unsafe {(*self.header_ptr.as_ptr()).len.load(Ordering::Acquire) };
+        // When all 3 u32 numbers are converted to u64, this cannot overflow.
+        if u64::from(len) + u64::from(additional) > u64::from(self.capacity) {
             return Err(AllocError);
-        }
-        let len = unsafe { self.len.as_ref().load(Ordering::Acquire) };
-        if self.capacity - len < additional {
-            Err(AllocError)
         } else {
             // SAFETY: todo
-            let addr = unsafe { self.data.as_ptr().add(len as usize) };
+            let addr = unsafe { self.data_ptr.as_ptr().add(len as usize) };
             // SAFETY: todo
             Ok(unsafe {
-                NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(
+                ptr::NonNull::new_unchecked(ptr::slice_from_raw_parts_mut(
                     addr,
                     additional as usize,
                 ))
             })
-        }
-    }
-
-    pub fn base_ptr(&self) -> Option<NonNull<T>> {
-        if self.header_ptr.is_none() {
-            None
-        } else {
-            Some(self.data)
         }
     }
 }
@@ -223,10 +215,9 @@ impl<T: Copy> Deref for ArenaVec<T> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
-        match self.header() {
-            None => &[],
-            Some(header) => header.deref(),
-        }
+        // SAFETY: struct retains a refcount, so it's definitely alive or
+        // something has already been screwed up.
+        unsafe { self.header_ptr.as_ref() }
     }
 }
 
@@ -244,7 +235,16 @@ impl IndexableStringArenaAllocator {
 #[derive(Clone, Copy, Debug)]
 pub struct IndexableHandle(NonZeroU32);
 
-impl StringAllocator for IndexableStringArenaAllocator {
+impl IntoIterator for IndexableStringArenaAllocator {
+    type Item = Option<LengthPrefixedStr>;
+    type IntoIter = todo!();
+
+    fn into_iter(self) -> Self::IntoIter {
+        todo!()
+    }
+}
+
+impl StringArena for IndexableStringArenaAllocator {
     type Handle = IndexableHandle;
 
     fn allocate_str(&self, value: impl AsRef<str>) -> Result<IndexableHandle, InternError> {
@@ -260,11 +260,12 @@ impl StringAllocator for IndexableStringArenaAllocator {
 
         // Both arenas have room, so go ahead and actually allocate.
         let length_prefixed_str = unsafe { LengthPrefixedStr::from_str_in(str, n, storage_ptr) };
+
+        // Change the length of the vec only after the data is written.
+        // SAFETY: struct retains a refcount, so it's valid.
         unsafe {
-            _ = self
-                .bytes_storage
+            (*self.bytes_storage.header_ptr.as_ptr())
                 .len
-                .as_ref()
                 .fetch_add(layout_size, Ordering::SeqCst)
         };
 
@@ -294,9 +295,8 @@ impl StringAllocator for IndexableStringArenaAllocator {
     }
 
     fn convert_handle_to_length_prefixed_str(&self, handle: Self::Handle) -> LengthPrefixedStr {
-        // SAFETY: All handles are guaranteed to fit within the allocation, or
-        // the operation would have failed, so there must be an allocation.
-        let ptr = unsafe { self.bytes_storage.base_ptr().unwrap_unchecked() };
+        let self1 = &self.bytes_storage;
+        let ptr = self1.data_ptr;
 
         // SAFETY: Again, all handles are guaranteed to fit within the
         // allocation, or else the operation would have initially failed.
@@ -315,10 +315,8 @@ impl StringAllocator for IndexableStringArenaAllocator {
     fn convert_length_prefixed_str_to_handle(&self, str: LengthPrefixedStr) -> Self::Handle {
         let data_ptr = str.data_ptr().as_ptr() as *const u8;
 
-        // SAFETY: length-prefixed strings must point inside the allocator's
-        // or else something is already wrong. So there must be a mapping
-        // backing the arena if we have a length-prefixed string.
-        let base_ptr = unsafe { self.bytes_storage.base_ptr().unwrap_unchecked().as_ptr() };
+        let self1 = &self.bytes_storage;
+        let base_ptr = self1.data_ptr.as_ptr();
 
         // SAFETY:
         //  1. The pointers belong to the same virtual allocation, and are in
