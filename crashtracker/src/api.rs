@@ -134,7 +134,7 @@ pub fn on_fork(
     // https://man7.org/linux/man-pages/man2/sigaltstack.2.html
 
     // See function level comment about why we do this.
-    replace_receiver(&config, &metadata)?;
+    replace_receiver(&config, metadata)?;
     Ok(())
 }
 
@@ -154,7 +154,7 @@ pub fn init(
 ) -> anyhow::Result<()> {
     // Setup the receiver first, so that if there is a crash detected it has
     // somewhere to go.
-    setup_receiver(&config, &metadata)?;
+    setup_receiver(&config, metadata)?;
     register_crash_handlers(&config)?;
     Ok(())
 }
@@ -218,7 +218,7 @@ fn test_crash() {
         "family".to_string(),
         vec![tag],
     );
-    update_metadata(&metadata2).expect("metadata");
+    update_metadata(metadata2).expect("metadata");
 
     let p: *const u32 = std::ptr::null();
     let q = unsafe { *p };

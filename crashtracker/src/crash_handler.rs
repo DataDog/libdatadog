@@ -16,7 +16,7 @@ use libc::{
 };
 use nix::sys::signal;
 use nix::sys::signal::{SaFlags, SigAction, SigHandler};
-use std::fs::{File, Metadata};
+use std::fs::File;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::ptr;
@@ -32,14 +32,13 @@ struct OldHandlers {
 static OLD_HANDLERS: AtomicPtr<OldHandlers> = AtomicPtr::new(ptr::null_mut());
 static RECEIVER: AtomicPtr<std::process::Child> = AtomicPtr::new(ptr::null_mut());
 static METADATA: AtomicPtr<(CrashtrackerMetadata, String)> = AtomicPtr::new(ptr::null_mut());
-static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
+static _CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
 
 static mut RESOLVE_FRAMES: bool = false;
-static mut METADATA_STRING: Option<String> = None;
 
 fn make_receiver(
     config: &CrashtrackerConfiguration,
-    metadata: &CrashtrackerMetadata,
+    metadata: CrashtrackerMetadata,
 ) -> anyhow::Result<std::process::Child> {
     // TODO: currently create the file in write mode.  Would append make more sense?
     let stderr = if let Some(filename) = &config.stderr_filename {
@@ -89,15 +88,22 @@ fn make_receiver(
 /// ATOMICITY:
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
-pub fn update_metadata(metadata: &CrashtrackerMetadata) -> anyhow::Result<()> {
+pub fn update_metadata(metadata: CrashtrackerMetadata) -> anyhow::Result<()> {
     let metadata_string = serde_json::to_string(&metadata)?;
-    unsafe { METADATA_STRING = Some(metadata_string) };
+    let box_ptr = Box::into_raw(Box::new((metadata, metadata_string)));
+    let old = METADATA.swap(box_ptr, SeqCst);
+    if !old.is_null() {
+        // Safety: This can only come from a box above.
+        unsafe {
+            std::mem::drop(Box::from_raw(old));
+        }
+    }
     Ok(())
 }
 
 pub fn setup_receiver(
     config: &CrashtrackerConfiguration,
-    metadata: &CrashtrackerMetadata,
+    metadata: CrashtrackerMetadata,
 ) -> anyhow::Result<()> {
     let new_receiver = Box::into_raw(Box::new(make_receiver(config, metadata)?));
     let old_receiver = RECEIVER.swap(new_receiver, SeqCst);
@@ -110,7 +116,7 @@ pub fn setup_receiver(
 
 pub fn replace_receiver(
     config: &CrashtrackerConfiguration,
-    metadata: &CrashtrackerMetadata,
+    metadata: CrashtrackerMetadata,
 ) -> anyhow::Result<()> {
     let new_receiver = Box::into_raw(Box::new(make_receiver(config, metadata)?));
     let old_receiver: *mut std::process::Child = RECEIVER.swap(new_receiver, SeqCst);
@@ -153,14 +159,15 @@ extern "C" fn handle_posix_signal(signum: i32) {
     // return to old handler (chain).  See comments on `restore_old_handler`.
 }
 
-fn emit_metadata(w: &mut impl Write) -> anyhow::Result<()> {
+fn emit_and_consume_metadata(w: &mut impl Write) -> anyhow::Result<()> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_METADATA}")?;
+    let metadata_ptr = METADATA.swap(ptr::null_mut(), SeqCst);
+    anyhow::ensure!(!metadata_ptr.is_null());
+    let (_metadata, metadata_string) = unsafe { metadata_ptr.as_ref().context("metadata ptr")? };
 
-    let metadata = unsafe { &METADATA_STRING.as_ref().context("Expected metadata")? };
-    writeln!(w, "{}", metadata)?;
-
+    writeln!(w, "{}", metadata_string)?;
     writeln!(w, "{DD_CRASHTRACK_END_METADATA}")?;
-
+    // Leak the metadata to avoid calling `drop` during a crash
     Ok(())
 }
 
@@ -179,7 +186,7 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
 
     let pipe = receiver.stdin.as_mut().unwrap();
 
-    emit_metadata(pipe)?;
+    emit_and_consume_metadata(pipe)?;
 
     writeln!(pipe, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
     writeln!(pipe, "{{\"signum\": {signum}, \"signame\": \"{signame}\"}}")?;
@@ -258,7 +265,7 @@ pub fn restore_old_handlers(leak: bool) -> anyhow::Result<()> {
     // Safety: The value restored here was returned from a previous sigaction call
     unsafe { signal::sigaction(signal::SIGBUS, &prev.sigbus)? };
     unsafe { signal::sigaction(signal::SIGSEGV, &prev.sigsegv)? };
-    // We want to avoid freeing memory inside the handler, so just leak it 
+    // We want to avoid freeing memory inside the handler, so just leak it
     // This is fine since we're crashing anyway at this point
     if leak {
         Box::leak(prev);

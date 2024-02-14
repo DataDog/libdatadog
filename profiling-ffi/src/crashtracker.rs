@@ -135,7 +135,7 @@ unsafe fn ddog_prof_crashtracker_update_metadata_impl(
     metadata: CrashtrackerMetadata,
 ) -> anyhow::Result<()> {
     let metadata = metadata.try_into()?;
-    datadog_crashtracker::update_metadata(&metadata)
+    datadog_crashtracker::update_metadata(metadata)
 }
 
 #[no_mangle]
