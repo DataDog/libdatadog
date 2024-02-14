@@ -100,7 +100,7 @@ impl CrashtrackerConfiguration {
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
 pub fn shutdown_crash_handler() -> anyhow::Result<()> {
-    restore_old_handlers()?;
+    restore_old_handlers(false)?;
     shutdown_receiver()?;
     Ok(())
 }

@@ -16,7 +16,7 @@ use libc::{
 };
 use nix::sys::signal;
 use nix::sys::signal::{SaFlags, SigAction, SigHandler};
-use std::fs::File;
+use std::fs::{File, Metadata};
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::ptr;
@@ -30,8 +30,10 @@ struct OldHandlers {
 }
 
 static OLD_HANDLERS: AtomicPtr<OldHandlers> = AtomicPtr::new(ptr::null_mut());
-
 static RECEIVER: AtomicPtr<std::process::Child> = AtomicPtr::new(ptr::null_mut());
+static METADATA: AtomicPtr<(CrashtrackerMetadata, String)> = AtomicPtr::new(ptr::null_mut());
+static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
+
 static mut RESOLVE_FRAMES: bool = false;
 static mut METADATA_STRING: Option<String> = None;
 
@@ -116,6 +118,7 @@ pub fn replace_receiver(
         !old_receiver.is_null(),
         "Error updating crash handler receiver: receiver did not already exist"
     );
+    // Safety: This was only ever created out of Box::into_raw
     let mut old_receiver: Box<std::process::Child> = unsafe { Box::from_raw(old_receiver) };
     // Close the stdin handle so we don't have two open copies
     // TODO: dropping the old receiver at the end of this function might do this automatically?
@@ -144,7 +147,7 @@ extern "C" fn handle_posix_signal(signum: i32) {
     // Safety: We've already crashed, this is a best effort to chain to the old
     // behaviour.  Do this first to prevent recursive activation if this handler
     // itself crashes (e.g. while calculating stacktrace)
-    let _ = restore_old_handlers();
+    let _ = restore_old_handlers(true);
     let _ = handle_posix_signal_impl(signum);
 
     // return to old handler (chain).  See comments on `restore_old_handler`.
@@ -247,7 +250,7 @@ unsafe fn register_signal_handler(signal_type: signal::Signal) -> anyhow::Result
     Ok(old_handler)
 }
 
-pub fn restore_old_handlers() -> anyhow::Result<()> {
+pub fn restore_old_handlers(leak: bool) -> anyhow::Result<()> {
     let prev = OLD_HANDLERS.swap(ptr::null_mut(), SeqCst);
     anyhow::ensure!(!prev.is_null());
     // Safety: The only nonnull pointer stored here comes from Box::into_raw()
@@ -255,7 +258,11 @@ pub fn restore_old_handlers() -> anyhow::Result<()> {
     // Safety: The value restored here was returned from a previous sigaction call
     unsafe { signal::sigaction(signal::SIGBUS, &prev.sigbus)? };
     unsafe { signal::sigaction(signal::SIGSEGV, &prev.sigsegv)? };
-
+    // We want to avoid freeing memory inside the handler, so just leak it 
+    // This is fine since we're crashing anyway at this point
+    if leak {
+        Box::leak(prev);
+    }
     Ok(())
 }
 
