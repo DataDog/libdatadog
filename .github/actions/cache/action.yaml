@@ -24,3 +24,7 @@ runs:
         key: v2-${{ runner.os }}-cargo-${{ inputs.rust_version }}-${{ hashFiles('**/Cargo.toml') }}-${{ inputs.build_profile }}
         restore-keys: |
           v2-${{ runner.os }}-cargo-${{ inputs.rust_version }}-${{ hashFiles('**/Cargo.toml') }}-
+# Cache will restore cargo and target data  if cache with matching OS and Rust Version as well as matching Cargo.toml files will be found. 
+# previously we also restored cache for specific os and Rust Version but the target/ directory had only been growing over time - and we've reached the limits of GitHub Runners
+# 
+# Ideally cache should understand interdependencies between Cargo projects, and invalidate according - when a specific project is changed only.
