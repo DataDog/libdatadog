@@ -1,11 +1,16 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+mod channel;
+pub use channel::*;
 
-pub mod example_interface;
-pub mod handles;
-pub mod transport;
+mod platform_handle;
+pub use platform_handle::*;
 
-pub mod platform;
-pub mod sequential;
+mod message;
+pub use message::*;
 
-pub use tarpc;
+mod mem_handle;
+pub(crate) use mem_handle::*;
+
+mod named_pipe;
+pub use named_pipe::*;

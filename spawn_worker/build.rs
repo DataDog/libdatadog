@@ -19,6 +19,8 @@ fn main() {
             builder.flag("-Wl,--no-as-needed");
         }
         builder.link_dynamically("m"); // rust code generally requires libm. Just link against it.
+    } else {
+        builder.flag("-wd4996"); // disable deprecation warnings
     }
 
     builder.try_compile_executable("trampoline.bin").unwrap();

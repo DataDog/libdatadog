@@ -11,6 +11,7 @@ tokio-console = ["tokio/full", "tokio/tracing", "console-subscriber"]
 
 [dependencies]
 anyhow = { version = "1.0" }
+arrayref = "0.3.7"
 bytes = "1.4"
 priority-queue = "1.3.2"
 ddcommon = { path = "../ddcommon" }
@@ -39,7 +40,7 @@ rmp-serde = "1.1.1"
 spawn_worker = { path = "../spawn_worker" }
 zwohash = "0.1.2"
 sys-info = { version = "0.9.0" }
-tokio = { version = "1.35.1", features = ["sync", "io-util", "signal"] }
+tokio = { version = "1.35.1", features = ["sync", "io-util", "signal", "rt-multi-thread"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 
 prctl = "1.0.0"
@@ -55,12 +56,25 @@ chrono = "0.4.31"
 console-subscriber = { version = "0.1", optional = true }
 uuid = { version = "1.3", features = ["v4"] }
 hashbrown = { version = "0.12", features = ["raw"] }
+libc = { version = "0.2" }
+
+[dependencies.windows]
+features = [
+    "Win32_Foundation",
+    "Wdk_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_WindowsProgramming"
+]
+version = "0.51.0"
 
 [dev-dependencies]
 libc = { version = "0.2" }
 tempfile = { version = "3.3" }
 
-[target.'cfg(not(windows))'.dependencies]
-libc = { version = "0.2" }
+[target.'cfg(unix)'.dependencies]
 nix = { version = "0.26.2", features = ["socket", "mman"] }
 sendfd = { version = "0.4", features = ["tokio"] }
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "=0.2.8" }
+kernel32-sys = "0.2.2"

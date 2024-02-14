@@ -101,7 +101,7 @@ where
     }
 }
 
-pub fn open_named_shm(path: CString) -> io::Result<MappedMem<NamedShmHandle>> {
+pub fn open_named_shm(path: &CString) -> io::Result<MappedMem<NamedShmHandle>> {
     NamedShmHandle::open(path)?.map()
 }
 
