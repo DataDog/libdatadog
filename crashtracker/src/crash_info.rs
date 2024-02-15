@@ -112,6 +112,7 @@ impl CrashInfo {
         self.metadata = Some(metadata);
         Ok(())
     }
+
     pub fn set_siginfo(&mut self, siginfo: SigInfo) -> anyhow::Result<()> {
         anyhow::ensure!(self.siginfo.is_none());
         self.siginfo = Some(siginfo);
@@ -159,9 +160,6 @@ impl CrashInfo {
             }
         }
 
-        //let site = "intake.profile.datad0g.com/api/v2/profile";
-        //let site = "datad0g.com";
-        //let api_key = std::env::var("DD_API_KEY")?;
         let data = serde_json::to_vec(self)?;
         let metadata = &self.metadata.as_ref().context("Missing metadata")?;
 
