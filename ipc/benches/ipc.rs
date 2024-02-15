@@ -4,20 +4,23 @@
 #[cfg(not(windows))]
 use criterion::{criterion_group, criterion_main, Criterion};
 #[cfg(not(windows))]
-use datadog_ipc::example_interface::{
-    ExampleInterfaceRequest, ExampleInterfaceResponse, ExampleServer, ExampleTransport,
+use datadog_ipc::{
+    example_interface::{
+        ExampleInterfaceRequest, ExampleInterfaceResponse, ExampleServer, ExampleTransport,
+    },
+    platform::Channel,
 };
 #[cfg(not(windows))]
 use std::{
-    os::unix::net::UnixStream as StdUnixStream,
+    os::unix::net::UnixStream,
     thread::{self},
 };
 #[cfg(not(windows))]
-use tokio::{net::UnixStream, runtime};
+use tokio::runtime;
 
 #[cfg(not(windows))]
 fn criterion_benchmark(c: &mut Criterion) {
-    let (sock_a, sock_b) = StdUnixStream::pair().unwrap();
+    let (sock_a, sock_b) = UnixStream::pair().unwrap();
 
     let worker = thread::spawn(move || {
         let rt = runtime::Builder::new_current_thread()
@@ -26,10 +29,9 @@ fn criterion_benchmark(c: &mut Criterion) {
             .unwrap();
         let _g = rt.enter();
         sock_a.set_nonblocking(true).unwrap();
-        let socket = UnixStream::from_std(sock_a).unwrap();
         let server = ExampleServer::default();
 
-        rt.block_on(server.accept_connection(socket));
+        rt.block_on(server.accept_connection(Channel::from(sock_a)));
     });
 
     let mut transport = ExampleTransport::from(sock_b);

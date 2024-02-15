@@ -15,17 +15,11 @@ use log::{debug, warn};
 #[cfg(not(feature = "logging"))]
 use tracing::{debug, warn};
 
-use datadog_ipc::platform::{self, locks::FLock};
+use crate::setup::Liaison;
+use datadog_ipc::platform::{self, locks::FLock, Channel};
 
-/// Implementations of this interface must provide behavior repeatable across processes with the same version
-/// of library.
-/// Allowing all instances of the same version of the library to establish a shared connection
-pub trait Liaison: Sized {
-    fn connect_to_server(&self) -> io::Result<UnixStream>;
-    fn attempt_listen(&self) -> io::Result<Option<UnixListener>>;
-    fn ipc_shared() -> Self;
-    fn ipc_per_process() -> Self;
-}
+pub type IpcClient = tokio::net::UnixStream;
+pub type IpcServer = UnixListener;
 
 fn ensure_dir_world_writable<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let mut perm = path.as_ref().metadata()?.permissions();
@@ -50,8 +44,8 @@ pub struct SharedDirLiaison {
 }
 
 impl Liaison for SharedDirLiaison {
-    fn connect_to_server(&self) -> io::Result<UnixStream> {
-        UnixStream::connect(&self.socket_path)
+    fn connect_to_server(&self) -> io::Result<Channel> {
+        Ok(Channel::from(UnixStream::connect(&self.socket_path)?))
     }
 
     fn attempt_listen(&self) -> io::Result<Option<UnixListener>> {
@@ -80,12 +74,12 @@ impl Liaison for SharedDirLiaison {
     }
 
     fn ipc_shared() -> Self {
-        Self::new_tmp_dir()
+        Self::new_default_location()
     }
 
     fn ipc_per_process() -> Self {
         //TODO: implement per pid handling
-        Self::new_tmp_dir()
+        Self::new_default_location()
     }
 }
 
@@ -106,7 +100,7 @@ impl SharedDirLiaison {
         }
     }
 
-    pub fn new_tmp_dir() -> Self {
+    pub fn new_default_location() -> Self {
         Self::new(env::temp_dir().join("libdatadog"))
     }
 }
@@ -119,15 +113,12 @@ impl Default for SharedDirLiaison {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use std::{
-        io,
-        os::unix::net::{UnixListener, UnixStream},
-        path::PathBuf,
-    };
+    use std::{io, os::unix::net::UnixListener, path::PathBuf};
 
     use spawn_worker::getpid;
 
     use datadog_ipc::platform;
+    use datadog_ipc::platform::Channel;
 
     use super::Liaison;
 
@@ -137,8 +128,10 @@ mod linux {
     pub type DefaultLiason = AbstractUnixSocketLiaison;
 
     impl Liaison for AbstractUnixSocketLiaison {
-        fn connect_to_server(&self) -> io::Result<UnixStream> {
-            platform::sockets::connect_abstract(&self.path)
+        fn connect_to_server(&self) -> io::Result<Channel> {
+            Ok(Channel::from(platform::sockets::connect_abstract(
+                &self.path,
+            )?))
         }
 
         fn attempt_listen(&self) -> io::Result<Option<UnixListener>> {
