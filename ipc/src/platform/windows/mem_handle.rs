@@ -47,7 +47,8 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
                     ptr,
                     info.as_mut_ptr(),
                     mem::size_of::<MEMORY_BASIC_INFORMATION>(),
-                ) == 0 {
+                ) == 0
+                {
                     return Err(Error::last_os_error());
                 }
                 info.assume_init().RegionSize

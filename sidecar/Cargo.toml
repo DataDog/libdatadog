@@ -81,3 +81,4 @@ sendfd = { version = "0.4", features = ["tokio"] }
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "=0.2.8" }
 kernel32-sys = "0.2.2"
+microseh = "0.1.1"
