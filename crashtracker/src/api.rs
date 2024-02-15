@@ -2,12 +2,11 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 #![cfg(unix)]
 
+use crate::crash_handler::{register_crash_handlers, setup_receiver};
+
 use super::{
     counters::reset_counters,
-    crash_handler::{
-        register_crash_handlers, replace_receiver, restore_old_handlers, setup_receiver,
-        shutdown_receiver,
-    },
+    crash_handler::{replace_receiver, restore_old_handlers, shutdown_receiver},
 };
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
@@ -134,7 +133,7 @@ pub fn on_fork(
     // https://man7.org/linux/man-pages/man2/sigaltstack.2.html
 
     // See function level comment about why we do this.
-    replace_receiver(&config, metadata)?;
+    replace_receiver(config, metadata)?;
     Ok(())
 }
 
@@ -154,8 +153,9 @@ pub fn init(
 ) -> anyhow::Result<()> {
     // Setup the receiver first, so that if there is a crash detected it has
     // somewhere to go.
-    setup_receiver(&config, metadata)?;
-    register_crash_handlers(&config)?;
+    let create_alt_stack = config.create_alt_stack;
+    setup_receiver(config, metadata)?;
+    register_crash_handlers(create_alt_stack)?;
     Ok(())
 }
 

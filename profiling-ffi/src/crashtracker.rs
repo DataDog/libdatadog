@@ -120,6 +120,26 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_shutdown() -> ProfileResult {
 
 #[no_mangle]
 #[must_use]
+pub unsafe extern "C" fn ddog_prof_crashtracker_update_config(
+    config: CrashtrackerConfiguration,
+) -> ProfileResult {
+    match ddog_prof_crashtracker_update_config_impl(config) {
+        Ok(_) => ProfileResult::Ok(true),
+        Err(err) => ProfileResult::Err(Error::from(
+            err.context("ddog_prof_crashtracker_update_config failed"),
+        )),
+    }
+}
+
+unsafe fn ddog_prof_crashtracker_update_config_impl(
+    config: CrashtrackerConfiguration,
+) -> anyhow::Result<()> {
+    let config = config.try_into()?;
+    datadog_crashtracker::update_config(config)
+}
+
+#[no_mangle]
+#[must_use]
 pub unsafe extern "C" fn ddog_prof_crashtracker_update_metadata(
     metadata: CrashtrackerMetadata,
 ) -> ProfileResult {

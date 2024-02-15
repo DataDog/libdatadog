@@ -32,12 +32,10 @@ struct OldHandlers {
 static OLD_HANDLERS: AtomicPtr<OldHandlers> = AtomicPtr::new(ptr::null_mut());
 static RECEIVER: AtomicPtr<std::process::Child> = AtomicPtr::new(ptr::null_mut());
 static METADATA: AtomicPtr<(CrashtrackerMetadata, String)> = AtomicPtr::new(ptr::null_mut());
-static _CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
-
-static mut RESOLVE_FRAMES: bool = false;
+static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
 
 fn make_receiver(
-    config: &CrashtrackerConfiguration,
+    config: CrashtrackerConfiguration,
     metadata: CrashtrackerMetadata,
 ) -> anyhow::Result<std::process::Child> {
     // TODO: currently create the file in write mode.  Would append make more sense?
@@ -64,15 +62,9 @@ fn make_receiver(
             &config.path_to_receiver_binary
         ))?;
 
-    // Write the args into the receiver.
-    // Use the pipe to avoid secrets ending up on the commandline
-    writeln!(
-        receiver.stdin.as_ref().unwrap(),
-        "{}",
-        serde_json::to_string(&config)?
-    )?;
-
     update_metadata(metadata)?;
+    update_config(config)?;
+
     Ok(receiver)
 }
 
@@ -83,11 +75,10 @@ fn make_receiver(
 /// PRECONDITIONS:
 ///     None
 /// SAFETY:
-///     Crash-tracking functions are not reentrant.
+///     Crash-tracking functions are not guaranteed to be reentrant.
 ///     No other crash-handler functions should be called concurrently.
 /// ATOMICITY:
-///     This function is not atomic. A crash during its execution may lead to
-///     unexpected crash-handling behaviour.
+///     This function uses a swap on an atomic pointer.
 pub fn update_metadata(metadata: CrashtrackerMetadata) -> anyhow::Result<()> {
     let metadata_string = serde_json::to_string(&metadata)?;
     let box_ptr = Box::into_raw(Box::new((metadata, metadata_string)));
@@ -101,8 +92,32 @@ pub fn update_metadata(metadata: CrashtrackerMetadata) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Updates the crashtracker config for this process
+/// Config is stored in a global variable and sent to the crashtracking
+/// receiver when a crash occurs.
+///
+/// PRECONDITIONS:
+///     None
+/// SAFETY:
+///     Crash-tracking functions are not guaranteed to be reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function uses a swap on an atomic pointer.
+pub fn update_config(config: CrashtrackerConfiguration) -> anyhow::Result<()> {
+    let config_string = serde_json::to_string(&config)?;
+    let box_ptr = Box::into_raw(Box::new((config, config_string)));
+    let old = CONFIG.swap(box_ptr, SeqCst);
+    if !old.is_null() {
+        // Safety: This can only come from a box above.
+        unsafe {
+            std::mem::drop(Box::from_raw(old));
+        }
+    }
+    Ok(())
+}
+
 pub fn setup_receiver(
-    config: &CrashtrackerConfiguration,
+    config: CrashtrackerConfiguration,
     metadata: CrashtrackerMetadata,
 ) -> anyhow::Result<()> {
     let new_receiver = Box::into_raw(Box::new(make_receiver(config, metadata)?));
@@ -115,7 +130,7 @@ pub fn setup_receiver(
 }
 
 pub fn replace_receiver(
-    config: &CrashtrackerConfiguration,
+    config: CrashtrackerConfiguration,
     metadata: CrashtrackerMetadata,
 ) -> anyhow::Result<()> {
     let new_receiver = Box::into_raw(Box::new(make_receiver(config, metadata)?));
@@ -159,23 +174,21 @@ extern "C" fn handle_posix_signal(signum: i32) {
     // return to old handler (chain).  See comments on `restore_old_handler`.
 }
 
-fn emit_and_consume_metadata(w: &mut impl Write) -> anyhow::Result<()> {
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_METADATA}")?;
-    let metadata_ptr = METADATA.swap(ptr::null_mut(), SeqCst);
-    anyhow::ensure!(!metadata_ptr.is_null());
-    let (_metadata, metadata_string) = unsafe { metadata_ptr.as_ref().context("metadata ptr")? };
-
-    writeln!(w, "{}", metadata_string)?;
-    writeln!(w, "{DD_CRASHTRACK_END_METADATA}")?;
-    // Leak the metadata to avoid calling `drop` during a crash
+fn emit_config(w: &mut impl Write, config_str: &str) -> anyhow::Result<()> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_CONFIG}")?;
+    writeln!(w, "{}", config_str)?;
+    writeln!(w, "{DD_CRASHTRACK_END_CONFIG}")?;
     Ok(())
 }
 
-fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
-    let receiver = RECEIVER.swap(ptr::null_mut(), SeqCst);
-    anyhow::ensure!(!receiver.is_null(), "No crashtracking receiver");
-    let receiver = unsafe { receiver.as_mut().context("")? };
+fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> anyhow::Result<()> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_METADATA}")?;
+    writeln!(w, "{}", metadata_str)?;
+    writeln!(w, "{DD_CRASHTRACK_END_METADATA}")?;
+    Ok(())
+}
 
+fn emit_siginfo(w: &mut impl Write, signum: i32) -> anyhow::Result<()> {
     let signame = if signum == libc::SIGSEGV {
         "SIGSEGV"
     } else if signum == libc::SIGBUS {
@@ -184,14 +197,34 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
         "UNKNOWN"
     };
 
-    let pipe = receiver.stdin.as_mut().unwrap();
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
+    writeln!(w, "{{\"signum\": {signum}, \"signame\": \"{signame}\"}}")?;
+    writeln!(w, "{DD_CRASHTRACK_END_SIGINFO}")?;
+    Ok(())
+}
 
-    emit_and_consume_metadata(pipe)?;
+fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
+    // Leak receiver, config, and metadata to avoid calling 'drop' during a crash
+    let receiver = RECEIVER.swap(ptr::null_mut(), SeqCst);
+    anyhow::ensure!(!receiver.is_null(), "No crashtracking receiver");
+    let receiver = unsafe { receiver.as_mut().context("")? };
 
-    writeln!(pipe, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
-    writeln!(pipe, "{{\"signum\": {signum}, \"signame\": \"{signame}\"}}")?;
-    writeln!(pipe, "{DD_CRASHTRACK_END_SIGINFO}")?;
+    let config = CONFIG.swap(ptr::null_mut(), SeqCst);
+    anyhow::ensure!(!config.is_null(), "No crashtracking config");
+    let (config, config_str) = unsafe { config.as_mut().context("")? };
 
+    let metadata_ptr = METADATA.swap(ptr::null_mut(), SeqCst);
+    anyhow::ensure!(!metadata_ptr.is_null());
+    let (_metadata, metadata_string) = unsafe { metadata_ptr.as_ref().context("metadata ptr")? };
+
+    let pipe = receiver
+        .stdin
+        .as_mut()
+        .context("Crashtracker: Can't get pipe")?;
+
+    emit_metadata(pipe, metadata_string)?;
+    emit_config(pipe, config_str)?;
+    emit_siginfo(pipe, signum)?;
     emit_counters(pipe)?;
 
     #[cfg(target_os = "linux")]
@@ -203,7 +236,12 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     // In fact, if we look into the code here, we see mallocs.
     // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
     // Do this last, so even if it crashes, we still get the other info.
-    unsafe { emit_backtrace_by_frames(pipe, RESOLVE_FRAMES)? };
+    unsafe {
+        emit_backtrace_by_frames(
+            pipe,
+            config.resolve_frames == CrashtrackerResolveFrames::ExperimentalInProcess,
+        )?
+    };
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
 
     pipe.flush()?;
@@ -218,12 +256,10 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
 }
 
 // TODO, there is a small race condition here, but we can keep it small
-pub fn register_crash_handlers(config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
+pub fn register_crash_handlers(create_alt_stack: bool) -> anyhow::Result<()> {
     anyhow::ensure!(OLD_HANDLERS.load(SeqCst).is_null());
     unsafe {
-        RESOLVE_FRAMES = config.resolve_frames == CrashtrackerResolveFrames::ExperimentalInProcess;
-
-        if config.create_alt_stack {
+        if create_alt_stack {
             set_alt_stack()?;
         }
         let sigbus = register_signal_handler(signal::SIGBUS)?;
