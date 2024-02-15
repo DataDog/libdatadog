@@ -46,4 +46,6 @@ pub fn generate_header(crate_dir: PathBuf, header_name: &str, output_base_dir: O
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file(output_path);
+    // This assumes there is a cbindgen.toml file in the crate root
+    println!("cargo:rerun-if-changed=cbindgen.toml");
 }
