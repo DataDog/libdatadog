@@ -15,7 +15,7 @@ const SIDECAR_IPC_MODE_PER_PROCESS: &str = "instance_per_process";
 const ENV_SIDECAR_LOG_METHOD: &str = "_DD_DEBUG_SIDECAR_LOG_METHOD";
 const SIDECAR_LOG_METHOD_DISABLED: &str = "disabled";
 const SIDECAR_LOG_METHOD_STDOUT: &str = "stdout";
-const SIDECAR_LOG_METHOD_STDERR: &str = "stderr";
+const SIDECAR_LOG_METHOD_STDERR: &str = "stderr"; // https://github.com/tokio-rs/tokio/issues/5866
 
 const SIDECAR_HELP: &str = "help";
 
