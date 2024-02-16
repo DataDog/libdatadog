@@ -345,9 +345,9 @@ impl TelemetryWorker {
         if !metrics.series.is_empty() {
             payloads.push(data::Payload::GenerateMetrics(metrics))
         }
-        let sketches = self.build_metrics_distributions();
-        if !sketches.series.is_empty() {
-            payloads.push(data::Payload::Distributions(sketches))
+        let distributions = self.build_metrics_distributions();
+        if !distributions.series.is_empty() {
+            payloads.push(data::Payload::Distributions(distributions))
         }
         payloads
     }
@@ -355,7 +355,7 @@ impl TelemetryWorker {
     fn build_metrics_distributions(&mut self) -> data::Distributions {
         let mut series = Vec::new();
         let context_guard = self.data.metric_contexts.lock();
-        for (context_key, extra_tags, points) in self.data.metric_buckets.flush_sketches() {
+        for (context_key, extra_tags, points) in self.data.metric_buckets.flush_distributions() {
             let Some(context) = context_guard.read(context_key) else {
                 telemetry_worker_log!(self, ERROR, "Context not found for key {:?}", context_key);
                 continue;

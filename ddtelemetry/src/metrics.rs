@@ -49,14 +49,6 @@ impl MetricBucket {
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ContextKey(u32, metrics::MetricType);
 
-#[repr(u8)]
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
-enum MetricType {
-    Count,
-    Gauge,
-    Sketches,
-}
-
 #[derive(Debug, PartialEq, Eq, Hash)]
 struct BucketKey {
     context_key: ContextKey,
@@ -97,7 +89,7 @@ impl MetricBuckets {
         )
     }
 
-    pub fn flush_sketches(
+    pub fn flush_distributions(
         &mut self,
     ) -> impl Iterator<Item = (ContextKey, Vec<Tag>, Vec<f64>)> + '_ {
         self.distributions.drain().map(
