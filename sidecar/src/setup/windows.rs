@@ -79,12 +79,21 @@ impl Liaison for NamedPipeLiaison {
                 loop {
                     match open_named_shm(&pid_path) {
                         Ok(shm) => {
-                            let mut pid = 0;
-                            if let Err(e) = microseh::try_seh(|| {
-                                pid = u32::from_ne_bytes(*array_ref![shm.as_slice(), 0, 4])
-                            }) {
-                                last_error = Some(Box::new(e));
-                            } else if pid != 0 {
+                            #[cfg(windows_seh_wrapper)]
+                            let pid = {
+                                let mut pid = 0;
+                                if let Err(e) = microseh::try_seh(|| {
+                                    pid = u32::from_ne_bytes(*array_ref![shm.as_slice(), 0, 4])
+                                }) {
+                                    last_error = Some(Box::new(e));
+                                }
+                                pid
+                            };
+
+                            #[cfg(not(windows_seh_wrapper))]
+                            let pid = u32::from_ne_bytes(*array_ref![shm.as_slice(), 0, 4]);
+
+                            if pid != 0 {
                                 return Ok(ProcessHandle::Pid(pid));
                             }
                         }

@@ -10,7 +10,7 @@ anyhow = { version = "1.0" }
 bytes = { version = "1.4" }
 futures = { version = "0.3", default-features = false }
 io-lifetimes = { version = "1.0" }
-page_size = "0.5"
+page_size = "0.6.0"
 pin-project = { version = "1" }
 memfd = { version = "0.6" }
 serde = { version = "1.0", default-features = false, features = ["derive"] }

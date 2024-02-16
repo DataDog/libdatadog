@@ -572,7 +572,7 @@ dependencies = [
  "libc",
  "nix 0.27.1",
  "os_info",
- "page_size 0.6.0",
+ "page_size",
  "serde",
  "serde_json",
  "uuid",
@@ -592,7 +592,7 @@ dependencies = [
  "libc",
  "memfd",
  "nix 0.26.4",
- "page_size 0.5.0",
+ "page_size",
  "pin-project",
  "pretty_assertions",
  "sendfd",
@@ -644,7 +644,7 @@ dependencies = [
  "mime_guess",
  "nix 0.27.1",
  "os_info",
- "page_size 0.6.0",
+ "page_size",
  "percent-encoding",
  "prost 0.12.3",
  "rustc-hash",
@@ -1882,16 +1882,6 @@ name = "overload"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b15813163c1d831bf4a13c3610c05c0d03b39feb07f7e09fa234dac9b15aaf39"
-
-[[package]]
-name = "page_size"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b7663cbd190cfd818d08efa8497f6cd383076688c49a391ef7c0d03cd12b561"
-dependencies = [
- "libc",
- "winapi 0.3.9",
-]
 
 [[package]]
 name = "page_size"

@@ -43,6 +43,7 @@ pub enum ConfigurationOrigin {
 
 #[derive(Serialize, Debug)]
 pub struct AppStarted {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub configuration: Vec<Configuration>,
 }
 
@@ -64,6 +65,11 @@ pub struct AppClientConfigurationChange {
 #[derive(Serialize, Debug)]
 pub struct GenerateMetrics {
     pub series: Vec<metrics::Serie>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct Distributions {
+    pub series: Vec<metrics::Distribution>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

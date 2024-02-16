@@ -128,8 +128,8 @@ impl SelfTelemetry {
             memory_usage: worker.register_metric_context(
                 "server.memory_usage".to_string(),
                 vec![],
-                MetricType::Gauge,
-                true, // TODO: make sure its a common metric
+                MetricType::Distribution,
+                true,
                 MetricNamespace::Sidecar,
             ),
         };
