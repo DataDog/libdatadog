@@ -31,12 +31,6 @@ fn test_the_tests_inner(profile: Profile) {
             artifact_type: ArtifactType::CDylib,
             triple_target: None,
         },
-        &ArtifactsBuild {
-            name: "profiling-crashtracking-receiver".to_owned(),
-            profile: profile,
-            artifact_type: ArtifactType::ExecutablePackage,
-            triple_target: None,
-        },
         &test_the_tests,
     ];
     let artifacts = build_artifacts(crates).unwrap();
