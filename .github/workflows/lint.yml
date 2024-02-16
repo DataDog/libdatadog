@@ -81,13 +81,25 @@ jobs:
       - name: "Generate new LICENSE-3rdparty.yml and check against the previous" 
         env: 
           CARGO_HOME: "/tmp/dd-cargo"
-        run: > 
+        run: |
+          # Run cargo bundle-licenses without directly checking against a previous snapshot
           cargo bundle-licenses \
             --format yaml \
-            --output /tmp/CI.yaml \
-            --previous LICENSE-3rdparty.yml \
-            --check-previous \
-          || diff /tmp/CI.yaml LICENSE-3rdparty.yml
+            --output /tmp/CI.yaml
+
+          # Normalize the paths in both files to ignore registry differences
+          sed -E 's/(registry\/src\/)[^\/]+/\1normalized_path/g' /tmp/CI.yaml > /tmp/CI_normalized.yaml
+          sed -E 's/(registry\/src\/)[^\/]+/\1normalized_path/g' LICENSE-3rdparty.yml > /tmp/LICENSE-3rdparty_normalized.yml
+
+          # Now perform the diff on the normalized files
+          if ! diff /tmp/CI_normalized.yaml /tmp/LICENSE-3rdparty_normalized.yml; then
+            echo "Differences detected."
+            exit 1
+          fi
+
+          echo "No differences found."
+
+
       - name: export the generated license file on failure
         if: ${{ failure() }}
         uses: actions/upload-artifact@v3
