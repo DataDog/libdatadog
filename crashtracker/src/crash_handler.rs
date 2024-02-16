@@ -20,8 +20,8 @@ use std::fs::File;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::ptr;
-use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::Ordering::SeqCst;
+use std::sync::atomic::{AtomicBool, AtomicPtr};
 
 #[derive(Debug)]
 struct OldHandlers {
@@ -29,15 +29,19 @@ struct OldHandlers {
     sigsegv: SigAction,
 }
 
+// These represent data used by the crashtracker.
+// Using mutexes inside a signal handler is not allowed, so use `AtomicPtr`
+// instead to get atomicity.
+// These should always be either: null_mut, or `Box::into_raw()`
+// This means that we can always clean up the memory inside one of these using
+// `Box::from_raw` to recreate the box, then dropping it.
+static ALTSTACK_INIT: AtomicBool = AtomicBool::new(false);
 static OLD_HANDLERS: AtomicPtr<OldHandlers> = AtomicPtr::new(ptr::null_mut());
 static RECEIVER: AtomicPtr<std::process::Child> = AtomicPtr::new(ptr::null_mut());
 static METADATA: AtomicPtr<(CrashtrackerMetadata, String)> = AtomicPtr::new(ptr::null_mut());
 static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
 
-fn make_receiver(
-    config: CrashtrackerConfiguration,
-    metadata: CrashtrackerMetadata,
-) -> anyhow::Result<std::process::Child> {
+fn make_receiver(config: CrashtrackerConfiguration) -> anyhow::Result<std::process::Child> {
     // TODO: currently create the file in write mode.  Would append make more sense?
     let stderr = if let Some(filename) = &config.stderr_filename {
         File::create(filename)?.into()
@@ -61,9 +65,6 @@ fn make_receiver(
             "Unable to start process: {}",
             &config.path_to_receiver_binary
         ))?;
-
-    update_metadata(metadata)?;
-    update_config(config)?;
 
     Ok(receiver)
 }
@@ -116,31 +117,57 @@ pub fn update_config(config: CrashtrackerConfiguration) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn setup_receiver(
-    config: CrashtrackerConfiguration,
-    metadata: CrashtrackerMetadata,
-) -> anyhow::Result<()> {
-    let new_receiver = Box::into_raw(Box::new(make_receiver(config, metadata)?));
-    let old_receiver = RECEIVER.swap(new_receiver, SeqCst);
-    anyhow::ensure!(
-        old_receiver.is_null(),
-        "Error registering crash handler receiver: receiver already existed"
-    );
+/// Ensures there is a receiver running.
+/// PRECONDITIONS:
+///     None
+/// SAFETY:
+///     Crash-tracking functions are not guaranteed to be reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function uses a compare_and_exchange on an atomic pointer.
+///     If two simultaneous calls to this function occur, the first will win,
+///     and the second will cleanup the redundant receiver.
+pub fn ensure_receiver(config: CrashtrackerConfiguration) -> anyhow::Result<()> {
+    if !RECEIVER.load(SeqCst).is_null() {
+        // Receiver already running
+        return Ok(());
+    }
+
+    let new_receiver = Box::into_raw(Box::new(make_receiver(config)?));
+    let res = RECEIVER.compare_exchange(ptr::null_mut(), new_receiver, SeqCst, SeqCst);
+    if res.is_err() {
+        // Race condition: Someone else setup the receiver between check and now.
+        // Cleanup after ourselves
+        // Safety: we just took it from a box above, and own the only ref since
+        // the compare_exchange failed.
+        let mut new_receiver = unsafe { Box::from_raw(new_receiver) };
+        new_receiver.kill()?;
+        new_receiver.wait()?;
+    }
+
     Ok(())
 }
 
-pub fn replace_receiver(
-    config: CrashtrackerConfiguration,
-    metadata: CrashtrackerMetadata,
-) -> anyhow::Result<()> {
-    let new_receiver = Box::into_raw(Box::new(make_receiver(config, metadata)?));
+/// Each fork needs its own receiver.  This function should run in the child
+/// after a fork to spawn a new receiver for the child.
+/// PRECONDITIONS:
+///     None
+/// SAFETY:
+///     Crash-tracking functions are not guaranteed to be reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function uses a compare_and_exchange on an atomic pointer.
+///     If two simultaneous calls to this function occur, the first will win,
+///     and the second will cleanup the redundant receiver.
+pub fn update_reciever_after_fork(config: CrashtrackerConfiguration) -> anyhow::Result<()> {
+    let new_receiver = Box::into_raw(Box::new(make_receiver(config)?));
     let old_receiver: *mut std::process::Child = RECEIVER.swap(new_receiver, SeqCst);
     anyhow::ensure!(
         !old_receiver.is_null(),
         "Error updating crash handler receiver: receiver did not already exist"
     );
     // Safety: This was only ever created out of Box::into_raw
-    let mut old_receiver: Box<std::process::Child> = unsafe { Box::from_raw(old_receiver) };
+    let mut old_receiver = unsafe { Box::from_raw(old_receiver) };
     // Close the stdin handle so we don't have two open copies
     // TODO: dropping the old receiver at the end of this function might do this automatically?
     drop(old_receiver.stdin.take());
@@ -151,16 +178,29 @@ pub fn replace_receiver(
     Ok(())
 }
 
+/// Shuts down a receiver,
+/// PRECONDITIONS:
+///     The signal handlers should be restored before removing the reciever.
+/// SAFETY:
+///     Crash-tracking functions are not guaranteed to be reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function uses a compare_and_exchange on an atomic pointer.
+///     If two simultaneous calls to this function occur, the first will win,
+///     and the second will cleanup the redundant receiver.
 pub fn shutdown_receiver() -> anyhow::Result<()> {
-    let old_receiver = RECEIVER.swap(ptr::null_mut(), SeqCst);
     anyhow::ensure!(
-        !old_receiver.is_null(),
-        "Error shutting down crash handler receiver: receiver did not already exist"
+        OLD_HANDLERS.load(SeqCst).is_null(),
+        "Crashtracker signal handlers should removed before shutting down the receiver"
     );
-    let mut old_receiver = unsafe { Box::from_raw(old_receiver) };
-
-    old_receiver.kill()?;
-    old_receiver.wait()?;
+    let old_receiver = RECEIVER.swap(ptr::null_mut(), SeqCst);
+    if !old_receiver.is_null() {
+        // Safety: This only comes from a `Box::into_raw`, and was checked for
+        // null above
+        let mut old_receiver = unsafe { Box::from_raw(old_receiver) };
+        old_receiver.kill()?;
+        old_receiver.wait()?;
+    }
     Ok(())
 }
 
@@ -255,9 +295,30 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     Ok(())
 }
 
-// TODO, there is a small race condition here, but we can keep it small
+/// Registers UNIX signal handlers to detect program crashes.
+/// This function can be called multiple times and will be idempotent: it will
+/// only create and set the handlers once.
+/// However, note the restriction below:
+/// PRECONDITIONS:
+///     The signal handlers should be restored before removing the reciever.
+/// SAFETY:
+///     Crash-tracking functions are not guaranteed to be reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function uses a compare_and_exchange on an atomic pointer.
+///     However, setting the crash handler itself is not an atomic operation
+///     and hence it is possible that a concurrent operation could see partial
+///     execution of this function.
+///     If a crash occurs during execution of this function, it is possible that
+///     the crash handler will have been registered, but the old signal handler
+///     will not yet be stored.  This would lead to unexpected behaviour for the
+///     user.  This should only matter if something crashes concurrently with
+///     this function executing.
 pub fn register_crash_handlers(create_alt_stack: bool) -> anyhow::Result<()> {
-    anyhow::ensure!(OLD_HANDLERS.load(SeqCst).is_null());
+    if !OLD_HANDLERS.load(SeqCst).is_null() {
+        return Ok(());
+    }
+
     unsafe {
         if create_alt_stack {
             set_alt_stack()?;
@@ -267,7 +328,10 @@ pub fn register_crash_handlers(create_alt_stack: bool) -> anyhow::Result<()> {
         let boxed_ptr = Box::into_raw(Box::new(OldHandlers { sigbus, sigsegv }));
 
         let res = OLD_HANDLERS.compare_exchange(ptr::null_mut(), boxed_ptr, SeqCst, SeqCst);
-        anyhow::ensure!(res.is_ok());
+        anyhow::ensure!(
+            res.is_ok(),
+            "TOCTTOU error in crashtracker::register_crash_handlers"
+        );
     }
     Ok(())
 }
@@ -293,7 +357,7 @@ unsafe fn register_signal_handler(signal_type: signal::Signal) -> anyhow::Result
     Ok(old_handler)
 }
 
-pub fn restore_old_handlers(leak: bool) -> anyhow::Result<()> {
+pub fn restore_old_handlers(inside_signal_handler: bool) -> anyhow::Result<()> {
     let prev = OLD_HANDLERS.swap(ptr::null_mut(), SeqCst);
     anyhow::ensure!(!prev.is_null());
     // Safety: The only nonnull pointer stored here comes from Box::into_raw()
@@ -303,7 +367,7 @@ pub fn restore_old_handlers(leak: bool) -> anyhow::Result<()> {
     unsafe { signal::sigaction(signal::SIGSEGV, &prev.sigsegv)? };
     // We want to avoid freeing memory inside the handler, so just leak it
     // This is fine since we're crashing anyway at this point
-    if leak {
+    if inside_signal_handler {
         Box::leak(prev);
     }
     Ok(())
@@ -312,6 +376,10 @@ pub fn restore_old_handlers(leak: bool) -> anyhow::Result<()> {
 /// Allocates a signal altstack, and puts a guard page at the end.
 /// Inspired by https://github.com/rust-lang/rust/pull/69969/files
 unsafe fn set_alt_stack() -> anyhow::Result<()> {
+    if ALTSTACK_INIT.load(SeqCst) {
+        return Ok(());
+    }
+
     let page_size = page_size::get();
     let stackp = mmap(
         ptr::null_mut(),
@@ -339,5 +407,6 @@ unsafe fn set_alt_stack() -> anyhow::Result<()> {
     };
     let rval = sigaltstack(&stack, ptr::null_mut());
     anyhow::ensure!(rval == 0, "sigaltstack failed {rval}");
+    ALTSTACK_INIT.store(true, SeqCst);
     Ok(())
 }

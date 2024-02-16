@@ -2,11 +2,14 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 #![cfg(unix)]
 
-use crate::crash_handler::{register_crash_handlers, setup_receiver};
+use crate::{
+    crash_handler::{ensure_receiver, register_crash_handlers},
+    update_config, update_metadata,
+};
 
 use super::{
     counters::reset_counters,
-    crash_handler::{replace_receiver, restore_old_handlers, shutdown_receiver},
+    crash_handler::{restore_old_handlers, shutdown_receiver, update_reciever_after_fork},
 };
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
@@ -132,15 +135,18 @@ pub fn on_fork(
     // The altstack (if any) is similarly unaffected by fork:
     // https://man7.org/linux/man-pages/man2/sigaltstack.2.html
 
+    update_metadata(metadata)?;
+    update_config(config.clone())?;
+
     // See function level comment about why we do this.
-    replace_receiver(config, metadata)?;
+    update_reciever_after_fork(config)?;
     Ok(())
 }
 
-/// Initilize the crash-tracking infrasturcture.
+/// Initialize the crash-tracking infrastructure.
 ///
 /// PRECONDITIONS:
-///     This function assumes that the crash-tracker is uninitialized
+///     None.
 /// SAFETY:
 ///     Crash-tracking functions are not reentrant.
 ///     No other crash-handler functions should be called concurrently.
@@ -154,7 +160,9 @@ pub fn init(
     // Setup the receiver first, so that if there is a crash detected it has
     // somewhere to go.
     let create_alt_stack = config.create_alt_stack;
-    setup_receiver(config, metadata)?;
+    update_metadata(metadata)?;
+    update_config(config.clone())?;
+    ensure_receiver(config)?;
     register_crash_handlers(create_alt_stack)?;
     Ok(())
 }
@@ -170,10 +178,9 @@ pub fn init(
 // mkdir /tmp/crashreports
 // look in /tmp/crashreports for the crash reports and output files
 // Commented out since `ignore` doesn't work in CI.
-//#[test]
+#[test]
 fn test_crash() {
     use crate::begin_profiling_op;
-    use crate::update_metadata;
     use chrono::Utc;
     use ddcommon::parse_uri;
 
@@ -224,42 +231,3 @@ fn test_crash() {
     let q = unsafe { *p };
     assert_eq!(q, 3);
 }
-
-// To test on docker:
-/*
-docker run -it --rm -v $DATADOG_ROOT:/code -w/code ubuntu
-apt update && apt upgrade
-DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-build-essential \
-ca-certificates \
-curl \
-git \
-libbz2-dev \
-libffi-dev \
-liblzma-dev \
-libncurses5-dev \
-libncursesw5-dev \
-libreadline-dev \
-libsqlite3-dev \
-libssl-dev \
-libxml2-dev \
-libxmlsec1-dev \
-llvm \
-make \
-mecab-ipadic-utf8 \
-tk-dev \
-tzdata \
-wget \
-xz-utils \
-zlib1g-dev
-
-curl https://sh.rustup.rs -sSf | sh
-source "$HOME/.cargo/env"
-cargo install cbindgen
-cargo build --target-dir /tmp/libdatadog/
-mkdir /tmp/crashreports/
-git clone https://github.com/DataDog/libdatadog.git
-cd libdatadog
-git checkout dsn/crash-handler-api
-cargo test test_crash -- --ignored
-*/
