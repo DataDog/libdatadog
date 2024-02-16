@@ -4,13 +4,12 @@
 
 use crate::exporter::{self, Endpoint};
 use crate::profiles::ProfileResult;
-use datadog_profiling::crashtracker;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use ddcommon_ffi::Error;
 use std::ops::Not;
 
-pub use datadog_profiling::crashtracker::{CrashtrackerResolveFrames, ProfilingOpTypes};
+pub use datadog_crashtracker::{CrashtrackerResolveFrames, ProfilingOpTypes};
 
 #[repr(C)]
 pub struct CrashtrackerConfiguration<'a> {
@@ -26,23 +25,24 @@ pub struct CrashtrackerConfiguration<'a> {
     pub resolve_frames: CrashtrackerResolveFrames,
 }
 
-impl<'a> TryFrom<CrashtrackerConfiguration<'a>> for crashtracker::CrashtrackerConfiguration {
+impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
+    for datadog_crashtracker::CrashtrackerConfiguration
+{
     type Error = anyhow::Error;
     fn try_from(value: CrashtrackerConfiguration<'a>) -> anyhow::Result<Self> {
         fn option_from_char_slice(s: CharSlice) -> anyhow::Result<Option<String>> {
-            let s = unsafe { s.try_to_utf8()?.to_string() };
+            let s = s.try_to_utf8()?.to_string();
             Ok(s.is_empty().not().then_some(s))
         }
 
         let create_alt_stack = value.create_alt_stack;
         let endpoint = unsafe { Some(exporter::try_to_endpoint(value.endpoint)?) };
-        let path_to_receiver_binary =
-            unsafe { value.path_to_receiver_binary.try_to_utf8()?.to_string() };
+        let path_to_receiver_binary = value.path_to_receiver_binary.try_to_utf8()?.to_string();
         let resolve_frames = value.resolve_frames;
         let stderr_filename = option_from_char_slice(value.optional_stderr_filename)?;
         let stdout_filename = option_from_char_slice(value.optional_stdout_filename)?;
 
-        crashtracker::CrashtrackerConfiguration::new(
+        Self::new(
             create_alt_stack,
             endpoint,
             path_to_receiver_binary,
@@ -62,19 +62,17 @@ pub struct CrashtrackerMetadata<'a> {
     pub tags: Option<&'a ddcommon_ffi::Vec<Tag>>,
 }
 
-impl<'a> TryFrom<CrashtrackerMetadata<'a>> for crashtracker::CrashtrackerMetadata {
+impl<'a> TryFrom<CrashtrackerMetadata<'a>> for datadog_crashtracker::CrashtrackerMetadata {
     type Error = anyhow::Error;
     fn try_from(value: CrashtrackerMetadata<'a>) -> anyhow::Result<Self> {
-        let profiling_library_name =
-            unsafe { value.profiling_library_name.try_to_utf8()?.to_string() };
-        let profiling_library_version =
-            unsafe { value.profiling_library_version.try_to_utf8()?.to_string() };
-        let family = unsafe { value.family.try_to_utf8()?.to_string() };
+        let profiling_library_name = value.profiling_library_name.try_to_utf8()?.to_string();
+        let profiling_library_version = value.profiling_library_version.try_to_utf8()?.to_string();
+        let family = value.family.try_to_utf8()?.to_string();
         let tags = value
             .tags
             .map(|tags| tags.iter().cloned().collect())
             .unwrap_or_default();
-        Ok(crashtracker::CrashtrackerMetadata::new(
+        Ok(Self::new(
             profiling_library_name,
             profiling_library_version,
             family,
@@ -88,7 +86,7 @@ impl<'a> TryFrom<CrashtrackerMetadata<'a>> for crashtracker::CrashtrackerMetadat
 pub unsafe extern "C" fn ddog_prof_crashtracker_begin_profiling_op(
     op: ProfilingOpTypes,
 ) -> ProfileResult {
-    match crashtracker::begin_profiling_op(op) {
+    match datadog_crashtracker::begin_profiling_op(op) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
             err.context("ddog_prof_crashtracker_init failed"),
@@ -101,7 +99,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_begin_profiling_op(
 pub unsafe extern "C" fn ddog_prof_crashtracker_end_profiling_op(
     op: ProfilingOpTypes,
 ) -> ProfileResult {
-    match crashtracker::end_profiling_op(op) {
+    match datadog_crashtracker::end_profiling_op(op) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
             err.context("ddog_prof_crashtracker_init failed"),
@@ -112,7 +110,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_end_profiling_op(
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_crashtracker_shutdown() -> ProfileResult {
-    match crashtracker::shutdown_crash_handler() {
+    match datadog_crashtracker::shutdown_crash_handler() {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
             err.context("ddog_prof_crashtracker_init failed"),
@@ -140,13 +138,13 @@ unsafe fn ddog_prof_crashtracker_update_on_fork_impl(
 ) -> anyhow::Result<()> {
     let config = config.try_into()?;
     let metadata = metadata.try_into()?;
-    crashtracker::on_fork(config, metadata)
+    datadog_crashtracker::on_fork(config, metadata)
 }
 
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_crashtracker_receiver_entry_point() -> ProfileResult {
-    match crashtracker::receiver_entry_point() {
+    match datadog_crashtracker::receiver_entry_point() {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
             err.context("ddog_prof_crashtracker_receiver_entry_point failed"),
@@ -174,5 +172,5 @@ unsafe fn ddog_prof_crashtracker_init_impl(
 ) -> anyhow::Result<()> {
     let config = config.try_into()?;
     let metadata = metadata.try_into()?;
-    crashtracker::init(config, metadata)
+    datadog_crashtracker::init(config, metadata)
 }

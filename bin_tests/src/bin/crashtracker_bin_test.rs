@@ -3,10 +3,8 @@
 
 use std::env;
 
-use datadog_profiling::{
-    crashtracker::{self, CrashtrackerConfiguration, CrashtrackerMetadata},
-    exporter::Tag,
-};
+use datadog_crashtracker::{self as crashtracker, CrashtrackerConfiguration, CrashtrackerMetadata};
+use datadog_profiling::exporter::Tag;
 
 #[inline(never)]
 unsafe fn deref_ptr(p: *mut u8) {

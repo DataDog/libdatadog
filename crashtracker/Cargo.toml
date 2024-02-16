@@ -1,0 +1,32 @@
+[package]
+name = "datadog-crashtracker"
+authors = ["Daniel Schwartz-Narbonne <dsn@datadoghq.com>"]
+description = "Detects program crashes and reports them to datadog backend."
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+anyhow = "1.0"
+backtrace = "0.3.69"
+chrono = {version = "0.4", default-features = false, features = ["std", "clock", "serde"]}
+datadog-profiling = { path = "../profiling"}
+ddcommon = {path = "../ddcommon"}
+hyper = {version = "0.14", features = ["client"], default-features = false}
+libc = "0.2"
+nix = { version = "0.27.1", features = ["signal"] }
+os_info = "3.7.0"
+page_size = "0.6.0"
+serde = {version = "1.0", features = ["derive"]}
+serde_json = {version = "1.0"}
+uuid = { version = "1.4.1", features = ["v4", "serde"] }
+ddtelemetry = {path = "../ddtelemetry"}
+tokio = { version = "1.23", features = ["rt", "macros"] }
+http = "0.2"
+
+[dev-dependencies]
+tempfile = { version = "3.3" }

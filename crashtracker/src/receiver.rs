@@ -25,7 +25,7 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
 
     let telemetry_uploader = telemetry::TelemetryCrashUploader::new(&metadata, &config).ok();
 
-    match receive_report(&metadata)? {
+    match receive_report(std::io::stdin().lock(), &metadata)? {
         CrashReportStatus::NoCrash => Ok(()),
         CrashReportStatus::CrashReport(crash_info) => {
             if config.resolve_frames == CrashtrackerResolveFrames::ExperimentalInReceiver {
@@ -52,6 +52,7 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
 #[derive(Debug)]
 enum StdinState {
     Counters,
+    Done,
     File(String, Vec<String>),
     SigInfo,
     StackTrace(Vec<StackFrame>),
@@ -80,6 +81,11 @@ fn process_line(
             let val = val.as_i64().context("Vals are ints")?;
             crashinfo.add_counter(key, val)?;
             StdinState::Counters
+        }
+
+        StdinState::Done => {
+            eprint!("Unexpected line after crashreport is done: {line}");
+            StdinState::Done
         }
 
         StdinState::File(filename, lines) if line.starts_with(DD_CRASHTRACK_END_FILE) => {
@@ -120,9 +126,10 @@ fn process_line(
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_STACKTRACE) => {
             StdinState::StackTrace(vec![])
         }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => StdinState::Done,
         StdinState::Waiting => {
             //TODO: Do something here?
-            eprint!("Unexpected line: {line}");
+            eprint!("Unexpected line while receiving crashreport: {line}");
             StdinState::Waiting
         }
     };
@@ -142,11 +149,14 @@ enum CrashReportStatus {
 /// In the case where the parent failed to transfer a full crash-report
 /// (for instance if it crashed while calculating the crash-report), we return
 /// a PartialCrashReport.
-fn receive_report(metadata: &CrashtrackerMetadata) -> anyhow::Result<CrashReportStatus> {
+fn receive_report(
+    stream: impl std::io::BufRead,
+    metadata: &CrashtrackerMetadata,
+) -> anyhow::Result<CrashReportStatus> {
     let mut crashinfo = CrashInfo::new(metadata.clone());
     let mut stdin_state = StdinState::Waiting;
     //TODO: This assumes that the input is valid UTF-8.
-    for line in std::io::stdin().lock().lines() {
+    for line in stream.lines() {
         let line = line?;
         stdin_state = process_line(&mut crashinfo, line, stdin_state)?;
     }
@@ -162,7 +172,7 @@ fn receive_report(metadata: &CrashtrackerMetadata) -> anyhow::Result<CrashReport
 
     // If we were waiting for data when stdin closed, let our caller know that
     // we only have partial data.
-    if matches!(stdin_state, StdinState::Waiting) {
+    if matches!(stdin_state, StdinState::Done) {
         Ok(CrashReportStatus::CrashReport(crashinfo))
     } else {
         Ok(CrashReportStatus::PartialCrashReport(

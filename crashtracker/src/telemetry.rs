@@ -190,7 +190,7 @@ mod tests {
         fs, time,
     };
 
-    use crate::crashtracker::SigInfo;
+    use crate::SigInfo;
     use chrono::DateTime;
     use ddcommon::{tag::Tag, Endpoint};
 
@@ -199,14 +199,14 @@ mod tests {
     fn new_test_uploader() -> TelemetryCrashUploader {
         TelemetryCrashUploader::new(
             &new_test_prof_metadata(),
-            &crate::crashtracker::CrashtrackerConfiguration {
+            &crate::CrashtrackerConfiguration {
                 create_alt_stack: true,
                 endpoint: Some(Endpoint {
                     url: hyper::Uri::from_static("http://localhost:8126/profiling/v1/input"),
                     api_key: None,
                 }),
                 path_to_receiver_binary: String::new(),
-                resolve_frames: crate::crashtracker::CrashtrackerResolveFrames::Never,
+                resolve_frames: crate::CrashtrackerResolveFrames::Never,
                 stderr_filename: None,
                 stdout_filename: None,
             },
@@ -263,7 +263,7 @@ mod tests {
         counters.insert("collecting_sample".to_owned(), 1);
         counters.insert("not_profiling".to_owned(), 0);
         t.upload_to_telemetry(
-            &crate::crashtracker::CrashInfo {
+            &crate::CrashInfo {
                 counters,
                 files: HashMap::new(),
                 metadata: new_test_prof_metadata(),

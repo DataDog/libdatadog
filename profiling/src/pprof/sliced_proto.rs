@@ -85,12 +85,6 @@ pub struct ProfileFunctionsEntry {
     pub functions_entry: Function,
 }
 
-#[derive(Eq, Hash, PartialEq, ::prost::Message)]
-pub struct ProfileStringTableEntry {
-    #[prost(string, required, tag = "6")]
-    pub string_table_entry: String,
-}
-
 // These fields are not repeated so we can just make a combined struct for them.
 #[derive(Eq, Hash, PartialEq, ::prost::Message)]
 pub struct ProfileSimpler {
@@ -140,14 +134,6 @@ impl From<Function> for ProfileFunctionsEntry {
     fn from(item: Function) -> Self {
         Self {
             functions_entry: item,
-        }
-    }
-}
-
-impl From<String> for ProfileStringTableEntry {
-    fn from(item: String) -> Self {
-        Self {
-            string_table_entry: item,
         }
     }
 }

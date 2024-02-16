@@ -192,7 +192,7 @@ where
             request.context.trace_context.new_child()
         });
         let entered = span.enter();
-        tracing::info!("ReceiveRequest");
+        tracing::debug!("ReceiveRequest");
         let start = self.in_flight_requests_mut().start_request(
             request.id,
             request.context.deadline,
@@ -773,14 +773,14 @@ impl<Req, Res> InFlightRequest<Req, Res> {
                 if context.discard_response {
                     let response = RequestResponse::Discarded { request_id };
                     let _ = response_tx.send(response).await;
-                    tracing::info!("DiscardingResponse");
+                    tracing::debug!("DiscardingResponse");
                 } else {
                     let response = RequestResponse::Response(Response {
                         request_id,
                         message: Ok(response),
                     });
                     let _ = response_tx.send(response).await;
-                    tracing::info!("BufferResponse");
+                    tracing::debug!("BufferResponse");
                 }
             },
             abort_registration,

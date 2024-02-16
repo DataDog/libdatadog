@@ -1,9 +1,9 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
-use crate::crashtracker::CrashtrackerMetadata;
-use crate::exporter::{self, Endpoint, Tag};
+use crate::CrashtrackerMetadata;
 use anyhow::Context;
 use chrono::{DateTime, Utc};
+use datadog_profiling::exporter::{self, Endpoint, Tag};
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 use std::time::Duration;
@@ -179,7 +179,17 @@ impl CrashInfo {
             tags,
             endpoint,
         )?;
-        let request = exporter.build(time, time, &[crash_file], &[], None, None, None, timeout)?;
+        let request = exporter.build(
+            time,
+            time,
+            &[crash_file],
+            &[],
+            None,
+            None,
+            None,
+            None,
+            timeout,
+        )?;
         let response = exporter.send(request, None)?;
         //TODO, do we need to wait a bit for the agent to finish upload?
         Ok(response)

@@ -3,7 +3,6 @@
 
 pub mod api;
 pub mod collections;
-pub mod crashtracker;
 pub mod exporter;
 pub mod internal;
 pub mod pprof;

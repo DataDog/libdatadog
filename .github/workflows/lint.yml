@@ -31,7 +31,7 @@ jobs:
           rust_version: ${{ matrix.rust_version }}
       - name: Install ${{ matrix.version }} toolchain and clippy
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }} && rustup component add clippy
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.69.0 ] && echo -Aunknown-lints)
   licensecheck:
     runs-on: ubuntu-latest
     name: "Presence of licence headers"
@@ -53,7 +53,7 @@ jobs:
   # have diverged in more than a few words. You should verify that the licence
   #  text is in fact correct in these cases.
   #
-  # If this job fails, you need to regenerate the license, e.g.
+  # If this job fails, you probably need to regenerate the license, e.g.
   # CARGO_HOME=/tmp/dd-cargo cargo bundle-licenses --format yaml --output LICENSE-3rdparty.yml
   license-3rdparty:
     runs-on: ubuntu-latest
@@ -71,18 +71,35 @@ jobs:
             ~/.cargo/bin/
             ~/.cargo/.crates.toml
           # cache key contains current version of cargo-bundle-licenses
-          # when upstream version is updated we can bump the cache key version, to cache the latest version of the tool
-          key: "v1-0.5.0"
-      - run: cargo install cargo-bundle-licenses 
+          # when upstream version is updated we can bump the cache key version,
+          # to cache the latest version of the tool
+          key: "v1-1.3.0"
+      # cargo-bundle-licenses v1.3 doesn't understand path differences due to
+      # sparse vs git index, so force git.
+      - run: mkdir -p .cargo && printf "[registries.crates-io]\nprotocol = \"git\"\n" > .cargo/config.toml
+      - run: cargo install cargo-bundle-licenses
       - name: "Generate new LICENSE-3rdparty.yml and check against the previous" 
         env: 
           CARGO_HOME: "/tmp/dd-cargo"
-        run: > 
+        run: |
+          # Run cargo bundle-licenses without directly checking against a previous snapshot
           cargo bundle-licenses \
             --format yaml \
-            --output /tmp/CI.yaml \
-            --previous LICENSE-3rdparty.yml \
-            --check-previous 
+            --output /tmp/CI.yaml
+
+          # Normalize the paths in both files to ignore registry differences
+          sed -E 's/(registry\/src\/)[^\/]+/\1normalized_path/g' /tmp/CI.yaml > /tmp/CI_normalized.yaml
+          sed -E 's/(registry\/src\/)[^\/]+/\1normalized_path/g' LICENSE-3rdparty.yml > /tmp/LICENSE-3rdparty_normalized.yml
+
+          # Now perform the diff on the normalized files
+          if ! diff /tmp/CI_normalized.yaml /tmp/LICENSE-3rdparty_normalized.yml; then
+            echo "Differences detected."
+            exit 1
+          fi
+
+          echo "No differences found."
+
+
       - name: export the generated license file on failure
         if: ${{ failure() }}
         uses: actions/upload-artifact@v3

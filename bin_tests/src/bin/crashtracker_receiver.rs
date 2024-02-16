@@ -1,5 +1,5 @@
-use datadog_profiling::crashtracker;
+use datadog_crashtracker;
 
 fn main() -> anyhow::Result<()> {
-    crashtracker::receiver_entry_point()
+    datadog_crashtracker::receiver_entry_point()
 }

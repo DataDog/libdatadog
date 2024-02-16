@@ -28,7 +28,7 @@ http = "0.2"
 http-body = "0.4"
 hyper = {version = "0.14", features = ["client"], default-features = false}
 hyper-multipart-rfc7578 = "0.7.0"
-indexmap = "1.8"
+indexmap = "2.2"
 libc = "0.2"
 lz4_flex = { version = "0.9", default-features = false, features = ["std", "safe-encode", "frame"] }
 mime = "0.3.16"
@@ -37,13 +37,11 @@ nix = { version = "0.27.1", features = ["signal"] }
 os_info = "3.7.0"
 page_size = "0.6.0"
 percent-encoding = "2.1"
-prost = "0.11"
+prost = "0.12"
 rustc-hash = { version = "1.1", default-features = false }
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
 tokio = {version = "1.23", features = ["rt", "macros"]}
 tokio-util = "0.7.1"
+byteorder = { version = "1.5", features = ["std"] }
 uuid = { version = "1.4.1", features = ["v4", "serde"] }
-
-[dev-dependencies]
-tempfile = { version = "3.3" }
