@@ -21,19 +21,19 @@ fn test_crash_tracking_bin_release() {
 }
 
 fn test_crash_tracking_bin(crash_tracking_receiver_profile: Profile) {
-    let crash_tracking_receiver = ArtifactsBuild {
-        name: "profiling-crashtracking-receiver".to_owned(),
-        profile: crash_tracking_receiver_profile,
-        artifact_type: ArtifactType::ExecutablePackage,
-        triple_target: None,
-    };
     let crashtracker_bin = ArtifactsBuild {
         name: "crashtracker_bin_test".to_owned(),
-        profile: Profile::Debug,
+        profile: crash_tracking_receiver_profile,
         artifact_type: ArtifactType::Bin,
         triple_target: None,
     };
-    let artifacts = build_artifacts(&[&crash_tracking_receiver, &crashtracker_bin]).unwrap();
+    let crashtracker_receiver = ArtifactsBuild {
+        name: "crashtracker_receiver".to_owned(),
+        profile: crash_tracking_receiver_profile,
+        artifact_type: ArtifactType::Bin,
+        triple_target: None,
+    };
+    let artifacts = build_artifacts(&[&crashtracker_receiver, &crashtracker_bin]).unwrap();
 
     let tmpdir = tempfile::TempDir::new().unwrap();
     let mut crash_profile_path = tmpdir.path().to_owned();
@@ -43,7 +43,7 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: Profile) {
 
     let mut p = process::Command::new(&artifacts[&crashtracker_bin])
         .arg(crash_profile_path.as_os_str())
-        .arg(artifacts[&crash_tracking_receiver].as_os_str())
+        .arg(artifacts[&crashtracker_receiver].as_os_str())
         .spawn()
         .unwrap();
     let exit_status = bin_tests::timeit!("exit after signal", {
@@ -82,8 +82,17 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: Profile) {
                 .iter()
                 .map(|name| name["name"].as_str().unwrap().to_owned())
         })
-        .collect::<std::collections::HashSet<String>>();
-    assert!(frame_names.contains("crashtracker_bin_test::main::he201e34cfd8b548a"));
+        .collect::<Vec<String>>();
+    let mut frame_match = false;
+    for frame in &frame_names {
+        if frame.starts_with("crashtracker_bin_test::main::") {
+            frame_match = true;
+            break;
+        }
+    }
+    if !frame_match {
+        panic!("Didn't find expected frame name")
+    }
 
     let crash_telemetry = fs::read(crash_telemetry_path).unwrap();
     let telemetry_payload = serde_json::from_slice::<serde_json::Value>(&crash_telemetry).unwrap();

@@ -8,6 +8,11 @@ use datadog_profiling::{
     exporter::Tag,
 };
 
+#[inline(never)]
+unsafe fn deref_ptr(p: *mut u8) {
+    *std::hint::black_box(p) = std::hint::black_box(1);
+}
+
 fn main() -> anyhow::Result<()> {
     let mut args = env::args().skip(1);
     let output_filename = args
@@ -20,7 +25,7 @@ fn main() -> anyhow::Result<()> {
         CrashtrackerConfiguration {
             create_alt_stack: true,
             endpoint: Some(datadog_profiling::exporter::Endpoint {
-                url: hyper::Uri::from_maybe_shared(format!("file://{}", output_filename))?,
+                url: ddcommon::parse_uri(&format!("file://{}", output_filename))?,
                 api_key: None,
             }),
             path_to_receiver_binary: receiver_binary,
@@ -42,7 +47,7 @@ fn main() -> anyhow::Result<()> {
     )?;
     crashtracker::begin_profiling_op(crashtracker::ProfilingOpTypes::CollectingSample)?;
     unsafe {
-        *std::hint::black_box(std::ptr::null_mut::<u8>()) = 1;
+        deref_ptr(std::ptr::null_mut::<u8>());
     }
     crashtracker::end_profiling_op(crashtracker::ProfilingOpTypes::CollectingSample)?;
     Ok(())

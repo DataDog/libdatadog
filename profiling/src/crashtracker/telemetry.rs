@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::time::{self, SystemTime};
 
+use super::{CrashInfo, CrashtrackerConfiguration, CrashtrackerMetadata};
 use anyhow::Ok;
-use super::{CrashtrackerConfiguration, CrashInfo, CrashtrackerMetadata};
 use ddtelemetry::{
     build_host,
     data::{self, Application, LogLevel},
@@ -54,7 +54,10 @@ pub struct TelemetryCrashUploader {
 }
 
 impl TelemetryCrashUploader {
-    pub fn new(prof_metadata: &CrashtrackerMetadata, prof_cfg: &CrashtrackerConfiguration) -> anyhow::Result<Self> {
+    pub fn new(
+        prof_metadata: &CrashtrackerMetadata,
+        prof_cfg: &CrashtrackerConfiguration,
+    ) -> anyhow::Result<Self> {
         let mut cfg = ddtelemetry::config::Config::from_env();
         if let Some(endpoint) = &prof_cfg.endpoint {
             // TODO: This changes the path part of the query to target the agent.
@@ -64,7 +67,11 @@ impl TelemetryCrashUploader {
             // But do we want to support direct submission to the intake?
 
             // ignore result because what are we going to do?
-            let _ = cfg.set_endpoint(endpoint.clone());
+            let _ = if endpoint.url.scheme_str() == Some("file") {
+                cfg.set_url(&format!("file://{}.telemetry", endpoint.url.path()))
+            } else {
+                cfg.set_endpoint(endpoint.clone())
+            };
         }
 
         parse_tags!(
@@ -183,8 +190,8 @@ mod tests {
         fs, time,
     };
 
-    use chrono::DateTime;
     use crate::crashtracker::SigInfo;
+    use chrono::DateTime;
     use ddcommon::{tag::Tag, Endpoint};
 
     use super::TelemetryCrashUploader;

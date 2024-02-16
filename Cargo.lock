@@ -224,6 +224,7 @@ dependencies = [
  "anyhow",
  "current_platform",
  "datadog-profiling",
+ "ddcommon",
  "hyper",
  "once_cell",
  "serde_json",

@@ -194,7 +194,13 @@ impl CrashInfo {
         // error trying to connect: Unsupported scheme file
         // Instead, manually support it.
         if Some("file") == endpoint.url.scheme_str() {
-            self.to_file(endpoint.url.path())?;
+            self.to_file(
+                endpoint
+                    .url
+                    .path_and_query()
+                    .ok_or_else(|| anyhow::format_err!("empty path for upload to file"))?
+                    .as_str(),
+            )?;
             Ok(None)
         } else {
             Ok(Some(self.upload_to_dd(endpoint, timeout)?))
