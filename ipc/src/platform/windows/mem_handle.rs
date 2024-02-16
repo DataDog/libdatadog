@@ -43,11 +43,14 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
             // We don't know the size of a freshly opened object yet. Query it.
             shm.size = unsafe {
                 let mut info = MaybeUninit::<MEMORY_BASIC_INFORMATION>::uninit();
-                VirtualQuery(
+                if VirtualQuery(
                     ptr,
                     info.as_mut_ptr(),
                     mem::size_of::<MEMORY_BASIC_INFORMATION>(),
-                );
+                ) == 0
+                {
+                    return Err(Error::last_os_error());
+                }
                 info.assume_init().RegionSize
             };
         } else {
@@ -127,7 +130,7 @@ impl NamedShmHandle {
     pub fn open(path: &CString) -> io::Result<NamedShmHandle> {
         let name = Self::format_name(path);
         let handle = unsafe { OpenFileMappingA(FILE_MAP_WRITE, 0, name.as_ptr() as LPCSTR) };
-        if handle == null_mut() {
+        if handle.is_null() {
             return Err(Error::last_os_error());
         }
         // We need to map the handle to query its size, hence starting out with NOT_COMMITTED

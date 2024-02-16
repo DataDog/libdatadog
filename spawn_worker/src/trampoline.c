@@ -108,7 +108,7 @@ int main(int argc, char *argv[]) {
         return 10;
     } 
 
-    void (*fn)() = GetProcAddress(handle, symbol_name);
+    void (*fn)() = (void(*)())GetProcAddress(handle, symbol_name);
 
     if (!fn) {
         DWORD res = GetLastError();
