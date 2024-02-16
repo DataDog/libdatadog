@@ -77,8 +77,7 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
             }
             location_components.next();
         }
-        let target_dir = location_components.rev().collect::<PathBuf>();
-        target_dir
+        location_components.rev().collect::<PathBuf>()
     });
 
     let mut artifact_path = artifact_dir.clone();
@@ -91,7 +90,7 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
         ArtifactType::ExecutablePackage | ArtifactType::Bin => artifact_path.push(&c.name),
         ArtifactType::CDylib => {
             let name = "lib".to_owned()
-                + &c.name.replace("-", "_")
+                + &c.name.replace('-', "_")
                 + "."
                 + shared_lib_extension(
                     c.triple_target
@@ -107,8 +106,8 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
 
 /// Caches and returns the path of the artifacts built by cargo
 /// This function should only be called from cargo tests
-pub fn build_artifacts<'a, 'b>(
-    crates: &'a [&'b ArtifactsBuild],
+pub fn build_artifacts<'b>(
+    crates: &[&'b ArtifactsBuild],
 ) -> anyhow::Result<HashMap<&'b ArtifactsBuild, PathBuf>> {
     static ARTIFACTS: OnceCell<Mutex<HashMap<ArtifactsBuild, PathBuf>>> = OnceCell::new();
 
@@ -133,7 +132,7 @@ pub fn build_artifacts<'a, 'b>(
 
 fn shared_lib_extension(triple_target: &str) -> anyhow::Result<&'static str> {
     let (_arch, rest) = triple_target
-        .split_once("-")
+        .split_once('-')
         .ok_or_else(|| anyhow::anyhow!("malformed triple target {}", triple_target))?;
     Ok(if rest.starts_with("unknown-linux") {
         "so"

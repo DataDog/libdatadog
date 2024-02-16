@@ -129,7 +129,7 @@ impl TelemetryCrashUploader {
         })?;
 
         let stack_trace = serde_json::to_string(&crash_info.stacktrace)?;
-        let tags = extract_crash_info_tags(&crash_info).unwrap_or_default();
+        let tags = extract_crash_info_tags(crash_info).unwrap_or_default();
 
         let tracer_time = match &crash_info.timestamp {
             Some(ts) => ts.timestamp() as u64,
@@ -147,7 +147,7 @@ impl TelemetryCrashUploader {
             application: &metadata.application,
             host: &metadata.host,
             payload: &data::Payload::Logs(vec![data::Log {
-                message: message,
+                message,
                 level: LogLevel::Error,
                 stack_trace: Some(stack_trace),
                 tags,
@@ -229,6 +229,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_profiler_config_extraction() {
         let t = new_test_uploader();
 
@@ -246,6 +247,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_crash_request_content() {
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {
