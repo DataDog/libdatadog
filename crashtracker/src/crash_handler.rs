@@ -247,14 +247,14 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     // Leak receiver, config, and metadata to avoid calling 'drop' during a crash
     let receiver = RECEIVER.swap(ptr::null_mut(), SeqCst);
     anyhow::ensure!(!receiver.is_null(), "No crashtracking receiver");
-    let receiver = unsafe { receiver.as_mut().context("")? };
+    let receiver = unsafe { receiver.as_mut().context("No crashtracking receiver")? };
 
     let config = CONFIG.swap(ptr::null_mut(), SeqCst);
     anyhow::ensure!(!config.is_null(), "No crashtracking config");
-    let (config, config_str) = unsafe { config.as_mut().context("")? };
+    let (config, config_str) = unsafe { config.as_ref().context("No crashtracking receiver")? };
 
     let metadata_ptr = METADATA.swap(ptr::null_mut(), SeqCst);
-    anyhow::ensure!(!metadata_ptr.is_null());
+    anyhow::ensure!(!metadata_ptr.is_null(), "No crashtracking metadata");
     let (_metadata, metadata_string) = unsafe { metadata_ptr.as_ref().context("metadata ptr")? };
 
     let pipe = receiver
@@ -359,7 +359,7 @@ unsafe fn register_signal_handler(signal_type: signal::Signal) -> anyhow::Result
 
 pub fn restore_old_handlers(inside_signal_handler: bool) -> anyhow::Result<()> {
     let prev = OLD_HANDLERS.swap(ptr::null_mut(), SeqCst);
-    anyhow::ensure!(!prev.is_null());
+    anyhow::ensure!(!prev.is_null(), "No crashtracking previous signal handlers");
     // Safety: The only nonnull pointer stored here comes from Box::into_raw()
     let prev = unsafe { Box::from_raw(prev) };
     // Safety: The value restored here was returned from a previous sigaction call
