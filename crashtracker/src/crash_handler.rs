@@ -291,7 +291,8 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     // for input from the parent, while the parent waits for the child to exit.
     // TODO, use a polling mechanism that could recover from a crashing child
     receiver.wait()?;
-    // Calling "free" in a signal handler is dangerous, so don't do that.
+    // Calling "free" in a signal handler is dangerous, so we just leak the
+    // objects we took (receiver, metadata, config, etc)
     Ok(())
 }
 
