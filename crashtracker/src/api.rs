@@ -3,13 +3,10 @@
 #![cfg(unix)]
 
 use crate::{
-    crash_handler::{ensure_receiver, register_crash_handlers},
-    update_config, update_metadata,
-};
-
-use super::{
     counters::reset_counters,
+    crash_handler::{ensure_receiver, register_crash_handlers},
     crash_handler::{restore_old_handlers, shutdown_receiver, update_reciever_after_fork},
+    update_config, update_metadata,
 };
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
