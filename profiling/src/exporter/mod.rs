@@ -124,7 +124,7 @@ impl ProfileExporter {
     /// * `profiling_library_name` - Profiling library name, usually dd-trace-something, e.g. "dd-trace-rb". See
     ///   https://datadoghq.atlassian.net/wiki/spaces/PROF/pages/1538884229/Client#Header-values (Datadog internal link)
     ///   for a list of common values.
-    /// * `profliling_library_version` - Version used when publishing the profiling library to a package manager
+    /// * `profiling_library_version` - Version used when publishing the profiling library to a package manager
     /// * `family` - Profile family, e.g. "ruby"
     /// * `tags` - Tags to include with every profile reported by this exporter. It's also possible to include
     ///   profile-specific tags, see `additional_tags` on `build`.
@@ -154,10 +154,13 @@ impl ProfileExporter {
     #[allow(clippy::too_many_arguments)]
     /// Build a Request object representing the profile information provided.
     ///
-    /// For details on the `internal_metadata_json`, please reference the Datadog-internal
+    /// For details on the `internal_metadata` parameter, please reference the Datadog-internal
     /// "RFC: Attaching internal metadata to pprof profiles".
     /// If you use this parameter, please update the RFC with your use-case, so we can keep track of how this
     /// is getting used.
+    ///
+    /// For details on the `info` parameter, please reference the Datadog-internal
+    /// "RFC: Pprof System Info Support".
     pub fn build(
         &self,
         start: DateTime<Utc>,
@@ -167,6 +170,7 @@ impl ProfileExporter {
         additional_tags: Option<&Vec<Tag>>,
         endpoint_counts: Option<&ProfiledEndpointsStats>,
         internal_metadata: Option<serde_json::Value>,
+        info: Option<serde_json::Value>,
         timeout: std::time::Duration,
     ) -> anyhow::Result<Request> {
         let mut form = multipart::Form::default();
@@ -229,6 +233,7 @@ impl ProfileExporter {
             "version": "4",
             "endpoint_counts" : endpoint_counts,
             "internal": internal_metadata.unwrap_or_else(|| json!({})),
+            "info": info.unwrap_or_else(|| json!({})),
         })
         .to_string();
 

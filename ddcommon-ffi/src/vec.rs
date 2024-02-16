@@ -4,6 +4,7 @@
 extern crate alloc;
 
 use crate::slice::Slice;
+use core::ops::Deref;
 use std::io::Write;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
@@ -27,7 +28,7 @@ unsafe impl<T: Sync> Sync for Vec<T> {}
 
 impl<T: PartialEq> PartialEq for Vec<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.len() == other.len() && self.iter().zip(other.iter()).all(|(s, o)| s == o)
+        **self == **other
     }
 }
 
@@ -37,7 +38,7 @@ impl<T> Drop for Vec<T> {
     fn drop(&mut self) {
         let vec =
             unsafe { alloc::vec::Vec::from_raw_parts(self.ptr as *mut T, self.len, self.capacity) };
-        std::mem::drop(vec)
+        drop(vec)
     }
 }
 
@@ -73,7 +74,7 @@ impl<'a, T> IntoIterator for &'a Vec<T> {
     type IntoIter = core::slice::Iter<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        unsafe { self.as_slice().into_slice() }.iter()
+        self.deref().iter()
     }
 }
 
@@ -93,35 +94,16 @@ impl<T> Vec<T> {
         self.replace(vec);
     }
 
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len > 0
-    }
-
     pub fn as_slice(&self) -> Slice<T> {
-        unsafe { Slice::new(self.ptr, self.len) }
+        unsafe { Slice::from_raw_parts(self.ptr, self.len) }
     }
+}
 
-    pub fn iter(&self) -> std::slice::Iter<T> {
-        unsafe { self.as_slice().into_slice() }.iter()
-    }
+impl<T> Deref for Vec<T> {
+    type Target = [T];
 
-    pub fn last(&self) -> Option<&T> {
-        if self.len == 0 {
-            return None;
-        }
-        unsafe { self.ptr.add(self.len - 1).as_ref() }
-    }
-
-    pub fn get(&self, index: usize) -> Option<&T> {
-        if index >= self.len {
-            None
-        } else {
-            unsafe { self.ptr.add(index).as_ref() }
-        }
+    fn deref(&self) -> &Self::Target {
+        self.as_slice().as_slice()
     }
 }
 
@@ -133,7 +115,7 @@ impl<T> Default for Vec<T> {
 
 #[cfg(test)]
 mod test {
-    use crate::vec::*;
+    use super::*;
 
     #[test]
     fn test_default() {
@@ -160,7 +142,7 @@ mod test {
         assert_eq!(ffi_vec.len(), 2);
         assert!(ffi_vec.capacity >= 2);
 
-        let slice = unsafe { ffi_vec.as_slice().as_slice() };
+        let slice = ffi_vec.deref();
         let [first, second]: [_; 2] = slice.try_into().expect("slice to have 2 items");
         assert_eq!(first, 1);
         assert_eq!(second, 2);

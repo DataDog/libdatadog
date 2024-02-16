@@ -192,7 +192,7 @@ where
             request.context.trace_context.new_child()
         });
         let entered = span.enter();
-        tracing::info!("ReceiveRequest");
+        tracing::debug!("ReceiveRequest");
         let start = self.in_flight_requests_mut().start_request(
             request.id,
             request.context.deadline,
@@ -760,7 +760,9 @@ impl<Req, Res> InFlightRequest<Req, Res> {
         let method = serve.method(&message);
         // TODO(https://github.com/rust-lang/rust-clippy/issues/9111)
         // remove when clippy is fixed
+        #[allow(unknown_lints)]
         #[allow(clippy::needless_borrow)]
+        #[allow(clippy::needless_borrows_for_generic_args)]
         span.record("otel.name", &method.unwrap_or(""));
         let _ = Abortable::new(
             async move {
@@ -771,14 +773,14 @@ impl<Req, Res> InFlightRequest<Req, Res> {
                 if context.discard_response {
                     let response = RequestResponse::Discarded { request_id };
                     let _ = response_tx.send(response).await;
-                    tracing::info!("DiscardingResponse");
+                    tracing::debug!("DiscardingResponse");
                 } else {
                     let response = RequestResponse::Response(Response {
                         request_id,
                         message: Ok(response),
                     });
                     let _ = response_tx.send(response).await;
-                    tracing::info!("BufferResponse");
+                    tracing::debug!("BufferResponse");
                 }
             },
             abort_registration,

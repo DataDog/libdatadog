@@ -24,7 +24,7 @@ pub struct Profile {
     sample_types: Vec<ValueType>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
-    strings: FxIndexSet<String>,
+    strings: FxIndexSet<Box<str>>,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
 }
@@ -94,7 +94,7 @@ impl Profile {
 
         let stacktrace = self.add_stacktrace(locations);
         self.observations
-            .add(Sample::new(labels, stacktrace), timestamp, sample.values);
+            .add(Sample::new(labels, stacktrace), timestamp, sample.values)?;
         Ok(())
     }
 
@@ -145,7 +145,7 @@ impl Profile {
             label_sets: Default::default(),
             locations: Default::default(),
             mappings: Default::default(),
-            observations: Default::default(),
+            observations: Observations::new(sample_types.len()),
             period: None,
             sample_types: vec![],
             stack_traces: Default::default(),
@@ -302,7 +302,7 @@ impl Profile {
         }
 
         for item in self.strings.into_iter() {
-            encoder.encode(ProfileStringTableEntry::from(item))?;
+            encoder.encode_string_table_entry(item)?;
         }
 
         encoder.encode(ProfileSimpler {
@@ -527,17 +527,11 @@ impl Profile {
     // code, which would break if we did so. We could try to do something with
     // a test "feature", but this naming scheme is sufficient for now.
     pub fn only_for_testing_num_aggregated_samples(&self) -> usize {
-        self.observations
-            .iter()
-            .filter(|(_, ts, _)| ts.is_none())
-            .count()
+        self.observations.aggregated_samples_count()
     }
 
     pub fn only_for_testing_num_timestamped_samples(&self) -> usize {
-        use std::collections::HashSet;
-        let sample_set: HashSet<Timestamp> =
-            HashSet::from_iter(self.observations.iter().filter_map(|(_, ts, _)| ts));
-        sample_set.len()
+        self.observations.timestamped_samples_count()
     }
 }
 
@@ -735,9 +729,9 @@ mod api_test {
         }
         let samples = profile.sorted_samples();
 
-        let sample = samples.get(0).expect("index 0 to exist");
+        let sample = samples.first().expect("index 0 to exist");
         assert_eq!(sample.labels.len(), 1);
-        let label = sample.labels.get(0).expect("index 0 to exist");
+        let label = sample.labels.first().expect("index 0 to exist");
         let key = profile
             .string_table
             .get(label.key as usize)
@@ -757,7 +751,7 @@ mod api_test {
 
         let sample = samples.get(1).expect("index 1 to exist");
         assert_eq!(sample.labels.len(), 1);
-        let label = sample.labels.get(0).expect("index 0 to exist");
+        let label = sample.labels.first().expect("index 0 to exist");
         let key = profile
             .string_table
             .get(label.key as usize)
@@ -777,7 +771,7 @@ mod api_test {
 
         let sample = samples.get(2).expect("index 2 to exist");
         assert_eq!(sample.labels.len(), 2);
-        let label = sample.labels.get(0).expect("index 0 to exist");
+        let label = sample.labels.first().expect("index 0 to exist");
         let key = profile
             .string_table
             .get(label.key as usize)
@@ -965,12 +959,12 @@ mod api_test {
         assert_eq!(serialized_profile.samples.len(), 2);
         let samples = serialized_profile.sorted_samples();
 
-        let s1 = samples.get(0).expect("sample");
+        let s1 = samples.first().expect("sample");
 
         // The trace endpoint label should be added to the first sample
         assert_eq!(s1.labels.len(), 3);
 
-        let l1 = s1.labels.get(0).expect("label");
+        let l1 = s1.labels.first().expect("label");
 
         assert_eq!(
             serialized_profile
@@ -1147,7 +1141,7 @@ mod api_test {
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.get(0).expect("one sample");
+        let first = serialized_profile.samples.first().expect("one sample");
 
         assert_eq!(first.values[0], 1);
         assert_eq!(first.values[1], 10000);
@@ -1202,7 +1196,7 @@ mod api_test {
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.get(0).expect("one sample");
+        let first = serialized_profile.samples.first().expect("one sample");
 
         assert_eq!(first.values, vec![0, 10000, 42]);
     }
@@ -1230,7 +1224,7 @@ mod api_test {
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.get(0).expect("one sample");
+        let first = serialized_profile.samples.first().expect("one sample");
 
         assert_eq!(first.values, vec![3, 10000, 42]);
     }
@@ -1262,7 +1256,7 @@ mod api_test {
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.get(0).expect("one sample");
+        let first = serialized_profile.samples.first().expect("one sample");
 
         assert_eq!(first.values, vec![1, 298, 29]);
     }
@@ -1294,7 +1288,7 @@ mod api_test {
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.get(0).expect("one sample");
+        let first = serialized_profile.samples.first().expect("one sample");
 
         assert_eq!(first.values, vec![1, 16, 0]);
     }
@@ -1394,7 +1388,7 @@ mod api_test {
 
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         let samples = serialized_profile.sorted_samples();
-        let first = samples.get(0).expect("first sample");
+        let first = samples.first().expect("first sample");
 
         assert_eq!(first.values, vec![2, 10000, 42]);
 
@@ -1459,7 +1453,7 @@ mod api_test {
 
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         let samples = serialized_profile.sorted_samples();
-        let first = samples.get(0).expect("first sample");
+        let first = samples.first().expect("first sample");
 
         assert_eq!(first.values, vec![2, 10000, 105]);
 
@@ -1519,7 +1513,7 @@ mod api_test {
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.get(0).expect("one sample");
+        let first = serialized_profile.samples.first().expect("one sample");
 
         assert_eq!(first.values, vec![1, 10000, 42]);
     }
@@ -1554,7 +1548,7 @@ mod api_test {
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.get(0).expect("one sample");
+        let first = serialized_profile.samples.first().expect("one sample");
 
         assert_eq!(first.values, vec![2, 10000, 42]);
     }
@@ -1612,7 +1606,7 @@ mod api_test {
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         let samples = serialized_profile.sorted_samples();
 
-        let first = samples.get(0).expect("one sample");
+        let first = samples.first().expect("one sample");
 
         assert_eq!(first.values, vec![2, 10000, 42]);
 
@@ -1696,7 +1690,7 @@ mod api_test {
 
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         let samples = serialized_profile.sorted_samples();
-        let first = samples.get(0).expect("one sample");
+        let first = samples.first().expect("one sample");
 
         assert_eq!(first.values, vec![2, 10000, 42]);
 
@@ -1737,7 +1731,7 @@ mod api_test {
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.get(0).expect("one sample");
+        let first = serialized_profile.samples.first().expect("one sample");
 
         assert_eq!(first.values, vec![2, 20000, 42]);
     }
@@ -1779,7 +1773,7 @@ mod api_test {
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
-        let first = serialized_profile.samples.get(0).expect("one sample");
+        let first = serialized_profile.samples.first().expect("one sample");
 
         assert_eq!(first.values, vec![2, 10000, 210]);
     }

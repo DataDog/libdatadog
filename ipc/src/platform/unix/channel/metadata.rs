@@ -10,7 +10,7 @@ use std::{
 use io_lifetimes::OwnedFd;
 
 use crate::{
-    handles::{HandlesTransport, TransferHandles},
+    handles::TransferHandles,
     platform::{Message, PlatformHandle, MAX_FDS},
 };
 
@@ -32,28 +32,6 @@ impl Default for ChannelMetadata {
             fds_to_close: Default::default(),
             pid: nix::unistd::getpid().as_raw(),
         }
-    }
-}
-
-impl HandlesTransport for &mut ChannelMetadata {
-    type Error = io::Error;
-
-    fn move_handle<'h, T>(self, handle: PlatformHandle<T>) -> Result<(), Self::Error> {
-        self.enqueue_for_sending(handle);
-
-        Ok(())
-    }
-
-    fn provide_handle<T>(self, hint: &PlatformHandle<T>) -> Result<PlatformHandle<T>, Self::Error> {
-        self.find_handle(hint).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "can't provide expected handle for hint: {}",
-                    hint.as_raw_fd()
-                ),
-            )
-        })
     }
 }
 
