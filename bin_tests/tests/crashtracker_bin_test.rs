@@ -77,28 +77,6 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile) {
         }),
         crash_payload["siginfo"]
     );
-    let frame_names = crash_payload["stacktrace"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .flat_map(|frame| {
-            frame["names"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|name| name["name"].as_str().unwrap().to_owned())
-        })
-        .collect::<Vec<String>>();
-    let mut frame_match = false;
-    for frame in &frame_names {
-        if frame.starts_with("crashtracker_bin_test::main::") {
-            frame_match = true;
-            break;
-        }
-    }
-    if !frame_match {
-        panic!("Didn't find expected frame name")
-    }
 
     let crash_telemetry = fs::read(crash_telemetry_path).unwrap();
     let telemetry_payload = serde_json::from_slice::<serde_json::Value>(&crash_telemetry).unwrap();

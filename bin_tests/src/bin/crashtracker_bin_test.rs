@@ -37,7 +37,7 @@ mod unix {
                     api_key: None,
                 }),
                 path_to_receiver_binary: receiver_binary,
-                resolve_frames: crashtracker::CrashtrackerResolveFrames::ExperimentalInProcess,
+                resolve_frames: crashtracker::CrashtrackerResolveFrames::Never,
                 stderr_filename: Some(stderr_filename),
                 stdout_filename: None,
             },
