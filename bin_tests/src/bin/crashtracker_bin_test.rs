@@ -11,6 +11,7 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(unix)]
 mod unix {
+    use anyhow::Context;
     use std::env;
 
     use datadog_crashtracker::{
@@ -25,15 +26,9 @@ mod unix {
 
     pub fn main() -> anyhow::Result<()> {
         let mut args = env::args().skip(1);
-        let output_filename = args
-            .next()
-            .ok_or(anyhow::anyhow!("Unexpected number of arguments"))?;
-        let receiver_binary = args
-            .next()
-            .ok_or(anyhow::anyhow!("Unexpected number of arguments"))?;
-        let stderr_filename = args
-            .next()
-            .ok_or(anyhow::anyhow!("Unexpected number of arguments"))?;
+        let output_filename = args.next().context("Unexpected number of arguments")?;
+        let receiver_binary = args.next().context("Unexpected number of arguments")?;
+        let stderr_filename = args.next().context("Unexpected number of arguments")?;
         crashtracker::init(
             CrashtrackerConfiguration {
                 create_alt_stack: true,

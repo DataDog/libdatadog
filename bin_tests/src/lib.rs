@@ -28,7 +28,7 @@ pub enum ArtifactType {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub enum Profile {
+pub enum BuildProfile {
     Debug,
     Release,
 }
@@ -37,14 +37,14 @@ pub enum Profile {
 pub struct ArtifactsBuild {
     pub name: String,
     pub artifact_type: ArtifactType,
-    pub profile: Profile,
+    pub build_profile: BuildProfile,
     pub triple_target: Option<String>,
 }
 
 fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     let mut build_cmd = process::Command::new(env!("CARGO"));
     build_cmd.arg("build");
-    if let Profile::Release = c.profile {
+    if let BuildProfile::Release = c.build_profile {
         build_cmd.arg("--release");
     }
     match c.artifact_type {
@@ -81,9 +81,9 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     });
 
     let mut artifact_path = artifact_dir.clone();
-    artifact_path.push(match c.profile {
-        Profile::Debug => "debug",
-        Profile::Release => "release",
+    artifact_path.push(match c.build_profile {
+        BuildProfile::Debug => "debug",
+        BuildProfile::Release => "release",
     });
 
     match c.artifact_type {

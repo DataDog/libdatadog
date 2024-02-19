@@ -5,31 +5,31 @@
 
 use std::{fs, process};
 
-use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, Profile};
+use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_the_tests_debug() {
-    test_the_tests_inner(Profile::Debug);
+    test_the_tests_inner(BuildProfile::Debug);
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_the_tests_release() {
-    test_the_tests_inner(Profile::Release);
+    test_the_tests_inner(BuildProfile::Release);
 }
 
-fn test_the_tests_inner(profile: Profile) {
+fn test_the_tests_inner(profile: BuildProfile) {
     let test_the_tests = ArtifactsBuild {
         name: "test_the_tests".to_owned(),
-        profile,
+        build_profile: profile,
         artifact_type: ArtifactType::Bin,
         triple_target: None,
     };
     let crates = &[
         &ArtifactsBuild {
             name: "datadog-profiling-ffi".to_owned(),
-            profile,
+            build_profile: profile,
             artifact_type: ArtifactType::CDylib,
             triple_target: None,
         },

@@ -6,30 +6,30 @@
 use std::fs;
 use std::process;
 
-use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, Profile};
+use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_debug() {
-    test_crash_tracking_bin(Profile::Debug);
+    test_crash_tracking_bin(BuildProfile::Debug);
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_release() {
-    test_crash_tracking_bin(Profile::Release);
+    test_crash_tracking_bin(BuildProfile::Release);
 }
 
-fn test_crash_tracking_bin(crash_tracking_receiver_profile: Profile) {
+fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile) {
     let crashtracker_bin = ArtifactsBuild {
         name: "crashtracker_bin_test".to_owned(),
-        profile: crash_tracking_receiver_profile,
+        build_profile: crash_tracking_receiver_profile,
         artifact_type: ArtifactType::Bin,
         triple_target: None,
     };
     let crashtracker_receiver = ArtifactsBuild {
         name: "crashtracker_receiver".to_owned(),
-        profile: crash_tracking_receiver_profile,
+        build_profile: crash_tracking_receiver_profile,
         artifact_type: ArtifactType::Bin,
         triple_target: None,
     };
