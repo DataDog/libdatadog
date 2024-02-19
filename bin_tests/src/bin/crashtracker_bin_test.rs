@@ -31,6 +31,9 @@ mod unix {
         let receiver_binary = args
             .next()
             .ok_or(anyhow::anyhow!("Unexpected number of arguments"))?;
+        let stderr_filename = args
+            .next()
+            .ok_or(anyhow::anyhow!("Unexpected number of arguments"))?;
         crashtracker::init(
             CrashtrackerConfiguration {
                 create_alt_stack: true,
@@ -40,7 +43,7 @@ mod unix {
                 }),
                 path_to_receiver_binary: receiver_binary,
                 resolve_frames: crashtracker::CrashtrackerResolveFrames::ExperimentalInProcess,
-                stderr_filename: None,
+                stderr_filename: Some(stderr_filename),
                 stdout_filename: None,
             },
             CrashtrackerMetadata {

@@ -22,14 +22,14 @@ fn test_the_tests_release() {
 fn test_the_tests_inner(profile: Profile) {
     let test_the_tests = ArtifactsBuild {
         name: "test_the_tests".to_owned(),
-        profile: profile,
+        profile,
         artifact_type: ArtifactType::Bin,
         triple_target: None,
     };
     let crates = &[
         &ArtifactsBuild {
             name: "datadog-profiling-ffi".to_owned(),
-            profile: profile,
+            profile,
             artifact_type: ArtifactType::CDylib,
             triple_target: None,
         },

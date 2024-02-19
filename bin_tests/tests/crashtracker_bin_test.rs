@@ -40,10 +40,13 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: Profile) {
     crash_profile_path.push("crash");
     let mut crash_telemetry_path = tmpdir.path().to_owned();
     crash_telemetry_path.push("crash.telemetry");
+    let mut stderr_path = tmpdir.path().to_owned();
+    stderr_path.push("out.stderr");
 
     let mut p = process::Command::new(&artifacts[&crashtracker_bin])
-        .arg(crash_profile_path.as_os_str())
+        .arg(&crash_profile_path)
         .arg(artifacts[&crashtracker_receiver].as_os_str())
+        .arg(&stderr_path)
         .spawn()
         .unwrap();
     let exit_status = bin_tests::timeit!("exit after signal", {
@@ -51,6 +54,9 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: Profile) {
         p.wait().unwrap()
     });
     assert!(!exit_status.success());
+
+    let stderr = fs::read(stderr_path).unwrap();
+    assert_eq!(Ok(""), String::from_utf8(stderr).as_deref());
 
     // Check the crash data
     let crash_profile = fs::read(crash_profile_path).unwrap();
