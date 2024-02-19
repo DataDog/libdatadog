@@ -653,7 +653,6 @@ dependencies = [
  "bytes",
  "chrono",
  "ddcommon",
- "ddtelemetry",
  "derivative",
  "futures",
  "futures-core",
