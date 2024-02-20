@@ -133,18 +133,20 @@ fn shared_lib_extension(triple_target: &str) -> anyhow::Result<&'static str> {
     let (_arch, rest) = triple_target
         .split_once('-')
         .ok_or_else(|| anyhow::anyhow!("malformed triple target {}", triple_target))?;
-    Ok(if rest.starts_with("unknown-linux") || rest.starts_with("alpine-linux"){
-        "so"
-    } else if rest.starts_with("pc-windows") {
-        "dll"
-    } else if rest.starts_with("apple-darwin") {
-        "dylib"
-    } else {
-        return Err(anyhow::anyhow!(
-            "unrecognized triple-target {}",
-            triple_target
-        ));
-    })
+    Ok(
+        if rest.starts_with("unknown-linux") || rest.starts_with("alpine-linux") {
+            "so"
+        } else if rest.starts_with("pc-windows") {
+            "dll"
+        } else if rest.starts_with("apple-darwin") {
+            "dylib"
+        } else {
+            return Err(anyhow::anyhow!(
+                "unrecognized triple-target {}",
+                triple_target
+            ));
+        },
+    )
 }
 
 #[macro_export]
