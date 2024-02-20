@@ -6,6 +6,7 @@
 use std::fs;
 use std::process;
 
+use anyhow::Context;
 use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
 
 #[test]
@@ -59,8 +60,12 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile) {
     assert_eq!(Ok(""), String::from_utf8(stderr).as_deref());
 
     // Check the crash data
-    let crash_profile = fs::read(crash_profile_path).unwrap();
-    let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile).unwrap();
+    let crash_profile = fs::read(crash_profile_path)
+        .context("reading crashtracker profiling payload")
+        .unwrap();
+    let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile)
+        .context("deserializing crashtracker profiling payload to json")
+        .unwrap();
     assert_eq!(
         serde_json::json!({
           "collecting_sample": 1,
@@ -78,8 +83,12 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile) {
         crash_payload["siginfo"]
     );
 
-    let crash_telemetry = fs::read(crash_telemetry_path).unwrap();
-    let telemetry_payload = serde_json::from_slice::<serde_json::Value>(&crash_telemetry).unwrap();
+    let crash_telemetry = fs::read(crash_telemetry_path)
+        .context("reading crashtracker telemetry payload")
+        .unwrap();
+    let telemetry_payload = serde_json::from_slice::<serde_json::Value>(&crash_telemetry)
+        .context("deserializing crashtracker telemetry payload to json")
+        .unwrap();
     assert_eq!(telemetry_payload["request_type"], "logs");
     assert_eq!(
         serde_json::json!({
