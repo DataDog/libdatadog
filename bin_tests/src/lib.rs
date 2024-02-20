@@ -96,8 +96,7 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
                     c.triple_target
                         .as_deref()
                         .unwrap_or(current_platform::CURRENT_PLATFORM),
-                )
-                .unwrap();
+                )?;
             artifact_path.push(name);
         }
     };
@@ -134,7 +133,7 @@ fn shared_lib_extension(triple_target: &str) -> anyhow::Result<&'static str> {
     let (_arch, rest) = triple_target
         .split_once('-')
         .ok_or_else(|| anyhow::anyhow!("malformed triple target {}", triple_target))?;
-    Ok(if rest.starts_with("unknown-linux") {
+    Ok(if rest.starts_with("unknown-linux") || rest.starts_with("alpine-linux"){
         "so"
     } else if rest.starts_with("pc-windows") {
         "dll"
