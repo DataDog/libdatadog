@@ -89,7 +89,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_begin_profiling_op(
     match datadog_crashtracker::begin_profiling_op(op) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_init failed"),
+            err.context("ddog_prof_crashtracker_begin_profiling_op failed"),
         )),
     }
 }
@@ -102,7 +102,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_end_profiling_op(
     match datadog_crashtracker::end_profiling_op(op) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_init failed"),
+            err.context("ddog_prof_crashtracker_end_profiling_op failed"),
         )),
     }
 }
@@ -113,49 +113,9 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_shutdown() -> ProfileResult {
     match datadog_crashtracker::shutdown_crash_handler() {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_init failed"),
+            err.context("ddog_prof_crashtracker_shutdown failed"),
         )),
     }
-}
-
-#[no_mangle]
-#[must_use]
-pub unsafe extern "C" fn ddog_prof_crashtracker_update_config(
-    config: CrashtrackerConfiguration,
-) -> ProfileResult {
-    match ddog_prof_crashtracker_update_config_impl(config) {
-        Ok(_) => ProfileResult::Ok(true),
-        Err(err) => ProfileResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_update_config failed"),
-        )),
-    }
-}
-
-unsafe fn ddog_prof_crashtracker_update_config_impl(
-    config: CrashtrackerConfiguration,
-) -> anyhow::Result<()> {
-    let config = config.try_into()?;
-    datadog_crashtracker::update_config(config)
-}
-
-#[no_mangle]
-#[must_use]
-pub unsafe extern "C" fn ddog_prof_crashtracker_update_metadata(
-    metadata: CrashtrackerMetadata,
-) -> ProfileResult {
-    match ddog_prof_crashtracker_update_metadata_impl(metadata) {
-        Ok(_) => ProfileResult::Ok(true),
-        Err(err) => ProfileResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_update_metadata failed"),
-        )),
-    }
-}
-
-unsafe fn ddog_prof_crashtracker_update_metadata_impl(
-    metadata: CrashtrackerMetadata,
-) -> anyhow::Result<()> {
-    let metadata = metadata.try_into()?;
-    datadog_crashtracker::update_metadata(metadata)
 }
 
 #[no_mangle]
