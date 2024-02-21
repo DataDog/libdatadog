@@ -137,16 +137,26 @@ pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
         spawn_cfg.append_env(env, val);
     }
 
+    let mut log_error = Ok(());
     match cfg.log_method {
         config::LogMethod::File(ref path) => {
-            let file = File::options()
+            match File::options()
                 .append(true)
                 .truncate(false)
                 .create(true)
-                .open(path)?;
-            let (out, err) = (Stdio::from(&file), Stdio::from(&file));
-            spawn_cfg.stdout(out);
-            spawn_cfg.stderr(err);
+                .open(path)
+            {
+                Ok(file) => {
+                    let (out, err) = (Stdio::from(&file), Stdio::from(&file));
+                    spawn_cfg.stdout(out);
+                    spawn_cfg.stderr(err);
+                }
+                Err(e) => {
+                    log_error = Err(e);
+                    spawn_cfg.stdout(Stdio::Null);
+                    spawn_cfg.stderr(Stdio::Null);
+                }
+            }
         }
         config::LogMethod::Disabled => {
             spawn_cfg.stdout(Stdio::Null);
@@ -163,7 +173,7 @@ pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
         .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
         .context("Could not spawn the sidecar daemon")?;
 
-    Ok(())
+    log_error.context("Failed to open the log file")
 }
 
 pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTransport> {
