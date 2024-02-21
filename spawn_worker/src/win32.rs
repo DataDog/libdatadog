@@ -139,7 +139,7 @@ impl SpawnWorker {
             stdout: None,
             stderr: None,
             target: Target::Noop,
-            env: env::vars_os().into_iter().collect(),
+            env: env::vars_os().collect(),
             process_name: None,
             passed_handle: None,
             shared_lib_dependencies: vec![],
@@ -385,7 +385,7 @@ impl SpawnWorker {
                     | EXTENDED_STARTUPINFO_PRESENT,
                 Some(envp.as_mut_ptr() as *mut c_void),
                 PCWSTR::null(),
-                &mut si.StartupInfo,
+                &si.StartupInfo,
                 &mut pi,
             )
         }
@@ -400,12 +400,10 @@ impl SpawnWorker {
 
         unsafe {
             Ok(Child {
-                handle: OwnedHandle::from_raw_handle(RawHandle::from(
-                    pi.hProcess.to_owned().0 as *mut c_void,
-                )),
-                main_thread_handle: OwnedHandle::from_raw_handle(RawHandle::from(
+                handle: OwnedHandle::from_raw_handle(pi.hProcess.to_owned().0 as *mut c_void),
+                main_thread_handle: OwnedHandle::from_raw_handle(
                     pi.hThread.to_owned().0 as *mut c_void,
-                )),
+                ),
             })
         }
     }

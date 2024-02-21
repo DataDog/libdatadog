@@ -1,8 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 #![cfg(windows)]
-use std::fs::OpenOptions;
-use std::{fs, fs::File};
+use std::{fs, fs::OpenOptions};
 
 use spawn_worker::{SpawnWorker, Stdio, Target};
 
