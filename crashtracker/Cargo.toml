@@ -13,6 +13,7 @@ crate-type = ["lib"]
 [dependencies]
 anyhow = "1.0"
 backtrace = "0.3.69"
+blazesym = {git = "https://github.com/libbpf/blazesym.git"}
 chrono = {version = "0.4", default-features = false, features = ["std", "clock", "serde"]}
 datadog-profiling = { path = "../profiling"}
 ddcommon = {path = "../ddcommon"}

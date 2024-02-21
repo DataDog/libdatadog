@@ -56,6 +56,7 @@ mod counters;
 mod crash_handler;
 mod crash_info;
 mod receiver;
+mod stacktrace;
 
 pub use api::*;
 pub use constants::*;
@@ -63,3 +64,33 @@ pub use counters::{begin_profiling_op, end_profiling_op, ProfilingOpTypes};
 pub use crash_handler::{update_config, update_metadata};
 pub use crash_info::*;
 pub use receiver::receiver_entry_point;
+
+#[test]
+fn test_blaze() {
+    use blazesym::symbolize::CodeInfo;
+    use blazesym::symbolize::Input;
+    use blazesym::symbolize::Process;
+    use blazesym::symbolize::Source;
+    use blazesym::symbolize::Sym;
+    use blazesym::symbolize::Symbolized;
+    use blazesym::symbolize::Symbolizer;
+    use blazesym::Addr;
+    use blazesym::Pid;
+
+    const ADDR_WIDTH: usize = 16;
+    // Retrieve up to 64 stack frames of the calling thread.
+    const MAX_CNT: usize = 64;
+
+    let mut addrs_buf = [std::ptr::null_mut::<libc::c_void>(); MAX_CNT];
+    let addr_cnt = unsafe { libc::backtrace(addrs_buf.as_mut_ptr(), MAX_CNT as _) } as usize;
+    let addrs = &addrs_buf[0..std::cmp::min(addr_cnt, MAX_CNT)];
+    // Symbolize the addresses for the current process, as that's where
+    // they were captured.
+    let mut process = Process::new(std::process::id().into());
+    process.map_files = false;
+    let src = Source::Process(process);
+    let symbolizer = Symbolizer::new();
+    let _syms = symbolizer
+        .symbolize(&src, Input::AbsAddr(&[addrs[0] as u64]))
+        .unwrap();
+}
