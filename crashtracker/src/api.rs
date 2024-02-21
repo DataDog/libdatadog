@@ -5,7 +5,7 @@
 use crate::{
     counters::reset_counters,
     crash_handler::{ensure_receiver, register_crash_handlers},
-    crash_handler::{restore_old_handlers, shutdown_receiver, update_reciever_after_fork},
+    crash_handler::{restore_old_handlers, shutdown_receiver, update_receiver_after_fork},
     update_config, update_metadata,
 };
 use ddcommon::tag::Tag;
@@ -136,7 +136,7 @@ pub fn on_fork(
     update_config(config.clone())?;
 
     // See function level comment about why we do this.
-    update_reciever_after_fork(config)?;
+    update_receiver_after_fork(config)?;
     Ok(())
 }
 
