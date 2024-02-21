@@ -23,6 +23,7 @@ use crate::setup::{self, IpcClient, IpcServer, Liaison};
 
 use crate::config::{self, Config};
 use crate::self_telemetry::self_telemetry;
+use crate::watchdog::Watchdog;
 use crate::{ddog_daemon_entry_point, setup_daemon_process};
 
 async fn main_loop<L, C, Fut>(listener: L, cancel: Arc<C>) -> io::Result<()>
@@ -66,7 +67,9 @@ where
 
     let server = SidecarServer::default();
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
-    let telemetry_handle = self_telemetry(server.clone(), shutdown_complete_rx);
+
+    let watchdog_handle = Watchdog::from_receiver(shutdown_complete_rx).spawn_watchdog();
+    let telemetry_handle = self_telemetry(server.clone(), watchdog_handle);
 
     listener(Box::new({
         let shutdown_complete_tx = shutdown_complete_tx.clone();
