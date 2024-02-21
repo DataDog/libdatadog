@@ -3,8 +3,9 @@
 
 #![cfg(unix)]
 
-use std::fs;
+use std::path::Path;
 use std::process;
+use std::{fs, path::PathBuf};
 
 use anyhow::Context;
 use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
@@ -37,17 +38,17 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile) {
     let artifacts = build_artifacts(&[&crashtracker_receiver, &crashtracker_bin]).unwrap();
 
     let tmpdir = tempfile::TempDir::new().unwrap();
-    let mut crash_profile_path = tmpdir.path().to_owned();
-    crash_profile_path.push("crash");
-    let mut crash_telemetry_path = tmpdir.path().to_owned();
-    crash_telemetry_path.push("crash.telemetry");
-    let mut stderr_path = tmpdir.path().to_owned();
-    stderr_path.push("out.stderr");
+
+    let crash_profile_path = extend_path(tmpdir.path(), "crash");
+    let crash_telemetry_path = extend_path(tmpdir.path(), "crash.telemetry");
+    let stdout_path = extend_path(tmpdir.path(), "out.stdout");
+    let stderr_path = extend_path(tmpdir.path(), "out.stderr");
 
     let mut p = process::Command::new(&artifacts[&crashtracker_bin])
         .arg(&crash_profile_path)
         .arg(artifacts[&crashtracker_receiver].as_os_str())
         .arg(&stderr_path)
+        .arg(&stdout_path)
         .spawn()
         .unwrap();
     let exit_status = bin_tests::timeit!("exit after signal", {
@@ -56,8 +57,14 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile) {
     });
     assert!(!exit_status.success());
 
-    let stderr = fs::read(stderr_path).unwrap();
+    let stderr = fs::read(stderr_path)
+        .context("reading crashtracker stderr")
+        .unwrap();
+    let stdout = fs::read(stdout_path)
+        .context("reading crashtracker stdout")
+        .unwrap();
     assert_eq!(Ok(""), String::from_utf8(stderr).as_deref());
+    assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
 
     // Check the crash data
     let crash_profile = fs::read(crash_profile_path)
@@ -120,4 +127,10 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile) {
         tags
     );
     assert_eq!(telemetry_payload["payload"][0]["is_sensitive"], true);
+}
+
+fn extend_path<T: AsRef<Path>>(parent: &Path, path: T) -> PathBuf {
+    let mut parent = parent.to_path_buf();
+    parent.push(path);
+    parent
 }

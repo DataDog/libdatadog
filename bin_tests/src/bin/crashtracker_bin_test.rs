@@ -29,6 +29,7 @@ mod unix {
         let output_filename = args.next().context("Unexpected number of arguments")?;
         let receiver_binary = args.next().context("Unexpected number of arguments")?;
         let stderr_filename = args.next().context("Unexpected number of arguments")?;
+        let stdout_filename = args.next().context("Unexpected number of arguments")?;
         crashtracker::init(
             CrashtrackerConfiguration {
                 create_alt_stack: true,
@@ -39,7 +40,7 @@ mod unix {
                 path_to_receiver_binary: receiver_binary,
                 resolve_frames: crashtracker::CrashtrackerResolveFrames::Never,
                 stderr_filename: Some(stderr_filename),
-                stdout_filename: None,
+                stdout_filename: Some(stdout_filename),
             },
             CrashtrackerMetadata {
                 profiling_library_name: "libdatadog".to_owned(),
