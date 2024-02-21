@@ -159,7 +159,7 @@ pub fn ensure_receiver(config: CrashtrackerConfiguration) -> anyhow::Result<()> 
 ///     This function uses a compare_and_exchange on an atomic pointer.
 ///     If two simultaneous calls to this function occur, the first will win,
 ///     and the second will cleanup the redundant receiver.
-pub fn update_reciever_after_fork(config: CrashtrackerConfiguration) -> anyhow::Result<()> {
+pub fn update_receiver_after_fork(config: CrashtrackerConfiguration) -> anyhow::Result<()> {
     let new_receiver = Box::into_raw(Box::new(make_receiver(config)?));
     let old_receiver: *mut std::process::Child = RECEIVER.swap(new_receiver, SeqCst);
     anyhow::ensure!(
@@ -180,7 +180,7 @@ pub fn update_reciever_after_fork(config: CrashtrackerConfiguration) -> anyhow::
 
 /// Shuts down a receiver,
 /// PRECONDITIONS:
-///     The signal handlers should be restored before removing the reciever.
+///     The signal handlers should be restored before removing the receiver.
 /// SAFETY:
 ///     Crash-tracking functions are not guaranteed to be reentrant.
 ///     No other crash-handler functions should be called concurrently.
@@ -301,7 +301,7 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
 /// only create and set the handlers once.
 /// However, note the restriction below:
 /// PRECONDITIONS:
-///     The signal handlers should be restored before removing the reciever.
+///     The signal handlers should be restored before removing the receiver.
 /// SAFETY:
 ///     Crash-tracking functions are not guaranteed to be reentrant.
 ///     No other crash-handler functions should be called concurrently.
