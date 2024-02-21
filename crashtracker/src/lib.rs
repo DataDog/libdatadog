@@ -90,7 +90,7 @@ fn test_blaze() {
     process.map_files = false;
     let src = Source::Process(process);
     let symbolizer = Symbolizer::new();
-    let _syms = symbolizer
+    let syms = symbolizer
         .symbolize(&src, Input::AbsAddr(&[addrs[0] as u64]))
         .unwrap();
 }

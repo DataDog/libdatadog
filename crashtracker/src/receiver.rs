@@ -4,6 +4,8 @@
 use self::stacktrace::StackFrame;
 use super::*;
 use anyhow::Context;
+use blazesym::symbolize::{Process, Source};
+use nix::unistd::getppid;
 use std::time::Duration;
 
 /// Receives data from a crash collector via a pipe on `stdin`, formats it into
@@ -18,9 +20,13 @@ use std::time::Duration;
 pub fn receiver_entry_point() -> anyhow::Result<()> {
     match receive_report(std::io::stdin().lock())? {
         CrashReportStatus::NoCrash => Ok(()),
-        CrashReportStatus::CrashReport(config, crash_info) => {
+        CrashReportStatus::CrashReport(config, mut crash_info) => {
             if config.resolve_frames == CrashtrackerResolveFrames::ExperimentalInReceiver {
-                todo!("Processing names in the receiver is WIP");
+                let ppid: u32 = getppid().as_raw().try_into()?;
+                let mut process = Process::new(ppid.into());
+                process.map_files = false;
+                let src = Source::Process(process);
+                crash_info.resolve_names(&src)?;
             }
             if let Some(endpoint) = config.endpoint {
                 // Don't keep the endpoint waiting forever.
