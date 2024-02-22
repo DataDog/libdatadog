@@ -4,6 +4,19 @@ use cbindgen::{self, Config};
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
+/// Configure the header generation using environment variables.
+/// call into `generate_header` with the appropriate arguments.
+///
+/// # Arguments
+///
+/// * `header_name` - The name of the header file to generate.
+pub fn generate_and_configure_header(header_name: &str) {
+    let crate_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let output_base_dir: Option<String> = env::var("DESTDIR").ok(); // Use `ok()` to convert Result to Option
+    generate_header(crate_dir, header_name, output_base_dir.as_deref());
+    println!("cargo:rerun-if-env-changed=DESTDIR");
+}
+
 /// Generates a C header file using `cbindgen` for the specified crate.
 ///
 /// # Arguments
@@ -22,6 +35,7 @@ pub fn generate_header(crate_dir: PathBuf, header_name: &str, output_base_dir: O
         cargo_target_path.join("include/datadog/").join(header_name)
     } else {
         // If relative, adjust the path accordingly. we are in a crate, so get back to top level
+        // The assumption is that the crate is in a subdirectory of the workspace
         let adjusted_path = Path::new("..").join(cargo_target_path);
         adjusted_path.join("include/datadog/").join(header_name)
     };
