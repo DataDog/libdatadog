@@ -3,38 +3,14 @@
 
 use crate::alloc::{AllocError, ArenaAllocator};
 use crate::collections::identifiable::{Id, StringId};
+use crate::iter::{IntoLendingIterator, LendingIterator};
 use core::borrow::Borrow;
 use core::ops::Deref;
 use core::{fmt, hash, mem, ptr};
 use std::alloc::{Layout, LayoutError};
 use std::collections::TryReserveError;
 
-pub trait StringArena: IntoIterator<Item=Option<LengthPrefixedStr>> {
-    type Handle: Copy + Sized;
-
-    /// Copies the given str into the allocator.
-    fn allocate_str(&self, str: impl AsRef<str>) -> Result<Self::Handle, InternError>;
-
-    fn fetch(&self, handle: Option<Self::Handle>) -> &str;
-
-    fn capacity(&self) -> usize;
-
-    fn convert_handle_to_length_prefixed_str(&self, handle: Self::Handle) -> LengthPrefixedStr;
-    fn convert_length_prefixed_str_to_handle(&self, str: LengthPrefixedStr) -> Self::Handle;
-}
-
-impl IntoIterator for ArenaAllocator {
-    type Item = Option<LengthPrefixedStr>;
-    type IntoIter = ArenaAllocatorIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        todo!()
-    }
-}
-
-impl StringArena for ArenaAllocator {
-    type Handle = LengthPrefixedStr;
-
+impl ArenaAllocator {
     fn allocate_str(&self, value: impl AsRef<str>) -> Result<LengthPrefixedStr, InternError> {
         let str = value.as_ref();
         match u16::try_from(str.len()) {
@@ -44,13 +20,13 @@ impl StringArena for ArenaAllocator {
                     Err(_err) => return Err(InternError::LargeString(str.len())),
                 };
                 let allocation = self.allocate_zeroed(layout)?;
-                Ok(unsafe { LengthPrefixedStr::from_str_in(str, n, allocation) })
+                Ok(unsafe { LengthPrefixedStr::from_str_in(str, allocation) })
             }
             Err(_) => Err(InternError::AllocError),
         }
     }
 
-    fn fetch(&self, handle: Option<Self::Handle>) -> &str {
+    pub fn fetch(&self, handle: Option<LengthPrefixedStr>) -> &str {
         match handle {
             None => "",
 
@@ -65,14 +41,6 @@ impl StringArena for ArenaAllocator {
             None => 0,
             Some(mapping) => mapping.allocation_size(),
         }
-    }
-
-    fn convert_handle_to_length_prefixed_str(&self, handle: Self::Handle) -> LengthPrefixedStr {
-        handle
-    }
-
-    fn convert_length_prefixed_str_to_handle(&self, str: LengthPrefixedStr) -> Self::Handle {
-        str
     }
 }
 
@@ -170,11 +138,14 @@ impl LengthPrefixedStr {
         Self { header: ptr.cast() }
     }
 
+    /// # Safety
+    ///  - The str's len must fit in a [u16].
+    ///  - It must be valid to write `s.len() + 2` bytes to the `ptr`.
     #[inline]
-    pub unsafe fn from_str_in(s: &str, n: u16, ptr: ptr::NonNull<[u8]>) -> Self {
+    pub unsafe fn from_str_in(s: &str, ptr: ptr::NonNull<[u8]>) -> Self {
         // SAFETY: todo
-        let header_src = u16::to_be_bytes(n);
-        debug_assert!(header_src.len() + n as usize <= ptr.len());
+        let header_src = u16::to_be_bytes(s.len() as u16);
+        debug_assert!(header_src.len() + s.len() <= ptr.len());
 
         let header_ptr = ptr.as_ptr() as *mut u8;
         // SAFETY: todo
@@ -182,7 +153,7 @@ impl LengthPrefixedStr {
         // SAFETY: todo
         let bytes_ptr = header_ptr.add(header_src.len());
         // SAFETY: todo
-        ptr::copy_nonoverlapping(s.as_ptr(), bytes_ptr, n as usize);
+        ptr::copy_nonoverlapping(s.as_ptr(), bytes_ptr, s.len());
         Self {
             // SAFETY: todo
             header: ptr::NonNull::new_unchecked(header_ptr.cast()),
@@ -202,17 +173,24 @@ impl Deref for LengthPrefixedStr {
 
 /// A StringTable holds unique strings in a set. The data of each string is
 /// held in an arena, so individual strings don't hit the system allocator.
-pub struct StringTable<A: StringArena = ArenaAllocator> {
-    arena: A,
+pub struct StringTable {
+    arena: ArenaAllocator,
+    /// Used to determine uniqueness of strings, and the order that the
+    /// strings were inserted.
     map: FxHashMap<LengthPrefixedStr, StringId>,
 }
 
-impl IntoIterator for StringTable {
-    type Item = Option<str>;
-    type IntoIter = ();
+impl IntoLendingIterator for StringTable {
+    type Iter = ArenaAllocatorIter;
 
-    fn into_iter(self) -> Self::IntoIter {
-        todo!()
+    fn into_iter(self) -> Self::Iter {
+        let len = self.len();
+        ArenaAllocatorIter {
+            arena: self.arena,
+            offset: 0,
+            len,
+            has_empty_str: true,
+        }
     }
 }
 
@@ -254,7 +232,7 @@ impl From<TryReserveError> for InternError {
     }
 }
 
-impl StringTable<ArenaAllocator> {
+impl StringTable {
     /// Creates a new string table whose arena allocator can hold at least
     /// `min_capacity` bytes. This will get rounded up to multiple of the OS
     /// page size. A capacity of 0 is allowed, in which case a virtual
@@ -263,15 +241,13 @@ impl StringTable<ArenaAllocator> {
         let arena = ArenaAllocator::with_capacity(min_capacity.next_power_of_two())?;
         Ok(Self::new_in(arena)?)
     }
-}
 
-impl<A: StringArena> StringTable<A> {
-    pub fn new_in(arena: A) -> Result<Self, AllocError> {
+    pub fn new_in(arena: ArenaAllocator) -> Result<Self, AllocError> {
         let map = FxHashMap::default();
         Ok(StringTable { arena, map })
     }
 
-    pub fn arena(&self) -> &A {
+    pub fn arena(&self) -> &ArenaAllocator {
         &self.arena
     }
 
@@ -283,7 +259,7 @@ impl<A: StringArena> StringTable<A> {
     pub(crate) fn insert_full<S>(
         &mut self,
         s: &S,
-    ) -> Result<(Option<A::Handle>, StringId), InternError>
+    ) -> Result<(Option<LengthPrefixedStr>, StringId), InternError>
     where
         S: ?Sized + Borrow<str>,
     {
@@ -293,7 +269,7 @@ impl<A: StringArena> StringTable<A> {
     pub(crate) fn intern_inner<S>(
         &mut self,
         s: &S,
-    ) -> Result<(Option<A::Handle>, StringId), InternError>
+    ) -> Result<(Option<LengthPrefixedStr>, StringId), InternError>
     where
         S: ?Sized + Borrow<str>,
     {
@@ -302,22 +278,21 @@ impl<A: StringArena> StringTable<A> {
             return Ok((None, StringId::ZERO));
         }
 
-        match self.map.get_key_value(str) {
+        let map = &mut self.map;
+        match map.get_key_value(str) {
             None => {
-                self.map.try_reserve(1)?;
-                let string_id = StringId::from_offset(self.map.len());
+                map.try_reserve(1)?;
+                // It's +1 because the empty str is not held, but the string
+                // table acts as if it is.
+                let len = map.len() + 1;
+                let string_id = StringId::from_offset(len);
                 let arena = &self.arena;
                 let handle = arena.allocate_str(str)?;
-                self.map.insert(
-                    arena.convert_handle_to_length_prefixed_str(handle),
-                    string_id,
-                );
+
+                map.insert(handle, string_id);
                 Ok((Some(handle), string_id))
             }
-            Some((str, string_id)) => {
-                let handle = self.arena.convert_length_prefixed_str_to_handle(*str);
-                Ok((Some(handle), *string_id))
-            }
+            Some((str, string_id)) => Ok((Some(*str), *string_id)),
         }
     }
 
@@ -332,15 +307,13 @@ impl<A: StringArena> StringTable<A> {
     where
         S: ?Sized + Borrow<str>,
     {
-        match self.intern_inner(s) {
-            Ok((_str, string_id)) => Ok(string_id),
-            Err(err) => Err(err),
-        }
+        Ok(self.intern_inner(s)?.1)
     }
 
     #[inline]
     pub fn len(&self) -> usize {
-        // + 1 for empty string, which isn't held
+        // + 1 for empty string, which isn't held in the map but is considered
+        // to be in the string table at all times.
         self.map.len() + 1
     }
 
@@ -367,16 +340,16 @@ pub struct ArenaAllocatorIter {
     has_empty_str: bool,
 }
 
-impl Iterator for ArenaAllocatorIter {
-    type Item = Option<LengthPrefixedStr>;
+impl LendingIterator for ArenaAllocatorIter {
+    type Item<'a> = &'a str;
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next(&mut self) -> Option<Self::Item<'_>> {
         if self.len == 0 {
             None
         } else if self.has_empty_str {
             self.len -= 1;
             self.has_empty_str = false;
-            Some(None)
+            Some("")
         } else {
             let ptr = self
                 .arena
@@ -394,12 +367,14 @@ impl Iterator for ArenaAllocatorIter {
             };
             self.len -= 1;
             self.offset += mem::size_of::<u16>() + str.len();
-            Some(Some(str))
+
+            // SAFETY: todo
+            unsafe { Some(mem::transmute(str.deref())) }
         }
     }
 
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.len, Some(self.len))
+    fn count(self) -> usize {
+        self.len
     }
 }
 
@@ -439,6 +414,16 @@ mod tests {
     }
 
     #[test]
+    fn test_empty() {
+        let table = StringTable::with_arena_capacity(0).unwrap();
+
+        // The empty string must always be included in the table at 0.
+        let mut iter = table.into_iter();
+        let first = iter.next().unwrap();
+        assert_eq!("", first);
+    }
+
+    #[test]
     fn owned_string_table() -> anyhow::Result<()> {
         let cases: &[_] = &[
             (StringId::ZERO, ""),
@@ -459,11 +444,6 @@ mod tests {
 
         let mut table = StringTable::with_arena_capacity(capacity)?;
 
-        // The empty string must always be included in the table at 0.
-        let empty_table = table.iter().collect::<Vec<_>>();
-        let first = empty_table.first().unwrap();
-        assert_eq!("", *first);
-
         // Intern a string literal to ensure ?Sized works.
         table.intern("")?;
 
@@ -478,14 +458,14 @@ mod tests {
             assert_eq!(*offset, actual_offset);
         }
 
-        let table_vec = table.iter().collect::<Vec<_>>();
-        assert_eq!(cases.len(), table_vec.len());
-        let actual = table_vec
-            .into_iter()
-            .enumerate()
-            .map(|(offset, item)| (StringId::from_offset(offset), item))
-            .collect::<Vec<_>>();
-        assert_eq!(cases, &actual);
+        let mut table_iter = table.into_iter().to_owned();
+        for (_, case) in cases {
+            let item = table_iter.next().unwrap();
+            assert_eq!(*case, item)
+        }
+        // should be exhausted at this point.
+        assert_eq!(0, table_iter.count());
+
         Ok(())
     }
 }

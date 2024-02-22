@@ -5,8 +5,9 @@ use self::api::UpscalingInfo;
 use super::*;
 use crate::api;
 use crate::collections::identifiable::*;
-use crate::collections::{StringArena, StringTable};
+use crate::collections::StringTable;
 use crate::internal::ProfiledEndpointsStats;
+use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::pprof::sliced_proto::*;
 use crate::serializer::CompressedProtobufSerializer;
 use std::borrow::{Borrow, Cow};
@@ -322,8 +323,9 @@ impl Profile {
             encoder.encode(ProfileFunctionsEntry::from(item))?;
         }
 
-        for item in self.strings.into_iter() {
-            encoder.encode_string_table_entry(item.deref())?;
+        let mut iter = self.strings.into_iter();
+        while let Some(item) = iter.next() {
+            encoder.encode_string_table_entry(item)?;
         }
 
         encoder.encode(ProfileSimpler {
