@@ -139,14 +139,23 @@ pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
 
     match cfg.log_method {
         config::LogMethod::File(ref path) => {
-            let file = File::options()
+            match File::options()
                 .append(true)
                 .truncate(false)
                 .create(true)
-                .open(path)?;
-            let (out, err) = (Stdio::from(&file), Stdio::from(&file));
-            spawn_cfg.stdout(out);
-            spawn_cfg.stderr(err);
+                .open(path)
+            {
+                Ok(file) => {
+                    let (out, err) = (Stdio::from(&file), Stdio::from(&file));
+                    spawn_cfg.stdout(out);
+                    spawn_cfg.stderr(err);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to open logfile for sidecar: {:?}", e);
+                    spawn_cfg.stdout(Stdio::Null);
+                    spawn_cfg.stderr(Stdio::Null);
+                }
+            }
         }
         config::LogMethod::Disabled => {
             spawn_cfg.stdout(Stdio::Null);
