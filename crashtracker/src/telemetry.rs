@@ -271,7 +271,7 @@ mod tests {
             &crate::CrashInfo {
                 counters,
                 files: HashMap::new(),
-                metadata: new_test_prof_metadata(),
+                metadata: Some(new_test_prof_metadata()),
                 os_info: os_info::Info::unknown(),
                 siginfo: Some(SigInfo {
                     signum: 11,
