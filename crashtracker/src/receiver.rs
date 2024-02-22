@@ -3,7 +3,7 @@
 
 use super::*;
 use anyhow::Context;
-use std::{io::BufRead, time::Duration};
+use std::time::Duration;
 
 /// Receives data from a crash collector via a pipe on `stdin`, formats it into
 /// `CrashInfo` json, and emits it to the endpoint/file defined in `config`.
@@ -15,33 +15,33 @@ use std::{io::BufRead, time::Duration};
 /// See comments in [profiling/crashtracker/mod.rs] for a full architecture
 /// description.
 pub fn receiver_entry_point() -> anyhow::Result<()> {
-    let mut config = String::new();
-    std::io::stdin().lock().read_line(&mut config)?;
-    let config: CrashtrackerConfiguration = serde_json::from_str(&config)?;
-
-    let mut metadata = String::new();
-    std::io::stdin().lock().read_line(&mut metadata)?;
-    let metadata: CrashtrackerMetadata = serde_json::from_str(&metadata)?;
-
-    let telemetry_uploader = telemetry::TelemetryCrashUploader::new(&metadata, &config).ok();
-
-    match receive_report(std::io::stdin().lock(), &metadata)? {
+    match receive_report(std::io::stdin().lock())? {
         CrashReportStatus::NoCrash => Ok(()),
-        CrashReportStatus::CrashReport(crash_info) => {
+        CrashReportStatus::CrashReport(config, crash_info) => {
             if config.resolve_frames == CrashtrackerResolveFrames::ExperimentalInReceiver {
                 todo!("Processing names in the receiver is WIP");
             }
+            let telemetry_uploader = telemetry::TelemetryCrashUploader::new(
+                crash_info
+                    .metadata
+                    .as_ref()
+                    .context("Crashtracker: Missing metadata")?,
+                &config,
+            )
+            .ok();
+
             if let Some(endpoint) = config.endpoint {
                 // Don't keep the endpoint waiting forever.
                 // TODO Experiment to see if 30 is the right number.
                 crash_info.upload_to_endpoint(endpoint, Duration::from_secs(30))?;
             }
+
             if let Some(uploader) = telemetry_uploader {
                 uploader.upload_to_telemetry(&crash_info, Duration::from_secs(30))?;
             }
             Ok(())
         }
-        CrashReportStatus::PartialCrashReport(_, _) => todo!(),
+        CrashReportStatus::PartialCrashReport(..) => todo!(),
     }
 }
 
@@ -51,9 +51,11 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
 /// to the CrashReport.
 #[derive(Debug)]
 enum StdinState {
+    Config,
     Counters,
     Done,
     File(String, Vec<String>),
+    Metadata,
     SigInfo,
     StackTrace(Vec<StackFrame>),
     Waiting,
@@ -65,10 +67,21 @@ enum StdinState {
 /// Once we reach the end of a block, append the block's data to `crashinfo`.
 fn process_line(
     crashinfo: &mut CrashInfo,
+    config: &mut Option<CrashtrackerConfiguration>,
     line: String,
     state: StdinState,
 ) -> anyhow::Result<StdinState> {
     let next = match state {
+        StdinState::Config if line.starts_with(DD_CRASHTRACK_END_CONFIG) => StdinState::Waiting,
+        StdinState::Config => {
+            if config.is_some() {
+                // The config might contain sensitive data, don't log it.
+                eprint!("Unexpected double config");
+            }
+            std::mem::swap(config, &mut Some(serde_json::from_str(&line)?));
+            StdinState::Config
+        }
+
         StdinState::Counters if line.starts_with(DD_CRASHTRACK_END_COUNTERS) => StdinState::Waiting,
         StdinState::Counters => {
             let v: serde_json::Value = serde_json::from_str(&line)?;
@@ -97,6 +110,13 @@ fn process_line(
             StdinState::File(name, contents)
         }
 
+        StdinState::Metadata if line.starts_with(DD_CRASHTRACK_END_METADATA) => StdinState::Waiting,
+        StdinState::Metadata => {
+            let metadata = serde_json::from_str(&line)?;
+            crashinfo.set_metadata(metadata)?;
+            StdinState::Metadata
+        }
+
         StdinState::SigInfo if line.starts_with(DD_CRASHTRACK_END_SIGINFO) => StdinState::Waiting,
         StdinState::SigInfo => {
             let siginfo = serde_json::from_str(&line)?;
@@ -115,12 +135,16 @@ fn process_line(
             StdinState::StackTrace(stacktrace)
         }
 
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_CONFIG) => StdinState::Config,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_COUNTERS) => {
             StdinState::Counters
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_FILE) => {
             let (_, filename) = line.split_once(' ').unwrap_or(("", "MISSING_FILENAME"));
             StdinState::File(filename.to_string(), vec![])
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_METADATA) => {
+            StdinState::Metadata
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SIGINFO) => StdinState::SigInfo,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_STACKTRACE) => {
@@ -138,27 +162,26 @@ fn process_line(
 
 enum CrashReportStatus {
     NoCrash,
-    CrashReport(CrashInfo),
-    PartialCrashReport(CrashInfo, StdinState),
+    CrashReport(CrashtrackerConfiguration, CrashInfo),
+    PartialCrashReport(CrashtrackerConfiguration, CrashInfo, StdinState),
 }
 
-/// Listens to `stdin`, reading it line by line, until
+/// Listens to `stream`, reading it line by line, until
 /// 1. A crash-report is received, in which case it is processed for upload
 /// 2. `stdin` closes without a crash report (i.e. if the parent terminated
 ///    normally)
 /// In the case where the parent failed to transfer a full crash-report
 /// (for instance if it crashed while calculating the crash-report), we return
 /// a PartialCrashReport.
-fn receive_report(
-    stream: impl std::io::BufRead,
-    metadata: &CrashtrackerMetadata,
-) -> anyhow::Result<CrashReportStatus> {
-    let mut crashinfo = CrashInfo::new(metadata.clone());
+fn receive_report(stream: impl std::io::BufRead) -> anyhow::Result<CrashReportStatus> {
+    let mut crashinfo = CrashInfo::new();
     let mut stdin_state = StdinState::Waiting;
+    let mut config = None;
+
     //TODO: This assumes that the input is valid UTF-8.
     for line in stream.lines() {
         let line = line?;
-        stdin_state = process_line(&mut crashinfo, line, stdin_state)?;
+        stdin_state = process_line(&mut crashinfo, &mut config, line, stdin_state)?;
     }
 
     if !crashinfo.crash_seen() {
@@ -170,12 +193,15 @@ fn receive_report(
     #[cfg(target_os = "linux")]
     crashinfo.add_file("/proc/cpuinfo")?;
 
+    let config = config.context("Missing crashtracker configuration")?;
+
     // If we were waiting for data when stdin closed, let our caller know that
     // we only have partial data.
     if matches!(stdin_state, StdinState::Done) {
-        Ok(CrashReportStatus::CrashReport(crashinfo))
+        Ok(CrashReportStatus::CrashReport(config, crashinfo))
     } else {
         Ok(CrashReportStatus::PartialCrashReport(
+            config,
             crashinfo,
             stdin_state,
         ))

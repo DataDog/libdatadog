@@ -39,7 +39,7 @@ pub struct CrashInfo {
     pub additional_stacktraces: HashMap<String, Vec<StackFrame>>,
     pub counters: HashMap<String, i64>,
     pub files: HashMap<String, Vec<String>>,
-    pub metadata: CrashtrackerMetadata,
+    pub metadata: Option<CrashtrackerMetadata>,
     pub os_info: os_info::Info,
     pub siginfo: Option<SigInfo>,
     pub stacktrace: Vec<StackFrame>,
@@ -54,22 +54,24 @@ impl CrashInfo {
     pub fn crash_seen(&self) -> bool {
         self.siginfo.is_some()
     }
+}
 
-    pub fn get_metadata(&self) -> &CrashtrackerMetadata {
-        &self.metadata
+impl Default for CrashInfo {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 /// Constructor and setters
 impl CrashInfo {
-    pub fn new(metadata: CrashtrackerMetadata) -> Self {
+    pub fn new() -> Self {
         let os_info = os_info::get();
         let uuid = Uuid::new_v4();
         Self {
             additional_stacktraces: HashMap::new(),
             counters: HashMap::new(),
             files: HashMap::new(),
-            metadata,
+            metadata: None,
             os_info,
             siginfo: None,
             stacktrace: vec![],
@@ -102,6 +104,12 @@ impl CrashInfo {
             old.is_none(),
             "Attempted to add file that was already there {filename}"
         );
+        Ok(())
+    }
+
+    pub fn set_metadata(&mut self, metadata: CrashtrackerMetadata) -> anyhow::Result<()> {
+        anyhow::ensure!(self.metadata.is_none());
+        self.metadata = Some(metadata);
         Ok(())
     }
 
@@ -152,11 +160,8 @@ impl CrashInfo {
             }
         }
 
-        //let site = "intake.profile.datad0g.com/api/v2/profile";
-        //let site = "datad0g.com";
-        //let api_key = std::env::var("DD_API_KEY")?;
         let data = serde_json::to_vec(self)?;
-        let metadata = self.get_metadata();
+        let metadata = &self.metadata.as_ref().context("Missing metadata")?;
 
         let is_crash_tag = make_tag("is_crash", "yes")?;
         let tags = Some(

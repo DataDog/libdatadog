@@ -6,7 +6,7 @@ use std::fmt::Write;
 use std::time::{self, SystemTime};
 
 use super::{CrashInfo, CrashtrackerConfiguration, CrashtrackerMetadata};
-use anyhow::Ok;
+use anyhow::{Context, Ok};
 use ddtelemetry::{
     build_host,
     data::{self, Application, LogLevel},
@@ -124,7 +124,10 @@ impl TelemetryCrashUploader {
 
         let message = serde_json::to_string(&TelemetryCrashInfoMessage {
             files: &crash_info.files,
-            metadata: &crash_info.metadata,
+            metadata: crash_info
+                .metadata
+                .as_ref()
+                .context("Crashtracker: Missing metadata")?,
             os_info: &crash_info.os_info,
         })?;
 

@@ -341,6 +341,14 @@ pub struct ClientStatsPayload {
     #[prost(string, repeated, tag = "12")]
     #[serde(default)]
     pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// The git commit SHA is obtained from a trace, where it may be set through a tracer <-> source code integration.
+    #[prost(string, tag = "13")]
+    #[serde(default)]
+    pub git_commit_sha: ::prost::alloc::string::String,
+    /// The image tag is obtained from a container's set of tags.
+    #[prost(string, tag = "14")]
+    #[serde(default)]
+    pub image_tag: ::prost::alloc::string::String,
 }
 /// ClientStatsBucket is a time bucket containing aggregated stats.
 #[derive(Deserialize, Serialize)]
