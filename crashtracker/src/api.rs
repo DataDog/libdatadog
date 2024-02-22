@@ -175,7 +175,7 @@ pub fn init(
 // mkdir /tmp/crashreports
 // look in /tmp/crashreports for the crash reports and output files
 // Commented out since `ignore` doesn't work in CI.
-#[test]
+//#[test]
 fn test_crash() {
     use crate::begin_profiling_op;
     use chrono::Utc;

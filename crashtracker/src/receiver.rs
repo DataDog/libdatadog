@@ -22,6 +22,9 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
         CrashReportStatus::NoCrash => Ok(()),
         CrashReportStatus::CrashReport(config, mut crash_info) => {
             if config.resolve_frames == CrashtrackerResolveFrames::InReceiver {
+                // The receiver is the direct child of the crashing process
+                // TODO: This pid should be sent over the wire, so that
+                // it can be used in a sidecar.
                 let ppid: u32 = getppid().as_raw().try_into()?;
                 let mut process = Process::new(ppid.into());
                 // https://github.com/libbpf/blazesym/issues/518
