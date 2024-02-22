@@ -89,7 +89,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_begin_profiling_op(
     match datadog_crashtracker::begin_profiling_op(op) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_init failed"),
+            err.context("ddog_prof_crashtracker_begin_profiling_op failed"),
         )),
     }
 }
@@ -102,7 +102,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_end_profiling_op(
     match datadog_crashtracker::end_profiling_op(op) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_init failed"),
+            err.context("ddog_prof_crashtracker_end_profiling_op failed"),
         )),
     }
 }
@@ -113,7 +113,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_shutdown() -> ProfileResult {
     match datadog_crashtracker::shutdown_crash_handler() {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_init failed"),
+            err.context("ddog_prof_crashtracker_shutdown failed"),
         )),
     }
 }
@@ -127,7 +127,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
     match ddog_prof_crashtracker_update_on_fork_impl(config, metadata) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_init failed"),
+            err.context("ddog_prof_crashtracker_update_on_fork failed"),
         )),
     }
 }
