@@ -168,6 +168,9 @@ fn receive_report(stream: impl std::io::BufRead) -> anyhow::Result<CrashReportSt
     //TODO: This assumes that the input is valid UTF-8.
     for line in stream.lines() {
         let line = line?;
+        if DEBUG {
+            eprintln!("{line}");
+        }
         stdin_state = process_line(&mut crashinfo, &mut config, line, stdin_state)?;
     }
 
