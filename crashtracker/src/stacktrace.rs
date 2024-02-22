@@ -9,7 +9,7 @@ impl From<Sym<'_>> for StackFrameNames {
         let mut rval = Self::default();
         if let Some(c) = value.code_info {
             rval.lineno = c.line;
-            rval.filename = c.file.into_owned().into_string().ok();
+            rval.filename = Some(c.to_path().display().to_string());
             rval.colno = c.column.map(|c| c.into());
         }
         rval.name = Some(value.name.into_owned());

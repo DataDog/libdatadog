@@ -21,7 +21,7 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
     match receive_report(std::io::stdin().lock())? {
         CrashReportStatus::NoCrash => Ok(()),
         CrashReportStatus::CrashReport(config, mut crash_info) => {
-            if config.resolve_frames == CrashtrackerResolveFrames::ExperimentalInReceiver {
+            if config.resolve_frames == CrashtrackerResolveFrames::InReceiver {
                 let ppid: u32 = getppid().as_raw().try_into()?;
                 let mut process = Process::new(ppid.into());
                 // https://github.com/libbpf/blazesym/issues/518
