@@ -11,6 +11,9 @@ license.workspace = true
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]
 
+[build-dependencies]
+build_common = { path = "../build-common" }
+
 [dependencies]
 ddtelemetry = { path = "../ddtelemetry" }
 ddcommon = { path = "../ddcommon" }
