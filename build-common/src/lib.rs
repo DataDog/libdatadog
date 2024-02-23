@@ -1,23 +1,53 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
-use cbindgen::{self, Config};
+use cbindgen::Config;
 use std::path::PathBuf;
+use std::process::Command;
+use std::str;
 use std::{env, fs};
 
 /// Configure the header generation using environment variables.
 /// call into `generate_header` with the appropriate arguments.
-/// Expects CARGO_TARGET_DIR to be set.
+///
 /// Expects CARGO_MANIFEST_DIR to be set.
 /// If DESTDIR is set, it will be used as the base directory for the header file.
+///         DESTDIR can be either relative or absolute.
+/// Either CARGO_TARGET_DIR is set, or `cargo locate-project --workspace` is used to find the base of the target directory.
 ///
 /// # Arguments
 ///
 /// * `header_name` - The name of the header file to generate.
 pub fn generate_and_configure_header(header_name: &str) {
     let crate_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let cargo_target_dir = env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .expect("CARGO_TARGET_DIR environment variable is set");
+
+    let cargo_target_dir = match env::var_os("CARGO_TARGET_DIR") {
+        Some(dir) => PathBuf::from(dir),
+        None => {
+            let output = Command::new("cargo")
+                .args(["locate-project", "--workspace"])
+                .output()
+                .expect("Failed to execute `cargo locate-project`");
+
+            if !output.status.success() {
+                panic!("`cargo locate-project --workspace` command failed");
+            }
+
+            let stdout = str::from_utf8(&output.stdout).expect("Output not valid UTF-8");
+            let json: serde_json::Value =
+                serde_json::from_str(stdout).expect("Failed to parse JSON output");
+            let project_root = json["root"]
+                .as_str()
+                .expect("Failed to extract project root path")
+                .replace("\"", "");
+
+            // Correctly find the parent of the Cargo.toml file's directory to approximate the workspace root
+            PathBuf::from(project_root)
+                .parent()
+                .expect("Failed to find workspace root directory")
+                .to_path_buf()
+                .join("target")
+        }
+    };
 
     // Attempt to read `DESTDIR`, falling back to `CARGO_TARGET_DIR` if not set
     let mut deliverables_dir = env::var("DESTDIR")

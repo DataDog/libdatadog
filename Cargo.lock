@@ -266,6 +266,8 @@ name = "build_common"
 version = "6.0.0"
 dependencies = [
  "cbindgen",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
