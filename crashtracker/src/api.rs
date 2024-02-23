@@ -41,9 +41,9 @@ impl CrashtrackerMetadata {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CrashtrackerResolveFrames {
     Never,
-    /// Resolving frames is experimental, and can fail/crash
+    /// Resolving frames in process is experimental, and can fail/crash
     ExperimentalInProcess,
-    ExperimentalInReceiver,
+    InReceiver,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -193,7 +193,7 @@ fn test_crash() {
     let path_to_receiver_binary =
         "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
     let create_alt_stack = true;
-    let resolve_frames = CrashtrackerResolveFrames::Never;
+    let resolve_frames = CrashtrackerResolveFrames::InReceiver;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
 

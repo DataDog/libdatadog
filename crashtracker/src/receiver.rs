@@ -1,8 +1,11 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
+use self::stacktrace::StackFrame;
 use super::*;
 use anyhow::Context;
+use blazesym::symbolize::{Process, Source};
+use nix::unistd::getppid;
 use std::time::Duration;
 
 /// Receives data from a crash collector via a pipe on `stdin`, formats it into
@@ -17,9 +20,17 @@ use std::time::Duration;
 pub fn receiver_entry_point() -> anyhow::Result<()> {
     match receive_report(std::io::stdin().lock())? {
         CrashReportStatus::NoCrash => Ok(()),
-        CrashReportStatus::CrashReport(config, crash_info) => {
-            if config.resolve_frames == CrashtrackerResolveFrames::ExperimentalInReceiver {
-                todo!("Processing names in the receiver is WIP");
+        CrashReportStatus::CrashReport(config, mut crash_info) => {
+            if config.resolve_frames == CrashtrackerResolveFrames::InReceiver {
+                // The receiver is the direct child of the crashing process
+                // TODO: This pid should be sent over the wire, so that
+                // it can be used in a sidecar.
+                let ppid: u32 = getppid().as_raw().try_into()?;
+                let mut process = Process::new(ppid.into());
+                // https://github.com/libbpf/blazesym/issues/518
+                process.map_files = false;
+                let src = Source::Process(process);
+                crash_info.resolve_names(&src)?;
             }
             if let Some(endpoint) = config.endpoint {
                 // Don't keep the endpoint waiting forever.
