@@ -1,19 +1,40 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 use cbindgen::{self, Config};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::{env, fs};
 
 /// Configure the header generation using environment variables.
 /// call into `generate_header` with the appropriate arguments.
+/// Expects CARGO_TARGET_DIR to be set.
+/// Expects CARGO_MANIFEST_DIR to be set.
+/// If DESTDIR is set, it will be used as the base directory for the header file.
 ///
 /// # Arguments
 ///
 /// * `header_name` - The name of the header file to generate.
 pub fn generate_and_configure_header(header_name: &str) {
     let crate_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let output_base_dir: Option<String> = env::var("DESTDIR").ok(); // Use `ok()` to convert Result to Option
-    generate_header(crate_dir, header_name, output_base_dir.as_deref());
+    let cargo_target_dir = env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .expect("CARGO_TARGET_DIR environment variable is set");
+
+    // Attempt to read `DESTDIR`, falling back to `CARGO_TARGET_DIR` if not set
+    let mut deliverables_dir = env::var("DESTDIR")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| cargo_target_dir.clone());
+
+    // Check if `deliverables_dir` is relative
+    if deliverables_dir.is_relative() {
+        // Get the parent directory of `cargo_target_dir` to use as a base for the relative `deliverables_dir`
+        let parent_dir = cargo_target_dir
+            .parent()
+            .expect("CARGO_TARGET_DIR does not have a parent directory, aborting build.");
+        deliverables_dir = parent_dir.join(&deliverables_dir);
+    }
+
+    generate_header(crate_dir, header_name, deliverables_dir);
     println!("cargo:rerun-if-env-changed=DESTDIR");
 }
 
@@ -24,21 +45,14 @@ pub fn generate_and_configure_header(header_name: &str) {
 /// * `crate_dir` - The directory of the crate to generate bindings for.
 /// * `header_name` - The name of the header file to generate.
 /// * `output_base_dir` - The base directory where the header file will be placed.
-///                       Defaults to target if unspecified
-pub fn generate_header(crate_dir: PathBuf, header_name: &str, output_base_dir: Option<&str>) {
-    let cargo_target_dir = output_base_dir.unwrap_or("target");
-
-    // Determine if `cargo_target_dir` is absolute or relative
-    let cargo_target_path = Path::new(cargo_target_dir);
-    let output_path = if cargo_target_path.is_absolute() {
-        // If absolute, use it directly
-        cargo_target_path.join("include/datadog/").join(header_name)
-    } else {
-        // If relative, adjust the path accordingly. we are in a crate, so get back to top level
-        // The assumption is that the crate is in a subdirectory of the workspace
-        let adjusted_path = Path::new("..").join(cargo_target_path);
-        adjusted_path.join("include/datadog/").join(header_name)
-    };
+///                       Should be an absolute path as build scripts are run from
+///                       the current crate's root.
+pub fn generate_header(crate_dir: PathBuf, header_name: &str, output_base_dir: PathBuf) {
+    assert!(
+        output_base_dir.is_absolute(),
+        "output_base_dir must be an absolute path"
+    );
+    let output_path = output_base_dir.join("include/datadog/").join(header_name);
 
     // Ensure the output directory exists
     if let Some(parent) = output_path.parent() {
