@@ -38,7 +38,7 @@ pub fn generate_and_configure_header(header_name: &str) {
             let project_root = json["root"]
                 .as_str()
                 .expect("Failed to extract project root path")
-                .replace("\"", "");
+                .replace('\"', "");
 
             // Correctly find the parent of the Cargo.toml file's directory to approximate the workspace root
             PathBuf::from(project_root)
@@ -91,7 +91,7 @@ pub fn generate_header(crate_dir: PathBuf, header_name: &str, output_base_dir: P
         }
     }
 
-    if env::var("DEBUG_BUILD_SCRIPT").is_ok() {
+    if env::var("DEBUG_BUILD").is_ok() {
         println!(
             "cargo:warning=Output path for include: {}",
             output_path.display()
