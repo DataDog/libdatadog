@@ -56,6 +56,7 @@ mod counters;
 mod crash_handler;
 mod crash_info;
 mod receiver;
+mod stacktrace;
 
 pub use api::*;
 pub use constants::*;
