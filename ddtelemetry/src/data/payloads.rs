@@ -66,6 +66,11 @@ pub struct GenerateMetrics {
     pub series: Vec<metrics::Serie>,
 }
 
+#[derive(Serialize, Debug)]
+pub struct Distributions {
+    pub series: Vec<metrics::Distribution>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Log {
     pub message: String,

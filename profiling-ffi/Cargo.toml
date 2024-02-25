@@ -13,6 +13,9 @@ license.workspace = true
 # cf. https://github.com/rust-lang/rust/issues/51009
 crate-type = ["staticlib", "cdylib"]
 
+[build-dependencies]
+build_common = { path = "../build-common" }
+
 [dependencies]
 anyhow = "1.0"
 chrono = {version = "0.4", default-features = false}

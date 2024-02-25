@@ -46,14 +46,14 @@ impl ProcessHandle {
             }
             ProcessHandle::Pid(pid) => {
                 let handle = unsafe { OpenProcess(PROCESS_DUP_HANDLE, 0, *pid) };
-                if handle == null_mut() {
+                if handle.is_null() {
                     return Err(io::Error::last_os_error());
                 }
                 *self = ProcessHandle::Handle(WrappedHANDLE(handle));
             }
             ProcessHandle::Getter(getter) => *self = getter()?,
         };
-        return self.get();
+        self.get()
     }
 
     pub fn send_file_handle(&mut self, handle: RawHandle) -> io::Result<RawHandle> {

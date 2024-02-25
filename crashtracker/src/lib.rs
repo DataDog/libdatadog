@@ -56,9 +56,11 @@ mod counters;
 mod crash_handler;
 mod crash_info;
 mod receiver;
+mod stacktrace;
 
 pub use api::*;
 pub use constants::*;
 pub use counters::{begin_profiling_op, end_profiling_op, ProfilingOpTypes};
+pub use crash_handler::{update_config, update_metadata};
 pub use crash_info::*;
 pub use receiver::receiver_entry_point;

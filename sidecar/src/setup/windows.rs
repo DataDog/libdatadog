@@ -7,6 +7,7 @@ use datadog_ipc::platform::metadata::ProcessHandle;
 use datadog_ipc::platform::{Channel, PIPE_PATH};
 use kernel32::{CreateFileA, CreateNamedPipeA, WTSGetActiveConsoleSessionId};
 use libc::getpid;
+use std::error::Error;
 use std::ffi::CString;
 use std::os::windows::io::{FromRawHandle, OwnedHandle};
 use std::ptr::null_mut;
@@ -73,17 +74,30 @@ impl Liaison for NamedPipeLiaison {
                 // Await the shared memory handle which will contain the pid of the sidecar
                 // As it may not be immediately available during startup
                 let timeout_end = Instant::now() + Duration::from_secs(2);
-                let mut last_error = None;
+                let mut last_error: Option<Box<dyn Error>> = None;
                 let pid_path = pid_shm_path(&String::from_utf8_lossy(socket_path.as_bytes()));
                 loop {
                     match open_named_shm(&pid_path) {
                         Ok(shm) => {
+                            #[cfg(windows_seh_wrapper)]
+                            let pid = {
+                                let mut pid = 0;
+                                if let Err(e) = microseh::try_seh(|| {
+                                    pid = u32::from_ne_bytes(*array_ref![shm.as_slice(), 0, 4])
+                                }) {
+                                    last_error = Some(Box::new(e));
+                                }
+                                pid
+                            };
+
+                            #[cfg(not(windows_seh_wrapper))]
                             let pid = u32::from_ne_bytes(*array_ref![shm.as_slice(), 0, 4]);
+
                             if pid != 0 {
                                 return Ok(ProcessHandle::Pid(pid));
                             }
                         }
-                        Err(e) => last_error = Some(e),
+                        Err(e) => last_error = Some(Box::new(e)),
                     }
                     if Instant::now() > timeout_end {
                         warn!("Reading the sidecar pid from {} timed out after {:?}. (last error: {:?})",
