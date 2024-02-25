@@ -57,11 +57,12 @@ mod unix {
 
 #[cfg(windows)]
 mod windows {
+    use std::io;
     use windows_sys::Win32::System::Memory;
 
     pub mod raw {
-        use std::{io, ptr};
-        use windows_sys::Win32::System::Memory;
+        use super::*;
+        use core::ptr;
 
         pub fn virtual_alloc(size: usize) -> io::Result<ptr::NonNull<()>> {
             let result = unsafe {
