@@ -728,7 +728,6 @@ dependencies = [
  "mime_guess",
  "nix 0.27.1",
  "os_info",
- "page_size",
  "percent-encoding",
  "prost 0.12.3",
  "rustc-hash",
