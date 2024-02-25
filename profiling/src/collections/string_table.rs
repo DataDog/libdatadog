@@ -458,7 +458,7 @@ mod tests {
             assert_eq!(*offset, actual_offset);
         }
 
-        let mut table_iter = table.into_iter().to_owned();
+        let mut table_iter = table.into_iter();
         for (_, case) in cases {
             let item = table_iter.next().unwrap();
             assert_eq!(*case, item)
