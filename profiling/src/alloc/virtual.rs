@@ -6,7 +6,7 @@ use core::{mem, ptr, slice};
 use std::io;
 
 #[cfg(unix)]
-mod unix {
+mod os {
     use std::{io, ptr};
 
     /// Allocates virtual memory of the given size, which must be a
@@ -53,7 +53,7 @@ mod unix {
 }
 
 #[cfg(windows)]
-mod windows {
+mod os {
     use std::{io, ptr};
     use windows_sys::Win32::System::Memory;
 
@@ -87,11 +87,7 @@ mod windows {
     }
 }
 
-#[cfg(unix)]
-use unix as os;
-
-#[cfg(windows)]
-use windows as os;
+pub use os::*;
 
 #[repr(C)]
 pub struct Mapping {
@@ -112,7 +108,7 @@ impl Mapping {
                 format!("requested virtual allocation of {min_size} bytes could not be padded to the page size {page_size}"),
             )),
             Some(size) => Ok(Mapping {
-                base: os::virtual_alloc(size)?,
+                base: virtual_alloc(size)?,
                 size,
             })
 
@@ -131,7 +127,7 @@ impl Mapping {
 impl Drop for Mapping {
     fn drop(&mut self) {
         // SAFETY: passing ptr and size exactly as received from alloc.
-        let _result = unsafe { os::virtual_free(self.base, self.size) };
+        let _result = unsafe { virtual_free(self.base, self.size) };
 
         // If this fails, there's not much that can be done about it. It
         // could panic but panic in drops are generally frowned on.
