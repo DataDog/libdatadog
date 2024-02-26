@@ -6,7 +6,7 @@ use crate::collections::identifiable::{Id, StringId};
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use core::borrow::Borrow;
 use core::ops::Deref;
-use core::{fmt, hash, mem, ptr};
+use core::{fmt, hash, marker, mem, ptr};
 use std::alloc::{Layout, LayoutError};
 use std::collections::TryReserveError;
 
@@ -44,8 +44,7 @@ impl ArenaAllocator {
     }
 }
 
-type FxHashMap<K, V> =
-    std::collections::HashMap<K, V, hash::BuildHasherDefault<rustc_hash::FxHasher>>;
+type FxHashMap<K, V> = hashbrown::HashMap<K, V, hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 
 /// Not pub, used to do unsafe things. See [LengthPrefixedStr] for more info.
 #[repr(C)]
@@ -232,6 +231,15 @@ impl From<TryReserveError> for InternError {
     }
 }
 
+impl From<hashbrown::TryReserveError> for InternError {
+    fn from(_value: hashbrown::TryReserveError) -> Self {
+        InternError::AllocError
+    }
+}
+
+/// Hack, gets transmuted into a [hash::BuildHasherDefault] in const fns.
+struct ZeroSizedHashBuilder<H>(marker::PhantomData<fn() -> H>);
+
 impl StringTable {
     /// Creates a new string table whose arena allocator can hold at least
     /// `min_capacity` bytes. This will get rounded up to multiple of the OS
@@ -245,6 +253,19 @@ impl StringTable {
     pub fn new_in(arena: ArenaAllocator) -> Result<Self, AllocError> {
         let map = FxHashMap::default();
         Ok(StringTable { arena, map })
+    }
+
+    pub const fn new() -> Self {
+        let arena = ArenaAllocator::new();
+        // SAFETY: both are zero-sized types. This is only done because on
+        // Rust v1.69, there is no other way to get HashBuilder in a const fn.
+        let hasher = unsafe {
+            mem::transmute(ZeroSizedHashBuilder::<rustc_hash::FxHasher>(
+                marker::PhantomData,
+            ))
+        };
+        let map = FxHashMap::with_hasher(hasher);
+        StringTable { arena, map }
     }
 
     pub fn arena(&self) -> &ArenaAllocator {
@@ -467,5 +488,17 @@ mod tests {
         assert_eq!(0, table_iter.count());
 
         Ok(())
+    }
+
+    /// Testing that a StringTable can be made in a const context, which can
+    /// avoid lazy initialization in thread-locals, for instance.
+    #[test]
+    fn test_const_fn() {
+        thread_local! {
+            static STRING_TABLE: StringTable = const { StringTable::new() };
+        }
+
+        let len = STRING_TABLE.with(|table| table.len());
+        assert_eq!(1, len);
     }
 }
