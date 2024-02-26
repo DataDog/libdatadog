@@ -1,7 +1,13 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+
+use ddcommon::tag::Tag;
 use ddcommon_ffi as ffi;
-use ddtelemetry::worker::TelemetryWorkerHandle;
+use ddtelemetry::{
+    data::metrics::{MetricNamespace, MetricType},
+    metrics::ContextKey,
+    worker::TelemetryWorkerHandle,
+};
 use ffi::slice::AsBytes;
 
 use crate::MaybeError;
@@ -82,7 +88,39 @@ pub extern "C" fn ddog_handle_stop(handle: &TelemetryWorkerHandle) -> MaybeError
     MaybeError::None
 }
 
+#[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+pub unsafe extern "C" fn ddog_handle_register_metric_context(
+    handle: &TelemetryWorkerHandle,
+    name: ffi::CharSlice,
+    metric_type: MetricType,
+    tags: ffi::Vec<Tag>,
+    common: bool,
+    namespace: MetricNamespace,
+) -> ContextKey {
+    handle.register_metric_context(
+        name.to_utf8_lossy().into_owned(),
+        tags.into(),
+        metric_type,
+        common,
+        namespace,
+    )
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_handle_add_point(
+    handle: &TelemetryWorkerHandle,
+    context_key: &ContextKey,
+    value: f64,
+    extra_tags: ffi::Vec<Tag>,
+) -> MaybeError {
+    crate::try_c!(handle.add_point(value, context_key, extra_tags.into()));
+    MaybeError::None
+}
+
+#[no_mangle]
+// This function takes ownership of the handle. It should not be reused after
 pub extern "C" fn ddog_handle_wait_for_shutdown(handle: Box<TelemetryWorkerHandle>) {
     handle.wait_for_shutdown()
 }

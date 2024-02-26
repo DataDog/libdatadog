@@ -115,19 +115,25 @@ pub extern "C" fn ddog_MaybeError_drop(_: MaybeError) {}
 
 #[cfg(test)]
 mod test_c_ffi {
+    use std::{mem::MaybeUninit, ptr::NonNull};
+
     use super::*;
     use crate::{builder::*, worker_handle::*};
     use ddcommon::{parse_uri, Endpoint};
+    use ddtelemetry::{
+        data::metrics::{MetricNamespace, MetricType},
+        worker::{TelemetryWorkerBuilder, TelemetryWorkerHandle},
+    };
+    use ffi::tags::{ddog_Vec_Tag_new, ddog_Vec_Tag_push, PushTagResult};
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_set_builder_str_param() {
-        let mut builder = std::ptr::null_mut();
-
         unsafe {
+            let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
             assert_eq!(
                 ddog_builder_instantiate(
-                    &mut builder,
+                    NonNull::new(&mut builder).unwrap().cast(),
                     ffi::CharSlice::from("service_name"),
                     ffi::CharSlice::from("language_name"),
                     ffi::CharSlice::from("language_version"),
@@ -135,8 +141,7 @@ mod test_c_ffi {
                 ),
                 MaybeError::None
             );
-            assert!(!builder.is_null());
-            let mut builder = Box::from_raw(builder);
+            let mut builder = builder.assume_init();
 
             assert_eq!(
                 ddog_builder_with_str_named_property(
@@ -181,12 +186,11 @@ mod test_c_ffi {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_set_builder_enum_param() {
-        let mut builder = std::ptr::null_mut();
-
+        let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
         unsafe {
             assert_eq!(
                 ddog_builder_instantiate(
-                    &mut builder,
+                    NonNull::new(&mut builder).unwrap().cast(),
                     ffi::CharSlice::from("service_name"),
                     ffi::CharSlice::from("language_name"),
                     ffi::CharSlice::from("language_version"),
@@ -194,8 +198,7 @@ mod test_c_ffi {
                 ),
                 MaybeError::None,
             );
-            assert!(!builder.is_null());
-            let mut builder = Box::from_raw(builder);
+            let mut builder = builder.assume_init();
 
             assert_eq!(
                 ddog_builder_with_property_str(
@@ -233,37 +236,107 @@ mod test_c_ffi {
     #[cfg_attr(miri, ignore)]
     fn test_worker_run() {
         unsafe {
-            let mut builder = std::ptr::null_mut();
-            ddog_builder_instantiate(
-                &mut builder,
-                ffi::CharSlice::from("service_name"),
-                ffi::CharSlice::from("language_name"),
-                ffi::CharSlice::from("language_version"),
-                ffi::CharSlice::from("tracer_version"),
+            let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
+            assert_eq!(
+                ddog_builder_instantiate(
+                    NonNull::new(&mut builder).unwrap().cast(),
+                    ffi::CharSlice::from("service_name"),
+                    ffi::CharSlice::from("language_name"),
+                    ffi::CharSlice::from("language_version"),
+                    ffi::CharSlice::from("tracer_version"),
+                ),
+                MaybeError::None
             );
-
-            let mut builder = Box::from_raw(builder);
+            let mut builder = builder.assume_init();
 
             let f = tempfile::NamedTempFile::new().unwrap();
-            ddog_builder_with_endpoint_config_endpoint(
-                &mut builder,
-                &Endpoint {
-                    api_key: None,
-                    url: parse_uri(&format!(
-                        "file://{}",
-                        f.path().as_os_str().to_str().unwrap()
-                    ))
-                    .unwrap(),
-                },
+            assert_eq!(
+                ddog_builder_with_endpoint_config_endpoint(
+                    &mut builder,
+                    &Endpoint {
+                        api_key: None,
+                        url: parse_uri(&format!(
+                            "file://{}",
+                            f.path().as_os_str().to_str().unwrap()
+                        ))
+                        .unwrap(),
+                    },
+                ),
+                MaybeError::None
             );
             ddog_builder_with_bool_config_telemetry_debug_logging_enabled(&mut builder, true);
 
-            let mut handle = std::ptr::null_mut();
-            ddog_builder_run(builder, &mut handle);
-            let handle = Box::from_raw(handle);
+            let mut handle: MaybeUninit<Box<TelemetryWorkerHandle>> = MaybeUninit::uninit();
+            ddog_builder_run(builder, NonNull::new(&mut handle).unwrap().cast());
+            let handle = handle.assume_init();
 
             ddog_handle_start(&handle);
             ddog_handle_stop(&handle);
+            ddog_handle_wait_for_shutdown(handle);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_metrics_worker_run() {
+        unsafe {
+            let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
+            assert_eq!(
+                ddog_builder_instantiate(
+                    NonNull::new(&mut builder).unwrap().cast(),
+                    ffi::CharSlice::from("service_name"),
+                    ffi::CharSlice::from("language_name"),
+                    ffi::CharSlice::from("language_version"),
+                    ffi::CharSlice::from("tracer_version"),
+                ),
+                MaybeError::None
+            );
+            let mut builder = builder.assume_init();
+
+            let f = tempfile::NamedTempFile::new().unwrap();
+            assert_eq!(
+                ddog_builder_with_endpoint_config_endpoint(
+                    &mut builder,
+                    &Endpoint {
+                        api_key: None,
+                        url: parse_uri(&format!(
+                            "file://{}",
+                            f.path().as_os_str().to_str().unwrap()
+                        ))
+                        .unwrap(),
+                    },
+                ),
+                MaybeError::None
+            );
+            ddog_builder_with_bool_config_telemetry_debug_logging_enabled(&mut builder, true);
+
+            let mut handle: MaybeUninit<Box<TelemetryWorkerHandle>> = MaybeUninit::uninit();
+            ddog_builder_run_metric_logs(builder, NonNull::new(&mut handle).unwrap().cast());
+            let handle = handle.assume_init();
+
+            assert!(matches!(ddog_handle_start(&handle), MaybeError::None));
+
+            let mut tags = ddog_Vec_Tag_new();
+            assert!(matches!(
+                ddog_Vec_Tag_push(
+                    &mut tags,
+                    ffi::CharSlice::from("foo"),
+                    ffi::CharSlice::from("bar"),
+                ),
+                PushTagResult::Ok
+            ));
+
+            let context_key = ddog_handle_register_metric_context(
+                &handle,
+                ffi::CharSlice::from("test_metric"),
+                MetricType::Count,
+                tags,
+                true,
+                MetricNamespace::Apm,
+            );
+            ddog_handle_add_point(&handle, &context_key, 1.0, ddog_Vec_Tag_new());
+
+            assert_eq!(ddog_handle_stop(&handle), MaybeError::None);
             ddog_handle_wait_for_shutdown(handle);
         }
     }
