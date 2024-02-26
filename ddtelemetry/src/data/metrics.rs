@@ -28,6 +28,7 @@ pub struct Distribution {
 
 #[derive(Serialize, Debug, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
+#[repr(C)]
 pub enum MetricNamespace {
     Tracers,
     Profilers,
@@ -44,6 +45,7 @@ pub enum MetricNamespace {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
+#[repr(C)]
 pub enum MetricType {
     Gauge,
     Count,

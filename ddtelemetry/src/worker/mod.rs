@@ -159,6 +159,86 @@ impl TelemetryWorker {
         action.unwrap_or(TelemetryActions::Lifecycle(LifecycleAction::Stop))
     }
 
+    async fn run_metrics_logs(mut self) {
+        loop {
+            if self.cancellation_token.is_cancelled() {
+                return;
+            }
+
+            let action = self.recv_next_action().await;
+
+            match self.dispatch_metrics_logs_action(action).await {
+                ControlFlow::Continue(()) => {}
+                ControlFlow::Break(()) => break,
+            };
+        }
+    }
+
+    async fn dispatch_metrics_logs_action(&mut self, action: TelemetryActions) -> ControlFlow<()> {
+        telemetry_worker_log!(self, DEBUG, "Handling metric action {:?}", action);
+        use LifecycleAction::*;
+        use TelemetryActions::*;
+        match action {
+            Lifecycle(Start) => {
+                if !self.data.started {
+                    self.deadlines
+                        .schedule_event(LifecycleAction::FlushData)
+                        .unwrap();
+                    self.deadlines
+                        .schedule_event(LifecycleAction::FlushMetricAggr)
+                        .unwrap();
+                    self.data.started = true;
+                }
+            }
+            AddLog((identifier, log)) => {
+                self.data.logs.get_mut_or_insert(identifier, log).count += 1;
+            }
+            AddPoint((point, key, extra_tags)) => {
+                self.data.metric_buckets.add_point(key, point, extra_tags)
+            }
+            Lifecycle(FlushMetricAggr) => {
+                self.data.metric_buckets.flush_agregates();
+                self.deadlines
+                    .schedule_event(LifecycleAction::FlushMetricAggr)
+                    .unwrap();
+            }
+            Lifecycle(FlushData) => {
+                if !self.data.started {
+                    return CONTINUE;
+                }
+                let batch = self.build_observability_batch();
+                if !batch.is_empty() {
+                    let payload = data::Payload::MessageBatch(batch);
+                    match self.send_payload(&payload).await {
+                        Ok(()) => self.payload_sent_success(&payload),
+                        Err(e) => self.log_err(&e),
+                    }
+                }
+
+                self.deadlines
+                    .schedule_event(LifecycleAction::FlushData)
+                    .unwrap();
+            }
+            AddConfig(_) | AddDependecy(_) | AddIntegration(_) | Lifecycle(ExtendedHeartbeat) => {}
+            Lifecycle(Stop) => {
+                if !self.data.started {
+                    return BREAK;
+                }
+                self.data.metric_buckets.flush_agregates();
+
+                let obsevability_events = self.build_observability_batch();
+                if let Err(e) = self
+                    .send_payload(&data::Payload::MessageBatch(obsevability_events))
+                    .await
+                {
+                    self.log_err(&e);
+                }
+                return BREAK;
+            }
+        };
+        CONTINUE
+    }
+
     // Runs a state machine that waits for actions, either from the worker's
     // mailbox, or scheduled actions from the worker's deadline object.
     async fn run(mut self) {
@@ -191,6 +271,9 @@ impl TelemetryWorker {
                     }
                     self.deadlines
                         .schedule_event(LifecycleAction::FlushData)
+                        .unwrap();
+                    self.deadlines
+                        .schedule_event(LifecycleAction::FlushMetricAggr)
                         .unwrap();
                     self.data.started = true;
                 }
@@ -307,6 +390,7 @@ impl TelemetryWorker {
         CONTINUE
     }
 
+    // Builds telemetry payloads containing lifecycle events
     fn build_app_events_batch(&self) -> Vec<Payload> {
         let mut payloads = Vec::new();
 
@@ -334,6 +418,7 @@ impl TelemetryWorker {
         payloads
     }
 
+    // Builds telemetry payloads containing logs, metrics and distributions
     fn build_observability_batch(&mut self) -> Vec<Payload> {
         let mut payloads = Vec::new();
 
@@ -542,8 +627,11 @@ impl InnerTelemetryShutdown {
 pub struct TelemetryWorkerHandle {
     sender: mpsc::Sender<TelemetryActions>,
     shutdown: Arc<InnerTelemetryShutdown>,
+    //
     cancellation_token: CancellationToken,
+    // Used to spawn cancellation tasks
     runtime: runtime::Handle,
+
     contexts: MetricContexts,
 }
 
@@ -810,14 +898,31 @@ impl TelemetryWorkerBuilder {
         Ok((worker_handle, join_handle))
     }
 
+    // Starts a telemetry worker that only sends metrics and logs, no lifecycle events
+    pub fn run_metrics_logs(self) -> Result<TelemetryWorkerHandle> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+
+        let config = config::Config::from_env();
+
+        let (handle, worker) = self.build_worker(config, runtime.handle().clone())?;
+        let notify_shutdown = handle.shutdown.clone();
+        std::thread::spawn(move || {
+            runtime.block_on(worker.run_metrics_logs());
+            runtime.shutdown_background();
+            notify_shutdown.shutdown_finished();
+        });
+
+        Ok(handle)
+    }
+
     pub fn run(self) -> Result<TelemetryWorkerHandle> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
 
-        // TODO Paul LGDC: Is that really what we want?
         let config = config::Config::from_env();
-
         let (handle, worker) = self.build_worker(config, runtime.handle().clone())?;
 
         let notify_shutdown = handle.shutdown.clone();
