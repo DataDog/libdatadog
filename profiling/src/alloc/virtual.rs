@@ -77,7 +77,7 @@ mod windows {
     /// # Safety
     ///  1. The ptr must have been previously allocated by [virtual_alloc].
     ///  2. The size should be the exact size it was allocated with.
-    pub unsafe fn virtual_free(ptr: ptr::NonNull<()>, size: usize) -> io::Result<()> {
+    pub unsafe fn virtual_free(ptr: ptr::NonNull<()>, _size: usize) -> io::Result<()> {
         let result = Memory::VirtualFree(ptr.as_ptr().cast(), 0, Memory::MEM_RELEASE);
         if result == 0 {
             Err(io::Error::last_os_error())
