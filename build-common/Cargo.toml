@@ -8,6 +8,10 @@ version.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = []
+cbindgen = []
+
 [dependencies]
 cbindgen = {version = "0.26"}
 serde = "1.0"
