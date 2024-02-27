@@ -11,13 +11,17 @@ license.workspace = true
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]
 
+[features]
+default = ["cbindgen"]
+cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+
 [build-dependencies]
 build_common = { path = "../build-common" }
 
 [dependencies]
 ddtelemetry = { path = "../ddtelemetry" }
 ddcommon = { path = "../ddcommon" }
-ddcommon-ffi = { path = "../ddcommon-ffi" }
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 paste = "1"
 libc = "0.2"
 

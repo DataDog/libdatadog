@@ -8,6 +8,10 @@ version.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = ["cbindgen"]
+cbindgen = ["build_common/cbindgen"]
+
 [build-dependencies]
 build_common = { path = "../build-common" }
 
