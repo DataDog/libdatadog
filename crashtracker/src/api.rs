@@ -48,6 +48,7 @@ pub enum CrashtrackerResolveFrames {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashtrackerConfiguration {
+    pub collect_stacktrace: bool,
     pub create_alt_stack: bool,
     pub endpoint: Option<Endpoint>,
     pub path_to_receiver_binary: String,
@@ -58,6 +59,7 @@ pub struct CrashtrackerConfiguration {
 
 impl CrashtrackerConfiguration {
     pub fn new(
+        collect_stacktrace: bool,
         create_alt_stack: bool,
         endpoint: Option<Endpoint>,
         path_to_receiver_binary: String,
@@ -73,6 +75,7 @@ impl CrashtrackerConfiguration {
         "Can't give the same filename for stderr and stdout, they will conflict with each other"
     );
         Ok(Self {
+            collect_stacktrace,
             create_alt_stack,
             endpoint,
             path_to_receiver_binary,
@@ -190,6 +193,7 @@ fn test_crash() {
         api_key: None,
     });
 
+    let collect_stacktrace = true;
     let path_to_receiver_binary =
         "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
     let create_alt_stack = true;
@@ -198,6 +202,7 @@ fn test_crash() {
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
 
     let config = CrashtrackerConfiguration::new(
+        collect_stacktrace,
         create_alt_stack,
         endpoint,
         path_to_receiver_binary,
