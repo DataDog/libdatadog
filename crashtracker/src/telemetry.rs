@@ -209,6 +209,7 @@ mod tests {
                 resolve_frames: crate::CrashtrackerResolveFrames::Never,
                 stderr_filename: None,
                 stdout_filename: None,
+                collect_stacktrace: true,
             },
         )
         .unwrap()
@@ -268,7 +269,7 @@ mod tests {
             &crate::CrashInfo {
                 counters,
                 files: HashMap::new(),
-                metadata: new_test_prof_metadata(),
+                metadata: Some(new_test_prof_metadata()),
                 os_info: os_info::Info::unknown(),
                 siginfo: Some(SigInfo {
                     signum: 11,
@@ -279,6 +280,7 @@ mod tests {
                 tags: HashMap::new(),
                 timestamp: DateTime::from_timestamp(1702465105, 0),
                 uuid: uuid::uuid!("1d6b97cb-968c-40c9-af6e-e4b4d71e8781"),
+                incomplete: true,
             },
             time::Duration::from_secs(1),
         )

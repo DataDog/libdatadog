@@ -3,7 +3,7 @@
 use crate::stacktrace::StackFrame;
 use crate::CrashtrackerMetadata;
 use anyhow::Context;
-use blazesym::symbolize::{Source, Symbolizer};
+use blazesym::symbolize::{Process, Source, Symbolizer};
 use chrono::{DateTime, Utc};
 use datadog_profiling::exporter::{self, Endpoint, Tag};
 use serde::{Deserialize, Serialize};
@@ -27,6 +27,7 @@ pub struct CrashInfo {
     pub os_info: os_info::Info,
     pub siginfo: Option<SigInfo>,
     pub stacktrace: Vec<StackFrame>,
+    pub incomplete: bool,
     /// Any additional data goes here
     pub tags: HashMap<String, String>,
     pub timestamp: Option<DateTime<Utc>>,
@@ -57,6 +58,14 @@ impl CrashInfo {
         }
         Ok(())
     }
+
+    pub fn resolve_names_from_process(&mut self, pid: u32) -> anyhow::Result<()> {
+        let mut process = Process::new(pid.into());
+        // https://github.com/libbpf/blazesym/issues/518
+        process.map_files = false;
+        let src = Source::Process(process);
+        self.resolve_names(&src)
+    }
 }
 
 /// Constructor and setters
@@ -68,6 +77,7 @@ impl CrashInfo {
             additional_stacktraces: HashMap::new(),
             counters: HashMap::new(),
             files: HashMap::new(),
+            incomplete: false,
             metadata: None,
             os_info,
             siginfo: None,
@@ -101,6 +111,11 @@ impl CrashInfo {
             old.is_none(),
             "Attempted to add file that was already there {filename}"
         );
+        Ok(())
+    }
+
+    pub fn set_incomplete(&mut self, incomplete: bool) -> anyhow::Result<()> {
+        self.incomplete = incomplete;
         Ok(())
     }
 

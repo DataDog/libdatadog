@@ -41,6 +41,7 @@ mod unix {
                 resolve_frames: crashtracker::CrashtrackerResolveFrames::Never,
                 stderr_filename: Some(stderr_filename),
                 stdout_filename: Some(stdout_filename),
+                collect_stacktrace: true,
             },
             CrashtrackerMetadata {
                 profiling_library_name: "libdatadog".to_owned(),

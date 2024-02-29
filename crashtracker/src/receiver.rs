@@ -4,9 +4,22 @@
 use self::stacktrace::StackFrame;
 use super::*;
 use anyhow::Context;
-use blazesym::symbolize::{Process, Source};
 use nix::unistd::getppid;
 use std::time::Duration;
+
+pub fn resolve_frames(
+    config: &CrashtrackerConfiguration,
+    crash_info: &mut CrashInfo,
+) -> anyhow::Result<()> {
+    if config.resolve_frames == CrashtrackerResolveFrames::InReceiver {
+        // The receiver is the direct child of the crashing process
+        // TODO: This pid should be sent over the wire, so that
+        // it can be used in a sidecar.
+        let ppid: u32 = getppid().as_raw().try_into()?;
+        crash_info.resolve_names_from_process(ppid)?
+    }
+    Ok(())
+}
 
 /// Receives data from a crash collector via a pipe on `stdin`, formats it into
 /// `CrashInfo` json, and emits it to the endpoint/file defined in `config`.
@@ -21,19 +34,9 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
     match receive_report(std::io::stdin().lock())? {
         CrashReportStatus::NoCrash => Ok(()),
         CrashReportStatus::CrashReport(config, mut crash_info) => {
-            if config.resolve_frames == CrashtrackerResolveFrames::InReceiver {
-                // The receiver is the direct child of the crashing process
-                // TODO: This pid should be sent over the wire, so that
-                // it can be used in a sidecar.
-                let ppid: u32 = getppid().as_raw().try_into()?;
-                let mut process = Process::new(ppid.into());
-                // https://github.com/libbpf/blazesym/issues/518
-                process.map_files = false;
-                let src = Source::Process(process);
-                crash_info.resolve_names(&src)?;
-            }
+            resolve_frames(&config, &mut crash_info)?;
+
             if let Some(endpoint) = &config.endpoint {
-                // Don't keep the endpoint waiting forever.
                 // TODO Experiment to see if 30 is the right number.
                 crash_info.upload_to_endpoint(endpoint.clone(), Duration::from_secs(30))?;
             }
@@ -44,7 +47,17 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        CrashReportStatus::PartialCrashReport(..) => todo!(),
+        CrashReportStatus::PartialCrashReport(config, mut crash_info, stdin_state) => {
+            eprintln!("Failed to fully receive crash.  Exit state was: {stdin_state:?}");
+            resolve_frames(&config, &mut crash_info)?;
+
+            if let Some(endpoint) = config.endpoint {
+                // TODO Experiment to see if 30 is the right number.
+                crash_info.upload_to_endpoint(endpoint, Duration::from_secs(30))?;
+            }
+
+            Ok(())
+        }
     }
 }
 
@@ -203,6 +216,7 @@ fn receive_report(stream: impl std::io::BufRead) -> anyhow::Result<CrashReportSt
     if matches!(stdin_state, StdinState::Done) {
         Ok(CrashReportStatus::CrashReport(config, crashinfo))
     } else {
+        crashinfo.set_incomplete(true)?;
         Ok(CrashReportStatus::PartialCrashReport(
             config,
             crashinfo,
