@@ -51,9 +51,15 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
             eprintln!("Failed to fully receive crash.  Exit state was: {stdin_state:?}");
             resolve_frames(&config, &mut crash_info)?;
 
-            if let Some(endpoint) = config.endpoint {
+            if let Some(endpoint) = &config.endpoint {
                 // TODO Experiment to see if 30 is the right number.
-                crash_info.upload_to_endpoint(endpoint, Duration::from_secs(30))?;
+                crash_info.upload_to_endpoint(endpoint.clone(), Duration::from_secs(30))?;
+            }
+
+            if let Some(metadata) = &crash_info.metadata {
+                if let Ok(uploader) = telemetry::TelemetryCrashUploader::new(metadata, &config) {
+                    uploader.upload_to_telemetry(&crash_info, Duration::from_secs(30))?;
+                }
             }
 
             Ok(())
