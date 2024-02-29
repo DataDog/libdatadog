@@ -1,7 +1,9 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+use crate::stacktrace::StackFrame;
 use crate::CrashtrackerMetadata;
 use anyhow::Context;
+use blazesym::symbolize::{Source, Symbolizer};
 use chrono::{DateTime, Utc};
 use datadog_profiling::exporter::{self, Endpoint, Tag};
 use serde::{Deserialize, Serialize};
@@ -9,24 +11,6 @@ use std::io::BufRead;
 use std::time::Duration;
 use std::{collections::HashMap, fs::File, io::BufReader};
 use uuid::Uuid;
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-pub struct StackFrameNames {
-    colno: Option<u32>,
-    filename: Option<String>,
-    lineno: Option<u32>,
-    name: Option<String>,
-}
-
-/// All fields are hex encoded integers.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StackFrame {
-    ip: Option<String>,
-    module_base_address: Option<String>,
-    names: Option<Vec<StackFrameNames>>,
-    sp: Option<String>,
-    symbol_address: Option<String>,
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SigInfo {
@@ -39,7 +23,7 @@ pub struct CrashInfo {
     pub additional_stacktraces: HashMap<String, Vec<StackFrame>>,
     pub counters: HashMap<String, i64>,
     pub files: HashMap<String, Vec<String>>,
-    pub metadata: CrashtrackerMetadata,
+    pub metadata: Option<CrashtrackerMetadata>,
     pub os_info: os_info::Info,
     pub siginfo: Option<SigInfo>,
     pub stacktrace: Vec<StackFrame>,
@@ -54,22 +38,37 @@ impl CrashInfo {
     pub fn crash_seen(&self) -> bool {
         self.siginfo.is_some()
     }
+}
 
-    pub fn get_metadata(&self) -> &CrashtrackerMetadata {
-        &self.metadata
+impl Default for CrashInfo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CrashInfo {
+    pub fn resolve_names(&mut self, src: &Source) -> anyhow::Result<()> {
+        let symbolizer = Symbolizer::new();
+        for frame in &mut self.stacktrace {
+            // Resolving names is best effort, just print the error and continue
+            frame
+                .resolve_names(src, &symbolizer)
+                .unwrap_or_else(|err| eprintln!("Error resolving name {err}"));
+        }
+        Ok(())
     }
 }
 
 /// Constructor and setters
 impl CrashInfo {
-    pub fn new(metadata: CrashtrackerMetadata) -> Self {
+    pub fn new() -> Self {
         let os_info = os_info::get();
         let uuid = Uuid::new_v4();
         Self {
             additional_stacktraces: HashMap::new(),
             counters: HashMap::new(),
             files: HashMap::new(),
-            metadata,
+            metadata: None,
             os_info,
             siginfo: None,
             stacktrace: vec![],
@@ -102,6 +101,12 @@ impl CrashInfo {
             old.is_none(),
             "Attempted to add file that was already there {filename}"
         );
+        Ok(())
+    }
+
+    pub fn set_metadata(&mut self, metadata: CrashtrackerMetadata) -> anyhow::Result<()> {
+        anyhow::ensure!(self.metadata.is_none());
+        self.metadata = Some(metadata);
         Ok(())
     }
 
@@ -152,11 +157,8 @@ impl CrashInfo {
             }
         }
 
-        //let site = "intake.profile.datad0g.com/api/v2/profile";
-        //let site = "datad0g.com";
-        //let api_key = std::env::var("DD_API_KEY")?;
         let data = serde_json::to_vec(self)?;
-        let metadata = self.get_metadata();
+        let metadata = &self.metadata.as_ref().context("Missing metadata")?;
 
         let is_crash_tag = make_tag("is_crash", "yes")?;
         let tags = Some(

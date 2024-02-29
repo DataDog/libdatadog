@@ -15,8 +15,8 @@ datadog-sidecar = { path = "../sidecar" }
 datadog-trace-utils = { path = "../trace-utils" }
 datadog-ipc = { path = "../ipc" }
 ddcommon = { path = "../ddcommon" }
-ddcommon-ffi = { path = "../ddcommon-ffi" }
-ddtelemetry-ffi = { path = "../ddtelemetry-ffi" }
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false }
 paste = "1"
 libc = "0.2"
 

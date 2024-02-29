@@ -43,7 +43,7 @@ macro_rules! parse_tags {
 /// log `message` field as a json
 struct TelemetryCrashInfoMessage<'a> {
     pub files: &'a HashMap<String, Vec<String>>,
-    pub metadata: &'a CrashtrackerMetadata,
+    pub metadata: Option<&'a CrashtrackerMetadata>,
     pub os_info: &'a os_info::Info,
 }
 
@@ -124,7 +124,7 @@ impl TelemetryCrashUploader {
 
         let message = serde_json::to_string(&TelemetryCrashInfoMessage {
             files: &crash_info.files,
-            metadata: &crash_info.metadata,
+            metadata: crash_info.metadata.as_ref(),
             os_info: &crash_info.os_info,
         })?;
 

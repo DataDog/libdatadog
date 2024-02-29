@@ -13,15 +13,22 @@ license.workspace = true
 # cf. https://github.com/rust-lang/rust/issues/51009
 crate-type = ["staticlib", "cdylib"]
 
+[features]
+default = ["cbindgen"]
+cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+
+[build-dependencies]
+build_common = { path = "../build-common" }
+
 [dependencies]
 anyhow = "1.0"
-chrono = {version = "0.4", default-features = false}
-datadog-crashtracker = { path = "../crashtracker"}
-datadog-profiling = { path = "../profiling"}
-hyper = {version = "0.14", default-features = false}
+chrono = {version = "0.4", default-features = false }
+datadog-crashtracker = { path = "../crashtracker" }
+datadog-profiling = { path = "../profiling" }
+hyper = { version = "0.14", default-features = false }
 ddcommon = { path = "../ddcommon"}
-ddcommon-ffi = { path = "../ddcommon-ffi"}
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 libc = "0.2"
 tokio-util = "0.7.1"
-serde_json = {version = "1.0"}
+serde_json = { version = "1.0" }
 futures = { version = "0.3", default-features = false }
