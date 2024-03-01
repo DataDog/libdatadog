@@ -2,10 +2,10 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use crate::crashtracker::{
-    crashinfo_ptr_to_inner, CrashInfo, CrashInfoNewResult, CrashtrackerResult,
+    crashinfo_ptr_to_inner, CrashInfo, CrashInfoNewResult, CrashtrackerResult, StackFrame,
 };
 use anyhow::Context;
-use ddcommon_ffi::{slice::AsBytes, CharSlice};
+use ddcommon_ffi::{slice::AsBytes, CharSlice, Slice};
 
 use super::CrashtrackerMetadata;
 
@@ -105,7 +105,33 @@ unsafe fn ddog_crashtracker_crashinfo_set_metadata_impl(
     Ok(())
 }
 
-// unsafe fn ddog_crashtracker_crashinfo_set_stacktrace(
-//     crashinfo: *mut CrashInfo,
-//     metadata: CrashtrackerMetadata,
-// )
+/// Adds the contents of "file" to the crashinfo
+///
+/// # Safety
+/// `crashinfo` must be a valid pointer to a `CrashInfo` object.
+/// `name` should be a valid reference to a utf8 encoded String.
+/// The string is copied into the crashinfo, so it does not need to outlive this
+/// call.
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_crashtracker_crashinfo_set_stacktrace(
+    crashinfo: *mut CrashInfo,
+    stacktrace: Slice<StackFrame>,
+) -> CrashtrackerResult {
+    ddog_crashtracker_crashinfo_set_stacktrace_impl(crashinfo, stacktrace)
+        .context("ddog_crashtracker_crashinfo_set_metadata failed")
+        .into()
+}
+
+unsafe fn ddog_crashtracker_crashinfo_set_stacktrace_impl(
+    crashinfo: *mut CrashInfo,
+    stacktrace: Slice<StackFrame>,
+) -> anyhow::Result<()> {
+    let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
+    let mut stacktrace_vec = Vec::with_capacity(stacktrace.len());
+    for s in stacktrace.iter() {
+        stacktrace_vec.push(s.try_into()?)
+    }
+    crashinfo.set_stacktrace(stacktrace_vec)?;
+    Ok(())
+}

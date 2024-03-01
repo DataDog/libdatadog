@@ -5,7 +5,7 @@ use crate::exporter::{self, Endpoint};
 pub use datadog_crashtracker::{CrashtrackerResolveFrames, ProfilingOpTypes};
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
-use ddcommon_ffi::Error;
+use ddcommon_ffi::{Error, Slice};
 use std::ops::Not;
 
 #[repr(C)]
@@ -24,15 +24,16 @@ pub struct CrashtrackerConfiguration<'a> {
     pub resolve_frames: CrashtrackerResolveFrames,
 }
 
+fn option_from_char_slice(s: CharSlice) -> anyhow::Result<Option<String>> {
+    let s = s.try_to_utf8()?.to_string();
+    Ok(s.is_empty().not().then_some(s))
+}
+
 impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
     for datadog_crashtracker::CrashtrackerConfiguration
 {
     type Error = anyhow::Error;
     fn try_from(value: CrashtrackerConfiguration<'a>) -> anyhow::Result<Self> {
-        fn option_from_char_slice(s: CharSlice) -> anyhow::Result<Option<String>> {
-            let s = s.try_to_utf8()?.to_string();
-            Ok(s.is_empty().not().then_some(s))
-        }
         let collect_stacktrace = value.collect_stacktrace;
         let create_alt_stack = value.create_alt_stack;
         let endpoint = unsafe { Some(exporter::try_to_endpoint(value.endpoint)?) };
@@ -154,5 +155,91 @@ impl From<anyhow::Result<()>> for CrashtrackerResult {
             Ok(_) => CrashtrackerResult::Ok(true),
             Err(err) => CrashtrackerResult::Err(err.into()),
         }
+    }
+}
+
+#[repr(C)]
+pub struct StackFrameNames<'a> {
+    colno: Option<u32>,
+    filename: CharSlice<'a>,
+    lineno: Option<u32>,
+    name: CharSlice<'a>,
+}
+
+impl<'a> TryFrom<StackFrameNames<'a>> for datadog_crashtracker::StackFrameNames {
+    type Error = anyhow::Error;
+
+    fn try_from(value: StackFrameNames<'a>) -> Result<Self, Self::Error> {
+        let colno = value.colno;
+        let filename = option_from_char_slice(value.filename)?;
+        let lineno = value.lineno;
+        let name = option_from_char_slice(value.name)?;
+        Ok(Self {
+            colno,
+            filename,
+            lineno,
+            name,
+        })
+    }
+}
+
+impl<'a> TryFrom<&StackFrameNames<'a>> for datadog_crashtracker::StackFrameNames {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &StackFrameNames<'a>) -> Result<Self, Self::Error> {
+        let colno = value.colno;
+        let filename = option_from_char_slice(value.filename)?;
+        let lineno = value.lineno;
+        let name = option_from_char_slice(value.name)?;
+        Ok(Self {
+            colno,
+            filename,
+            lineno,
+            name,
+        })
+    }
+}
+
+#[repr(C)]
+pub struct StackFrame<'a> {
+    ip: usize,
+    module_base_address: usize,
+    names: Slice<'a, StackFrameNames<'a>>,
+    sp: usize,
+    symbol_address: usize,
+}
+
+impl<'a> TryFrom<&StackFrame<'a>> for datadog_crashtracker::StackFrame {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &StackFrame<'a>) -> Result<Self, Self::Error> {
+        fn to_hex(v: usize) -> Option<String> {
+            if v == 0 {
+                None
+            } else {
+                Some(format!("{v:#X}"))
+            }
+        }
+
+        let ip = to_hex(value.ip);
+        let module_base_address = to_hex(value.module_base_address);
+        let names = if value.names.is_empty() {
+            None
+        } else {
+            let mut vec = Vec::with_capacity(value.names.len());
+            for x in value.names.iter() {
+                vec.push(x.try_into()?);
+            }
+            Some(vec)
+        };
+        let sp = to_hex(value.sp);
+        let symbol_address = to_hex(value.symbol_address);
+        Ok(Self {
+            ip,
+            module_base_address,
+            names,
+            sp,
+            symbol_address,
+        })
     }
 }

@@ -19,20 +19,20 @@ impl From<Sym<'_>> for StackFrameNames {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct StackFrameNames {
-    colno: Option<u32>,
-    filename: Option<String>,
-    lineno: Option<u32>,
-    name: Option<String>,
+    pub colno: Option<u32>,
+    pub filename: Option<String>,
+    pub lineno: Option<u32>,
+    pub name: Option<String>,
 }
 
 /// All fields are hex encoded integers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StackFrame {
-    ip: Option<String>,
-    module_base_address: Option<String>,
-    names: Option<Vec<StackFrameNames>>,
-    sp: Option<String>,
-    symbol_address: Option<String>,
+    pub ip: Option<String>,
+    pub module_base_address: Option<String>,
+    pub names: Option<Vec<StackFrameNames>>,
+    pub sp: Option<String>,
+    pub symbol_address: Option<String>,
 }
 
 impl StackFrame {
