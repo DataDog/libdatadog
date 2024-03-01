@@ -147,3 +147,12 @@ pub enum CrashtrackerResult {
     ),
     Err(Error),
 }
+
+impl From<anyhow::Result<()>> for CrashtrackerResult {
+    fn from(value: anyhow::Result<()>) -> Self {
+        match value {
+            Ok(_) => CrashtrackerResult::Ok(true),
+            Err(err) => CrashtrackerResult::Err(err.into()),
+        }
+    }
+}
