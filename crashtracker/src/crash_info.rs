@@ -3,7 +3,7 @@
 use crate::stacktrace::StackFrame;
 use crate::CrashtrackerMetadata;
 use anyhow::Context;
-use blazesym::symbolize::{Source, Symbolizer};
+use blazesym::symbolize::{Process, Source, Symbolizer};
 use chrono::{DateTime, Utc};
 use datadog_profiling::exporter::{self, Endpoint, Tag};
 use serde::{Deserialize, Serialize};
@@ -14,23 +14,24 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SigInfo {
-    signum: u64,
-    signame: Option<String>,
+    pub signum: u64,
+    pub signame: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashInfo {
-    additional_stacktraces: HashMap<String, Vec<StackFrame>>,
-    counters: HashMap<String, i64>,
-    files: HashMap<String, Vec<String>>,
-    metadata: Option<CrashtrackerMetadata>,
-    os_info: os_info::Info,
-    siginfo: Option<SigInfo>,
-    stacktrace: Vec<StackFrame>,
+    pub additional_stacktraces: HashMap<String, Vec<StackFrame>>,
+    pub counters: HashMap<String, i64>,
+    pub files: HashMap<String, Vec<String>>,
+    pub metadata: Option<CrashtrackerMetadata>,
+    pub os_info: os_info::Info,
+    pub siginfo: Option<SigInfo>,
+    pub stacktrace: Vec<StackFrame>,
+    pub incomplete: bool,
     /// Any additional data goes here
-    tags: HashMap<String, String>,
-    timestamp: Option<DateTime<Utc>>,
-    uuid: Uuid,
+    pub tags: HashMap<String, String>,
+    pub timestamp: Option<DateTime<Utc>>,
+    pub uuid: Uuid,
 }
 
 /// Getters and predicates
@@ -57,6 +58,14 @@ impl CrashInfo {
         }
         Ok(())
     }
+
+    pub fn resolve_names_from_process(&mut self, pid: u32) -> anyhow::Result<()> {
+        let mut process = Process::new(pid.into());
+        // https://github.com/libbpf/blazesym/issues/518
+        process.map_files = false;
+        let src = Source::Process(process);
+        self.resolve_names(&src)
+    }
 }
 
 /// Constructor and setters
@@ -68,6 +77,7 @@ impl CrashInfo {
             additional_stacktraces: HashMap::new(),
             counters: HashMap::new(),
             files: HashMap::new(),
+            incomplete: false,
             metadata: None,
             os_info,
             siginfo: None,
@@ -101,6 +111,11 @@ impl CrashInfo {
             old.is_none(),
             "Attempted to add file that was already there {filename}"
         );
+        Ok(())
+    }
+
+    pub fn set_incomplete(&mut self, incomplete: bool) -> anyhow::Result<()> {
+        self.incomplete = incomplete;
         Ok(())
     }
 
@@ -206,7 +221,13 @@ impl CrashInfo {
         // error trying to connect: Unsupported scheme file
         // Instead, manually support it.
         if Some("file") == endpoint.url.scheme_str() {
-            self.to_file(endpoint.url.path())?;
+            self.to_file(
+                endpoint
+                    .url
+                    .path_and_query()
+                    .ok_or_else(|| anyhow::format_err!("empty path for upload to file"))?
+                    .as_str(),
+            )?;
             Ok(None)
         } else {
             Ok(Some(self.upload_to_dd(endpoint, timeout)?))
