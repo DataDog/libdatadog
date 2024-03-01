@@ -57,6 +57,7 @@ mod crash_handler;
 mod crash_info;
 mod receiver;
 mod stacktrace;
+mod telemetry;
 
 pub use api::*;
 pub use constants::*;
