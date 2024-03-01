@@ -651,6 +651,8 @@ impl TelemetryWorkerHandle {
                 level,
                 stack_trace,
                 count: 1,
+                tags: String::new(),
+                is_sensitive: false,
             },
         )))?;
         Ok(())
