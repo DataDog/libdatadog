@@ -57,7 +57,8 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile) {
     });
     assert!(!exit_status.success());
     // Sadly this is necessary because in case of partial crash the tracked process
-    // doesn't wait for the crahtracker receiver which causes
+    // doesn't wait for the crahtracker receiver which causes races, with the test
+    // running before the receiver has a chance to send the report.
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     let stderr = fs::read(stderr_path)
