@@ -265,7 +265,9 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     emit_metadata(pipe, metadata_string)?;
     emit_config(pipe, config_str)?;
     emit_siginfo(pipe, signum)?;
+    pipe.flush()?;
     emit_counters(pipe)?;
+    pipe.flush()?;
 
     #[cfg(target_os = "linux")]
     emit_proc_self_maps(pipe)?;
@@ -276,12 +278,14 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     // In fact, if we look into the code here, we see mallocs.
     // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
     // Do this last, so even if it crashes, we still get the other info.
-    unsafe {
-        emit_backtrace_by_frames(
-            pipe,
-            config.resolve_frames == CrashtrackerResolveFrames::ExperimentalInProcess,
-        )?
-    };
+    if config.collect_stacktrace {
+        unsafe {
+            emit_backtrace_by_frames(
+                pipe,
+                config.resolve_frames == CrashtrackerResolveFrames::ExperimentalInProcess,
+            )?
+        };
+    }
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
 
     pipe.flush()?;
