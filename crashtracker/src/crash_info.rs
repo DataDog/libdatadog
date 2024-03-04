@@ -132,9 +132,19 @@ impl CrashInfo {
         Ok(())
     }
 
-    pub fn set_stacktrace(&mut self, stacktrace: Vec<StackFrame>) -> anyhow::Result<()> {
-        anyhow::ensure!(self.stacktrace.is_empty());
-        self.stacktrace = stacktrace;
+    pub fn set_stacktrace(
+        &mut self,
+        thread_id: Option<String>,
+        stacktrace: Vec<StackFrame>,
+    ) -> anyhow::Result<()> {
+        if let Some(thread_id) = thread_id {
+            anyhow::ensure!(!self.additional_stacktraces.contains_key(&thread_id));
+            self.additional_stacktraces.insert(thread_id, stacktrace);
+        } else {
+            anyhow::ensure!(self.stacktrace.is_empty());
+            self.stacktrace = stacktrace;
+        }
+
         Ok(())
     }
 

@@ -26,7 +26,7 @@ pub struct CrashtrackerConfiguration<'a> {
     pub timeout_secs: u64,
 }
 
-fn option_from_char_slice(s: CharSlice) -> anyhow::Result<Option<String>> {
+pub fn option_from_char_slice(s: CharSlice) -> anyhow::Result<Option<String>> {
     let s = s.try_to_utf8()?.to_string();
     Ok(s.is_empty().not().then_some(s))
 }

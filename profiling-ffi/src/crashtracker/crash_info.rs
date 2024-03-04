@@ -2,7 +2,8 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use crate::crashtracker::{
-    crashinfo_ptr_to_inner, CrashInfo, CrashInfoNewResult, CrashtrackerResult, StackFrame,
+    crashinfo_ptr_to_inner, option_from_char_slice, CrashInfo, CrashInfoNewResult,
+    CrashtrackerResult, StackFrame,
 };
 use anyhow::Context;
 use ddcommon_ffi::{slice::AsBytes, CharSlice, Slice};
@@ -94,7 +95,8 @@ pub unsafe extern "C" fn ddog_crashinfo_set_metadata(
         .into()
 }
 
-/// Sets `stacktrace` as the default stacktrace on `crashinfo`.
+/// If `thread_id` is empty, sets `stacktrace` as the default stacktrace.
+/// Otherwise, adds an additional stacktrace with id "thread_id".
 ///
 /// # Safety
 /// `crashinfo` must be a valid pointer to a `CrashInfo` object.
@@ -104,21 +106,24 @@ pub unsafe extern "C" fn ddog_crashinfo_set_metadata(
 #[must_use]
 pub unsafe extern "C" fn ddog_crashinfo_set_stacktrace(
     crashinfo: *mut CrashInfo,
+    thread_id: CharSlice,
     stacktrace: Slice<StackFrame>,
 ) -> CrashtrackerResult {
     unsafe fn inner(
         crashinfo: *mut CrashInfo,
+        thread_id: CharSlice,
         stacktrace: Slice<StackFrame>,
     ) -> anyhow::Result<()> {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
+        let thread_id = option_from_char_slice(thread_id)?;
         let mut stacktrace_vec = Vec::with_capacity(stacktrace.len());
         for s in stacktrace.iter() {
             stacktrace_vec.push(s.try_into()?)
         }
-        crashinfo.set_stacktrace(stacktrace_vec)?;
+        crashinfo.set_stacktrace(thread_id, stacktrace_vec)?;
         Ok(())
     }
-    inner(crashinfo, stacktrace)
+    inner(crashinfo, thread_id, stacktrace)
         .context("ddog_crashinfo_set_metadata failed")
         .into()
 }

@@ -140,7 +140,7 @@ fn process_line(
         }
 
         StdinState::StackTrace(stacktrace) if line.starts_with(DD_CRASHTRACK_END_STACKTRACE) => {
-            crashinfo.set_stacktrace(stacktrace)?;
+            crashinfo.set_stacktrace(None, stacktrace)?;
             StdinState::Waiting
         }
         StdinState::StackTrace(mut stacktrace) => {
