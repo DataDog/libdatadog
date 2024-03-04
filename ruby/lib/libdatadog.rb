@@ -9,9 +9,25 @@ module Libdatadog
   end
 
   def self.pkgconfig_folder(pkgconfig_file_name = "datadog_profiling_with_rpath.pc")
-    current_platform = Gem::Platform.local.to_s
+    current_platform = self.current_platform
 
-    if RbConfig::CONFIG["arch"].include?("-musl") && !current_platform.include?("-musl")
+    return unless available_binaries.include?(current_platform)
+
+    pkgconfig_file = Dir.glob("#{vendor_directory}/#{current_platform}/**/#{pkgconfig_file_name}").first
+
+    return unless pkgconfig_file
+
+    File.absolute_path(File.dirname(pkgconfig_file))
+  end
+
+  private_class_method def self.vendor_directory
+    ENV["LIBDATADOG_VENDOR_OVERRIDE"] || "#{__dir__}/../vendor/libdatadog-#{Libdatadog::LIB_VERSION}/"
+  end
+
+  def self.current_platform
+    platform = Gem::Platform.local.to_s
+
+    if RbConfig::CONFIG["arch"].include?("-musl") && !platform.include?("-musl")
       # Fix/workaround for https://github.com/DataDog/dd-trace-rb/issues/2222
       #
       # Old versions of rubygems (for instance 3.0.3) don't properly detect alternative libc implementations on Linux;
@@ -25,19 +41,9 @@ module Libdatadog
       #
       # See also https://github.com/rubygems/rubygems/pull/2922 and https://github.com/rubygems/rubygems/pull/4082
 
-      current_platform = RbConfig::CONFIG["arch"]
+      RbConfig::CONFIG["arch"]
+    else
+      platform
     end
-
-    return unless available_binaries.include?(current_platform)
-
-    pkgconfig_file = Dir.glob("#{vendor_directory}/#{current_platform}/**/#{pkgconfig_file_name}").first
-
-    return unless pkgconfig_file
-
-    File.absolute_path(File.dirname(pkgconfig_file))
-  end
-
-  private_class_method def self.vendor_directory
-    ENV["LIBDATADOG_VENDOR_OVERRIDE"] || "#{__dir__}/../vendor/libdatadog-#{Libdatadog::LIB_VERSION}/"
   end
 end
