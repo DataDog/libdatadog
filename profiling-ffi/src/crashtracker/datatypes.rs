@@ -246,3 +246,19 @@ impl<'a> TryFrom<&StackFrame<'a>> for datadog_crashtracker::StackFrame {
         })
     }
 }
+
+#[repr(C)]
+pub struct SigInfo<'a> {
+    pub signum: u64,
+    pub signame: CharSlice<'a>,
+}
+
+impl<'a> TryFrom<SigInfo<'a>> for datadog_crashtracker::SigInfo {
+    type Error = anyhow::Error;
+
+    fn try_from(value: SigInfo<'a>) -> Result<Self, Self::Error> {
+        let signum = value.signum;
+        let signame = option_from_char_slice(value.signame)?;
+        Ok(Self { signum, signame })
+    }
+}

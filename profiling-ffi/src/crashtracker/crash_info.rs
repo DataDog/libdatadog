@@ -8,7 +8,7 @@ use crate::crashtracker::{
 use anyhow::Context;
 use ddcommon_ffi::{slice::AsBytes, CharSlice, Slice};
 
-use super::{CrashtrackerConfiguration, CrashtrackerMetadata};
+use super::{CrashtrackerConfiguration, CrashtrackerMetadata, SigInfo};
 
 /// Create a new crashinfo, and returns an opaque reference to it.
 /// # Safety
@@ -92,6 +92,29 @@ pub unsafe extern "C" fn ddog_crashinfo_set_metadata(
     }
     inner(crashinfo, metadata)
         .context("ddog_crashinfo_set_metadata failed")
+        .into()
+}
+
+/// Sets the crashinfo siginfo
+///
+/// # Safety
+/// `crashinfo` must be a valid pointer to a `CrashInfo` object.
+/// All references inside `metadata` must be valid.
+/// Strings are copied into the crashinfo, and do not need to outlive this call.
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_crashinfo_set_siginfo(
+    crashinfo: *mut CrashInfo,
+    siginfo: SigInfo,
+) -> CrashtrackerResult {
+    unsafe fn inner(crashinfo: *mut CrashInfo, siginfo: SigInfo) -> anyhow::Result<()> {
+        let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
+        let siginfo = siginfo.try_into()?;
+        crashinfo.set_siginfo(siginfo)?;
+        Ok(())
+    }
+    inner(crashinfo, siginfo)
+        .context("ddog_crashinfo_set_siginfo failed")
         .into()
 }
 
