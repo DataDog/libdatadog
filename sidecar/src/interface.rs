@@ -7,10 +7,11 @@
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashSet};
 use std::iter::zip;
-use std::ops::DerefMut;
+use std::ops::{DerefMut, Sub};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use std::{
     collections::HashMap,
     pin::Pin,
@@ -24,12 +25,14 @@ use futures::{
     future::{self, join_all, BoxFuture, Ready, Shared},
     FutureExt,
 };
+use lazy_static::lazy_static;
 use manual_future::{ManualFuture, ManualFutureCompleter};
 
 use datadog_ipc::platform::{FileBackedHandle, NamedShmHandle, ShmHandle};
 use datadog_ipc::tarpc::{context::Context, server::Channel};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, VecSkipError};
 use tokio::select;
 use tokio::task::{JoinError, JoinHandle};
 use tracing::{debug, enabled, error, info, warn, Level};
@@ -56,10 +59,10 @@ use crate::{config, log, tracer};
 #[datadog_ipc_macros::impl_transfer_handles]
 #[tarpc::service]
 pub trait SidecarInterface {
-    async fn equeue_actions(
+    async fn enqueue_actions(
         instance_id: InstanceId,
         queue_id: QueueId,
-        actions: Vec<TelemetryActions>,
+        actions: Vec<SidecarAction>,
     );
     async fn register_service_and_flush_queued_actions(
         instance_id: InstanceId,
@@ -93,6 +96,12 @@ pub enum RequestIdentifier {
     InstanceId(InstanceId),
     SessionId(String),
     None,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub enum SidecarAction {
+    Telemetry(TelemetryActions),
+    PhpComposerTelemetryFile(PathBuf),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -363,6 +372,7 @@ struct EnqueuedTelemetryData {
     configurations: Store<data::Configuration>,
     integrations: Store<data::Integration>,
     actions: Vec<TelemetryActions>,
+    computed_dependencies: Vec<Shared<ManualFuture<Arc<Vec<data::Dependency>>>>>,
 }
 
 impl Default for EnqueuedTelemetryData {
@@ -372,29 +382,51 @@ impl Default for EnqueuedTelemetryData {
             configurations: Store::new(MAX_ITEMS),
             integrations: Store::new(MAX_ITEMS),
             actions: Vec::new(),
+            computed_dependencies: Vec::new(),
         }
     }
 }
 
+#[serde_as]
+#[derive(Deserialize)]
+struct ComposerPackages {
+    #[serde_as(as = "VecSkipError<_>")]
+    packages: Vec<data::Dependency>,
+}
+
 impl EnqueuedTelemetryData {
-    pub fn process(&mut self, actions: Vec<TelemetryActions>) {
+    pub fn process(&mut self, actions: Vec<SidecarAction>) {
         for action in actions {
             match action {
-                TelemetryActions::AddConfig(c) => self.configurations.insert(c),
-                TelemetryActions::AddDependecy(d) => self.dependencies.insert(d),
-                TelemetryActions::AddIntegration(i) => self.integrations.insert(i),
-                other => self.actions.push(other),
+                SidecarAction::Telemetry(TelemetryActions::AddConfig(c)) => {
+                    self.configurations.insert(c)
+                }
+                SidecarAction::Telemetry(TelemetryActions::AddDependecy(d)) => {
+                    self.dependencies.insert(d)
+                }
+                SidecarAction::Telemetry(TelemetryActions::AddIntegration(i)) => {
+                    self.integrations.insert(i)
+                }
+                SidecarAction::Telemetry(other) => self.actions.push(other),
+                SidecarAction::PhpComposerTelemetryFile(composer_path) => self
+                    .computed_dependencies
+                    .push(Self::extract_composer_telemetry(composer_path).shared()),
             }
         }
     }
 
-    pub fn processed(action: Vec<TelemetryActions>) -> Self {
+    pub fn processed(action: Vec<SidecarAction>) -> Self {
         let mut data = Self::default();
         data.process(action);
         data
     }
 
-    fn extract_telemetry_actions(&mut self, actions: &mut Vec<TelemetryActions>) {
+    async fn extract_telemetry_actions(&mut self, actions: &mut Vec<TelemetryActions>) {
+        for computed_deps in self.computed_dependencies.clone() {
+            for d in computed_deps.await.iter() {
+                actions.push(TelemetryActions::AddDependecy(d.clone()));
+            }
+        }
         for d in self.dependencies.unflushed() {
             actions.push(TelemetryActions::AddDependecy(d.clone()));
         }
@@ -404,6 +436,65 @@ impl EnqueuedTelemetryData {
         for i in self.integrations.unflushed() {
             actions.push(TelemetryActions::AddIntegration(i.clone()));
         }
+    }
+
+    pub async fn process_immediately(sidecar_actions: Vec<SidecarAction>) -> Vec<TelemetryActions> {
+        let mut actions = vec![];
+        for action in sidecar_actions {
+            match action {
+                SidecarAction::Telemetry(t) => actions.push(t),
+                SidecarAction::PhpComposerTelemetryFile(path) => {
+                    for nested in Self::extract_composer_telemetry(path).await.iter() {
+                        actions.push(TelemetryActions::AddDependecy(nested.clone()));
+                    }
+                }
+            }
+        }
+        actions
+    }
+
+    // This parses a vendor/composer/installed.json file. It caches the parsed result for a while.
+    fn extract_composer_telemetry(path: PathBuf) -> ManualFuture<Arc<Vec<data::Dependency>>> {
+        let (deps, completer) = ManualFuture::new();
+        tokio::spawn(async {
+            type ComposerCache = HashMap<PathBuf, (SystemTime, Arc<Vec<data::Dependency>>)>;
+            lazy_static! {
+                static ref COMPOSER_CACHE: tokio::sync::Mutex<ComposerCache> =
+                    tokio::sync::Mutex::new(Default::default());
+            }
+
+            let mut cache = COMPOSER_CACHE.lock().await;
+            let packages = match tokio::fs::metadata(&path).await.and_then(|m| m.modified()) {
+                Err(e) => {
+                    warn!("Failed to report dependencies from {path:?}, could not read modification time: {e:?}");
+                    Arc::new(vec![])
+                }
+                Ok(modification) => {
+                    let now = SystemTime::now();
+                    if let Some((last_update, actions)) = cache.get(&path) {
+                        if modification < *last_update {
+                            completer.complete(actions.clone()).await;
+                            return;
+                        }
+                    }
+                    async fn parse(path: &PathBuf) -> Result<Vec<data::Dependency>> {
+                        let mut json = tokio::fs::read(&path).await?;
+                        let parsed: ComposerPackages = simd_json::from_slice(json.as_mut_slice())?;
+                        Ok(parsed.packages)
+                    }
+                    let packages = Arc::new(parse(&path).await.unwrap_or_else(|e| {
+                        warn!("Failed to report dependencies from {path:?}: {e:?}");
+                        vec![]
+                    }));
+                    cache.insert(path, (now, packages.clone()));
+                    // cheap way to avoid unbounded caching
+                    cache.retain(|_, (inserted, _)| *inserted > now.sub(Duration::from_secs(2000)));
+                    packages
+                }
+            };
+            completer.complete(packages).await;
+        });
+        deps
     }
 }
 
@@ -857,15 +948,15 @@ impl SidecarInterface for SidecarServer {
         no_response()
     }
 
-    type EqueueActionsFut = NoResponse;
+    type EnqueueActionsFut = NoResponse;
 
-    fn equeue_actions(
+    fn enqueue_actions(
         self,
         _context: Context,
         instance_id: InstanceId,
         queue_id: QueueId,
-        actions: Vec<TelemetryActions>,
-    ) -> Self::EqueueActionsFut {
+        actions: Vec<SidecarAction>,
+    ) -> Self::EnqueueActionsFut {
         let rt_info = self.get_runtime(&instance_id);
         let mut queue = rt_info.app_or_actions.lock().unwrap();
         match queue.entry(queue_id) {
@@ -877,7 +968,12 @@ impl SidecarInterface for SidecarServer {
                     let service_future = service_future.clone();
                     // drop on stop
                     if actions.iter().any(|action| {
-                        matches!(action, TelemetryActions::Lifecycle(LifecycleAction::Stop))
+                        matches!(
+                            action,
+                            SidecarAction::Telemetry(TelemetryActions::Lifecycle(
+                                LifecycleAction::Stop
+                            ))
+                        )
                     }) {
                         entry.remove();
                     }
@@ -890,6 +986,7 @@ impl SidecarInterface for SidecarServer {
                             return;
                         };
                         if let Some(app) = app_future.await {
+                            let actions = EnqueuedTelemetryData::process_immediately(actions).await;
                             app.telemetry.send_msgs(actions).await.ok();
                         }
                     });
@@ -928,10 +1025,10 @@ impl SidecarInterface for SidecarServer {
             }
         };
         if let Some(AppOrQueue::Queue(mut enqueued_data)) = app_or_queue {
-            let mut actions: Vec<TelemetryActions> = vec![];
-            enqueued_data.extract_telemetry_actions(&mut actions);
-
             tokio::spawn(async move {
+                let mut actions: Vec<TelemetryActions> = vec![];
+                enqueued_data.extract_telemetry_actions(&mut actions).await;
+
                 if let Some(app) = self
                     .get_app(
                         &instance_id,
@@ -1087,8 +1184,7 @@ pub mod blocking {
 
     use datadog_ipc::transport::blocking::BlockingTransport;
 
-    use crate::interface::{SerializedTracerHeaderTags, SessionConfig};
-    use ddtelemetry::worker::TelemetryActions;
+    use crate::interface::{SerializedTracerHeaderTags, SessionConfig, SidecarAction};
 
     use super::{
         InstanceId, QueueId, RuntimeMeta, SidecarInterfaceRequest, SidecarInterfaceResponse,
@@ -1117,9 +1213,9 @@ pub mod blocking {
         transport: &mut SidecarTransport,
         instance_id: &InstanceId,
         queue_id: &QueueId,
-        actions: Vec<TelemetryActions>,
+        actions: Vec<SidecarAction>,
     ) -> io::Result<()> {
-        transport.send(SidecarInterfaceRequest::EqueueActions {
+        transport.send(SidecarInterfaceRequest::EnqueueActions {
             instance_id: instance_id.clone(),
             queue_id: *queue_id,
             actions,

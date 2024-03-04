@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use datadog_sidecar::interface::{
     blocking::{self, SidecarTransport},
-    InstanceId, QueueId, RuntimeMeta, SerializedTracerHeaderTags, SessionConfig,
+    InstanceId, QueueId, RuntimeMeta, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
 use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
 use ddcommon::Endpoint;
@@ -275,7 +275,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
         transport,
         instance_id,
         queue_id,
-        vec![config_entry],
+        vec![SidecarAction::Telemetry(config_entry)],
     ));
     MaybeError::None
 }
@@ -301,7 +301,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
         transport,
         instance_id,
         queue_id,
-        vec![dependency],
+        vec![SidecarAction::Telemetry(dependency)],
     ));
 
     MaybeError::None
@@ -332,7 +332,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
         transport,
         instance_id,
         queue_id,
-        vec![integration],
+        vec![SidecarAction::Telemetry(integration)],
     ));
 
     MaybeError::None
@@ -371,7 +371,9 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_end(
         transport,
         instance_id,
         queue_id,
-        vec![TelemetryActions::Lifecycle(LifecycleAction::Stop)],
+        vec![SidecarAction::Telemetry(TelemetryActions::Lifecycle(
+            LifecycleAction::Stop
+        ))],
     ));
 
     MaybeError::None
