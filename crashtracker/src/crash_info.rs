@@ -14,24 +14,24 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SigInfo {
-    signum: u64,
-    signame: Option<String>,
+    pub signum: u64,
+    pub signame: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashInfo {
-    additional_stacktraces: HashMap<String, Vec<StackFrame>>,
-    counters: HashMap<String, i64>,
-    files: HashMap<String, Vec<String>>,
-    incomplete: bool,
-    metadata: Option<CrashtrackerMetadata>,
-    os_info: os_info::Info,
-    siginfo: Option<SigInfo>,
-    stacktrace: Vec<StackFrame>,
+    pub additional_stacktraces: HashMap<String, Vec<StackFrame>>,
+    pub counters: HashMap<String, i64>,
+    pub files: HashMap<String, Vec<String>>,
+    pub metadata: Option<CrashtrackerMetadata>,
+    pub os_info: os_info::Info,
+    pub siginfo: Option<SigInfo>,
+    pub stacktrace: Vec<StackFrame>,
+    pub incomplete: bool,
     /// Any additional data goes here
-    tags: HashMap<String, String>,
-    timestamp: Option<DateTime<Utc>>,
-    uuid: Uuid,
+    pub tags: HashMap<String, String>,
+    pub timestamp: Option<DateTime<Utc>>,
+    pub uuid: Uuid,
 }
 
 /// Getters and predicates
@@ -221,7 +221,13 @@ impl CrashInfo {
         // error trying to connect: Unsupported scheme file
         // Instead, manually support it.
         if Some("file") == endpoint.url.scheme_str() {
-            self.to_file(endpoint.url.path())?;
+            self.to_file(
+                endpoint
+                    .url
+                    .path_and_query()
+                    .ok_or_else(|| anyhow::format_err!("empty path for upload to file"))?
+                    .as_str(),
+            )?;
             Ok(None)
         } else {
             Ok(Some(self.upload_to_dd(endpoint, timeout)?))

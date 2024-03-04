@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
 pub struct Dependency {
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 }
 
@@ -16,11 +15,8 @@ pub struct Dependency {
 pub struct Integration {
     pub name: String,
     pub enabled: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub compatible: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_enabled: Option<bool>,
 }
 
@@ -77,9 +73,12 @@ pub struct Log {
     pub level: LogLevel,
     pub count: u32,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub stack_trace: Option<String>,
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub tags: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub is_sensitive: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
