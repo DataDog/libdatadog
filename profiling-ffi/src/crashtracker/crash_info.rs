@@ -33,20 +33,15 @@ pub unsafe extern "C" fn ddog_crashinfo_add_counter(
     name: CharSlice,
     val: i64,
 ) -> CrashtrackerResult {
-    ddog_crashinfo_add_counter_impl(crashinfo, name, val)
+    unsafe fn inner(crashinfo: *mut CrashInfo, name: CharSlice, val: i64) -> anyhow::Result<()> {
+        let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
+        let name = name.to_utf8_lossy();
+        crashinfo.add_counter(&name, val)?;
+        Ok(())
+    }
+    inner(crashinfo, name, val)
         .context("ddog_crashinfo_add_counter failed")
         .into()
-}
-
-unsafe fn ddog_crashinfo_add_counter_impl(
-    crashinfo: *mut CrashInfo,
-    name: CharSlice,
-    val: i64,
-) -> anyhow::Result<()> {
-    let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
-    let name = name.to_utf8_lossy();
-    crashinfo.add_counter(&name, val)?;
-    Ok(())
 }
 
 /// Adds the contents of "file" to the crashinfo
@@ -62,19 +57,15 @@ pub unsafe extern "C" fn ddog_crashinfo_add_file(
     crashinfo: *mut CrashInfo,
     name: CharSlice,
 ) -> CrashtrackerResult {
-    ddog_crashinfo_add_file_impl(crashinfo, name)
+    unsafe fn inner(crashinfo: *mut CrashInfo, name: CharSlice) -> anyhow::Result<()> {
+        let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
+        let name = name.to_utf8_lossy();
+        crashinfo.add_file(&name)?;
+        Ok(())
+    }
+    inner(crashinfo, name)
         .context("ddog_crashinfo_add_file failed")
         .into()
-}
-
-unsafe fn ddog_crashinfo_add_file_impl(
-    crashinfo: *mut CrashInfo,
-    name: CharSlice,
-) -> anyhow::Result<()> {
-    let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
-    let name = name.to_utf8_lossy();
-    crashinfo.add_file(&name)?;
-    Ok(())
 }
 
 /// Sets the crashinfo metadata
@@ -89,19 +80,18 @@ pub unsafe extern "C" fn ddog_crashinfo_set_metadata(
     crashinfo: *mut CrashInfo,
     metadata: CrashtrackerMetadata,
 ) -> CrashtrackerResult {
-    ddog_crashinfo_set_metadata_impl(crashinfo, metadata)
+    unsafe fn inner(
+        crashinfo: *mut CrashInfo,
+        metadata: CrashtrackerMetadata,
+    ) -> anyhow::Result<()> {
+        let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
+        let metadata = metadata.try_into()?;
+        crashinfo.set_metadata(metadata)?;
+        Ok(())
+    }
+    inner(crashinfo, metadata)
         .context("ddog_crashinfo_set_metadata failed")
         .into()
-}
-
-unsafe fn ddog_crashinfo_set_metadata_impl(
-    crashinfo: *mut CrashInfo,
-    metadata: CrashtrackerMetadata,
-) -> anyhow::Result<()> {
-    let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
-    let metadata = metadata.try_into()?;
-    crashinfo.set_metadata(metadata)?;
-    Ok(())
 }
 
 /// Sets `stacktrace` as the default stacktrace on `crashinfo`.
@@ -116,22 +106,21 @@ pub unsafe extern "C" fn ddog_crashinfo_set_stacktrace(
     crashinfo: *mut CrashInfo,
     stacktrace: Slice<StackFrame>,
 ) -> CrashtrackerResult {
-    ddog_crashinfo_set_stacktrace_impl(crashinfo, stacktrace)
+    unsafe fn inner(
+        crashinfo: *mut CrashInfo,
+        stacktrace: Slice<StackFrame>,
+    ) -> anyhow::Result<()> {
+        let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
+        let mut stacktrace_vec = Vec::with_capacity(stacktrace.len());
+        for s in stacktrace.iter() {
+            stacktrace_vec.push(s.try_into()?)
+        }
+        crashinfo.set_stacktrace(stacktrace_vec)?;
+        Ok(())
+    }
+    inner(crashinfo, stacktrace)
         .context("ddog_crashinfo_set_metadata failed")
         .into()
-}
-
-unsafe fn ddog_crashinfo_set_stacktrace_impl(
-    crashinfo: *mut CrashInfo,
-    stacktrace: Slice<StackFrame>,
-) -> anyhow::Result<()> {
-    let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
-    let mut stacktrace_vec = Vec::with_capacity(stacktrace.len());
-    for s in stacktrace.iter() {
-        stacktrace_vec.push(s.try_into()?)
-    }
-    crashinfo.set_stacktrace(stacktrace_vec)?;
-    Ok(())
 }
 
 /// Exports `crashinfo` to the Instrumentation Telemetry backend
@@ -144,19 +133,18 @@ pub unsafe extern "C" fn ddog_crashinfo_upload_to_telemetry(
     crashinfo: *mut CrashInfo,
     config: CrashtrackerConfiguration,
 ) -> CrashtrackerResult {
-    ddog_crashinfo_upload_to_telemetry_impl(crashinfo, config)
+    unsafe fn inner(
+        crashinfo: *mut CrashInfo,
+        config: CrashtrackerConfiguration,
+    ) -> anyhow::Result<()> {
+        let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
+        let config = config.try_into()?;
+        crashinfo.upload_to_telemetry(&config)?;
+        Ok(())
+    }
+    inner(crashinfo, config)
         .context("ddog_crashinfo_upload_to_telemetry failed")
         .into()
-}
-
-unsafe fn ddog_crashinfo_upload_to_telemetry_impl(
-    crashinfo: *mut CrashInfo,
-    config: CrashtrackerConfiguration,
-) -> anyhow::Result<()> {
-    let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
-    let config = config.try_into()?;
-    crashinfo.upload_to_telemetry(&config)?;
-    Ok(())
 }
 
 /// Exports `crashinfo` to the profiling backend at `endpoint`
@@ -169,18 +157,18 @@ pub unsafe extern "C" fn ddog_crashinfo_upload_to_endpoint(
     crashinfo: *mut CrashInfo,
     config: CrashtrackerConfiguration,
 ) -> CrashtrackerResult {
-    ddog_crashinfo_upload_to_endpoint_impl(crashinfo, config)
+    unsafe fn inner(
+        crashinfo: *mut CrashInfo,
+        config: CrashtrackerConfiguration,
+    ) -> anyhow::Result<()> {
+        let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
+        let config: datadog_crashtracker::CrashtrackerConfiguration = config.try_into()?;
+        let endpoint = config.endpoint.context("Expected endpoint")?;
+        crashinfo.upload_to_endpoint(endpoint, config.timeout)?;
+        Ok(())
+    }
+
+    inner(crashinfo, config)
         .context("ddog_crashinfo_upload_to_endpoint failed")
         .into()
-}
-
-unsafe fn ddog_crashinfo_upload_to_endpoint_impl(
-    crashinfo: *mut CrashInfo,
-    config: CrashtrackerConfiguration,
-) -> anyhow::Result<()> {
-    let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
-    let config: datadog_crashtracker::CrashtrackerConfiguration = config.try_into()?;
-    let endpoint = config.endpoint.context("Expected endpoint")?;
-    crashinfo.upload_to_endpoint(endpoint, config.timeout)?;
-    Ok(())
 }
