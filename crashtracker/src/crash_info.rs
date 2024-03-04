@@ -1,7 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 use crate::stacktrace::StackFrame;
-use crate::CrashtrackerMetadata;
+use crate::telemetry::TelemetryCrashUploader;
+use crate::{CrashtrackerConfiguration, CrashtrackerMetadata};
 use anyhow::Context;
 use blazesym::symbolize::{Process, Source, Symbolizer};
 use chrono::{DateTime, Utc};
@@ -232,5 +233,18 @@ impl CrashInfo {
         } else {
             Ok(Some(self.upload_to_dd(endpoint, timeout)?))
         }
+    }
+
+    pub fn upload_to_telemetry(
+        &self,
+        config: &CrashtrackerConfiguration,
+        timeout: Duration,
+    ) -> anyhow::Result<()> {
+        if let Some(metadata) = &self.metadata {
+            if let Ok(uploader) = TelemetryCrashUploader::new(metadata, config) {
+                uploader.upload_to_telemetry(&self, timeout)?;
+            }
+        }
+        Ok(())
     }
 }
