@@ -28,16 +28,17 @@ module Libdatadog
     platform = Gem::Platform.local.to_s
 
     if RbConfig::CONFIG["arch"].include?("-musl") && !platform.include?("-musl")
-      # Fix/workaround for https://github.com/DataDog/dd-trace-rb/issues/2222
+      # Fix/workaround for https://github.com/datadog/dd-trace-rb/issues/2222
       #
       # Old versions of rubygems (for instance 3.0.3) don't properly detect alternative libc implementations on Linux;
       # in particular for our case, they don't detect musl. (For reference, Rubies older than 2.7 may have shipped with
       # an affected version of rubygems).
       # In such cases, we fall back to use RbConfig::CONFIG['arch'] instead.
       #
-      # Why not use RbConfig::CONFIG['arch'] always? Because Gem::Platform.local.to_s does some normalization we want
-      # in other situations -- for instance, it turns `x86_64-linux-gnu` to `x86_64-linux`. So for now we only add this
-      # workaround in a specific situation where we actually know it is wrong.
+      # Why not use RbConfig::CONFIG['arch'] always? Because Gem::Platform.local.to_s does some normalization that seemed
+      # useful in the past, although part of it got removed in https://github.com/rubygems/rubygems/pull/5852.
+      # For now we only add this workaround in a specific situation where we actually know it is wrong, but in the
+      # future it may be worth re-evaluating if we should move away from `Gem::Platform` altogether.
       #
       # See also https://github.com/rubygems/rubygems/pull/2922 and https://github.com/rubygems/rubygems/pull/4082
 
