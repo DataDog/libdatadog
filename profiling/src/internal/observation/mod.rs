@@ -9,6 +9,7 @@
 //! single pointer of overhead.
 
 mod observations;
+mod timestamped_observations;
 mod trimmed_observation;
 
 // We keep trimmed_observation private, to ensure that only maps can make and

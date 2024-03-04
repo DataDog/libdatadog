@@ -17,6 +17,44 @@ where
 #[derive(Deserialize, Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SpanLink {
+    /// @gotags: json:"trace_id" msg:"trace_id"
+    ///
+    /// Required.
+    #[prost(uint64, tag = "1")]
+    pub trace_id: u64,
+    /// @gotags: json:"trace_id_high" msg:"trace_id_high,omitempty"
+    ///
+    /// Optional. The high 64 bits of a referenced trace id.
+    #[prost(uint64, tag = "2")]
+    pub trace_id_high: u64,
+    /// @gotags: json:"span_id" msg:"span_id"
+    ///
+    /// Required.
+    #[prost(uint64, tag = "3")]
+    pub span_id: u64,
+    /// @gotags: msg:"attributes,omitempty"
+    ///
+    /// Optional. Simple mapping of keys to string values.
+    #[prost(map = "string, string", tag = "4")]
+    pub attributes: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    /// @gotags: msg:"tracestate,omitempty"
+    ///
+    /// Optional. W3C tracestate.
+    #[prost(string, tag = "5")]
+    pub tracestate: ::prost::alloc::string::String,
+    /// @gotags: msg:"flags,omitempty"
+    ///
+    /// Optional. W3C trace flags. If set, the high bit (bit 31) must be set.
+    #[prost(uint32, tag = "6")]
+    pub flags: u32,
+}
+#[derive(Deserialize, Serialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Span {
     /// service is the name of the service with which this span is associated.
     /// @gotags: json:"service" msg:"service"
@@ -102,6 +140,12 @@ pub struct Span {
         ::prost::alloc::string::String,
         ::prost::alloc::vec::Vec<u8>,
     >,
+    /// span_links represents a collection of links, where each link defines a causal relationship between two spans.
+    /// @gotags: json:"span_links,omitempty" msg:"span_links,omitempty"
+    #[prost(message, repeated, tag = "14")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_null_into_default")]
+    pub span_links: ::prost::alloc::vec::Vec<SpanLink>,
 }
 /// TraceChunk represents a list of spans with the same trace ID. In other words, a chunk of a trace.
 #[derive(Deserialize, Serialize)]
@@ -297,6 +341,14 @@ pub struct ClientStatsPayload {
     #[prost(string, repeated, tag = "12")]
     #[serde(default)]
     pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// The git commit SHA is obtained from a trace, where it may be set through a tracer <-> source code integration.
+    #[prost(string, tag = "13")]
+    #[serde(default)]
+    pub git_commit_sha: ::prost::alloc::string::String,
+    /// The image tag is obtained from a container's set of tags.
+    #[prost(string, tag = "14")]
+    #[serde(default)]
+    pub image_tag: ::prost::alloc::string::String,
 }
 /// ClientStatsBucket is a time bucket containing aggregated stats.
 #[derive(Deserialize, Serialize)]

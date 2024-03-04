@@ -10,11 +10,11 @@ use std::{
 };
 
 use futures::future::{pending, ready, Pending, Ready};
-use tarpc::{context::Context, server::Channel};
-use tokio::net::UnixStream;
+use tarpc::context::Context;
+use tarpc::server::Channel;
 
 use super::{
-    platform::{AsyncChannel, PlatformHandle},
+    platform::PlatformHandle,
     transport::{blocking::BlockingTransport, Transport},
 };
 
@@ -41,10 +41,10 @@ pub struct ExampleServer {
 }
 
 impl ExampleServer {
-    pub async fn accept_connection(self, socket: UnixStream) {
+    pub async fn accept_connection(self, channel: crate::platform::Channel) {
         let server = tarpc::server::BaseChannel::new(
             tarpc::server::Config::default(),
-            Transport::from(AsyncChannel::from(socket)),
+            Transport::try_from(channel).unwrap(),
         );
 
         server.execute(self.serve()).await

@@ -29,7 +29,6 @@ fn create_logfile(path: &PathBuf) -> anyhow::Result<std::fs::File> {
     let log_file = std::fs::File::options()
         .create(true)
         .truncate(false)
-        .write(true)
         .append(true)
         .open(path)?;
     Ok(log_file)

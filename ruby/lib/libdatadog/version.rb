@@ -2,9 +2,9 @@
 
 module Libdatadog
   # Current libdatadog version
-  LIB_VERSION = "5.0.0"
+  LIB_VERSION = "6.0.0"
 
-  GEM_MAJOR_VERSION = "1"
+  GEM_MAJOR_VERSION = "2"
   GEM_MINOR_VERSION = "0"
   GEM_PRERELEASE_VERSION = "" # remember to include dot prefix, if needed!
   private_constant :GEM_MAJOR_VERSION, :GEM_MINOR_VERSION, :GEM_PRERELEASE_VERSION

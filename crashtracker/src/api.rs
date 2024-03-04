@@ -2,12 +2,11 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 #![cfg(unix)]
 
-use super::{
+use crate::{
     counters::reset_counters,
-    crash_handler::{
-        register_crash_handlers, replace_receiver, restore_old_handlers, setup_receiver,
-        shutdown_receiver,
-    },
+    crash_handler::{ensure_receiver, register_crash_handlers},
+    crash_handler::{restore_old_handlers, shutdown_receiver, update_receiver_after_fork},
+    update_config, update_metadata,
 };
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
@@ -42,13 +41,14 @@ impl CrashtrackerMetadata {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CrashtrackerResolveFrames {
     Never,
-    /// Resolving frames is experimental, and can fail/crash
+    /// Resolving frames in process is experimental, and can fail/crash
     ExperimentalInProcess,
-    ExperimentalInReceiver,
+    InReceiver,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashtrackerConfiguration {
+    pub collect_stacktrace: bool,
     pub create_alt_stack: bool,
     pub endpoint: Option<Endpoint>,
     pub path_to_receiver_binary: String,
@@ -59,6 +59,7 @@ pub struct CrashtrackerConfiguration {
 
 impl CrashtrackerConfiguration {
     pub fn new(
+        collect_stacktrace: bool,
         create_alt_stack: bool,
         endpoint: Option<Endpoint>,
         path_to_receiver_binary: String,
@@ -74,6 +75,7 @@ impl CrashtrackerConfiguration {
         "Can't give the same filename for stderr and stdout, they will conflict with each other"
     );
         Ok(Self {
+            collect_stacktrace,
             create_alt_stack,
             endpoint,
             path_to_receiver_binary,
@@ -100,7 +102,7 @@ impl CrashtrackerConfiguration {
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
 pub fn shutdown_crash_handler() -> anyhow::Result<()> {
-    restore_old_handlers()?;
+    restore_old_handlers(false)?;
     shutdown_receiver()?;
     Ok(())
 }
@@ -133,15 +135,18 @@ pub fn on_fork(
     // The altstack (if any) is similarly unaffected by fork:
     // https://man7.org/linux/man-pages/man2/sigaltstack.2.html
 
+    update_metadata(metadata)?;
+    update_config(config.clone())?;
+
     // See function level comment about why we do this.
-    replace_receiver(&config, &metadata)?;
+    update_receiver_after_fork(config)?;
     Ok(())
 }
 
-/// Initilize the crash-tracking infrasturcture.
+/// Initialize the crash-tracking infrastructure.
 ///
 /// PRECONDITIONS:
-///     This function assumes that the crash-tracker is uninitialized
+///     None.
 /// SAFETY:
 ///     Crash-tracking functions are not reentrant.
 ///     No other crash-handler functions should be called concurrently.
@@ -154,8 +159,11 @@ pub fn init(
 ) -> anyhow::Result<()> {
     // Setup the receiver first, so that if there is a crash detected it has
     // somewhere to go.
-    setup_receiver(&config, &metadata)?;
-    register_crash_handlers(&config)?;
+    let create_alt_stack = config.create_alt_stack;
+    update_metadata(metadata)?;
+    update_config(config.clone())?;
+    ensure_receiver(config)?;
+    register_crash_handlers(create_alt_stack)?;
     Ok(())
 }
 
@@ -169,6 +177,7 @@ pub fn init(
 // ./build-profiling-ffi /tmp/libdatadog
 // mkdir /tmp/crashreports
 // look in /tmp/crashreports for the crash reports and output files
+// Commented out since `ignore` doesn't work in CI.
 //#[test]
 fn test_crash() {
     use crate::begin_profiling_op;
@@ -184,14 +193,16 @@ fn test_crash() {
         api_key: None,
     });
 
+    let collect_stacktrace = true;
     let path_to_receiver_binary =
         "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
     let create_alt_stack = true;
-    let resolve_frames = CrashtrackerResolveFrames::Never;
+    let resolve_frames = CrashtrackerResolveFrames::InReceiver;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
 
     let config = CrashtrackerConfiguration::new(
+        collect_stacktrace,
         create_alt_stack,
         endpoint,
         path_to_receiver_binary,
@@ -208,46 +219,17 @@ fn test_crash() {
     );
     init(config, metadata).expect("not to fail");
     begin_profiling_op(crate::ProfilingOpTypes::CollectingSample).expect("Not to fail");
+
+    let tag = Tag::new("apple", "banana").expect("tag");
+    let metadata2 = CrashtrackerMetadata::new(
+        "libname".to_string(),
+        "version".to_string(),
+        "family".to_string(),
+        vec![tag],
+    );
+    update_metadata(metadata2).expect("metadata");
+
     let p: *const u32 = std::ptr::null();
     let q = unsafe { *p };
     assert_eq!(q, 3);
 }
-
-// To test on docker:
-/*
-docker run -it --rm -v $DATADOG_ROOT:/code -w/code ubuntu
-apt update && apt upgrade
-DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-build-essential \
-ca-certificates \
-curl \
-git \
-libbz2-dev \
-libffi-dev \
-liblzma-dev \
-libncurses5-dev \
-libncursesw5-dev \
-libreadline-dev \
-libsqlite3-dev \
-libssl-dev \
-libxml2-dev \
-libxmlsec1-dev \
-llvm \
-make \
-mecab-ipadic-utf8 \
-tk-dev \
-tzdata \
-wget \
-xz-utils \
-zlib1g-dev
-
-curl https://sh.rustup.rs -sSf | sh
-source "$HOME/.cargo/env"
-cargo install cbindgen
-cargo build --target-dir /tmp/libdatadog/
-mkdir /tmp/crashreports/
-git clone https://github.com/DataDog/libdatadog.git
-cd libdatadog
-git checkout dsn/crash-handler-api
-cargo test test_crash -- --ignored
-*/

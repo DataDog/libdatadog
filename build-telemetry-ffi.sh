@@ -68,7 +68,7 @@ export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
 datadog_telemetry_ffi="ddtelemetry-ffi"
 echo "Building the ${datadog_telemetry_ffi} crate (may take some time)..."
-cargo build --package="${datadog_telemetry_ffi}" --release --target "${target}"
+DESTDIR="$destdir" cargo build --package="${datadog_telemetry_ffi}" --release --target "${target}"
 
 # Remove _ffi suffix when copying
 shared_library_name="${library_prefix}ddtelemetry_ffi${shared_library_suffix}"
@@ -130,12 +130,6 @@ echo "Building tools"
 cargo build --package tools --bins
 
 echo "Generating $destdir/include/libdatadog headers..."
-cbindgen --crate ddcommon-ffi \
-    --config ddcommon-ffi/cbindgen.toml \
-    --output "$destdir/include/datadog/common.h"
-cbindgen --crate "${datadog_telemetry_ffi}"  \
-    --config ddtelemetry-ffi/cbindgen.toml \
-    --output "$destdir/include/datadog/telemetry.h"
-./target/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/telemetry.h"
+./target/debug/dedup_headers "${destdir}/include/datadog/common.h" "${destdir}/include/datadog/telemetry.h"
 
 echo "Done."

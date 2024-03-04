@@ -133,6 +133,7 @@ pub fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
         }
     }
     writeln!(w, "\n{DD_CRASHTRACK_END_FILE} \"{path}\"")?;
+    w.flush()?;
     Ok(())
 }
 

@@ -34,6 +34,7 @@ pub fn create_test_span(
         metrics: HashMap::new(),
         r#type: "".to_string(),
         meta_struct: HashMap::new(),
+        span_links: vec![],
     };
     if is_top_level {
         span.metrics.insert("_top_level".to_string(), 1.0);

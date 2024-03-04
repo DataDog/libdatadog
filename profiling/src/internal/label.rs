@@ -150,3 +150,9 @@ impl LabelSetId {
         self.0 as usize
     }
 }
+
+impl From<LabelSetId> for u32 {
+    fn from(value: LabelSetId) -> Self {
+        value.0
+    }
+}

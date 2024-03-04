@@ -24,7 +24,8 @@ members = [
   "trace-utils",
   "spawn_worker",
   "tests/spawn_from_lib",
-  "serverless"
+  "serverless",
+  "bin_tests",
 ]
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"
@@ -35,16 +36,16 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.69"
 edition = "2021"
-version = "5.0.0"
+version = "6.0.0"
 license = "Apache-2.0"
 
 [profile.dev]
 debug = 2 # full debug info
 
 [profile.release]
-codegen-units = 1 
+codegen-units = 1
 debug = 1 # line tables only
-lto = true 
+lto = true
 opt-level = "s" # optimize for size
 
 [profile.release.package.datadog-serverless-trace-mini-agent]

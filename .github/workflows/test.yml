@@ -15,6 +15,7 @@ jobs:
         include:
           - platform: "ubuntu-latest"
             rust_version: "${RUST_VERSION}"
+      fail-fast: false
     steps:
       - name: Checkout sources
         uses: actions/checkout@v3
@@ -27,6 +28,17 @@ jobs:
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
       - id: rust-version
         run: echo "version=$(rustc --version)" >> $GITHUB_OUTPUT
+      - name: Free Disk Space (Ubuntu only)
+        if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
       - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --verbose"
         run: cargo build --workspace --verbose
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test --workspace --verbose"
@@ -91,8 +103,8 @@ jobs:
       - name: "Generate Telemetry FFI"
         shell: bash
         run: |
-           chmod +x build-profiling-ffi.sh
-           ./build-profiling-ffi.sh ${OUTPUT_FOLDER}/telemetry
+           chmod +x build-telemetry-ffi.sh
+           ./build-telemetry-ffi.sh ${OUTPUT_FOLDER}/telemetry
 
       - name: 'Publish libdatadog'
         uses: actions/upload-artifact@v3

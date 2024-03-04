@@ -10,6 +10,10 @@ license.workspace = true
 [lib]
 crate-type = ["lib"]
 
+[target.'cfg(unix)'.dependencies]
+# TODO: move to a named release once https://github.com/libbpf/blazesym/pull/520 makes it to release
+blazesym = {git = "https://github.com/libbpf/blazesym.git", rev = "4fa15cb"}
+
 [dependencies]
 anyhow = "1.0"
 backtrace = "0.3.69"
@@ -24,3 +28,9 @@ page_size = "0.6.0"
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
 uuid = { version = "1.4.1", features = ["v4", "serde"] }
+ddtelemetry = {path = "../ddtelemetry"}
+tokio = { version = "1.23", features = ["rt", "macros"] }
+http = "0.2"
+
+[dev-dependencies]
+tempfile = { version = "3.3" }

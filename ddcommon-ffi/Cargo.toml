@@ -8,10 +8,14 @@ version.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["cbindgen"]
+cbindgen = ["build_common/cbindgen"]
+
+[build-dependencies]
+build_common = { path = "../build-common" }
 
 [dependencies]
 ddcommon = { path = "../ddcommon" }
 anyhow = "1.0"
 hyper = {version = "0.14", default-features = false}
-

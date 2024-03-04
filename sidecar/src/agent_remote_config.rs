@@ -32,7 +32,7 @@ pub fn create_anon_pair() -> anyhow::Result<(AgentRemoteConfigWriter<ShmHandle>,
 
 pub fn new_reader(endpoint: &Endpoint) -> AgentRemoteConfigReader<NamedShmHandle> {
     AgentRemoteConfigReader(OneWayShmReader::new(
-        open_named_shm(path_for_endpoint(endpoint)).ok(),
+        open_named_shm(&path_for_endpoint(endpoint)).ok(),
         Some(AgentRemoteConfigEndpoint(endpoint.clone())),
     ))
 }
@@ -58,7 +58,7 @@ impl ReaderOpener<NamedShmHandle>
     fn open(&self) -> Option<MappedMem<NamedShmHandle>> {
         self.extra
             .as_ref()
-            .and_then(|endpoint| open_named_shm(path_for_endpoint(&endpoint.0)).ok())
+            .and_then(|endpoint| open_named_shm(&path_for_endpoint(&endpoint.0)).ok())
     }
 }
 

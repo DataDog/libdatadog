@@ -1,7 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use std::{borrow::Cow, str::FromStr};
+use std::{borrow::Cow, ops::Deref, str::FromStr};
 
 use hyper::{
     header::HeaderValue,
@@ -37,19 +37,46 @@ pub struct Endpoint {
     pub api_key: Option<Cow<'static, str>>,
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
+struct SerializedUri<'a> {
+    scheme: Option<Cow<'a, str>>,
+    authority: Option<Cow<'a, str>>,
+    path_and_query: Option<Cow<'a, str>>,
+}
+
 fn serialize_uri<S>(uri: &hyper::Uri, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    serializer.serialize_str(&uri.to_string())
+    let parts = uri.clone().into_parts();
+    let uri = SerializedUri {
+        scheme: parts.scheme.as_ref().map(|s| Cow::Borrowed(s.as_str())),
+        authority: parts.authority.as_ref().map(|s| Cow::Borrowed(s.as_str())),
+        path_and_query: parts
+            .path_and_query
+            .as_ref()
+            .map(|s| Cow::Borrowed(s.as_str())),
+    };
+    uri.serialize(serializer)
 }
 
 fn deserialize_uri<'de, D>(deserializer: D) -> Result<hyper::Uri, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let url: String = Deserialize::deserialize(deserializer)?;
-    hyper::Uri::from_str(&url).map_err(Error::custom)
+    let uri = SerializedUri::deserialize(deserializer)?;
+    let mut builder = hyper::Uri::builder();
+    if let Some(v) = uri.authority {
+        builder = builder.authority(v.deref());
+    }
+    if let Some(v) = uri.scheme {
+        builder = builder.scheme(v.deref());
+    }
+    if let Some(v) = uri.path_and_query {
+        builder = builder.path_and_query(v.deref());
+    }
+
+    builder.build().map_err(Error::custom)
 }
 
 // TODO: we should properly handle malformed urls

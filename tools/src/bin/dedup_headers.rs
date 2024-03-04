@@ -13,7 +13,7 @@ use std::io::{self, BufReader, BufWriter, Read, Seek, Write};
 
 fn collect_definitions(header: &str) -> Vec<regex::Match<'_>> {
     lazy_static::lazy_static! {
-        static ref HEADER_TYPE_DECL_RE: Regex = RegexBuilder::new(r"^(/\*\*.*?\*/\n)?typedef (struct|enum) [a-zA-Z_0-9]+ +(\{.*?\} )?[a-zA-Z_0-9]+;\n+")
+        static ref HEADER_TYPE_DECL_RE: Regex = RegexBuilder::new(r"^(/\*\*.*?\*/\n)?(#define [a-zA-Z_0-9]+ [^\n]+|typedef (struct|enum) [a-zA-Z_0-9]+ +(\{.*?\} )?[a-zA-Z_0-9]+;)\n+")
             .multi_line(true)
             .dot_matches_new_line(true)
             .build()

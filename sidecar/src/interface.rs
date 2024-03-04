@@ -29,10 +29,9 @@ use datadog_ipc::platform::{FileBackedHandle, NamedShmHandle, ShmHandle};
 use datadog_ipc::tarpc::{context::Context, server::Channel};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use tokio::net::UnixStream;
 use tokio::select;
 use tokio::task::{JoinError, JoinHandle};
-use tracing::{debug, enabled, error, info, Level};
+use tracing::{debug, enabled, error, info, warn, Level};
 
 use crate::agent_remote_config::AgentRemoteConfigWriter;
 use crate::config::get_product_endpoint;
@@ -97,20 +96,20 @@ pub enum RequestIdentifier {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SerializedTracerHeaderTags {
-    data: String,
+    data: Vec<u8>,
 }
 
 impl<'a> From<&'a SerializedTracerHeaderTags> for TracerHeaderTags<'a> {
     fn from(serialized: &'a SerializedTracerHeaderTags) -> Self {
-        // Panics if deserialization fails due (e.g. input containing double quote or backslash)
-        serde_json::from_str(&serialized.data).unwrap()
+        // Panics if deserialization fails (but that shouldn't ever happen)
+        bincode::deserialize(serialized.data.as_slice()).unwrap()
     }
 }
 
 impl<'a> From<TracerHeaderTags<'a>> for SerializedTracerHeaderTags {
     fn from(value: TracerHeaderTags<'a>) -> Self {
         SerializedTracerHeaderTags {
-            data: serde_json::to_string(&value).unwrap(),
+            data: bincode::serialize(&value).unwrap(),
         }
     }
 }
@@ -609,12 +608,12 @@ pub struct SidecarServer {
 }
 
 impl SidecarServer {
-    pub async fn accept_connection(self, socket: UnixStream) {
+    pub async fn accept_connection(self, async_channel: AsyncChannel) {
         let server = datadog_ipc::tarpc::server::BaseChannel::new(
             datadog_ipc::tarpc::server::Config {
                 pending_response_buffer: 10000,
             },
-            Transport::from(AsyncChannel::from(socket)),
+            Transport::from(async_channel),
         );
 
         let mut executor = datadog_ipc::sequential::execute_sequential(
@@ -660,7 +659,10 @@ impl SidecarServer {
             }
         });
 
-        executor.await;
+        if let Err(e) = executor.await {
+            warn!("Error from executor: {e:?}");
+        }
+
         if let Ok((sessions, instances)) = session_interceptor.await {
             for session in sessions {
                 let stop = {
