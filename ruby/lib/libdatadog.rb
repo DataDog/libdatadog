@@ -27,6 +27,15 @@ module Libdatadog
   def self.current_platform
     platform = Gem::Platform.local.to_s
 
+    if platform.end_with?("-gnu")
+      # In some cases on Linux with glibc the platform includes a -gnu suffix. We normalize it to not have the suffix.
+      #
+      # Note: This should be platform = platform.delete_suffix("-gnu") but it doesn't work on legacy Rubies; once
+      # dd-trace-rb 2.0 is out we can simplify this.
+      #
+      platform = platform[0..-5]
+    end
+
     if RbConfig::CONFIG["arch"].include?("-musl") && !platform.include?("-musl")
       # Fix/workaround for https://github.com/datadog/dd-trace-rb/issues/2222
       #
