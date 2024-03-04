@@ -14,7 +14,7 @@ license.workspace = true
 crate-type = ["staticlib", "cdylib"]
 
 [features]
-build_symbolizer = ["symbolizer-ffi"]
+symbolizer = ["symbolizer-ffi"]
 default = ["cbindgen"]
 cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
 

@@ -1,25 +1,16 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 use cbindgen::Config;
-use std::path::PathBuf;
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str;
-use std::{env, fs};
 
-/// Configure the header generation using environment variables.
-/// call into `generate_header` with the appropriate arguments.
+/// Determines the cargo target directory and deliverables directory.
 ///
-/// Expects CARGO_MANIFEST_DIR to be set.
-/// If DESTDIR is set, it will be used as the base directory for the header file.
-///         DESTDIR can be either relative or absolute.
-/// Either CARGO_TARGET_DIR is set, or `cargo locate-project --workspace` is used to find the base of the target directory.
+/// # Returns
 ///
-/// # Arguments
-///
-/// * `header_name` - The name of the header file to generate.
-pub fn generate_and_configure_header(header_name: &str) {
-    let crate_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-
+/// * `(PathBuf, PathBuf)` - The cargo target directory and deliverables directory.
+fn determine_paths() -> (PathBuf, PathBuf) {
     let cargo_target_dir = match env::var_os("CARGO_TARGET_DIR") {
         Some(dir) => PathBuf::from(dir),
         None => {
@@ -48,12 +39,12 @@ pub fn generate_and_configure_header(header_name: &str) {
                 .join("target")
         }
     };
-
     // Attempt to read `DESTDIR`, falling back to `CARGO_TARGET_DIR` if not set
     let mut deliverables_dir = env::var("DESTDIR")
         .ok()
         .map(PathBuf::from)
         .unwrap_or_else(|| cargo_target_dir.clone());
+    println!("cargo:rerun-if-env-changed=DESTDIR");
 
     // Check if `deliverables_dir` is relative
     if deliverables_dir.is_relative() {
@@ -64,8 +55,25 @@ pub fn generate_and_configure_header(header_name: &str) {
         deliverables_dir = parent_dir.join(&deliverables_dir);
     }
 
+    (cargo_target_dir, deliverables_dir)
+}
+
+/// Configure the header generation using environment variables.
+/// call into `generate_header` with the appropriate arguments.
+///
+/// Expects CARGO_MANIFEST_DIR to be set.
+/// If DESTDIR is set, it will be used as the base directory for the header file.
+///         DESTDIR can be either relative or absolute.
+/// Either CARGO_TARGET_DIR is set, or `cargo locate-project --workspace` is used to find the base of the target directory.
+///
+/// # Arguments
+///
+/// * `header_name` - The name of the header file to generate.
+pub fn generate_and_configure_header(header_name: &str) {
+    let crate_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let (_, deliverables_dir) = determine_paths();
+
     generate_header(crate_dir, header_name, deliverables_dir);
-    println!("cargo:rerun-if-env-changed=DESTDIR");
 }
 
 /// Generates a C header file using `cbindgen` for the specified crate.
@@ -84,11 +92,8 @@ pub fn generate_header(crate_dir: PathBuf, header_name: &str, output_base_dir: P
     );
     let output_path = output_base_dir.join("include/datadog/").join(header_name);
 
-    // Ensure the output directory exists
     if let Some(parent) = output_path.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent).expect("Failed to create output directory");
-        }
+        fs::create_dir_all(parent).expect("Failed to create output directory");
     }
 
     if env::var("DEBUG_BUILD").is_ok() {
@@ -104,6 +109,50 @@ pub fn generate_header(crate_dir: PathBuf, header_name: &str, output_base_dir: P
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file(output_path);
-    // This assumes there is a cbindgen.toml file in the crate root
+
     println!("cargo:rerun-if-changed=cbindgen.toml");
+}
+
+/// Copies header files from the source directory to the destination directory.
+/// It considers all .*h* files in the source directory.
+/// This behaves in a similar way as `generate_and_configure_header`.
+pub fn copy_and_configure_headers() {
+    let crate_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let (_cargo_target_dir, deliverables_dir) = determine_paths();
+
+    if !deliverables_dir.exists() {
+        fs::create_dir_all(&deliverables_dir).expect("Failed to create deliverables directory");
+    }
+
+    let src_dir = crate_dir.join("src");
+    if src_dir.is_dir() {
+        for entry in fs::read_dir(src_dir).expect("Failed to read src directory") {
+            let entry = entry.expect("Failed to read entry in src directory");
+            let path = entry.path();
+
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("h") {
+                copy_header(&path, &deliverables_dir);
+            }
+        }
+    }
+}
+
+/// Copies a single header file.
+/// # Arguments
+///
+/// * `source` - The source header
+/// * `destination` - The destination path
+fn copy_header(source: &Path, destination: &Path) {
+    let output_path = destination
+        .join("include/datadog/")
+        .join(source.file_name().unwrap());
+
+    if env::var("DEBUG_BUILD").is_ok() {
+        println!(
+            "cargo:warning=Copy header {} to {}",
+            source.display(),
+            output_path.display()
+        );
+    }
+    fs::copy(source, output_path).expect("Failed to copy header file");
 }

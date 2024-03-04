@@ -278,19 +278,8 @@ checksum = "703642b98a00b3b90513279a8ede3fcfa479c126c5fb46e78f3051522f021403"
 
 [[package]]
 name = "blazesym"
-version = "0.2.0-alpha.10"
-source = "git+https://github.com/libbpf/blazesym.git?rev=4fa15cb#4fa15cbe1c547ae8277f775c59696b441b39bdd7"
-dependencies = [
- "cpp_demangle",
- "gimli",
- "libc",
- "rustc-demangle",
-]
-
-[[package]]
-name = "blazesym"
-version = "0.2.0-alpha.10"
-source = "git+https://github.com/danielocfb/blazesym.git?rev=71312a367c594ea43924f991566810ef1c119843#71312a367c594ea43924f991566810ef1c119843"
+version = "0.2.0-alpha.11"
+source = "git+https://github.com/libbpf/blazesym.git?rev=v0.2.0-alpha.11#16bfee4bca2fe73e19f9530d334a9523d9551cbd"
 dependencies = [
  "cpp_demangle",
  "gimli",
@@ -301,9 +290,9 @@ dependencies = [
 [[package]]
 name = "blazesym-c"
 version = "0.0.0"
-source = "git+https://github.com/danielocfb/blazesym.git?rev=71312a367c594ea43924f991566810ef1c119843#71312a367c594ea43924f991566810ef1c119843"
+source = "git+https://github.com/libbpf/blazesym.git?rev=v0.2.0-alpha.11#16bfee4bca2fe73e19f9530d334a9523d9551cbd"
 dependencies = [
- "blazesym 0.2.0-alpha.10 (git+https://github.com/danielocfb/blazesym.git?rev=71312a367c594ea43924f991566810ef1c119843)",
+ "blazesym",
  "memoffset 0.9.0",
 ]
 
@@ -689,7 +678,7 @@ version = "6.0.0"
 dependencies = [
  "anyhow",
  "backtrace",
- "blazesym 0.2.0-alpha.10 (git+https://github.com/libbpf/blazesym.git?rev=4fa15cb)",
+ "blazesym",
  "chrono",
  "datadog-profiling",
  "ddcommon",
@@ -2860,6 +2849,7 @@ name = "symbolizer-ffi"
 version = "6.0.0"
 dependencies = [
  "blazesym-c",
+ "build_common",
 ]
 
 [[package]]

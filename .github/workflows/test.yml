@@ -125,8 +125,7 @@ jobs:
           if [[ "${{ matrix.platform }}" == "ubuntu-latest" ]]; then
             cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DBUILD_SYMBOLIZER=true
             cmake --build  .
-            # sudo should not be needed here
-            sudo ./symbolizer
+            ./symbolizer
           else
             cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling
             cmake --build .

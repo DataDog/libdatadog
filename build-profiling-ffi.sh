@@ -32,7 +32,7 @@ static_library_suffix=".a"
 library_prefix="lib"
 remove_rpath=0
 fix_macos_rpath=0
-build_symbolizer=0
+symbolizer=0
 
 # Rust provides this note about the link libraries:
 # note: Link against the following native artifacts when linking against this
@@ -49,7 +49,7 @@ case "$target" in
         native_static_libs=" -lssp_nonshared -lc"
         # on alpine musl, Rust adds some weird runpath to cdylibs
         remove_rpath=1
-        build_symbolizer=1
+        symbolizer=1
         ;;
 
     "x86_64-apple-darwin"|"aarch64-apple-darwin")
@@ -64,7 +64,7 @@ case "$target" in
     "x86_64-unknown-linux-gnu"|"aarch64-unknown-linux-gnu")
         expected_native_static_libs=" -ldl -lrt -lpthread -lgcc_s -lc -lm -lrt -lpthread -lutil -ldl -lutil"
         native_static_libs=" -ldl -lrt -lpthread -lc -lm -lrt -lpthread -lutil -ldl -lutil"
-        build_symbolizer=1
+        symbolizer=1
         ;;
 
     "x86_64-pc-windows-msvc")
@@ -105,10 +105,12 @@ export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
 datadog_profiling_ffi="datadog-profiling-ffi"
 FEATURES="--no-default-features"
-if [[ "$build_symbolizer" -eq 1 ]]; then
-    FEATURES="--features build_symbolizer"
+if [[ "$symbolizer" -eq 1 ]]; then
+    FEATURES="--features symbolizer"
 fi
 echo "Building the ${datadog_profiling_ffi} crate (may take some time). Features = ${FEATURES}..."
+DESTDIR="$destdir" cargo build ${FEATURES} --package="${datadog_profiling_ffi}" --release --target "${target}"
+
 # Remove _ffi suffix when copying
 shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"
 shared_library_rename="${library_prefix}datadog_profiling${shared_library_suffix}"
@@ -166,12 +168,7 @@ fi
 cd -
 
 echo "Building tools"
-cargo build --package tools --bins
-
-# TODO : move to build script
-if [[ "$build_symbolizer" -eq 1 ]]; then
-    cp ./symbolizer-ffi/src/blazesym.h "$destdir/include/datadog/blazesym.h"
-fi
+DESTDIR=$destdir cargo build --package tools --bins
 
 "$CARGO_TARGET_DIR"/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h"
 
