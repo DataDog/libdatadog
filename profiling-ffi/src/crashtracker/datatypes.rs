@@ -7,6 +7,7 @@ use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use ddcommon_ffi::{Error, Slice};
 use std::ops::Not;
+use std::time::Duration;
 
 #[repr(C)]
 pub struct CrashtrackerConfiguration<'a> {
@@ -22,6 +23,7 @@ pub struct CrashtrackerConfiguration<'a> {
     pub path_to_receiver_binary: CharSlice<'a>,
     /// Whether/when we should attempt to resolve frames
     pub resolve_frames: CrashtrackerResolveFrames,
+    pub timeout_secs: u64,
 }
 
 fn option_from_char_slice(s: CharSlice) -> anyhow::Result<Option<String>> {
@@ -41,7 +43,7 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
         let resolve_frames = value.resolve_frames;
         let stderr_filename = option_from_char_slice(value.optional_stderr_filename)?;
         let stdout_filename = option_from_char_slice(value.optional_stdout_filename)?;
-
+        let timeout = Duration::from_secs(value.timeout_secs);
         Self::new(
             collect_stacktrace,
             create_alt_stack,
@@ -50,6 +52,7 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
             resolve_frames,
             stderr_filename,
             stdout_filename,
+            timeout,
         )
     }
 }

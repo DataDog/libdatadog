@@ -11,6 +11,7 @@ use crate::{
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashtrackerMetadata {
@@ -55,9 +56,11 @@ pub struct CrashtrackerConfiguration {
     pub resolve_frames: CrashtrackerResolveFrames,
     pub stderr_filename: Option<String>,
     pub stdout_filename: Option<String>,
+    pub timeout: Duration,
 }
 
 impl CrashtrackerConfiguration {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         collect_stacktrace: bool,
         create_alt_stack: bool,
@@ -66,6 +69,7 @@ impl CrashtrackerConfiguration {
         resolve_frames: CrashtrackerResolveFrames,
         stderr_filename: Option<String>,
         stdout_filename: Option<String>,
+        timeout: Duration,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
             !path_to_receiver_binary.is_empty(),
@@ -82,6 +86,7 @@ impl CrashtrackerConfiguration {
             resolve_frames,
             stderr_filename,
             stdout_filename,
+            timeout,
         })
     }
 }
@@ -200,7 +205,7 @@ fn test_crash() {
     let resolve_frames = CrashtrackerResolveFrames::InReceiver;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
-
+    let timeout = Duration::from_secs(30);
     let config = CrashtrackerConfiguration::new(
         collect_stacktrace,
         create_alt_stack,
@@ -209,6 +214,7 @@ fn test_crash() {
         resolve_frames,
         stderr_filename,
         stdout_filename,
+        timeout,
     )
     .expect("not to fail");
     let metadata = CrashtrackerMetadata::new(

@@ -40,7 +40,7 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
                 // TODO Experiment to see if 30 is the right number.
                 crash_info.upload_to_endpoint(endpoint.clone(), Duration::from_secs(30))?;
             }
-            crash_info.upload_to_telemetry(&config, Duration::from_secs(30))?;
+            crash_info.upload_to_telemetry(&config)?;
 
             Ok(())
         }
@@ -52,7 +52,7 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
                 // TODO Experiment to see if 30 is the right number.
                 crash_info.upload_to_endpoint(endpoint.clone(), Duration::from_secs(30))?;
             }
-            crash_info.upload_to_telemetry(&config, Duration::from_secs(30))?;
+            crash_info.upload_to_telemetry(&config)?;
 
             Ok(())
         }
