@@ -12,8 +12,9 @@ license.workspace = true
 crate-type = ["lib", "staticlib", "cdylib"]
 
 [features]
-default = ["cbindgen"]
+default = ["cbindgen", "expanded_builder_macros"]
 cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+expanded_builder_macros = []
 
 [build-dependencies]
 build_common = { path = "../build-common" }

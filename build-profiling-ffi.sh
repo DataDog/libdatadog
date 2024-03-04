@@ -16,7 +16,8 @@ fi
 
 set -eu
 
-destdir="$1"
+mkdir -v -p "$1"
+destdir=$(get_abs_filename "$1")
 
 if [ $CARGO_TARGET_DIR = $destdir ]; then
     echo "Error: CARGO_TARGET_DIR and destdir cannot be the same"
@@ -103,7 +104,9 @@ export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 datadog_profiling_ffi="datadog-profiling-ffi"
 echo "Building the ${datadog_profiling_ffi} crate (may take some time)..."
 
-DESTDIR="$destdir" cargo build --package="${datadog_profiling_ffi}" --release --target "${target}"
+cd ./profiling-ffi
+DESTDIR="$destdir" cargo build --package="${datadog_profiling_ffi}" --features ddtelemetry-ffi --release --target "${target}"
+cd ..
 
 # Remove _ffi suffix when copying
 shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"
@@ -165,7 +168,7 @@ echo "Building tools"
 cargo build --package tools --bins
 
 echo "Generating $destdir/include/libdatadog headers..."
-"$CARGO_TARGET_DIR"/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h"
+"$CARGO_TARGET_DIR"/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h" "$destdir/include/datadog/telemetry.h"
 
 # Don't build the crashtracker on windows
 if [[ "$target" != "x86_64-pc-windows-msvc" ]]; then
