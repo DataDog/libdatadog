@@ -3,6 +3,7 @@
 #![cfg(unix)]
 
 use crate::crashtracker::datatypes::*;
+use anyhow::Context;
 use ddcommon_ffi::Error;
 
 #[no_mangle]
@@ -10,12 +11,9 @@ use ddcommon_ffi::Error;
 pub unsafe extern "C" fn ddog_prof_crashtracker_begin_profiling_op(
     op: ProfilingOpTypes,
 ) -> CrashtrackerResult {
-    match datadog_crashtracker::begin_profiling_op(op) {
-        Ok(_) => CrashtrackerResult::Ok(true),
-        Err(err) => CrashtrackerResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_begin_profiling_op failed"),
-        )),
-    }
+    datadog_crashtracker::begin_profiling_op(op)
+        .context("ddog_prof_crashtracker_begin_profiling_op failed")
+        .into()
 }
 
 #[no_mangle]
@@ -23,23 +21,17 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_begin_profiling_op(
 pub unsafe extern "C" fn ddog_prof_crashtracker_end_profiling_op(
     op: ProfilingOpTypes,
 ) -> CrashtrackerResult {
-    match datadog_crashtracker::end_profiling_op(op) {
-        Ok(_) => CrashtrackerResult::Ok(true),
-        Err(err) => CrashtrackerResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_end_profiling_op failed"),
-        )),
-    }
+    datadog_crashtracker::end_profiling_op(op)
+        .context("ddog_prof_crashtracker_end_profiling_op failed")
+        .into()
 }
 
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_crashtracker_shutdown() -> CrashtrackerResult {
-    match datadog_crashtracker::shutdown_crash_handler() {
-        Ok(_) => CrashtrackerResult::Ok(true),
-        Err(err) => CrashtrackerResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_shutdown failed"),
-        )),
-    }
+    datadog_crashtracker::shutdown_crash_handler()
+        .context("ddog_prof_crashtracker_shutdown failed")
+        .into()
 }
 
 #[no_mangle]
@@ -48,32 +40,25 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
     config: CrashtrackerConfiguration,
     metadata: CrashtrackerMetadata,
 ) -> CrashtrackerResult {
-    match ddog_prof_crashtracker_update_on_fork_impl(config, metadata) {
-        Ok(_) => CrashtrackerResult::Ok(true),
-        Err(err) => CrashtrackerResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_update_on_fork failed"),
-        )),
+    unsafe fn inner(
+        config: CrashtrackerConfiguration,
+        metadata: CrashtrackerMetadata,
+    ) -> anyhow::Result<()> {
+        let config = config.try_into()?;
+        let metadata = metadata.try_into()?;
+        datadog_crashtracker::on_fork(config, metadata)
     }
-}
-
-unsafe fn ddog_prof_crashtracker_update_on_fork_impl(
-    config: CrashtrackerConfiguration,
-    metadata: CrashtrackerMetadata,
-) -> anyhow::Result<()> {
-    let config = config.try_into()?;
-    let metadata = metadata.try_into()?;
-    datadog_crashtracker::on_fork(config, metadata)
+    inner(config, metadata)
+        .context("ddog_prof_crashtracker_update_on_fork failed")
+        .into()
 }
 
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_crashtracker_receiver_entry_point() -> CrashtrackerResult {
-    match datadog_crashtracker::receiver_entry_point() {
-        Ok(_) => CrashtrackerResult::Ok(true),
-        Err(err) => CrashtrackerResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_receiver_entry_point failed"),
-        )),
-    }
+    datadog_crashtracker::receiver_entry_point()
+        .context("ddog_prof_crashtracker_receiver_entry_point failed")
+        .into()
 }
 
 #[no_mangle]
@@ -82,19 +67,18 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_init(
     config: CrashtrackerConfiguration,
     metadata: CrashtrackerMetadata,
 ) -> CrashtrackerResult {
-    match ddog_prof_crashtracker_init_impl(config, metadata) {
+    unsafe fn inner(
+        config: CrashtrackerConfiguration,
+        metadata: CrashtrackerMetadata,
+    ) -> anyhow::Result<()> {
+        let config = config.try_into()?;
+        let metadata = metadata.try_into()?;
+        datadog_crashtracker::init(config, metadata)
+    }
+    match inner(config, metadata) {
         Ok(_) => CrashtrackerResult::Ok(true),
         Err(err) => CrashtrackerResult::Err(Error::from(
             err.context("ddog_prof_crashtracker_init failed"),
         )),
     }
-}
-
-unsafe fn ddog_prof_crashtracker_init_impl(
-    config: CrashtrackerConfiguration,
-    metadata: CrashtrackerMetadata,
-) -> anyhow::Result<()> {
-    let config = config.try_into()?;
-    let metadata = metadata.try_into()?;
-    datadog_crashtracker::init(config, metadata)
 }
