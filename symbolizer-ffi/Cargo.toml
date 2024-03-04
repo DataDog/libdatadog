@@ -11,4 +11,4 @@ license.workspace = true
 crate-type = ["lib"]
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
-blazesym-c = { git = "https://github.com/libbpf/blazesym.git", rev = "db01d98008ad09c2683490ae21eedba218f91aa2" }
+blazesym-c = { git = "https://github.com/danielocfb/blazesym.git", rev = "71312a367c594ea43924f991566810ef1c119843" }

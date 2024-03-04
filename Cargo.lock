@@ -247,7 +247,7 @@ checksum = "703642b98a00b3b90513279a8ede3fcfa479c126c5fb46e78f3051522f021403"
 [[package]]
 name = "blazesym"
 version = "0.2.0-alpha.10"
-source = "git+https://github.com/libbpf/blazesym.git?rev=db01d98008ad09c2683490ae21eedba218f91aa2#db01d98008ad09c2683490ae21eedba218f91aa2"
+source = "git+https://github.com/danielocfb/blazesym.git?rev=71312a367c594ea43924f991566810ef1c119843#71312a367c594ea43924f991566810ef1c119843"
 dependencies = [
  "cpp_demangle",
  "gimli",
@@ -258,7 +258,7 @@ dependencies = [
 [[package]]
 name = "blazesym-c"
 version = "0.0.0"
-source = "git+https://github.com/libbpf/blazesym.git?rev=db01d98008ad09c2683490ae21eedba218f91aa2#db01d98008ad09c2683490ae21eedba218f91aa2"
+source = "git+https://github.com/danielocfb/blazesym.git?rev=71312a367c594ea43924f991566810ef1c119843#71312a367c594ea43924f991566810ef1c119843"
 dependencies = [
  "blazesym",
  "memoffset 0.9.0",
