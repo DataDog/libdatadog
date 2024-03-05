@@ -461,6 +461,7 @@ impl EnqueuedTelemetryData {
             lazy_static! {
                 static ref COMPOSER_CACHE: tokio::sync::Mutex<ComposerCache> =
                     tokio::sync::Mutex::new(Default::default());
+                static ref LAST_CACHE_CLEAN: AtomicU64 = AtomicU64::new(0);
             }
 
             let mut cache = COMPOSER_CACHE.lock().await;
@@ -488,7 +489,23 @@ impl EnqueuedTelemetryData {
                     }));
                     cache.insert(path, (now, packages.clone()));
                     // cheap way to avoid unbounded caching
-                    cache.retain(|_, (inserted, _)| *inserted > now.sub(Duration::from_secs(2000)));
+                    const CACHE_INTERVAL: u64 = 2000;
+                    let last_clean = LAST_CACHE_CLEAN.load(Ordering::Relaxed);
+                    let now_secs = Instant::now().elapsed().as_secs();
+                    if now_secs > last_clean + CACHE_INTERVAL
+                        && LAST_CACHE_CLEAN
+                            .compare_exchange(
+                                last_clean,
+                                now_secs,
+                                Ordering::SeqCst,
+                                Ordering::Acquire,
+                            )
+                            .is_ok()
+                    {
+                        cache.retain(|_, (inserted, _)| {
+                            *inserted > now.sub(Duration::from_secs(CACHE_INTERVAL))
+                        });
+                    }
                     packages
                 }
             };
@@ -496,6 +513,29 @@ impl EnqueuedTelemetryData {
         });
         deps
     }
+}
+
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_extract_composer_telemetry() {
+    let data = EnqueuedTelemetryData::extract_composer_telemetry(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/installed.json").into(),
+    )
+    .await;
+    assert_eq!(
+        data,
+        vec![
+            data::Dependency {
+                name: "g1a/composer-test-scenarios".to_string(),
+                version: None
+            },
+            data::Dependency {
+                name: "datadog/dd-trace".to_string(),
+                version: Some("dev-master".to_string())
+            },
+        ]
+        .into()
+    );
 }
 
 #[derive(Default)]
