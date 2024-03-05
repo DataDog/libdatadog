@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use std::borrow::Cow;
 use std::future;
@@ -124,10 +124,11 @@ impl ProfileExporter {
     /// * `profiling_library_name` - Profiling library name, usually dd-trace-something, e.g. "dd-trace-rb". See
     ///   https://datadoghq.atlassian.net/wiki/spaces/PROF/pages/1538884229/Client#Header-values (Datadog internal link)
     ///   for a list of common values.
-    /// * `profiling_library_version` - Version used when publishing the profiling library to a package manager
+    /// * `profiling_library_version` - Version used when publishing the profiling library to a
+    ///   package manager
     /// * `family` - Profile family, e.g. "ruby"
-    /// * `tags` - Tags to include with every profile reported by this exporter. It's also possible to include
-    ///   profile-specific tags, see `additional_tags` on `build`.
+    /// * `tags` - Tags to include with every profile reported by this exporter. It's also possible
+    ///   to include profile-specific tags, see `additional_tags` on `build`.
     /// * `endpoint` - Configuration for reporting data
     pub fn new<F, N, V>(
         profiling_library_name: N,
@@ -156,8 +157,8 @@ impl ProfileExporter {
     ///
     /// For details on the `internal_metadata` parameter, please reference the Datadog-internal
     /// "RFC: Attaching internal metadata to pprof profiles".
-    /// If you use this parameter, please update the RFC with your use-case, so we can keep track of how this
-    /// is getting used.
+    /// If you use this parameter, please update the RFC with your use-case, so we can keep track of
+    /// how this is getting used.
     ///
     /// For details on the `info` parameter, please reference the Datadog-internal
     /// "RFC: Pprof System Info Support".
@@ -258,20 +259,20 @@ impl ProfileExporter {
             let mut encoder = FrameEncoder::new(buffer);
             encoder.write_all(file.bytes)?;
             let encoded = encoder.finish()?;
-            /* The Datadog RFC examples strip off the file extension, but the exact behavior isn't
-             * specified. This does the simple thing of using the filename without modification for
-             * the form name because intake does not care about these name of the form field for
-             * these attachments.
+            /* The Datadog RFC examples strip off the file extension, but the exact behavior
+             * isn't specified. This does the simple thing of using the filename
+             * without modification for the form name because intake does not care
+             * about these name of the form field for these attachments.
              */
             form.add_reader_file(file.name, Cursor::new(encoded), file.name);
         }
 
         for file in files_to_export_unmodified {
             let encoded = file.bytes.to_vec();
-            /* The Datadog RFC examples strip off the file extension, but the exact behavior isn't
-             * specified. This does the simple thing of using the filename without modification for
-             * the form name because intake does not care about these name of the form field for
-             * these attachments.
+            /* The Datadog RFC examples strip off the file extension, but the exact behavior
+             * isn't specified. This does the simple thing of using the filename
+             * without modification for the form name because intake does not care
+             * about these name of the form field for these attachments.
              */
             form.add_reader_file(file.name, Cursor::new(encoded), file.name)
         }

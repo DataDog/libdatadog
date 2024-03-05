@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{http, Body, Method, Request, Response, Server, StatusCode};
@@ -54,12 +54,14 @@ impl MiniAgent {
             now.elapsed().as_millis()
         );
 
-        // setup a channel to send processed traces to our flusher. tx is passed through each endpoint_handler
-        // to the trace processor, which uses it to send de-serialized processed trace payloads to our trace flusher.
+        // setup a channel to send processed traces to our flusher. tx is passed through each
+        // endpoint_handler to the trace processor, which uses it to send de-serialized
+        // processed trace payloads to our trace flusher.
         let (trace_tx, trace_rx): (Sender<SendData>, Receiver<SendData>) =
             mpsc::channel(TRACER_PAYLOAD_CHANNEL_BUFFER_SIZE);
 
-        // start our trace flusher. receives trace payloads and handles buffering + deciding when to flush to backend.
+        // start our trace flusher. receives trace payloads and handles buffering + deciding when to
+        // flush to backend.
         let trace_flusher = self.trace_flusher.clone();
         let trace_config = self.config.clone();
         tokio::spawn(async move {

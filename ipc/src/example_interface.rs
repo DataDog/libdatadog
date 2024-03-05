@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 use std::{
     fs::File,
     sync::{
@@ -63,7 +63,8 @@ impl ExampleInterface for ExampleServer {
 
     fn notify(self, _: Context) -> Self::NotifyFut {
         self.req_cnt.fetch_add(1, Ordering::AcqRel);
-        pending() // returning pending future, ensures the RPC system will not try to return a response to the client
+        pending() // returning pending future, ensures the RPC system will not try to return a
+                  // response to the client
     }
 
     type TimeNowFut = Ready<Duration>;

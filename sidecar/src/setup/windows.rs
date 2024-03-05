@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use crate::one_way_shared_memory::open_named_shm;
 use arrayref::array_ref;
@@ -66,8 +66,8 @@ impl Liaison for NamedPipeLiaison {
         };
 
         let socket_path = self.socket_path.clone();
-        // Have a ProcessHandle::Getter() so that we don't immediately block in case the sidecar is still starting up,
-        // but only the first time we want to submit shared memory
+        // Have a ProcessHandle::Getter() so that we don't immediately block in case the sidecar is
+        // still starting up, but only the first time we want to submit shared memory
         Ok(Channel::from_client_handle_and_pid(
             unsafe { OwnedHandle::from_raw_handle(pipe) },
             ProcessHandle::Getter(Box::new(move || {
@@ -157,8 +157,9 @@ impl Liaison for NamedPipeLiaison {
 
 impl NamedPipeLiaison {
     pub fn new<P: AsRef<str>>(prefix: P) -> Self {
-        // Due to the restriction on Global\ namespace for shared memory we have to distinguish individual sidecar sessions.
-        // Fetch the session_id to effectively namespace the Named Pipe names too.
+        // Due to the restriction on Global\ namespace for shared memory we have to distinguish
+        // individual sidecar sessions. Fetch the session_id to effectively namespace the
+        // Named Pipe names too.
         let session_id = unsafe { WTSGetActiveConsoleSessionId() };
         Self {
             socket_path: CString::new(format!(
@@ -216,8 +217,9 @@ mod tests {
 
             // can't listen twice when some listener is active
             //assert!(liaison.attempt_listen().unwrap().is_none());
-            // a liaison can try connecting to existing socket to ensure its valid, adding connection to accept queue
-            // but we can drain any preexisting connections in the queue
+            // a liaison can try connecting to existing socket to ensure its valid, adding
+            // connection to accept queue but we can drain any preexisting connections
+            // in the queue
             let (_, result) = future::join(
                 srv.connect(),
                 tokio::spawn(async move { (liaison.connect_to_server().unwrap(), liaison) }),
@@ -228,7 +230,8 @@ mod tests {
             let mut buf = [0; 1];
             assert_eq!(1, srv.read(&mut buf).await.unwrap());
 
-            // for this test: Somehow, NamedPipeServer remains tangled with the event-loop and won't free itself in time
+            // for this test: Somehow, NamedPipeServer remains tangled with the event-loop and won't
+            // free itself in time
             unsafe { CloseHandle(raw_handle) };
             std::mem::forget(srv);
 

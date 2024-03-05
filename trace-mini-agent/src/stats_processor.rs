@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -49,7 +49,8 @@ impl StatsProcessor for ServerlessStatsProcessor {
             return response;
         }
 
-        // deserialize trace stats from the request body, convert to protobuf structs (see trace-protobuf crate)
+        // deserialize trace stats from the request body, convert to protobuf structs (see
+        // trace-protobuf crate)
         let mut stats: pb::ClientStatsPayload =
             match stats_utils::get_stats_from_request_body(body).await {
                 Ok(res) => res,

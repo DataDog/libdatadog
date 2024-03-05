@@ -1,7 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed
-// under the Apache License Version 2.0. This product includes software
-// developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
-// Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use datadog_trace_protobuf::pb;
 use regex::Regex;
@@ -29,7 +27,8 @@ pub struct ReplaceRule {
     repl: String,
 }
 
-/// replace_trace_tags replaces the tag values of all spans within a trace with a given set of rules.
+/// replace_trace_tags replaces the tag values of all spans within a trace with a given set of
+/// rules.
 pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
     for span in trace.iter_mut() {
         replace_span_tags(span, rules);

@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use std::{collections::VecDeque, hash::Hash};
 
@@ -87,7 +87,8 @@ mod queuehasmpap {
         /// # Safety
         ///
         /// This function inserts a new item in the store unconditionnaly
-        /// If the item already exists, it's drop implementation will not be called, and memory might leak
+        /// If the item already exists, it's drop implementation will not be called, and memory
+        /// might leak
         ///
         /// The hash needs to be precomputed too
         fn insert_nocheck(&mut self, hash: u64, key: K, value: V) -> usize {

@@ -1,5 +1,6 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use async_trait::async_trait;
 use hyper::{Body, Client, Method, Request, Response};
 use log::{debug, error};
@@ -128,7 +129,8 @@ fn get_region_from_gcp_region_string(str: String) -> String {
     }
 }
 
-/// GoogleMetadataClient trait is used so we can mock a google metadata server response in unit tests
+/// GoogleMetadataClient trait is used so we can mock a google metadata server response in unit
+/// tests
 #[async_trait]
 trait GoogleMetadataClient {
     async fn get_metadata(&self) -> anyhow::Result<Response<Body>>;
@@ -211,7 +213,8 @@ async fn verify_azure_environment_or_exit(os: &str) {
     );
 }
 
-/// AzureVerificationClient trait is used so we can mock the azure function local url response in unit tests
+/// AzureVerificationClient trait is used so we can mock the azure function local url response in
+/// unit tests
 trait AzureVerificationClient {
     fn get_function_root_files(&self, path: &Path) -> anyhow::Result<Vec<String>>;
 }

@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
 use futures::stream::FuturesUnordered;
@@ -64,9 +64,11 @@ pub struct TracerHeaderTags<'a> {
     pub lang_vendor: &'a str,
     pub tracer_version: &'a str,
     pub container_id: &'a str,
-    // specifies that the client has marked top-level spans, when set. Any non-empty value will mean 'yes'.
+    // specifies that the client has marked top-level spans, when set. Any non-empty value will
+    // mean 'yes'.
     pub client_computed_top_level: bool,
-    // specifies whether the client has computed stats so that the agent doesn't have to. Any non-empty value will mean 'yes'.
+    // specifies whether the client has computed stats so that the agent doesn't have to. Any
+    // non-empty value will mean 'yes'.
     pub client_computed_stats: bool,
 }
 
@@ -324,7 +326,8 @@ pub fn get_root_span_index(trace: &Vec<pb::Span>) -> anyhow::Result<usize> {
     // parent_id -> (child_span, index_of_child_span_in_trace)
     let mut parent_id_to_child_map: HashMap<u64, (&pb::Span, usize)> = HashMap::new();
 
-    // look for the span with parent_id == 0 (starting from the end) since some clients put the root span last.
+    // look for the span with parent_id == 0 (starting from the end) since some clients put the root
+    // span last.
     for i in (0..trace.len()).rev() {
         let cur_span = &trace[i];
         if cur_span.parent_id == 0 {
@@ -631,7 +634,8 @@ mod tests {
     fn test_get_root_span_index_from_partial_trace() {
         let trace = vec![
             create_test_span(1234, 12342, 12341, 1, false),
-            create_test_span(1234, 12341, 12340, 1, false), // this is the root span, it's parent is not in the trace
+            create_test_span(1234, 12341, 12340, 1, false), /* this is the root span, it's
+                                                             * parent is not in the trace */
             create_test_span(1234, 12343, 12342, 1, false),
         ];
 

@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use self::stacktrace::StackFrame;
 use super::*;
@@ -190,8 +190,7 @@ enum CrashReportStatus {
 
 /// Listens to `stream`, reading it line by line, until
 /// 1. A crash-report is received, in which case it is processed for upload
-/// 2. `stdin` closes without a crash report (i.e. if the parent terminated
-///    normally)
+/// 2. `stdin` closes without a crash report (i.e. if the parent terminated normally)
 /// In the case where the parent failed to transfer a full crash-report
 /// (for instance if it crashed while calculating the crash-report), we return
 /// a PartialCrashReport.

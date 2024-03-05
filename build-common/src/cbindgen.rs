@@ -1,6 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
-
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 use cbindgen::Config;
 use std::env;
 use std::fs;
@@ -34,7 +33,8 @@ fn determine_paths() -> (PathBuf, PathBuf) {
                 .expect("Failed to extract project root path")
                 .replace('\"', "");
 
-            // Correctly find the parent of the Cargo.toml file's directory to approximate the workspace root
+            // Correctly find the parent of the Cargo.toml file's directory to approximate the
+            // workspace root
             PathBuf::from(project_root)
                 .parent()
                 .expect("Failed to find workspace root directory")
@@ -51,7 +51,8 @@ fn determine_paths() -> (PathBuf, PathBuf) {
 
     // Check if `deliverables_dir` is relative
     if deliverables_dir.is_relative() {
-        // Get the parent directory of `cargo_target_dir` to use as a base for the relative `deliverables_dir`
+        // Get the parent directory of `cargo_target_dir` to use as a base for the relative
+        // `deliverables_dir`
         let parent_dir = cargo_target_dir
             .parent()
             .expect("CARGO_TARGET_DIR does not have a parent directory, aborting build.");
@@ -66,8 +67,9 @@ fn determine_paths() -> (PathBuf, PathBuf) {
 ///
 /// Expects CARGO_MANIFEST_DIR to be set.
 /// If DESTDIR is set, it will be used as the base directory for the header file.
-///         DESTDIR can be either relative or absolute.
-/// Either CARGO_TARGET_DIR is set, or `cargo locate-project --workspace` is used to find the base of the target directory.
+/// DESTDIR can be either relative or absolute.
+/// Either CARGO_TARGET_DIR is set, or `cargo locate-project --workspace` is used to find the base 
+/// of the target directory.
 ///
 /// # Arguments
 ///
@@ -85,9 +87,8 @@ pub fn generate_and_configure_header(header_name: &str) {
 ///
 /// * `crate_dir` - The directory of the crate to generate bindings for.
 /// * `header_name` - The name of the header file to generate.
-/// * `output_base_dir` - The base directory where the header file will be placed.
-///                       Should be an absolute path as build scripts are run from
-///                       the current crate's root.
+/// * `output_base_dir` - The base directory where the header file will be placed. Should be an
+///   absolute path as build scripts are run from the current crate's root.
 pub fn generate_header(crate_dir: PathBuf, header_name: &str, output_base_dir: PathBuf) {
     assert!(
         output_base_dir.is_absolute(),

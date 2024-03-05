@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 // #![cfg(feature = "prefer-dynamic")]
 // use test_spawn_from_lib::spawn_self;
 
@@ -15,7 +15,8 @@ fn rewind_and_read(file: &mut std::fs::File) -> anyhow::Result<String> {
     Ok(buf)
 }
 
-/// run with: RUSTFLAGS="-C prefer-dynamic" cargo test --package test_spawn_from_lib --features prefer-dynamic -- --ignored
+/// run with: RUSTFLAGS="-C prefer-dynamic" cargo test --package test_spawn_from_lib --features
+/// prefer-dynamic -- --ignored
 #[test]
 #[ignore = "requires -C prefer-dynamic"]
 #[cfg(feature = "prefer_dynamic")]
