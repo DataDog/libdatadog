@@ -16,8 +16,7 @@ fi
 
 set -eu
 
-mkdir -v -p "$1"
-destdir=$(get_abs_filename "$1")
+destdir="$1"
 
 if [ $CARGO_TARGET_DIR = $destdir ]; then
     echo "Error: CARGO_TARGET_DIR and destdir cannot be the same"
@@ -104,9 +103,7 @@ export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 datadog_profiling_ffi="datadog-profiling-ffi"
 echo "Building the ${datadog_profiling_ffi} crate (may take some time)..."
 
-cd ./profiling-ffi
-DESTDIR="$destdir" cargo build --package="${datadog_profiling_ffi}" --features ddtelemetry-ffi --release --target "${target}"
-cd ..
+DESTDIR="$destdir" cargo build --package="${datadog_profiling_ffi}" --features datadog-profiling-ffi/ddtelemetry-ffi --release --target "${target}"
 
 # Remove _ffi suffix when copying
 shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"
