@@ -1,7 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed
-// under the Apache License Version 2.0. This product includes software
-// developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
-// Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 /// is_card_number checks if b could be a credit card number by checking the digit count and IIN prefix.
 /// If validateLuhn is true, the Luhn checksum is also applied to potential candidates.

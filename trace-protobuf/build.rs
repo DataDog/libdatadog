@@ -117,11 +117,8 @@ fn generate_protobuf() {
         .unwrap();
 
     // add license, serde imports, custom deserializer code to the top of the protobuf rust structs file
-    let add_to_top =
-        "// Unless explicitly stated otherwise all files in this repository are licensed
-// under the Apache License Version 2.0. This product includes software
-// developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
-// Datadog, Inc.
+    let add_to_top = "// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -135,7 +132,7 @@ where
 }
 
 "
-        .as_bytes();
+    .as_bytes();
 
     prepend_to_file(add_to_top, &output_path.join("pb.rs"));
 }
