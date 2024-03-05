@@ -107,15 +107,13 @@ pub unsafe extern "C" fn ddog_crashinfo_set_siginfo(
     crashinfo: *mut CrashInfo,
     siginfo: SigInfo,
 ) -> CrashtrackerResult {
-    unsafe fn inner(crashinfo: *mut CrashInfo, siginfo: SigInfo) -> anyhow::Result<()> {
+    (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         let siginfo = siginfo.try_into()?;
-        crashinfo.set_siginfo(siginfo)?;
-        Ok(())
-    }
-    inner(crashinfo, siginfo)
-        .context("ddog_crashinfo_set_siginfo failed")
-        .into()
+        crashinfo.set_siginfo(siginfo)
+    })()
+    .context("ddog_crashinfo_set_siginfo failed")
+    .into()
 }
 
 /// If `thread_id` is empty, sets `stacktrace` as the default stacktrace.
@@ -132,23 +130,17 @@ pub unsafe extern "C" fn ddog_crashinfo_set_stacktrace(
     thread_id: CharSlice,
     stacktrace: Slice<StackFrame>,
 ) -> CrashtrackerResult {
-    unsafe fn inner(
-        crashinfo: *mut CrashInfo,
-        thread_id: CharSlice,
-        stacktrace: Slice<StackFrame>,
-    ) -> anyhow::Result<()> {
+    (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         let thread_id = option_from_char_slice(thread_id)?;
         let mut stacktrace_vec = Vec::with_capacity(stacktrace.len());
         for s in stacktrace.iter() {
             stacktrace_vec.push(s.try_into()?)
         }
-        crashinfo.set_stacktrace(thread_id, stacktrace_vec)?;
-        Ok(())
-    }
-    inner(crashinfo, thread_id, stacktrace)
-        .context("ddog_crashinfo_set_metadata failed")
-        .into()
+        crashinfo.set_stacktrace(thread_id, stacktrace_vec)
+    })()
+    .context("ddog_crashinfo_set_metadata failed")
+    .into()
 }
 
 /// Exports `crashinfo` to the Instrumentation Telemetry backend
@@ -161,18 +153,13 @@ pub unsafe extern "C" fn ddog_crashinfo_upload_to_telemetry(
     crashinfo: *mut CrashInfo,
     config: CrashtrackerConfiguration,
 ) -> CrashtrackerResult {
-    unsafe fn inner(
-        crashinfo: *mut CrashInfo,
-        config: CrashtrackerConfiguration,
-    ) -> anyhow::Result<()> {
+    (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         let config = config.try_into()?;
-        crashinfo.upload_to_telemetry(&config)?;
-        Ok(())
-    }
-    inner(crashinfo, config)
-        .context("ddog_crashinfo_upload_to_telemetry failed")
-        .into()
+        crashinfo.upload_to_telemetry(&config)
+    })()
+    .context("ddog_crashinfo_upload_to_telemetry failed")
+    .into()
 }
 
 /// Exports `crashinfo` to the profiling backend at `endpoint`
@@ -185,18 +172,13 @@ pub unsafe extern "C" fn ddog_crashinfo_upload_to_endpoint(
     crashinfo: *mut CrashInfo,
     config: CrashtrackerConfiguration,
 ) -> CrashtrackerResult {
-    unsafe fn inner(
-        crashinfo: *mut CrashInfo,
-        config: CrashtrackerConfiguration,
-    ) -> anyhow::Result<()> {
+    (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         let config: datadog_crashtracker::CrashtrackerConfiguration = config.try_into()?;
         let endpoint = config.endpoint.context("Expected endpoint")?;
         crashinfo.upload_to_endpoint(endpoint, config.timeout)?;
-        Ok(())
-    }
-
-    inner(crashinfo, config)
-        .context("ddog_crashinfo_upload_to_endpoint failed")
-        .into()
+        anyhow::Ok(())
+    })()
+    .context("ddog_crashinfo_upload_to_endpoint failed")
+    .into()
 }
