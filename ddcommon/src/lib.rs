@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use std::{borrow::Cow, ops::Deref, str::FromStr};
 
@@ -80,10 +80,12 @@ where
 }
 
 // TODO: we should properly handle malformed urls
-// for windows and unix schemes:
-//    for compatibility reasons with existing implementation this parser stores the encoded path in authority section
-//    as there is no existing standard https://github.com/whatwg/url/issues/577 that covers this. We need to pick one hack or another
-// for file scheme implementation will simply backfill missing authority section
+// * For windows and unix schemes:
+//     * For compatibility reasons with existing implementation this parser stores the encoded path
+//       in authority section as there is no existing standard
+//       [see](https://github.com/whatwg/url/issues/577) that covers this. We need to pick one hack
+//       or another
+// * For file scheme implementation will simply backfill missing authority section
 pub fn parse_uri(uri: &str) -> anyhow::Result<hyper::Uri> {
     let scheme_pos = if let Some(scheme_pos) = uri.find("://") {
         scheme_pos

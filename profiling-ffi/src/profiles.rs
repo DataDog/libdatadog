@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use crate::Timespec;
 use datadog_profiling::api;
@@ -330,7 +330,7 @@ impl<'a> TryFrom<Sample<'a>> for api::Sample<'a> {
 /// * `sample_types`
 /// * `period` - Optional period of the profile. Passing None/null translates to zero values.
 /// * `start_time` - Optional time the profile started at. Passing None/null will use the current
-///                  time.
+///   time.
 ///
 /// # Safety
 /// All slices must be have pointers that are suitably aligned for their type
@@ -510,9 +510,12 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
 /// * `offset_values` - offset of the values
 /// * `label_name` - name of the label used to identify sample(s)
 /// * `label_value` - value of the label used to identify sample(s)
-/// * `sum_value_offset` - offset of the value used as a sum (compute the average with `count_value_offset`)
-/// * `count_value_offset` - offset of the value used as a count (compute the average with `sum_value_offset`)
-/// * `sampling_distance` - this is the threshold for this sampling window. This value must not be equal to 0
+/// * `sum_value_offset` - offset of the value used as a sum (compute the average with
+///   `count_value_offset`)
+/// * `count_value_offset` - offset of the value used as a count (compute the average with
+///   `sum_value_offset`)
+/// * `sampling_distance` - this is the threshold for this sampling window. This value must not be
+///   equal to 0
 ///
 /// # Safety
 /// This function must be called before serialize and must not be called after.
@@ -566,8 +569,10 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_poisson(
 /// * `offset_values` - offset of the values
 /// * `label_name` - name of the label used to identify sample(s)
 /// * `label_value` - value of the label used to identify sample(s)
-/// * `total_sampled` - number of sampled event (found in the pprof). This value must not be equal to 0
-/// * `total_real` - number of events the profiler actually witnessed. This value must not be equal to 0
+/// * `total_sampled` - number of sampled event (found in the pprof). This value must not be equal
+///   to 0
+/// * `total_real` - number of events the profiler actually witnessed. This value must not be equal
+///   to 0
 ///
 /// # Safety
 /// This function must be called before serialize and must not be called after.
@@ -677,12 +682,12 @@ impl From<internal::EncodedProfile> for EncodedProfile {
 /// # Arguments
 /// * `profile` - a reference to the profile being serialized.
 /// * `end_time` - optional end time of the profile. If None/null is passed, the current time will
-///                be used.
+///   be used.
 /// * `duration_nanos` - Optional duration of the profile. Passing None or a negative duration will
-///                      mean the duration will based on the end time minus the start time, but
-///                      under anomalous conditions this may fail as system clocks can be adjusted,
-///                      or the programmer accidentally passed an earlier time. The duration of
-///                      the serialized profile will be set to zero for these cases.
+///   mean the duration will based on the end time minus the start time, but under anomalous
+///   conditions this may fail as system clocks can be adjusted, or the programmer accidentally
+///   passed an earlier time. The duration of the serialized profile will be set to zero for these
+///   cases.
 /// * `start_time` - Optional start time for the next profile.
 ///
 /// # Safety

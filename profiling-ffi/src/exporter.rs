@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 #![allow(renamed_and_removed_lints)]
 #![allow(clippy::box_vec)]
@@ -113,13 +113,16 @@ pub unsafe fn try_to_endpoint(endpoint: Endpoint) -> anyhow::Result<exporter::En
 
 /// Creates a new exporter to be used to report profiling data.
 /// # Arguments
-/// * `profiling_library_name` - Profiling library name, usually dd-trace-something, e.g. "dd-trace-rb". See
-///   https://datadoghq.atlassian.net/wiki/spaces/PROF/pages/1538884229/Client#Header-values (Datadog internal link)
+/// * `profiling_library_name` - Profiling library name, usually dd-trace-something, e.g.
+///   "dd-trace-rb". See
+///   https://datadoghq.atlassian.net/wiki/spaces/PROF/pages/1538884229/Client#Header-values
+///   (Datadog internal link)
 ///   for a list of common values.
-/// * `profliling_library_version` - Version used when publishing the profiling library to a package manager
+/// * `profliling_library_version` - Version used when publishing the profiling library to a package
+///   manager
 /// * `family` - Profile family, e.g. "ruby"
-/// * `tags` - Tags to include with every profile reported by this exporter. It's also possible to include
-///   profile-specific tags, see `additional_tags` on `profile_exporter_build`.
+/// * `tags` - Tags to include with every profile reported by this exporter. It's also possible to
+///   include profile-specific tags, see `additional_tags` on `profile_exporter_build`.
 /// * `endpoint` - Configuration for reporting data
 /// # Safety
 /// All pointers must refer to valid objects of the correct types.
@@ -210,8 +213,8 @@ impl From<RequestBuildResult> for Result<Box<Request>, String> {
 ///
 /// For details on the `optional_internal_metadata_json`, please reference the Datadog-internal
 /// "RFC: Attaching internal metadata to pprof profiles".
-/// If you use this parameter, please update the RFC with your use-case, so we can keep track of how this
-/// is getting used.
+/// If you use this parameter, please update the RFC with your use-case, so we can keep track of how
+/// this is getting used.
 ///
 /// For details on the `optional_info_json`, please reference the Datadog-internal
 /// "RFC: Pprof System Info Support".
@@ -322,9 +325,8 @@ unsafe fn rebox_request(request: Option<&mut Option<&mut Request>>) -> Option<Bo
 ///
 /// # Arguments
 /// * `exporter` - Borrows the exporter for sending the request.
-/// * `request` - Takes ownership of the request, replacing it with a null
-///               pointer. This is why it takes a double-pointer, rather than
-///               a single one.
+/// * `request` - Takes ownership of the request, replacing it with a null pointer. This is why it
+///   takes a double-pointer, rather than a single one.
 /// * `cancel` - Borrows the cancel, if any.
 ///
 /// # Safety
@@ -364,7 +366,8 @@ unsafe fn ddog_prof_exporter_send_impl(
     Ok(HttpStatus(response.status().as_u16()))
 }
 
-/// Can be passed as an argument to send and then be used to asynchronously cancel it from a different thread.
+/// Can be passed as an argument to send and then be used to asynchronously cancel it from a
+/// different thread.
 #[no_mangle]
 #[must_use]
 pub extern "C" fn ddog_CancellationToken_new() -> NonNull<CancellationToken> {
@@ -392,9 +395,9 @@ pub extern "C" fn ddog_CancellationToken_new() -> NonNull<CancellationToken> {
 ///     ddog_CancellationToken_drop(cancel_t2);
 /// ```
 ///
-/// Without clone, both t1 and t2 would need to synchronize to make sure neither was using the cancel
-/// before it could be dropped. With clone, there is no need for such synchronization, both threads
-/// have their own cancel and should drop that cancel after they are done with it.
+/// Without clone, both t1 and t2 would need to synchronize to make sure neither was using the
+/// cancel before it could be dropped. With clone, there is no need for such synchronization, both
+/// threads have their own cancel and should drop that cancel after they are done with it.
 ///
 /// # Safety
 /// If the `token` is non-null, it must point to a valid object.
@@ -470,9 +473,10 @@ mod test {
     fn parsed_event_json(request: RequestBuildResult) -> serde_json::Value {
         let request = Result::from(request).unwrap();
 
-        // Really hacky way of getting the event.json file contents, because I didn't want to implement a full multipart parser
-        // and didn't find a particularly good alternative.
-        // If you do figure out a better way, there's another copy of this code in the profiling tests, please update there too :)
+        // Really hacky way of getting the event.json file contents, because I didn't want to
+        // implement a full multipart parser and didn't find a particularly good
+        // alternative. If you do figure out a better way, there's another copy of this code
+        // in the profiling tests, please update there too :)
         let body = request.body();
         let body_bytes: String = String::from_utf8_lossy(
             &futures::executor::block_on(hyper::body::to_bytes(body)).unwrap(),
@@ -584,7 +588,8 @@ mod test {
         assert_eq!(parsed_event_json["tags_profiler"], json!(""));
         assert_eq!(parsed_event_json["version"], json!("4"));
 
-        // TODO: Assert on contents of attachments, as well as on the headers/configuration for the exporter
+        // TODO: Assert on contents of attachments, as well as on the headers/configuration for the
+        // exporter
     }
 
     #[test]

@@ -1,5 +1,6 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::platform::platform_handle::PlatformHandle;
 use serde::{Deserialize, Deserializer, Serializer};
 use std::marker::PhantomData;
@@ -11,7 +12,6 @@ impl<T> FromRawHandle for PlatformHandle<T> {
     ///
     /// # Safety caller must ensure the RawFd is valid and open, and that the resulting PlatformHandle will
     /// # have exclusive ownership of the file descriptor
-    ///
     unsafe fn from_raw_handle(handle: RawHandle) -> Self {
         let inner = Some(Arc::new(OwnedHandle::from_raw_handle(handle)));
         Self {
