@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 #[cfg(windows)]
 //noinspection RsUnusedImport
@@ -32,7 +32,8 @@ pub struct PlatformHandle<T> {
             serialize_with = "serialize_rawhandle"
         )
     )]
-    pub(crate) fd: RawFileHandle, // Just an fd number to be used as reference e.g. when serializing, not for accessing actual fd
+    pub(crate) fd: RawFileHandle, /* Just an fd number to be used as reference e.g. when
+                                   * serializing, not for accessing actual fd */
     #[serde(skip)]
     pub(crate) inner: Option<Arc<OwnedFileHandle>>,
     pub(crate) phantom: PhantomData<T>,

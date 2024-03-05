@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
 use std::ffi::CString;
@@ -142,7 +142,8 @@ where
                     unsafe { reinterpret_u8_as_u64_slice(handle.as_slice()) }.into();
                 let copied_data: &RawData = new_mem.as_slice().into();
 
-                // Ensure the next write hasn't started yet *and* the data is from the expected generation
+                // Ensure the next write hasn't started yet *and* the data is from the expected
+                // generation
                 if !source_data.meta.writing.load(Ordering::SeqCst)
                     && new_generation == source_data.meta.generation.load(Ordering::Acquire)
                 {
@@ -191,7 +192,8 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
         mapped = mapped.ensure_space(std::mem::size_of::<RawMetaData>() + size);
 
         // Safety: ShmHandle is always big enough
-        // Actually &mut mapped.as_slice_mut() as RawData seems safe, but unsized locals are unstable
+        // Actually &mut mapped.as_slice_mut() as RawData seems safe, but unsized locals are
+        // unstable
         let data = unsafe { &mut *(mapped.as_slice_mut() as *mut [u8] as *mut RawData) };
         data.meta.writing.store(true, Ordering::SeqCst);
         data.meta.size = size;

@@ -1,5 +1,6 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::platform::{
     FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle, PlatformHandle, ShmHandle, ShmPath,
 };
@@ -72,7 +73,8 @@ fn alloc_shm(name: LPCSTR) -> io::Result<RawHandle> {
             INVALID_HANDLE_VALUE,
             null_mut(),
             // Windows does not allow for resizing file mappings (unlinke linux with ftruncate)
-            // Hence we resort to reserving space in the virtual mapping, which can be committed on demand
+            // Hence we resort to reserving space in the virtual mapping, which can be committed on
+            // demand
             PAGE_READWRITE | SEC_RESERVE,
             0,
             MAPPING_MAX_SIZE as DWORD,

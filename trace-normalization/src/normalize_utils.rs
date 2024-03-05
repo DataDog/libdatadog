@@ -1,9 +1,8 @@
-// Unless explicitly stated otherwise all files in this repository are licensed
-// under the Apache License Version 2.0. This product includes software
-// developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
-// Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
-// DEFAULT_SERVICE_NAME is the default name we assign a service if it's missing and we have no reasonable fallback
+// DEFAULT_SERVICE_NAME is the default name we assign a service if it's missing and we have no
+// reasonable fallback
 const DEFAULT_SERVICE_NAME: &str = "unnamed-service";
 
 // MAX_NAME_LEN the maximum length a name can have
