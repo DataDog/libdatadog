@@ -1,1 +1,7 @@
+unstable_features = true
+
 format_macro_matchers = true
+ignore = [
+  # embedded project waiting for upstream fixes
+  "ipc/tarpc/",
+]
