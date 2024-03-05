@@ -80,10 +80,12 @@ where
 }
 
 // TODO: we should properly handle malformed urls
-// for windows and unix schemes:
-//    for compatibility reasons with existing implementation this parser stores the encoded path in authority section
-//    as there is no existing standard https://github.com/whatwg/url/issues/577 that covers this. We need to pick one hack or another
-// for file scheme implementation will simply backfill missing authority section
+// * For windows and unix schemes:
+//     * For compatibility reasons with existing implementation this parser stores the encoded path
+//       in authority section as there is no existing standard
+//       [see](https://github.com/whatwg/url/issues/577) that covers this. We need to pick one hack
+//       or another
+// * For file scheme implementation will simply backfill missing authority section
 pub fn parse_uri(uri: &str) -> anyhow::Result<hyper::Uri> {
     let scheme_pos = if let Some(scheme_pos) = uri.find("://") {
         scheme_pos

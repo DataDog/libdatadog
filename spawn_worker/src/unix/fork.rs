@@ -15,11 +15,11 @@ pub enum Fork {
 ///
 /// # Safety
 ///
-/// Existing state of the process must allow safe forking, e.g. no background threads should be running
-/// as any locks held by these threads will be locked forever
+/// Existing state of the process must allow safe forking, e.g. no background threads should be
+/// running as any locks held by these threads will be locked forever
 ///
-/// When forking a multithreaded application, no code should allocate or access other potentially locked resources
-/// until call to exec is executed
+/// When forking a multithreaded application, no code should allocate or access other potentially
+/// locked resources until call to exec is executed
 pub(crate) unsafe fn fork() -> Result<Fork, std::io::Error> {
     let res = libc::fork();
     match res {
@@ -33,11 +33,11 @@ pub(crate) unsafe fn fork() -> Result<Fork, std::io::Error> {
 ///
 /// # Safety
 ///
-/// Existing state of the process must allow safe forking, e.g. no background threads should be running
-/// as any locks held by these threads will be locked forever
+/// Existing state of the process must allow safe forking, e.g. no background threads should be
+/// running as any locks held by these threads will be locked forever
 ///
-/// When forking a multithreaded application, no code should allocate or access other potentially locked resources
-/// until call to exec is executed
+/// When forking a multithreaded application, no code should allocate or access other potentially
+/// locked resources until call to exec is executed
 #[cfg(test)]
 unsafe fn fork_fn<Args>(args: Args, f: fn(Args) -> ()) -> Result<libc::pid_t, std::io::Error> {
     match fork()? {

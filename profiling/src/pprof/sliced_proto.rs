@@ -10,12 +10,10 @@
 //! 3. which is then compressed.
 //!
 //! This operation is memory inefficient:
-//! 1. `pprof::Profile` does not deduplicate stack traces or labels, causing
-//!    significant memory blow-up compared to `internal::Profile` for timelined
-//!    traces.
-//! 2. The `pprof` protobuf is highly compressible, particularly when timeline
-//!    is enabled.  We are storing in memory a large buffer, that could have
-//!    easily been compressed to a small one.  
+//! 1. `pprof::Profile` does not deduplicate stack traces or labels, causing significant memory
+//!    blow-up compared to `internal::Profile` for timelined traces.
+//! 2. The `pprof` protobuf is highly compressible, particularly when timeline is enabled.  We are
+//!    storing in memory a large buffer, that could have easily been compressed to a small one.
 //! 3. Only at this point do we have a small in-memory buffer.
 //!
 //! If we stream the creation of the protobuf, we can avoid this memory blowup.

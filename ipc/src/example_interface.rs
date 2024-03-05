@@ -63,7 +63,8 @@ impl ExampleInterface for ExampleServer {
 
     fn notify(self, _: Context) -> Self::NotifyFut {
         self.req_cnt.fetch_add(1, Ordering::AcqRel);
-        pending() // returning pending future, ensures the RPC system will not try to return a response to the client
+        pending() // returning pending future, ensures the RPC system will not try to return a
+                  // response to the client
     }
 
     type TimeNowFut = Ready<Duration>;

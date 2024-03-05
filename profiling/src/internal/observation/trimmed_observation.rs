@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! This file contains the internal structures used by `ObservationMap` and `TimestampedObservationMap`.
-//! See the comment on mod.rs for more explanation.
+//! This file contains the internal structures used by `ObservationMap` and
+//! `TimestampedObservationMap`. See the comment on mod.rs for more explanation.
 
 use std::mem;
 

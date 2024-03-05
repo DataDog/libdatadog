@@ -73,7 +73,8 @@ fn alloc_shm(name: LPCSTR) -> io::Result<RawHandle> {
             INVALID_HANDLE_VALUE,
             null_mut(),
             // Windows does not allow for resizing file mappings (unlinke linux with ftruncate)
-            // Hence we resort to reserving space in the virtual mapping, which can be committed on demand
+            // Hence we resort to reserving space in the virtual mapping, which can be committed on
+            // demand
             PAGE_READWRITE | SEC_RESERVE,
             0,
             MAPPING_MAX_SIZE as DWORD,

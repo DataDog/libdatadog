@@ -78,12 +78,14 @@ where
                         let dst = &mut *(dst as *mut _ as *mut [MaybeUninit<u8>]);
                         let mut buf_window = tokio::io::ReadBuf::uninit(dst);
                         // this implementation is based on Tokio async read implementation,
-                        // it is performing an UB operation by using uninitiallized memory - although in practice its somewhat defined
+                        // it is performing an UB operation by using uninitiallized memory -
+                        // although in practice its somewhat defined
                         // there are still some unknowns WRT to future behaviors
 
-                        // TODO: make sure this optimization is really needed - once BenchPlatform is connected to libdatadog
-                        // benchmark unfilled_mut vs initialize_unfilled - and if the difference is negligible - then lets switch to
-                        // implementation that doesn't use UB.
+                        // TODO: make sure this optimization is really needed - once BenchPlatform
+                        // is connected to libdatadog benchmark unfilled_mut
+                        // vs initialize_unfilled - and if the difference is negligible - then lets
+                        // switch to implementation that doesn't use UB.
                         let b = &mut *(buf_window.unfilled_mut() as *mut [MaybeUninit<u8>]
                             as *mut [u8]);
 
@@ -167,8 +169,9 @@ where
     }
 
     pub fn is_closed(&self) -> bool {
-        // The blocking transport is not supposed to be readable on the client side unless it's a response.
-        // So, outside of waiting for a response, it will never be readable unless the server side closed its socket.
+        // The blocking transport is not supposed to be readable on the client side unless it's a
+        // response. So, outside of waiting for a response, it will never be readable unless
+        // the server side closed its socket.
         self.transport.channel.probe_readable()
     }
 

@@ -326,7 +326,8 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
 
     // Set initial log level if provided
     if let Ok(env) = env::var("DD_TRACE_LOG_LEVEL") {
-        MULTI_LOG_FILTER.add(env); // this also immediately drops it, but will retain it for few seconds during startup
+        MULTI_LOG_FILTER.add(env); // this also immediately drops it, but will retain it for few
+                                   // seconds during startup
     }
     MULTI_LOG_WRITER.add(config::Config::get().log_method); // same than MULTI_LOG_FILTER
 

@@ -52,8 +52,8 @@ pub extern "C" fn ddog_daemon_entry_point() {
                 }
             };
 
-            // We pass the shm to ensure we drop the shm handle with the pid immediately after cancellation
-            // To avoid actual race conditions
+            // We pass the shm to ensure we drop the shm handle with the pid immediately after
+            // cancellation To avoid actual race conditions
             Ok((
                 |handler| accept_socket_loop(pipe, closed_future, handler, shm),
                 cancel,
@@ -96,7 +96,8 @@ async fn accept_socket_loop(
 }
 
 pub fn setup_daemon_process(listener: OwnedHandle, spawn_cfg: &mut SpawnWorker) -> io::Result<()> {
-    // Ensure unique process names - we spawn one sidecar per console session id (see setup/windows.rs for the reasoning)
+    // Ensure unique process names - we spawn one sidecar per console session id (see
+    // setup/windows.rs for the reasoning)
     spawn_cfg
         .process_name(format!("datadog-ipc-helper-{}", unsafe {
             WTSGetActiveConsoleSessionId()

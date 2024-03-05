@@ -46,8 +46,9 @@ impl ChannelMetadata {
                 .into_iter()
                 .flat_map(|fd| self.fds_to_close.remove(&fd));
 
-            // if ACK came from the same PID, it means there is a duplicate PlatformHandle instance in the same
-            // process. Thus we should leak the handles allowing other PlatformHandle's to safely close
+            // if ACK came from the same PID, it means there is a duplicate PlatformHandle instance
+            // in the same process. Thus we should leak the handles allowing other
+            // PlatformHandle's to safely close
             if message.pid == self.pid {
                 for h in fds_to_close {
                     h.into_owned_handle()
@@ -55,7 +56,8 @@ impl ChannelMetadata {
                         .unwrap_or_default();
                 }
             } else {
-                // drain iterator closing all open file desriptors that were ACKed by the other party
+                // drain iterator closing all open file desriptors that were ACKed by the other
+                // party
                 fds_to_close.last();
             }
         }

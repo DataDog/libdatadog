@@ -32,7 +32,8 @@ pub struct PlatformHandle<T> {
             serialize_with = "serialize_rawhandle"
         )
     )]
-    pub(crate) fd: RawFileHandle, // Just an fd number to be used as reference e.g. when serializing, not for accessing actual fd
+    pub(crate) fd: RawFileHandle, /* Just an fd number to be used as reference e.g. when
+                                   * serializing, not for accessing actual fd */
     #[serde(skip)]
     pub(crate) inner: Option<Arc<OwnedFileHandle>>,
     pub(crate) phantom: PhantomData<T>,

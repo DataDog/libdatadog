@@ -10,7 +10,8 @@ use log::{error, info};
 use serde_json::json;
 
 /// Does two things:
-/// 1. Logs the given message. A success status code (within 200-299) will cause an info log to be written,
+/// 1. Logs the given message. A success status code (within 200-299) will cause an info log to be
+///    written,
 /// otherwise error will be written.
 /// 2. Returns the given message in the body of JSON response with the given status code.
 ///
@@ -31,11 +32,11 @@ pub fn log_and_create_http_response(
     Response::builder().status(status).body(Body::from(body))
 }
 
-/// Takes a request's header map, and verifies that the "content-length" header is present, valid, and less
-/// than the given max_content_length.
+/// Takes a request's header map, and verifies that the "content-length" header is present, valid,
+/// and less than the given max_content_length.
 ///
-/// Will return None if no issues are found. Otherwise logs an error (with the given prefix) and returns
-/// and HTTP Response with the appropriate error status code.
+/// Will return None if no issues are found. Otherwise logs an error (with the given prefix) and
+/// returns and HTTP Response with the appropriate error status code.
 pub fn verify_request_content_length(
     header_map: &HeaderMap,
     max_content_length: usize,

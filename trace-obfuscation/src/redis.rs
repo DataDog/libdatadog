@@ -49,8 +49,8 @@ fn obfuscate_redis_cmd(str: &mut String, cmd: String, mut args: Vec<String>) -> 
             // • APPEND key value
             // • GETSET key value
             // • LPUSHX key value
-            // • GEORADIUSBYMEMBER key member radius m|km|ft|mi [WITHCOORD] [WITHDIST] [WITHHASH] [COUNT count] [ASC|DESC] [STORE key] [STOREDIST key]
-            // • RPUSHX key value
+            // • GEORADIUSBYMEMBER key member radius m|km|ft|mi [WITHCOORD] [WITHDIST] [WITHHASH]
+            // [COUNT count] [ASC|DESC] [STORE key] [STOREDIST key] • RPUSHX key value
             // • SET key value [expiration EX seconds|PX milliseconds] [NX|XX]
             // • SETNX key value
             // • SISMEMBER key member
@@ -120,7 +120,8 @@ fn obfuscate_redis_cmd(str: &mut String, cmd: String, mut args: Vec<String>) -> 
         }
         "BITFIELD" => {
             // Obfuscate 3rd argument to SET sub-command:
-            // • BITFIELD key [GET type offset] [SET type offset value] [INCRBY type offset increment] [OVERFLOW WRAP|SAT|FAIL]
+            // • BITFIELD key [GET type offset] [SET type offset value] [INCRBY type offset
+            // increment] [OVERFLOW WRAP|SAT|FAIL]
             let mut n = 0;
             for (i, arg) in args.iter_mut().enumerate() {
                 if arg.to_uppercase() == "SET" {
@@ -180,7 +181,8 @@ pub fn remove_all_redis_args(redis_cmd: &str) -> String {
     };
     obfuscated_cmd.push_str(cmd);
 
-    // If there are no tokens left in the iterator, return the obfuscated result with just the command.
+    // If there are no tokens left in the iterator, return the obfuscated result with just the
+    // command.
     if redis_cmd_iter.peek().is_none() {
         return obfuscated_cmd;
     }

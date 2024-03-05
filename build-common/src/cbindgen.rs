@@ -12,7 +12,8 @@ use std::{env, fs};
 /// Expects CARGO_MANIFEST_DIR to be set.
 /// If DESTDIR is set, it will be used as the base directory for the header file.
 ///         DESTDIR can be either relative or absolute.
-/// Either CARGO_TARGET_DIR is set, or `cargo locate-project --workspace` is used to find the base of the target directory.
+/// Either CARGO_TARGET_DIR is set, or `cargo locate-project --workspace` is used to find the base
+/// of the target directory.
 ///
 /// # Arguments
 ///
@@ -40,7 +41,8 @@ pub fn generate_and_configure_header(header_name: &str) {
                 .expect("Failed to extract project root path")
                 .replace('\"', "");
 
-            // Correctly find the parent of the Cargo.toml file's directory to approximate the workspace root
+            // Correctly find the parent of the Cargo.toml file's directory to approximate the
+            // workspace root
             PathBuf::from(project_root)
                 .parent()
                 .expect("Failed to find workspace root directory")
@@ -57,7 +59,8 @@ pub fn generate_and_configure_header(header_name: &str) {
 
     // Check if `deliverables_dir` is relative
     if deliverables_dir.is_relative() {
-        // Get the parent directory of `cargo_target_dir` to use as a base for the relative `deliverables_dir`
+        // Get the parent directory of `cargo_target_dir` to use as a base for the relative
+        // `deliverables_dir`
         let parent_dir = cargo_target_dir
             .parent()
             .expect("CARGO_TARGET_DIR does not have a parent directory, aborting build.");
@@ -74,9 +77,8 @@ pub fn generate_and_configure_header(header_name: &str) {
 ///
 /// * `crate_dir` - The directory of the crate to generate bindings for.
 /// * `header_name` - The name of the header file to generate.
-/// * `output_base_dir` - The base directory where the header file will be placed.
-///                       Should be an absolute path as build scripts are run from
-///                       the current crate's root.
+/// * `output_base_dir` - The base directory where the header file will be placed. Should be an
+///   absolute path as build scripts are run from the current crate's root.
 pub fn generate_header(crate_dir: PathBuf, header_name: &str, output_base_dir: PathBuf) {
     assert!(
         output_base_dir.is_absolute(),

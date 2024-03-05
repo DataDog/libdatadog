@@ -16,7 +16,6 @@ impl<T> FromRawFd for PlatformHandle<T> {
     ///
     /// # Safety caller must ensure the RawFd is valid and open, and that the resulting PlatformHandle will
     /// # have exclusive ownership of the file descriptor
-    ///
     unsafe fn from_raw_fd(fd: RawFd) -> Self {
         let inner = Some(Arc::new(OwnedFd::from_raw_fd(fd)));
         Self {

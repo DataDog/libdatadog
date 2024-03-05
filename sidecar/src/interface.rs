@@ -1,7 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-// Lint removed from stable clippy after rust 1.60 - this allow can be removed once we update rust version
+// Lint removed from stable clippy after rust 1.60 - this allow can be removed once we update rust
+// version
 #![allow(clippy::needless_collect)]
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashSet};

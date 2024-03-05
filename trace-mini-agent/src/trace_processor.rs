@@ -19,7 +19,8 @@ use crate::{
 
 #[async_trait]
 pub trait TraceProcessor {
-    /// Deserializes traces from a hyper request body and sends them through the provided tokio mpsc Sender.
+    /// Deserializes traces from a hyper request body and sends them through the provided tokio mpsc
+    /// Sender.
     async fn process_traces(
         &self,
         config: Arc<Config>,
@@ -54,7 +55,8 @@ impl TraceProcessor for ServerlessTraceProcessor {
 
         let tracer_header_tags = (&parts.headers).into();
 
-        // deserialize traces from the request body, convert to protobuf structs (see trace-protobuf crate)
+        // deserialize traces from the request body, convert to protobuf structs (see trace-protobuf
+        // crate)
         let (body_size, traces) = match trace_utils::get_traces_from_request_body(body).await {
             Ok(res) => res,
             Err(err) => {

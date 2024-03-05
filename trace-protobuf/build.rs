@@ -36,13 +36,14 @@ fn generate_protobuf() {
     // in the following ways:
 
     // - annotate generated structs to use PascalCase, expected in the trace stats intake.
-    //   deserialization will result in an empty stats payload otherwise (though will not explicitly fail).
+    //   deserialization will result in an empty stats payload otherwise (though will not explicitly
+    //   fail).
 
-    // - annotate certain Span fields so serde will use the default value of a field's type if the field
-    //   doesn't exist during deserialization.
+    // - annotate certain Span fields so serde will use the default value of a field's type if the
+    //   field doesn't exist during deserialization.
 
-    // - handle edge case struct field names that the trace stats intake expects.
-    //   example: the trace intake expects the name ContainerID rather than the PascalCase ContainerId
+    // - handle edge case struct field names that the trace stats intake expects. example: the trace
+    //   intake expects the name ContainerID rather than the PascalCase ContainerId
 
     config.type_attribute("TracerPayload", "#[derive(Deserialize, Serialize)]");
     config.type_attribute("TraceChunk", "#[derive(Deserialize, Serialize)]");
@@ -116,7 +117,8 @@ fn generate_protobuf() {
         )
         .unwrap();
 
-    // add license, serde imports, custom deserializer code to the top of the protobuf rust structs file
+    // add license, serde imports, custom deserializer code to the top of the protobuf rust structs
+    // file
     let add_to_top = "// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 

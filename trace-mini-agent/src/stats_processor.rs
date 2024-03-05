@@ -49,7 +49,8 @@ impl StatsProcessor for ServerlessStatsProcessor {
             return response;
         }
 
-        // deserialize trace stats from the request body, convert to protobuf structs (see trace-protobuf crate)
+        // deserialize trace stats from the request body, convert to protobuf structs (see
+        // trace-protobuf crate)
         let mut stats: pb::ClientStatsPayload =
             match stats_utils::get_stats_from_request_body(body).await {
                 Ok(res) => res,

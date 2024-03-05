@@ -7,6 +7,7 @@ use std::collections::HashMap;
 #[derive(Deserialize, Serialize)]
 pub struct Message<Item> {
     pub item: Item,
-    // The handles are to be sent before via DuplicateHandle - post-transfer reassigns the correct handle
+    // The handles are to be sent before via DuplicateHandle - post-transfer reassigns the correct
+    // handle
     pub handles: HashMap<u64, u64>,
 }

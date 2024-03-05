@@ -63,7 +63,8 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     }
 
     /// This static variable contains the path in which cargo puts it's build artifacts
-    /// This relies on the assumption that the current binary is assumed to not have been moved from it's directory
+    /// This relies on the assumption that the current binary is assumed to not have been moved from
+    /// it's directory
     static ARTIFACT_DIR: OnceCell<PathBuf> = OnceCell::new();
     let artifact_dir = ARTIFACT_DIR.get_or_init(|| {
         let test_bin_location = PathBuf::from(env::args().next().unwrap());

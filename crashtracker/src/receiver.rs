@@ -190,8 +190,7 @@ enum CrashReportStatus {
 
 /// Listens to `stream`, reading it line by line, until
 /// 1. A crash-report is received, in which case it is processed for upload
-/// 2. `stdin` closes without a crash report (i.e. if the parent terminated
-///    normally)
+/// 2. `stdin` closes without a crash report (i.e. if the parent terminated normally)
 /// In the case where the parent failed to transfer a full crash-report
 /// (for instance if it crashed while calculating the crash-report), we return
 /// a PartialCrashReport.

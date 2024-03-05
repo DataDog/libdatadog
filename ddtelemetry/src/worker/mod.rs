@@ -90,7 +90,6 @@ pub enum LifecycleAction {
 ///
 /// The identifier is a single 64 bit integer to save space an memory
 /// and to be able to generic on the way different languages handle
-///
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LogIdentifier {
     // Collisions? Never heard of them

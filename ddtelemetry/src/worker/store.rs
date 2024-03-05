@@ -87,7 +87,8 @@ mod queuehasmpap {
         /// # Safety
         ///
         /// This function inserts a new item in the store unconditionnaly
-        /// If the item already exists, it's drop implementation will not be called, and memory might leak
+        /// If the item already exists, it's drop implementation will not be called, and memory
+        /// might leak
         ///
         /// The hash needs to be precomputed too
         fn insert_nocheck(&mut self, hash: u64, key: K, value: V) -> usize {

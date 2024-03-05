@@ -207,8 +207,9 @@ mod tests {
             let listener = liaison.attempt_listen().unwrap().unwrap();
             // can't listen twice when some listener is active
             assert!(liaison.attempt_listen().unwrap().is_none());
-            // a liaison can try connecting to existing socket to ensure its valid, adding connection to accept queue
-            // but we can drain any preexisting connections in the queue
+            // a liaison can try connecting to existing socket to ensure its valid, adding
+            // connection to accept queue but we can drain any preexisting connections
+            // in the queue
             listener.set_nonblocking(true).unwrap();
             loop {
                 match listener.accept() {

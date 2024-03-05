@@ -27,7 +27,8 @@ pub struct ReplaceRule {
     repl: String,
 }
 
-/// replace_trace_tags replaces the tag values of all spans within a trace with a given set of rules.
+/// replace_trace_tags replaces the tag values of all spans within a trace with a given set of
+/// rules.
 pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
     for span in trace.iter_mut() {
         replace_span_tags(span, rules);

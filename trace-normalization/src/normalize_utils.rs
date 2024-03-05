@@ -1,7 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-// DEFAULT_SERVICE_NAME is the default name we assign a service if it's missing and we have no reasonable fallback
+// DEFAULT_SERVICE_NAME is the default name we assign a service if it's missing and we have no
+// reasonable fallback
 const DEFAULT_SERVICE_NAME: &str = "unnamed-service";
 
 // MAX_NAME_LEN the maximum length a name can have

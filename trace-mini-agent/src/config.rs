@@ -43,7 +43,8 @@ impl Config {
 
         let dd_site = env::var("DD_SITE").unwrap_or_else(|_| "datadoghq.com".to_string());
 
-        // construct the trace & trace stats intake urls based on DD_SITE env var (to flush traces & trace stats to)
+        // construct the trace & trace stats intake urls based on DD_SITE env var (to flush traces &
+        // trace stats to)
         let mut trace_intake_url = trace_intake_url(&dd_site);
         let mut trace_stats_intake_url = trace_stats_url(&dd_site);
 

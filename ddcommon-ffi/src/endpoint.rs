@@ -15,7 +15,8 @@ pub extern "C" fn ddog_endpoint_from_url(url: crate::CharSlice) -> Option<Box<En
         .map(|url| Box::new(Endpoint { url, api_key: None }))
 }
 
-// We'll just specify the base site here. If api key provided, different intakes need to use their own subdomains.
+// We'll just specify the base site here. If api key provided, different intakes need to use their
+// own subdomains.
 #[no_mangle]
 #[must_use]
 pub extern "C" fn ddog_endpoint_from_api_key(api_key: crate::CharSlice) -> Box<Endpoint> {
@@ -27,7 +28,8 @@ pub extern "C" fn ddog_endpoint_from_api_key(api_key: crate::CharSlice) -> Box<E
     })
 }
 
-// We'll just specify the base site here. If api key provided, different intakes need to use their own subdomains.
+// We'll just specify the base site here. If api key provided, different intakes need to use their
+// own subdomains.
 #[no_mangle]
 #[must_use]
 pub extern "C" fn ddog_endpoint_from_api_key_and_site(
