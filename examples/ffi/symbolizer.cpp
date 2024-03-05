@@ -1,3 +1,6 @@
+// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+
 #include <iostream>
 #include <vector>
 
@@ -13,8 +16,6 @@
     (unsigned long)&&__here;                                                   \
   })
 
-// Virtual only works as privileged user
-// This is slightly surprising considering self maps should be readable
 void symbolize_and_print_abs(blaze_symbolizer* symbolizer, uintptr_t addr) {
     std::vector<uintptr_t> addrs = {addr};
     

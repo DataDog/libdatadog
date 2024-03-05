@@ -150,6 +150,10 @@ fn copy_header(source: &Path, destination: &Path) {
         .join("include/datadog/")
         .join(source.file_name().unwrap());
 
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent).expect("Failed to create output directory");
+    }
+
     if env::var("DEBUG_BUILD").is_ok() {
         println!(
             "cargo:warning=Copy header {} to {}",

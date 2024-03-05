@@ -14,9 +14,9 @@ license.workspace = true
 crate-type = ["staticlib", "cdylib"]
 
 [features]
-symbolizer = ["symbolizer-ffi"]
-default = ["cbindgen"]
+default = []
 cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+symbolizer = ["symbolizer-ffi"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
@@ -33,4 +33,4 @@ libc = "0.2"
 tokio-util = "0.7.1"
 serde_json = { version = "1.0" }
 futures = { version = "0.3", default-features = false }
-symbolizer-ffi = { path = "../symbolizer-ffi", optional = true }
+symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
