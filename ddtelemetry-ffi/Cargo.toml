@@ -13,7 +13,7 @@ crate-type = ["lib", "staticlib", "cdylib"]
 
 [features]
 default = ["cbindgen", "expanded_builder_macros"]
-cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen", "expanded_builder_macros"]
 expanded_builder_macros = []
 
 [build-dependencies]
