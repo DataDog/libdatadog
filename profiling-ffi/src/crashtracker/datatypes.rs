@@ -100,7 +100,7 @@ impl CrashInfo {
         }
     }
 
-    fn take(&mut self) -> Option<Box<datadog_crashtracker::CrashInfo>> {
+    pub(super) fn take(&mut self) -> Option<Box<datadog_crashtracker::CrashInfo>> {
         // Leaving a null will help with double-free issues that can
         // arise in C. Of course, it's best to never get there in the
         // first place!

@@ -19,6 +19,18 @@ pub unsafe extern "C" fn ddog_crashinfo_new() -> CrashInfoNewResult {
     CrashInfoNewResult::Ok(CrashInfo::new(datadog_crashtracker::CrashInfo::new()))
 }
 
+/// # Safety
+/// The `crash_info` can be null, but if non-null it must point to a CrashInfo
+/// made by this module, which has not previously been dropped.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_crashinfo_drop(crashinfo: *mut CrashInfo) {
+    // Technically, this function has been designed so if it's double-dropped
+    // then it's okay, but it's not something that should be relied on.
+    if !crashinfo.is_null() {
+        drop((*crashinfo).take())
+    }
+}
+
 /// Adds a "counter" variable, with the given value.  Useful for determining if
 /// "interesting" operations were occurring when the crash did.
 ///
@@ -34,15 +46,13 @@ pub unsafe extern "C" fn ddog_crashinfo_add_counter(
     name: CharSlice,
     val: i64,
 ) -> CrashtrackerResult {
-    unsafe fn inner(crashinfo: *mut CrashInfo, name: CharSlice, val: i64) -> anyhow::Result<()> {
+    (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         let name = name.to_utf8_lossy();
-        crashinfo.add_counter(&name, val)?;
-        Ok(())
-    }
-    inner(crashinfo, name, val)
-        .context("ddog_crashinfo_add_counter failed")
-        .into()
+        crashinfo.add_counter(&name, val)
+    })()
+    .context("ddog_crashinfo_add_counter failed")
+    .into()
 }
 
 /// Adds the contents of "file" to the crashinfo
@@ -58,15 +68,13 @@ pub unsafe extern "C" fn ddog_crashinfo_add_file(
     crashinfo: *mut CrashInfo,
     name: CharSlice,
 ) -> CrashtrackerResult {
-    unsafe fn inner(crashinfo: *mut CrashInfo, name: CharSlice) -> anyhow::Result<()> {
+    (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         let name = name.to_utf8_lossy();
-        crashinfo.add_file(&name)?;
-        Ok(())
-    }
-    inner(crashinfo, name)
-        .context("ddog_crashinfo_add_file failed")
-        .into()
+        crashinfo.add_file(&name)
+    })()
+    .context("ddog_crashinfo_add_file failed")
+    .into()
 }
 
 /// Sets the crashinfo metadata
@@ -81,18 +89,13 @@ pub unsafe extern "C" fn ddog_crashinfo_set_metadata(
     crashinfo: *mut CrashInfo,
     metadata: CrashtrackerMetadata,
 ) -> CrashtrackerResult {
-    unsafe fn inner(
-        crashinfo: *mut CrashInfo,
-        metadata: CrashtrackerMetadata,
-    ) -> anyhow::Result<()> {
+    (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         let metadata = metadata.try_into()?;
-        crashinfo.set_metadata(metadata)?;
-        Ok(())
-    }
-    inner(crashinfo, metadata)
-        .context("ddog_crashinfo_set_metadata failed")
-        .into()
+        crashinfo.set_metadata(metadata)
+    })()
+    .context("ddog_crashinfo_set_metadata failed")
+    .into()
 }
 
 /// Sets the crashinfo siginfo
