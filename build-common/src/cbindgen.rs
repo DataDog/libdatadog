@@ -68,7 +68,7 @@ fn determine_paths() -> (PathBuf, PathBuf) {
 /// Expects CARGO_MANIFEST_DIR to be set.
 /// If DESTDIR is set, it will be used as the base directory for the header file.
 /// DESTDIR can be either relative or absolute.
-/// Either CARGO_TARGET_DIR is set, or `cargo locate-project --workspace` is used to find the base 
+/// Either CARGO_TARGET_DIR is set, or `cargo locate-project --workspace` is used to find the base
 /// of the target directory.
 ///
 /// # Arguments
