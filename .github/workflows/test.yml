@@ -42,7 +42,7 @@ jobs:
       - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --verbose"
         run: cargo build --workspace --verbose
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test --workspace --verbose"
-        run: cargo test --workspace --verbose
+        run: cargo test --workspace --verbose -- --nocapture
         env:
           RUST_BACKTRACE: 1
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test --workspace --verbose -- --ignored --test-threads=1"
