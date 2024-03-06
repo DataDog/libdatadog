@@ -11,13 +11,14 @@ use std::alloc::{Layout, LayoutError};
 use std::collections::TryReserveError;
 
 impl ArenaAllocator {
-    fn allocate_str(&self, value: impl AsRef<str>) -> Result<LengthPrefixedStr, InternError> {
+    fn try_allocate_str(&self, value: impl AsRef<str>) -> Result<LengthPrefixedStr, InternError> {
         let str = value.as_ref();
-        match u16::try_from(str.len()) {
+        let str_len = str.len();
+        match u16::try_from(str_len) {
             Ok(n) => {
                 let layout = match LengthPrefixedStr::layout_of(n) {
                     Ok(l) => l,
-                    Err(_err) => return Err(InternError::LargeString(str.len())),
+                    Err(_err) => return Err(InternError::LargeString(str_len)),
                 };
                 let allocation = self.allocate_zeroed(layout)?;
                 Ok(unsafe { LengthPrefixedStr::from_str_in(str, allocation) })
@@ -49,9 +50,9 @@ type FxHashMap<K, V> = hashbrown::HashMap<K, V, hash::BuildHasherDefault<rustc_h
 /// Not pub, used to do unsafe things. See [LengthPrefixedStr] for more info.
 #[repr(C)]
 struct LengthPrefixedHeader {
-    /// Stored as a byte array to avoid alignments greater than 1. This
+    /// The length of the string, in native byte order as a [u16]. This
     /// prevents wasted bytes in the arena due to alignment.
-    len: [u8; mem::size_of::<u16>()],
+    len: [u8; 2],
 }
 
 /// Dangerous type, has a lifetime which has been elided! The lifetime is the
@@ -62,7 +63,7 @@ struct LengthPrefixedHeader {
 /// struct LengthPrefixedString {
 ///     /// The length of the string, in native byte order as a [u16].
 ///     size: [u8; core::mem::size_of::<u16>()],
-///     /// The string data, which is `size` bytes and is not guaranteed to
+///     /// The string data, which is `size` bytes and is _not_ guaranteed to
 ///     /// end with the null byte.
 ///     data: [u8],
 /// }
@@ -70,10 +71,10 @@ struct LengthPrefixedHeader {
 ///
 /// In stable Rust at this time, there's no way to use thin-pointers to these
 /// types and then be able to re-constitute the fat-pointer at run-time. This
-/// is why [LengthPrefixedStr] uses a thin-pointer to only the header prefix
+/// is partly why [LengthPrefixedStr] uses a thin-pointer to the header prefix
 /// of the data and uses unsafe Rust for the rest.
 ///
-#[repr(C)]
+#[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct LengthPrefixedStr {
     header: ptr::NonNull<LengthPrefixedHeader>,
@@ -112,8 +113,8 @@ impl LengthPrefixedStr {
     pub fn layout_of(n: u16) -> Result<Layout, LayoutError> {
         let header = Layout::new::<LengthPrefixedHeader>();
         let array = Layout::array::<u8>(n as usize)?;
-        let (layout, offset) = header.extend(array)?;
-        debug_assert_eq!(offset, mem::size_of::<u16>());
+        let (layout, _offset) = header.extend(array)?;
+        debug_assert_eq!(_offset, mem::size_of::<u16>());
         // no need to pad, everything is alignment of 1
         Ok(layout)
     }
@@ -122,7 +123,7 @@ impl LengthPrefixedStr {
         let header = self.header.as_ptr();
         // SAFETY: a LengthPrefixedStr always points to a valid header object,
         // even for an empty string.
-        let len = u16::from_be_bytes(unsafe { &*header }.len) as usize;
+        let len = u16::from_ne_bytes(unsafe { &*header }.len) as usize;
 
         // SAFETY: the data begins immediately after the header.
         let ptr = unsafe { self.header.as_ptr().add(1) }.cast();
@@ -143,7 +144,7 @@ impl LengthPrefixedStr {
     #[inline]
     pub unsafe fn from_str_in(s: &str, ptr: ptr::NonNull<[u8]>) -> Self {
         // SAFETY: todo
-        let header_src = u16::to_be_bytes(s.len() as u16);
+        let header_src = u16::to_ne_bytes(s.len() as u16);
         debug_assert!(header_src.len() + s.len() <= ptr.len());
 
         let header_ptr = ptr.as_ptr() as *mut u8;
@@ -238,7 +239,16 @@ impl From<hashbrown::TryReserveError> for InternError {
 }
 
 /// Hack, gets transmuted into a [hash::BuildHasherDefault] in const fns.
-struct ZeroSizedHashBuilder<H>(marker::PhantomData<fn() -> H>);
+pub struct ZeroSizedHashBuilder<H>(marker::PhantomData<fn() -> H>);
+
+impl<H> ZeroSizedHashBuilder<H> {
+    pub const fn make() -> hash::BuildHasherDefault<H> {
+        // SAFETY: both zero-sized types. This is only done because on Rust
+        // v1.69, there is no other way to get HashBuilder in a const fn, at
+        // least as far as I can tell.
+        unsafe { mem::transmute(Self(marker::PhantomData)) }
+    }
+}
 
 impl StringTable {
     /// Creates a new string table whose arena allocator can hold at least
@@ -257,14 +267,7 @@ impl StringTable {
 
     pub const fn new() -> Self {
         let arena = ArenaAllocator::new();
-        // SAFETY: both are zero-sized types. This is only done because on
-        // Rust v1.69, there is no other way to get HashBuilder in a const fn.
-        let hasher = unsafe {
-            mem::transmute(ZeroSizedHashBuilder::<rustc_hash::FxHasher>(
-                marker::PhantomData,
-            ))
-        };
-        let map = FxHashMap::with_hasher(hasher);
+        let map = FxHashMap::with_hasher(ZeroSizedHashBuilder::make());
         StringTable { arena, map }
     }
 
@@ -308,7 +311,7 @@ impl StringTable {
                 let len = map.len() + 1;
                 let string_id = StringId::from_offset(len);
                 let arena = &self.arena;
-                let handle = arena.allocate_str(str)?;
+                let handle = arena.try_allocate_str(str)?;
 
                 map.insert(handle, string_id);
                 Ok((Some(handle), string_id))
@@ -412,7 +415,7 @@ mod tests {
 
         let arena = ArenaAllocator::with_capacity(32)?;
 
-        let str = arena.allocate_str("datadog")?;
+        let str = arena.try_allocate_str("datadog")?;
 
         assert_eq!(&*str, "datadog");
 
