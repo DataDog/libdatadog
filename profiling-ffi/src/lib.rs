@@ -10,6 +10,8 @@ mod crashtracker;
 mod exporter;
 mod profiles;
 
+pub use crashtracker::*;
+
 /// Represents time since the Unix Epoch in seconds plus nanoseconds.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
