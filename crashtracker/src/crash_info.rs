@@ -5,6 +5,7 @@ use crate::stacktrace::StackFrame;
 use crate::telemetry::TelemetryCrashUploader;
 use crate::{CrashtrackerConfiguration, CrashtrackerMetadata};
 use anyhow::Context;
+#[cfg(unix)]
 use blazesym::symbolize::{Process, Source, Symbolizer};
 use chrono::{DateTime, Utc};
 use datadog_profiling::exporter::{self, Endpoint, Tag};
@@ -49,6 +50,7 @@ impl Default for CrashInfo {
     }
 }
 
+#[cfg(unix)]
 impl CrashInfo {
     pub fn resolve_names(&mut self, src: &Source) -> anyhow::Result<()> {
         let symbolizer = Symbolizer::new();
