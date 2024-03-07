@@ -48,6 +48,7 @@
 
 mod api;
 mod collectors;
+mod configuration;
 mod constants;
 mod counters;
 mod crash_handler;
@@ -58,6 +59,7 @@ mod telemetry;
 
 #[cfg(unix)]
 pub use api::*;
+pub use configuration::{CrashtrackerConfiguration, CrashtrackerResolveFrames};
 pub use constants::*;
 pub use counters::{begin_profiling_op, end_profiling_op, ProfilingOpTypes};
 #[cfg(unix)]
