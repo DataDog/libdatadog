@@ -22,9 +22,6 @@ pub struct StackFrame {
 }
 
 #[cfg(unix)]
-pub use unix::*;
-
-#[cfg(unix)]
 mod unix {
     use super::*;
     use blazesym::symbolize::{Input, Source, Sym, Symbolized, Symbolizer};
@@ -66,3 +63,5 @@ mod unix {
         }
     }
 }
+#[cfg(unix)]
+pub use unix::*;
