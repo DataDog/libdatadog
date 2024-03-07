@@ -11422,7 +11422,7 @@ third_party_libraries:
 
          END OF TERMS AND CONDITIONS
 - package_name: mio
-  package_version: 0.8.9
+  package_version: 0.8.11
   license: MIT
   licenses:
   - license: MIT
