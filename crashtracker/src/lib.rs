@@ -56,10 +56,13 @@ mod receiver;
 mod stacktrace;
 mod telemetry;
 
+#[cfg(unix)]
 pub use api::*;
 pub use constants::*;
 pub use counters::{begin_profiling_op, end_profiling_op, ProfilingOpTypes};
+#[cfg(unix)]
 pub use crash_handler::{update_config, update_metadata};
 pub use crash_info::*;
+#[cfg(unix)]
 pub use receiver::receiver_entry_point;
 pub use stacktrace::{StackFrame, StackFrameNames};

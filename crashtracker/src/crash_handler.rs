@@ -3,7 +3,8 @@
 
 #![cfg(unix)]
 
-use super::api::{CrashtrackerConfiguration, CrashtrackerMetadata, CrashtrackerResolveFrames};
+use super::crash_info::CrashtrackerMetadata;
+use super::api::{CrashtrackerConfiguration, CrashtrackerResolveFrames};
 use super::collectors::emit_backtrace_by_frames;
 #[cfg(target_os = "linux")]
 use super::collectors::emit_proc_self_maps;

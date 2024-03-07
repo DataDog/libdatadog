@@ -7,36 +7,12 @@ use crate::{
     crash_handler::{ensure_receiver, register_crash_handlers},
     crash_handler::{restore_old_handlers, shutdown_receiver, update_receiver_after_fork},
     update_config, update_metadata,
+    crash_info::CrashtrackerMetadata
 };
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CrashtrackerMetadata {
-    pub profiling_library_name: String,
-    pub profiling_library_version: String,
-    pub family: String,
-    // Should include "service", "environment", etc
-    pub tags: Vec<Tag>,
-}
-
-impl CrashtrackerMetadata {
-    pub fn new(
-        profiling_library_name: String,
-        profiling_library_version: String,
-        family: String,
-        tags: Vec<Tag>,
-    ) -> Self {
-        Self {
-            profiling_library_name,
-            profiling_library_version,
-            family,
-            tags,
-        }
-    }
-}
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
