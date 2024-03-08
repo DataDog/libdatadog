@@ -3,7 +3,6 @@
 
 // To regenerate expanded.rs run
 // ```bash
-// 
 // HEADER=$(cat ddtelemetry-ffi/src/builder/macros.rs | sed '/^$/q') EXPANDED=ddtelemetry-ffi/src/builder/expanded.rs &&
 //   echo $HEADER '\n' > $EXPANDED && cargo expand -p ddtelemetry-ffi --no-default-features builder::macros |
 //   sed 's/#\[cfg(not(feature = "expanded_builder_macros"))\]/pub use macros::*;/' |
