@@ -1,5 +1,6 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 #![cfg(unix)]
 
 #[cfg(target_os = "linux")]
@@ -432,8 +433,9 @@ impl SpawnWorker {
                 let fd = linux::write_trampoline()?;
                 skip_close_fd = fd.as_raw_fd();
                 Box::new(move || {
-                    // not using nix crate here, as it would allocate args after fork, which will lead to crashes on systems
-                    // where allocator is not fork+thread safe
+                    // not using nix crate here, as it would allocate args after fork, which will
+                    // lead to crashes on systems where allocator is not
+                    // fork+thread safe
                     unsafe { libc::fexecve(fd.as_raw_fd(), argv.as_ptr(), envp.as_ptr()) };
                     // if we're here then exec has failed
                     panic!("{}", std::io::Error::last_os_error());
@@ -555,8 +557,9 @@ impl SpawnWorker {
 
         if self.daemonize {
             if let Fork::Parent(_) = do_fork()? {
-                // musl will try to "correct" offsets in an atexit handler (lseek a FILE* to the "true" position)
-                // Ensure all fds are closed so that musl cannot have side-effects
+                // musl will try to "correct" offsets in an atexit handler (lseek a FILE* to the
+                // "true" position) Ensure all fds are closed so that musl cannot
+                // have side-effects
                 for i in 0..4 {
                     unsafe {
                         libc::close(i);

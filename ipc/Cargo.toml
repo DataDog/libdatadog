@@ -15,7 +15,7 @@ pin-project = { version = "1" }
 memfd = { version = "0.6" }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 tokio = { version = "1.23", features = ["sync", "io-util", "signal"] }
-tokio-serde = { version = "0.8", features = ["json"] }
+tokio-serde = { version = "0.8", features = ["bincode"] }
 tokio-util = { version = "0.6.9", features = ["codec"] }
 libc = { version = "0.2" }
 

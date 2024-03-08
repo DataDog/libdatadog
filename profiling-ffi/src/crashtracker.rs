@@ -1,5 +1,6 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 #![cfg(unix)]
 
 use crate::exporter::{self, Endpoint};
@@ -13,6 +14,8 @@ pub use datadog_crashtracker::{CrashtrackerResolveFrames, ProfilingOpTypes};
 
 #[repr(C)]
 pub struct CrashtrackerConfiguration<'a> {
+    /// Should the crashtracker attempt to collect a stacktrace for the crash
+    pub collect_stacktrace: bool,
     pub create_alt_stack: bool,
     /// The endpoint to send the crash repor to (can be a file://)
     pub endpoint: Endpoint<'a>,
@@ -34,7 +37,7 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
             let s = s.try_to_utf8()?.to_string();
             Ok(s.is_empty().not().then_some(s))
         }
-
+        let collect_stacktrace = value.collect_stacktrace;
         let create_alt_stack = value.create_alt_stack;
         let endpoint = unsafe { Some(exporter::try_to_endpoint(value.endpoint)?) };
         let path_to_receiver_binary = value.path_to_receiver_binary.try_to_utf8()?.to_string();
@@ -43,6 +46,7 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
         let stdout_filename = option_from_char_slice(value.optional_stdout_filename)?;
 
         Self::new(
+            collect_stacktrace,
             create_alt_stack,
             endpoint,
             path_to_receiver_binary,

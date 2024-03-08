@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 //! See the mod.rs file comment for why this module and file exists.
 
@@ -12,7 +12,8 @@ use std::collections::HashMap;
 struct NonEmptyObservations {
     // Samples with no timestamps are aggregated in-place as each observation is added
     aggregated_data: HashMap<Sample, TrimmedObservation>,
-    // Samples with timestamps are all separately kept (so we can know the exact values at the given timestamp)
+    // Samples with timestamps are all separately kept (so we can know the exact values at the
+    // given timestamp)
     timestamped_data: TimestampedObservations,
     obs_len: ObservationLength,
     timestamped_samples_count: usize,

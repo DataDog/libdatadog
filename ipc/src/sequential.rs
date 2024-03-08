@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use std::{
     pin::Pin,
@@ -68,7 +68,7 @@ where
     S: Serve<C::Req, Resp = C::Resp> + Send + 'static + Clone,
     S::Fut: Send,
 {
-    type Output = ();
+    type Output = anyhow::Result<()>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         while let Some(response_handler) = ready!(self.as_mut().project().inner.poll_next(cx)) {
@@ -79,13 +79,13 @@ where
                         // TODO: should we log something in case we drop the request on the floor?
                     }
                 }
-                Err(_e) => {
+                Err(e) => {
                     // TODO: should we log something in case we drop the request on the floor?
-                    break;
+                    return Poll::Ready(Err(e.into()));
                 }
             }
         }
-        Poll::Ready(())
+        Poll::Ready(Ok(()))
     }
 }
 

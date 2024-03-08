@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 pub mod blocking;
 
@@ -13,22 +13,21 @@ use std::{
 // TODO keep Json for now, however MessagePack seems to fail at deserialization
 
 use pin_project::pin_project;
-use tokio_serde::formats::Json;
+use tokio_serde::formats::Bincode;
 
 use tokio_serde::Framed as SerdeFramed;
 
 use futures::{Sink, Stream};
 use serde::{Deserialize, Serialize};
 
-use tokio_util::codec::Framed;
-use tokio_util::codec::LengthDelimitedCodec;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use super::{
     handles::TransferHandles,
     platform::{metadata::ChannelMetadata, AsyncChannel, Channel, Message},
 };
 
-pub type DefaultCodec<Item, SinkItem> = Json<Item, SinkItem>;
+pub type DefaultCodec<Item, SinkItem> = Bincode<Item, SinkItem>;
 
 type DefaultSerdeFramed<Item, SinkItem> = SerdeFramed<
     Framed<AsyncChannel, LengthDelimitedCodec>,
@@ -130,8 +129,10 @@ where
     SinkItem: Serialize,
 {
     let channel_metadata = io.metadata.clone();
+    let mut length_delimited = LengthDelimitedCodec::new();
+    length_delimited.set_max_frame_length(100_000_000);
     Transport {
-        inner: SerdeFramed::new(Framed::new(io, LengthDelimitedCodec::new()), codec),
+        inner: SerdeFramed::new(Framed::new(io, length_delimited), codec),
         channel_metadata,
     }
 }

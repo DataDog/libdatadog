@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 /// Usage:
 /// ./dedup_headers <base_header> <child_headers>...
@@ -13,7 +13,7 @@ use std::io::{self, BufReader, BufWriter, Read, Seek, Write};
 
 fn collect_definitions(header: &str) -> Vec<regex::Match<'_>> {
     lazy_static::lazy_static! {
-        static ref HEADER_TYPE_DECL_RE: Regex = RegexBuilder::new(r"^(/\*\*.*?\*/\n)?typedef (struct|enum) [a-zA-Z_0-9]+ +(\{.*?\} )?[a-zA-Z_0-9]+;\n+")
+        static ref HEADER_TYPE_DECL_RE: Regex = RegexBuilder::new(r"^(/\*\*.*?\*/\n)?(#define [a-zA-Z_0-9]+ [^\n]+|typedef (struct|enum) [a-zA-Z_0-9]+ +(\{.*?\} )?[a-zA-Z_0-9]+;)\n+")
             .multi_line(true)
             .dot_matches_new_line(true)
             .build()
