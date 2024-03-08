@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use datadog_profiling::exporter::{File, ProfileExporter, Request};
 use std::error::Error;
@@ -71,9 +71,10 @@ mod tests {
     }
 
     fn parsed_event_json(request: Request) -> serde_json::Value {
-        // Really hacky way of getting the event.json file contents, because I didn't want to implement a full multipart parser
-        // and didn't find a particularly good alternative.
-        // If you do figure out a better way, there's another copy of this code in the profiling-ffi tests, please update there too :)
+        // Really hacky way of getting the event.json file contents, because I didn't want to
+        // implement a full multipart parser and didn't find a particularly good
+        // alternative. If you do figure out a better way, there's another copy of this code
+        // in the profiling-ffi tests, please update there too :)
         let body = request.body();
         let body_bytes: String = String::from_utf8_lossy(
             &futures::executor::block_on(hyper::body::to_bytes(body)).unwrap(),

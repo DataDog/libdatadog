@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use std::{collections::HashMap, env, ops::DerefMut, path::PathBuf, process, sync::Mutex};
 
@@ -63,7 +63,8 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     }
 
     /// This static variable contains the path in which cargo puts it's build artifacts
-    /// This relies on the assumption that the current binary is assumed to not have been moved from it's directory
+    /// This relies on the assumption that the current binary is assumed to not have been moved from
+    /// it's directory
     static ARTIFACT_DIR: OnceCell<PathBuf> = OnceCell::new();
     let artifact_dir = ARTIFACT_DIR.get_or_init(|| {
         let test_bin_location = PathBuf::from(env::args().next().unwrap());

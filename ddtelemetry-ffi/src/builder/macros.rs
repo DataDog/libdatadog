@@ -1,14 +1,13 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 // To regenerate expanded.rs run
 // ```bash
-//
+// 
 // HEADER=$(cat ddtelemetry-ffi/src/builder/macros.rs | sed '/^$/q') EXPANDED=ddtelemetry-ffi/src/builder/expanded.rs &&
 //   echo $HEADER '\n' > $EXPANDED && cargo expand -p ddtelemetry-ffi --no-default-features builder::macros |
 //   sed 's/#\[cfg(not(feature = "expanded_builder_macros"))\]/pub use macros::*;/' |
 //   sed 's/::alloc::fmt::format/std::fmt::format/' >> $EXPANDED && cargo fmt
-//
 // ```
 
 use ddcommon::Endpoint;
