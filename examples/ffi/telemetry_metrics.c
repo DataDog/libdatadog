@@ -5,6 +5,8 @@
 #include <datadog/telemetry.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 #define TRY(expr)                                                                                  \
   {                                                                                                \
@@ -14,6 +16,15 @@
       return 1;                                                                                    \
     }                                                                                              \
   }
+#define STR(x) #x
+#define LOG_LOCATION_IDENTIFIER() (ddog_CharSlice) DDOG_CHARSLICE_C(STR(__FILE__) ":" STR(__LINE__))
+
+ddog_CharSlice charslice_from_ptr(char *str) {
+  return (ddog_CharSlice){
+      .ptr = str,
+      .len = strlen(str),
+  };
+}
 
 int main(void) {
   ddog_TelemetryWorkerBuilder *builder;
@@ -22,7 +33,7 @@ int main(void) {
                  tracer_version = DDOG_CHARSLICE_C("0.0.0");
   TRY(ddog_builder_instantiate(&builder, service, lang, lang_version, tracer_version));
 
-  ddog_CharSlice endpoint_char = DDOG_CHARSLICE_C("file://./examples_telemetry.out");
+  ddog_CharSlice endpoint_char = DDOG_CHARSLICE_C("file://./examples_telemetry_metrics.out");
   struct ddog_Endpoint *endpoint = ddog_endpoint_from_url(endpoint_char);
   TRY(ddog_builder_with_endpoint_config_endpoint(builder, endpoint));
   ddog_endpoint_drop(endpoint);
@@ -36,11 +47,33 @@ int main(void) {
   TRY(ddog_builder_with_bool_config_telemetry_debug_logging_enabled(builder, true));
 
   ddog_TelemetryWorkerHandle *handle;
-  TRY(ddog_builder_run(builder, &handle));
+  // builder is consummed after the call to build
+  TRY(ddog_builder_run_metric_logs(builder, &handle));
   TRY(ddog_handle_start(handle));
 
+  ddog_CharSlice metric_name = DDOG_CHARSLICE_C("test.telemetry");
+  ddog_Vec_Tag tags = ddog_Vec_Tag_new();
+  ddog_Vec_Tag_push(&tags, charslice_from_ptr("foo"), charslice_from_ptr("bar"));
+  // tags is consummed
+  struct ddog_ContextKey test_temetry = ddog_handle_register_metric_context(
+      handle, metric_name, DDOG_METRIC_TYPE_COUNT, tags, true, DDOG_METRIC_NAMESPACE_TELEMETRY);
+
+  TRY(ddog_handle_add_point(handle, &test_temetry, 1.0));
+  TRY(ddog_handle_add_point(handle, &test_temetry, 1.0));
+
+  ddog_Vec_Tag extra_tags = ddog_Vec_Tag_new();
+  ddog_Vec_Tag_push(&tags, charslice_from_ptr("baz"), charslice_from_ptr("bat"));
+  TRY(ddog_handle_add_point_with_tags(handle, &test_temetry, 1.0, extra_tags));
+  for (int i = 0; i < 10; i++) {
+    TRY(ddog_handle_add_log(
+        handle, LOG_LOCATION_IDENTIFIER(),
+        (ddog_CharSlice)DDOG_CHARSLICE_C("no kinder bueno left in the cafetaria"),
+        DDOG_LOG_LEVEL_ERROR, (ddog_CharSlice)DDOG_CHARSLICE_C("")));
+  }
+
+  sleep(11);
   TRY(ddog_handle_stop(handle));
-  ddog_handle_wait_for_shutdown(handle);
+  ddog_handle_wait_for_shutdown_ms(handle, 10);
 
   return 0;
 }
