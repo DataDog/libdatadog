@@ -1,4 +1,4 @@
-// BSD 3-Clause License
+// BSD-3-Clause License
 // Synchronized from blazesym repository
 #ifndef __blazesym_h_
 #define __blazesym_h_

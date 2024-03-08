@@ -107,7 +107,6 @@ FEATURES="--features cbindgen"
 if [[ "$symbolizer" -eq 1 ]]; then
     FEATURES="--features cbindgen,symbolizer"
 fi
-cargo build --features "cbindgen,symbolizer"
 
 echo "Building the ${datadog_profiling_ffi} crate (may take some time). Features = ${FEATURES}..."
 DEBUG_BUILD=1 DESTDIR="$destdir" cargo build ${FEATURES} --package="${datadog_profiling_ffi}" --release --target "${target}"
