@@ -33,7 +33,6 @@ use tokio::{
     runtime::{self, Handle},
     sync::mpsc,
     task::JoinHandle,
-    time::Instant,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -190,7 +189,10 @@ impl TelemetryWorker {
                 }
             }
             AddLog((identifier, log)) => {
-                self.data.logs.get_mut_or_insert(identifier, log).count += 1;
+                let (l, new) = self.data.logs.get_mut_or_insert(identifier, log);
+                if !new {
+                    l.count += 1;
+                }
             }
             AddPoint((point, key, extra_tags)) => {
                 self.data.metric_buckets.add_point(key, point, extra_tags)
@@ -281,7 +283,10 @@ impl TelemetryWorker {
             AddIntegration(integration) => self.data.integrations.insert(integration),
             AddConfig(cfg) => self.data.configurations.insert(cfg),
             AddLog((identifier, log)) => {
-                self.data.logs.get_mut_or_insert(identifier, log).count += 1;
+                let (l, new) = self.data.logs.get_mut_or_insert(identifier, log);
+                if !new {
+                    l.count += 1;
+                }
             }
             AddPoint((point, key, extra_tags)) => {
                 self.data.metric_buckets.add_point(key, point, extra_tags)
@@ -623,10 +628,16 @@ impl InnerTelemetryShutdown {
 }
 
 #[derive(Clone)]
+/// TelemetryWorkerHandle is a handle which allows interactions with the telemetry worker.
+/// The handle is safe to use across threads.
+///
+/// The worker won't send data to the agent until you call `TelemetryWorkerHandle::send_start`
+///
+/// To stop the worker, call `TelemetryWorkerHandle::send_stop` which trigger flush aynchronously
+/// then `TelemetryWorkerHandle::wait_for_shutdown`
 pub struct TelemetryWorkerHandle {
     sender: mpsc::Sender<TelemetryActions>,
     shutdown: Arc<InnerTelemetryShutdown>,
-    //
     cancellation_token: CancellationToken,
     // Used to spawn cancellation tasks
     runtime: runtime::Handle,
@@ -686,13 +697,18 @@ impl TelemetryWorkerHandle {
             .try_send(TelemetryActions::Lifecycle(LifecycleAction::Stop))?)
     }
 
-    pub fn cancel_requests_with_deadline(&self, deadline: Instant) {
+    fn cancel_requests_with_deadline(&self, deadline: time::Instant) {
         let token = self.cancellation_token.clone();
         let f = async move {
-            tokio::time::sleep_until(deadline).await;
+            tokio::time::sleep_until(deadline.into()).await;
             token.cancel()
         };
         self.runtime.spawn(f);
+    }
+
+    pub fn wait_for_shutdown_deadline(&self, deadline: time::Instant) {
+        self.cancel_requests_with_deadline(deadline);
+        self.wait_for_shutdown()
     }
 
     pub fn add_dependency(&self, name: String, version: Option<String>) -> Result<()> {
@@ -934,5 +950,19 @@ impl TelemetryWorkerBuilder {
         });
 
         Ok(handle)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::worker::TelemetryWorkerHandle;
+
+    fn is_send<T: Send>(_: T) {}
+    fn is_sync<T: Sync>(_: T) {}
+
+    #[test]
+    fn test_handle_sync_send() {
+        let _ = |h: TelemetryWorkerHandle| is_send(h);
+        let _ = |h: TelemetryWorkerHandle| is_sync(h);
     }
 }

@@ -336,7 +336,7 @@ mod test_c_ffi {
                 true,
                 MetricNamespace::Apm,
             );
-            ddog_handle_add_point(&handle, &context_key, 1.0, ddog_Vec_Tag_new());
+            ddog_handle_add_point(&handle, &context_key, 1.0);
 
             assert_eq!(ddog_handle_stop(&handle), MaybeError::None);
             ddog_handle_wait_for_shutdown(handle);

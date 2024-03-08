@@ -1,11 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{error::Error, time::Duration};
+use std::{error::Error, time::Duration, time::Instant};
 
 use ddcommon::tag::Tag;
 use ddtelemetry::{data, worker};
-use tokio::time::Instant;
 
 macro_rules! timeit {
     ($op_name:literal, $op:block) => {{
@@ -113,8 +112,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // About 200ms (the time it takes to send a app-closing request)
     timeit!("shutdown", {
         handle.send_stop().unwrap();
-        handle.cancel_requests_with_deadline(Instant::now() + Duration::from_millis(10));
-        handle.wait_for_shutdown();
+        handle.wait_for_shutdown_deadline(Instant::now() + Duration::from_millis(10));
     });
 
     Ok(())

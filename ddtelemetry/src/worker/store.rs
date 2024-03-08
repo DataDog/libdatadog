@@ -60,16 +60,16 @@ mod queuehasmpap {
             self.items.get(idx - self.popped)
         }
 
-        pub fn get_mut_or_insert(&mut self, key: K, default: V) -> &mut V {
+        pub fn get_mut_or_insert(&mut self, key: K, default: V) -> (&mut V, bool) {
             let hash = make_hash(&self.hash_buidler, &key);
             if let Some(&idx) = self
                 .table
                 .get(hash, |other| self.items[other - self.popped].0 == key)
             {
-                return &mut self.items[idx - self.popped].1;
+                return (&mut self.items[idx - self.popped].1, false);
             }
             self.insert_nocheck(hash, key, default);
-            &mut self.items.back_mut().unwrap().1
+            (&mut self.items.back_mut().unwrap().1, true)
         }
 
         // Insert a new item at the back if the queue if it doesn't yet exist.
