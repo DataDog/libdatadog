@@ -822,6 +822,7 @@ dependencies = [
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
+ "ddtelemetry-ffi",
  "futures",
  "hyper",
  "libc",
