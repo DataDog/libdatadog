@@ -24,6 +24,14 @@
 #define STR(x) #x
 #define LOG_LOCATION_IDENTIFIER() (ddog_CharSlice) DDOG_CHARSLICE_C(STR(__FILE__) ":" STR(__LINE__))
 
+#ifdef _WIN32
+unsigned int sleep(unsigned int seconds) {
+    Sleep(seconds * 1000);
+    return 0;
+}
+#endif
+
+
 ddog_CharSlice charslice_from_ptr(char *str) {
   return (ddog_CharSlice){
       .ptr = str,
