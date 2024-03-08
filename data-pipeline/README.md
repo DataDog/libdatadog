@@ -1,5 +1,9 @@
 # data-pipeline
 
+## Status
+Currently the project is a proof of concept so the API is not definitive and possible frequent changes should be
+expected. 
+
 ## Modules
 
 - **TraceExporter**: provides a minimum viable product (MVP) to send traces to agents. The aim of the project at this
@@ -93,23 +97,63 @@ match exporter.send(payload, payload_size) {
     Err(e) => //handle error
 }
 ```
-## Development
-For the sake of simplicity the binding projects for the different languages will be placed on libdatadog workspace
-and use the data-pipeline crate as a dependency.
-
+## Integrating the TraceExporter in the tracers
+### \[WIP\]Importing a binary into an existing project
+In case you want to use a binary to hook C-like functions in your language we will provide a crate to build such binary.
+This crate is located in:
 libdatadog             
 |                      
-+--data-pipeline       
-|                      
 +--data-pipeline-ffi   
-|                      
-+--...                 
-|                      
-|                      
-+--data-pipeline-nodejs
+
+#### Build
+```
+cargo build --debug/release
+```
+#### Artifacts
+The build will produce two artifacts:
+- `libdata-pipeline-ffi.so`
+- `libdata-pipeline.h`
+They will be located in `libdatadog/target/\[debug|release\]/`. 
+
+### Building the bindings directly in libdatadog
+In case of using a Rust framework in order to build the bindings for you language there is the posibility to create a
+new crate in libdatadog workspace and use the data-pipeline crate as a dependency.
+
+#### Create new crate
+```
+cargo new data-pipline-nodejs --lib
+```
+
+#### Set up dependencies
+In order to use the TraceExporter in your project the `data-pipeline` crate needs to be added in the bindings dependency
+list.
+
+```
+[package]
+# Package attributes
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Language bindings framework dependencies.
+
+data-pipeline = { path = ../data-pipeline }
+
+[build-dependencies]
+# Build framework dependencies
+```
+
+#### Build and artifact generation
+The building and artifact generation process will depend heavily on the framework selected.
 
 
-## Future work
+## Expected workflow from teams integrating data-pipeline
+- Create your own language bindings.
+- Hook it in the tracer.
+- Feedback about difficulties about integrating the solution, performance and package size.
+
+## Nice to have duting R&D week
 - Asynchronous interface.
 - Handle transformations between different protocol versions.
 - Agent API discovery.
