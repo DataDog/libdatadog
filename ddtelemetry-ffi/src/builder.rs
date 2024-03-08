@@ -119,8 +119,9 @@ pub unsafe extern "C" fn ddog_builder_run(
 
 #[no_mangle]
 /// Builds the telemetry worker and return a handle to it. The worker will only process and send
-/// telemetry metrics and telemetry logs. Any lifecyle/dependency/configuration event will be ignored 
-/// 
+/// telemetry metrics and telemetry logs. Any lifecyle/dependency/configuration event will be
+/// ignored
+///
 /// # Safety
 /// * handle should be a non null pointer to a null pointer
 pub unsafe extern "C" fn ddog_builder_run_metric_logs(

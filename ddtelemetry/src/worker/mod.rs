@@ -962,7 +962,9 @@ mod tests {
 
     #[test]
     fn test_handle_sync_send() {
+        #[allow(clippy::redundant_closure)]
         let _ = |h: TelemetryWorkerHandle| is_send(h);
+        #[allow(clippy::redundant_closure)]
         let _ = |h: TelemetryWorkerHandle| is_sync(h);
     }
 }
