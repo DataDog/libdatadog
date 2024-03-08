@@ -480,7 +480,10 @@ impl EnqueuedTelemetryData {
                     }
                     async fn parse(path: &PathBuf) -> Result<Vec<data::Dependency>> {
                         let mut json = tokio::fs::read(&path).await?;
+                        #[cfg(not(target_arch = "x86"))]
                         let parsed: ComposerPackages = simd_json::from_slice(json.as_mut_slice())?;
+                        #[cfg(target_arch = "x86")]
+                        let parsed = ComposerPackages { packages: vec![] }; // not interested in 32 bit
                         Ok(parsed.packages)
                     }
                     let packages = Arc::new(parse(&path).await.unwrap_or_else(|e| {
