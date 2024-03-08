@@ -1,0 +1,11 @@
+[package]
+name = "data-pipeline"
+rust-version.workspace = true
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ureq = { version = "2.9.6", features = ["charset", "json"] }
