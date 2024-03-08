@@ -1,4 +1,4 @@
-root_name: datadog-crashtracker, datadog-profiling, ddcommon, ddtelemetry, datadog-profiling-ffi, ddcommon-ffi, build_common, datadog-profiling-replayer, ddtelemetry-ffi, tools, datadog-ipc, datadog-ipc-macros, tarpc, tarpc-plugins, spawn_worker, cc_utils, datadog-sidecar, datadog-sidecar-macros, datadog-trace-normalization, datadog-trace-protobuf, datadog-trace-utils, datadog-sidecar-ffi, sidecar_mockgen, datadog-trace-obfuscation, test_spawn_from_lib, datadog-serverless-trace-mini-agent, datadog-trace-mini-agent
+root_name: datadog-crashtracker, datadog-profiling, ddcommon, ddtelemetry, datadog-profiling-ffi, ddcommon-ffi, build_common, ddtelemetry-ffi, datadog-profiling-replayer, tools, datadog-ipc, datadog-ipc-macros, tarpc, tarpc-plugins, spawn_worker, cc_utils, datadog-sidecar, datadog-sidecar-macros, datadog-trace-normalization, datadog-trace-protobuf, datadog-trace-utils, datadog-sidecar-ffi, sidecar_mockgen, datadog-trace-obfuscation, test_spawn_from_lib, datadog-serverless-trace-mini-agent, datadog-trace-mini-agent
 third_party_libraries:
 - package_name: addr2line
   package_version: 0.21.0

@@ -6,6 +6,7 @@ use ddcommon_ffi as ffi;
 pub mod builder;
 pub mod worker_handle;
 
+#[allow(unused_macros)]
 macro_rules! c_setters {
     (
         object_name => $object_name:ident,
@@ -24,9 +25,9 @@ macro_rules! c_setters {
                 pub unsafe extern "C" fn [<ddog_ $object_name _with_ $property_type_name_snakecase _ $path $(_ $path_rest)* >](
                     $object_name: &mut $object_ty,
                     param: $property_type,
-                ) -> MaybeError {
+                ) -> crate::MaybeError {
                     $object_name . $path $(.  $path_rest)* = Some(crate::try_c!($convert_fn (param)));
-                    MaybeError::None
+                    crate::MaybeError::None
                 }
             )+
 
@@ -40,15 +41,15 @@ macro_rules! c_setters {
             #[allow(clippy::redundant_closure_call)]
             #[allow(clippy::missing_safety_doc)]
             #[doc=concat!(
-                " Sets a property from it's string value.\n\n",
-                " # Available properties:\n\n",
+                "\n Sets a property from it's string value.\n\n",
+                " Available properties:\n\n",
                 $(" * ", stringify!($path $(. $path_rest)*) , "\n\n",)+
             )]
             pub unsafe extern "C" fn [<ddog_ $object_name _with_property_ $property_type_name_snakecase>](
                 $object_name: &mut $object_ty,
                 property: [<$object_ty $property_type_name_camel_case Property >],
                 param: $property_type,
-            ) -> MaybeError {
+            ) -> crate::MaybeError {
                 use [<$object_ty $property_type_name_camel_case Property >] ::*;
                 match property {
                     $(
@@ -57,15 +58,15 @@ macro_rules! c_setters {
                         }
                     )+
                 }
-                MaybeError::None
+                crate::MaybeError::None
             }
 
             #[no_mangle]
             #[allow(clippy::redundant_closure_call)]
             #[allow(clippy::missing_safety_doc)]
             #[doc=concat!(
-                " Sets a property from it's string value.\n\n",
-                " # Available properties:\n\n",
+                "\n Sets a property from it's string value.\n\n",
+                " Available properties:\n\n",
                 $(
                     " * ", stringify!($path $(. $path_rest)*) , "\n\n",
                 )+
@@ -74,7 +75,7 @@ macro_rules! c_setters {
                 $object_name: &mut $object_ty,
                 property: ffi::CharSlice,
                 param: $property_type,
-            ) -> MaybeError {
+            ) -> crate::MaybeError {
                 let property = crate::try_c!(property.try_to_utf8());
                 match property {
                     $(
@@ -83,9 +84,9 @@ macro_rules! c_setters {
                         }
                     )+
                     // TODO this is an error
-                    _ => return MaybeError::None,
+                    _ => return crate::MaybeError::None,
                 }
-                MaybeError::None
+                crate::MaybeError::None
             }
         }
 
@@ -106,6 +107,7 @@ macro_rules! try_c {
     };
 }
 
+#[allow(unused_imports)]
 pub(crate) use c_setters;
 
 pub type MaybeError = ffi::Option<ffi::Vec<u8>>;
@@ -139,7 +141,7 @@ mod test_c_ffi {
                     ffi::CharSlice::from("language_version"),
                     ffi::CharSlice::from("tracer_version"),
                 ),
-                MaybeError::None
+                crate::MaybeError::None
             );
             let mut builder = builder.assume_init();
 
@@ -149,7 +151,7 @@ mod test_c_ffi {
                     ffi::CharSlice::from("runtime_id"),
                     ffi::CharSlice::from("abcd")
                 ),
-                MaybeError::None,
+                crate::MaybeError::None,
             );
             assert_eq!(builder.runtime_id.as_deref(), Some("abcd"));
 
@@ -159,7 +161,7 @@ mod test_c_ffi {
                     ffi::CharSlice::from("application.runtime_name"),
                     ffi::CharSlice::from("rust")
                 ),
-                MaybeError::None,
+                crate::MaybeError::None,
             );
             assert_eq!(builder.application.runtime_name.as_deref(), Some("rust"));
 
@@ -169,7 +171,7 @@ mod test_c_ffi {
                     ffi::CharSlice::from("host.kernel_version"),
                     ffi::CharSlice::from("ダタドグ")
                 ),
-                MaybeError::None,
+                crate::MaybeError::None,
             );
             assert_eq!(builder.host.kernel_version.as_deref(), Some("ダタドグ"));
 
@@ -196,7 +198,7 @@ mod test_c_ffi {
                     ffi::CharSlice::from("language_version"),
                     ffi::CharSlice::from("tracer_version"),
                 ),
-                MaybeError::None,
+                crate::MaybeError::None,
             );
             let mut builder = builder.assume_init();
 
@@ -206,7 +208,7 @@ mod test_c_ffi {
                     TelemetryWorkerBuilderStrProperty::RuntimeId,
                     ffi::CharSlice::from("abcd")
                 ),
-                MaybeError::None,
+                crate::MaybeError::None,
             );
             assert_eq!(builder.runtime_id.as_deref(), Some("abcd"));
 
@@ -216,7 +218,7 @@ mod test_c_ffi {
                     TelemetryWorkerBuilderStrProperty::ApplicationRuntimeName,
                     ffi::CharSlice::from("rust")
                 ),
-                MaybeError::None,
+                crate::MaybeError::None,
             );
             assert_eq!(builder.application.runtime_name.as_deref(), Some("rust"));
 
@@ -226,7 +228,7 @@ mod test_c_ffi {
                     TelemetryWorkerBuilderStrProperty::HostKernelVersion,
                     ffi::CharSlice::from("ダタドグ")
                 ),
-                MaybeError::None,
+                crate::MaybeError::None,
             );
             assert_eq!(builder.host.kernel_version.as_deref(), Some("ダタドグ"));
         }

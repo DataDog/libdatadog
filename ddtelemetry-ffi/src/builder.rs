@@ -1,7 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon::Endpoint;
 use ddcommon_ffi as ffi;
 use ddtelemetry::{
     data,
@@ -11,6 +10,16 @@ use ffi::slice::AsBytes;
 use std::ptr::NonNull;
 
 use crate::MaybeError;
+
+#[cfg(not(feature = "expanded_builder_macros"))]
+mod macros;
+#[cfg(not(feature = "expanded_builder_macros"))]
+pub use macros::*;
+
+#[cfg(feature = "expanded_builder_macros")]
+mod expanded;
+#[cfg(feature = "expanded_builder_macros")]
+pub use expanded::*;
 
 /// # Safety
 /// * builder should be a non null pointer to a null pointer to a builder
@@ -54,54 +63,6 @@ pub unsafe extern "C" fn ddog_builder_instantiate_with_hostname(
     out_builder.as_ptr().write(new);
     MaybeError::None
 }
-
-crate::c_setters!(
-    object_name => builder,
-    object_type => TelemetryWorkerBuilder,
-    property_type => ffi::CharSlice,
-    property_type_name_snakecase => str,
-    property_type_name_camel_case => Str,
-    convert_fn => (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) }),
-    SETTERS {
-        application.service_version,
-        application.env,
-        application.runtime_name,
-        application.runtime_version,
-        application.runtime_patches,
-
-        host.container_id,
-        host.os,
-        host.kernel_name,
-        host.kernel_release,
-        host.kernel_version,
-
-        runtime_id
-    }
-);
-
-crate::c_setters!(
-    object_name => builder,
-    object_type => TelemetryWorkerBuilder,
-    property_type => bool,
-    property_type_name_snakecase => bool,
-    property_type_name_camel_case => Bool,
-    convert_fn => (|b: bool| -> Result<_, String> { Ok(b) }),
-    SETTERS {
-        config.telemetry_debug_logging_enabled,
-    }
-);
-
-crate::c_setters!(
-    object_name => builder,
-    object_type => TelemetryWorkerBuilder,
-    property_type => &Endpoint,
-    property_type_name_snakecase => endpoint,
-    property_type_name_camel_case => Endpoint,
-    convert_fn => (|e: &Endpoint| -> Result<_, String> { Ok(e.clone()) }),
-    SETTERS {
-        config.endpoint,
-    }
-);
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
