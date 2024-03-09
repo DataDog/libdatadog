@@ -103,13 +103,12 @@ cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
 datadog_profiling_ffi="datadog-profiling-ffi"
-FEATURES="--features cbindgen"
+FEATURES="--features cbindgen,datadog-profiling-ffi/ddtelemetry-ffi"
 if [[ "$symbolizer" -eq 1 ]]; then
-    FEATURES="--features cbindgen,symbolizer"
+    FEATURES="--features cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,symbolizer"
 fi
 
-echo "Building the ${datadog_profiling_ffi} crate (may take some time). Features = ${FEATURES}..."
-DEBUG_BUILD=1 DESTDIR="$destdir" cargo build ${FEATURES} --package="${datadog_profiling_ffi}" --release --target "${target}"
+DESTDIR="$destdir" cargo build --package="${datadog_profiling_ffi}" ${FEATURES} --release --target "${target}"
 
 # Remove _ffi suffix when copying
 shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"
@@ -170,7 +169,8 @@ cd -
 echo "Building tools"
 DESTDIR=$destdir cargo build --package tools --bins
 
-"$CARGO_TARGET_DIR"/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h"
+echo "Generating $destdir/include/libdatadog headers..."
+"$CARGO_TARGET_DIR"/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h" "$destdir/include/datadog/telemetry.h"
 
 # Don't build the crashtracker on windows
 if [[ "$target" != "x86_64-pc-windows-msvc" ]]; then

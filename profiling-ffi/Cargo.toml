@@ -16,6 +16,7 @@ crate-type = ["staticlib", "cdylib"]
 [features]
 default = []
 cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+ddtelemetry-ffi = ["dep:ddtelemetry-ffi"]
 symbolizer = ["symbolizer-ffi"]
 
 [build-dependencies]
@@ -29,6 +30,7 @@ datadog-profiling = { path = "../profiling" }
 hyper = { version = "0.14", default-features = false }
 ddcommon = { path = "../ddcommon"}
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
 libc = "0.2"
 tokio-util = "0.7.1"
 serde_json = { version = "1.0" }

@@ -13,6 +13,10 @@ mod crashtracker;
 mod exporter;
 mod profiles;
 
+// re-export telemetry ffi
+#[cfg(feature = "ddtelemetry-ffi")]
+pub use ddtelemetry_ffi::*;
+
 /// Represents time since the Unix Epoch in seconds plus nanoseconds.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]

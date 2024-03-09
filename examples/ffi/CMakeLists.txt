@@ -18,8 +18,10 @@ endif()
 add_executable(profiles profiles.c)
 target_link_libraries(profiles PRIVATE Datadog::Profiling)
 
-
 if(BUILD_SYMBOLIZER)
   add_executable(symbolizer symbolizer.cpp)
   target_link_libraries(symbolizer PRIVATE Datadog::Profiling)
 endif()
+
+add_executable(telemetry telemetry.c)
+target_link_libraries(telemetry PRIVATE Datadog::Profiling)
