@@ -39,7 +39,7 @@ impl AgentClient {
         }
     }
 
-    pub fn blocking_send_trace(&mut self, url: &str, payload: Vec<u8>, trace_count: usize) -> Result<String, String> {
+    pub fn blocking_send_trace(&mut self, url: &str, payload: &[u8], trace_count: usize) -> Result<String, String> {
         let result = self.client
            .post(url)
            .set("Content-Type", "application/msgpack")

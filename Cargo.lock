@@ -718,6 +718,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "data-pipeline-ffi"
+version = "6.0.0"
+dependencies = [
+ "data-pipeline",
+]
+
+[[package]]
 name = "datadog-crashtracker"
 version = "6.0.0"
 dependencies = [

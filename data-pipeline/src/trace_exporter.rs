@@ -11,7 +11,7 @@ impl TraceExporter {
         TraceExporterBuilder::default()
     }
 
-    pub fn send(&mut self, data: Vec<u8>, trace_count: usize) -> Result<String, String> {
+    pub fn send(&mut self, data: &[u8], trace_count: usize) -> Result<String, String> {
         let url = format!("{}:{}{}", self.host, self.port, "/v0.4/traces");
         self.client.blocking_send_trace(&url, data, trace_count)
     }
@@ -30,42 +30,42 @@ pub struct TraceExporterBuilder {
 
 impl TraceExporterBuilder {
 
-    fn set_timeout(&mut self, timeout: u64) -> &mut TraceExporterBuilder {
+    pub fn set_timeout(&mut self, timeout: u64) -> &mut TraceExporterBuilder {
         self.timeout = Some(timeout);
         self
     }
 
-    fn set_host(&mut self, host: &str) -> &mut TraceExporterBuilder {
+    pub fn set_host(&mut self, host: &str) -> &mut TraceExporterBuilder {
         self.host = Some(String::from(host));
         self
     }
 
-    fn set_port(&mut self, port: u16) -> &mut TraceExporterBuilder {
+    pub fn set_port(&mut self, port: u16) -> &mut TraceExporterBuilder {
         self.port = Some(port);
         self
     }
 
-    fn set_tracer_version(&mut self, tracer_version: &str) -> &mut TraceExporterBuilder {
+    pub fn set_tracer_version(&mut self, tracer_version: &str) -> &mut TraceExporterBuilder {
         self.tracer_version = Some(String::from(tracer_version));
         self
     }
 
-    fn set_language(&mut self, lang: &str) -> &mut TraceExporterBuilder {
+    pub fn set_language(&mut self, lang: &str) -> &mut TraceExporterBuilder {
         self.language = Some(String::from(lang));
         self
     }
 
-    fn set_language_version(&mut self, lang_version: &str) -> &mut TraceExporterBuilder {
+    pub fn set_language_version(&mut self, lang_version: &str) -> &mut TraceExporterBuilder {
         self.language_version = Some(String::from(lang_version));
         self
     }
 
-    fn set_language_interpreter(&mut self, lang_interpreter: &str) -> &mut TraceExporterBuilder {
+    pub fn set_language_interpreter(&mut self, lang_interpreter: &str) -> &mut TraceExporterBuilder {
         self.interpreter = Some(String::from(lang_interpreter));
         self
     }
 
-    fn build(&mut self) -> TraceExporter {
+    pub fn build(&mut self) -> TraceExporter {
         TraceExporter{
             client: AgentClient::new(self.timeout.unwrap_or_default(),
                         self.tracer_version.as_ref().unwrap(),

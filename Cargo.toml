@@ -26,7 +26,8 @@ members = [
   "tests/spawn_from_lib",
   "serverless",
   "bin_tests",
-  "data-pipeline"
+  "data-pipeline",
+  "data-pipeline-ffi"
 ]
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"
