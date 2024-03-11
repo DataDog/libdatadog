@@ -49,8 +49,8 @@ int main(void) {
   const ddog_prof_CrashtrackerMetadata metadata = {
       .profiling_library_name = to_slice_c_char("libdatadog"),
       .profiling_library_version = to_slice_c_char("42"),
-      .tags = &tags,
       .family = to_slice_c_char("rust"),
+      .tags = &tags,
   };
 
   check_result(ddog_crashinfo_set_metadata(crashinfo.get(), metadata), "Failed to add metadata");
