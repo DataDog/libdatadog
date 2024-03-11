@@ -22,7 +22,7 @@
     }                                                                                              \
   }
 #define STR(x) #x
-#define LOG_LOCATION_IDENTIFIER() (ddog_CharSlice) DDOG_CHARSLICE_C(STR(__FILE__) ":" STR(__LINE__))
+#define LOG_LOCATION_IDENTIFIER() DDOG_CHARSLICE_C(STR(__FILE__) ":" STR(__LINE__))
 
 #ifdef _WIN32
 unsigned int sleep(unsigned int seconds) {
@@ -80,8 +80,8 @@ int main(void) {
   for (int i = 0; i < 10; i++) {
     TRY(ddog_handle_add_log(
         handle, LOG_LOCATION_IDENTIFIER(),
-        (ddog_CharSlice)DDOG_CHARSLICE_C("no kinder bueno left in the cafetaria"),
-        DDOG_LOG_LEVEL_ERROR, (ddog_CharSlice)DDOG_CHARSLICE_C("")));
+        DDOG_CHARSLICE_C("no kinder bueno left in the cafetaria"),
+        DDOG_LOG_LEVEL_ERROR, DDOG_CHARSLICE_C("")));
   }
 
   sleep(11);
