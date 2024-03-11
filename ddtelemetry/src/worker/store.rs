@@ -37,6 +37,7 @@ mod queuehasmpap {
             self.items.is_empty()
         }
 
+        // Remove the oldest item in the queue and return it
         pub fn pop_front(&mut self) -> Option<(K, V)> {
             let (k, v) = self.items.pop_front()?;
             let hash = make_hash(&self.hash_buidler, &k);
@@ -59,18 +60,21 @@ mod queuehasmpap {
             self.items.get(idx - self.popped)
         }
 
-        pub fn get_mut_or_insert(&mut self, key: K, default: V) -> &mut V {
+        pub fn get_mut_or_insert(&mut self, key: K, default: V) -> (&mut V, bool) {
             let hash = make_hash(&self.hash_buidler, &key);
             if let Some(&idx) = self
                 .table
                 .get(hash, |other| self.items[other - self.popped].0 == key)
             {
-                return &mut self.items[idx - self.popped].1;
+                return (&mut self.items[idx - self.popped].1, false);
             }
             self.insert_nocheck(hash, key, default);
-            &mut self.items.back_mut().unwrap().1
+            (&mut self.items.back_mut().unwrap().1, true)
         }
 
+        // Insert a new item at the back if the queue if it doesn't yet exist.
+        //
+        // If the key already exists, replace the previous value
         pub fn insert(&mut self, key: K, value: V) -> (usize, bool) {
             let hash = make_hash(&self.hash_buidler, &key);
             if let Some(&idx) = self
@@ -170,12 +174,15 @@ where
         self.unflushed.push_back(idx);
     }
 
+    // Reinsert all already flushed items in the flush queue
     pub fn unflush_stored(&mut self) {
+        self.unflushed.clear();
         for i in self.items.iter_idx() {
-            self.unflushed.push_front(i);
+            self.unflushed.push_back(i);
         }
     }
 
+    // Remove the first `count` items in the queue
     pub fn removed_flushed(&mut self, count: usize) {
         for _ in 0..count {
             self.unflushed.pop_front();
@@ -263,5 +270,18 @@ mod tests {
 
         assert_eq!(store.unflushed.len(), 4);
         assert_eq!(store.unflushed().collect::<Vec<_>>(), &[&6, &7, &8, &9]);
+    }
+
+    #[test]
+    fn test_unflush_stored() {
+        let mut store = Store::new(5);
+        for i in 2..7 {
+            store.insert(i);
+        }
+        assert_eq!(store.unflushed.len(), 5);
+
+        assert_eq!(store.unflushed().collect::<Vec<_>>(), &[&2, &3, &4, &5, &6]);
+        store.unflush_stored();
+        assert_eq!(store.unflushed().collect::<Vec<_>>(), &[&2, &3, &4, &5, &6]);
     }
 }

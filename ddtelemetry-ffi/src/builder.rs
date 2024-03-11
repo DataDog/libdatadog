@@ -7,6 +7,7 @@ use ddtelemetry::{
     worker::{TelemetryWorkerBuilder, TelemetryWorkerHandle},
 };
 use ffi::slice::AsBytes;
+use std::ptr::NonNull;
 
 use crate::MaybeError;
 
@@ -24,7 +25,7 @@ pub use expanded::*;
 /// * builder should be a non null pointer to a null pointer to a builder
 #[no_mangle]
 pub unsafe extern "C" fn ddog_builder_instantiate(
-    builder: &mut *mut TelemetryWorkerBuilder,
+    out_builder: NonNull<Box<TelemetryWorkerBuilder>>,
     service_name: ffi::CharSlice,
     language_name: ffi::CharSlice,
     language_version: ffi::CharSlice,
@@ -36,9 +37,7 @@ pub unsafe extern "C" fn ddog_builder_instantiate(
         language_version.to_utf8_lossy().into_owned(),
         tracer_version.to_utf8_lossy().into_owned(),
     ));
-    // Leaking is the last thing we do before returning
-    // Otherwise we would need to manually drop it in case of error
-    *builder = Box::into_raw(new);
+    out_builder.as_ptr().write(new);
     MaybeError::None
 }
 
@@ -46,7 +45,7 @@ pub unsafe extern "C" fn ddog_builder_instantiate(
 /// * builder should be a non null pointer to a null pointer to a builder
 #[no_mangle]
 pub unsafe extern "C" fn ddog_builder_instantiate_with_hostname(
-    builder: &mut *mut TelemetryWorkerBuilder,
+    out_builder: NonNull<Box<TelemetryWorkerBuilder>>,
     hostname: ffi::CharSlice,
     service_name: ffi::CharSlice,
     language_name: ffi::CharSlice,
@@ -61,9 +60,7 @@ pub unsafe extern "C" fn ddog_builder_instantiate_with_hostname(
         tracer_version.to_utf8_lossy().into_owned(),
     ));
 
-    // Leaking is the last thing we do before returning
-    // Otherwise we would need to manually drop it in case of error
-    *builder = Box::into_raw(new);
+    out_builder.as_ptr().write(new);
     MaybeError::None
 }
 
@@ -106,12 +103,33 @@ pub unsafe extern "C" fn ddog_builder_with_config(
 }
 
 #[no_mangle]
+/// Builds the telemetry worker and return a handle to it
+///
 /// # Safety
 /// * handle should be a non null pointer to a null pointer
 pub unsafe extern "C" fn ddog_builder_run(
     builder: Box<TelemetryWorkerBuilder>,
-    handle: &mut *mut TelemetryWorkerHandle,
+    out_handle: NonNull<Box<TelemetryWorkerHandle>>,
 ) -> MaybeError {
-    *handle = Box::into_raw(Box::new(crate::try_c!(builder.run())));
+    out_handle
+        .as_ptr()
+        .write(Box::new(crate::try_c!(builder.run())));
+    MaybeError::None
+}
+
+#[no_mangle]
+/// Builds the telemetry worker and return a handle to it. The worker will only process and send
+/// telemetry metrics and telemetry logs. Any lifecyle/dependency/configuration event will be
+/// ignored
+///
+/// # Safety
+/// * handle should be a non null pointer to a null pointer
+pub unsafe extern "C" fn ddog_builder_run_metric_logs(
+    builder: Box<TelemetryWorkerBuilder>,
+    out_handle: NonNull<Box<TelemetryWorkerHandle>>,
+) -> MaybeError {
+    out_handle
+        .as_ptr()
+        .write(Box::new(crate::try_c!(builder.run_metrics_logs())));
     MaybeError::None
 }
