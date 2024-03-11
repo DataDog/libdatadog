@@ -1,6 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "symbolizer")]
+pub use symbolizer_ffi::*;
+
 use std::fmt::Debug;
 use std::time::SystemTime;
 
@@ -11,6 +14,9 @@ mod exporter;
 mod profiles;
 
 pub use crashtracker::*;
+// re-export telemetry ffi
+#[cfg(feature = "ddtelemetry-ffi")]
+pub use ddtelemetry_ffi::*;
 
 /// Represents time since the Unix Epoch in seconds plus nanoseconds.
 #[repr(C)]
