@@ -54,7 +54,7 @@ int main(void) {
   };
 
   check_result(ddog_crashinfo_set_metadata(crashinfo.get(), metadata), "Failed to add metadata");
-  ddog_Endpoint endpoint = ddog_Endpoint_file(to_slice_c_char("file://./test.txt"));
+  ddog_Endpoint endpoint = ddog_Endpoint_file(to_slice_c_char("file://tmp/test.txt"));
   check_result(ddog_crashinfo_upload_to_endpoint(crashinfo.get(), endpoint, 1),
                "Failed to export to file");
 }

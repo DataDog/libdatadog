@@ -86,7 +86,7 @@ pub extern "C" fn endpoint_agentless<'a>(
 /// # Arguments
 /// * `filename` - Path to the output file "/tmp/file.txt".
 #[export_name = "ddog_Endpoint_file"]
-pub extern "C" fn endpoint_file<'a>(filename: CharSlice<'a>) -> Endpoint<'a> {
+pub extern "C" fn endpoint_file(filename: CharSlice) -> Endpoint {
     Endpoint::File(filename)
 }
 unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
@@ -118,7 +118,10 @@ pub unsafe fn try_to_endpoint(endpoint: Endpoint) -> anyhow::Result<exporter::En
                 Cow::Owned(api_key_str.to_owned()),
             )
         }
-        Endpoint::File(_) => todo!(),
+        Endpoint::File(filename) => {
+            let filename = filename.try_to_utf8()?;
+            exporter::config::file(filename)
+        }
     }
 }
 
