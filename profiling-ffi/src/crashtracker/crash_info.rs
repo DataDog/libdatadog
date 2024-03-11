@@ -1,14 +1,15 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use super::{CrashtrackerConfiguration, CrashtrackerMetadata, SigInfo};
 use crate::crashtracker::{
     crashinfo_ptr_to_inner, option_from_char_slice, CrashInfo, CrashInfoNewResult,
     CrashtrackerResult, StackFrame,
 };
+use crate::exporter::{self, Endpoint};
 use anyhow::Context;
 use ddcommon_ffi::{slice::AsBytes, CharSlice, Slice};
-
-use super::{CrashtrackerConfiguration, CrashtrackerMetadata, SigInfo};
+use std::time::Duration;
 
 /// Create a new crashinfo, and returns an opaque reference to it.
 /// # Safety
@@ -173,13 +174,14 @@ pub unsafe extern "C" fn ddog_crashinfo_upload_to_telemetry(
 #[must_use]
 pub unsafe extern "C" fn ddog_crashinfo_upload_to_endpoint(
     crashinfo: *mut CrashInfo,
-    config: CrashtrackerConfiguration,
+    endpoint: Endpoint,
+    timeout_secs: u64,
 ) -> CrashtrackerResult {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
-        let config: datadog_crashtracker::CrashtrackerConfiguration = config.try_into()?;
-        let endpoint = config.endpoint.context("Expected endpoint")?;
-        crashinfo.upload_to_endpoint(endpoint, config.timeout)?;
+        let endpoint = exporter::try_to_endpoint(endpoint)?;
+        let timeout = Duration::from_secs(timeout_secs);
+        crashinfo.upload_to_endpoint(endpoint, timeout)?;
         anyhow::Ok(())
     })()
     .context("ddog_crashinfo_upload_to_endpoint failed")
