@@ -1,11 +1,9 @@
-extern "C" {
-#include <datadog/common.h>
-#include <datadog/profiling.h>
-}
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <datadog/common.h>
+#include <datadog/profiling.h>
 #include <memory>
 #include <thread>
 
