@@ -37,6 +37,7 @@ pub enum SendResult {
 pub enum Endpoint<'a> {
     Agent(CharSlice<'a>),
     Agentless(CharSlice<'a>, CharSlice<'a>),
+    File(CharSlice<'a>),
 }
 
 #[repr(C)]
@@ -79,6 +80,15 @@ pub extern "C" fn endpoint_agentless<'a>(
     Endpoint::Agentless(site, api_key)
 }
 
+/// Creates an endpoint that writes to a file.
+/// Useful for local debugging.
+/// Currently only supported by the crashtracker.
+/// # Arguments
+/// * `filename` - Path to the output file "/tmp/file.txt".
+#[export_name = "ddog_Endpoint_file"]
+pub extern "C" fn endpoint_file<'a>(filename: CharSlice<'a>) -> Endpoint<'a> {
+    Endpoint::File(filename)
+}
 unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
     let str: &str = slice.try_to_utf8()?;
     #[cfg(unix)]
@@ -108,6 +118,7 @@ pub unsafe fn try_to_endpoint(endpoint: Endpoint) -> anyhow::Result<exporter::En
                 Cow::Owned(api_key_str.to_owned()),
             )
         }
+        Endpoint::File(_) => todo!(),
     }
 }
 
