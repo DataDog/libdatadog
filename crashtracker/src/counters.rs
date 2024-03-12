@@ -94,6 +94,7 @@ pub fn end_profiling_op(op: ProfilingOpTypes) -> anyhow::Result<()> {
 /// SIGNAL SAFETY:
 ///     This function is careful to only write to the handle, without doing any
 ///     unnecessary mutexes or memory allocation.
+#[cfg(unix)]
 pub fn emit_counters(w: &mut impl Write) -> anyhow::Result<()> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_COUNTERS}")?;
     for (i, c) in PROFILING_OP_COUNTERS.iter().enumerate() {

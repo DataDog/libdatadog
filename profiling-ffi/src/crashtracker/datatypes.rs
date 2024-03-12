@@ -140,6 +140,24 @@ pub enum CrashInfoNewResult {
     Err(Error),
 }
 
+#[repr(C)]
+pub enum CrashtrackerGetCountersResult {
+    Ok([i64; ProfilingOpTypes::SIZE as usize]),
+    #[allow(dead_code)]
+    Err(Error),
+}
+
+impl From<anyhow::Result<[i64; ProfilingOpTypes::SIZE as usize]>>
+    for CrashtrackerGetCountersResult
+{
+    fn from(value: anyhow::Result<[i64; ProfilingOpTypes::SIZE as usize]>) -> Self {
+        match value {
+            Ok(x) => Self::Ok(x),
+            Err(err) => Self::Err(err.into()),
+        }
+    }
+}
+
 /// A generic result type for when a crashtracking operation may fail,
 /// but there's nothing to return in the case of success.
 #[repr(C)]
@@ -155,8 +173,8 @@ pub enum CrashtrackerResult {
 impl From<anyhow::Result<()>> for CrashtrackerResult {
     fn from(value: anyhow::Result<()>) -> Self {
         match value {
-            Ok(_) => CrashtrackerResult::Ok(true),
-            Err(err) => CrashtrackerResult::Err(err.into()),
+            Ok(_) => Self::Ok(true),
+            Err(err) => Self::Err(err.into()),
         }
     }
 }

@@ -1,39 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
-
 use crate::crashtracker::datatypes::*;
 use anyhow::Context;
-
-#[no_mangle]
-#[must_use]
-/// Atomically increments the count associated with `op`.
-/// Useful for tracking what operations were occuring when a crash occurred.
-///
-/// # Safety
-/// No safety concerns.
-pub unsafe extern "C" fn ddog_prof_crashtracker_begin_profiling_op(
-    op: ProfilingOpTypes,
-) -> CrashtrackerResult {
-    datadog_crashtracker::begin_profiling_op(op)
-        .context("ddog_prof_crashtracker_begin_profiling_op failed")
-        .into()
-}
-
-#[no_mangle]
-#[must_use]
-/// Atomically decrements the count associated with `op`.
-/// Useful for tracking what operations were occuring when a crash occurred.
-///
-/// # Safety
-/// No safety concerns.
-pub unsafe extern "C" fn ddog_prof_crashtracker_end_profiling_op(
-    op: ProfilingOpTypes,
-) -> CrashtrackerResult {
-    datadog_crashtracker::end_profiling_op(op)
-        .context("ddog_prof_crashtracker_end_profiling_op failed")
-        .into()
-}
 
 #[no_mangle]
 #[must_use]
