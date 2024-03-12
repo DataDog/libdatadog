@@ -28,3 +28,6 @@ target_link_libraries(telemetry PRIVATE Datadog::Profiling)
 
 add_executable(telemetry_metrics telemetry_metrics.c)
 target_link_libraries(telemetry_metrics PRIVATE Datadog::Profiling)
+
+add_executable(crashtracking crashtracking.c)
+target_link_libraries(crashtracking PRIVATE Datadog::Profiling)
