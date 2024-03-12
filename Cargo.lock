@@ -721,6 +721,7 @@ dependencies = [
 name = "data-pipeline-ffi"
 version = "6.0.0"
 dependencies = [
+ "build_common",
  "data-pipeline",
 ]
 

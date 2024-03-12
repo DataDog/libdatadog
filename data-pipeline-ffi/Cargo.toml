@@ -10,5 +10,8 @@ license.workspace = true
 [lib]
 crate-type = ["cdylib"]
 
+[build-dependencies]
+build_common = { path = "../build-common" }
+
 [dependencies]
 data-pipeline = { path = "../data-pipeline" }

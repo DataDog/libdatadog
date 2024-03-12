@@ -39,6 +39,7 @@ pub unsafe extern "C" fn dd_trace_exporter_free(ctx: *mut ExporterHandle) {
     drop(Box::from_raw(ctx))
 }
 
+#[no_mangle]
 pub unsafe extern "C" fn dd_trace_exporter_send(
     ctx: *mut ExporterHandle,
     trace: *const u8,
