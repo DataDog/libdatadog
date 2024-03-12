@@ -11,8 +11,8 @@ license.workspace = true
 crate-type = ["lib"]
 
 [target.'cfg(unix)'.dependencies]
-# TODO: move to a named release once https://github.com/libbpf/blazesym/pull/520 makes it to release
-blazesym = {git = "https://github.com/libbpf/blazesym.git", rev = "4fa15cb"}
+# Should be kept in sync with the libdatadog symbolizer crate (also using blasesym)
+blazesym = {git = "https://github.com/libbpf/blazesym.git", rev = "v0.2.0-alpha.11"}
 
 [dependencies]
 anyhow = "1.0"
