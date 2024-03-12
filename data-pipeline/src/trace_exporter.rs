@@ -10,14 +10,46 @@ use log::error;
 use std::{collections::HashMap, ops::Deref, str::FromStr};
 use tokio::runtime::Runtime;
 
-pub struct TraceExporter<'a> {
-    endpoint: Endpoint,
-    tracer_header_tags: TracerHeaderTags<'a>,
-    no_proxy: bool,
-    runtime: Runtime,
+struct TracerTags {
+    tracer_version: String,
+    language: String,
+    language_version: String,
+    language_interpreter: String
 }
 
-impl TraceExporter<'_> {
+impl<'a> From<&'a TracerTags> for TracerHeaderTags<'a> {
+    fn from(tags: &'a TracerTags) -> TracerHeaderTags<'a> {
+        let mut header_tags = TracerHeaderTags::default();
+        header_tags.lang = &tags.language;
+        header_tags.lang_version = &tags.language_version;
+        header_tags.tracer_version = &tags.tracer_version;
+        header_tags.lang_interpreter = &tags.language_interpreter;
+
+        header_tags
+    }
+}
+
+impl From<TracerTags> for HashMap<&'static str, String> {
+    fn from(tags: TracerTags) -> HashMap<&'static str, String> {
+        let mut header_tags = TracerHeaderTags::default();
+        header_tags.lang = &tags.language;
+        header_tags.lang_version = &tags.language_version;
+        header_tags.tracer_version = &tags.tracer_version;
+        header_tags.lang_interpreter = &tags.language_interpreter;
+
+        header_tags.into()
+    }
+}
+
+
+pub struct TraceExporter {
+    endpoint: Endpoint,
+    tags: TracerTags,
+    no_proxy: bool,
+    runtime: Runtime
+}
+
+impl TraceExporter {
     pub fn builder() -> TraceExporterBuilder {
         TraceExporterBuilder::default()
     }
@@ -41,7 +73,8 @@ impl TraceExporter<'_> {
                         concat!("Tracer/", env!("CARGO_PKG_VERSION")),
                     )
                     .method(Method::POST);
-                let headers: HashMap<&'static str, String> = self.tracer_header_tags.into();
+
+                let headers: HashMap<&'static str, String> = self.tags.into();
 
                 for (key, value) in &headers {
                     req_builder = req_builder.header(*key, value);
@@ -94,16 +127,18 @@ impl TraceExporter<'_> {
             return Ok(String::from("{}"));
         }
 
+        let header_tags: TracerHeaderTags<'_> = (&self.tags).into();
+
         let tracer_payload = trace_utils::collect_trace_chunks(
             traces,
-            &self.tracer_header_tags,
+            &header_tags,
             |_chunk, _root_span_index| {},
         );
 
         let send_data = SendData::new(
             size,
             tracer_payload,
-            self.tracer_header_tags,
+            header_tags,
             &self.endpoint,
         );
         self.runtime.block_on(async {
@@ -128,7 +163,6 @@ impl TraceExporter<'_> {
 pub struct TraceExporterBuilder {
     host: Option<String>,
     port: Option<u16>,
-    timeout: Option<u64>,
     tracer_version: Option<String>,
     language: Option<String>,
     language_version: Option<String>,
@@ -137,11 +171,6 @@ pub struct TraceExporterBuilder {
 }
 
 impl TraceExporterBuilder {
-    pub fn set_timeout(&mut self, timeout: u64) -> &mut TraceExporterBuilder {
-        self.timeout = Some(timeout);
-        self
-    }
-
     pub fn set_host(&mut self, host: &str) -> &mut TraceExporterBuilder {
         self.host = Some(String::from(host));
         self
@@ -181,19 +210,6 @@ impl TraceExporterBuilder {
     }
 
     pub fn build(&mut self) -> anyhow::Result<TraceExporter> {
-        let mut tags = TracerHeaderTags::default();
-        if let Some(lang) = &self.language {
-            tags.lang = lang
-        };
-        if let Some(lang_version) = &self.language_version {
-            tags.lang_version = lang_version
-        };
-        if let Some(interpreter) = &self.interpreter {
-            tags.lang_interpreter = interpreter
-        };
-        if let Some(tracer_version) = &self.tracer_version {
-            tags.tracer_version = tracer_version
-        };
         let version = if self.no_proxy { "v0.7" } else { "v0.4" };
         let endpoint = Endpoint {
             url: hyper::Uri::from_str(
@@ -212,7 +228,12 @@ impl TraceExporterBuilder {
             .build()?;
         Ok(TraceExporter {
             endpoint,
-            tracer_header_tags: tags,
+            tags: TracerTags {
+                tracer_version: self.tracer_version.clone().unwrap(),
+                language_version: self.language_version.clone().unwrap(),
+                language_interpreter: self.interpreter.clone().unwrap(),
+                language: self.language.clone().unwrap(),
+            },
             no_proxy: self.no_proxy,
             runtime,
         })
@@ -227,7 +248,6 @@ mod tests {
     fn new() {
         let mut builder = TraceExporterBuilder::default();
         let exporter = builder
-            .set_timeout(10)
             .set_host("192.168.1.1")
             .set_port(8127)
             .set_proxy(false)
@@ -242,7 +262,6 @@ mod tests {
             exporter.endpoint.url.to_string(),
             "http://192.168.1.1:8127/v0.7/traces"
         );
-        assert_eq!(builder.timeout.unwrap(), 10);
         assert_eq!(builder.host.unwrap(), "192.168.1.1");
         assert_eq!(builder.port.unwrap(), 8127);
         assert_eq!(builder.tracer_version.unwrap(), "v0.1");
@@ -255,7 +274,6 @@ mod tests {
     fn new_defaults() {
         let mut builder = TraceExporterBuilder::default();
         let exporter = builder
-            .set_timeout(10)
             .set_tracer_version("v0.1")
             .set_language("nodejs")
             .set_language_version("1.0")
@@ -267,7 +285,6 @@ mod tests {
             exporter.endpoint.url.to_string(),
             "http://127.0.0.1:8126/v0.4/traces"
         );
-        assert_eq!(builder.timeout.unwrap(), 10);
         assert_eq!(builder.tracer_version.unwrap(), "v0.1");
         assert_eq!(builder.language.unwrap(), "nodejs");
         assert_eq!(builder.language_version.unwrap(), "1.0");
