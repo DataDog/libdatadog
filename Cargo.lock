@@ -741,7 +741,11 @@ name = "data-pipeline-ffi"
 version = "8.0.0"
 dependencies = [
  "build_common",
+ "bytes",
+ "cbindgen",
  "data-pipeline",
+ "ddcommon-ffi",
+ "libc",
 ]
 
 [[package]]
