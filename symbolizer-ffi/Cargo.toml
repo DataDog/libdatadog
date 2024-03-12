@@ -1,0 +1,18 @@
+[package]
+name = "symbolizer-ffi"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+build_common = { path = "../build-common" }
+
+[lib]
+crate-type = ["lib"]
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+# Should be kept in sync with the libdatadog crashtracker crate (also using blasesym)
+blazesym-c = { git = "https://github.com/libbpf/blazesym.git", rev = "v0.2.0-alpha.11" }

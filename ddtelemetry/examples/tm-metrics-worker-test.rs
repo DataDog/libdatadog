@@ -1,10 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{
-    error::Error,
-    time::{Duration, Instant},
-};
+use std::{error::Error, time::Duration, time::Instant};
 
 use ddcommon::tag::Tag;
 use ddtelemetry::{data, worker};
@@ -37,12 +34,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     builder.config.telemetry_debug_logging_enabled = Some(true);
     builder.config.endpoint = Some(ddcommon::Endpoint {
-        url: ddcommon::parse_uri("file://./tm-worker-test.output").unwrap(),
+        url: ddcommon::parse_uri("file://./tm-metrics-worker-test.output").unwrap(),
         api_key: None,
     });
     builder.config.telemetry_hearbeat_interval = Some(Duration::from_secs(1));
 
-    let handle = builder.run()?;
+    let handle = builder.run_metrics_logs()?;
 
     let ping_metric = handle.register_metric_context(
         "test_telemetry.ping".into(),

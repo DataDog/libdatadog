@@ -1,11 +1,9 @@
-extern "C" {
-#include <datadog/common.h>
-#include <datadog/profiling.h>
-}
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <datadog/common.h>
+#include <datadog/profiling.h>
 #include <memory>
 #include <thread>
 
@@ -34,8 +32,8 @@ int main(int argc, char *argv[]) {
   const auto service = argv[1];
 
   const ddog_prof_ValueType wall_time = {
-      .type_ = DDOG_CHARSLICE_C("wall-time"),
-      .unit = DDOG_CHARSLICE_C("nanoseconds"),
+      .type_ = DDOG_CHARSLICE_C_BARE("wall-time"),
+      .unit = DDOG_CHARSLICE_C_BARE("nanoseconds"),
   };
 
   const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
@@ -54,15 +52,15 @@ int main(int argc, char *argv[]) {
       .mapping = {},
       .function =
           {
-              .name = DDOG_CHARSLICE_C("{main}"),
-              .filename = DDOG_CHARSLICE_C("/srv/example/index.php"),
+              .name = DDOG_CHARSLICE_C_BARE("{main}"),
+              .filename = DDOG_CHARSLICE_C_BARE("/srv/example/index.php"),
           },
   };
 
   int64_t value = 10;
   const ddog_prof_Label label = {
-      .key = DDOG_CHARSLICE_C("language"),
-      .str = DDOG_CHARSLICE_C("php"),
+      .key = DDOG_CHARSLICE_C_BARE("language"),
+      .str = DDOG_CHARSLICE_C_BARE("php"),
   };
   ddog_prof_Sample sample = {
       .locations = {&root_location, 1},
@@ -78,7 +76,7 @@ int main(int argc, char *argv[]) {
 
   uintptr_t offset[1] = {0};
   ddog_prof_Slice_Usize offsets_slice = {.ptr = offset, .len = 1};
-  ddog_CharSlice empty_charslice = DDOG_CHARSLICE_C("");
+  ddog_CharSlice empty_charslice = DDOG_CHARSLICE_C_BARE("");
 
   auto upscaling_addresult = ddog_prof_Profile_add_upscaling_rule_proportional(
       profile.get(), offsets_slice, empty_charslice, empty_charslice, 1, 1);
@@ -101,11 +99,11 @@ int main(int argc, char *argv[]) {
   ddog_prof_EncodedProfile *encoded_profile = &serialize_result.ok;
 
   ddog_Endpoint endpoint =
-      ddog_Endpoint_agentless(DDOG_CHARSLICE_C("datad0g.com"), to_slice_c_char(api_key));
+      ddog_Endpoint_agentless(DDOG_CHARSLICE_C_BARE("datad0g.com"), to_slice_c_char(api_key));
 
   ddog_Vec_Tag tags = ddog_Vec_Tag_new();
   ddog_Vec_Tag_PushResult tag_result =
-      ddog_Vec_Tag_push(&tags, DDOG_CHARSLICE_C("service"), to_slice_c_char(service));
+      ddog_Vec_Tag_push(&tags, DDOG_CHARSLICE_C_BARE("service"), to_slice_c_char(service));
   if (tag_result.tag == DDOG_VEC_TAG_PUSH_RESULT_ERR) {
     print_error("Failed to push tag: ", tag_result.err);
     ddog_Error_drop(&tag_result.err);
@@ -113,8 +111,8 @@ int main(int argc, char *argv[]) {
   }
 
   ddog_prof_Exporter_NewResult exporter_new_result =
-      ddog_prof_Exporter_new(DDOG_CHARSLICE_C("exporter-example"), DDOG_CHARSLICE_C("1.2.3"),
-                             DDOG_CHARSLICE_C("native"), &tags, endpoint);
+      ddog_prof_Exporter_new(DDOG_CHARSLICE_C_BARE("exporter-example"), DDOG_CHARSLICE_C_BARE("1.2.3"),
+                             DDOG_CHARSLICE_C_BARE("native"), &tags, endpoint);
   ddog_Vec_Tag_drop(tags);
 
   if (exporter_new_result.tag == DDOG_PROF_EXPORTER_NEW_RESULT_ERR) {
@@ -126,7 +124,7 @@ int main(int argc, char *argv[]) {
   auto exporter = exporter_new_result.ok;
 
   ddog_prof_Exporter_File files_to_compress_and_export_[] = {{
-      .name = DDOG_CHARSLICE_C("auto.pprof"),
+      .name = DDOG_CHARSLICE_C_BARE("auto.pprof"),
       .file = ddog_Vec_U8_as_slice(&encoded_profile->buffer),
   }};
   ddog_prof_Exporter_Slice_File files_to_compress_and_export = {
@@ -136,10 +134,10 @@ int main(int argc, char *argv[]) {
 
   ddog_prof_Exporter_Slice_File files_to_export_unmodified = ddog_prof_Exporter_Slice_File_empty();
 
-  ddog_CharSlice internal_metadata_example = DDOG_CHARSLICE_C(
+  ddog_CharSlice internal_metadata_example = DDOG_CHARSLICE_C_BARE(
       "{\"no_signals_workaround_enabled\": \"true\", \"execution_trace_enabled\": \"false\"}");
 
-  ddog_CharSlice info_example = DDOG_CHARSLICE_C(
+  ddog_CharSlice info_example = DDOG_CHARSLICE_C_BARE(
       "{\"application\": {\"start_time\": \"2024-01-24T11:17:22+0000\"}, \"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
 
   ddog_prof_Exporter_Request_BuildResult build_result = ddog_prof_Exporter_Request_build(

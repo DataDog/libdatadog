@@ -47,6 +47,7 @@ impl MetricBucket {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
+#[repr(C)]
 pub struct ContextKey(u32, metrics::MetricType);
 
 #[derive(Debug, PartialEq, Eq, Hash)]

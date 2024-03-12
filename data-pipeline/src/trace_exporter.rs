@@ -1,9 +1,12 @@
+// Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::agent_client::AgentClient;
 
 pub struct TraceExporter {
     host: String,
     port: u16,
-    client: AgentClient
+    client: AgentClient,
 }
 
 impl TraceExporter {
@@ -25,60 +28,63 @@ pub struct TraceExporterBuilder {
     tracer_version: Option<String>,
     language: Option<String>,
     language_version: Option<String>,
-    interpreter: Option<String>
+    interpreter: Option<String>,
 }
 
 impl TraceExporterBuilder {
-
-    fn set_timeout(&mut self, timeout: u64) -> &mut TraceExporterBuilder {
+    pub fn set_timeout(&mut self, timeout: u64) -> &mut TraceExporterBuilder {
         self.timeout = Some(timeout);
         self
     }
 
-    fn set_host(&mut self, host: &str) -> &mut TraceExporterBuilder {
+    pub fn set_host(&mut self, host: &str) -> &mut TraceExporterBuilder {
         self.host = Some(String::from(host));
         self
     }
 
-    fn set_port(&mut self, port: u16) -> &mut TraceExporterBuilder {
+    pub fn set_port(&mut self, port: u16) -> &mut TraceExporterBuilder {
         self.port = Some(port);
         self
     }
 
-    fn set_tracer_version(&mut self, tracer_version: &str) -> &mut TraceExporterBuilder {
+    pub fn set_tracer_version(&mut self, tracer_version: &str) -> &mut TraceExporterBuilder {
         self.tracer_version = Some(String::from(tracer_version));
         self
     }
 
-    fn set_language(&mut self, lang: &str) -> &mut TraceExporterBuilder {
+    pub fn set_language(&mut self, lang: &str) -> &mut TraceExporterBuilder {
         self.language = Some(String::from(lang));
         self
     }
 
-    fn set_language_version(&mut self, lang_version: &str) -> &mut TraceExporterBuilder {
+    pub fn set_language_version(&mut self, lang_version: &str) -> &mut TraceExporterBuilder {
         self.language_version = Some(String::from(lang_version));
         self
     }
 
-    fn set_language_interpreter(&mut self, lang_interpreter: &str) -> &mut TraceExporterBuilder {
+    pub fn set_language_interpreter(
+        &mut self,
+        lang_interpreter: &str,
+    ) -> &mut TraceExporterBuilder {
         self.interpreter = Some(String::from(lang_interpreter));
         self
     }
 
-    fn build(&mut self) -> TraceExporter {
-        TraceExporter{
-            client: AgentClient::new(self.timeout.unwrap_or_default(),
-                        self.tracer_version.as_ref().unwrap(),
-                        self.language.as_ref().unwrap(),
-                        self.language_version.as_ref().unwrap(),
-                        self.interpreter.as_ref().unwrap()),
+    pub fn build(&mut self) -> TraceExporter {
+        TraceExporter {
+            client: AgentClient::new(
+                self.timeout.unwrap_or_default(),
+                self.tracer_version.as_ref().unwrap(),
+                self.language.as_ref().unwrap(),
+                self.language_version.as_ref().unwrap(),
+                self.interpreter.as_ref().unwrap(),
+            ),
             // TODO: avoid cloning?
             host: self.host.clone().unwrap(),
-            port: self.port.unwrap_or_default()
+            port: self.port.unwrap_or_default(),
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -110,9 +116,7 @@ mod tests {
     }
 
     #[test]
-    fn configure() {
-    }
+    fn configure() {}
     #[test]
-    fn export() {
-    }
+    fn export() {}
 }
