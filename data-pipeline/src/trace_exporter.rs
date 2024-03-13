@@ -14,39 +14,39 @@ struct TracerTags {
     tracer_version: String,
     language: String,
     language_version: String,
-    language_interpreter: String
+    language_interpreter: String,
 }
 
 impl<'a> From<&'a TracerTags> for TracerHeaderTags<'a> {
     fn from(tags: &'a TracerTags) -> TracerHeaderTags<'a> {
-        let mut header_tags = TracerHeaderTags::default();
-        header_tags.lang = &tags.language;
-        header_tags.lang_version = &tags.language_version;
-        header_tags.tracer_version = &tags.tracer_version;
-        header_tags.lang_interpreter = &tags.language_interpreter;
-
-        header_tags
+        TracerHeaderTags::<'_> {
+            lang: &tags.language,
+            lang_version: &tags.language_version,
+            tracer_version: &tags.tracer_version,
+            lang_interpreter: &tags.language_interpreter,
+            ..Default::default()
+        }
     }
 }
 
 impl From<TracerTags> for HashMap<&'static str, String> {
     fn from(tags: TracerTags) -> HashMap<&'static str, String> {
-        let mut header_tags = TracerHeaderTags::default();
-        header_tags.lang = &tags.language;
-        header_tags.lang_version = &tags.language_version;
-        header_tags.tracer_version = &tags.tracer_version;
-        header_tags.lang_interpreter = &tags.language_interpreter;
-
-        header_tags.into()
+        TracerHeaderTags::<'_> {
+            lang: &tags.language,
+            lang_version: &tags.language_version,
+            tracer_version: &tags.tracer_version,
+            lang_interpreter: &tags.language_interpreter,
+            ..Default::default()
+        }
+        .into()
     }
 }
-
 
 pub struct TraceExporter {
     endpoint: Endpoint,
     tags: TracerTags,
     no_proxy: bool,
-    runtime: Runtime
+    runtime: Runtime,
 }
 
 impl TraceExporter {
@@ -129,18 +129,10 @@ impl TraceExporter {
 
         let header_tags: TracerHeaderTags<'_> = (&self.tags).into();
 
-        let tracer_payload = trace_utils::collect_trace_chunks(
-            traces,
-            &header_tags,
-            |_chunk, _root_span_index| {},
-        );
+        let tracer_payload =
+            trace_utils::collect_trace_chunks(traces, &header_tags, |_chunk, _root_span_index| {});
 
-        let send_data = SendData::new(
-            size,
-            tracer_payload,
-            header_tags,
-            &self.endpoint,
-        );
+        let send_data = SendData::new(size, tracer_payload, header_tags, &self.endpoint);
         self.runtime.block_on(async {
             match send_data.send().await {
                 Ok(response) => match hyper::body::to_bytes(response.into_body()).await {

@@ -1,14 +1,11 @@
-use std::ffi::{CString, c_char};
-use ddcommon_ffi::{
-    slice::{
-        AsBytes,
-        ByteSlice
-    },
-    CharSlice,
-};
 use bytes::Bytes;
 use data_pipeline::trace_exporter::TraceExporter;
 use data_pipeline::trace_exporter::TraceExporterBuilder;
+use ddcommon_ffi::{
+    slice::{AsBytes, ByteSlice},
+    CharSlice,
+};
+use std::ffi::{c_char, CString};
 
 #[no_mangle]
 pub unsafe extern "C" fn dd_trace_exporter_new(
@@ -16,9 +13,9 @@ pub unsafe extern "C" fn dd_trace_exporter_new(
     port: u16,
     tracer_version: CharSlice,
     language: CharSlice,
-    language_version:  CharSlice,
-    language_interpreter: CharSlice) -> *mut TraceExporter {
-
+    language_version: CharSlice,
+    language_interpreter: CharSlice,
+) -> *mut TraceExporter {
     let mut builder = TraceExporterBuilder::default();
 
     let exporter = builder
@@ -28,10 +25,10 @@ pub unsafe extern "C" fn dd_trace_exporter_new(
         .set_language(language.to_utf8_lossy().as_ref())
         .set_language_version(language_version.to_utf8_lossy().as_ref())
         .set_language_interpreter(language_interpreter.to_utf8_lossy().as_ref())
-        .build().unwrap();
+        .build()
+        .unwrap();
 
     Box::into_raw(Box::new(exporter))
-
 }
 
 #[no_mangle]
@@ -45,12 +42,12 @@ pub unsafe extern "C" fn dd_trace_exporter_free(ctx: *mut TraceExporter) {
 pub unsafe extern "C" fn dd_trace_exporter_send(
     ctx: *mut TraceExporter,
     trace: ByteSlice,
-    trace_count: usize) -> *const c_char {
-
+    trace_count: usize,
+) -> *const c_char {
     let handle = Box::from_raw(ctx);
-    let response = handle.send(
-        Bytes::copy_from_slice(trace.as_bytes()),
-        trace_count).unwrap_or(String::from(""));
+    let response = handle
+        .send(Bytes::copy_from_slice(trace.as_bytes()), trace_count)
+        .unwrap_or(String::from(""));
 
     CString::new(response).unwrap().into_raw()
 }

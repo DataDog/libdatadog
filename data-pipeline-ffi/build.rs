@@ -8,4 +8,3 @@ fn main() {
     let header_name = "data-pipeline.h";
     generate_and_configure_header(header_name);
 }
-
