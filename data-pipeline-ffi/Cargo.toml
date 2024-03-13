@@ -10,8 +10,13 @@ license.workspace = true
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+default = []
+cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+
 [build-dependencies]
 build_common = { path = "../build-common" }
+cbindgen = "0.26.0"
 
 [dependencies]
 data-pipeline = { path = "../data-pipeline" }
