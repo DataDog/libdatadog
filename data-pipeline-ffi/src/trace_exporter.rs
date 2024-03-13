@@ -1,27 +1,33 @@
-use std::ffi::{CStr, CString, c_char};
+use std::ffi::{CString, c_char};
+use ddcommon_ffi::{
+    slice::{
+        AsBytes,
+        ByteSlice
+    },
+    CharSlice,
+};
 use bytes::Bytes;
 use data_pipeline::trace_exporter::TraceExporter;
 use data_pipeline::trace_exporter::TraceExporterBuilder;
 
-
 #[no_mangle]
 pub unsafe extern "C" fn dd_trace_exporter_new(
-    host: *const c_char,
+    host: CharSlice,
     port: u16,
-    tracer_version: *const c_char,
-    language: *const c_char,
-    language_version: *const c_char,
-    language_interpreter: *const c_char) -> *mut TraceExporter {
+    tracer_version: CharSlice,
+    language: CharSlice,
+    language_version:  CharSlice,
+    language_interpreter: CharSlice) -> *mut TraceExporter {
 
     let mut builder = TraceExporterBuilder::default();
 
     let exporter = builder
-        .set_host(CStr::from_ptr(host).to_str().unwrap())
+        .set_host(host.to_utf8_lossy().as_ref())
         .set_port(port)
-        .set_tracer_version(CStr::from_ptr(tracer_version).to_str().unwrap())
-        .set_language(CStr::from_ptr(language).to_str().unwrap())
-        .set_language_version(CStr::from_ptr(language_version).to_str().unwrap())
-        .set_language_interpreter(CStr::from_ptr(language_interpreter).to_str().unwrap())
+        .set_tracer_version(tracer_version.to_utf8_lossy().as_ref())
+        .set_language(language.to_utf8_lossy().as_ref())
+        .set_language_version(language_version.to_utf8_lossy().as_ref())
+        .set_language_interpreter(language_interpreter.to_utf8_lossy().as_ref())
         .build().unwrap();
 
     Box::into_raw(Box::new(exporter))
@@ -30,23 +36,21 @@ pub unsafe extern "C" fn dd_trace_exporter_new(
 
 #[no_mangle]
 pub unsafe extern "C" fn dd_trace_exporter_free(ctx: *mut TraceExporter) {
-    if !ctx.is_null() {
-        drop(Box::from_raw(ctx))
+    if let Some(p) = ctx.as_mut() {
+        drop(Box::from_raw(p))
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn dd_trace_exporter_send(
     ctx: *mut TraceExporter,
-    trace: *const u8,
-    size: usize,
+    trace: ByteSlice,
     trace_count: usize) -> *const c_char {
 
     let handle = Box::from_raw(ctx);
     let response = handle.send(
-        Bytes::copy_from_slice(std::slice::from_raw_parts(trace, size)),
+        Bytes::copy_from_slice(trace.as_bytes()),
         trace_count).unwrap_or(String::from(""));
 
     CString::new(response).unwrap().into_raw()
 }
-

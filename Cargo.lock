@@ -743,6 +743,7 @@ dependencies = [
  "build_common",
  "bytes",
  "data-pipeline",
+ "ddcommon-ffi",
 ]
 
 [[package]]

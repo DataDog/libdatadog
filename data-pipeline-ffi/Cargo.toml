@@ -15,4 +15,5 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 data-pipeline = { path = "../data-pipeline" }
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 bytes = "1.4"
