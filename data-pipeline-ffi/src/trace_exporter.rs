@@ -1,7 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use bytes::Bytes;
 use data_pipeline::trace_exporter::TraceExporter;
 use data_pipeline::trace_exporter::TraceExporterBuilder;
 use ddcommon_ffi::{
@@ -49,9 +48,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
 ) -> *mut c_char {
     let handle = Box::from_raw(ctx);
     let response = handle
-        .send(Bytes::copy_from_slice(trace.as_bytes()), trace_count)
+        .send(trace.as_bytes(), trace_count)
         .unwrap_or(String::from(""));
-
+    // The handle is leaked so the caller can still use it
+    Box::leak(handle);
     let ret = libc::malloc(response.len() + 1);
     std::ptr::copy(response.as_bytes().as_ptr(), ret.cast(), response.len());
     std::ptr::write(ret.add(response.len()) as *mut u8, 0u8);
