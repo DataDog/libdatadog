@@ -9,10 +9,9 @@ use ddcommon_ffi::{
     CharSlice,
 };
 use std::ffi::c_char;
-use libc;
 
 #[no_mangle]
-pub unsafe extern "C" fn dd_trace_exporter_new(
+pub unsafe extern "C" fn ddog_trace_exporter_new(
     host: CharSlice,
     port: u16,
     tracer_version: CharSlice,
@@ -36,14 +35,14 @@ pub unsafe extern "C" fn dd_trace_exporter_new(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn dd_trace_exporter_free(ctx: *mut TraceExporter) {
+pub unsafe extern "C" fn ddog_trace_exporter_free(ctx: *mut TraceExporter) {
     if let Some(p) = ctx.as_mut() {
         drop(Box::from_raw(p))
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn dd_trace_exporter_send(
+pub unsafe extern "C" fn ddog_trace_exporter_send(
     ctx: *mut TraceExporter,
     trace: ByteSlice,
     trace_count: usize,
@@ -55,6 +54,6 @@ pub unsafe extern "C" fn dd_trace_exporter_send(
 
     let ret = libc::malloc(response.len() + 1);
     std::ptr::copy(response.as_bytes().as_ptr(), ret.cast(), response.len());
-    std::ptr::write(ret.offset(response.len() as isize) as *mut u8, 0u8);
+    std::ptr::write(ret.add(response.len()) as *mut u8, 0u8);
     ret as *mut c_char
 }

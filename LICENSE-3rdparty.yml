@@ -9983,7 +9983,7 @@ third_party_libraries:
       See the License for the specific language governing permissions and
       limitations under the License.
 - package_name: libc
-  package_version: 0.2.150
+  package_version: 0.2.153
   license: MIT OR Apache-2.0
   licenses:
   - license: MIT
