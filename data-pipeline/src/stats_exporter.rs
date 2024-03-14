@@ -1,7 +1,16 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{self, AtomicU64},
+        Mutex,
+    },
+};
 
+use anyhow::Ok;
 use datadog_trace_normalization::normalize_utils;
 use datadog_trace_protobuf::pb;
+use ddcommon::{connector, tag::Tag, Endpoint};
+use hyper::{Method, Uri};
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 struct BucketKey {
@@ -49,48 +58,38 @@ fn encode_bucket(key: BucketKey, bucket: Bucket) -> pb::ClientGroupedStats {
 }
 
 #[derive(Debug, Default)]
-struct StatsAggregator {
-    buckets: HashMap<BucketKey, Bucket>,
-    meta: LibraryMetadata,
-    sequence_id: u64,
+pub struct LibraryMetadata {
+    pub hostname: String,
+    pub env: String,
+    pub version: String,
+    pub lang: String,
+    pub tracer_version: String,
+    pub runtime_id: String,
+    pub service: String,
+    pub container_id: String,
+    pub git_commit_sha: String,
+    pub tags: Vec<Tag>,
+}
+
+pub struct SpanStats {
+    pub resource_name: String,
+    pub service_name: String,
+    pub operation_name: String,
+    pub span_type: String,
+    pub http_status_code: u32,
+    pub is_synthetics_request: bool,
+    pub is_top_level: bool,
+    pub is_error: bool,
+    pub duration: u64,
 }
 
 #[derive(Debug, Default)]
-struct LibraryMetadata {
-    hostname: String,
-    env: String,
-    version: String,
-    lang: String,
-    tracer_version: String,
-    runtime_id: String,
-    service: String,
-    container_id: String,
-    git_commit_sha: String,
-    tags: Vec<String>,
+struct StatsBuckets {
+    buckets: HashMap<BucketKey, Bucket>,
 }
 
-struct SpanStat {
-    resource_name: String,
-    service_name: String,
-    operation_name: String,
-    span_type: String,
-    http_status_code: u32,
-    is_synthetics_request: bool,
-    is_top_level: bool,
-    is_error: bool,
-    duration: u64,
-}
-
-impl StatsAggregator {
-    pub fn new(meta: LibraryMetadata) -> Self {
-        Self {
-            buckets: HashMap::new(),
-            meta,
-            sequence_id: 0,
-        }
-    }
-
-    pub fn insert(&mut self, mut span_stat: SpanStat) {
+impl StatsBuckets {
+    fn insert(&mut self, mut span_stat: SpanStats) {
         normalize_span_stat(&mut span_stat);
 
         let bucket = self
@@ -118,13 +117,60 @@ impl StatsAggregator {
             bucket.top_level_hits += 1;
         }
     }
+}
 
-    fn send(&mut self) {
-        todo!()
+#[derive(Debug)]
+pub struct StatsExporter {
+    buckets: Mutex<StatsBuckets>,
+    meta: LibraryMetadata,
+    sequence_id: AtomicU64,
+
+    rt: tokio::runtime::Runtime,
+    client: ddcommon::HttpClient,
+    endpoint: ddcommon::Endpoint,
+}
+
+impl StatsExporter {
+    pub fn new(meta: LibraryMetadata, endpoint: ddcommon::Endpoint) -> anyhow::Result<Self> {
+        Ok(Self {
+            buckets: Mutex::default(),
+            meta,
+            sequence_id: AtomicU64::new(0),
+
+            endpoint,
+
+            // TODO return error
+            rt: tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?,
+            client: hyper::Client::builder().build(connector::Connector::default()),
+        })
     }
 
-    fn flush(&mut self) -> pb::ClientStatsPayload {
-        self.sequence_id += 1;
+    pub fn insert(&self, span_stat: SpanStats) {
+        self.buckets.lock().unwrap().insert(span_stat)
+    }
+
+    pub fn send(&self) -> anyhow::Result<()> {
+        let payload = self.flush();
+        let body = rmp_serde::encode::to_vec(&payload)?;
+        let req = self
+            .endpoint
+            .into_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))
+            .unwrap()
+            .header(
+                hyper::header::CONTENT_TYPE,
+                ddcommon::header::APPLICATION_MSGPACK,
+            )
+            .method(Method::POST)
+            .body(hyper::Body::from(body))?;
+
+        self.rt.block_on(async { self.client.request(req).await })?;
+        Ok(())
+    }
+
+    fn flush(&self) -> pb::ClientStatsPayload {
+        let sequence = self.sequence_id.fetch_add(1, atomic::Ordering::Relaxed);
         pb::ClientStatsPayload {
             hostname: self.meta.hostname.clone(),
             env: self.meta.env.clone(),
@@ -135,14 +181,14 @@ impl StatsAggregator {
             service: self.meta.service.clone(),
             container_id: self.meta.container_id.clone(),
             git_commit_sha: self.meta.git_commit_sha.clone(),
-            tags: self.meta.tags.clone(),
+            tags: self.meta.tags.iter().map(|t| t.to_string()).collect(),
 
-            sequence: self.sequence_id,
+            sequence,
 
             stats: vec![pb::ClientStatsBucket {
                 start: 0,
                 duration: 0,
-                stats: self
+                stats: std::mem::take(&mut *self.buckets.lock().unwrap())
                     .buckets
                     .drain()
                     .map(|(k, b)| encode_bucket(k, b))
@@ -159,9 +205,32 @@ impl StatsAggregator {
     }
 }
 
-fn normalize_span_stat(span: &mut SpanStat) {
+fn normalize_span_stat(span: &mut SpanStats) {
     normalize_utils::normalize_service(&mut span.service_name);
     normalize_utils::normalize_name(&mut span.operation_name);
     normalize_utils::normalize_span_type(&mut span.span_type);
     normalize_utils::normalize_resource(&mut span.resource_name, &span.operation_name);
+}
+
+pub fn endpoint_from_agent_url(agent_url: Uri) -> anyhow::Result<Endpoint> {
+    let mut parts = agent_url.into_parts();
+    parts.path_and_query = Some(http::uri::PathAndQuery::from_static("/v0.6/stats"));
+    let url = hyper::Uri::from_parts(parts)?;
+    Ok(Endpoint { url, api_key: None })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn is_send<T: Send>(_: T) {}
+    fn is_sync<T: Sync>(_: T) {}
+
+    #[test]
+    fn test_handle_sync_send() {
+        #[allow(clippy::redundant_closure)]
+        let _ = |h: StatsExporter| is_send(h);
+        #[allow(clippy::redundant_closure)]
+        let _ = |h: StatsExporter| is_sync(h);
+    }
 }
