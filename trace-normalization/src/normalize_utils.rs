@@ -266,11 +266,11 @@ mod tests {
 
     #[duplicate_item(
         test_name                       input                               expected;
-        [test_normalize_empty_string]   [""]                                [""];
+        [test_normalize_empty_string]   [""]                                ["unnamed_operation"];
         [test_normalize_valid_string]   ["good"]                            ["good"];
         [test_normalize_long_string]    ["Too-Long-.".repeat(20).as_str()]  ["Too_Long.".repeat(10)];
         [test_normalize_dash_string]    ["bad-name"]                        ["bad_name"];
-        [test_normalize_invalid_string] ["&***"]                            [""];
+        [test_normalize_invalid_string] ["&***"]                            ["unnamed_operation"];
         [test_normalize_invalid_prefix] ["&&&&&&&_test-name-"]              ["test_name"];
     )]
     #[test]
@@ -282,7 +282,7 @@ mod tests {
 
     #[duplicate_item(
         test_name                       input                               expected;
-        [test_normalize_empty_service]  [""]                                [""];
+        [test_normalize_empty_service]  [""]                                ["unnamed-service"];
         [test_normalize_valid_service]  ["good"]                            ["good"];
         [test_normalize_long_service]   ["Too$Long$.".repeat(20).as_str()]  ["too_long_.".repeat(10)];
         [test_normalize_dash_service]   ["bad&service"]                     ["bad_service"];
