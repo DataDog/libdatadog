@@ -4,5 +4,5 @@
 #![deny(clippy::all)]
 
 pub mod normalizer;
-
 pub mod normalize_utils;
+pub(crate) mod utf8_helpers;
