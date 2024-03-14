@@ -22,3 +22,4 @@ cbindgen = "0.26.0"
 data-pipeline = { path = "../data-pipeline" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 bytes = "1.4"
+libc = "0.2.153"

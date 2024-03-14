@@ -8,7 +8,8 @@ use ddcommon_ffi::{
     slice::{AsBytes, ByteSlice},
     CharSlice,
 };
-use std::ffi::{c_char, CString};
+use std::ffi::c_char;
+use libc;
 
 #[no_mangle]
 pub unsafe extern "C" fn dd_trace_exporter_new(
@@ -46,11 +47,14 @@ pub unsafe extern "C" fn dd_trace_exporter_send(
     ctx: *mut TraceExporter,
     trace: ByteSlice,
     trace_count: usize,
-) -> *const c_char {
+) -> *mut c_char {
     let handle = Box::from_raw(ctx);
     let response = handle
         .send(Bytes::copy_from_slice(trace.as_bytes()), trace_count)
         .unwrap_or(String::from(""));
 
-    CString::new(response).unwrap().into_raw()
+    let ret = libc::malloc(response.len() + 1);
+    std::ptr::copy(response.as_bytes().as_ptr(), ret.cast(), response.len());
+    std::ptr::write(ret.offset(response.len() as isize) as *mut u8, 0u8);
+    ret as *mut c_char
 }
