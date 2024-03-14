@@ -731,6 +731,7 @@ dependencies = [
  "datadog-trace-utils",
  "ddcommon",
  "futures",
+ "http",
  "hyper",
  "log",
  "rmp-serde",
@@ -744,6 +745,7 @@ dependencies = [
  "build_common",
  "bytes",
  "data-pipeline",
+ "ddcommon",
  "ddcommon-ffi",
  "libc",
 ]
