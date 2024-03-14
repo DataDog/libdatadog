@@ -7,7 +7,7 @@ use datadog_trace_utils::trace_utils::{self, SendData, TracerHeaderTags};
 use ddcommon::{connector, Endpoint};
 use hyper::{Body, Client, Method};
 use log::error;
-use std::{collections::HashMap, ops::Deref, str::FromStr};
+use std::{borrow::Borrow, collections::HashMap, str::FromStr};
 use tokio::runtime::Runtime;
 
 struct TracerTags {
@@ -29,8 +29,8 @@ impl<'a> From<&'a TracerTags> for TracerHeaderTags<'a> {
     }
 }
 
-impl From<TracerTags> for HashMap<&'static str, String> {
-    fn from(tags: TracerTags) -> HashMap<&'static str, String> {
+impl<'a> From<&'a TracerTags> for HashMap<&'static str, String> {
+    fn from(tags: &'a TracerTags) -> HashMap<&'static str, String> {
         TracerHeaderTags::<'_> {
             lang: &tags.language,
             lang_version: &tags.language_version,
@@ -54,7 +54,7 @@ impl TraceExporter {
         TraceExporterBuilder::default()
     }
 
-    pub fn send(self, data: Bytes, trace_count: usize) -> Result<String, String> {
+    pub fn send(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
         if self.no_proxy {
             self.send_deser_ser(data)
         } else {
@@ -62,7 +62,7 @@ impl TraceExporter {
         }
     }
 
-    fn send_proxy(self, data: Bytes, trace_count: usize) -> Result<String, String> {
+    fn send_proxy(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
         let uri = self.endpoint.url.clone();
         self.runtime
             .block_on(async {
@@ -74,7 +74,7 @@ impl TraceExporter {
                     )
                     .method(Method::POST);
 
-                let headers: HashMap<&'static str, String> = self.tags.into();
+                let headers: HashMap<&'static str, String> = self.tags.borrow().into();
 
                 for (key, value) in &headers {
                     req_builder = req_builder.header(*key, value);
@@ -82,7 +82,9 @@ impl TraceExporter {
                 req_builder = req_builder
                     .header("Content-type", "application/msgpack")
                     .header("X-Datadog-Trace-Count", trace_count.to_string().as_str());
-                let req = req_builder.body(Body::from(data)).unwrap();
+                let req = req_builder
+                    .body(Body::from(Bytes::copy_from_slice(data)))
+                    .unwrap();
 
                 match Client::builder()
                     .build(connector::Connector::default())
@@ -112,9 +114,9 @@ impl TraceExporter {
             })
     }
 
-    fn send_deser_ser(self, data: Bytes) -> Result<String, String> {
+    fn send_deser_ser(&self, data: &[u8]) -> Result<String, String> {
         let size = data.len();
-        let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_slice(data.deref()) {
+        let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_slice(data) {
             Ok(res) => res,
             Err(err) => {
                 error!("Error deserializing trace from request body: {err}");
