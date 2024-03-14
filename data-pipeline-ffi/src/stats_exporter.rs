@@ -74,8 +74,10 @@ pub unsafe extern "C" fn ddog_stats_exporter_insert_span_data(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_stats_exporter_send(exporter: &StatsExporter) {
-    let _ = exporter.send();
+pub unsafe extern "C" fn ddog_stats_exporter_send(
+    exporter: &StatsExporter,
+) -> ffi::Option<ffi::Error> {
+    try_c!(exporter.send())
 }
 
 #[no_mangle]
