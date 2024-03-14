@@ -11,6 +11,7 @@ members = [
   "ddcommon-ffi",
   "ddtelemetry",
   "ddtelemetry-ffi",
+  "ddsketch",
   "tools",
   "ipc",
   "ipc/macros",
