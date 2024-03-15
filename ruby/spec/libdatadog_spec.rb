@@ -38,6 +38,10 @@ RSpec.describe Libdatadog do
       describe ".pkgconfig_folder" do
         it { expect(Libdatadog.pkgconfig_folder).to be nil }
       end
+
+      describe ".path_to_crashtracking_receiver_binary" do
+        it { expect(Libdatadog.path_to_crashtracking_receiver_binary).to be nil }
+      end
     end
 
     context "when vendor directory does not exist" do
@@ -49,6 +53,10 @@ RSpec.describe Libdatadog do
 
       describe ".pkgconfig_folder" do
         it { expect(Libdatadog.pkgconfig_folder).to be nil }
+      end
+
+      describe ".path_to_crashtracking_receiver_binary" do
+        it { expect(Libdatadog.path_to_crashtracking_receiver_binary).to be nil }
       end
     end
 
@@ -114,11 +122,23 @@ RSpec.describe Libdatadog do
             expect(Libdatadog.pkgconfig_folder).to eq pkgconfig_folder
           end
         end
+
+        describe ".path_to_crashtracking_receiver_binary" do
+          it "returns the full path to the crashtracking_receiver_binary" do
+            expect(Libdatadog.path_to_crashtracking_receiver_binary).to eq(
+              "#{temporary_directory}/#{Gem::Platform.local}/some/folder/containing/the/bin/libdatadog-crashtracking-receiver"
+            )
+          end
+        end
       end
 
       context "but not for the current platform" do
         describe ".pkgconfig_folder" do
           it { expect(Libdatadog.pkgconfig_folder).to be nil }
+        end
+
+        describe ".path_to_crashtracking_receiver_binary" do
+          it { expect(Libdatadog.path_to_crashtracking_receiver_binary).to be nil }
         end
       end
     end

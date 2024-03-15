@@ -56,4 +56,12 @@ module Libdatadog
       platform
     end
   end
+
+  def self.path_to_crashtracking_receiver_binary
+    pkgconfig_folder = self.pkgconfig_folder
+
+    return unless pkgconfig_folder
+
+    File.absolute_path("#{pkgconfig_folder}/../../bin/libdatadog-crashtracking-receiver")
+  end
 end
