@@ -16,7 +16,7 @@ use serde_json::json;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
-use ddcommon::{azure_app_services, connector, HttpClient, HttpResponse, Endpoint};
+use ddcommon::{azure_app_services, connector, Endpoint, HttpClient, HttpResponse};
 
 pub mod config;
 mod errors;

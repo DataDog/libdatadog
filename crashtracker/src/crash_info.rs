@@ -7,12 +7,12 @@ use anyhow::Context;
 use blazesym::symbolize::{Process, Source, Symbolizer};
 use chrono::{DateTime, Utc};
 use datadog_profiling::exporter::{self, Tag};
+use ddcommon::Endpoint;
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 use std::time::Duration;
 use std::{collections::HashMap, fs::File, io::BufReader};
 use uuid::Uuid;
-use ddcommon::Endpoint;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SigInfo {
