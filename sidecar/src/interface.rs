@@ -52,6 +52,8 @@ use ddtelemetry::{
     },
 };
 
+use ddcommon::tag::Tag;
+
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{config, log, tracer};
 
@@ -99,8 +101,26 @@ pub enum RequestIdentifier {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+pub struct MetricDefinition {
+    pub name: String,
+}
+
+impl MetricDefinition {
+    pub fn new<T>(name: T) -> Self
+    where
+        T: Into<String>,
+    {
+        Self {
+            name: name.into(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 pub enum SidecarAction {
     Telemetry(TelemetryActions),
+    RegisterTelemetryMetric(MetricDefinition),
+    AddTelemetryMetricPoint((String, f64, Vec<Tag>)),
     PhpComposerTelemetryFile(PathBuf),
 }
 
@@ -371,6 +391,8 @@ struct EnqueuedTelemetryData {
     dependencies: Store<data::Dependency>,
     configurations: Store<data::Configuration>,
     integrations: Store<data::Integration>,
+    metrics: Vec<MetricDefinition>,
+    points: Vec<(String, f64, Vec<Tag>)>,
     actions: Vec<TelemetryActions>,
     computed_dependencies: Vec<Shared<ManualFuture<Arc<Vec<data::Dependency>>>>>,
 }
@@ -381,6 +403,8 @@ impl Default for EnqueuedTelemetryData {
             dependencies: Store::new(MAX_ITEMS),
             configurations: Store::new(MAX_ITEMS),
             integrations: Store::new(MAX_ITEMS),
+            metrics: Vec::new(),
+            points: Vec::new(),
             actions: Vec::new(),
             computed_dependencies: Vec::new(),
         }
@@ -411,6 +435,13 @@ impl EnqueuedTelemetryData {
                 SidecarAction::PhpComposerTelemetryFile(composer_path) => self
                     .computed_dependencies
                     .push(Self::extract_composer_telemetry(composer_path).shared()),
+
+                SidecarAction::RegisterTelemetryMetric(m) => {
+                    self.metrics.push(m)
+                },
+                SidecarAction::AddTelemetryMetricPoint(p) => {
+                    self.points.push(p)
+                },
             }
         }
     }
@@ -448,6 +479,12 @@ impl EnqueuedTelemetryData {
                         actions.push(TelemetryActions::AddDependecy(nested.clone()));
                     }
                 }
+                SidecarAction::RegisterTelemetryMetric(_) => {
+                    // FIXME: ???
+                },
+                SidecarAction::AddTelemetryMetricPoint(_) => {
+                    // FIXME: ???
+                },
             }
         }
         actions
@@ -1082,6 +1119,34 @@ impl SidecarInterface for SidecarServer {
                     )
                     .await
                 {
+                    // Register metrics
+                    let mut metrics = HashMap::new();
+                    for metric in enqueued_data.metrics.iter() {
+                        let context_key: ddtelemetry::metrics::ContextKey = app.telemetry.register_metric_context(
+                            metric.name.clone(),
+                            Vec::new(),
+                            data::metrics::MetricType::Count,
+                            false, // commom
+                            data::metrics::MetricNamespace::Tracers,
+                        );
+
+                        metrics.insert(metric.name.clone(), context_key);
+                    }
+
+                    // Send metric points
+                    for point in enqueued_data.points.iter() {
+                        let context_key = metrics.get(&point.0).unwrap();
+
+                        let add_point_action = TelemetryActions::AddPoint((
+                            point.1,
+                            *context_key,
+                            point.2.clone(), // FIXME: is this correct??
+                        ));
+
+                        // FIXME: Send in batches
+                        app.telemetry.send_msgs(vec![add_point_action]).await.ok();
+                    }
+
                     let actions: Vec<_> = std::mem::take(&mut enqueued_data.actions);
                     // drop on stop
                     if actions.iter().any(|action| {
