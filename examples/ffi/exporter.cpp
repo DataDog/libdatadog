@@ -98,8 +98,8 @@ int main(int argc, char *argv[]) {
 
   ddog_prof_EncodedProfile *encoded_profile = &serialize_result.ok;
 
-  ddog_Endpoint endpoint =
-      ddog_Endpoint_agentless(DDOG_CHARSLICE_C_BARE("datad0g.com"), to_slice_c_char(api_key));
+  ddog_prof_Endpoint endpoint =
+      ddog_prof_Endpoint_agentless(DDOG_CHARSLICE_C_BARE("datad0g.com"), to_slice_c_char(api_key));
 
   ddog_Vec_Tag tags = ddog_Vec_Tag_new();
   ddog_Vec_Tag_PushResult tag_result =
