@@ -114,7 +114,7 @@ pub fn generate_header(crate_dir: PathBuf, header_name: &str, output_base_dir: P
         .expect("Unable to generate bindings")
         .write_to_file(output_path);
 
-    // println!("cargo:rerun-if-changed=cbindgen.toml");
+    println!("cargo:rerun-if-changed=cbindgen.toml");
 }
 
 /// Copies header files from the source directory to the destination directory.
