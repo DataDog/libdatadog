@@ -104,6 +104,11 @@ jobs:
         run: |
            ./build-telemetry-ffi.sh ${OUTPUT_FOLDER}/telemetry
 
+      - name: "Generate Data Pipeline FFI"
+        shell: bash
+        run: |
+           ./build-data-pipeline-ffi.sh ${OUTPUT_FOLDER}/data-pipeline
+
       - name: 'Publish libdatadog'
         uses: actions/upload-artifact@v3
         if: '${{ always() }}'
@@ -113,7 +118,7 @@ jobs:
           path: ${{ github.workspace }}/artifacts
           retention-days: 1
 
-      - name: "(Windows) Test building C bindings - dynamic link vc runtime"
+      - name: "(Windows) Test building Profiling C bindings - dynamic link vc runtime"
         if: ${{ matrix.platform == 'windows-latest' }}
         shell: bash
         run: |
@@ -123,7 +128,7 @@ jobs:
           cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DVCRUNTIME_LINK_TYPE=DLL
           cmake --build .
 
-      - name: "(Windows) Test building C bindings - static link vc runtime"
+      - name: "(Windows) Test building Profiling C bindings - static link vc runtime"
         if: ${{ matrix.platform == 'windows-latest' }}
         shell: bash
         run: |
@@ -133,7 +138,7 @@ jobs:
           cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DVCRUNTIME_LINK_TYPE=STATIC
           cmake --build .
 
-      - name: "Test building C bindings"
+      - name: "Test building Profiling C bindings"
         shell: bash
         if: ${{ matrix.platform != 'windows-latest' }}
         run: |
@@ -149,6 +154,15 @@ jobs:
             cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling
             cmake --build .
           fi
+
+      - name: "Test building Data Pipeline C bindings"
+        shell: bash
+        if: ${{ matrix.platform != 'windows-latest' }}
+        run: |
+          set -e
+          cd examples/ffi/data-pipeline
+          cmake -S . -B build -DDataPipeline_ROOT=$OUTPUT_FOLDER/data-pipeline
+          cmake --build build
 
   cross-centos7:
     name: build and test using cross - on centos7

@@ -16,7 +16,7 @@ mini-agent:
 - trace-mini-agent/**/*
 - serverless/**/*
 - trace-normalization/**/*
-- trace-obfuscaiton/**/*
+- trace-obfuscation/**/*
 - trace-utils/**/*
 
 telemetry:
@@ -29,3 +29,7 @@ dogstatsd:
 sidecar:
 - sidecar/**/*
 - sidecar-ffi/**/*
+
+data-pipeline:
+- data-pipeline/**/*
+- data-pipeline-ffi/**/*
