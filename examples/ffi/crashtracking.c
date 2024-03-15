@@ -20,7 +20,7 @@ int main(int argc, char **argv) {
 
   ddog_prof_CrashtrackerConfiguration config = {
     .create_alt_stack = false,
-    .endpoint = ddog_Endpoint_agent(DDOG_CHARSLICE_C("http://localhost:8126")),
+    .endpoint = ddog_prof_Endpoint_agent(DDOG_CHARSLICE_C("http://localhost:8126")),
     .path_to_receiver_binary = DDOG_CHARSLICE_C("FIXME - point me to receiver binary path"),
     .resolve_frames = DDOG_PROF_CRASHTRACKER_RESOLVE_FRAMES_NEVER,
   };
