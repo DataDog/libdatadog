@@ -744,7 +744,6 @@ version = "6.0.0"
 dependencies = [
  "build_common",
  "bytes",
- "cbindgen",
  "data-pipeline",
  "ddcommon",
  "ddcommon-ffi",
