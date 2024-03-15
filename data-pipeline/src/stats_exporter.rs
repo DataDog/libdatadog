@@ -64,6 +64,7 @@ pub struct LibraryMetadata {
     pub tags: Vec<Tag>,
 }
 
+#[derive(Debug, Clone)]
 pub struct SpanStats {
     pub resource_name: String,
     pub service_name: String,
@@ -142,7 +143,7 @@ impl StatsExporter {
 
     pub async fn send(&self) -> anyhow::Result<()> {
         let payload = self.flush();
-        let body = rmp_serde::encode::to_vec(&payload)?;
+        let body = rmp_serde::encode::to_vec_named(&payload)?;
         let req = self
             .cfg
             .endpoint
