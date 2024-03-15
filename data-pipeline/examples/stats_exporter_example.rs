@@ -29,20 +29,29 @@ fn main() {
     .unwrap();
 
     let span_stats = SpanStats {
-        resource_name: "".into(),
+        resource_name: "successful_op".into(),
         service_name: "stats_exporter_test".into(),
         operation_name: "insert_stats".into(),
         span_type: "".into(),
-        http_status_code: 0,
+        http_status_code: 200,
         is_synthetics_request: false,
         is_error: false,
         is_top_level: true,
-        duration: 1000000,
+        duration: 1000000000,
     };
 
     for i in 0..100 {
         let mut s = span_stats.clone();
-        s.duration += 100000 * i;
+        s.duration += 10000000 * i;
+        stats_exporter.insert(s)
+    }
+
+    for i in 0..100 {
+        let mut s = span_stats.clone();
+        s.resource_name = "error_op".into();
+        s.is_error = true;
+        s.http_status_code = 400;
+        s.duration += 10000000 * i;
         stats_exporter.insert(s)
     }
     stats_exporter.send().unwrap()

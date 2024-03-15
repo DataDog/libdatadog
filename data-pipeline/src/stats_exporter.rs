@@ -74,7 +74,7 @@ pub struct SpanStats {
     pub is_synthetics_request: bool,
     pub is_top_level: bool,
     pub is_error: bool,
-    pub duration: u64,
+    pub duration: u64, //  in nanoseconds
 }
 
 #[derive(Debug)]
