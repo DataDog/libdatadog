@@ -15,6 +15,11 @@ prefix = "ddog_"
 renaming_overrides_prefixing = true
 
 [export.rename]
+"ByteSlice" = "ddog_ByteSlice"
+"CharSlice" = "ddog_CharSlice"
+"Slice_U8" = "ddog_Slice_U8"
+"Slice_CChar" = "ddog_Slice_CChar"
+"Error" = "ddog_Error"
 
 [export.mangle]
 rename_types = "PascalCase"
@@ -28,4 +33,4 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["ddcommon", "ddcommon-ffi"]
+include = ["ddcommon", "ddcommon-ffi", "data-pipeline"]
