@@ -80,8 +80,14 @@ impl TraceExporter {
                     req_builder = req_builder.header(*key, value);
                 }
                 req_builder = req_builder
-                    .header(hyper::header::CONTENT_TYPE, ddcommon::header::APPLICATION_MSGPACK)
-                    .header(ddcommon::header::DATADOG_TRACE_COUNT, trace_count.to_string().as_str());
+                    .header(
+                        hyper::header::CONTENT_TYPE,
+                        ddcommon::header::APPLICATION_MSGPACK,
+                    )
+                    .header(
+                        ddcommon::header::DATADOG_TRACE_COUNT,
+                        trace_count.to_string().as_str(),
+                    );
                 let req = req_builder
                     .body(Body::from(Bytes::copy_from_slice(data)))
                     .unwrap();

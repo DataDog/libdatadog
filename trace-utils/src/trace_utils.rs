@@ -323,21 +323,21 @@ pub fn get_root_span_index(trace: &[pb::Span]) -> anyhow::Result<usize> {
         anyhow::bail!("Cannot find root span index in an empty trace.");
     }
 
-    // Do a first pass to find if we have an obvious root span (starting from the end) since some clients put the root
-    // span last.
-    for (i, span) in trace.into_iter().enumerate().rev() {
+    // Do a first pass to find if we have an obvious root span (starting from the end) since some
+    // clients put the root span last.
+    for (i, span) in trace.iter().enumerate().rev() {
         if span.parent_id == 0 {
             return Ok(i);
         }
     }
 
     let mut span_ids: HashSet<u64> = HashSet::with_capacity(trace.len());
-    for span in trace.into_iter() {
+    for span in trace.iter() {
         span_ids.insert(span.span_id);
     }
 
     let mut root_span_id = None;
-    for (i, span) in trace.into_iter().enumerate() {
+    for (i, span) in trace.iter().enumerate() {
         // If a span's parent is not in the trace, it is a root
         if !span_ids.contains(&span.parent_id) {
             if root_span_id.is_some() {
@@ -349,7 +349,7 @@ pub fn get_root_span_index(trace: &[pb::Span]) -> anyhow::Result<usize> {
             root_span_id = Some(i);
         }
     }
-    return Ok(match root_span_id {
+    Ok(match root_span_id {
         Some(i) => i,
         None => {
             error!(
@@ -358,7 +358,7 @@ pub fn get_root_span_index(trace: &[pb::Span]) -> anyhow::Result<usize> {
             );
             trace.len() - 1
         }
-    });
+    })
 }
 
 /// Updates all the spans top-level attribute.
