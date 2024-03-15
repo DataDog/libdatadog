@@ -16,11 +16,10 @@ use serde_json::json;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
-use ddcommon::{azure_app_services, connector, HttpClient, HttpResponse};
+use ddcommon::{azure_app_services, connector, Endpoint, HttpClient, HttpResponse};
 
 pub mod config;
 mod errors;
-pub use ddcommon::Endpoint;
 
 #[cfg(unix)]
 pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};

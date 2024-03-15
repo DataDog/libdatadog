@@ -3,7 +3,7 @@
 
 #![cfg(unix)]
 
-use crate::exporter::{self, Endpoint};
+use crate::exporter::{self, ProfilingEndpoint};
 use crate::profiles::ProfileResult;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
@@ -18,7 +18,7 @@ pub struct CrashtrackerConfiguration<'a> {
     pub collect_stacktrace: bool,
     pub create_alt_stack: bool,
     /// The endpoint to send the crash repor to (can be a file://)
-    pub endpoint: Endpoint<'a>,
+    pub endpoint: ProfilingEndpoint<'a>,
     /// Optional filename to forward stderr to (useful for logging/debugging)
     pub optional_stderr_filename: CharSlice<'a>,
     /// Optional filename to forward stdout to (useful for logging/debugging)
