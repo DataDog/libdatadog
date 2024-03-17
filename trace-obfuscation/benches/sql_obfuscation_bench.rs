@@ -8,7 +8,7 @@ fn sql_obfuscation(c: &mut Criterion) {
     c.bench_function("obfsucate_sql_string", |b| {
         b.iter(|| {
             for (input, _) in CASES {
-                black_box(obfsucate_sql_string(&*input));
+                black_box(obfsucate_sql_string(input));
             }
         })
     });

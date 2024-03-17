@@ -131,7 +131,7 @@ fn replace_all(
         let mut last_match = 0;
         for m in it {
             scratch_space.push_str(&haystack[last_match..m.start()]);
-            scratch_space.push_str(&replace);
+            scratch_space.push_str(replace);
             last_match = m.end();
         }
         scratch_space.push_str(&haystack[last_match..]);

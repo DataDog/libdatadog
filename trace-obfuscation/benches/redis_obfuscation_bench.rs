@@ -95,7 +95,6 @@ SET k v
     ];
 
     c.bench_function("obfuscate_redis_string", |b| {
-        
         b.iter(|| {
             for c in cases {
                 black_box(redis::obfuscate_redis_string(c));

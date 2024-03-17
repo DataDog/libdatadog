@@ -4,9 +4,9 @@
 fn is_splitter(b: u8) -> bool {
     matches!(
         b,
-        b',' | b'(' | b')' | b'|' | b' ' | b'\t' | b'\n' | b'\r' 
-        | 0xB // vertical tab 
-        | 0xC // form feed
+        b',' | b'(' | b')' | b'|' | b' ' | b'\t' | b'\n' | b'\r' |
+        0xB | // vertical tab 
+        0xC // form feed
     )
 }
 
@@ -14,7 +14,7 @@ fn is_numeric_litteral_prefix(bytes: &[u8], start: usize) -> bool {
     matches!(
         bytes[start],
         b'0' | b'1' | b'2' | b'3' | b'4' | b'5' | b'6' | b'7' | b'8' | b'9' | b'-' | b'+' | b'.'
-    ) && !(start + 1 < bytes.len() && bytes[start] == b'-' &&  bytes[start+1] == b'-')
+    ) && !(start + 1 < bytes.len() && bytes[start] == b'-' && bytes[start + 1] == b'-')
 }
 
 fn is_hex_litteral_prefix(bytes: &[u8], start: usize, end: usize) -> bool {
@@ -26,13 +26,13 @@ fn is_quoted(bytes: &[u8], start: usize, end: usize) -> bool {
 }
 
 /// Normalizes an sql string by replacing litterals with '?' chars.
-/// 
+///
 /// The algorithm works by finding the places where a litteral could start (so called splitters)
 /// and then identifies them by looking at their first few characters.
-/// 
+///
 /// It does not attempt at rigorous parsing of the SQL syntax, and does not take any context
-/// sensitive decision, contrary to the more exhaustive datadog-agent implementation. 
-/// 
+/// sensitive decision, contrary to the more exhaustive datadog-agent implementation.
+///
 /// based off
 /// https://github.com/DataDog/dd-trace-java/blob/36e924eaa/internal-api/src/main/java/datadog/trace/api/normalize/SQLNormalizer.java
 pub fn obfsucate_sql_string(s: &str) -> String {
@@ -46,19 +46,20 @@ pub fn obfsucate_sql_string(s: &str) -> String {
         if start >= s.len() {
             break;
         }
-        let end = next_splitter(&bytes, start).unwrap_or(s.len());
+        let end = next_splitter(bytes, start).unwrap_or(s.len());
         if start + 1 == end {
             // if the gap is 1 character it can only be a number
             if bytes[start].is_ascii_digit() {
-                obfuscated.push_str("?");
+                obfuscated.push('?');
             } else {
                 obfuscated.push_str(&s[start..end]);
             }
         } else if start + 1 < end {
-            if is_numeric_litteral_prefix(bytes, start) 
+            if is_numeric_litteral_prefix(bytes, start)
                 || is_quoted(bytes, start, end)
-                || is_hex_litteral_prefix(bytes, start, end) {
-                obfuscated.push_str("?");
+                || is_hex_litteral_prefix(bytes, start, end)
+            {
+                obfuscated.push('?');
             } else {
                 obfuscated.push_str(&s[start..end]);
             }
@@ -93,24 +94,30 @@ mod tests {
     #[test]
     fn test_sql_obfuscation() {
         let mut panic = None;
-        let err = CASES.iter().enumerate().filter_map(|(i, (input, output))| {
-            let err = match std::panic::catch_unwind(|| test_sql_obfuscation_case(&input, &output)) {
-                Ok(r) => r,
-                Err(p) => {
-                    panic = Some(p);
-                    eprintln!("panicked case {i}\n\tinput: {input}\n\n");
-                    return None
-                },
-            }.err()?;
-            Some(format!("failed case {i}\n\terr: {err}\n"))
-        }).collect::<String>();
-        if !err.is_empty(){
+        let err = CASES
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (input, output))| {
+                let err =
+                    match std::panic::catch_unwind(|| test_sql_obfuscation_case(input, output)) {
+                        Ok(r) => r,
+                        Err(p) => {
+                            panic = Some(p);
+                            eprintln!("panicked case {i}\n\tinput: {input}\n\n");
+                            return None;
+                        }
+                    }
+                    .err()?;
+                Some(format!("failed case {i}\n\terr: {err}\n"))
+            })
+            .collect::<String>();
+        if !err.is_empty() {
             if panic.is_none() {
                 panic!("{err}")
             } else {
                 eprintln!("{err}")
             }
-        } 
+        }
         if let Some(p) = panic {
             std::panic::resume_unwind(p);
         }
@@ -118,7 +125,7 @@ mod tests {
 
     fn test_sql_obfuscation_case(input: &str, output: &str) -> anyhow::Result<()> {
         let got = super::obfsucate_sql_string(input);
-        if output!= got {
+        if output != got {
             anyhow::bail!("expected {output}\n\tgot: {got}")
         }
         Ok(())

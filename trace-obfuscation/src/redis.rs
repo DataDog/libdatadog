@@ -30,12 +30,8 @@ pub fn obfuscate_redis_string(cmd: &str) -> String {
     s.to_string()
 }
 
-fn obfuscate_redis_cmd<'a, 'b>(
-    str: &'a mut String,
-    cmd: &'b str,
-    mut args: Vec<&'b str>,
-) -> Vec<&'b str> {
-    str.push_str(&cmd);
+fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str>) -> Vec<&'a str> {
+    str.push_str(cmd);
     if args.is_empty() {
         return args;
     }
@@ -122,7 +118,7 @@ fn obfuscate_redis_cmd<'a, 'b>(
             // Obfuscate 2nd argument to SET sub-command.
             // • CONFIG SET parameter value
             let mut uppercase_arg = [0; 8];
-            let uppercase_arg = ascii_uppercase(&args[0], &mut uppercase_arg).unwrap_or(b"");
+            let uppercase_arg = ascii_uppercase(args[0], &mut uppercase_arg).unwrap_or(b"");
             if uppercase_arg == b"SET" {
                 args = obfuscate_redis_args_n(args, 2)
             }
@@ -150,7 +146,7 @@ fn obfuscate_redis_cmd<'a, 'b>(
                     continue; // key
                 }
                 let mut uppercase_arg = [0; 8];
-                let uppercase_arg = ascii_uppercase(&args[i], &mut uppercase_arg).unwrap_or(b"");
+                let uppercase_arg = ascii_uppercase(args[i], &mut uppercase_arg).unwrap_or(b"");
                 match uppercase_arg {
                     b"NX" | b"XX" | b"CH" | b"INCR" => {}
                     _ => {
