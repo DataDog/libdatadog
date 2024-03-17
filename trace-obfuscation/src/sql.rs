@@ -47,6 +47,7 @@ pub fn obfsucate_sql_string(s: &str) -> String {
             break;
         }
         let end = next_splitter(bytes, start).unwrap_or(s.len());
+        #[allow(clippy::comparison_chain)]
         if start + 1 == end {
             // if the gap is 1 character it can only be a number
             if bytes[start].is_ascii_digit() {
