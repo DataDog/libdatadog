@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::Throughput::Elements;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, BenchmarkId, Criterion};
 use datadog_trace_obfuscation::credit_cards::is_card_number;
 
-fn is_card_number_bench(c: &mut Criterion) {
+pub fn is_card_number_bench(c: &mut Criterion) {
     let ccs = [
         "378282246310005",
         "  378282246310005",
@@ -44,4 +44,3 @@ fn is_card_number_no_luhn_bench(c: &mut Criterion) {
 }
 
 criterion_group!(benches, is_card_number_bench, is_card_number_no_luhn_bench);
-criterion_main!(benches);

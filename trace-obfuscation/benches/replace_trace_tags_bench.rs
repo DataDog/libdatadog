@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, Criterion};
 use datadog_trace_obfuscation::replacer;
 use datadog_trace_protobuf::pb;
 
@@ -56,4 +56,3 @@ fn criterion_benchmark(c: &mut Criterion) {
 }
 
 criterion_group!(benches, criterion_benchmark);
-criterion_main!(benches);
