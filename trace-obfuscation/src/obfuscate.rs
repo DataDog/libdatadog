@@ -44,7 +44,7 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
         _ => {}
     }
     if let Some(tag_replace_rules) = &config.tag_replace_rules {
-        replace_span_tags(span, tag_replace_rules)
+        replace_span_tags(span, tag_replace_rules, &mut String::new());
     }
 }
 

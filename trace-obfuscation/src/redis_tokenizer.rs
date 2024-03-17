@@ -1,179 +1,141 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum RedisTokenType {
     RedisTokenCommand,
     RedisTokenArgument,
 }
 
-pub struct RedisTokenizer {
-    data: Vec<char>,
-    cur_char: char,
+pub struct RedisTokenizer<'a> {
+    data: &'a str,
     offset: usize,
-    has_started: bool,
-    done: bool,
     state: RedisTokenType, // specifies the token we are about to parse
 }
 
 #[derive(Debug)]
-pub struct RedisTokenizerScanResult {
-    pub token: String,
+pub struct RedisTokenizerScanResult<'a> {
+    pub token: &'a str,
     pub token_type: RedisTokenType,
     pub done: bool,
 }
 
-impl RedisTokenizer {
+impl<'a> RedisTokenizer<'a> {
     pub fn new(query: &str) -> RedisTokenizer {
-        RedisTokenizer {
-            data: query.trim().chars().collect(),
-            cur_char: ' ',
+        let mut s = RedisTokenizer {
+            data: query,
             offset: 0,
-            has_started: false,
-            done: false,
             state: RedisTokenType::RedisTokenCommand,
+        };
+        s.skip_empty_lines();
+        s
+    }
+
+    pub fn scan(&mut self) -> RedisTokenizerScanResult<'a> {
+        let token_type = self.state;
+        let current = self.next_token();
+        RedisTokenizerScanResult {
+            token: &self.data[current.0..current.1],
+            token_type,
+            done: self.curr_char() == 0,
         }
     }
 
-    pub fn scan(&mut self) -> RedisTokenizerScanResult {
-        match self.state {
-            RedisTokenType::RedisTokenCommand => self.scan_command(),
-            RedisTokenType::RedisTokenArgument => self.scan_argument(),
-        }
-    }
-
-    fn scan_command(&mut self) -> RedisTokenizerScanResult {
-        let s = &mut String::new();
-        let mut started = false;
+    pub fn next_token(&mut self) -> (usize, usize) {
+        let s = match self.state {
+            RedisTokenType::RedisTokenCommand => self.next_cmd(),
+            RedisTokenType::RedisTokenArgument => self.next_arg(),
+        };
         loop {
-            self.next();
-            if self.done {
-                return RedisTokenizerScanResult {
-                    token: s.to_string(),
-                    token_type: RedisTokenType::RedisTokenCommand,
-                    done: self.done,
-                };
+            self.skip_whitespace();
+            if self.curr_char() != b'\n' {
+                break;
             }
-            match self.cur_char {
-                ' ' => {
-                    if !started {
-                        self.skip_space();
-                        continue;
-                    }
-                    // done scanning command
+            self.state = RedisTokenType::RedisTokenCommand;
+            self.offset += 1;
+        }
+        s
+    }
+
+    fn next_cmd(&mut self) -> (usize, usize) {
+        self.skip_whitespace();
+        let start = self.offset;
+        loop {
+            match self.curr_char() {
+                0 => break,
+                b'\n' => {
+                    let span = (start, self.offset);
+                    self.offset += 1;
+                    return span;
+                }
+                b' ' => {
                     self.state = RedisTokenType::RedisTokenArgument;
-                    self.skip_space();
-                    return RedisTokenizerScanResult {
-                        token: s.to_string(),
-                        token_type: RedisTokenType::RedisTokenCommand,
-                        done: self.done,
-                    };
+                    break;
                 }
-                '\n' => {
-                    return RedisTokenizerScanResult {
-                        token: s.to_string(),
-                        token_type: RedisTokenType::RedisTokenCommand,
-                        done: self.done,
-                    };
-                }
-                _ => {
-                    s.push(self.cur_char);
-                }
+                _ => self.offset += 1,
             }
-            started = true
         }
+        (start, self.offset)
     }
 
-    fn skip_space(&mut self) {
-        while matches!(self.cur_char, ' ' | '\t') || self.cur_char == '\r' && !self.done {
-            self.next()
-        }
-        if self.cur_char == '\n' {
-            // next token is a command
-            self.state = RedisTokenType::RedisTokenCommand
-        } else {
-            // don't steal the first non-space character
-            self.unread()
-        }
-    }
-
-    fn scan_argument(&mut self) -> RedisTokenizerScanResult {
-        let s = &mut String::new();
-        let mut quoted = false; // in quoted string
-        let mut escape = false; // in escape sequence
+    fn next_arg(&mut self) -> (usize, usize) {
+        self.skip_whitespace();
+        let start = self.offset;
+        let mut quote = false;
+        let mut escape = false;
         loop {
-            self.next();
-            if self.done {
-                return RedisTokenizerScanResult {
-                    token: s.to_string(),
-                    token_type: RedisTokenType::RedisTokenArgument,
-                    done: self.done,
-                };
-            }
-            match self.cur_char {
-                '\\' => {
-                    s.push('\\');
+            match self.curr_char() {
+                0 => break,
+                b'\\' => {
                     if !escape {
                         escape = true;
+                        self.offset += 1;
                         continue;
                     }
                 }
-                '\n' => {
-                    if !quoted {
-                        self.state = RedisTokenType::RedisTokenCommand;
-                        return RedisTokenizerScanResult {
-                            token: s.to_string(),
-                            token_type: RedisTokenType::RedisTokenArgument,
-                            done: self.done,
-                        };
-                    }
-                    s.push('\n')
-                }
-                '"' => {
-                    s.push('"');
+                b'"' => {
                     if !escape {
-                        // this quote wasn't escaped, toggle quoted mode
-                        quoted = !quoted
+                        quote = !quote
                     }
                 }
-                ' ' => {
-                    if !quoted {
-                        self.skip_space();
-                        return RedisTokenizerScanResult {
-                            token: s.to_string(),
-                            token_type: RedisTokenType::RedisTokenArgument,
-                            done: self.done,
-                        };
+                b'\n' => {
+                    if !quote {
+                        let span = (start, self.offset);
+                        self.offset += 1;
+                        self.state = RedisTokenType::RedisTokenCommand;
+                        return span;
                     }
-                    s.push(' ');
                 }
-                _ => {
-                    s.push(self.cur_char);
+                b' ' => {
+                    if !quote {
+                        return (start, self.offset);
+                    }
                 }
+                _ => {}
             }
-            escape = false
-        }
-    }
-
-    fn next(&mut self) {
-        if self.has_started {
+            escape = false;
             self.offset += 1;
-        } else {
-            self.has_started = true;
         }
-        if self.offset < self.data.len() {
-            self.cur_char = self.data[self.offset];
-            return;
-        }
-        self.done = true;
+        (start, self.offset)
     }
 
-    fn unread(&mut self) {
-        if !self.offset < 1 {
-            return;
+    fn skip_whitespace(&mut self) {
+        while matches!(self.curr_char(), b' ' | b'\t' | b'\r') {
+            self.offset += 1;
         }
-        self.offset -= 1;
-        self.cur_char = self.data[self.offset];
+    }
+
+    fn skip_empty_lines(&mut self) {
+        while matches!(self.curr_char(), b' ' | b'\t' | b'\r' | b'\n') {
+            self.offset += 1;
+        }
+    }
+
+    fn curr_char(&self) -> u8 {
+        match self.data.as_bytes().get(self.offset) {
+            Some(&c) => c,
+            None => 0,
+        }
     }
 }
 
