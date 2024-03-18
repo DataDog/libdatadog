@@ -5,6 +5,7 @@ use criterion::{black_box, criterion_group, Criterion};
 use datadog_trace_obfuscation::redis;
 
 fn obfuscate_redis_string_benchmark(c: &mut Criterion) {
+    let mut group = c.benchmark_group("redis");
     let cases = [
         "AUTH my-secret-password",
         "AUTH james my-secret-password",
@@ -94,7 +95,7 @@ SET k v
         "bitfield key SET key value incrby 3",
     ];
 
-    c.bench_function("obfuscate_redis_string", |b| {
+    group.bench_function("obfuscate_redis_string", |b| {
         b.iter(|| {
             for c in cases {
                 black_box(redis::obfuscate_redis_string(c));
