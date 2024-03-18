@@ -103,7 +103,7 @@ COPY "ipc/tarpc/tarpc/Cargo.toml" "ipc/tarpc/tarpc/"
 COPY "ipc/tarpc/plugins/Cargo.toml" "ipc/tarpc/plugins/"
 COPY "bin_tests/Cargo.toml"  "bin_tests/"
 RUN find -name "Cargo.toml" | sed -e s#Cargo.toml#src/lib.rs#g | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
-RUN echo trace-obfuscation/benches/benches_main.rs tools/src/bin/dedup_headers.rs tools/sidecar_mockgen/src/bin/sidecar_mockgen.rs ddtelemetry/examples/tm-worker-test.rs ipc/tarpc/tarpc/examples/compression.rs ipc/tarpc/tarpc/examples/custom_transport.rs ipc/tarpc/tarpc/examples/pubsub.rs ipc/tarpc/tarpc/examples/readme.rs ipc/tarpc/tarpc/examples/tracing.rs ipc/tarpc/tarpc/tests/compile_fail.rs ipc/tarpc/tarpc/tests/dataservice.rs ipc/tarpc/tarpc/tests/service_functional.rs bin_tests/src/bin/crashtracker_bin_test.rs bin_tests/src/bin/test_the_tests.rs | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
+RUN echo trace-obfuscation/benches/trace_obfuscation.rs tools/src/bin/dedup_headers.rs tools/sidecar_mockgen/src/bin/sidecar_mockgen.rs ddtelemetry/examples/tm-worker-test.rs ipc/tarpc/tarpc/examples/compression.rs ipc/tarpc/tarpc/examples/custom_transport.rs ipc/tarpc/tarpc/examples/pubsub.rs ipc/tarpc/tarpc/examples/readme.rs ipc/tarpc/tarpc/examples/tracing.rs ipc/tarpc/tarpc/tests/compile_fail.rs ipc/tarpc/tarpc/tests/dataservice.rs ipc/tarpc/tarpc/tests/service_functional.rs bin_tests/src/bin/crashtracker_bin_test.rs bin_tests/src/bin/test_the_tests.rs | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
 
 # cache dependencies
 RUN cargo fetch --locked

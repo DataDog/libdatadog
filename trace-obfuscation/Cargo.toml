@@ -23,5 +23,5 @@ duplicate = "0.4.1"
 criterion = "0.5"
 
 [[bench]]
-name = "benches_main"
+name = "trace_obfuscation"
 harness = false
