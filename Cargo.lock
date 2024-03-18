@@ -856,8 +856,14 @@ dependencies = [
 name = "datadog-live-debugger"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
+ "ddcommon",
+ "hyper",
  "json",
  "regex",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -968,6 +974,7 @@ dependencies = [
  "console-subscriber",
  "datadog-ipc",
  "datadog-ipc-macros",
+ "datadog-live-debugger",
  "datadog-remote-config",
  "datadog-sidecar-macros",
  "datadog-trace-normalization",
@@ -1017,6 +1024,7 @@ name = "datadog-sidecar-ffi"
 version = "0.0.1"
 dependencies = [
  "datadog-ipc",
+ "datadog-live-debugger",
  "datadog-sidecar",
  "datadog-trace-utils",
  "ddcommon",
@@ -1151,6 +1159,7 @@ dependencies = [
  "build_common",
  "ddcommon",
  "hyper",
+ "serde",
 ]
 
 [[package]]

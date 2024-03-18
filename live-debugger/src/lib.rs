@@ -8,6 +8,9 @@ mod parse_json_expr;
 mod parse_util;
 mod probe_defs;
 
+pub mod debugger_defs;
+pub mod sender;
+
 pub use expr_eval::*;
 pub use parse_json::parse as parse_json;
 pub use probe_defs::*;

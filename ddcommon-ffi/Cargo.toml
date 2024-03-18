@@ -19,3 +19,4 @@ build_common = { path = "../build-common" }
 ddcommon = { path = "../ddcommon" }
 anyhow = "1.0"
 hyper = {version = "0.14", default-features = false}
+serde = "1.0"

@@ -85,6 +85,10 @@ pub trait SidecarInterface {
         data: Vec<u8>,
         headers: SerializedTracerHeaderTags,
     );
+    async fn send_debugger_data_shm(
+        instance_id: InstanceId,
+        #[SerializedHandle] handle: ShmHandle,
+    );
     async fn set_remote_config_data(
         instance_id: InstanceId,
         service: String,
@@ -188,6 +192,7 @@ struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
     session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
+    debugger_config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
     log_guard: Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
     session_id: String,
 }
@@ -288,6 +293,17 @@ impl SessionInfo {
         F: FnMut(&mut tracer::Config),
     {
         f(&mut self.get_trace_config());
+    }
+
+    fn get_debugger_config(&self) -> MutexGuard<datadog_live_debugger::sender::Config> {
+        self.debugger_config.lock().unwrap()
+    }
+
+    fn modify_debugger_config<F>(&self, mut f: F)
+    where
+        F: FnMut(&mut datadog_live_debugger::sender::Config),
+    {
+        f(&mut self.get_debugger_config());
     }
 }
 
@@ -786,9 +802,9 @@ impl SidecarServer {
                     }
                     if let RequestIdentifier::SessionId(session)
                     | RequestIdentifier::InstanceId(InstanceId {
-                        session_id: session,
-                        ..
-                    }) = instance
+                                                        session_id: session,
+                                                        ..
+                                                    }) = instance
                     {
                         if sessions.insert(session.clone()) {
                             match session_counter.lock().unwrap().entry(session) {
@@ -956,6 +972,13 @@ impl SidecarServer {
         // send trace payload to our trace flusher
         let data = SendData::new(size, payload, headers, target);
         self.trace_flusher.enqueue(data);
+    }
+
+    async fn send_debugger_data(&self, data: &[u8], target: &Endpoint) {
+        if let Err(e) = datadog_live_debugger::sender::send(data, target).await {
+            error!("Error sending data to live debugger endpoint: {e:?}");
+            debug!("Attempted to send the following payload: {}", String::from_utf8_lossy(data));
+        }
     }
 }
 
@@ -1143,6 +1166,11 @@ impl SidecarInterface for SidecarServer {
             cfg.language = config.language.clone();
             cfg.tracer_version = config.tracer_version.clone();
         });
+        session.modify_debugger_config(|cfg| {
+            let endpoint =
+                get_product_endpoint(datadog_live_debugger::sender::PROD_INTAKE_SUBDOMAIN, &config.endpoint);
+            cfg.set_endpoint(endpoint).ok();
+        });
         self.trace_flusher
             .interval
             .store(config.flush_interval.as_millis() as u64, Ordering::Relaxed);
@@ -1229,6 +1257,33 @@ impl SidecarInterface for SidecarServer {
         no_response()
     }
 
+    type SendDebuggerDataShmFut = NoResponse;
+
+    fn send_debugger_data_shm(
+        self,
+        _: Context,
+        instance_id: InstanceId,
+        handle: ShmHandle,
+    ) -> Self::SendDebuggerDataShmFut {
+        if let Some(endpoint) = self
+            .get_session(&instance_id.session_id)
+            .get_debugger_config()
+            .endpoint
+            .clone()
+        {
+            tokio::spawn(async move {
+                match handle.map() {
+                    Ok(mapped) => {
+                        self.send_debugger_data(mapped.as_slice(), &endpoint).await;
+                    }
+                    Err(e) => error!("Failed mapping shared trace data memory: {}", e),
+                }
+            });
+        }
+
+        no_response()
+    }
+
     type SetRemoteConfigDataFut = NoResponse;
 
     fn set_remote_config_data(
@@ -1267,12 +1322,14 @@ impl SidecarInterface for SidecarServer {
 }
 
 pub mod blocking {
-    use datadog_ipc::platform::ShmHandle;
+    use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
     use std::{
         borrow::Cow,
         io,
         time::{Duration, Instant},
     };
+    use std::hash::Hash;
+    use serde::Serialize;
 
     use datadog_ipc::transport::blocking::BlockingTransport;
 
@@ -1368,6 +1425,43 @@ pub mod blocking {
             handle,
             headers,
         })
+    }
+
+    pub fn send_debugger_data_shm(
+        transport: &mut SidecarTransport,
+        instance_id: &InstanceId,
+        handle: ShmHandle,
+    ) -> io::Result<()> {
+        transport.send(SidecarInterfaceRequest::SendDebuggerDataShm {
+            instance_id: instance_id.clone(),
+            handle,
+        })
+    }
+
+    pub fn send_debugger_data_shm_vec<S: Eq + Hash + Serialize>(
+        transport: &mut SidecarTransport,
+        instance_id: &InstanceId,
+        payloads: Vec<datadog_live_debugger::debugger_defs::DebuggerPayload<S>>,
+    ) -> anyhow::Result<()> {
+        struct SizeCount(usize);
+
+        impl io::Write for SizeCount {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.0 += buf.len();
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut size_serializer = serde_json::Serializer::new(SizeCount(0));
+        payloads.serialize(&mut size_serializer).unwrap();
+
+        let mut mapped = ShmHandle::new(size_serializer.into_inner().0)?.map()?;
+        let mut serializer = serde_json::Serializer::new(mapped.as_slice_mut());
+        payloads.serialize(&mut serializer).unwrap();
+
+        Ok(send_debugger_data_shm(transport, instance_id, mapped.into())?)
     }
 
     pub fn set_remote_config_data(

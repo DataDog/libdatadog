@@ -273,3 +273,8 @@ impl<'a> From<&'a datadog_live_debugger::LiveDebuggingData> for LiveDebuggingDat
         }
     }
 }
+
+#[no_mangle]
+pub extern "C" fn ddog_capture_defaults() -> Capture {
+    Capture::default()
+}

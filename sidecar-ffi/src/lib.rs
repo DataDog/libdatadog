@@ -31,6 +31,7 @@ use ddtelemetry::{
     data::{self, Dependency, Integration},
     worker::{LifecycleAction, TelemetryActions},
 };
+use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use ffi::slice::AsBytes;
 
 use ddtelemetry_ffi::{try_c, MaybeError};
@@ -508,6 +509,27 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
         instance_id,
         data.as_bytes().to_vec(),
         tracer_header_tags.into(),
+    ));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+#[allow(improper_ctypes_definitions)] // DebuggerPayload is just a pointer, we hide its internals
+pub unsafe extern "C" fn ddog_sidecar_send_debugger_data(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    payloads: Vec<DebuggerPayload<ffi::CharSlice>>
+) -> MaybeError {
+    if payloads.is_empty() {
+        return MaybeError::None;
+    }
+
+    try_c!(blocking::send_debugger_data_shm_vec(
+        transport,
+        instance_id,
+        payloads,
     ));
 
     MaybeError::None

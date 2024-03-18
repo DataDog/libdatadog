@@ -14,10 +14,10 @@ pub struct Capture {
 impl Default for Capture {
     fn default() -> Self {
         Capture {
-            max_reference_depth: 10,
-            max_collection_size: 1000,
-            max_length: 1000,
-            max_field_depth: 10,
+            max_reference_depth: 3,
+            max_collection_size: 100,
+            max_length: 255,
+            max_field_depth: 20,
         }
     }
 }
