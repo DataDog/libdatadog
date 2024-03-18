@@ -25,7 +25,7 @@ fn is_quoted(bytes: &[u8], start: usize, end: usize) -> bool {
     bytes[start] == b'\'' && bytes[end - 1] == b'\''
 }
 
-/// Normalizes an sql string by replacing litterals with '?' chars.
+/// Obfuscates an sql string by replacing litterals with '?' chars.
 ///
 /// The algorithm works by finding the places where a litteral could start (so called splitters)
 /// and then identifies them by looking at their first few characters.
@@ -35,7 +35,7 @@ fn is_quoted(bytes: &[u8], start: usize, end: usize) -> bool {
 ///
 /// based off
 /// https://github.com/DataDog/dd-trace-java/blob/36e924eaa/internal-api/src/main/java/datadog/trace/api/normalize/SQLNormalizer.java
-pub fn obfsucate_sql_string(s: &str) -> String {
+pub fn obfuscate_sql_string(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut obfuscated = String::new();
     if s.is_empty() {
@@ -125,7 +125,7 @@ mod tests {
     }
 
     fn test_sql_obfuscation_case(input: &str, output: &str) -> anyhow::Result<()> {
-        let got = super::obfsucate_sql_string(input);
+        let got = super::obfuscate_sql_string(input);
         if output != got {
             anyhow::bail!("expected {output}\n\tgot: {got}")
         }
