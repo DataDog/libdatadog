@@ -1,6 +1,10 @@
+// Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 
 fn normalize_service_bench(c: &mut Criterion) {
+    let mut group = c.benchmark_group("normalization");
     let cases = &[
         ("#test_starting_hash", "test_starting_hash"),
             ("TestCAPSandSuch", "testcapsandsuch"),
@@ -46,7 +50,7 @@ fn normalize_service_bench(c: &mut Criterion) {
             ),
         ];
 
-    c.bench_function("normalize_service", |b| {
+    group.bench_function("normalize_service", |b| {
         b.iter_batched_ref(
             || cases.iter().map(|(c, _)| c.to_string()).collect::<Vec<_>>(),
             |cases| {
@@ -60,20 +64,24 @@ fn normalize_service_bench(c: &mut Criterion) {
 }
 
 fn normalize_name_bench(c: &mut Criterion) {
+    let mut group = c.benchmark_group("normalization");
     let cases = &[
         "good",
         "bad-name",
         "Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.",
     ];
-    let mut group = c.benchmark_group("normalize_name");
     for case in cases {
-        group.bench_with_input(BenchmarkId::new("", case), *case, |b, case| {
-            b.iter_batched_ref(
-                || case.to_owned(),
-                |c| datadog_trace_normalization::normalize_utils::normalize_name(c),
-                BatchSize::NumIterations(100000),
-            )
-        });
+        group.bench_with_input(
+            BenchmarkId::new("normalize_name", case),
+            *case,
+            |b, case| {
+                b.iter_batched_ref(
+                    || case.to_owned(),
+                    datadog_trace_normalization::normalize_utils::normalize_name,
+                    BatchSize::NumIterations(100000),
+                )
+            },
+        );
     }
 }
 

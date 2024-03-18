@@ -1,3 +1,6 @@
+// Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 /// Taken from the source of
 /// https://doc.rust-lang.org/std/primitive.str.html#method.floor_char_boundary
 /// TODO remove when str::floor_char_boundary is stable
