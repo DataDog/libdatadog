@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporter::{self, Endpoint};
+use crate::exporter::{self, ProfilingEndpoint};
 pub use datadog_crashtracker::{CrashtrackerResolveFrames, ProfilingOpTypes};
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
@@ -15,7 +15,7 @@ pub struct CrashtrackerConfiguration<'a> {
     pub collect_stacktrace: bool,
     pub create_alt_stack: bool,
     /// The endpoint to send the crash repor to (can be a file://)
-    pub endpoint: Endpoint<'a>,
+    pub endpoint: ProfilingEndpoint<'a>,
     /// Optional filename to forward stderr to (useful for logging/debugging)
     pub optional_stderr_filename: CharSlice<'a>,
     /// Optional filename to forward stdout to (useful for logging/debugging)

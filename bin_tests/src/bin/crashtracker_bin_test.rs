@@ -34,7 +34,7 @@ mod unix {
         crashtracker::init(
             CrashtrackerConfiguration {
                 create_alt_stack: true,
-                endpoint: Some(datadog_profiling::exporter::Endpoint {
+                endpoint: Some(ddcommon::Endpoint {
                     url: ddcommon::parse_uri(&format!("file://{}", output_filename))?,
                     api_key: None,
                 }),

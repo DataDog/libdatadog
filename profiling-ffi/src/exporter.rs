@@ -34,7 +34,7 @@ pub enum SendResult {
 }
 
 #[repr(C)]
-pub enum Endpoint<'a> {
+pub enum ProfilingEndpoint<'a> {
     Agent(CharSlice<'a>),
     Agentless(CharSlice<'a>, CharSlice<'a>),
     File(CharSlice<'a>),
@@ -63,21 +63,21 @@ pub struct HttpStatus(u16);
 /// Creates an endpoint that uses the agent.
 /// # Arguments
 /// * `base_url` - Contains a URL with scheme, host, and port e.g. "https://agent:8126/".
-#[export_name = "ddog_Endpoint_agent"]
-pub extern "C" fn endpoint_agent(base_url: CharSlice) -> Endpoint {
-    Endpoint::Agent(base_url)
+#[no_mangle]
+pub extern "C" fn ddog_prof_Endpoint_agent(base_url: CharSlice) -> ProfilingEndpoint {
+    ProfilingEndpoint::Agent(base_url)
 }
 
 /// Creates an endpoint that uses the Datadog intake directly aka agentless.
 /// # Arguments
 /// * `site` - Contains a host and port e.g. "datadoghq.com".
 /// * `api_key` - Contains the Datadog API key.
-#[export_name = "ddog_Endpoint_agentless"]
-pub extern "C" fn endpoint_agentless<'a>(
+#[no_mangle]
+pub extern "C" fn ddog_prof_Endpoint_agentless<'a>(
     site: CharSlice<'a>,
     api_key: CharSlice<'a>,
-) -> Endpoint<'a> {
-    Endpoint::Agentless(site, api_key)
+) -> ProfilingEndpoint<'a> {
+    ProfilingEndpoint::Agentless(site, api_key)
 }
 
 /// Creates an endpoint that writes to a file.
@@ -86,8 +86,8 @@ pub extern "C" fn endpoint_agentless<'a>(
 /// # Arguments
 /// * `filename` - Path to the output file "/tmp/file.txt".
 #[export_name = "ddog_Endpoint_file"]
-pub extern "C" fn endpoint_file(filename: CharSlice) -> Endpoint {
-    Endpoint::File(filename)
+pub extern "C" fn endpoint_file(filename: CharSlice) -> ProfilingEndpoint {
+    ProfilingEndpoint::File(filename)
 }
 unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
     let str: &str = slice.try_to_utf8()?;
@@ -102,15 +102,15 @@ unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
     Ok(hyper::Uri::from_str(str)?)
 }
 
-pub unsafe fn try_to_endpoint(endpoint: Endpoint) -> anyhow::Result<exporter::Endpoint> {
+pub unsafe fn try_to_endpoint(endpoint: ProfilingEndpoint) -> anyhow::Result<ddcommon::Endpoint> {
     // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
     // a failed result is likely to be an error.
     match endpoint {
-        Endpoint::Agent(url) => {
+        ProfilingEndpoint::Agent(url) => {
             let base_url = try_to_url(url)?;
             exporter::config::agent(base_url)
         }
-        Endpoint::Agentless(site, api_key) => {
+        ProfilingEndpoint::Agentless(site, api_key) => {
             let site_str = site.try_to_utf8()?;
             let api_key_str = api_key.try_to_utf8()?;
             exporter::config::agentless(
@@ -118,7 +118,7 @@ pub unsafe fn try_to_endpoint(endpoint: Endpoint) -> anyhow::Result<exporter::En
                 Cow::Owned(api_key_str.to_owned()),
             )
         }
-        Endpoint::File(filename) => {
+        ProfilingEndpoint::File(filename) => {
             let filename = filename.try_to_utf8()?;
             exporter::config::file(filename)
         }
@@ -147,7 +147,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_new(
     profiling_library_version: CharSlice,
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoint: Endpoint,
+    endpoint: ProfilingEndpoint,
 ) -> ExporterNewResult {
     // Use a helper function so we can use the ? operator.
     match ddog_prof_exporter_new_impl(
@@ -171,7 +171,7 @@ fn ddog_prof_exporter_new_impl(
     profiling_library_version: CharSlice,
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoint: Endpoint,
+    endpoint: ProfilingEndpoint,
 ) -> anyhow::Result<ProfileExporter> {
     let library_name = profiling_library_name.to_utf8_lossy().into_owned();
     let library_version = profiling_library_version.to_utf8_lossy().into_owned();
@@ -520,7 +520,7 @@ mod test {
                 profiling_library_version(),
                 family(),
                 Some(&tags),
-                endpoint_agent(endpoint()),
+                ddog_prof_Endpoint_agent(endpoint()),
             )
         };
 
@@ -546,7 +546,7 @@ mod test {
                 profiling_library_version(),
                 family(),
                 None,
-                endpoint_agent(endpoint()),
+                ddog_prof_Endpoint_agent(endpoint()),
             )
         };
 
@@ -617,7 +617,7 @@ mod test {
                 profiling_library_version(),
                 family(),
                 None,
-                endpoint_agent(endpoint()),
+                ddog_prof_Endpoint_agent(endpoint()),
             )
         };
 
@@ -689,7 +689,7 @@ mod test {
                 profiling_library_version(),
                 family(),
                 None,
-                endpoint_agent(endpoint()),
+                ddog_prof_Endpoint_agent(endpoint()),
             )
         };
 
@@ -749,7 +749,7 @@ mod test {
                 profiling_library_version(),
                 family(),
                 None,
-                endpoint_agent(endpoint()),
+                ddog_prof_Endpoint_agent(endpoint()),
             )
         };
 
@@ -863,7 +863,7 @@ mod test {
                 profiling_library_version(),
                 family(),
                 None,
-                endpoint_agent(endpoint()),
+                ddog_prof_Endpoint_agent(endpoint()),
             )
         };
 
