@@ -43,7 +43,7 @@ use datadog_ipc::tarpc;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::{SendData, TracerHeaderTags};
-use ddcommon::Endpoint;
+use ddcommon::{Endpoint, tag::Tag};
 use ddtelemetry::{
     data,
     worker::{
@@ -51,8 +51,6 @@ use ddtelemetry::{
         TelemetryWorkerHandle, MAX_ITEMS,
     },
 };
-
-use ddcommon::tag::Tag;
 
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{config, log, tracer};
@@ -119,7 +117,7 @@ impl MetricDefinition {
 #[derive(Debug, Deserialize, Serialize)]
 pub enum SidecarAction {
     Telemetry(TelemetryActions),
-    RegisterTelemetryMetric(MetricDefinition),
+    RegisterTelemetryMetric(MetricDefinition), // FIXME: implement missing properties: namespace, metric type, ...
     AddTelemetryMetricPoint((String, f64, Vec<Tag>)),
     PhpComposerTelemetryFile(PathBuf),
 }
@@ -480,10 +478,10 @@ impl EnqueuedTelemetryData {
                     }
                 }
                 SidecarAction::RegisterTelemetryMetric(_) => {
-                    // FIXME: ???
+                    // Not implemented
                 },
                 SidecarAction::AddTelemetryMetricPoint(_) => {
-                    // FIXME: ???
+                    // Not implemented
                 },
             }
         }
@@ -1126,28 +1124,24 @@ impl SidecarInterface for SidecarServer {
                             metric.name.clone(),
                             Vec::new(),
                             data::metrics::MetricType::Count,
-                            false, // commom
+                            false,
                             data::metrics::MetricNamespace::Tracers,
                         );
 
                         metrics.insert(metric.name.clone(), context_key);
                     }
 
+                    let mut actions: Vec<_> = std::mem::take(&mut enqueued_data.actions);
+
                     // Send metric points
-                    for point in enqueued_data.points.iter() {
-                        let context_key = metrics.get(&point.0).unwrap();
-
-                        let add_point_action = TelemetryActions::AddPoint((
-                            point.1,
-                            *context_key,
-                            point.2.clone(), // FIXME: is this correct??
-                        ));
-
-                        // FIXME: Send in batches
-                        app.telemetry.send_msgs(vec![add_point_action]).await.ok();
+                    for (metric_name, value, tags) in std::mem::take(&mut enqueued_data.points) {
+                        actions.push(TelemetryActions::AddPoint((
+                            value,
+                            *metrics.get(&metric_name).unwrap(),
+                            tags,
+                        )));
                     }
 
-                    let actions: Vec<_> = std::mem::take(&mut enqueued_data.actions);
                     // drop on stop
                     if actions.iter().any(|action| {
                         matches!(action, TelemetryActions::Lifecycle(LifecycleAction::Stop))
