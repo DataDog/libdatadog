@@ -3,11 +3,12 @@
 
 use std::collections::HashMap;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, Criterion};
 use datadog_trace_obfuscation::replacer;
 use datadog_trace_protobuf::pb;
 
 fn criterion_benchmark(c: &mut Criterion) {
+    let mut group = c.benchmark_group("tags");
     let rules: &[replacer::ReplaceRule] = &replacer::parse_rules_from_string(
         r#"[
         {"name": "*", "pattern": "(token/)([^/]*)", "repl": "${1}?"},
@@ -48,7 +49,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     };
 
     let mut trace = [span_1];
-    c.bench_function("replace_trace_tags_bench", |b| {
+    group.bench_function("replace_trace_tags", |b| {
         b.iter(|| {
             replacer::replace_trace_tags(black_box(&mut trace), black_box(rules));
         })
@@ -56,4 +57,3 @@ fn criterion_benchmark(c: &mut Criterion) {
 }
 
 criterion_group!(benches, criterion_benchmark);
-criterion_main!(benches);

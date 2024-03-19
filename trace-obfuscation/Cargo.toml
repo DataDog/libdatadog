@@ -23,9 +23,5 @@ duplicate = "0.4.1"
 criterion = "0.5"
 
 [[bench]]
-name = "replace_trace_tags_bench"
-harness = false
-
-[[bench]]
-name = "credit_cards_bench"
+name = "trace_obfuscation"
 harness = false
