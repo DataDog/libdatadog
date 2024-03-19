@@ -21,6 +21,7 @@ use std::{
 use anyhow::Result;
 
 use datadog_ipc::{platform::AsyncChannel, transport::Transport};
+use ddtelemetry::metrics::ContextKey;
 use futures::{
     future::{self, join_all, BoxFuture, Ready, Shared},
     FutureExt,
@@ -383,6 +384,7 @@ impl RuntimeInfo {
 struct AppInstance {
     telemetry: TelemetryWorkerHandle,
     telemetry_worker_shutdown: Shared<BoxFuture<'static, Option<()>>>,
+    telemetry_metrics: HashMap<String, ContextKey>,
 }
 
 struct EnqueuedTelemetryData {
@@ -942,6 +944,7 @@ impl SidecarServer {
                 let instance = AppInstance {
                     telemetry: handle,
                     telemetry_worker_shutdown: worker_join.map(Result::ok).boxed().shared(),
+                    telemetry_metrics: HashMap::new(),
                 };
 
                 instance.telemetry.send_msgs(inital_actions).await.ok();
@@ -1107,7 +1110,7 @@ impl SidecarInterface for SidecarServer {
                 let mut actions: Vec<TelemetryActions> = vec![];
                 enqueued_data.extract_telemetry_actions(&mut actions).await;
 
-                if let Some(app) = self
+                if let Some(mut app) = self
                     .get_app(
                         &instance_id,
                         &runtime_meta,
@@ -1118,17 +1121,18 @@ impl SidecarInterface for SidecarServer {
                     .await
                 {
                     // Register metrics
-                    let mut metrics = HashMap::new();
                     for metric in enqueued_data.metrics.iter() {
-                        let context_key: ddtelemetry::metrics::ContextKey = app.telemetry.register_metric_context(
+                        if app.telemetry_metrics.contains_key(&metric.name) {
+                            continue;
+                        }
+
+                        app.telemetry_metrics.insert(metric.name.clone(), app.telemetry.register_metric_context(
                             metric.name.clone(),
                             Vec::new(),
                             data::metrics::MetricType::Count,
                             false,
                             data::metrics::MetricNamespace::Tracers,
-                        );
-
-                        metrics.insert(metric.name.clone(), context_key);
+                        ));
                     }
 
                     let mut actions: Vec<_> = std::mem::take(&mut enqueued_data.actions);
@@ -1137,7 +1141,7 @@ impl SidecarInterface for SidecarServer {
                     for (metric_name, value, tags) in std::mem::take(&mut enqueued_data.points) {
                         actions.push(TelemetryActions::AddPoint((
                             value,
-                            *metrics.get(&metric_name).unwrap(),
+                            *app.telemetry_metrics.get(&metric_name).unwrap(),
                             tags,
                         )));
                     }
