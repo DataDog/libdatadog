@@ -25,32 +25,47 @@ pub struct ReplaceRule {
 
     // repl specifies the replacement string to be used when Pattern matches.
     repl: String,
+
+    // does the replacement pattern contain references to the capture groups
+    no_expansion: bool,
+}
+
+impl ReplaceRule {
+    fn apply(&self, tag_value: &mut String, scratch_space: &mut String) {
+        replace_all(
+            &self.re,
+            &self.repl,
+            self.no_expansion,
+            tag_value,
+            scratch_space,
+        )
+    }
 }
 
 /// replace_trace_tags replaces the tag values of all spans within a trace with a given set of
 /// rules.
 pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
+    let mut scratch_space = String::new();
     for span in trace.iter_mut() {
-        replace_span_tags(span, rules);
+        replace_span_tags(span, rules, &mut scratch_space);
     }
 }
 
 /// replace_span_tags replaces the tag values of a span with a given set of rules.
-pub fn replace_span_tags(span: &mut pb::Span, rules: &[ReplaceRule]) {
+pub fn replace_span_tags(span: &mut pb::Span, rules: &[ReplaceRule], scratch_space: &mut String) {
     for rule in rules {
         match rule.name.as_ref() {
             "*" => {
-                for (_, val) in span.meta.iter_mut() {
-                    *val = rule.re.replace_all(val, &rule.repl).to_string();
+                for (_, tag_value) in span.meta.iter_mut() {
+                    rule.apply(tag_value, scratch_space);
                 }
             }
             "resource.name" => {
-                span.resource = rule.re.replace_all(&span.resource, &rule.repl).to_string();
+                rule.apply(&mut span.resource, scratch_space);
             }
             _ => {
-                if let Some(val) = span.meta.get_mut(&rule.name) {
-                    let replaced_tag = rule.re.replace_all(val, &rule.repl).to_string();
-                    *val = replaced_tag;
+                if let Some(tag_value) = span.meta.get_mut(&rule.name) {
+                    rule.apply(tag_value, scratch_space);
                 }
             }
         }
@@ -76,13 +91,70 @@ pub fn parse_rules_from_string(
                 anyhow::bail!("Obfuscator Error: Error while parsing rule: {}", err)
             }
         };
+        let no_expansion = regex::Replacer::no_expansion(&mut &raw_rule.repl).is_some();
         vec.push(ReplaceRule {
             name: raw_rule.name,
             re: compiled_regex,
             repl: raw_rule.repl,
+            no_expansion,
         });
     }
     Ok(vec)
+}
+
+/// Mutate the haystack by changing all occurences of the regex by the `replace` parameter
+/// using the scratch space provided
+///
+/// Taken from regex::replacen to use a reusable scratch space instead of allocating a new String
+/// https://docs.rs/regex/1.10.2/src/regex/regex/string.rs.html#890-944
+fn replace_all(
+    re: &Regex,
+    mut replace: &str,
+    no_expansion: bool,
+    haystack: &mut String,
+    scratch_space: &mut String,
+) {
+    // If we know that the replacement doesn't have any capture expansions,
+    // then we can use the fast path. The fast path can make a tremendous
+    // difference:
+    //
+    //   1) We use `find_iter` instead of `captures_iter`. Not asking for captures generally makes
+    //      the regex engines faster.
+    //   2) We don't need to look up all of the capture groups and do replacements inside the
+    //      replacement string. We just push it at each match and be done with it.
+    if no_expansion {
+        let mut it = re.find_iter(haystack).peekable();
+        if it.peek().is_none() {
+            return;
+        }
+        scratch_space.reserve(haystack.len());
+        let mut last_match = 0;
+        for m in it {
+            scratch_space.push_str(&haystack[last_match..m.start()]);
+            scratch_space.push_str(replace);
+            last_match = m.end();
+        }
+        scratch_space.push_str(&haystack[last_match..]);
+    } else {
+        // The slower path, which we use if the replacement may need access to
+        // capture groups.
+        let mut it = re.captures_iter(haystack).peekable();
+        if it.peek().is_none() {
+            return;
+        }
+        scratch_space.reserve(haystack.len());
+        let mut last_match = 0;
+        for cap in it {
+            // unwrap on 0 is OK because captures only reports matches
+            let m = cap.get(0).unwrap();
+            scratch_space.push_str(&haystack[last_match..m.start()]);
+            regex::Replacer::replace_append(&mut replace, &cap, scratch_space);
+            last_match = m.end();
+        }
+        scratch_space.push_str(&haystack[last_match..]);
+    }
+    std::mem::swap(scratch_space, haystack);
+    scratch_space.truncate(0);
 }
 
 #[cfg(test)]

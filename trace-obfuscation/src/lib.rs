@@ -11,3 +11,4 @@ pub mod obfuscation_config;
 pub mod redis;
 pub mod redis_tokenizer;
 pub mod replacer;
+pub mod sql;

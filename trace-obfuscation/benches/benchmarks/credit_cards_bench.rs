@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::Throughput::Elements;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, BenchmarkId, Criterion};
 use datadog_trace_obfuscation::credit_cards::is_card_number;
 
-fn is_card_number_bench(c: &mut Criterion) {
+pub fn is_card_number_bench(c: &mut Criterion) {
+    let mut group = c.benchmark_group("credit_card");
     let ccs = [
         "378282246310005",
         "  378282246310005",
@@ -15,7 +16,6 @@ fn is_card_number_bench(c: &mut Criterion) {
         "x371413321323331",        // invalid characters
         "",
     ];
-    let mut group = c.benchmark_group("is_card_number");
     for c in ccs.iter() {
         group.throughput(Elements(1));
         group.bench_with_input(BenchmarkId::new("is_card_number", c), c, |b, i| {
@@ -25,6 +25,7 @@ fn is_card_number_bench(c: &mut Criterion) {
 }
 
 fn is_card_number_no_luhn_bench(c: &mut Criterion) {
+    let mut group = c.benchmark_group("credit_card");
     let ccs = [
         "378282246310005",
         "  378282246310005",
@@ -34,7 +35,6 @@ fn is_card_number_no_luhn_bench(c: &mut Criterion) {
         "x371413321323331",        // invalid characters
         "",
     ];
-    let mut group = c.benchmark_group("is_card_number_no_luhn");
     for c in ccs.iter() {
         group.throughput(Elements(1));
         group.bench_with_input(BenchmarkId::new("is_card_number_no_luhn", c), c, |b, i| {
@@ -44,4 +44,3 @@ fn is_card_number_no_luhn_bench(c: &mut Criterion) {
 }
 
 criterion_group!(benches, is_card_number_bench, is_card_number_no_luhn_bench);
-criterion_main!(benches);
