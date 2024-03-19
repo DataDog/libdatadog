@@ -113,6 +113,15 @@ task package: [
   end
 end
 
+Rake::Task["package"].enhance { Rake::Task["spec_validate_permissions"].execute }
+
+task :spec_validate_permissions do
+  require "rspec"
+  RSpec.world.reset # If any other tests ran before, flushes them
+  ret = RSpec::Core::Runner.run(["spec/gem_packaging.rb"])
+  raise "Release tests failed! See error output above." if ret != 0
+end
+
 desc "Release all packaged gems"
 task push_to_rubygems: [
   :package,
