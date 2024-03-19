@@ -21,9 +21,9 @@ use anyhow::Context;
 /// # Atomicity
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
-pub unsafe extern "C" fn ddog_prof_crashtracker_shutdown() -> CrashtrackerResult {
+pub unsafe extern "C" fn ddog_prof_Crashtracker_shutdown() -> CrashtrackerResult {
     datadog_crashtracker::shutdown_crash_handler()
-        .context("ddog_prof_crashtracker_shutdown failed")
+        .context("ddog_prof_Crashtracker_shutdown failed")
         .into()
 }
 
@@ -47,7 +47,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_shutdown() -> CrashtrackerResult
 /// # Atomicity
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
-pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
+pub unsafe extern "C" fn ddog_prof_Crashtracker_update_on_fork(
     config: CrashtrackerConfiguration,
     metadata: CrashtrackerMetadata,
 ) -> CrashtrackerResult {
@@ -56,7 +56,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
         let metadata = metadata.try_into()?;
         datadog_crashtracker::on_fork(config, metadata)
     })()
-    .context("ddog_prof_crashtracker_update_on_fork failed")
+    .context("ddog_prof_Crashtracker_update_on_fork failed")
     .into()
 }
 
@@ -73,9 +73,9 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
 /// description.
 /// # Safety
 /// No safety concerns
-pub unsafe extern "C" fn ddog_prof_crashtracker_receiver_entry_point() -> CrashtrackerResult {
+pub unsafe extern "C" fn ddog_prof_Crashtracker_receiver_entry_point() -> CrashtrackerResult {
     datadog_crashtracker::receiver_entry_point()
-        .context("ddog_prof_crashtracker_receiver_entry_point failed")
+        .context("ddog_prof_Crashtracker_receiver_entry_point failed")
         .into()
 }
 
@@ -91,7 +91,7 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_receiver_entry_point() -> Crasht
 /// # Atomicity
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
-pub unsafe extern "C" fn ddog_prof_crashtracker_init(
+pub unsafe extern "C" fn ddog_prof_Crashtracker_init(
     config: CrashtrackerConfiguration,
     metadata: CrashtrackerMetadata,
 ) -> CrashtrackerResult {
@@ -100,6 +100,6 @@ pub unsafe extern "C" fn ddog_prof_crashtracker_init(
         let metadata = metadata.try_into()?;
         datadog_crashtracker::init(config, metadata)
     })()
-    .context("ddog_prof_crashtracker_init failed")
+    .context("ddog_prof_Crashtracker_init failed")
     .into()
 }
