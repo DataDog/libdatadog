@@ -46,6 +46,7 @@ use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::{SendData, TracerHeaderTags};
 use ddcommon::{Endpoint, tag::Tag};
 use ddtelemetry::{
+    metrics::MetricContext,
     data,
     worker::{
         store::Store, LifecycleAction, TelemetryActions, TelemetryWorkerBuilder,
@@ -100,25 +101,9 @@ pub enum RequestIdentifier {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct MetricDefinition {
-    pub name: String,
-}
-
-impl MetricDefinition {
-    pub fn new<T>(name: T) -> Self
-    where
-        T: Into<String>,
-    {
-        Self {
-            name: name.into(),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
 pub enum SidecarAction {
     Telemetry(TelemetryActions),
-    RegisterTelemetryMetric(MetricDefinition), // FIXME: implement missing properties: namespace, metric type, ...
+    RegisterTelemetryMetric(MetricContext),
     AddTelemetryMetricPoint((String, f64, Vec<Tag>)),
     PhpComposerTelemetryFile(PathBuf),
 }
@@ -391,7 +376,7 @@ struct EnqueuedTelemetryData {
     dependencies: Store<data::Dependency>,
     configurations: Store<data::Configuration>,
     integrations: Store<data::Integration>,
-    metrics: Vec<MetricDefinition>,
+    metrics: Vec<MetricContext>,
     points: Vec<(String, f64, Vec<Tag>)>,
     actions: Vec<TelemetryActions>,
     computed_dependencies: Vec<Shared<ManualFuture<Arc<Vec<data::Dependency>>>>>,
@@ -1121,17 +1106,17 @@ impl SidecarInterface for SidecarServer {
                     .await
                 {
                     // Register metrics
-                    for metric in enqueued_data.metrics.iter() {
+                    for metric in std::mem::take(&mut enqueued_data.metrics).into_iter() {
                         if app.telemetry_metrics.contains_key(&metric.name) {
                             continue;
                         }
 
                         app.telemetry_metrics.insert(metric.name.clone(), app.telemetry.register_metric_context(
-                            metric.name.clone(),
-                            Vec::new(),
-                            data::metrics::MetricType::Count,
-                            false,
-                            data::metrics::MetricNamespace::Tracers,
+                            metric.name,
+                            metric.tags,
+                            metric.metric_type,
+                            metric.common,
+                            metric.namespace,
                         ));
                     }
 
