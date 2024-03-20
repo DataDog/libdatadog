@@ -126,7 +126,7 @@ impl StatsExporter {
 
     pub fn insert(&self, mut span_stat: SpanStats) {
         normalize_span_stat(&mut span_stat);
-        // todo obfuscation
+        obfuscate_span_stat(&mut span_stat);
 
         let mut buckets = self.buckets.lock().unwrap();
         let bucket = buckets
@@ -192,6 +192,19 @@ fn normalize_span_stat(span: &mut SpanStats) {
     normalize_utils::normalize_name(&mut span.operation_name);
     normalize_utils::normalize_span_type(&mut span.span_type);
     normalize_utils::normalize_resource(&mut span.resource_name, &span.operation_name);
+}
+
+fn obfuscate_span_stat(span: &mut SpanStats) {
+    match &*span.span_type {
+        "redis" => {
+            span.resource_name =
+                datadog_trace_obfuscation::redis::obfuscate_redis_string(&span.resource_name);
+        }
+        "sql" | "cassandra" => {
+            // TODO integrate SQL obfuscation
+        }
+        _ => {}
+    };
 }
 
 fn encode_bucket(key: BucketKey, bucket: Bucket) -> pb::ClientGroupedStats {

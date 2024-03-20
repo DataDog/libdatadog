@@ -1094,6 +1094,7 @@ dependencies = [
  "bytes",
  "datadog-ddsketch",
  "datadog-trace-normalization",
+ "datadog-trace-obfuscation",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
  "ddcommon",

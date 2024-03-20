@@ -22,4 +22,5 @@ ddcommon = { path = "../ddcommon" }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-utils = { path = "../trace-utils" }
 datadog-trace-normalization = { path = "../trace-normalization" }
+datadog-trace-obfuscation = { path = "../trace-obfuscation" }
 datadog-ddsketch = { path = "../ddsketch" }
