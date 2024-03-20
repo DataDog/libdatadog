@@ -20,12 +20,11 @@ static ddog_CharSlice to_slice_string(std::string &s) {
 // TODO: Testing on my mac, the tags appear to have the opposite meaning you'd
 // expect
 static ddog_prof_Option_U32 some_u32(uint32_t i) {
-  ddog_prof_Option_U32 rval;
+  ddog_prof_Option_U32 rval = {.tag = DDOG_PROF_OPTION_U32_SOME_U32};
   rval.some = i;
-  rval.tag = DDOG_PROF_OPTION_U32_NONE_U32;
   return rval;
 }
-static ddog_prof_Option_U32 none_u32() { return {.tag = DDOG_PROF_OPTION_U32_SOME_U32}; }
+static ddog_prof_Option_U32 none_u32() { return {.tag = DDOG_PROF_OPTION_U32_NONE_U32}; }
 
 struct Deleter {
   void operator()(ddog_prof_CrashInfo *object) { ddog_crashinfo_drop(object); }
