@@ -78,6 +78,31 @@ pub unsafe extern "C" fn ddog_crashinfo_add_file(
     .into()
 }
 
+/// Adds the tag with given "key" and "value" to the crashinfo
+///
+/// # Safety
+/// `crashinfo` must be a valid pointer to a `CrashInfo` object.
+/// `key` should be a valid reference to a utf8 encoded String.
+/// `value` should be a valid reference to a utf8 encoded String.
+/// The string is copied into the crashinfo, so it does not need to outlive this
+/// call.
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_crashinfo_add_tag(
+    crashinfo: *mut CrashInfo,
+    key: CharSlice,
+    value: CharSlice,
+) -> CrashtrackerResult {
+    (|| {
+        let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
+        let key = key.to_utf8_lossy().to_string();
+        let value = value.to_utf8_lossy().to_string();
+        crashinfo.add_tag(key, value)
+    })()
+    .context("ddog_crashinfo_add_tag failed")
+    .into()
+}
+
 /// Sets the crashinfo metadata
 ///
 /// # Safety

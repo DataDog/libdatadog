@@ -144,6 +144,15 @@ impl CrashInfo {
         Ok(())
     }
 
+    pub fn add_tag(&mut self, key: String, value: String) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.tags.contains_key(&key),
+            "Already had tag with key: {key}"
+        );
+        self.tags.insert(key, value);
+        Ok(())
+    }
+
     pub fn set_incomplete(&mut self, incomplete: bool) -> anyhow::Result<()> {
         self.incomplete = incomplete;
         Ok(())
