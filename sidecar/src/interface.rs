@@ -21,7 +21,6 @@ use std::{
 use anyhow::Result;
 
 use datadog_ipc::{platform::AsyncChannel, transport::Transport};
-use ddtelemetry::metrics::ContextKey;
 use futures::{
     future::{self, join_all, BoxFuture, Ready, Shared},
     FutureExt,
@@ -44,10 +43,10 @@ use datadog_ipc::tarpc;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::{SendData, TracerHeaderTags};
-use ddcommon::{Endpoint, tag::Tag};
+use ddcommon::{tag::Tag, Endpoint};
 use ddtelemetry::{
-    metrics::MetricContext,
     data,
+    metrics::{ContextKey, MetricContext},
     worker::{
         store::Store, LifecycleAction, TelemetryActions, TelemetryWorkerBuilder,
         TelemetryWorkerHandle, MAX_ITEMS,
@@ -421,12 +420,8 @@ impl EnqueuedTelemetryData {
                     .computed_dependencies
                     .push(Self::extract_composer_telemetry(composer_path).shared()),
 
-                SidecarAction::RegisterTelemetryMetric(m) => {
-                    self.metrics.push(m)
-                },
-                SidecarAction::AddTelemetryMetricPoint(p) => {
-                    self.points.push(p)
-                },
+                SidecarAction::RegisterTelemetryMetric(m) => self.metrics.push(m),
+                SidecarAction::AddTelemetryMetricPoint(p) => self.points.push(p),
             }
         }
     }
@@ -466,10 +461,10 @@ impl EnqueuedTelemetryData {
                 }
                 SidecarAction::RegisterTelemetryMetric(_) => {
                     // Not implemented
-                },
+                }
                 SidecarAction::AddTelemetryMetricPoint(_) => {
                     // Not implemented
-                },
+                }
             }
         }
         actions
@@ -1111,13 +1106,16 @@ impl SidecarInterface for SidecarServer {
                             continue;
                         }
 
-                        app.telemetry_metrics.insert(metric.name.clone(), app.telemetry.register_metric_context(
-                            metric.name,
-                            metric.tags,
-                            metric.metric_type,
-                            metric.common,
-                            metric.namespace,
-                        ));
+                        app.telemetry_metrics.insert(
+                            metric.name.clone(),
+                            app.telemetry.register_metric_context(
+                                metric.name,
+                                metric.tags,
+                                metric.metric_type,
+                                metric.common,
+                                metric.namespace,
+                            ),
+                        );
                     }
 
                     let mut actions: Vec<_> = std::mem::take(&mut enqueued_data.actions);
