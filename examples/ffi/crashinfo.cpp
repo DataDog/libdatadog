@@ -11,6 +11,7 @@ extern "C" {
 #include <cstring>
 #include <memory>
 #include <thread>
+#include <vector>
 
 static ddog_CharSlice to_slice_c_char(const char *s) { return {.ptr = s, .len = strlen(s)}; }
 static ddog_CharSlice to_slice_string(std::string &s) {
