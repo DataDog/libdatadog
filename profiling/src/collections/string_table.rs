@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Unless explicitly stated otherwise all files in this repository are licensed under the Apache
+// License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use crate::alloc::{AllocError, ArenaAllocator};
 use crate::collections::identifiable::{Id, StringId};
@@ -73,7 +73,6 @@ struct LengthPrefixedHeader {
 /// types and then be able to re-constitute the fat-pointer at run-time. This
 /// is partly why [LengthPrefixedStr] uses a thin-pointer to the header prefix
 /// of the data and uses unsafe Rust for the rest.
-///
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct LengthPrefixedStr {
