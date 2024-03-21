@@ -134,7 +134,7 @@ mod test_c_ffi {
         unsafe {
             let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
             assert_eq!(
-                ddog_builder_instantiate(
+                ddog_telemetry_builder_instantiate(
                     NonNull::new(&mut builder).unwrap().cast(),
                     ffi::CharSlice::from("service_name"),
                     ffi::CharSlice::from("language_name"),
@@ -146,7 +146,7 @@ mod test_c_ffi {
             let mut builder = builder.assume_init();
 
             assert_eq!(
-                ddog_builder_with_str_named_property(
+                ddog_telemetry_builder_with_str_named_property(
                     &mut builder,
                     ffi::CharSlice::from("runtime_id"),
                     ffi::CharSlice::from("abcd")
@@ -156,7 +156,7 @@ mod test_c_ffi {
             assert_eq!(builder.runtime_id.as_deref(), Some("abcd"));
 
             assert_eq!(
-                ddog_builder_with_str_named_property(
+                ddog_telemetry_builder_with_str_named_property(
                     &mut builder,
                     ffi::CharSlice::from("application.runtime_name"),
                     ffi::CharSlice::from("rust")
@@ -166,7 +166,7 @@ mod test_c_ffi {
             assert_eq!(builder.application.runtime_name.as_deref(), Some("rust"));
 
             assert_eq!(
-                ddog_builder_with_str_named_property(
+                ddog_telemetry_builder_with_str_named_property(
                     &mut builder,
                     ffi::CharSlice::from("host.kernel_version"),
                     ffi::CharSlice::from("ダタドグ")
@@ -175,7 +175,7 @@ mod test_c_ffi {
             );
             assert_eq!(builder.host.kernel_version.as_deref(), Some("ダタドグ"));
 
-            assert!(ddog_builder_with_str_named_property(
+            assert!(ddog_telemetry_builder_with_str_named_property(
                 &mut builder,
                 ffi::CharSlice::from("doesnt exist"),
                 ffi::CharSlice::from("abc")
@@ -191,7 +191,7 @@ mod test_c_ffi {
         let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
         unsafe {
             assert_eq!(
-                ddog_builder_instantiate(
+                ddog_telemetry_builder_instantiate(
                     NonNull::new(&mut builder).unwrap().cast(),
                     ffi::CharSlice::from("service_name"),
                     ffi::CharSlice::from("language_name"),
@@ -203,7 +203,7 @@ mod test_c_ffi {
             let mut builder = builder.assume_init();
 
             assert_eq!(
-                ddog_builder_with_property_str(
+                ddog_telemetry_builder_with_property_str(
                     &mut builder,
                     TelemetryWorkerBuilderStrProperty::RuntimeId,
                     ffi::CharSlice::from("abcd")
@@ -213,7 +213,7 @@ mod test_c_ffi {
             assert_eq!(builder.runtime_id.as_deref(), Some("abcd"));
 
             assert_eq!(
-                ddog_builder_with_property_str(
+                ddog_telemetry_builder_with_property_str(
                     &mut builder,
                     TelemetryWorkerBuilderStrProperty::ApplicationRuntimeName,
                     ffi::CharSlice::from("rust")
@@ -223,7 +223,7 @@ mod test_c_ffi {
             assert_eq!(builder.application.runtime_name.as_deref(), Some("rust"));
 
             assert_eq!(
-                ddog_builder_with_property_str(
+                ddog_telemetry_builder_with_property_str(
                     &mut builder,
                     TelemetryWorkerBuilderStrProperty::HostKernelVersion,
                     ffi::CharSlice::from("ダタドグ")
@@ -240,7 +240,7 @@ mod test_c_ffi {
         unsafe {
             let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
             assert_eq!(
-                ddog_builder_instantiate(
+                ddog_telemetry_builder_instantiate(
                     NonNull::new(&mut builder).unwrap().cast(),
                     ffi::CharSlice::from("service_name"),
                     ffi::CharSlice::from("language_name"),
@@ -253,7 +253,7 @@ mod test_c_ffi {
 
             let f = tempfile::NamedTempFile::new().unwrap();
             assert_eq!(
-                ddog_builder_with_endpoint_config_endpoint(
+                ddog_telemetry_builder_with_endpoint_config_endpoint(
                     &mut builder,
                     &Endpoint {
                         api_key: None,
@@ -266,15 +266,18 @@ mod test_c_ffi {
                 ),
                 MaybeError::None
             );
-            ddog_builder_with_bool_config_telemetry_debug_logging_enabled(&mut builder, true);
+            ddog_telemetry_builder_with_bool_config_telemetry_debug_logging_enabled(
+                &mut builder,
+                true,
+            );
 
             let mut handle: MaybeUninit<Box<TelemetryWorkerHandle>> = MaybeUninit::uninit();
-            ddog_builder_run(builder, NonNull::new(&mut handle).unwrap().cast());
+            ddog_telemetry_builder_run(builder, NonNull::new(&mut handle).unwrap().cast());
             let handle = handle.assume_init();
 
-            ddog_handle_start(&handle);
-            ddog_handle_stop(&handle);
-            ddog_handle_wait_for_shutdown(handle);
+            ddog_telemetry_handle_start(&handle);
+            ddog_telemetry_handle_stop(&handle);
+            ddog_telemetry_handle_wait_for_shutdown(handle);
         }
     }
 
@@ -284,7 +287,7 @@ mod test_c_ffi {
         unsafe {
             let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
             assert_eq!(
-                ddog_builder_instantiate(
+                ddog_telemetry_builder_instantiate(
                     NonNull::new(&mut builder).unwrap().cast(),
                     ffi::CharSlice::from("service_name"),
                     ffi::CharSlice::from("language_name"),
@@ -297,7 +300,7 @@ mod test_c_ffi {
 
             let f = tempfile::NamedTempFile::new().unwrap();
             assert_eq!(
-                ddog_builder_with_endpoint_config_endpoint(
+                ddog_telemetry_builder_with_endpoint_config_endpoint(
                     &mut builder,
                     &Endpoint {
                         api_key: None,
@@ -310,13 +313,22 @@ mod test_c_ffi {
                 ),
                 MaybeError::None
             );
-            ddog_builder_with_bool_config_telemetry_debug_logging_enabled(&mut builder, true);
+            ddog_telemetry_builder_with_bool_config_telemetry_debug_logging_enabled(
+                &mut builder,
+                true,
+            );
 
             let mut handle: MaybeUninit<Box<TelemetryWorkerHandle>> = MaybeUninit::uninit();
-            ddog_builder_run_metric_logs(builder, NonNull::new(&mut handle).unwrap().cast());
+            ddog_telemetry_builder_run_metric_logs(
+                builder,
+                NonNull::new(&mut handle).unwrap().cast(),
+            );
             let handle = handle.assume_init();
 
-            assert!(matches!(ddog_handle_start(&handle), MaybeError::None));
+            assert!(matches!(
+                ddog_telemetry_handle_start(&handle),
+                MaybeError::None
+            ));
 
             let mut tags = ddog_Vec_Tag_new();
             assert!(matches!(
@@ -328,7 +340,7 @@ mod test_c_ffi {
                 PushTagResult::Ok
             ));
 
-            let context_key = ddog_handle_register_metric_context(
+            let context_key = ddog_telemetry_handle_register_metric_context(
                 &handle,
                 ffi::CharSlice::from("test_metric"),
                 MetricType::Count,
@@ -336,10 +348,10 @@ mod test_c_ffi {
                 true,
                 MetricNamespace::Apm,
             );
-            ddog_handle_add_point(&handle, &context_key, 1.0);
+            ddog_telemetry_handle_add_point(&handle, &context_key, 1.0);
 
-            assert_eq!(ddog_handle_stop(&handle), MaybeError::None);
-            ddog_handle_wait_for_shutdown(handle);
+            assert_eq!(ddog_telemetry_handle_stop(&handle), MaybeError::None);
+            ddog_telemetry_handle_wait_for_shutdown(handle);
         }
     }
 }

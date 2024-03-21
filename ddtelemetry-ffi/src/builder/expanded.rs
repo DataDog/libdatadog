@@ -10,11 +10,11 @@ mod macros {
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
     #[allow(clippy::missing_safety_doc)]
-    pub unsafe extern "C" fn ddog_builder_with_str_application_service_version(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_application_service_version(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> crate::MaybeError {
-        builder.application.service_version = Some(
+        telemetry_builder.application.service_version = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
@@ -35,36 +35,11 @@ mod macros {
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
     #[allow(clippy::missing_safety_doc)]
-    pub unsafe extern "C" fn ddog_builder_with_str_application_env(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_application_env(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> crate::MaybeError {
-        builder.application.env = Some(
-            match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
-                param,
-            ) {
-                Ok(o) => o,
-                Err(e) => {
-                    return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                        {
-                            let res = std::fmt::format(format_args!("{0:?}", e));
-                            res
-                        }
-                        .into_bytes(),
-                    ));
-                }
-            },
-        );
-        crate::MaybeError::None
-    }
-    #[no_mangle]
-    #[allow(clippy::redundant_closure_call)]
-    #[allow(clippy::missing_safety_doc)]
-    pub unsafe extern "C" fn ddog_builder_with_str_application_runtime_name(
-        builder: &mut TelemetryWorkerBuilder,
-        param: ffi::CharSlice,
-    ) -> crate::MaybeError {
-        builder.application.runtime_name =
+        telemetry_builder.application.env =
             Some(
                 match (|s: ffi::CharSlice| -> Result<_, String> {
                     Ok(s.to_utf8_lossy().into_owned())
@@ -87,11 +62,11 @@ mod macros {
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
     #[allow(clippy::missing_safety_doc)]
-    pub unsafe extern "C" fn ddog_builder_with_str_application_runtime_version(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_application_runtime_name(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> crate::MaybeError {
-        builder.application.runtime_version = Some(
+        telemetry_builder.application.runtime_name = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
@@ -112,11 +87,11 @@ mod macros {
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
     #[allow(clippy::missing_safety_doc)]
-    pub unsafe extern "C" fn ddog_builder_with_str_application_runtime_patches(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_application_runtime_version(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> crate::MaybeError {
-        builder.application.runtime_patches = Some(
+        telemetry_builder.application.runtime_version = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
@@ -137,11 +112,11 @@ mod macros {
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
     #[allow(clippy::missing_safety_doc)]
-    pub unsafe extern "C" fn ddog_builder_with_str_host_container_id(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_application_runtime_patches(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> crate::MaybeError {
-        builder.host.container_id = Some(
+        telemetry_builder.application.runtime_patches = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
@@ -162,11 +137,11 @@ mod macros {
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
     #[allow(clippy::missing_safety_doc)]
-    pub unsafe extern "C" fn ddog_builder_with_str_host_os(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_host_container_id(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> crate::MaybeError {
-        builder.host.os = Some(
+        telemetry_builder.host.container_id = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
@@ -187,11 +162,11 @@ mod macros {
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
     #[allow(clippy::missing_safety_doc)]
-    pub unsafe extern "C" fn ddog_builder_with_str_host_kernel_name(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_host_os(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> crate::MaybeError {
-        builder.host.kernel_name = Some(
+        telemetry_builder.host.os = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
@@ -212,11 +187,11 @@ mod macros {
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
     #[allow(clippy::missing_safety_doc)]
-    pub unsafe extern "C" fn ddog_builder_with_str_host_kernel_release(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_host_kernel_name(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> crate::MaybeError {
-        builder.host.kernel_release = Some(
+        telemetry_builder.host.kernel_name = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
@@ -237,11 +212,11 @@ mod macros {
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
     #[allow(clippy::missing_safety_doc)]
-    pub unsafe extern "C" fn ddog_builder_with_str_host_kernel_version(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_host_kernel_release(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> crate::MaybeError {
-        builder.host.kernel_version = Some(
+        telemetry_builder.host.kernel_release = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
@@ -262,11 +237,36 @@ mod macros {
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
     #[allow(clippy::missing_safety_doc)]
-    pub unsafe extern "C" fn ddog_builder_with_str_runtime_id(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_host_kernel_version(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
     ) -> crate::MaybeError {
-        builder.runtime_id = Some(
+        telemetry_builder.host.kernel_version = Some(
+            match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
+                param,
+            ) {
+                Ok(o) => o,
+                Err(e) => {
+                    return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
+                        {
+                            let res = std::fmt::format(format_args!("{0:?}", e));
+                            res
+                        }
+                        .into_bytes(),
+                    ));
+                }
+            },
+        );
+        crate::MaybeError::None
+    }
+    #[no_mangle]
+    #[allow(clippy::redundant_closure_call)]
+    #[allow(clippy::missing_safety_doc)]
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_runtime_id(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
+        param: ffi::CharSlice,
+    ) -> crate::MaybeError {
+        telemetry_builder.runtime_id = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
@@ -330,15 +330,15 @@ mod macros {
      * runtime_id
 
     */
-    pub unsafe extern "C" fn ddog_builder_with_property_str(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_property_str(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         property: TelemetryWorkerBuilderStrProperty,
         param: ffi::CharSlice,
     ) -> crate::MaybeError {
         use TelemetryWorkerBuilderStrProperty::*;
         match property {
             ApplicationServiceVersion => {
-                builder.application.service_version = Some(
+                telemetry_builder.application.service_version = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -357,7 +357,7 @@ mod macros {
                 );
             }
             ApplicationEnv => {
-                builder.application.env = Some(
+                telemetry_builder.application.env = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -376,7 +376,7 @@ mod macros {
                 );
             }
             ApplicationRuntimeName => {
-                builder.application.runtime_name = Some(
+                telemetry_builder.application.runtime_name = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -395,7 +395,7 @@ mod macros {
                 );
             }
             ApplicationRuntimeVersion => {
-                builder.application.runtime_version = Some(
+                telemetry_builder.application.runtime_version = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -414,7 +414,7 @@ mod macros {
                 );
             }
             ApplicationRuntimePatches => {
-                builder.application.runtime_patches = Some(
+                telemetry_builder.application.runtime_patches = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -433,27 +433,7 @@ mod macros {
                 );
             }
             HostContainerId => {
-                builder.host.container_id =
-                    Some(
-                        match (|s: ffi::CharSlice| -> Result<_, String> {
-                            Ok(s.to_utf8_lossy().into_owned())
-                        })(param)
-                        {
-                            Ok(o) => o,
-                            Err(e) => {
-                                return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                    {
-                                        let res = std::fmt::format(format_args!("{0:?}", e));
-                                        res
-                                    }
-                                    .into_bytes(),
-                                ));
-                            }
-                        },
-                    );
-            }
-            HostOs => {
-                builder.host.os = Some(
+                telemetry_builder.host.container_id = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -471,8 +451,8 @@ mod macros {
                     },
                 );
             }
-            HostKernelName => {
-                builder.host.kernel_name =
+            HostOs => {
+                telemetry_builder.host.os =
                     Some(
                         match (|s: ffi::CharSlice| -> Result<_, String> {
                             Ok(s.to_utf8_lossy().into_owned())
@@ -491,8 +471,27 @@ mod macros {
                         },
                     );
             }
+            HostKernelName => {
+                telemetry_builder.host.kernel_name = Some(
+                    match (|s: ffi::CharSlice| -> Result<_, String> {
+                        Ok(s.to_utf8_lossy().into_owned())
+                    })(param)
+                    {
+                        Ok(o) => o,
+                        Err(e) => {
+                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
+                                {
+                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    res
+                                }
+                                .into_bytes(),
+                            ));
+                        }
+                    },
+                );
+            }
             HostKernelRelease => {
-                builder.host.kernel_release = Some(
+                telemetry_builder.host.kernel_release = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -511,7 +510,7 @@ mod macros {
                 );
             }
             HostKernelVersion => {
-                builder.host.kernel_version = Some(
+                telemetry_builder.host.kernel_version = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -530,7 +529,7 @@ mod macros {
                 );
             }
             RuntimeId => {
-                builder.runtime_id = Some(
+                telemetry_builder.runtime_id = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -582,8 +581,8 @@ mod macros {
      * runtime_id
 
     */
-    pub unsafe extern "C" fn ddog_builder_with_str_named_property(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_str_named_property(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         property: ffi::CharSlice,
         param: ffi::CharSlice,
     ) -> crate::MaybeError {
@@ -601,7 +600,7 @@ mod macros {
         };
         match property {
             "application.service_version" => {
-                builder.application.service_version = Some(
+                telemetry_builder.application.service_version = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -620,7 +619,7 @@ mod macros {
                 );
             }
             "application.env" => {
-                builder.application.env = Some(
+                telemetry_builder.application.env = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -639,7 +638,7 @@ mod macros {
                 );
             }
             "application.runtime_name" => {
-                builder.application.runtime_name = Some(
+                telemetry_builder.application.runtime_name = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -658,7 +657,7 @@ mod macros {
                 );
             }
             "application.runtime_version" => {
-                builder.application.runtime_version = Some(
+                telemetry_builder.application.runtime_version = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -677,7 +676,7 @@ mod macros {
                 );
             }
             "application.runtime_patches" => {
-                builder.application.runtime_patches = Some(
+                telemetry_builder.application.runtime_patches = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -696,27 +695,7 @@ mod macros {
                 );
             }
             "host.container_id" => {
-                builder.host.container_id =
-                    Some(
-                        match (|s: ffi::CharSlice| -> Result<_, String> {
-                            Ok(s.to_utf8_lossy().into_owned())
-                        })(param)
-                        {
-                            Ok(o) => o,
-                            Err(e) => {
-                                return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                    {
-                                        let res = std::fmt::format(format_args!("{0:?}", e));
-                                        res
-                                    }
-                                    .into_bytes(),
-                                ));
-                            }
-                        },
-                    );
-            }
-            "host.os" => {
-                builder.host.os = Some(
+                telemetry_builder.host.container_id = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -734,8 +713,8 @@ mod macros {
                     },
                 );
             }
-            "host.kernel_name" => {
-                builder.host.kernel_name =
+            "host.os" => {
+                telemetry_builder.host.os =
                     Some(
                         match (|s: ffi::CharSlice| -> Result<_, String> {
                             Ok(s.to_utf8_lossy().into_owned())
@@ -754,8 +733,27 @@ mod macros {
                         },
                     );
             }
+            "host.kernel_name" => {
+                telemetry_builder.host.kernel_name = Some(
+                    match (|s: ffi::CharSlice| -> Result<_, String> {
+                        Ok(s.to_utf8_lossy().into_owned())
+                    })(param)
+                    {
+                        Ok(o) => o,
+                        Err(e) => {
+                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
+                                {
+                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    res
+                                }
+                                .into_bytes(),
+                            ));
+                        }
+                    },
+                );
+            }
             "host.kernel_release" => {
-                builder.host.kernel_release = Some(
+                telemetry_builder.host.kernel_release = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -774,7 +772,7 @@ mod macros {
                 );
             }
             "host.kernel_version" => {
-                builder.host.kernel_version = Some(
+                telemetry_builder.host.kernel_version = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -793,7 +791,7 @@ mod macros {
                 );
             }
             "runtime_id" => {
-                builder.runtime_id = Some(
+                telemetry_builder.runtime_id = Some(
                     match (|s: ffi::CharSlice| -> Result<_, String> {
                         Ok(s.to_utf8_lossy().into_owned())
                     })(param)
@@ -818,11 +816,11 @@ mod macros {
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
     #[allow(clippy::missing_safety_doc)]
-    pub unsafe extern "C" fn ddog_builder_with_bool_config_telemetry_debug_logging_enabled(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_bool_config_telemetry_debug_logging_enabled(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         param: bool,
     ) -> crate::MaybeError {
-        builder.config.telemetry_debug_logging_enabled =
+        telemetry_builder.config.telemetry_debug_logging_enabled =
             Some(match (|b: bool| -> Result<_, String> { Ok(b) })(param) {
                 Ok(o) => o,
                 Err(e) => {
@@ -853,15 +851,15 @@ mod macros {
      * config.telemetry_debug_logging_enabled
 
     */
-    pub unsafe extern "C" fn ddog_builder_with_property_bool(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_property_bool(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         property: TelemetryWorkerBuilderBoolProperty,
         param: bool,
     ) -> crate::MaybeError {
         use TelemetryWorkerBuilderBoolProperty::*;
         match property {
             ConfigTelemetryDebugLoggingEnabled => {
-                builder.config.telemetry_debug_logging_enabled =
+                telemetry_builder.config.telemetry_debug_logging_enabled =
                     Some(match (|b: bool| -> Result<_, String> { Ok(b) })(param) {
                         Ok(o) => o,
                         Err(e) => {
@@ -889,8 +887,8 @@ mod macros {
      * config.telemetry_debug_logging_enabled
 
     */
-    pub unsafe extern "C" fn ddog_builder_with_bool_named_property(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_bool_named_property(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         property: ffi::CharSlice,
         param: bool,
     ) -> crate::MaybeError {
@@ -908,7 +906,7 @@ mod macros {
         };
         match property {
             "config.telemetry_debug_logging_enabled" => {
-                builder.config.telemetry_debug_logging_enabled =
+                telemetry_builder.config.telemetry_debug_logging_enabled =
                     Some(match (|b: bool| -> Result<_, String> { Ok(b) })(param) {
                         Ok(o) => o,
                         Err(e) => {
@@ -929,11 +927,11 @@ mod macros {
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
     #[allow(clippy::missing_safety_doc)]
-    pub unsafe extern "C" fn ddog_builder_with_endpoint_config_endpoint(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_endpoint_config_endpoint(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         param: &Endpoint,
     ) -> crate::MaybeError {
-        builder.config.endpoint = Some(
+        telemetry_builder.config.endpoint = Some(
             match (|e: &Endpoint| -> Result<_, String> { Ok(e.clone()) })(param) {
                 Ok(o) => o,
                 Err(e) => {
@@ -965,15 +963,15 @@ mod macros {
      * config.endpoint
 
     */
-    pub unsafe extern "C" fn ddog_builder_with_property_endpoint(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_property_endpoint(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         property: TelemetryWorkerBuilderEndpointProperty,
         param: &Endpoint,
     ) -> crate::MaybeError {
         use TelemetryWorkerBuilderEndpointProperty::*;
         match property {
             ConfigEndpoint => {
-                builder.config.endpoint = Some(
+                telemetry_builder.config.endpoint = Some(
                     match (|e: &Endpoint| -> Result<_, String> { Ok(e.clone()) })(param) {
                         Ok(o) => o,
                         Err(e) => {
@@ -1002,8 +1000,8 @@ mod macros {
      * config.endpoint
 
     */
-    pub unsafe extern "C" fn ddog_builder_with_endpoint_named_property(
-        builder: &mut TelemetryWorkerBuilder,
+    pub unsafe extern "C" fn ddog_telemetry_builder_with_endpoint_named_property(
+        telemetry_builder: &mut TelemetryWorkerBuilder,
         property: ffi::CharSlice,
         param: &Endpoint,
     ) -> crate::MaybeError {
@@ -1021,7 +1019,7 @@ mod macros {
         };
         match property {
             "config.endpoint" => {
-                builder.config.endpoint = Some(
+                telemetry_builder.config.endpoint = Some(
                     match (|e: &Endpoint| -> Result<_, String> { Ok(e.clone()) })(param) {
                         Ok(o) => o,
                         Err(e) => {
