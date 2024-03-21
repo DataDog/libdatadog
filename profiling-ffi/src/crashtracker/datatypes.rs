@@ -191,16 +191,7 @@ impl<'a> TryFrom<StackFrameNames<'a>> for datadog_crashtracker::StackFrameNames 
     type Error = anyhow::Error;
 
     fn try_from(value: StackFrameNames<'a>) -> Result<Self, Self::Error> {
-        let colno = value.colno.into();
-        let filename = option_from_char_slice(value.filename)?;
-        let lineno = value.lineno.into();
-        let name = option_from_char_slice(value.name)?;
-        Ok(Self {
-            colno,
-            filename,
-            lineno,
-            name,
-        })
+        Self::try_from(&value)
     }
 }
 
