@@ -24,7 +24,7 @@ pub use expanded::*;
 /// # Safety
 /// * builder should be a non null pointer to a null pointer to a builder
 #[no_mangle]
-pub unsafe extern "C" fn ddog_builder_instantiate(
+pub unsafe extern "C" fn ddog_telemetry_builder_instantiate(
     out_builder: NonNull<Box<TelemetryWorkerBuilder>>,
     service_name: ffi::CharSlice,
     language_name: ffi::CharSlice,
@@ -44,7 +44,7 @@ pub unsafe extern "C" fn ddog_builder_instantiate(
 /// # Safety
 /// * builder should be a non null pointer to a null pointer to a builder
 #[no_mangle]
-pub unsafe extern "C" fn ddog_builder_instantiate_with_hostname(
+pub unsafe extern "C" fn ddog_telemetry_builder_instantiate_with_hostname(
     out_builder: NonNull<Box<TelemetryWorkerBuilder>>,
     hostname: ffi::CharSlice,
     service_name: ffi::CharSlice,
@@ -66,7 +66,7 @@ pub unsafe extern "C" fn ddog_builder_instantiate_with_hostname(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_builder_with_native_deps(
+pub unsafe extern "C" fn ddog_telemetry_builder_with_native_deps(
     builder: &mut TelemetryWorkerBuilder,
     include_native_deps: bool,
 ) -> MaybeError {
@@ -76,7 +76,7 @@ pub unsafe extern "C" fn ddog_builder_with_native_deps(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_builder_with_rust_shared_lib_deps(
+pub unsafe extern "C" fn ddog_telemetry_builder_with_rust_shared_lib_deps(
     builder: &mut TelemetryWorkerBuilder,
     include_rust_shared_lib_deps: bool,
 ) -> MaybeError {
@@ -86,7 +86,7 @@ pub unsafe extern "C" fn ddog_builder_with_rust_shared_lib_deps(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_builder_with_config(
+pub unsafe extern "C" fn ddog_telemetry_builder_with_config(
     builder: &mut TelemetryWorkerBuilder,
     name: ffi::CharSlice,
     value: ffi::CharSlice,
@@ -107,7 +107,7 @@ pub unsafe extern "C" fn ddog_builder_with_config(
 ///
 /// # Safety
 /// * handle should be a non null pointer to a null pointer
-pub unsafe extern "C" fn ddog_builder_run(
+pub unsafe extern "C" fn ddog_telemetry_builder_run(
     builder: Box<TelemetryWorkerBuilder>,
     out_handle: NonNull<Box<TelemetryWorkerHandle>>,
 ) -> MaybeError {
@@ -124,7 +124,7 @@ pub unsafe extern "C" fn ddog_builder_run(
 ///
 /// # Safety
 /// * handle should be a non null pointer to a null pointer
-pub unsafe extern "C" fn ddog_builder_run_metric_logs(
+pub unsafe extern "C" fn ddog_telemetry_builder_run_metric_logs(
     builder: Box<TelemetryWorkerBuilder>,
     out_handle: NonNull<Box<TelemetryWorkerHandle>>,
 ) -> MaybeError {

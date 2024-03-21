@@ -15,7 +15,7 @@ use ddtelemetry::worker::TelemetryWorkerBuilder;
 use ffi::slice::AsBytes;
 
 crate::c_setters!(
-    object_name => builder,
+    object_name => telemetry_builder,
     object_type => TelemetryWorkerBuilder,
     property_type => ffi::CharSlice,
     property_type_name_snakecase => str,
@@ -39,7 +39,7 @@ crate::c_setters!(
 );
 
 crate::c_setters!(
-    object_name => builder,
+    object_name => telemetry_builder,
     object_type => TelemetryWorkerBuilder,
     property_type => bool,
     property_type_name_snakecase => bool,
@@ -51,7 +51,7 @@ crate::c_setters!(
 );
 
 crate::c_setters!(
-    object_name => builder,
+    object_name => telemetry_builder,
     object_type => TelemetryWorkerBuilder,
     property_type => &Endpoint,
     property_type_name_snakecase => endpoint,
