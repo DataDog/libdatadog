@@ -99,8 +99,9 @@ int main(void) {
   };
 
   check_result(ddog_crashinfo_set_metadata(crashinfo.get(), metadata), "Failed to add metadata");
-  check_result(ddog_crashinfo_add_tag(crashinfo.get(), to_slice_c_char("best hockey team"), to_slice_c_char("Habs")), "Failed to add tag");
-
+  check_result(ddog_crashinfo_add_tag(crashinfo.get(), to_slice_c_char("best hockey team"),
+                                      to_slice_c_char("Habs")),
+               "Failed to add tag");
 
   // This API allows one to capture useful files (e.g. /proc/pid/maps)
   // For testing purposes, use `/etc/hosts` which should exist on any reasonable
