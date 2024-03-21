@@ -1,7 +1,8 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
-//! Used to store timestamped observations in a compressed buffer. Assumption is that we don't need this data until
+//! Used to store timestamped observations in a compressed buffer. Assumption is that we don't need
+//! this data until
 // serialization, so it's better to pack it in while we're holding it.
 
 use super::super::LabelSetId;
@@ -22,11 +23,11 @@ pub struct TimestampedObservations {
 }
 
 impl TimestampedObservations {
-    // As documented in the internal Datadog doc "Ruby timeline memory fragmentation impact investigation",
-    // allowing the timeline storage vec to slowly expand creates A LOT of memory fragmentation for apps that
-    // employ multiple threads.
-    // To avoid this, we've picked a default buffer size of 1MB that very rarely needs to grow, and when it does,
-    // is expected to grow in larger steps.
+    // As documented in the internal Datadog doc "Ruby timeline memory fragmentation impact
+    // investigation", allowing the timeline storage vec to slowly expand creates A LOT of
+    // memory fragmentation for apps that employ multiple threads.
+    // To avoid this, we've picked a default buffer size of 1MB that very rarely needs to grow, and
+    // when it does, is expected to grow in larger steps.
     const DEFAULT_BUFFER_SIZE: usize = 1_048_576;
 
     pub fn new(sample_types_len: usize) -> Self {
@@ -47,9 +48,9 @@ impl TimestampedObservations {
 
     pub fn add(&mut self, sample: Sample, ts: Timestamp, values: Vec<i64>) -> anyhow::Result<()> {
         // We explicitly turn the data into a stream of bytes, feeding it to the compressor.
-        // @ivoanjo: I played with introducing a structure to serialize it all-at-once, but it seems to be a lot of
-        // boilerplate (of which cost I'm not sure) to basically do the same as these few lines so in the end I came
-        // back to this.
+        // @ivoanjo: I played with introducing a structure to serialize it all-at-once, but it seems
+        // to be a lot of boilerplate (of which cost I'm not sure) to basically do the same
+        // as these few lines so in the end I came back to this.
 
         let stack_trace_id: u32 = sample.stacktrace.into();
         let labels_id: u32 = sample.labels.into();

@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use ddcommon::{config::parse_env, parse_uri, Endpoint};
 use std::{borrow::Cow, time::Duration};
@@ -16,23 +16,29 @@ const AGENT_TELEMETRY_URL_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
 const DEFAULT_AGENT_HOST: &str = "localhost";
 const DEFAULT_AGENT_PORT: u16 = 8126;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     /// Endpoint to send the data to
     pub endpoint: Option<Endpoint>,
     /// Enables debug logging
     pub telemetry_debug_logging_enabled: bool,
     pub telemetry_hearbeat_interval: Duration,
+    pub direct_submission_enabled: bool,
 }
 
-fn endpoint_with_telemetry_path(mut endpoint: Endpoint) -> anyhow::Result<Endpoint> {
+fn endpoint_with_telemetry_path(
+    mut endpoint: Endpoint,
+    direct_submission_enabled: bool,
+) -> anyhow::Result<Endpoint> {
     let mut uri_parts = endpoint.url.into_parts();
     if uri_parts.scheme.is_some() && uri_parts.scheme.as_ref().unwrap().as_str() != "file" {
-        uri_parts.path_and_query = Some(PathAndQuery::from_static(if endpoint.api_key.is_some() {
-            DIRECT_TELEMETRY_URL_PATH
-        } else {
-            AGENT_TELEMETRY_URL_PATH
-        }));
+        uri_parts.path_and_query = Some(PathAndQuery::from_static(
+            if endpoint.api_key.is_some() && direct_submission_enabled {
+                DIRECT_TELEMETRY_URL_PATH
+            } else {
+                AGENT_TELEMETRY_URL_PATH
+            },
+        ));
     }
 
     endpoint.url = Uri::from_parts(uri_parts)?;
@@ -120,6 +126,7 @@ impl Default for Config {
             endpoint: None,
             telemetry_debug_logging_enabled: false,
             telemetry_hearbeat_interval: Duration::from_secs(60),
+            direct_submission_enabled: false,
         }
     }
 }
@@ -155,7 +162,10 @@ impl Config {
     }
 
     pub fn set_endpoint(&mut self, endpoint: Endpoint) -> anyhow::Result<()> {
-        self.endpoint = Some(endpoint_with_telemetry_path(endpoint)?);
+        self.endpoint = Some(endpoint_with_telemetry_path(
+            endpoint,
+            self.direct_submission_enabled,
+        )?);
         Ok(())
     }
 
@@ -167,6 +177,7 @@ impl Config {
             endpoint: None,
             telemetry_debug_logging_enabled: settings.shared_lib_debug,
             telemetry_hearbeat_interval: settings.telemetry_heartbeat_interval,
+            direct_submission_enabled: settings.direct_submission_enabled,
         };
         if let Ok(url) = parse_uri(&url) {
             let _res = this.set_endpoint(Endpoint { url, api_key });

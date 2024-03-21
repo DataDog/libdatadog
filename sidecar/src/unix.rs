@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use spawn_worker::{getpid, SpawnWorker, Stdio};
 
@@ -35,11 +35,13 @@ pub extern "C" fn ddog_daemon_entry_point() {
             listener.set_nonblocking(true)?;
             let listener = UnixListener::from_std(listener)?;
 
-            // shutdown to gracefully dequeue, and immediately relinquish ownership of the socket while shutting down
+            // shutdown to gracefully dequeue, and immediately relinquish ownership of the socket
+            // while shutting down
             let cancel = {
                 let listener_fd = listener.as_raw_fd();
                 move || {
-                    // We need to drop O_NONBLOCK, as accept() on a shutdown socket will just give EAGAIN instead of EINVAL
+                    // We need to drop O_NONBLOCK, as accept() on a shutdown socket will just give
+                    // EAGAIN instead of EINVAL
                     let flags =
                         OFlag::from_bits_truncate(fcntl(listener_fd, F_GETFL).ok().unwrap());
                     _ = fcntl(listener_fd, F_SETFL(flags & !OFlag::O_NONBLOCK));

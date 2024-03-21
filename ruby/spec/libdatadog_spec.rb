@@ -38,6 +38,10 @@ RSpec.describe Libdatadog do
       describe ".pkgconfig_folder" do
         it { expect(Libdatadog.pkgconfig_folder).to be nil }
       end
+
+      describe ".path_to_crashtracking_receiver_binary" do
+        it { expect(Libdatadog.path_to_crashtracking_receiver_binary).to be nil }
+      end
     end
 
     context "when vendor directory does not exist" do
@@ -49,6 +53,10 @@ RSpec.describe Libdatadog do
 
       describe ".pkgconfig_folder" do
         it { expect(Libdatadog.pkgconfig_folder).to be nil }
+      end
+
+      describe ".path_to_crashtracking_receiver_binary" do
+        it { expect(Libdatadog.path_to_crashtracking_receiver_binary).to be nil }
       end
     end
 
@@ -89,6 +97,7 @@ RSpec.describe Libdatadog do
           # Fix for https://github.com/DataDog/dd-trace-rb/issues/2222
 
           before do
+            allow(RbConfig::CONFIG).to receive(:[]).and_call_original
             allow(RbConfig::CONFIG).to receive(:[]).with("arch").and_return("x86_64-linux-musl")
             allow(Gem::Platform).to receive(:local).and_return("x86_64-linux")
 
@@ -101,11 +110,35 @@ RSpec.describe Libdatadog do
             expect(Libdatadog.pkgconfig_folder).to eq "#{temporary_directory}/x86_64-linux-musl/some/folder/containing/the/pkgconfig/file"
           end
         end
+
+        context "when platform ends with -gnu" do
+          let(:pkgconfig_folder) { "#{temporary_directory}/aarch64-linux/some/folder/containing/the/pkgconfig/file" }
+
+          before do
+            allow(Gem::Platform).to receive(:local).and_return(Gem::Platform.new("aarch64-linux-gnu"))
+          end
+
+          it "chops off the -gnu suffix and returns the folder containing the pkgconfig file for the non-gnu variant" do
+            expect(Libdatadog.pkgconfig_folder).to eq pkgconfig_folder
+          end
+        end
+
+        describe ".path_to_crashtracking_receiver_binary" do
+          it "returns the full path to the crashtracking_receiver_binary" do
+            expect(Libdatadog.path_to_crashtracking_receiver_binary).to eq(
+              "#{temporary_directory}/#{Gem::Platform.local}/some/folder/containing/the/bin/libdatadog-crashtracking-receiver"
+            )
+          end
+        end
       end
 
       context "but not for the current platform" do
         describe ".pkgconfig_folder" do
           it { expect(Libdatadog.pkgconfig_folder).to be nil }
+        end
+
+        describe ".path_to_crashtracking_receiver_binary" do
+          it { expect(Libdatadog.path_to_crashtracking_receiver_binary).to be nil }
         end
       end
     end

@@ -1,8 +1,9 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 #![cfg(unix)]
 
-use crate::exporter::{self, Endpoint};
+use crate::exporter::{self, ProfilingEndpoint};
 use crate::profiles::ProfileResult;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
@@ -13,9 +14,11 @@ pub use datadog_crashtracker::{CrashtrackerResolveFrames, ProfilingOpTypes};
 
 #[repr(C)]
 pub struct CrashtrackerConfiguration<'a> {
+    /// Should the crashtracker attempt to collect a stacktrace for the crash
+    pub collect_stacktrace: bool,
     pub create_alt_stack: bool,
     /// The endpoint to send the crash repor to (can be a file://)
-    pub endpoint: Endpoint<'a>,
+    pub endpoint: ProfilingEndpoint<'a>,
     /// Optional filename to forward stderr to (useful for logging/debugging)
     pub optional_stderr_filename: CharSlice<'a>,
     /// Optional filename to forward stdout to (useful for logging/debugging)
@@ -34,7 +37,7 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
             let s = s.try_to_utf8()?.to_string();
             Ok(s.is_empty().not().then_some(s))
         }
-
+        let collect_stacktrace = value.collect_stacktrace;
         let create_alt_stack = value.create_alt_stack;
         let endpoint = unsafe { Some(exporter::try_to_endpoint(value.endpoint)?) };
         let path_to_receiver_binary = value.path_to_receiver_binary.try_to_utf8()?.to_string();
@@ -43,6 +46,7 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
         let stdout_filename = option_from_char_slice(value.optional_stdout_filename)?;
 
         Self::new(
+            collect_stacktrace,
             create_alt_stack,
             endpoint,
             path_to_receiver_binary,
@@ -83,51 +87,51 @@ impl<'a> TryFrom<CrashtrackerMetadata<'a>> for datadog_crashtracker::Crashtracke
 
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_prof_crashtracker_begin_profiling_op(
+pub unsafe extern "C" fn ddog_prof_Crashtracker_begin_profiling_op(
     op: ProfilingOpTypes,
 ) -> ProfileResult {
     match datadog_crashtracker::begin_profiling_op(op) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_begin_profiling_op failed"),
+            err.context("ddog_prof_Crashtracker_begin_profiling_op failed"),
         )),
     }
 }
 
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_prof_crashtracker_end_profiling_op(
+pub unsafe extern "C" fn ddog_prof_Crashtracker_end_profiling_op(
     op: ProfilingOpTypes,
 ) -> ProfileResult {
     match datadog_crashtracker::end_profiling_op(op) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_end_profiling_op failed"),
+            err.context("ddog_prof_Crashtracker_end_profiling_op failed"),
         )),
     }
 }
 
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_prof_crashtracker_shutdown() -> ProfileResult {
+pub unsafe extern "C" fn ddog_prof_Crashtracker_shutdown() -> ProfileResult {
     match datadog_crashtracker::shutdown_crash_handler() {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_shutdown failed"),
+            err.context("ddog_prof_Crashtracker_shutdown failed"),
         )),
     }
 }
 
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_prof_crashtracker_update_on_fork(
+pub unsafe extern "C" fn ddog_prof_Crashtracker_update_on_fork(
     config: CrashtrackerConfiguration,
     metadata: CrashtrackerMetadata,
 ) -> ProfileResult {
     match ddog_prof_crashtracker_update_on_fork_impl(config, metadata) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_update_on_fork failed"),
+            err.context("ddog_prof_Crashtracker_update_on_fork failed"),
         )),
     }
 }
@@ -143,25 +147,25 @@ unsafe fn ddog_prof_crashtracker_update_on_fork_impl(
 
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_prof_crashtracker_receiver_entry_point() -> ProfileResult {
+pub unsafe extern "C" fn ddog_prof_Crashtracker_receiver_entry_point() -> ProfileResult {
     match datadog_crashtracker::receiver_entry_point() {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_receiver_entry_point failed"),
+            err.context("ddog_prof_Crashtracker_receiver_entry_point failed"),
         )),
     }
 }
 
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_prof_crashtracker_init(
+pub unsafe extern "C" fn ddog_prof_Crashtracker_init(
     config: CrashtrackerConfiguration,
     metadata: CrashtrackerMetadata,
 ) -> ProfileResult {
     match ddog_prof_crashtracker_init_impl(config, metadata) {
         Ok(_) => ProfileResult::Ok(true),
         Err(err) => ProfileResult::Err(Error::from(
-            err.context("ddog_prof_crashtracker_init failed"),
+            err.context("ddog_prof_Crashtracker_init failed"),
         )),
     }
 }

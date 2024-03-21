@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use std::{
     env, fs, io,
@@ -207,8 +207,9 @@ mod tests {
             let listener = liaison.attempt_listen().unwrap().unwrap();
             // can't listen twice when some listener is active
             assert!(liaison.attempt_listen().unwrap().is_none());
-            // a liaison can try connecting to existing socket to ensure its valid, adding connection to accept queue
-            // but we can drain any preexisting connections in the queue
+            // a liaison can try connecting to existing socket to ensure its valid, adding
+            // connection to accept queue but we can drain any preexisting connections
+            // in the queue
             listener.set_nonblocking(true).unwrap();
             loop {
                 match listener.accept() {

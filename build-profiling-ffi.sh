@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 
-# Unless explicitly stated otherwise all files in this repository are licensed
-# under the Apache License Version 2.0. This product includes software developed
-# at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
 
 get_abs_filename() {
   # $1 : relative filename
@@ -32,6 +31,7 @@ static_library_suffix=".a"
 library_prefix="lib"
 remove_rpath=0
 fix_macos_rpath=0
+symbolizer=0
 
 # Rust provides this note about the link libraries:
 # note: Link against the following native artifacts when linking against this
@@ -48,6 +48,7 @@ case "$target" in
         native_static_libs=" -lssp_nonshared -lc"
         # on alpine musl, Rust adds some weird runpath to cdylibs
         remove_rpath=1
+        symbolizer=1
         ;;
 
     "x86_64-apple-darwin"|"aarch64-apple-darwin")
@@ -62,6 +63,7 @@ case "$target" in
     "x86_64-unknown-linux-gnu"|"aarch64-unknown-linux-gnu")
         expected_native_static_libs=" -ldl -lrt -lpthread -lgcc_s -lc -lm -lrt -lpthread -lutil -ldl -lutil"
         native_static_libs=" -ldl -lrt -lpthread -lc -lm -lrt -lpthread -lutil -ldl -lutil"
+        symbolizer=1
         ;;
 
     "x86_64-pc-windows-msvc")
@@ -101,9 +103,12 @@ cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
 datadog_profiling_ffi="datadog-profiling-ffi"
-echo "Building the ${datadog_profiling_ffi} crate (may take some time)..."
+FEATURES="--features cbindgen,datadog-profiling-ffi/ddtelemetry-ffi"
+if [[ "$symbolizer" -eq 1 ]]; then
+    FEATURES="--features cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,symbolizer"
+fi
 
-DESTDIR="$destdir" cargo build --package="${datadog_profiling_ffi}" --release --target "${target}"
+DESTDIR="$destdir" cargo build --package="${datadog_profiling_ffi}" ${FEATURES} --release --target "${target}"
 
 # Remove _ffi suffix when copying
 shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"
@@ -162,10 +167,10 @@ fi
 cd -
 
 echo "Building tools"
-cargo build --package tools --bins
+DESTDIR=$destdir cargo build --package tools --bins
 
 echo "Generating $destdir/include/libdatadog headers..."
-"$CARGO_TARGET_DIR"/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h"
+"$CARGO_TARGET_DIR"/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h" "$destdir/include/datadog/telemetry.h"
 
 # Don't build the crashtracker on windows
 if [[ "$target" != "x86_64-pc-windows-msvc" ]]; then

@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use self::api::UpscalingInfo;
 use super::*;
@@ -237,10 +237,9 @@ impl Profile {
     /// # Arguments
     /// * `end_time` - Optional end time of the profile. Passing None will use the current time.
     /// * `duration` - Optional duration of the profile. Passing None will try to calculate the
-    ///                duration based on the end time minus the start time, but under anomalous
-    ///                conditions this may fail as system clocks can be adjusted. The programmer
-    ///                may also accidentally pass an earlier time. The duration will be set to zero
-    ///                these cases.
+    ///   duration based on the end time minus the start time, but under anomalous conditions this
+    ///   may fail as system clocks can be adjusted. The programmer may also accidentally pass an
+    ///   earlier time. The duration will be set to zero these cases.
     pub fn serialize_into_compressed_pprof(
         mut self,
         end_time: Option<SystemTime>,
@@ -1031,7 +1030,8 @@ mod api_test {
 
         let s2 = samples.get(1).expect("sample");
 
-        // The trace endpoint label shouldn't be added to second sample because the span id doesn't match
+        // The trace endpoint label shouldn't be added to second sample because the span id doesn't
+        // match
         assert_eq!(s2.labels.len(), 2);
         Ok(())
     }

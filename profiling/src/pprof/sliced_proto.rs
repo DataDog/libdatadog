@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 //! This file is a companion to the standard pprof protobuf definition.
 //!
@@ -10,12 +10,10 @@
 //! 3. which is then compressed.
 //!
 //! This operation is memory inefficient:
-//! 1. `pprof::Profile` does not deduplicate stack traces or labels, causing
-//!    significant memory blow-up compared to `internal::Profile` for timelined
-//!    traces.
-//! 2. The `pprof` protobuf is highly compressible, particularly when timeline
-//!    is enabled.  We are storing in memory a large buffer, that could have
-//!    easily been compressed to a small one.  
+//! 1. `pprof::Profile` does not deduplicate stack traces or labels, causing significant memory
+//!    blow-up compared to `internal::Profile` for timelined traces.
+//! 2. The `pprof` protobuf is highly compressible, particularly when timeline is enabled.  We are
+//!    storing in memory a large buffer, that could have easily been compressed to a small one.
 //! 3. Only at this point do we have a small in-memory buffer.
 //!
 //! If we stream the creation of the protobuf, we can avoid this memory blowup.

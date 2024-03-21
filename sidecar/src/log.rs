@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use crate::config;
 use chrono::{DateTime, Utc};
@@ -326,7 +326,8 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
 
     // Set initial log level if provided
     if let Ok(env) = env::var("DD_TRACE_LOG_LEVEL") {
-        MULTI_LOG_FILTER.add(env); // this also immediately drops it, but will retain it for few seconds during startup
+        MULTI_LOG_FILTER.add(env); // this also immediately drops it, but will retain it for few
+                                   // seconds during startup
     }
     MULTI_LOG_WRITER.add(config::Config::get().log_method); // same than MULTI_LOG_FILTER
 

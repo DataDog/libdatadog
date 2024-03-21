@@ -1,13 +1,13 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use crate::redis_tokenizer::{RedisTokenType, RedisTokenizer};
 
 pub fn obfuscate_redis_string(cmd: &str) -> String {
     let mut tokenizer = RedisTokenizer::new(cmd);
     let s = &mut String::new();
-    let mut cmd: Option<String> = None;
-    let mut args: Vec<String> = Vec::new();
+    let mut cmd: Option<&str> = None;
+    let mut args: Vec<&str> = Vec::new();
 
     loop {
         let res = tokenizer.scan();
@@ -30,26 +30,29 @@ pub fn obfuscate_redis_string(cmd: &str) -> String {
     s.to_string()
 }
 
-fn obfuscate_redis_cmd(str: &mut String, cmd: String, mut args: Vec<String>) -> Vec<String> {
-    str.push_str(&cmd);
+fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str>) -> Vec<&'a str> {
+    str.push_str(cmd);
     if args.is_empty() {
         return args;
     }
     str.push(' ');
-    match cmd.to_uppercase().as_str() {
-        "AUTH" => {
+    let mut uppercase_cmd = [0; 32]; // no redis cmd is longer than 32 chars
+    let uppercase_cmd = ascii_uppercase(cmd, &mut uppercase_cmd).unwrap_or(&[]);
+    match uppercase_cmd {
+        b"AUTH" => {
             if !args.is_empty() {
                 args.clear();
-                args.push("?".to_string());
+                args.push("?");
             }
         }
-        "APPEND" | "GETSET" | "LPUSHX" | "GEORADIUSBYMEMBER" | "RPUSHX" | "SET" | "SETNX"
-        | "SISMEMBER" | "ZRANK" | "ZREVRANK" | "ZSCORE" => {
+        b"APPEND" | b"GETSET" | b"LPUSHX" | b"GEORADIUSBYMEMBER" | b"RPUSHX" | b"SET"
+        | b"SETNX" | b"SISMEMBER" | b"ZRANK" | b"ZREVRANK" | b"ZSCORE" => {
             // Obfuscate 2nd argument:
             // • APPEND key value
             // • GETSET key value
             // • LPUSHX key value
-            // • GEORADIUSBYMEMBER key member radius m|km|ft|mi [WITHCOORD] [WITHDIST] [WITHHASH] [COUNT count] [ASC|DESC] [STORE key] [STOREDIST key]
+            // • GEORADIUSBYMEMBER key member radius m|km|ft|mi [WITHCOORD] [WITHDIST] [WITHHASH]
+            // [COUNT count] [ASC|DESC] [STORE key] [STOREDIST key]
             // • RPUSHX key value
             // • SET key value [expiration EX seconds|PX milliseconds] [NX|XX]
             // • SETNX key value
@@ -59,8 +62,8 @@ fn obfuscate_redis_cmd(str: &mut String, cmd: String, mut args: Vec<String>) -> 
             // • ZSCORE key member
             args = obfuscate_redis_args_n(args, 1);
         }
-        "HSET" | "HSETNX" | "LREM" | "LSET" | "SETBIT" | "SETEX" | "PSETEX" | "SETRANGE"
-        | "ZINCRBY" | "SMOVE" | "RESTORE" => {
+        b"HSET" | b"HSETNX" | b"LREM" | b"LSET" | b"SETBIT" | b"SETEX" | b"PSETEX"
+        | b"SETRANGE" | b"ZINCRBY" | b"SMOVE" | b"RESTORE" => {
             // Obfuscate 3rd argument:
             // • HSET key field value
             // • HSETNX key field value
@@ -75,12 +78,12 @@ fn obfuscate_redis_cmd(str: &mut String, cmd: String, mut args: Vec<String>) -> 
             // • RESTORE key ttl serialized-value [REPLACE]
             args = obfuscate_redis_args_n(args, 2);
         }
-        "LINSERT" => {
+        b"LINSERT" => {
             // Obfuscate 4th argument:
             // • LINSERT key BEFORE|AFTER pivot value
             args = obfuscate_redis_args_n(args, 3);
         }
-        "GEOHASH" | "GEOPOS" | "GEODIST" | "LPUSH" | "RPUSH" | "SREM" | "ZREM" | "SADD" => {
+        b"GEOHASH" | b"GEOPOS" | b"GEODIST" | b"LPUSH" | b"RPUSH" | b"SREM" | b"ZREM" | b"SADD" => {
             // Obfuscate all arguments after the first one.
             // • GEOHASH key member [member ...]
             // • GEOPOS key member [member ...]
@@ -91,54 +94,61 @@ fn obfuscate_redis_cmd(str: &mut String, cmd: String, mut args: Vec<String>) -> 
             // • ZREM key member [member ...]
             // • SADD key member [member ...]
             if args.len() > 1 {
-                args[1] = "?".to_string();
+                args[1] = "?";
                 args.drain(2..);
             }
         }
-        "GEOADD" => {
+        b"GEOADD" => {
             // Obfuscating every 3rd argument starting from first
             // • GEOADD key longitude latitude member [longitude latitude member ...]
             args = obfuscate_redis_args_step(args, 1, 3)
         }
-        "HMSET" => {
+        b"HMSET" => {
             // Every 2nd argument starting from first.
             // • HMSET key field value [field value ...]
             args = obfuscate_redis_args_step(args, 1, 2)
         }
-        "MSET" | "MSETNX" => {
+        b"MSET" | b"MSETNX" => {
             // Every 2nd argument starting from command.
             // • MSET key value [key value ...]
             // • MSETNX key value [key value ...]
             args = obfuscate_redis_args_step(args, 0, 2)
         }
-        "CONFIG" => {
+        b"CONFIG" => {
             // Obfuscate 2nd argument to SET sub-command.
             // • CONFIG SET parameter value
-            if args[0].to_uppercase() == "SET" {
+            let mut uppercase_arg = [0; 8];
+            let uppercase_arg = ascii_uppercase(args[0], &mut uppercase_arg).unwrap_or(b"");
+            if uppercase_arg == b"SET" {
                 args = obfuscate_redis_args_n(args, 2)
             }
         }
-        "BITFIELD" => {
+        b"BITFIELD" => {
             // Obfuscate 3rd argument to SET sub-command:
-            // • BITFIELD key [GET type offset] [SET type offset value] [INCRBY type offset increment] [OVERFLOW WRAP|SAT|FAIL]
+            // • BITFIELD key [GET type offset] [SET type offset value] [INCRBY type offset
+            // increment] [OVERFLOW WRAP|SAT|FAIL]
             let mut n = 0;
             for (i, arg) in args.iter_mut().enumerate() {
-                if arg.to_uppercase() == "SET" {
+                let mut uppercase_arg = [0; 8];
+                let uppercase_arg = ascii_uppercase(arg, &mut uppercase_arg).unwrap_or(b"");
+                if uppercase_arg == b"SET" {
                     n = i;
                 }
                 if n > 0 && i - n == 3 {
-                    *arg = "?".to_string();
+                    *arg = "?";
                     break;
                 }
             }
         }
-        "ZADD" => {
+        b"ZADD" => {
             for i in 0..args.len() {
                 if i == 0 {
                     continue; // key
                 }
-                match args[i].as_str() {
-                    "NX" | "XX" | "CH" | "INCR" => {}
+                let mut uppercase_arg = [0; 8];
+                let uppercase_arg = ascii_uppercase(args[i], &mut uppercase_arg).unwrap_or(b"");
+                match uppercase_arg {
+                    b"NX" | b"XX" | b"CH" | b"INCR" => {}
                     _ => {
                         args = obfuscate_redis_args_step(args, i, 2);
                         break;
@@ -152,24 +162,24 @@ fn obfuscate_redis_cmd(str: &mut String, cmd: String, mut args: Vec<String>) -> 
     args
 }
 
-fn obfuscate_redis_args_n(mut args: Vec<String>, n: usize) -> Vec<String> {
+fn obfuscate_redis_args_n(mut args: Vec<&str>, n: usize) -> Vec<&str> {
     if args.len() > n {
-        args[n] = "?".to_string();
+        args[n] = "?";
     }
     args
 }
 
-fn obfuscate_redis_args_step(mut args: Vec<String>, start: usize, step: usize) -> Vec<String> {
+fn obfuscate_redis_args_step(mut args: Vec<&str>, start: usize, step: usize) -> Vec<&str> {
     if start + step > args.len() {
         return args;
     }
     for i in ((start + step - 1)..args.len()).step_by(step) {
-        args[i] = "?".to_string()
+        args[i] = "?";
     }
     args
 }
 
-pub fn remove_all_redis_args(redis_cmd: &str) -> String {
+pub(crate) fn remove_all_redis_args(redis_cmd: &str) -> String {
     let mut redis_cmd_iter = redis_cmd.split_whitespace().peekable();
     let mut obfuscated_cmd = String::new();
 
@@ -180,28 +190,37 @@ pub fn remove_all_redis_args(redis_cmd: &str) -> String {
     };
     obfuscated_cmd.push_str(cmd);
 
-    // If there are no tokens left in the iterator, return the obfuscated result with just the command.
+    // If there are no tokens left in the iterator, return the obfuscated result with just the
+    // command.
     if redis_cmd_iter.peek().is_none() {
         return obfuscated_cmd;
     }
 
     obfuscated_cmd.push(' ');
 
-    match cmd.to_uppercase().as_str() {
-        "BITFIELD" => {
+    let mut uppercase_cmd = [0; 32];
+    let uppercase_cmd = ascii_uppercase(cmd, &mut uppercase_cmd).unwrap_or(&[]);
+    match uppercase_cmd {
+        b"BITFIELD" => {
             obfuscated_cmd.push('?');
             for a in redis_cmd_iter {
-                let arg = a.to_uppercase();
-                if arg == "SET" || arg == "GET" || arg == "INCRBY" {
+                let mut uppercase_arg = [0; 8];
+                let uppercase_arg = ascii_uppercase(a, &mut uppercase_arg).unwrap_or(b"");
+                if uppercase_arg == b"SET" || uppercase_arg == b"GET" || uppercase_arg == b"INCRBY"
+                {
                     obfuscated_cmd.push_str(format!(" {a} ?").as_str());
                 }
             }
         }
-        "CONFIG" => {
+        b"CONFIG" => {
             let a = redis_cmd_iter.next().unwrap_or_default();
-            let arg = a.to_uppercase();
-            if arg == "GET" || arg == "SET" || arg == "RESETSTAT" || arg == "REWRITE" {
-                // out.WriteString(strings.Join([]string{args[0], "?"}, " "))
+            let mut uppercase_arg = [0; 16];
+            let uppercase_arg = ascii_uppercase(a, &mut uppercase_arg).unwrap_or(b"");
+            if uppercase_arg == b"GET"
+                || uppercase_arg == b"SET"
+                || uppercase_arg == b"RESETSTAT"
+                || uppercase_arg == b"REWRITE"
+            {
                 obfuscated_cmd.push_str(format!("{a} ?").as_str());
             } else {
                 obfuscated_cmd.push('?');
@@ -213,6 +232,18 @@ pub fn remove_all_redis_args(redis_cmd: &str) -> String {
     }
 
     obfuscated_cmd
+}
+
+fn ascii_uppercase<'a>(s: &str, dest: &'a mut [u8]) -> Option<&'a [u8]> {
+    if s.len() > dest.len() {
+        return None;
+    }
+    for (i, c) in s.as_bytes().iter().enumerate() {
+        if c.is_ascii() {
+            dest[i] = c.to_ascii_uppercase();
+        }
+    }
+    Some(&dest[0..s.len()])
 }
 
 #[cfg(test)]

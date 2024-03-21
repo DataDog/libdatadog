@@ -1,5 +1,5 @@
-# Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-# This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
 
 [package]
 name = "datadog-profiling-ffi"
@@ -13,18 +13,26 @@ license.workspace = true
 # cf. https://github.com/rust-lang/rust/issues/51009
 crate-type = ["staticlib", "cdylib"]
 
+[features]
+default = []
+cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+ddtelemetry-ffi = ["dep:ddtelemetry-ffi"]
+symbolizer = ["symbolizer-ffi"]
+
 [build-dependencies]
 build_common = { path = "../build-common" }
 
 [dependencies]
 anyhow = "1.0"
-chrono = {version = "0.4", default-features = false}
-datadog-crashtracker = { path = "../crashtracker"}
-datadog-profiling = { path = "../profiling"}
-hyper = {version = "0.14", default-features = false}
+chrono = {version = "0.4", default-features = false }
+datadog-crashtracker = { path = "../crashtracker" }
+datadog-profiling = { path = "../profiling" }
+hyper = { version = "0.14", default-features = false }
 ddcommon = { path = "../ddcommon"}
-ddcommon-ffi = { path = "../ddcommon-ffi"}
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
 libc = "0.2"
 tokio-util = "0.7.1"
-serde_json = {version = "1.0"}
+serde_json = { version = "1.0" }
 futures = { version = "0.3", default-features = false }
+symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }

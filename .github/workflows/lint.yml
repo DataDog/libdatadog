@@ -13,7 +13,7 @@ jobs:
         uses: ./.github/actions/cache
       - name: Install latest nightly toolchain and rustfmt
         run: rustup update nightly && rustup default nightly && rustup component add rustfmt
-      - run: rm -rf ipc/tarpc && sed -i 's/tarpc.*//' ipc/Cargo.toml && cargo fmt --all -- --check
+      - run: cargo fmt --all -- --check
   clippy:
     name: "clippy #${{ matrix.rust_version }}"
     strategy:
@@ -41,7 +41,8 @@ jobs:
       - name: Install licensecheck
         run: sudo apt-get install -y licensecheck
       - name: Check licenses
-        run: '! find . \( -name "*.rs" -o -name "*.c" -o -name "*.sh" \) -not -path "*/tarpc/*" | xargs licensecheck -c ".*" | grep -v "Apache License 2.0"'
+        # Exclude symbolizer-ffi from the checks (mostly imported code)
+        run: '! find . \( -name "*.rs" -o -name "*.c" -o -name "*.sh" \)  -not -path "./symbolizer-ffi/*" -not -path "*/tarpc/*" | xargs licensecheck -c ".*" | grep -v "Apache License 2.0"'
 
   # todo: fix upstream warnings; from the readme:
   # The most common cause of missing licenses seems to be workspaces that

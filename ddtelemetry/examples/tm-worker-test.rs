@@ -1,11 +1,13 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
-use std::{error::Error, time::Duration};
+use std::{
+    error::Error,
+    time::{Duration, Instant},
+};
 
 use ddcommon::tag::Tag;
 use ddtelemetry::{data, worker};
-use tokio::time::Instant;
 
 macro_rules! timeit {
     ($op_name:literal, $op:block) => {{
@@ -69,8 +71,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     handle.add_point(2.0, &ping_metric, tags.clone()).unwrap();
     handle.add_point(1.8, &dist_metric, tags).unwrap();
 
+    handle
+        .add_log(
+            "init.log",
+            "Hello there!".into(),
+            data::LogLevel::Debug,
+            None,
+        )
+        .unwrap();
+
     timeit!("sleep", {
-        std::thread::sleep(std::time::Duration::from_secs(3));
+        std::thread::sleep(std::time::Duration::from_secs(11));
     });
 
     handle
@@ -104,8 +115,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // About 200ms (the time it takes to send a app-closing request)
     timeit!("shutdown", {
         handle.send_stop().unwrap();
-        handle.cancel_requests_with_deadline(Instant::now() + Duration::from_millis(10));
-        handle.wait_for_shutdown();
+        handle.wait_for_shutdown_deadline(Instant::now() + Duration::from_millis(10));
     });
 
     Ok(())

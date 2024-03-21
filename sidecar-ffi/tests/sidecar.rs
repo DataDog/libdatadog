@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 use datadog_sidecar_ffi::*;
 
 macro_rules! assert_maybe_no_error {
@@ -55,8 +55,10 @@ fn test_ddog_ph_file_handling() {
 
 #[test]
 #[cfg_attr(not(windows), ignore)]
-// run all tests that can fork in a separate run, to avoid any race conditions with default rust test harness
-/// run with: RUSTFLAGS="-C prefer-dynamic" cargo test --package test_spawn_from_lib --features prefer-dynamic -- --ignored
+// run all tests that can fork in a separate run, to avoid any race conditions with default rust
+// test harness
+/// run with: RUSTFLAGS="-C prefer-dynamic" cargo test --package test_spawn_from_lib --features
+/// prefer-dynamic -- --ignored
 #[cfg_attr(windows, ignore = "requires -C prefer-dynamic")]
 #[cfg_attr(windows, cfg(feature = "prefer_dynamic"))]
 fn test_ddog_sidecar_connection() {
@@ -117,8 +119,8 @@ fn test_ddog_sidecar_register_app() {
             "dependency_version".into(),
         );
 
-        // ddog_sidecar_telemetry_addIntegration(&mut transport, instance_id, &queue_id, integration_name, integration_version)
-        // TODO add ability to add configuration
+        // ddog_sidecar_telemetry_addIntegration(&mut transport, instance_id, &queue_id,
+        // integration_name, integration_version) TODO add ability to add configuration
 
         assert_maybe_no_error!(ddog_sidecar_telemetry_flushServiceData(
             &mut transport,
@@ -145,7 +147,8 @@ fn test_ddog_sidecar_register_app() {
 
         //TODO: Shutdown the service
         // enough case: have C api that shutsdown telemetry worker
-        // ideal case : when connection socket is closed by the client the telemetry worker shuts down automatically
+        // ideal case : when connection socket is closed by the client the telemetry worker shuts
+        // down automatically
         ddog_sidecar_instanceId_drop(instance_id);
         ddog_sidecar_runtimeMeta_drop(meta);
     };
