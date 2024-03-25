@@ -2,7 +2,7 @@
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
 use super::{pad_to, page_size};
-use core::{mem, ptr, slice};
+use core::ptr;
 use std::io;
 
 #[cfg(unix)]
@@ -137,21 +137,5 @@ impl Drop for Mapping {
         if let Err(err) = _result {
             panic!("failed to drop mapping: {err}");
         }
-    }
-}
-
-impl core::ops::Deref for Mapping {
-    type Target = [mem::MaybeUninit<u8>];
-
-    fn deref(&self) -> &Self::Target {
-        // SAFETY: todo
-        unsafe { slice::from_raw_parts(self.base.cast().as_ptr(), self.size) }
-    }
-}
-
-impl core::ops::DerefMut for Mapping {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        // SAFETY: todo
-        unsafe { slice::from_raw_parts_mut(self.base.cast().as_ptr(), self.size) }
     }
 }

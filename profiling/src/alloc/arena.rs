@@ -30,7 +30,7 @@ impl ArenaAllocator {
     }
 
     unsafe fn from_mapping(mapping: Mapping) -> Self {
-        let remaining_capacity = Cell::new(mapping.len());
+        let remaining_capacity = Cell::new(mapping.allocation_size());
         Self {
             mapping: Some(mapping),
             remaining_capacity,
@@ -75,8 +75,9 @@ impl ArenaAllocator {
         let mut remaining_capacity = self.remaining_capacity.get();
 
         let base_ptr = mapping.base_non_null_ptr::<u8>().as_ptr();
-        // SAFETY: todo
-        let alloc_ptr = unsafe { base_ptr.add(mapping.len() - remaining_capacity) };
+        // SAFETY: this arithmetic is in-bounds (or 1 passed the end as allowed
+        // when the remaining capacity is zero).
+        let alloc_ptr = unsafe { base_ptr.add(mapping.allocation_size() - remaining_capacity) };
 
         // The alloc_ptr points to the first unallocated byte. The alignment
         // of the object to be allocated needs to be considered for both the
