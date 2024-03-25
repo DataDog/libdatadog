@@ -56,15 +56,14 @@ impl ArenaAllocator {
         self.remaining_capacity.get()
     }
 
-    /// Allocates the given layout. It will be zero-initialized.
+    /// Allocates the given layout. It will be zero-initialized. Allows for
+    /// zero-sized allocations, which are not guaranteed to have unique
+    /// addresses.
     pub fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         let layout = layout.pad_to_align();
         let size = layout.size();
         if size == 0 {
-            // SAFETY: empty slice made from dangling non-null ptr is safe.
-            let slice = ptr::slice_from_raw_parts_mut(NonNull::dangling().as_ptr(), 0);
-            // SAFETY: the dangling ptr is by definition non-null.
-            return Ok(unsafe { NonNull::new_unchecked(slice) });
+            return Ok(NonNull::from(&mut []));
         }
 
         let mapping = match self.mapping.as_ref() {

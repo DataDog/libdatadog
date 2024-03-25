@@ -81,7 +81,7 @@ mod os {
 /// isn't a power of two.
 #[inline]
 pub fn page_size() -> usize {
-    // todo: use OnceCell once we are on Rust 1.70+.
+    // todo: use OnceCell once we are on Rust 1.70+ to avoid unsafe.
     static INIT: Once = Once::new();
     static mut PAGE_SIZE: usize = 0;
 

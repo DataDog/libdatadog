@@ -139,22 +139,22 @@ impl LengthPrefixedStr {
 
     /// # Safety
     ///  - The str's len must fit in a [u16].
-    ///  - It must be valid to write `s.len() + 2` bytes to the `ptr`.
+    ///  - It must be valid to write `s.len() + 2` bytes to the `ptr`, including the fact that the
+    ///    bytes in `ptr` cannot overlap those referred to by `s`.
     #[inline]
     pub unsafe fn from_str_in(s: &str, ptr: ptr::NonNull<[u8]>) -> Self {
-        // SAFETY: todo
         let header_src = u16::to_ne_bytes(s.len() as u16);
         debug_assert!(header_src.len() + s.len() <= ptr.len());
 
         let header_ptr = ptr.as_ptr() as *mut u8;
-        // SAFETY: todo
+        // SAFETY: the header_src is local, the bytes are not overlapping.
         ptr::copy_nonoverlapping(header_src.as_ptr(), header_ptr, header_src.len());
-        // SAFETY: todo
+        // SAFETY: extension of this function's safety reqs.
         let bytes_ptr = header_ptr.add(header_src.len());
-        // SAFETY: todo
+        // SAFETY: also an extension of this function's safety reqs.
         ptr::copy_nonoverlapping(s.as_ptr(), bytes_ptr, s.len());
         Self {
-            // SAFETY: todo
+            // SAFETY: derived from arg `ptr` which is NonNull.
             header: ptr::NonNull::new_unchecked(header_ptr.cast()),
         }
     }
