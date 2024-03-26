@@ -3,8 +3,6 @@
 
 use super::*;
 use crate::api::UpscalingInfo;
-use crate::collections::identifiable::FxIndexMap;
-use crate::pprof;
 
 #[derive(Debug)]
 pub struct UpscalingRule {

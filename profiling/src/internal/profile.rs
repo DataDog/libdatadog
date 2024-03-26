@@ -6,7 +6,6 @@ use super::*;
 use crate::api;
 use crate::collections::identifiable::*;
 use crate::collections::StringTable;
-use crate::internal::ProfiledEndpointsStats;
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::pprof::sliced_proto::*;
 use crate::serializer::CompressedProtobufSerializer;
@@ -550,9 +549,7 @@ impl Profile {
 
 #[cfg(test)]
 mod api_test {
-
     use super::*;
-    use std::{borrow::Cow, collections::HashMap};
 
     #[test]
     fn interning() -> anyhow::Result<()> {

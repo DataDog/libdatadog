@@ -11,7 +11,6 @@ pub use ddcommon::tag::Tag;
 pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
 use lz4_flex::frame::FrameEncoder;
-use mime;
 use serde_json::json;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
