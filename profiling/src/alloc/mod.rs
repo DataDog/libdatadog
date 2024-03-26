@@ -5,8 +5,7 @@ mod arena;
 pub mod r#virtual;
 
 pub use arena::*;
-use std::collections::TryReserveError;
-
+use core::ptr;
 use std::sync::Once;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -20,8 +19,8 @@ impl std::fmt::Display for AllocError {
     }
 }
 
-impl From<TryReserveError> for AllocError {
-    fn from(_value: TryReserveError) -> Self {
+impl From<std::collections::TryReserveError> for AllocError {
+    fn from(_value: std::collections::TryReserveError) -> Self {
         AllocError
     }
 }
@@ -122,6 +121,55 @@ pub fn pad_to(bytes: usize, page_size: usize) -> Option<usize> {
         _ => bytes.checked_add(page_size - remainder),
         // By definition, the remainder is less than the divisor, so this
         // page_size - remainder cannot underflow.
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct InBoundsPtr {
+    /// The starting address of the allocation.
+    base: ptr::NonNull<u8>,
+    /// The offset from the base allocation. Never larger than [isize::MAX],
+    /// nor the allocation's size.
+    offset: usize,
+    /// The length of the allocation. Note it's never larger than [isize::MAX].
+    size: usize,
+}
+
+impl InBoundsPtr {
+    pub const fn add(&self, offset: usize) -> Result<InBoundsPtr, AllocError> {
+        match self.offset.checked_add(offset) {
+            Some(new_offset) if new_offset <= self.size => Ok(InBoundsPtr {
+                offset: new_offset,
+                ..*self
+            }),
+            _ => Err(AllocError),
+        }
+    }
+
+    pub fn align_to(&self, align: usize) -> Result<InBoundsPtr, AllocError> {
+        let off = self.as_ptr().align_offset(align);
+        self.add(off)
+    }
+
+    pub fn slice(&self, len: usize) -> Result<ptr::NonNull<[u8]>, AllocError> {
+        match self.offset.checked_add(len) {
+            Some(end) => {
+                if end > self.size {
+                    Err(AllocError)
+                } else {
+                    let slice = ptr::slice_from_raw_parts_mut(self.as_ptr(), len);
+                    // SAFETY: cannot be null (derived from an allocation).
+                    Ok(unsafe { ptr::NonNull::new_unchecked(slice) })
+                }
+            }
+            None => Err(AllocError),
+        }
+    }
+
+    pub fn as_ptr(&self) -> *mut u8 {
+        // SAFETY: in-bounds (the whole point of the type).
+        unsafe { self.base.as_ptr().add(self.offset) }
     }
 }
 

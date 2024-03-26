@@ -1,7 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
 
-use super::{pad_to, page_size};
+use super::{pad_to, page_size, InBoundsPtr};
 use core::ptr;
 use std::io;
 
@@ -107,16 +107,28 @@ impl Mapping {
                 io::ErrorKind::InvalidInput,
                 format!("requested virtual allocation of {min_size} bytes could not be padded to the page size {page_size}"),
             )),
-            Some(size) => Ok(Mapping {
-                base: virtual_alloc(size)?,
-                size,
-            })
-
+            Some(size) => {
+                if size > isize::MAX as usize {
+                    Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("padded virtual allocation of {min_size} exceeds isize::MAX"),
+                    ))
+                } else {
+                    Ok(Mapping {
+                        base: virtual_alloc(size)?,
+                        size,
+                    })
+                }
+            }
         }
     }
 
-    pub fn base_non_null_ptr<T>(&self) -> ptr::NonNull<T> {
-        self.base.cast()
+    pub fn base_in_bounds_ptr(&self) -> InBoundsPtr {
+        InBoundsPtr {
+            base: self.base.cast(),
+            offset: 0,
+            size: self.size,
+        }
     }
 
     pub fn allocation_size(&self) -> usize {

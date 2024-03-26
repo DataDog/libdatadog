@@ -132,11 +132,6 @@ impl LengthPrefixedStr {
         unsafe { ptr::NonNull::new_unchecked(fatptr) }
     }
 
-    /// The ptr needs to point to a valid length prefixed string.
-    unsafe fn from_bytes(ptr: ptr::NonNull<u8>) -> Self {
-        Self { header: ptr.cast() }
-    }
-
     /// # Safety
     ///  - The str's len must fit in a [u16].
     ///  - It must be valid to write `s.len() + 2` bytes to the `ptr`, including the fact that the
@@ -374,24 +369,14 @@ impl LendingIterator for ArenaAllocatorIter {
             self.has_empty_str = false;
             Some("")
         } else {
-            let ptr = self
-                .arena
-                .mapping
-                .as_ref()
-                .unwrap()
-                .base_non_null_ptr::<u8>()
-                .as_ptr();
-
+            let base = self.arena.mapping.as_ref().unwrap().base_in_bounds_ptr();
+            let ptr = base.add(self.offset).unwrap();
             // SAFETY: todo
-            let str = unsafe {
-                let ptr = ptr.add(self.offset);
-                let ptr = ptr::NonNull::new_unchecked(ptr);
-                LengthPrefixedStr::from_bytes(ptr)
-            };
+            let str = unsafe { mem::transmute::<*mut u8, LengthPrefixedStr>(ptr.as_ptr()) };
             self.len -= 1;
             self.offset += mem::size_of::<u16>() + str.len();
 
-            // SAFETY: todo
+            // SAFETY: transmuting the lifetime to the
             unsafe { Some(mem::transmute(str.deref())) }
         }
     }

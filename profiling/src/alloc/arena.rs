@@ -3,14 +3,13 @@
 
 use super::AllocError;
 use crate::alloc::r#virtual::Mapping;
-use core::ptr;
 use core::ptr::NonNull;
 use std::alloc::Layout;
 use std::cell::Cell;
 
 pub struct ArenaAllocator {
     pub(crate) mapping: Option<Mapping>,
-    remaining_capacity: Cell<usize>,
+    first_free_offset: Cell<usize>,
 }
 
 impl Default for ArenaAllocator {
@@ -25,15 +24,15 @@ impl ArenaAllocator {
     pub const fn new() -> Self {
         Self {
             mapping: None,
-            remaining_capacity: Cell::new(0),
+            first_free_offset: Cell::new(0),
         }
     }
 
     unsafe fn from_mapping(mapping: Mapping) -> Self {
-        let remaining_capacity = Cell::new(mapping.allocation_size());
+        let first_free_offset = Cell::new(0);
         Self {
             mapping: Some(mapping),
-            remaining_capacity,
+            first_free_offset,
         }
     }
 
@@ -53,7 +52,10 @@ impl ArenaAllocator {
     }
 
     pub fn remaining_capacity(&self) -> usize {
-        self.remaining_capacity.get()
+        match &self.mapping {
+            None => 0,
+            Some(mapping) => mapping.allocation_size() - self.first_free_offset.get(),
+        }
     }
 
     /// Allocates the given layout. It will be zero-initialized. Allows for
@@ -71,35 +73,13 @@ impl ArenaAllocator {
             Some(m) => m,
         };
 
-        let mut remaining_capacity = self.remaining_capacity.get();
-
-        let base_ptr = mapping.base_non_null_ptr::<u8>().as_ptr();
-        // SAFETY: this arithmetic is in-bounds (or 1 passed the end as allowed
-        // when the remaining capacity is zero).
-        let alloc_ptr = unsafe { base_ptr.add(mapping.allocation_size() - remaining_capacity) };
-
-        // The alloc_ptr points to the first unallocated byte. The alignment
-        // of the object to be allocated needs to be considered for both the
-        // start of the object but also the remaining capacity.
-        let align_offset = alloc_ptr.align_offset(layout.align());
-        let needed_capacity = align_offset + layout.size();
-
-        if needed_capacity > remaining_capacity {
-            return Err(AllocError);
-        }
-
-        remaining_capacity -= needed_capacity;
-        self.remaining_capacity.set(remaining_capacity);
-
-        // SAFETY: the allocation has already been determined to fit in the
-        // region, so the addition will fit within the region, and will also
-        // not be null.
-        let ptr = unsafe {
-            let alloc_ptr = alloc_ptr.add(align_offset);
-            let slice = ptr::slice_from_raw_parts_mut(alloc_ptr, size);
-            NonNull::new_unchecked(slice)
-        };
-        Ok(ptr)
+        let base_ptr = mapping.base_in_bounds_ptr();
+        let unaligned_ptr = base_ptr.add(self.first_free_offset.get())?;
+        let aligned_ptr = unaligned_ptr.align_to(layout.align())?;
+        let slice = aligned_ptr.slice(layout.size())?;
+        let first_free_offset = aligned_ptr.offset + layout.size();
+        self.first_free_offset.set(first_free_offset);
+        Ok(slice)
     }
 }
 
