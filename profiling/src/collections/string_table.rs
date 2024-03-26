@@ -56,7 +56,7 @@ struct LengthPrefixedHeader {
 }
 
 /// Dangerous type, has a lifetime which has been elided! The lifetime is the
-/// lifetime of the arena. It points to a struct which looks like this:
+/// lifetime of the arena's mapping. It points to a struct like this:
 ///
 /// ```
 /// #[repr(C)]
