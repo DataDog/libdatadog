@@ -60,7 +60,6 @@ fn multipart(
 mod tests {
     use crate::multipart;
     use datadog_profiling::exporter::*;
-    use ddcommon::tag::Tag;
     use serde_json::json;
 
     fn default_tags() -> Vec<Tag> {

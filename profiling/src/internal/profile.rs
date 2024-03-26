@@ -5,7 +5,6 @@ use self::api::UpscalingInfo;
 use super::*;
 use crate::api;
 use crate::collections::identifiable::*;
-use crate::internal::ProfiledEndpointsStats;
 use crate::pprof::sliced_proto::*;
 use crate::serializer::CompressedProtobufSerializer;
 use std::borrow::Cow;
@@ -536,9 +535,7 @@ impl Profile {
 
 #[cfg(test)]
 mod api_test {
-
     use super::*;
-    use std::{borrow::Cow, collections::HashMap};
 
     #[test]
     fn interning() {
