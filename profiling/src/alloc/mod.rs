@@ -57,10 +57,11 @@ mod os {
         use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
 
         let mut system_info = mem::MaybeUninit::<SYSTEM_INFO>::uninit();
-        // SAFETY: todo
+        // SAFETY: calling C function with correct uninit repr.
         unsafe { GetSystemInfo(system_info.as_mut_ptr()) };
 
-        // SAFETY: todo
+        // SAFETY: GetSystemInfo is not documented to fail in any way, so it
+        // should be safe to assume system_info was initialized.
         let system_info = unsafe { system_info.assume_init() };
 
         let size = system_info.dwPageSize;

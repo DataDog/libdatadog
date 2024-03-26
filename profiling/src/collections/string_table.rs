@@ -160,7 +160,9 @@ impl Deref for LengthPrefixedStr {
 
     fn deref(&self) -> &Self::Target {
         let fatptr = self.data_ptr();
-        // SAFETY: todo
+        // SAFETY: as long as the LengthPrefixedStr is still valid (which is
+        // an unsafe thing which cannot be verified by design in code), then
+        // it's safe to dereference to the stored str.
         unsafe { core::str::from_utf8_unchecked(fatptr.as_ref()) }
     }
 }
@@ -371,12 +373,12 @@ impl LendingIterator for ArenaAllocatorIter {
         } else {
             let base = self.arena.mapping.as_ref().unwrap().base_in_bounds_ptr();
             let ptr = base.add(self.offset).unwrap();
-            // SAFETY: todo
+            // SAFETY: transmuting from equivalent representation is safe here.
             let str = unsafe { mem::transmute::<*mut u8, LengthPrefixedStr>(ptr.as_ptr()) };
             self.len -= 1;
             self.offset += mem::size_of::<u16>() + str.len();
 
-            // SAFETY: transmuting the lifetime to the
+            // SAFETY: transmuting the lifetime to the arena's is correct.
             unsafe { Some(mem::transmute(str.deref())) }
         }
     }
