@@ -43,9 +43,10 @@ use datadog_ipc::tarpc;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::{SendData, TracerHeaderTags};
-use ddcommon::Endpoint;
+use ddcommon::{tag::Tag, Endpoint};
 use ddtelemetry::{
     data,
+    metrics::{ContextKey, MetricContext},
     worker::{
         store::Store, LifecycleAction, TelemetryActions, TelemetryWorkerBuilder,
         TelemetryWorkerHandle, MAX_ITEMS,
@@ -101,6 +102,8 @@ pub enum RequestIdentifier {
 #[derive(Debug, Deserialize, Serialize)]
 pub enum SidecarAction {
     Telemetry(TelemetryActions),
+    RegisterTelemetryMetric(MetricContext),
+    AddTelemetryMetricPoint((String, f64, Vec<Tag>)),
     PhpComposerTelemetryFile(PathBuf),
 }
 
@@ -365,12 +368,39 @@ impl RuntimeInfo {
 struct AppInstance {
     telemetry: TelemetryWorkerHandle,
     telemetry_worker_shutdown: Shared<BoxFuture<'static, Option<()>>>,
+    telemetry_metrics: HashMap<String, ContextKey>,
+}
+
+impl AppInstance {
+    pub fn register_metric(&mut self, metric: MetricContext) {
+        if !self.telemetry_metrics.contains_key(&metric.name) {
+            self.telemetry_metrics.insert(
+                metric.name.clone(),
+                self.telemetry.register_metric_context(
+                    metric.name,
+                    metric.tags,
+                    metric.metric_type,
+                    metric.common,
+                    metric.namespace,
+                ),
+            );
+        }
+    }
+
+    pub fn to_telemetry_point(
+        &self,
+        (name, val, tags): (String, f64, Vec<Tag>),
+    ) -> TelemetryActions {
+        TelemetryActions::AddPoint((val, *self.telemetry_metrics.get(&name).unwrap(), tags))
+    }
 }
 
 struct EnqueuedTelemetryData {
     dependencies: Store<data::Dependency>,
     configurations: Store<data::Configuration>,
     integrations: Store<data::Integration>,
+    metrics: Vec<MetricContext>,
+    points: Vec<(String, f64, Vec<Tag>)>,
     actions: Vec<TelemetryActions>,
     computed_dependencies: Vec<Shared<ManualFuture<Arc<Vec<data::Dependency>>>>>,
 }
@@ -381,6 +411,8 @@ impl Default for EnqueuedTelemetryData {
             dependencies: Store::new(MAX_ITEMS),
             configurations: Store::new(MAX_ITEMS),
             integrations: Store::new(MAX_ITEMS),
+            metrics: Vec::new(),
+            points: Vec::new(),
             actions: Vec::new(),
             computed_dependencies: Vec::new(),
         }
@@ -411,6 +443,9 @@ impl EnqueuedTelemetryData {
                 SidecarAction::PhpComposerTelemetryFile(composer_path) => self
                     .computed_dependencies
                     .push(Self::extract_composer_telemetry(composer_path).shared()),
+
+                SidecarAction::RegisterTelemetryMetric(m) => self.metrics.push(m),
+                SidecarAction::AddTelemetryMetricPoint(p) => self.points.push(p),
             }
         }
     }
@@ -438,7 +473,10 @@ impl EnqueuedTelemetryData {
         }
     }
 
-    pub async fn process_immediately(sidecar_actions: Vec<SidecarAction>) -> Vec<TelemetryActions> {
+    pub async fn process_immediately(
+        sidecar_actions: Vec<SidecarAction>,
+        app: &mut AppInstance,
+    ) -> Vec<TelemetryActions> {
         let mut actions = vec![];
         for action in sidecar_actions {
             match action {
@@ -447,6 +485,10 @@ impl EnqueuedTelemetryData {
                     for nested in Self::extract_composer_telemetry(path).await.iter() {
                         actions.push(TelemetryActions::AddDependecy(nested.clone()));
                     }
+                }
+                SidecarAction::RegisterTelemetryMetric(metric) => app.register_metric(metric),
+                SidecarAction::AddTelemetryMetricPoint(point) => {
+                    actions.push(app.to_telemetry_point(point));
                 }
             }
         }
@@ -907,6 +949,7 @@ impl SidecarServer {
                 let instance = AppInstance {
                     telemetry: handle,
                     telemetry_worker_shutdown: worker_join.map(Result::ok).boxed().shared(),
+                    telemetry_metrics: HashMap::new(),
                 };
 
                 instance.telemetry.send_msgs(inital_actions).await.ok();
@@ -1028,8 +1071,9 @@ impl SidecarInterface for SidecarServer {
                         } else {
                             return;
                         };
-                        if let Some(app) = app_future.await {
-                            let actions = EnqueuedTelemetryData::process_immediately(actions).await;
+                        if let Some(mut app) = app_future.await {
+                            let actions =
+                                EnqueuedTelemetryData::process_immediately(actions, &mut app).await;
                             app.telemetry.send_msgs(actions).await.ok();
                         }
                     });
@@ -1072,7 +1116,7 @@ impl SidecarInterface for SidecarServer {
                 let mut actions: Vec<TelemetryActions> = vec![];
                 enqueued_data.extract_telemetry_actions(&mut actions).await;
 
-                if let Some(app) = self
+                if let Some(mut app) = self
                     .get_app(
                         &instance_id,
                         &runtime_meta,
@@ -1082,7 +1126,18 @@ impl SidecarInterface for SidecarServer {
                     )
                     .await
                 {
-                    let actions: Vec<_> = std::mem::take(&mut enqueued_data.actions);
+                    // Register metrics
+                    for metric in std::mem::take(&mut enqueued_data.metrics).into_iter() {
+                        app.register_metric(metric);
+                    }
+
+                    let mut actions: Vec<_> = std::mem::take(&mut enqueued_data.actions);
+
+                    // Send metric points
+                    for point in std::mem::take(&mut enqueued_data.points) {
+                        actions.push(app.to_telemetry_point(point));
+                    }
+
                     // drop on stop
                     if actions.iter().any(|action| {
                         matches!(action, TelemetryActions::Lifecycle(LifecycleAction::Stop))

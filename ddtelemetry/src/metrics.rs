@@ -134,7 +134,7 @@ impl MetricBuckets {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MetricContext {
     pub namespace: data::metrics::MetricNamespace,
     pub name: String,
