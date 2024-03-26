@@ -124,11 +124,10 @@ impl Mapping {
     }
 
     pub fn base_in_bounds_ptr(&self) -> InBoundsPtr {
-        InBoundsPtr {
-            base: self.base.cast(),
-            offset: 0,
-            size: self.size,
-        }
+        let slice = ptr::slice_from_raw_parts_mut(self.base.cast::<u8>().as_ptr(), self.size);
+        // SAFETY: derived from mapping's NonNull pointer.
+        let base = unsafe { ptr::NonNull::new_unchecked(slice) };
+        InBoundsPtr { base, offset: 0 }
     }
 
     pub fn allocation_size(&self) -> usize {

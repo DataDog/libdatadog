@@ -128,21 +128,19 @@ pub fn pad_to(bytes: usize, page_size: usize) -> Option<usize> {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct InBoundsPtr {
-    /// The starting address of the allocation.
-    base: ptr::NonNull<u8>,
+    /// The starting address and length of the allocation.
+    base: ptr::NonNull<[u8]>,
     /// The offset from the base allocation. Never larger than [isize::MAX],
     /// nor the allocation's size.
     offset: usize,
-    /// The length of the allocation. Note it's never larger than [isize::MAX].
-    size: usize,
 }
 
 impl InBoundsPtr {
     pub const fn add(&self, offset: usize) -> Result<InBoundsPtr, AllocError> {
         match self.offset.checked_add(offset) {
-            Some(new_offset) if new_offset <= self.size => Ok(InBoundsPtr {
+            Some(new_offset) if new_offset <= self.base.len() => Ok(InBoundsPtr {
+                base: self.base,
                 offset: new_offset,
-                ..*self
             }),
             _ => Err(AllocError),
         }
@@ -155,22 +153,18 @@ impl InBoundsPtr {
 
     pub fn slice(&self, len: usize) -> Result<ptr::NonNull<[u8]>, AllocError> {
         match self.offset.checked_add(len) {
-            Some(end) => {
-                if end > self.size {
-                    Err(AllocError)
-                } else {
-                    let slice = ptr::slice_from_raw_parts_mut(self.as_ptr(), len);
-                    // SAFETY: cannot be null (derived from an allocation).
-                    Ok(unsafe { ptr::NonNull::new_unchecked(slice) })
-                }
+            Some(end) if end <= self.base.len() => {
+                let slice = ptr::slice_from_raw_parts_mut(self.as_ptr(), len);
+                // SAFETY: cannot be null (derived from an allocation).
+                Ok(unsafe { ptr::NonNull::new_unchecked(slice) })
             }
-            None => Err(AllocError),
+            _ => Err(AllocError),
         }
     }
 
     pub fn as_ptr(&self) -> *mut u8 {
         // SAFETY: in-bounds (the whole point of the type).
-        unsafe { self.base.as_ptr().add(self.offset) }
+        unsafe { (self.base.as_ptr() as *mut u8).add(self.offset) }
     }
 }
 

@@ -372,14 +372,16 @@ impl LendingIterator for ArenaAllocatorIter {
             Some("")
         } else {
             let base = self.arena.mapping.as_ref().unwrap().base_in_bounds_ptr();
-            let ptr = base.add(self.offset).unwrap();
-            // SAFETY: transmuting from equivalent representation is safe here.
-            let str = unsafe { mem::transmute::<*mut u8, LengthPrefixedStr>(ptr.as_ptr()) };
+            let prefixed_ptr = base.add(self.offset).unwrap().as_ptr();
+            // SAFETY: transmuting equivalent representations is safe here.
+            let str = unsafe { mem::transmute::<*mut u8, LengthPrefixedStr>(prefixed_ptr) };
             self.len -= 1;
             self.offset += mem::size_of::<u16>() + str.len();
 
-            // SAFETY: transmuting the lifetime to the arena's is correct.
-            unsafe { Some(mem::transmute(str.deref())) }
+            // SAFETY: since the iterator retains the memory backing the &str
+            // as long as the iterator is alive, the str can be lent using the
+            // iterator's lifetime.
+            Some(unsafe { mem::transmute::<&str, &str>(str.deref()) })
         }
     }
 
