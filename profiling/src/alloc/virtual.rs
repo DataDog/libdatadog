@@ -1,9 +1,6 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{pad_to, page_size, InBoundsPtr};
-use std::{io, ptr};
-
 #[cfg(unix)]
 mod os {
     use std::{io, ptr};
@@ -49,20 +46,20 @@ mod os {
     use windows_sys::Win32::System::Memory;
 
     pub fn virtual_alloc(size: usize) -> io::Result<ptr::NonNull<[u8]>> {
-        let result = unsafe {
-            Memory::VirtualAlloc(
-                ptr::null(),
-                size,
-                Memory::MEM_COMMIT | Memory::MEM_RESERVE,
-                Memory::PAGE_READWRITE,
-            )
-        };
-        if result.is_null() {
-            Err(io::Error::last_os_error())
-        } else {
-            let slice = ptr::slice_from_raw_parts_mut(result.cast(), size);
-            // SAFETY: checked that the ptr was not null above.
-            Ok(unsafe { ptr::NonNull::new_unchecked(slice) })
+        let null = ptr::null_mut();
+        let alloc_type = Memory::MEM_COMMIT | Memory::MEM_RESERVE;
+        let protection = Memory::PAGE_READWRITE;
+        let result = unsafe { Memory::VirtualAlloc(null, size, alloc_type, protection) };
+
+        match ptr::NonNull::new(result.cast::<u8>()) {
+            Some(addr) => {
+                // todo: on rust 1.70+ use NonNull::slice_from_raw_parts to
+                //       avoid another use of unsafe.
+                let slice = ptr::slice_from_raw_parts_mut(addr.as_ptr(), size);
+                // SAFETY: `addr` is `NonNull`, so inherently not null.
+                Ok(unsafe { ptr::NonNull::new_unchecked(slice) })
+            }
+            None => Err(io::Error::last_os_error()),
         }
     }
 
@@ -70,14 +67,16 @@ mod os {
     /// The fatptr must have been previously allocated by [virtual_alloc], and
     /// must have the same address and length as it was returned with.
     pub unsafe fn virtual_free(fatptr: ptr::NonNull<[u8]>) -> io::Result<()> {
-        let result = Memory::VirtualFree(fatptr.as_ptr().cast(), 0, Memory::MEM_RELEASE);
-        if result == 0 {
+        if Memory::VirtualFree(fatptr.as_ptr().cast(), 0, Memory::MEM_RELEASE) == 0 {
             Err(io::Error::last_os_error())
         } else {
             Ok(())
         }
     }
 }
+
+use super::{pad_to, page_size, InBoundsPtr};
+use std::{io, ptr};
 
 pub use os::*;
 
@@ -121,7 +120,7 @@ impl Mapping {
 
 impl Drop for Mapping {
     fn drop(&mut self) {
-        // SAFETY: passing ptr and size exactly as received from alloc.
+        // SAFETY: passing fatptr` exactly as received from alloc.
         let _result = unsafe { virtual_free(self.fatptr) };
 
         // If this fails, there's not much that can be done about it. It
