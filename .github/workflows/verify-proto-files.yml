@@ -4,7 +4,7 @@ on:
     types: [ opened, synchronize, reopened ]
 
 env:
-  DATADOG_AGENT_TAG: "7.52.0-rc.1"
+  DATADOG_AGENT_TAG: "7.53.0-rc.1"
 
 jobs:
   verify-proto-files:
