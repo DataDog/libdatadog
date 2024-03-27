@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{pad_to, page_size, InBoundsPtr};
-use core::ptr;
-use std::io;
+use std::{io, ptr};
 
 #[cfg(unix)]
 mod os {
