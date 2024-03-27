@@ -33,6 +33,8 @@
       PackagePath="include\native\datadog\profiling.h" />
     <None Include="$(LibDatadogBinariesOutputDir)\telemetry.h" Pack="true"
       PackagePath="include\native\datadog\telemetry.h" />
+    <None Include="$(LibDatadogBinariesOutputDir)\data-pipeline.h" Pack="true"
+      PackagePath="include\native\datadog\data-pipeline.h" />
 
     <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\debug\datadog_profiling_ffi.lib"
       Pack="true" PackagePath="build\native\lib\x64\debug\datadog_profiling_ffi.lib" />
@@ -61,5 +63,33 @@
       Pack="true" PackagePath="build\native\lib\x86\release\datadog_profiling_ffi.dll" />
     <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\release\datadog_profiling_ffi.pdb"
       Pack="true" PackagePath="build\native\lib\x86\release\datadog_profiling_ffi.pdb" />
+
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\debug\data_pipeline_ffi.lib"
+      Pack="true" PackagePath="build\native\lib\x64\debug\data_pipeline_ffi.lib" />
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\debug\data_pipeline_ffi.dll"
+      Pack="true" PackagePath="build\native\lib\x64\debug\data_pipeline_ffi.dll" />
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\debug\data_pipeline_ffi.pdb"
+      Pack="true" PackagePath="build\native\lib\x64\debug\data_pipeline_ffi.pdb" />
+
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\release\data_pipeline_ffi.lib"
+      Pack="true" PackagePath="build\native\lib\x64\release\data_pipeline_ffi.lib" />
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\release\data_pipeline_ffi.dll"
+      Pack="true" PackagePath="build\native\lib\x64\release\data_pipeline_ffi.dll" />
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\release\data_pipeline_ffi.pdb"
+      Pack="true" PackagePath="build\native\lib\x64\release\data_pipeline_ffi.lpdb" />
+
+    <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\debug\data_pipeline_ffi.lib"
+      Pack="true" PackagePath="build\native\lib\x64\debug\data_pipeline_ffi.lib" />
+    <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\debug\data_pipeline_ffi.dll"
+      Pack="true" PackagePath="build\native\lib\x64\debug\data_pipeline_ffi.dll" />
+    <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\debug\data_pipeline_ffi.pdb"
+      Pack="true" PackagePath="build\native\lib\x64\debug\data_pipeline_ffi.pdb" />
+
+    <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\release\data_pipeline_ffi.lib"
+      Pack="true" PackagePath="build\native\lib\x64\release\data_pipeline_ffi.lib" />
+    <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\release\data_pipeline_ffi.dll"
+      Pack="true" PackagePath="build\native\lib\x64\release\data_pipeline_ffi.dll" />
+    <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\release\data_pipeline_ffi.pdb"
+      Pack="true" PackagePath="build\native\lib\x64\release\data_pipeline_ffi.lpdb" />
   </ItemGroup>
 </Project>
