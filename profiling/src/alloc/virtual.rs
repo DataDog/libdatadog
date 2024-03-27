@@ -11,7 +11,7 @@ mod os {
 
     /// Allocates virtual memory of the given size, which must be a
     /// multiple of a page boundary and may not be zero.
-    pub fn virtual_alloc(size: usize) -> io::Result<ptr::NonNull<()>> {
+    pub fn virtual_alloc(size: usize) -> io::Result<ptr::NonNull<[u8]>> {
         let result = unsafe {
             libc::mmap(
                 ptr::null_mut(),
@@ -34,16 +34,17 @@ mod os {
                 "mmap returned a null pointer",
             ))
         } else {
+            let slice = ptr::slice_from_raw_parts_mut(result.cast(), size);
             // SAFETY: checked that the ptr was not null above.
-            Ok(unsafe { ptr::NonNull::new_unchecked(result).cast() })
+            Ok(unsafe { ptr::NonNull::new_unchecked(slice) })
         }
     }
 
     /// # Safety
-    ///  1. The ptr must have been previously allocated by [virtual_alloc].
-    ///  2. The size should be the exact size it was allocated with.
-    pub unsafe fn virtual_free(ptr: ptr::NonNull<()>, size: usize) -> io::Result<()> {
-        let result = libc::munmap(ptr.as_ptr().cast(), size as libc::size_t);
+    ///  1. The fatptr must have been previously allocated by [virtual_alloc].
+    ///  2. The size should be the exact size it was returned with.
+    pub unsafe fn virtual_free(fatptr: ptr::NonNull<[u8]>) -> io::Result<()> {
+        let result = libc::munmap(fatptr.as_ptr().cast(), fatptr.len() as libc::size_t);
         if result == -1 {
             Err(io::Error::last_os_error())
         } else {
@@ -57,7 +58,7 @@ mod os {
     use std::{io, ptr};
     use windows_sys::Win32::System::Memory;
 
-    pub fn virtual_alloc(size: usize) -> io::Result<ptr::NonNull<()>> {
+    pub fn virtual_alloc(size: usize) -> io::Result<ptr::NonNull<[u8]>> {
         let result = unsafe {
             Memory::VirtualAlloc(
                 ptr::null(),
@@ -69,16 +70,17 @@ mod os {
         if result.is_null() {
             Err(io::Error::last_os_error())
         } else {
+            let slice = ptr::slice_from_raw_parts_mut(result.cast(), size);
             // SAFETY: checked that the ptr was not null above.
-            Ok(unsafe { ptr::NonNull::new_unchecked(result).cast() })
+            Ok(unsafe { ptr::NonNull::new_unchecked(slice) })
         }
     }
 
     /// # Safety
-    ///  1. The ptr must have been previously allocated by [virtual_alloc].
-    ///  2. The size should be the exact size it was allocated with.
-    pub unsafe fn virtual_free(ptr: ptr::NonNull<()>, _size: usize) -> io::Result<()> {
-        let result = Memory::VirtualFree(ptr.as_ptr().cast(), 0, Memory::MEM_RELEASE);
+    ///  1. The fatptr must have been previously allocated by [virtual_alloc].
+    ///  2. The size should be the exact size it was returned with.
+    pub unsafe fn virtual_free(fatptr: ptr::NonNull<[u8]>) -> io::Result<()> {
+        let result = Memory::VirtualFree(fatptr.as_ptr().cast(), 0, Memory::MEM_RELEASE);
         if result == 0 {
             Err(io::Error::last_os_error())
         } else {
@@ -91,8 +93,7 @@ pub use os::*;
 
 #[repr(C)]
 pub struct Mapping {
-    base: ptr::NonNull<()>,
-    size: usize,
+    fatptr: ptr::NonNull<[u8]>,
 }
 
 /// # Safety
@@ -100,45 +101,38 @@ pub struct Mapping {
 unsafe impl Send for Mapping {}
 
 impl Mapping {
+    /// Pads `min_size` to the page size, and creates a new mapping of the
+    /// padded size.
     pub fn new(min_size: usize) -> io::Result<Mapping> {
         let page_size = page_size();
         match pad_to(min_size, page_size) {
-            None => Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("requested virtual allocation of {min_size} bytes could not be padded to the page size {page_size}"),
-            )),
-            Some(size) => {
-                if size > isize::MAX as usize {
-                    Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        format!("padded virtual allocation of {min_size} exceeds isize::MAX"),
-                    ))
-                } else {
-                    Ok(Mapping {
-                        base: virtual_alloc(size)?,
-                        size,
-                    })
-                }
+            Some(size) if size <= isize::MAX as usize => {
+                let fatptr = virtual_alloc(size)?;
+                Ok(Mapping { fatptr })
             }
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("requested virtual allocation of {min_size} bytes was too large (possibly after padding)"),
+            )),
         }
     }
 
+    #[inline]
     pub fn base_in_bounds_ptr(&self) -> InBoundsPtr {
-        let slice = ptr::slice_from_raw_parts_mut(self.base.cast::<u8>().as_ptr(), self.size);
-        // SAFETY: derived from mapping's NonNull pointer.
-        let base = unsafe { ptr::NonNull::new_unchecked(slice) };
+        let base = self.fatptr;
         InBoundsPtr { base, offset: 0 }
     }
 
+    #[inline]
     pub fn allocation_size(&self) -> usize {
-        self.size
+        self.fatptr.len()
     }
 }
 
 impl Drop for Mapping {
     fn drop(&mut self) {
         // SAFETY: passing ptr and size exactly as received from alloc.
-        let _result = unsafe { virtual_free(self.base, self.size) };
+        let _result = unsafe { virtual_free(self.fatptr) };
 
         // If this fails, there's not much that can be done about it. It
         // could panic but panic in drops are generally frowned on.
