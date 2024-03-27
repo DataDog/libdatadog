@@ -12,40 +12,31 @@ mod os {
     /// Allocates virtual memory of the given size, which must be a
     /// multiple of a page boundary and may not be zero.
     pub fn virtual_alloc(size: usize) -> io::Result<ptr::NonNull<[u8]>> {
-        let result = unsafe {
-            libc::mmap(
-                ptr::null_mut(),
-                size as libc::size_t,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANON,
-                -1,
-                0,
-            )
-        };
+        let null = ptr::null_mut();
+        let len = size as libc::size_t;
+        let prot = libc::PROT_READ | libc::PROT_WRITE;
+        let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
+        // SAFETY: creates a new mapping (no weird behavior), akin to malloc.
+        let result = unsafe { libc::mmap(null, len, prot, flags, -1, 0) };
 
         if result == libc::MAP_FAILED {
             return Err(io::Error::last_os_error());
         }
 
-        if result.is_null() {
-            unsafe { libc::munmap(result, size as libc::size_t) };
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "mmap returned a null pointer",
-            ))
-        } else {
-            let slice = ptr::slice_from_raw_parts_mut(result.cast(), size);
-            // SAFETY: checked that the ptr was not null above.
-            Ok(unsafe { ptr::NonNull::new_unchecked(slice) })
-        }
+        let slice = ptr::slice_from_raw_parts_mut(result.cast(), size);
+        // SAFETY: from my understanding of the spec, it's not possible to get
+        // a mapping which starts at 0 (aka null) when MAP_FIXED wasn't given
+        // and the specified address is 0.
+        Ok(unsafe { ptr::NonNull::new_unchecked(slice) })
     }
 
     /// # Safety
-    ///  1. The fatptr must have been previously allocated by [virtual_alloc].
-    ///  2. The size should be the exact size it was returned with.
+    /// The fatptr must have been previously allocated by [virtual_alloc], and
+    /// must have the same address and length as it was returned with.
     pub unsafe fn virtual_free(fatptr: ptr::NonNull<[u8]>) -> io::Result<()> {
-        let result = libc::munmap(fatptr.as_ptr().cast(), fatptr.len() as libc::size_t);
-        if result == -1 {
+        // SAFETY: if the caller meets the safety conditions of this function,
+        // then this is safe by extension.
+        if libc::munmap(fatptr.as_ptr().cast(), fatptr.len() as libc::size_t) == -1 {
             Err(io::Error::last_os_error())
         } else {
             Ok(())
@@ -77,8 +68,8 @@ mod os {
     }
 
     /// # Safety
-    ///  1. The fatptr must have been previously allocated by [virtual_alloc].
-    ///  2. The size should be the exact size it was returned with.
+    /// The fatptr must have been previously allocated by [virtual_alloc], and
+    /// must have the same address and length as it was returned with.
     pub unsafe fn virtual_free(fatptr: ptr::NonNull<[u8]>) -> io::Result<()> {
         let result = Memory::VirtualFree(fatptr.as_ptr().cast(), 0, Memory::MEM_RELEASE);
         if result == 0 {
