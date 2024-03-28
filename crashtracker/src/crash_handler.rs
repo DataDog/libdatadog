@@ -3,6 +3,8 @@
 
 #![cfg(unix)]
 
+use crate::DEBUG;
+
 use super::api::{CrashtrackerConfiguration, CrashtrackerMetadata, CrashtrackerResolveFrames};
 use super::collectors::emit_backtrace_by_frames;
 #[cfg(target_os = "linux")]
@@ -208,13 +210,21 @@ extern "C" fn handle_posix_signal(signum: i32) {
     // Safety: We've already crashed, this is a best effort to chain to the old
     // behaviour.  Do this first to prevent recursive activation if this handler
     // itself crashes (e.g. while calculating stacktrace)
-    let _ = restore_old_handlers(true);
-    let _ = handle_posix_signal_impl(signum);
-
+    let _res = restore_old_handlers(true);
+    if DEBUG {
+        eprintln!("restore_old_handlers: {_res:?}");
+    }
+    let _res = handle_posix_signal_impl(signum);
+    if DEBUG {
+        eprintln!("handle_posix_signal_impl: {_res:?}");
+    }
     // return to old handler (chain).  See comments on `restore_old_handler`.
 }
 
 fn emit_config(w: &mut impl Write, config_str: &str) -> anyhow::Result<()> {
+    if DEBUG {
+        eprintln!("crashtracker::emit_config");
+    }
     writeln!(w, "{DD_CRASHTRACK_BEGIN_CONFIG}")?;
     writeln!(w, "{}", config_str)?;
     writeln!(w, "{DD_CRASHTRACK_END_CONFIG}")?;
@@ -222,6 +232,9 @@ fn emit_config(w: &mut impl Write, config_str: &str) -> anyhow::Result<()> {
 }
 
 fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> anyhow::Result<()> {
+    if DEBUG {
+        eprintln!("crashtracker::emit_metadata");
+    }
     writeln!(w, "{DD_CRASHTRACK_BEGIN_METADATA}")?;
     writeln!(w, "{}", metadata_str)?;
     writeln!(w, "{DD_CRASHTRACK_END_METADATA}")?;
@@ -229,6 +242,9 @@ fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> anyhow::Result<()> {
 }
 
 fn emit_siginfo(w: &mut impl Write, signum: i32) -> anyhow::Result<()> {
+    if DEBUG {
+        eprintln!("crashtracker::emit_siginfo");
+    }
     let signame = if signum == libc::SIGSEGV {
         "SIGSEGV"
     } else if signum == libc::SIGBUS {
@@ -244,6 +260,9 @@ fn emit_siginfo(w: &mut impl Write, signum: i32) -> anyhow::Result<()> {
 }
 
 fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
+    if DEBUG {
+        eprintln!("crashtracker::handle_posix_signal_impl");
+    }
     // Leak receiver, config, and metadata to avoid calling 'drop' during a crash
     let receiver = RECEIVER.swap(ptr::null_mut(), SeqCst);
     anyhow::ensure!(!receiver.is_null(), "No crashtracking receiver");

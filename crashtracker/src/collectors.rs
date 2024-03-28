@@ -3,6 +3,8 @@
 
 use anyhow::Context;
 
+use crate::DEBUG;
+
 use super::constants::*;
 use std::{
     fs::File,
@@ -25,6 +27,10 @@ pub unsafe fn emit_backtrace_by_frames(
     w: &mut impl Write,
     resolve_frames: bool,
 ) -> anyhow::Result<()> {
+    if DEBUG {
+        eprintln!("crashtracker::emit_backtrace_by_frames({resolve_frames})");
+    }
+
     // https://docs.rs/backtrace/latest/backtrace/index.html
     writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
     backtrace::trace_unsynchronized(|frame| {
@@ -113,6 +119,10 @@ pub unsafe fn emit_backtrace_by_frames(
 ///     unnecessary mutexes or memory allocation.
 #[allow(dead_code)]
 pub fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
+    if DEBUG {
+        eprintln!("crashtracker::emit_text_file({path})");
+    }
+
     // open is signal safe
     // https://man7.org/linux/man-pages/man7/signal-safety.7.html
     let mut file = File::open(path).with_context(|| path.to_string())?;
