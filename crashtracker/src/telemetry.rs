@@ -210,6 +210,7 @@ mod tests {
                 stderr_filename: None,
                 stdout_filename: None,
                 collect_stacktrace: true,
+                timeout: time::Duration::from_secs(30),
             },
         )
         .unwrap()

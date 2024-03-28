@@ -13,6 +13,7 @@ mod crashtracker;
 mod exporter;
 mod profiles;
 
+pub use crashtracker::*;
 // re-export telemetry ffi
 #[cfg(feature = "ddtelemetry-ffi")]
 pub use ddtelemetry_ffi::*;

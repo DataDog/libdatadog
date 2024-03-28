@@ -45,10 +45,10 @@
 //!
 //! Handling of forks
 //! Safety issues
-#![cfg(unix)]
 
 mod api;
 mod collectors;
+mod configuration;
 mod constants;
 mod counters;
 mod crash_handler;
@@ -57,9 +57,14 @@ mod receiver;
 mod stacktrace;
 mod telemetry;
 
+#[cfg(unix)]
 pub use api::*;
+pub use configuration::{CrashtrackerConfiguration, CrashtrackerResolveFrames};
 pub use constants::*;
-pub use counters::{begin_profiling_op, end_profiling_op, ProfilingOpTypes};
+pub use counters::{begin_profiling_op, end_profiling_op, reset_counters, ProfilingOpTypes};
+#[cfg(unix)]
 pub use crash_handler::{update_config, update_metadata};
 pub use crash_info::*;
+#[cfg(unix)]
 pub use receiver::receiver_entry_point;
+pub use stacktrace::{StackFrame, StackFrameNames};

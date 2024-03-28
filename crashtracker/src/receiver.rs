@@ -1,5 +1,6 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(unix)]
 
 use self::stacktrace::StackFrame;
 use super::*;
@@ -40,11 +41,8 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
                 // TODO Experiment to see if 30 is the right number.
                 crash_info.upload_to_endpoint(endpoint.clone(), Duration::from_secs(30))?;
             }
-            if let Some(metadata) = &crash_info.metadata {
-                if let Ok(uploader) = telemetry::TelemetryCrashUploader::new(metadata, &config) {
-                    uploader.upload_to_telemetry(&crash_info, Duration::from_secs(30))?;
-                }
-            }
+            crash_info.upload_to_telemetry(&config)?;
+
             Ok(())
         }
         CrashReportStatus::PartialCrashReport(config, mut crash_info, stdin_state) => {
@@ -55,12 +53,7 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
                 // TODO Experiment to see if 30 is the right number.
                 crash_info.upload_to_endpoint(endpoint.clone(), Duration::from_secs(30))?;
             }
-
-            if let Some(metadata) = &crash_info.metadata {
-                if let Ok(uploader) = telemetry::TelemetryCrashUploader::new(metadata, &config) {
-                    uploader.upload_to_telemetry(&crash_info, Duration::from_secs(30))?;
-                }
-            }
+            crash_info.upload_to_telemetry(&config)?;
 
             Ok(())
         }
@@ -148,7 +141,7 @@ fn process_line(
         }
 
         StdinState::StackTrace(stacktrace) if line.starts_with(DD_CRASHTRACK_END_STACKTRACE) => {
-            crashinfo.set_stacktrace(stacktrace)?;
+            crashinfo.set_stacktrace(None, stacktrace)?;
             StdinState::Waiting
         }
         StdinState::StackTrace(mut stacktrace) => {

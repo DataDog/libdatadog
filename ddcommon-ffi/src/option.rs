@@ -22,3 +22,12 @@ impl<T> From<Option<T>> for std::option::Option<T> {
         }
     }
 }
+
+impl<T: Copy> From<&Option<T>> for std::option::Option<T> {
+    fn from(o: &Option<T>) -> Self {
+        match o {
+            Option::Some(s) => Some(*s),
+            Option::None => None,
+        }
+    }
+}

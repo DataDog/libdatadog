@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
 #[cfg(unix)]
 mod unix {
     use anyhow::Context;
-    use std::env;
+    use std::{env, time::Duration};
 
     use datadog_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerMetadata,
@@ -30,6 +30,7 @@ mod unix {
         let receiver_binary = args.next().context("Unexpected number of arguments")?;
         let stderr_filename = args.next().context("Unexpected number of arguments")?;
         let stdout_filename = args.next().context("Unexpected number of arguments")?;
+        let timeout = Duration::from_secs(30);
         crashtracker::init(
             CrashtrackerConfiguration {
                 create_alt_stack: true,
@@ -42,6 +43,7 @@ mod unix {
                 stderr_filename: Some(stderr_filename),
                 stdout_filename: Some(stdout_filename),
                 collect_stacktrace: true,
+                timeout,
             },
             CrashtrackerMetadata {
                 profiling_library_name: "libdatadog".to_owned(),
