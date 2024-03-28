@@ -16,3 +16,6 @@ trace-protobuf          @Datadog/serverless
 trace-mini-agent        @Datadog/serverless
 trace-utils             @Datadog/serverless
 serverless              @Datadog/serverless
+
+# no default owners
+experimental/           
