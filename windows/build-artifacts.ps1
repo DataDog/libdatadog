@@ -20,10 +20,13 @@ if (![System.IO.Path]::IsPathRooted($output_dir)) {
 
 Write-Host "Building project into $($output_dir)" -ForegroundColor Magenta
 
+# build inside the crate to use the config.toml file
+pushd profiling-ffi
 Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi --target i686-pc-windows-msvc --release --target-dir $output_dir }
 Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi --target i686-pc-windows-msvc --target-dir $output_dir }
 Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi --target x86_64-pc-windows-msvc --release --target-dir $output_dir }
 Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi --target x86_64-pc-windows-msvc --target-dir $output_dir }
+popd
 
 Write-Host "Building tools" -ForegroundColor Magenta
 Set-Location tools

@@ -100,7 +100,6 @@ sed < cmake/DatadogConfig.cmake.in \
 
 cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
-export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
 datadog_profiling_ffi="datadog-profiling-ffi"
 FEATURES="--features cbindgen,datadog-profiling-ffi/ddtelemetry-ffi"
@@ -108,7 +107,10 @@ if [[ "$symbolizer" -eq 1 ]]; then
     FEATURES="--features cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,symbolizer"
 fi
 
-DESTDIR="$destdir" cargo build --package="${datadog_profiling_ffi}" ${FEATURES} --release --target "${target}"
+# build inside the crate to use the config.toml file
+pushd profiling-ffi
+DESTDIR="$destdir" cargo build ${FEATURES} --release --target "${target}"
+popd
 
 # Remove _ffi suffix when copying
 shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"
