@@ -26,7 +26,7 @@ pub struct Distribution {
     pub interval: u64,
 }
 
-#[derive(Serialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 #[repr(C)]
 pub enum MetricNamespace {

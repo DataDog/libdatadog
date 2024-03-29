@@ -8,7 +8,9 @@ mod linux {
     use std::io::{Seek, Write};
 
     pub(crate) fn write_memfd(name: &str, contents: &[u8]) -> anyhow::Result<memfd::Memfd> {
-        let opts = memfd::MemfdOptions::default();
+        // This leaks a fd, but a fd to the TXT segment, which is fine.
+        // And it will ensure that fexecve works with custom binfmts (rosetta or qemu).
+        let opts = memfd::MemfdOptions::default().close_on_exec(false);
         let mfd = opts.create(name)?;
 
         mfd.as_file().set_len(contents.len() as u64)?;
