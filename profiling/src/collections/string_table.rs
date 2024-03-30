@@ -190,7 +190,7 @@ impl IntoLendingIterator for StringTable {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum InternError {
     /// The string is too big. Current limit is [u16::MAX]. Holds the size of
     /// the string which tried to get allocated.
@@ -394,6 +394,9 @@ impl LendingIterator for ArenaAllocatorIter {
 mod tests {
     use super::*;
     use core::hash::{BuildHasher, BuildHasherDefault, Hash, Hasher};
+    use rand::distributions::{Alphanumeric, DistIter, Standard};
+    use rand::prelude::ThreadRng;
+    use rand::Rng;
     use std::collections::HashMap;
 
     #[test]
@@ -491,5 +494,74 @@ mod tests {
 
         let len = STRING_TABLE.with(|table| table.len());
         assert_eq!(1, len);
+    }
+
+    #[test]
+    fn test_capacity() {
+        // Want to ensure we can handle valid but long strings.
+        let min_capacity = 4 * u16::MAX as usize;
+        let mut table = StringTable::with_arena_capacity(min_capacity).unwrap();
+
+        let real_capacity = table.arena_capacity();
+        let mut size = 0;
+
+        // Use ASCII strings for this, too byte oriented for utf-8 chars.
+        let mut char_rng = rand::thread_rng().sample_iter(&Alphanumeric);
+        let mut len_rng = rand::thread_rng().sample_iter::<u16, _>(Standard);
+
+        loop {
+            // length of the string (not num of entries in the table).
+            let len = len_rng.next().unwrap() as usize;
+            if len == 0 {
+                continue;
+            }
+
+            let str: String = gen_string(&mut char_rng, len);
+
+            match table.insert_full(&str) {
+                Err(err) => match err {
+                    InternError::LargeString(_) => {
+                        panic!("oops, accidentally created a large string, fix test")
+                    }
+                    InternError::AllocError => {
+                        assert!(size <= real_capacity);
+                        assert!(size + len > real_capacity);
+                        break;
+                    }
+                },
+                Ok((str, _id)) => {
+                    // Panic: string is at least 1 char, so it will be fine.
+                    // + 2 is for len header.
+                    size += str.unwrap().len() + 2;
+                }
+            }
+        }
+
+        // need at least 2 bytes for the header
+        let rem_bytes = real_capacity - size;
+        if rem_bytes >= 2 {
+            let string = gen_string(&mut char_rng, rem_bytes - 2);
+            table
+                .insert_full(&string)
+                .expect("this string to fit exactly");
+        }
+
+        // Always has an empty string!
+        let (empty, empty_id) = table.insert_full("").unwrap();
+        assert_eq!((None, StringId::ZERO), (empty, empty_id));
+
+        // There is no room for other strings though. Use a non-alphanumeric
+        // to avoid flakiness.
+        let err = table.insert_full(".").unwrap_err();
+        assert_eq!(InternError::AllocError, err);
+    }
+
+    fn gen_string(char_rng: &mut DistIter<&Alphanumeric, ThreadRng, u8>, len: usize) -> String {
+        let mut bytes = Vec::<u8>::with_capacity(len);
+        for _ in 0..len {
+            bytes.push(char_rng.next().unwrap());
+        }
+        // Should be valid utf-8, check rand distribution if not.
+        String::from_utf8(bytes).unwrap()
     }
 }
