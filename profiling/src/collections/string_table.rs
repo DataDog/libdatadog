@@ -497,6 +497,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_capacity() {
         // Want to ensure we can handle valid but long strings.
         let min_capacity = 4 * u16::MAX as usize;
