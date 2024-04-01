@@ -55,7 +55,7 @@ mod os {
 mod os {
     use std::{io, ptr};
     use windows_sys::Win32::System::Memory;
-    struct OsVirtualAllocator {}
+    pub struct OsVirtualAllocator {}
 
     impl VirtualAllocator for OsVirtualAllocator {
         fn virtual_alloc(&self, size: usize) -> io::Result<ptr::NonNull<[u8]>> {
