@@ -96,6 +96,17 @@ mod tests {
         Ok(())
     }
 
+    /// Practically speaking, if this failes we've _actually_ invoked UB
+    /// because the writes of zero are what considered this memory to be
+    /// initialized in the first place.
+    #[track_caller]
+    fn check_zero(fatptr: NonNull<[u8]>) {
+        let slice = unsafe { &*fatptr.as_ptr() };
+        for i in slice {
+            assert_eq!(0, *i);
+        }
+    }
+
     #[test]
     fn test_arena_basic_exhaustion() -> anyhow::Result<()> {
         let arena = ArenaAllocator::with_capacity(1)?;
@@ -105,7 +116,8 @@ mod tests {
         assert_eq!(expected_size, actual_size);
 
         // This should consume the whole arena.
-        arena.allocate_zeroed(Layout::from_size_align(expected_size, 1)?)?;
+        let fatptr = arena.allocate_zeroed(Layout::from_size_align(expected_size, 1)?)?;
+        check_zero(fatptr);
 
         // This should fail to allocate, zero bytes available.
         arena.allocate_zeroed(Layout::new::<u8>()).unwrap_err();
@@ -134,6 +146,11 @@ mod tests {
         let third = arena.allocate_zeroed(layout)?;
         let fourth = arena.allocate_zeroed(layout)?;
 
+        check_zero(first);
+        check_zero(second);
+        check_zero(third);
+        check_zero(fourth);
+
         // This _may_ fail to allocate, because we're only guaranteed 32 bytes
         // but in practice, it won't fail because it's rounded to a page size,
         // and I've never seen pages that small, even for 16 bit. However, in
@@ -159,6 +176,9 @@ mod tests {
         let second = arena.allocate_zeroed(layout)?;
         assert_eq!(DISTANCE / 2, second.len());
 
+        check_zero(first);
+        check_zero(second);
+
         expect_distance(first, second, DISTANCE / 2);
 
         Ok(())
@@ -175,6 +195,10 @@ mod tests {
         let second = arena.allocate_zeroed(bool)?;
         // third could be mis-aligned if alignment isn't considered.
         let third = arena.allocate_zeroed(pointer)?;
+
+        check_zero(first);
+        check_zero(second);
+        check_zero(third);
 
         expect_distance(first, second, mem::size_of::<*const ()>());
         expect_distance(second, third, mem::size_of::<*const ()>());
