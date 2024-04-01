@@ -2,23 +2,31 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::AllocError;
-use crate::alloc::r#virtual::Mapping;
+use crate::alloc::r#virtual::{Mapping, OsVirtualAllocator, VirtualAllocator};
 use core::ptr::NonNull;
 use std::alloc::Layout;
 use std::cell::Cell;
+use std::io;
 
-pub struct ArenaAllocator {
-    pub(crate) mapping: Option<Mapping>,
+#[derive(Debug)]
+pub struct ArenaAllocator<A: VirtualAllocator = OsVirtualAllocator> {
+    pub(crate) mapping: Option<Mapping<A>>,
     first_free_offset: Cell<usize>,
 }
 
-impl Default for ArenaAllocator {
+impl<A: VirtualAllocator> Default for ArenaAllocator<A> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ArenaAllocator {
+impl ArenaAllocator<OsVirtualAllocator> {
+    pub fn with_capacity(capacity: usize) -> io::Result<ArenaAllocator<OsVirtualAllocator>> {
+        Self::with_capacity_in(capacity, OsVirtualAllocator {})
+    }
+}
+
+impl<A: VirtualAllocator> ArenaAllocator<A> {
     /// Creates a new arena allocator which has a capacity of zero. It will
     /// not request a virtual mapping from the OS.
     pub const fn new() -> Self {
@@ -28,7 +36,7 @@ impl ArenaAllocator {
         }
     }
 
-    unsafe fn from_mapping(mapping: Mapping) -> Self {
+    unsafe fn from_mapping(mapping: Mapping<A>) -> ArenaAllocator<A> {
         let first_free_offset = Cell::new(0);
         Self {
             mapping: Some(mapping),
@@ -39,12 +47,12 @@ impl ArenaAllocator {
     /// Creates an arena allocator whose underlying buffer holds at least
     /// `capacity` bytes. It will round up to a page size, except for capacity
     /// of zero.
-    pub fn with_capacity(capacity: usize) -> anyhow::Result<Self> {
+    pub fn with_capacity_in(capacity: usize, alloc: A) -> io::Result<Self> {
         if capacity == 0 {
             return Ok(Self::new());
         }
 
-        let region = Mapping::new(capacity)?;
+        let region = Mapping::new_in(capacity, alloc)?;
 
         // SAFETY: we haven't done any unsafe things with the region like give
         // out pointers to its interior bytes.
@@ -182,5 +190,26 @@ mod tests {
         expect_distance(second, third, mem::size_of::<*const ()>());
 
         Ok(())
+    }
+
+    #[test]
+    fn test_alloc_failure() {
+        #[derive(Debug)]
+        struct FailingVirtualAllocator {}
+
+        impl VirtualAllocator for FailingVirtualAllocator {
+            fn virtual_alloc(&self, _size: usize) -> io::Result<NonNull<[u8]>> {
+                Err(io::Error::from(io::ErrorKind::Other))
+            }
+
+            unsafe fn virtual_free(&self, _fatptr: NonNull<[u8]>) -> io::Result<()> {
+                Err(io::Error::from(io::ErrorKind::Other))
+            }
+        }
+
+        // Should still work, zero-size doesn't use the allocator.
+        _ = ArenaAllocator::with_capacity_in(0, FailingVirtualAllocator {}).unwrap();
+
+        _ = ArenaAllocator::with_capacity_in(64, FailingVirtualAllocator {}).unwrap_err();
     }
 }
