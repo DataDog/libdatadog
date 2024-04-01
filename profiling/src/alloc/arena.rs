@@ -11,7 +11,7 @@ use std::io;
 #[derive(Debug)]
 pub struct ArenaAllocator<A: VirtualAllocator = OsVirtualAllocator> {
     pub(crate) mapping: Option<Mapping<A>>,
-    first_free_offset: Cell<usize>,
+    free_offset: Cell<usize>,
 }
 
 impl<A: VirtualAllocator> Default for ArenaAllocator<A> {
@@ -32,15 +32,7 @@ impl<A: VirtualAllocator> ArenaAllocator<A> {
     pub const fn new() -> Self {
         Self {
             mapping: None,
-            first_free_offset: Cell::new(0),
-        }
-    }
-
-    unsafe fn from_mapping(mapping: Mapping<A>) -> ArenaAllocator<A> {
-        let first_free_offset = Cell::new(0);
-        Self {
-            mapping: Some(mapping),
-            first_free_offset,
+            free_offset: Cell::new(0),
         }
     }
 
@@ -52,17 +44,19 @@ impl<A: VirtualAllocator> ArenaAllocator<A> {
             return Ok(Self::new());
         }
 
-        let region = Mapping::new_in(capacity, alloc)?;
+        let mapping = Some(Mapping::new_in(capacity, alloc)?);
 
-        // SAFETY: we haven't done any unsafe things with the region like give
-        // out pointers to its interior bytes.
-        Ok(unsafe { Self::from_mapping(region) })
+        let free_offset = Cell::new(0);
+        Ok(Self {
+            mapping,
+            free_offset,
+        })
     }
 
     pub fn remaining_capacity(&self) -> usize {
         match &self.mapping {
             None => 0,
-            Some(mapping) => mapping.allocation_size() - self.first_free_offset.get(),
+            Some(mapping) => mapping.allocation_size() - self.free_offset.get(),
         }
     }
 
@@ -76,17 +70,13 @@ impl<A: VirtualAllocator> ArenaAllocator<A> {
             return Ok(NonNull::from(&mut []));
         }
 
-        let mapping = match self.mapping.as_ref() {
-            None => return Err(AllocError),
-            Some(m) => m,
-        };
-
+        let mapping = self.mapping.as_ref().ok_or_else(|| AllocError)?;
         let base_ptr = mapping.base_in_bounds_ptr();
-        let unaligned_ptr = base_ptr.add(self.first_free_offset.get())?;
+        let unaligned_ptr = base_ptr.add(self.free_offset.get())?;
         let aligned_ptr = unaligned_ptr.align_to(layout.align())?;
-        let slice = aligned_ptr.slice(layout.size())?;
-        let first_free_offset = aligned_ptr.offset + layout.size();
-        self.first_free_offset.set(first_free_offset);
+        let slice = aligned_ptr.slice(size)?;
+        let free_offset = aligned_ptr.offset + size;
+        self.free_offset.set(free_offset);
         Ok(slice)
     }
 }

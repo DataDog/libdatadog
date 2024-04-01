@@ -6,9 +6,9 @@ pub trait VirtualAllocator {
     fn virtual_alloc(&self, size: usize) -> io::Result<ptr::NonNull<[u8]>>;
 
     /// # Safety
-    /// The fatptr must have been previously allocated by [virtual_alloc] by
-    /// this allocator, and must have the same address and length as it was
-    /// returned with.
+    /// The fatptr must have been previously allocated by [virtual_alloc] of
+    /// this allocator, must have the same address and length as it was
+    /// returned with, and it must not have been previously freed.
     unsafe fn virtual_free(&self, fatptr: ptr::NonNull<[u8]>) -> io::Result<()>;
 }
 
