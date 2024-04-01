@@ -53,8 +53,10 @@ mod os {
 
 #[cfg(windows)]
 mod os {
+    use super::VirtualAllocator;
     use std::{io, ptr};
     use windows_sys::Win32::System::Memory;
+
     pub struct OsVirtualAllocator {}
 
     impl VirtualAllocator for OsVirtualAllocator {
