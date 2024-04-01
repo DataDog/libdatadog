@@ -276,23 +276,17 @@ impl StringTable {
     /// caller needs to be sure to only use the [LengthPrefixedStr] while the
     /// arena is still valid.
     #[inline(never)]
-    pub(crate) fn insert_full<S>(
+    pub(crate) fn insert_full<S: Borrow<str>>(
         &mut self,
-        s: &S,
-    ) -> Result<(Option<LengthPrefixedStr>, StringId), InternError>
-    where
-        S: ?Sized + Borrow<str>,
-    {
+        s: S,
+    ) -> Result<(Option<LengthPrefixedStr>, StringId), InternError> {
         self.intern_inner(s)
     }
 
-    pub(crate) fn intern_inner<S>(
+    pub(crate) fn intern_inner<S: Borrow<str>>(
         &mut self,
-        s: &S,
-    ) -> Result<(Option<LengthPrefixedStr>, StringId), InternError>
-    where
-        S: ?Sized + Borrow<str>,
-    {
+        s: S,
+    ) -> Result<(Option<LengthPrefixedStr>, StringId), InternError> {
         let str = s.borrow();
         if str.is_empty() {
             return Ok((None, StringId::ZERO));
@@ -323,10 +317,7 @@ impl StringTable {
     /// Returns an error if the string is longer than [u16::MAX] or if one of
     /// the underlying allocator fails to allocate memory.
     #[inline(never)]
-    pub fn intern<S>(&mut self, s: &S) -> Result<StringId, InternError>
-    where
-        S: ?Sized + Borrow<str>,
-    {
+    pub fn intern(&mut self, s: impl Borrow<str>) -> Result<StringId, InternError> {
         Ok(self.intern_inner(s)?.1)
     }
 
@@ -463,13 +454,13 @@ mod tests {
         table.intern("")?;
 
         for (offset, str) in cases.iter() {
-            let actual_offset = table.intern(str)?;
+            let actual_offset = table.intern(*str)?;
             assert_eq!(*offset, actual_offset);
         }
 
         // repeat them to ensure they aren't re-added
         for (offset, str) in cases.iter() {
-            let actual_offset = table.intern(str)?;
+            let actual_offset = table.intern(*str)?;
             assert_eq!(*offset, actual_offset);
         }
 
@@ -519,7 +510,7 @@ mod tests {
 
             let str: String = gen_string(&mut char_rng, len);
 
-            match table.insert_full(&str) {
+            match table.insert_full(str) {
                 Err(err) => match err {
                     InternError::LargeString(_) => {
                         panic!("oops, accidentally created a large string, fix test")
@@ -543,7 +534,7 @@ mod tests {
         if rem_bytes >= 2 {
             let string = gen_string(&mut char_rng, rem_bytes - 2);
             table
-                .insert_full(&string)
+                .insert_full(string)
                 .expect("this string to fit exactly");
         }
 

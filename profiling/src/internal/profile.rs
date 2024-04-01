@@ -52,7 +52,7 @@ impl Profile {
         local_root_span_id: u64,
         endpoint: Cow<str>,
     ) -> anyhow::Result<()> {
-        let interned_endpoint = self.intern(endpoint.as_ref())?;
+        let interned_endpoint = self.intern(endpoint)?;
 
         self.endpoints
             .mappings
@@ -475,10 +475,7 @@ impl Profile {
     /// Interns the `str` as a string, returning the id in the string table.
     /// The empty string is guaranteed to have an id of [StringId::ZERO].
     #[inline]
-    fn intern<S>(&mut self, item: &S) -> anyhow::Result<StringId>
-    where
-        S: ?Sized + Borrow<str>,
-    {
+    fn intern<S: Borrow<str>>(&mut self, item: S) -> anyhow::Result<StringId> {
         Ok(self.strings.intern(item)?)
     }
 
