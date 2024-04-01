@@ -251,8 +251,8 @@ impl StringTable {
     /// `min_capacity` bytes. This will get rounded up to multiple of the OS
     /// page size. A capacity of 0 is allowed, in which case a virtual
     /// allocation will not be performed.
-    pub fn with_arena_capacity(min_capacity: usize) -> anyhow::Result<Self> {
-        let arena = ArenaAllocator::with_capacity(min_capacity.next_power_of_two())?;
+    pub fn with_arena_capacity(capacity_hint: usize) -> anyhow::Result<Self> {
+        let arena = ArenaAllocator::with_capacity(capacity_hint.next_power_of_two())?;
         Ok(Self::new_in(arena)?)
     }
 

@@ -340,13 +340,13 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
     start_time: Option<&Timespec>,
-    string_arena_min_capacity: libc::size_t,
+    string_arena_capacity_hint: libc::size_t,
 ) -> ProfileNewResult {
     let types: Vec<api::ValueType> = sample_types.into_slice().iter().map(Into::into).collect();
     let start_time = start_time.map_or_else(SystemTime::now, SystemTime::from);
     let period = period.map(Into::into);
 
-    match internal::Profile::new(start_time, &types, period, string_arena_min_capacity) {
+    match internal::Profile::new(start_time, &types, period, string_arena_capacity_hint) {
         Ok(internal_profile) => ProfileNewResult::Ok(Profile::new(internal_profile)),
         Err(err) => ProfileNewResult::Err(Error::from(err.context("ddog_prof_Profile_new failed"))),
     }

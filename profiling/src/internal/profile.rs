@@ -143,7 +143,7 @@ impl Profile {
         start_time: SystemTime,
         sample_types: &[api::ValueType],
         period: Option<api::Period>,
-        string_arena_capacity: usize,
+        string_arena_capacity_hint: usize,
     ) -> anyhow::Result<Self> {
         /* Do not use Profile's default() impl here or it will cause a stack
          * overflow, since that default impl calls this method.
@@ -160,7 +160,7 @@ impl Profile {
             sample_types: vec![],
             stack_traces: Default::default(),
             start_time,
-            strings: StringTable::with_arena_capacity(string_arena_capacity)?,
+            strings: StringTable::with_arena_capacity(string_arena_capacity_hint)?,
             timestamp_key: Default::default(),
             upscaling_rules: Default::default(),
         };
