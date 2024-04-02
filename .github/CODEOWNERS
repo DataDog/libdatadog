@@ -1,5 +1,6 @@
 *                       @Datadog/libdatadog-core
 build-profiling-ffi.sh  @Datadog/libdatadog-profiling
+crashtracker/           @Datadog/libdatadog-profiling
 profiling*/             @Datadog/libdatadog-profiling
 ddtelemetry*/           @Datadog/libdatadog-telemetry
 ruby/                   @Datadog/libdatadog-ruby
