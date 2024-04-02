@@ -70,7 +70,7 @@ impl<A: VirtualAllocator> ArenaAllocator<A> {
             return Ok(NonNull::from(&mut []));
         }
 
-        let mapping = self.mapping.as_ref().ok_or_else(|| AllocError)?;
+        let mapping = self.mapping.as_ref().ok_or(AllocError)?;
         let base_ptr = mapping.base_in_bounds_ptr();
         let unaligned_ptr = base_ptr.add(self.free_offset.get())?;
         let aligned_ptr = unaligned_ptr.align_to(layout.align())?;
