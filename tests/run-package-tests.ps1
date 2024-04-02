@@ -69,7 +69,7 @@ function BuildProject {
         exit 1
     }
 
-    pushd tests\windows_package
+    pushd $PSScriptRoot\windows_package
     $RuntimeLibrary=GetRuntimeLibrary -RT_LinkType $RT_LinkType -Configuration $Configuration
     Invoke-Call -ScriptBlock { &$msbuild windows_package.vcxproj /p:RuntimeLibrary=$RuntimeLibrary /p:Configuration=$Configuration /p:Platform=$Platform }
     popd
