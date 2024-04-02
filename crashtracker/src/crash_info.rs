@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::stacktrace::StackFrame;
-use crate::CrashtrackerMetadata;
+use crate::telemetry::TelemetryCrashUploader;
+use crate::CrashtrackerConfiguration;
 use anyhow::Context;
+#[cfg(unix)]
 use blazesym::symbolize::{Process, Source, Symbolizer};
 use chrono::{DateTime, Utc};
 use datadog_profiling::exporter::{self, Tag};
@@ -13,6 +15,31 @@ use std::io::BufRead;
 use std::time::Duration;
 use std::{collections::HashMap, fs::File, io::BufReader};
 use uuid::Uuid;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CrashtrackerMetadata {
+    pub profiling_library_name: String,
+    pub profiling_library_version: String,
+    pub family: String,
+    // Should include "service", "environment", etc
+    pub tags: Vec<Tag>,
+}
+
+impl CrashtrackerMetadata {
+    pub fn new(
+        profiling_library_name: String,
+        profiling_library_version: String,
+        family: String,
+        tags: Vec<Tag>,
+    ) -> Self {
+        Self {
+            profiling_library_name,
+            profiling_library_version,
+            family,
+            tags,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SigInfo {
@@ -49,6 +76,7 @@ impl Default for CrashInfo {
     }
 }
 
+#[cfg(unix)]
 impl CrashInfo {
     pub fn resolve_names(&mut self, src: &Source) -> anyhow::Result<()> {
         let symbolizer = Symbolizer::new();
@@ -116,6 +144,15 @@ impl CrashInfo {
         Ok(())
     }
 
+    pub fn add_tag(&mut self, key: String, value: String) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.tags.contains_key(&key),
+            "Already had tag with key: {key}"
+        );
+        self.tags.insert(key, value);
+        Ok(())
+    }
+
     pub fn set_incomplete(&mut self, incomplete: bool) -> anyhow::Result<()> {
         self.incomplete = incomplete;
         Ok(())
@@ -133,9 +170,19 @@ impl CrashInfo {
         Ok(())
     }
 
-    pub fn set_stacktrace(&mut self, stacktrace: Vec<StackFrame>) -> anyhow::Result<()> {
-        anyhow::ensure!(self.stacktrace.is_empty());
-        self.stacktrace = stacktrace;
+    pub fn set_stacktrace(
+        &mut self,
+        thread_id: Option<String>,
+        stacktrace: Vec<StackFrame>,
+    ) -> anyhow::Result<()> {
+        if let Some(thread_id) = thread_id {
+            anyhow::ensure!(!self.additional_stacktraces.contains_key(&thread_id));
+            self.additional_stacktraces.insert(thread_id, stacktrace);
+        } else {
+            anyhow::ensure!(self.stacktrace.is_empty());
+            self.stacktrace = stacktrace;
+        }
+
         Ok(())
     }
 
@@ -151,8 +198,9 @@ impl CrashInfo {
     /// SIGNAL SAFETY:
     ///     I believe but have not verified this is signal safe.
     pub fn to_file(&self, path: &str) -> anyhow::Result<()> {
-        let file = File::create(path)?;
-        serde_json::to_writer_pretty(file, self)?;
+        let file = File::create(path).with_context(|| format!("Failed to create {path}"))?;
+        serde_json::to_writer_pretty(file, self)
+            .with_context(|| format!("Failed to write json to {path}"))?;
         Ok(())
     }
 
@@ -234,5 +282,14 @@ impl CrashInfo {
         } else {
             Ok(Some(self.upload_to_dd(endpoint, timeout)?))
         }
+    }
+
+    pub fn upload_to_telemetry(&self, config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
+        if let Some(metadata) = &self.metadata {
+            if let Ok(uploader) = TelemetryCrashUploader::new(metadata, config) {
+                uploader.upload_to_telemetry(self, config.timeout)?;
+            }
+        }
+        Ok(())
     }
 }

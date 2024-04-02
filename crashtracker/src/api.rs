@@ -4,87 +4,16 @@
 
 use crate::{
     counters::reset_counters,
-    crash_handler::{ensure_receiver, register_crash_handlers},
-    crash_handler::{restore_old_handlers, shutdown_receiver, update_receiver_after_fork},
-    update_config, update_metadata,
+    crash_handler::{
+        ensure_receiver, register_crash_handlers, restore_old_handlers, shutdown_receiver,
+        update_receiver_after_fork,
+    },
+    crash_info::CrashtrackerMetadata,
+    update_config, update_metadata, CrashtrackerConfiguration, CrashtrackerResolveFrames,
 };
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CrashtrackerMetadata {
-    pub profiling_library_name: String,
-    pub profiling_library_version: String,
-    pub family: String,
-    // Should include "service", "environment", etc
-    pub tags: Vec<Tag>,
-}
-
-impl CrashtrackerMetadata {
-    pub fn new(
-        profiling_library_name: String,
-        profiling_library_version: String,
-        family: String,
-        tags: Vec<Tag>,
-    ) -> Self {
-        Self {
-            profiling_library_name,
-            profiling_library_version,
-            family,
-            tags,
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CrashtrackerResolveFrames {
-    Never,
-    /// Resolving frames in process is experimental, and can fail/crash
-    ExperimentalInProcess,
-    InReceiver,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CrashtrackerConfiguration {
-    pub collect_stacktrace: bool,
-    pub create_alt_stack: bool,
-    pub endpoint: Option<Endpoint>,
-    pub path_to_receiver_binary: String,
-    pub resolve_frames: CrashtrackerResolveFrames,
-    pub stderr_filename: Option<String>,
-    pub stdout_filename: Option<String>,
-}
-
-impl CrashtrackerConfiguration {
-    pub fn new(
-        collect_stacktrace: bool,
-        create_alt_stack: bool,
-        endpoint: Option<Endpoint>,
-        path_to_receiver_binary: String,
-        resolve_frames: CrashtrackerResolveFrames,
-        stderr_filename: Option<String>,
-        stdout_filename: Option<String>,
-    ) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            !path_to_receiver_binary.is_empty(),
-            "Expected a receiver binary"
-        );
-        anyhow::ensure!(stderr_filename.is_none() && stdout_filename.is_none() || stderr_filename != stdout_filename,
-        "Can't give the same filename for stderr and stdout, they will conflict with each other"
-    );
-        Ok(Self {
-            collect_stacktrace,
-            create_alt_stack,
-            endpoint,
-            path_to_receiver_binary,
-            resolve_frames,
-            stderr_filename,
-            stdout_filename,
-        })
-    }
-}
+use std::time::Duration;
 
 /// Cleans up after the crash-tracker:
 /// Unregister the crash handler, restore the previous handler (if any), and
@@ -200,7 +129,7 @@ fn test_crash() {
     let resolve_frames = CrashtrackerResolveFrames::InReceiver;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
-
+    let timeout = Duration::from_secs(30);
     let config = CrashtrackerConfiguration::new(
         collect_stacktrace,
         create_alt_stack,
@@ -209,6 +138,7 @@ fn test_crash() {
         resolve_frames,
         stderr_filename,
         stdout_filename,
+        timeout,
     )
     .expect("not to fail");
     let metadata = CrashtrackerMetadata::new(

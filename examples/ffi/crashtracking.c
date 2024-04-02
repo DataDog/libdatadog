@@ -32,7 +32,7 @@ int main(int argc, char **argv) {
     .tags = NULL,
   };
 
-  ddog_prof_Profile_Result result = ddog_prof_Crashtracker_init(config, metadata);
+  ddog_prof_CrashtrackerResult result = ddog_prof_Crashtracker_init(config, metadata);
   if (result.tag == DDOG_PROF_PROFILE_RESULT_ERR) {
     ddog_CharSlice message = ddog_Error_message(&result.err);
     fprintf(stderr, "%*s\n", (int)message.len, message.ptr);

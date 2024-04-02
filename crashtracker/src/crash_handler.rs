@@ -3,12 +3,13 @@
 
 #![cfg(unix)]
 
-use super::api::{CrashtrackerConfiguration, CrashtrackerMetadata, CrashtrackerResolveFrames};
 use super::collectors::emit_backtrace_by_frames;
 #[cfg(target_os = "linux")]
 use super::collectors::emit_proc_self_maps;
+use super::configuration::{CrashtrackerConfiguration, CrashtrackerResolveFrames};
 use super::constants::*;
 use super::counters::emit_counters;
+use super::crash_info::CrashtrackerMetadata;
 use anyhow::Context;
 use libc::{
     c_void, mmap, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE, PROT_READ,
