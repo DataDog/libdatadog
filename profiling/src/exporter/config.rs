@@ -68,3 +68,11 @@ pub fn agentless<AsStrRef: AsRef<str>, IntoCow: Into<Cow<'static, str>>>(
         api_key: Some(api_key.into()),
     })
 }
+
+pub fn file(path: impl AsRef<str>) -> anyhow::Result<Endpoint> {
+    let url: String = format!("file://{}", path.as_ref());
+    Ok(Endpoint {
+        url: Uri::from_str(url.as_str())?,
+        api_key: None,
+    })
+}
