@@ -212,6 +212,8 @@ extern "C" fn handle_posix_sigaction(signum: i32, sig_info: *mut siginfo_t, ucon
     // Once we've handled the signal, chain to any previous handlers.
     // SAFETY: This was created by [register_crash_handlers].  There is a tiny
     // instant of time between when the handlers are registered, and the
+    // `OLD_HANDLERS` are set.  This should be very short, but is hard to fully
+    // eliminate given the existing POSIX APIs.
     let old_handlers = unsafe { &*OLD_HANDLERS.load(SeqCst) };
     let old_sigaction = if signum == libc::SIGSEGV {
         old_handlers.sigsegv
