@@ -85,7 +85,6 @@ impl<A: VirtualAllocator> ArenaAllocator<A> {
 mod tests {
     use super::*;
     use crate::alloc::page_size;
-    use std::mem;
 
     #[test]
     fn test_capacity_0() -> anyhow::Result<()> {
@@ -184,24 +183,66 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_arena_complex_alignment() -> anyhow::Result<()> {
-        let arena = ArenaAllocator::with_capacity(64)?;
+    #[track_caller]
+    fn check_alignment(fatpr: NonNull<[u8]>, align_to: usize) {
+        let thinptr = fatpr.as_ptr() as *mut u8;
 
-        let pointer = Layout::new::<*const ()>();
-        let bool = Layout::new::<bool>();
+        // Implementations are allowed to return usize::MAX unconditionally.
+        // In practice, I haven't encountered this and the value is sensible.
+        let off = thinptr.align_offset(align_to);
+        assert_eq!(0, off);
+    }
+
+    #[track_caller]
+    fn check_complex_layout(arena: &ArenaAllocator, pointer: Layout) -> anyhow::Result<()> {
+        let bool = Layout::from_size_align(1, 1)?;
+        let sixteen_bit = Layout::from_size_align(2, 2)?;
+
+        /* The layout should look like this for 64-bit:
+        ├──────┤ first
+               ├┤ second
+                ├┤ padding
+                 ├─┤ third
+                   ├──┤ padding
+                      ├──────┤ fourth
+         */
 
         let first = arena.allocate_zeroed(pointer)?;
         let second = arena.allocate_zeroed(bool)?;
-        // third could be mis-aligned if alignment isn't considered.
-        let third = arena.allocate_zeroed(pointer)?;
+        let third = arena.allocate_zeroed(sixteen_bit)?;
+        let fourth = arena.allocate_zeroed(pointer)?;
 
         check_zero(first);
         check_zero(second);
         check_zero(third);
+        check_zero(fourth);
 
-        expect_distance(first, second, mem::size_of::<*const ()>());
-        expect_distance(second, third, mem::size_of::<*const ()>());
+        check_alignment(first, pointer.align());
+        check_alignment(second, bool.align());
+        check_alignment(third, sixteen_bit.align());
+        check_alignment(fourth, pointer.align());
+
+        expect_distance(first, second, pointer.size());
+        expect_distance(second, third, sixteen_bit.size());
+
+        // Measuring between 2nd and 4th is stable on 32/64/128 bit ptrs,
+        // because it varies by exactly the pointer length. Measuring between
+        // third and fourth would be platform dependent.
+        expect_distance(second, fourth, pointer.size());
+        Ok(())
+    }
+
+    #[test]
+    fn test_arena_complex_alignment() -> anyhow::Result<()> {
+        let arena = ArenaAllocator::with_capacity(64)?;
+
+        // Test different pointer sizes. Although we only target 64-bit at the
+        // moment, there are still types like u32, u64, and u128 which are
+        // the same from the allocator's perspective. This way we can check
+        // realistic size and alignments.
+        check_complex_layout(&arena, Layout::from_size_align(4, 4)?)?;
+        check_complex_layout(&arena, Layout::from_size_align(8, 8)?)?;
+        check_complex_layout(&arena, Layout::from_size_align(16, 16)?)?;
 
         Ok(())
     }
