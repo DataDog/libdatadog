@@ -50,3 +50,18 @@ fn test_demangle() {
         "std::__atomic_futex_unsigned_base::_M_futex_wait_until_steady"
     );
 }
+
+#[test]
+fn test_demangle_fails() {
+    let test_string = "_ZNSt28__fdf";
+    let test_slice = CharSlice::from(test_string);
+    let result: String = unsafe { ddog_demangle(test_slice, DemangleOptions::Complete) }
+        .unwrap()
+        .into();
+    assert_eq!(result, "");
+
+    let result: String = unsafe { ddog_demangle(test_slice, DemangleOptions::NameOnly) }
+        .unwrap()
+        .into();
+    assert_eq!(result, "");
+}
