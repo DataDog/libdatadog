@@ -3128,7 +3128,6 @@ version = "12.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76a99812da4020a67e76c4eb41f08c87364c14170495ff780f30dd519c221a68"
 dependencies = [
- "cc",
  "cpp_demangle",
  "msvc-demangler",
  "rustc-demangle",
