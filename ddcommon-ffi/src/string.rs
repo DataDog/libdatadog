@@ -26,6 +26,13 @@ impl From<String> for StringWrapper {
     }
 }
 
+impl From<StringWrapper> for String {
+    fn from(mut value: StringWrapper) -> Self {
+        let msg = std::mem::take(&mut value.message);
+        String::from_utf8(msg.into()).unwrap()
+    }
+}
+
 impl From<&str> for StringWrapper {
     fn from(value: &str) -> Self {
         Self::from(value.to_string())
@@ -62,6 +69,6 @@ pub unsafe extern "C" fn ddog_StringWrapper_drop(s: Option<&mut StringWrapper>) 
 pub unsafe extern "C" fn ddog_StringWrapper_message(s: Option<&StringWrapper>) -> CharSlice {
     match s {
         None => CharSlice::empty(),
-        Some(err) => CharSlice::from(err.as_ref()),
+        Some(s) => CharSlice::from(s.as_ref()),
     }
 }
