@@ -108,9 +108,7 @@ if [[ "$symbolizer" -eq 1 ]]; then
 fi
 
 # build inside the crate to use the config.toml file
-pushd profiling-ffi
-DESTDIR="$destdir" cargo build ${FEATURES} --release --target "${target}"
-popd
+( cd profiling-ffi && DESTDIR="$destdir" cargo build ${FEATURES} --release --target "${target}")
 
 # Remove _ffi suffix when copying
 shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"
