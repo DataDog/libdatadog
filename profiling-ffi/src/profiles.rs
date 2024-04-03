@@ -83,6 +83,24 @@ pub enum SerializeResult {
     Err(Error),
 }
 
+impl From<anyhow::Result<EncodedProfile>> for SerializeResult {
+    fn from(value: anyhow::Result<EncodedProfile>) -> Self {
+        match value {
+            Ok(e) => Self::Ok(e),
+            Err(err) => Self::Err(err.into()),
+        }
+    }
+}
+
+impl From<anyhow::Result<internal::EncodedProfile>> for SerializeResult {
+    fn from(value: anyhow::Result<internal::EncodedProfile>) -> Self {
+        match value {
+            Ok(e) => Self::Ok(e.into()),
+            Err(err) => Self::Err(err.into()),
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ValueType<'a> {
@@ -673,35 +691,19 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     duration_nanos: Option<&i64>,
     start_time: Option<&Timespec>,
 ) -> SerializeResult {
-    let profile = match profile_ptr_to_inner(profile) {
-        Ok(ok) => ok,
-        Err(err) => {
-            return SerializeResult::Err(Error::from(
-                err.context("ddog_prof_Profile_serialize failed"),
-            ))
-        }
-    };
-    let old_profile = match profile.reset_and_return_previous(start_time.map(SystemTime::from)) {
-        Ok(ok) => ok,
-        Err(err) => {
-            return SerializeResult::Err(Error::from(
-                err.context("ddog_prof_Profile_serialize failed"),
-            ))
-        }
-    };
-
-    let end_time = end_time.map(SystemTime::from);
-    let duration = match duration_nanos {
-        None => None,
-        Some(x) if *x < 0 => None,
-        Some(x) => Some(Duration::from_nanos((*x) as u64)),
-    };
-    match old_profile.serialize_into_compressed_pprof(end_time, duration) {
-        Ok(ok) => SerializeResult::Ok(ok.into()),
-        Err(err) => SerializeResult::Err(Error::from(
-            err.context("ddog_prof_Profile_serialize failed"),
-        )),
-    }
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
+        let old_profile = profile.reset_and_return_previous(start_time.map(SystemTime::from))?;
+        let end_time = end_time.map(SystemTime::from);
+        let duration = match duration_nanos {
+            None => None,
+            Some(x) if *x < 0 => None,
+            Some(x) => Some(Duration::from_nanos((*x) as u64)),
+        };
+        old_profile.serialize_into_compressed_pprof(end_time, duration)
+    })()
+    .context("ddog_prof_Profile_serialize failed")
+    .into()
 }
 
 #[must_use]
@@ -728,15 +730,13 @@ pub unsafe extern "C" fn ddog_prof_Profile_reset(
     profile: *mut Profile,
     start_time: Option<&Timespec>,
 ) -> ProfileResult {
-    match profile_ptr_to_inner(profile) {
-        Ok(profile) => match profile.reset_and_return_previous(start_time.map(SystemTime::from)) {
-            Ok(_) => ProfileResult::Ok(true),
-            Err(err) => {
-                ProfileResult::Err(Error::from(err.context("ddog_prof_Profile_reset failed")))
-            }
-        },
-        Err(err) => ProfileResult::Err(Error::from(err.context("ddog_prof_Profile_reset failed"))),
-    }
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
+        profile.reset_and_return_previous(start_time.map(SystemTime::from))?;
+        anyhow::Ok(())
+    })()
+    .context("ddog_prof_Profile_reset failed")
+    .into()
 }
 
 #[cfg(test)]
