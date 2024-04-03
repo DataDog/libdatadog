@@ -36,3 +36,5 @@ tokio-util = "0.7.1"
 serde_json = { version = "1.0" }
 futures = { version = "0.3", default-features = false }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
+symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"] }
+symbolic-common = "12.8.0"
