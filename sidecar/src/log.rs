@@ -16,7 +16,7 @@ use std::{env, io};
 use tracing::level_filters::LevelFilter;
 use tracing::span::{Attributes, Record};
 use tracing::subscriber::Interest;
-use tracing::{Event, Id, Metadata, Subscriber};
+use tracing::{Event, Id, Level, Metadata, Subscriber};
 use tracing_log::LogTracer;
 use tracing_subscriber::fmt::format::Writer;
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields, MakeWriter};
@@ -44,6 +44,7 @@ where
     live_counter: Mutex<HashMap<K, i32>>,
     pending_removal: Mutex<PriorityQueue<K, Instant>>,
     pub expire_after: Duration,
+    logs_created: Mutex<HashMap<Level, u32>>,
 }
 
 impl<K, V> Default for TemporarilyRetainedMap<K, V>
@@ -56,6 +57,7 @@ where
             live_counter: Mutex::new(HashMap::new()),
             pending_removal: Mutex::new(PriorityQueue::new()),
             expire_after: Duration::from_secs(5),
+            logs_created: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -95,6 +97,14 @@ where
         }
 
         TemporarilyRetainedMapGuard { key, map: self }
+    }
+
+    pub fn collect_logs_created_count<'a, 's: 'a>(&'s self) -> HashMap<Level, u32> {
+        let mut map = self.logs_created.lock().unwrap();
+        let clone = map.clone();
+        map.clear();
+
+        clone
     }
 }
 
@@ -178,11 +188,18 @@ impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
     }
 
     fn event_enabled(&self, event: &Event<'_>, cx: &Context<'_, S>) -> bool {
-        self.maps
+        let enabled = self
+            .maps
             .read()
             .unwrap()
             .values()
-            .any(|f| (f as &dyn Filter<S>).event_enabled(event, cx))
+            .any(|f| (f as &dyn Filter<S>).event_enabled(event, cx));
+
+        if enabled {
+            let mut map = self.logs_created.lock().unwrap();
+            *map.entry(event.metadata().level().to_owned()).or_default() += 1;
+        }
+        enabled
     }
 
     fn max_level_hint(&self) -> Option<LevelFilter> {
@@ -338,10 +355,13 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod test {
-    use super::{TemporarilyRetainedKeyParser, TemporarilyRetainedMap};
+    use super::{
+        enable_logging, TemporarilyRetainedKeyParser, TemporarilyRetainedMap, MULTI_LOG_FILTER,
+    };
     use lazy_static::lazy_static;
     use std::sync::atomic::{AtomicI32, Ordering};
     use std::time::Duration;
+    use tracing::{debug, error, warn, Level};
 
     lazy_static! {
         static ref ENABLED: AtomicI32 = AtomicI32::default();
@@ -393,5 +413,26 @@ mod test {
 
         assert_eq!(1, DISABLED.load(Ordering::SeqCst));
         assert_eq!(2, ENABLED.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_logs_created_counter() {
+        enable_logging().ok();
+
+        MULTI_LOG_FILTER.add("warn".to_string());
+        debug!("hi");
+        warn!("Bim");
+        warn!("Bam");
+        error!("Boom");
+        let map = MULTI_LOG_FILTER.collect_logs_created_count();
+        assert_eq!(2, map.len());
+        assert_eq!(map[&Level::WARN], 2);
+        assert_eq!(map[&Level::ERROR], 1);
+
+        debug!("hi");
+        warn!("Bim");
+        let map = MULTI_LOG_FILTER.collect_logs_created_count();
+        assert_eq!(1, map.len());
+        assert_eq!(map[&Level::WARN], 1);
     }
 }
