@@ -39,18 +39,24 @@ pub struct EncodedProfile {
 impl Profile {
     /// Add the endpoint data to the endpoint mappings.
     /// The `endpoint` string will be interned.
-    pub fn add_endpoint(&mut self, local_root_span_id: u64, endpoint: Cow<str>) {
+    pub fn add_endpoint(
+        &mut self,
+        local_root_span_id: u64,
+        endpoint: Cow<str>,
+    ) -> anyhow::Result<()> {
         let interned_endpoint = self.intern(endpoint.as_ref());
 
         self.endpoints
             .mappings
             .insert(local_root_span_id, interned_endpoint);
+        Ok(())
     }
 
-    pub fn add_endpoint_count(&mut self, endpoint: Cow<str>, value: i64) {
+    pub fn add_endpoint_count(&mut self, endpoint: Cow<str>, value: i64) -> anyhow::Result<()> {
         self.endpoints
             .stats
             .add_endpoint_count(endpoint.into_owned(), value);
+        Ok(())
     }
 
     pub fn add_sample(
