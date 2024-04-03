@@ -904,7 +904,7 @@ mod api_test {
     }
 
     #[test]
-    fn lazy_endpoints() {
+    fn lazy_endpoints() -> anyhow::Result<()> {
         let sample_types = vec![
             api::ValueType {
                 r#type: "samples",
@@ -955,7 +955,7 @@ mod api_test {
 
         profile.add_sample(sample2, None).expect("add to success");
 
-        profile.add_endpoint(10, Cow::from("my endpoint"));
+        profile.add_endpoint(10, Cow::from("my endpoint"))?;
 
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         assert_eq!(serialized_profile.samples.len(), 2);
@@ -1016,6 +1016,7 @@ mod api_test {
         // The trace endpoint label shouldn't be added to second sample because the span id doesn't
         // match
         assert_eq!(s2.labels.len(), 2);
+        Ok(())
     }
 
     #[test]
@@ -1042,7 +1043,7 @@ mod api_test {
     }
 
     #[test]
-    fn endpoint_counts_test() {
+    fn endpoint_counts_test() -> anyhow::Result<()> {
         let sample_types = vec![
             api::ValueType {
                 r#type: "samples",
@@ -1057,11 +1058,11 @@ mod api_test {
         let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
         let one_endpoint = "my endpoint";
-        profile.add_endpoint_count(Cow::from(one_endpoint), 1);
-        profile.add_endpoint_count(Cow::from(one_endpoint), 1);
+        profile.add_endpoint_count(Cow::from(one_endpoint), 1)?;
+        profile.add_endpoint_count(Cow::from(one_endpoint), 1)?;
 
         let second_endpoint = "other endpoint";
-        profile.add_endpoint_count(Cow::from(second_endpoint), 1);
+        profile.add_endpoint_count(Cow::from(second_endpoint), 1)?;
 
         let encoded_profile = profile
             .serialize_into_compressed_pprof(None, None)
@@ -1076,6 +1077,7 @@ mod api_test {
         let expected_endpoints_stats = ProfiledEndpointsStats::from(count);
 
         assert_eq!(endpoints_stats, expected_endpoints_stats);
+        Ok(())
     }
 
     #[test]
@@ -2048,7 +2050,7 @@ mod api_test {
     }
 
     #[test]
-    fn local_root_span_id_label_as_i64() {
+    fn local_root_span_id_label_as_i64() -> anyhow::Result<()> {
         let sample_types = vec![
             api::ValueType {
                 r#type: "samples",
@@ -2095,8 +2097,8 @@ mod api_test {
         profile.add_sample(sample1, None).expect("add to success");
         profile.add_sample(sample2, None).expect("add to success");
 
-        profile.add_endpoint(10, Cow::from("endpoint 10"));
-        profile.add_endpoint(large_span_id, Cow::from("large endpoint"));
+        profile.add_endpoint(10, Cow::from("endpoint 10"))?;
+        profile.add_endpoint(large_span_id, Cow::from("large endpoint"))?;
 
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         assert_eq!(serialized_profile.samples.len(), 2);
@@ -2151,5 +2153,6 @@ mod api_test {
         {
             assert_eq!(sample.labels, labels);
         }
+        Ok(())
     }
 }
