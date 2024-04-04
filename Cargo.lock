@@ -310,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -721,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "backtrace",
@@ -784,7 +784,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -816,7 +816,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-ffi"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -838,7 +838,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "clap 4.3.24",
@@ -961,7 +961,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "datadog-trace-protobuf",
@@ -971,7 +971,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -989,7 +989,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "prost 0.11.9",
  "prost-build",
@@ -1000,7 +1000,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-utils"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "datadog-trace-normalization",
@@ -1020,7 +1020,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -1045,7 +1045,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-ffi"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1055,7 +1055,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "ddcommon",
@@ -1079,7 +1079,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry-ffi"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "build_common",
  "ddcommon",
@@ -3136,7 +3136,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -3533,7 +3533,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "lazy_static",
  "regex",
