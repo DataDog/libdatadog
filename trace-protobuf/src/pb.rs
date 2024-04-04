@@ -134,6 +134,7 @@ pub struct Span {
     #[prost(map = "string, bytes", tag = "13")]
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
+    #[serde(skip_serializing_if = "::std::collections::HashMap::is_empty")]
     pub meta_struct: ::std::collections::HashMap<
         ::prost::alloc::string::String,
         ::prost::alloc::vec::Vec<u8>,
@@ -143,6 +144,7 @@ pub struct Span {
     #[prost(message, repeated, tag = "14")]
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
+    #[serde(skip_serializing_if = "::prost::alloc::vec::Vec::is_empty")]
     pub span_links: ::prost::alloc::vec::Vec<SpanLink>,
 }
 /// TraceChunk represents a list of spans with the same trace ID. In other words, a chunk of a trace.
