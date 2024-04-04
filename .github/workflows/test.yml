@@ -149,6 +149,7 @@ jobs:
             cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling
             cmake --build .
           fi
+
   cross-centos7:
     name: build and test using cross - on centos7
     runs-on: ubuntu-latest
@@ -156,6 +157,8 @@ jobs:
       group: ci-${{ github.ref }}-cross-centos7
       cancel-in-progress: true
     steps:
+      - name: Remove unused tools cache
+        run: rm -rf /opt/hostedtoolcache
       - name: Checkout
         uses: actions/checkout@v3
       - name: Cache
