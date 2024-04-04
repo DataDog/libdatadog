@@ -6,7 +6,7 @@ use self::stacktrace::StackFrame;
 use super::*;
 use anyhow::Context;
 use nix::unistd::getppid;
-use std::time::Duration;
+use std::{io::BufReader, os::unix::net::UnixListener, time::Duration};
 
 pub fn resolve_frames(
     config: &CrashtrackerConfiguration,
@@ -22,6 +22,21 @@ pub fn resolve_frames(
     Ok(())
 }
 
+pub fn get_unix_socket(socket_path: &str) -> anyhow::Result<UnixListener> {
+    if std::fs::metadata(socket_path).is_ok() {
+        println!("A socket is already present. Deleting...");
+        std::fs::remove_file(socket_path)
+            .with_context(|| format!("could not delete previous socket at {:?}", socket_path))?;
+    }
+
+    let unix_listener =
+        UnixListener::bind(socket_path).context("Could not create the unix socket")?;
+    println!("bound to socket");
+    Ok(unix_listener)
+}
+
+pub const SOCKET_PATH: &str = "/tmp/crash-report-socket";
+
 /// Receives data from a crash collector via a pipe on `stdin`, formats it into
 /// `CrashInfo` json, and emits it to the endpoint/file defined in `config`.
 ///
@@ -32,7 +47,14 @@ pub fn resolve_frames(
 /// See comments in [profiling/crashtracker/mod.rs] for a full architecture
 /// description.
 pub fn receiver_entry_point() -> anyhow::Result<()> {
-    match receive_report(std::io::stdin().lock())? {
+    println!("start entry point");
+    // TODO
+    let listener = get_unix_socket(SOCKET_PATH)?;
+    let (unix_stream, _) = listener.accept().expect("to accept a connection");
+    let stream = BufReader::new(unix_stream);
+    //    let stream = std::io::stdin().lock();
+    println!("opened stream");
+    match receive_report(stream)? {
         CrashReportStatus::NoCrash => Ok(()),
         CrashReportStatus::CrashReport(config, mut crash_info) => {
             resolve_frames(&config, &mut crash_info)?;
@@ -195,6 +217,7 @@ fn receive_report(stream: impl std::io::BufRead) -> anyhow::Result<CrashReportSt
     //TODO: This assumes that the input is valid UTF-8.
     for line in stream.lines() {
         let line = line?;
+        eprintln!("{line}");
         stdin_state = process_line(&mut crashinfo, &mut config, line, stdin_state)?;
     }
 

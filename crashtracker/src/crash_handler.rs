@@ -19,6 +19,7 @@ use nix::sys::signal;
 use nix::sys::signal::{SaFlags, SigAction, SigHandler};
 use std::fs::File;
 use std::io::Write;
+use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
 use std::ptr;
 use std::sync::atomic::Ordering::SeqCst;
@@ -293,6 +294,7 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
         // we don't want to spam the system with calls.  Make this one shot.
         return Ok(());
     }
+    eprintln!("start");
 
     // Leak receiver, config, and metadata to avoid calling 'drop' during a crash
     let receiver = RECEIVER.swap(ptr::null_mut(), SeqCst);
@@ -307,12 +309,19 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     anyhow::ensure!(!metadata_ptr.is_null(), "No crashtracking metadata");
     let (_metadata, metadata_string) = unsafe { metadata_ptr.as_ref().context("metadata ptr")? };
 
-    let pipe = receiver
-        .stdin
-        .as_mut()
-        .context("Crashtracker: Can't get pipe")?;
+    let mut unix_stream =
+        UnixStream::connect(super::receiver::SOCKET_PATH).expect(&format!("Could not create stream {}",super::receiver::SOCKET_PATH));
+    let pipe = &mut unix_stream;
+    eprintln!("got here");
+
+    // let pipe = receiver
+    //     .stdin
+    //     .as_mut()
+    //     .context("Crashtracker: Can't get pipe")?;
 
     emit_metadata(pipe, metadata_string)?;
+    eprintln!("emitted metadata");
+
     emit_config(pipe, config_str)?;
     emit_siginfo(pipe, signum)?;
     pipe.flush()?;
@@ -339,6 +348,11 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
 
     pipe.flush()?;
+
+    unix_stream
+    .shutdown(std::net::Shutdown::Write)
+    .context("Could not shutdown writing on the stream")?;
+    eprintln!("shutdown the stream");
     // https://doc.rust-lang.org/std/process/struct.Child.html#method.wait
     // The stdin handle to the child process, if any, will be closed before waiting.
     // This helps avoid deadlock: it ensures that the child does not block waiting

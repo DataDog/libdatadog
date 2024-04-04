@@ -13,7 +13,7 @@ use crate::{
 };
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
-use std::time::Duration;
+use std::{thread::sleep, time::Duration};
 
 /// Cleans up after the crash-tracker:
 /// Unregister the crash handler, restore the previous handler (if any), and
@@ -107,7 +107,7 @@ pub fn init(
 // mkdir /tmp/crashreports
 // look in /tmp/crashreports for the crash reports and output files
 // Commented out since `ignore` doesn't work in CI.
-//#[test]
+#[test]
 fn test_crash() {
     use crate::begin_profiling_op;
     use chrono::Utc;
@@ -159,6 +159,8 @@ fn test_crash() {
     );
     update_metadata(metadata2).expect("metadata");
 
+    sleep(Duration::from_secs(2));
+    
     let p: *const u32 = std::ptr::null();
     let q = unsafe { *p };
     assert_eq!(q, 3);
