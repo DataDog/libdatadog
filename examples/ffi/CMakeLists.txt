@@ -56,3 +56,7 @@ if(NOT WIN32)
   add_executable(crashtracking crashtracking.c)
   target_link_libraries(crashtracking PRIVATE Datadog::Profiling)
 endif()
+
+add_executable(trace_exporter trace_exporter.c)
+target_link_libraries(trace_exporter PRIVATE Datadog::Profiling)
+set_vcruntime_link_type(trace_exporter ${VCRUNTIME_LINK_TYPE})

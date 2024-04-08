@@ -97,17 +97,12 @@ jobs:
       - name: "Generate profiling FFI"
         shell: bash
         run: |
-           ./build-profiling-ffi.sh ${OUTPUT_FOLDER}/profiling
+           ./build-profiling-ffi.sh -f data-pipeline-ffi ${OUTPUT_FOLDER}/profiling
 
       - name: "Generate Telemetry FFI"
         shell: bash
         run: |
            ./build-telemetry-ffi.sh ${OUTPUT_FOLDER}/telemetry
-
-      - name: "Generate Data Pipeline FFI"
-        shell: bash
-        run: |
-           ./build-data-pipeline-ffi.sh ${OUTPUT_FOLDER}/data-pipeline
 
       - name: 'Publish libdatadog'
         uses: actions/upload-artifact@v3
@@ -154,15 +149,6 @@ jobs:
             cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling
             cmake --build .
           fi
-
-      - name: "Test building Data Pipeline C bindings"
-        shell: bash
-        if: ${{ matrix.platform != 'windows-latest' }}
-        run: |
-          set -e
-          cd examples/ffi/data-pipeline
-          cmake -S . -B build -DDataPipeline_ROOT=$OUTPUT_FOLDER/data-pipeline
-          cmake --build build
 
   cross-centos7:
     name: build and test using cross - on centos7

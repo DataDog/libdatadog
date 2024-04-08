@@ -1,3 +1,6 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
 [package]
 name = "data-pipeline-ffi"
 rust-version.workspace = true
@@ -8,7 +11,7 @@ license.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-crate-type = ["staticlib", "cdylib"]
+crate-type = ["lib", "staticlib", "cdylib"]
 
 [features]
 default = ["cbindgen"]
