@@ -720,6 +720,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "data-pipeline"
+version = "8.0.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "datadog-trace-normalization",
+ "datadog-trace-protobuf",
+ "datadog-trace-utils",
+ "ddcommon",
+ "futures",
+ "hyper",
+ "log",
+ "rmp-serde",
+ "tokio",
+]
+
+[[package]]
+name = "data-pipeline-ffi"
+version = "8.0.0"
+dependencies = [
+ "build_common",
+ "bytes",
+ "data-pipeline",
+ "ddcommon-ffi",
+ "libc",
+]
+
+[[package]]
 name = "datadog-crashtracker"
 version = "8.0.0"
 dependencies = [
@@ -821,6 +849,7 @@ dependencies = [
  "anyhow",
  "build_common",
  "chrono",
+ "data-pipeline-ffi",
  "datadog-crashtracker",
  "datadog-profiling",
  "ddcommon",
@@ -2897,9 +2926,9 @@ dependencies = [
 
 [[package]]
 name = "serde_bytes"
-version = "0.11.12"
+version = "0.11.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab33ec92f677585af6d88c65593ae2375adde54efdbf16d597f2cbc7a6d368ff"
+checksum = "8b8497c313fd43ab992087548117643f6fcd935cbf36f176ffda0aacf9591734"
 dependencies = [
  "serde",
 ]
@@ -2917,9 +2946,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.108"
+version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d1c7e3eac408d115102c4c24ad393e0821bb3a5df4d506a80f85f7a742a526b"
+checksum = "cb0652c533506ad7a2e353cce269330d6afd8bdfb6d75e0ace5b35aacbd7b9e9"
 dependencies = [
  "itoa",
  "ryu",
@@ -3654,9 +3683,9 @@ checksum = "3528ecfd12c466c6f163363caf2d02a71161dd5e1cc6ae7b34207ea2d42d81ed"
 
 [[package]]
 name = "trybuild"
-version = "1.0.85"
+version = "1.0.86"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "196a58260a906cedb9bf6d8034b6379d0c11f552416960452f267402ceeddff1"
+checksum = "8419ecd263363827c5730386f418715766f584e2f874d32c23c5b00bd9727e7e"
 dependencies = [
  "basic-toml",
  "glob",

@@ -18,6 +18,10 @@ pub use crashtracker::*;
 #[cfg(feature = "ddtelemetry-ffi")]
 pub use ddtelemetry_ffi::*;
 
+#[cfg(feature = "data-pipeline-ffi")]
+#[allow(unused_imports)]
+pub use data_pipeline_ffi::*;
+
 /// Represents time since the Unix Epoch in seconds plus nanoseconds.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]

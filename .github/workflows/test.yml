@@ -97,7 +97,7 @@ jobs:
       - name: "Generate profiling FFI"
         shell: bash
         run: |
-           ./build-profiling-ffi.sh ${OUTPUT_FOLDER}/profiling
+           ./build-profiling-ffi.sh -f data-pipeline-ffi ${OUTPUT_FOLDER}/profiling
 
       - name: "Generate Telemetry FFI"
         shell: bash
@@ -113,7 +113,7 @@ jobs:
           path: ${{ github.workspace }}/artifacts
           retention-days: 1
 
-      - name: "(Windows) Test building C bindings - dynamic link vc runtime"
+      - name: "(Windows) Test building Profiling C bindings - dynamic link vc runtime"
         if: ${{ matrix.platform == 'windows-latest' }}
         shell: bash
         run: |
@@ -123,7 +123,7 @@ jobs:
           cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DVCRUNTIME_LINK_TYPE=DLL
           cmake --build .
 
-      - name: "(Windows) Test building C bindings - static link vc runtime"
+      - name: "(Windows) Test building Profiling C bindings - static link vc runtime"
         if: ${{ matrix.platform == 'windows-latest' }}
         shell: bash
         run: |
@@ -133,7 +133,7 @@ jobs:
           cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DVCRUNTIME_LINK_TYPE=STATIC
           cmake --build .
 
-      - name: "Test building C bindings"
+      - name: "Test building Profiling C bindings"
         shell: bash
         if: ${{ matrix.platform != 'windows-latest' }}
         run: |
