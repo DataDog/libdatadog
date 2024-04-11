@@ -6,10 +6,12 @@ mod error;
 pub mod endpoint;
 pub mod option;
 pub mod slice;
+pub mod string;
 pub mod tags;
 pub mod vec;
 
 pub use error::*;
+pub use string::*;
 
 pub use option::Option;
 pub use slice::{CharSlice, Slice};

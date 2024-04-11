@@ -97,13 +97,11 @@ jobs:
       - name: "Generate profiling FFI"
         shell: bash
         run: |
-           chmod +x build-profiling-ffi.sh
-           ./build-profiling-ffi.sh ${OUTPUT_FOLDER}/profiling
+           ./build-profiling-ffi.sh -f data-pipeline-ffi ${OUTPUT_FOLDER}/profiling
 
       - name: "Generate Telemetry FFI"
         shell: bash
         run: |
-           chmod +x build-telemetry-ffi.sh
            ./build-telemetry-ffi.sh ${OUTPUT_FOLDER}/telemetry
 
       - name: 'Publish libdatadog'
@@ -115,8 +113,29 @@ jobs:
           path: ${{ github.workspace }}/artifacts
           retention-days: 1
 
-      - name: "Test building C bindings"
+      - name: "(Windows) Test building Profiling C bindings - dynamic link vc runtime"
+        if: ${{ matrix.platform == 'windows-latest' }}
         shell: bash
+        run: |
+          set -e
+          mkdir examples/ffi/build_dll
+          cd examples/ffi/build_dll
+          cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DVCRUNTIME_LINK_TYPE=DLL
+          cmake --build .
+
+      - name: "(Windows) Test building Profiling C bindings - static link vc runtime"
+        if: ${{ matrix.platform == 'windows-latest' }}
+        shell: bash
+        run: |
+          set -e
+          mkdir examples/ffi/build_static
+          cd examples/ffi/build_static
+          cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DVCRUNTIME_LINK_TYPE=STATIC
+          cmake --build .
+
+      - name: "Test building Profiling C bindings"
+        shell: bash
+        if: ${{ matrix.platform != 'windows-latest' }}
         run: |
           set -e
           mkdir examples/ffi/build
@@ -130,6 +149,7 @@ jobs:
             cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling
             cmake --build .
           fi
+
   cross-centos7:
     name: build and test using cross - on centos7
     runs-on: ubuntu-latest
@@ -137,6 +157,8 @@ jobs:
       group: ci-${{ github.ref }}-cross-centos7
       cancel-in-progress: true
     steps:
+      - name: Remove unused tools cache
+        run: rm -rf /opt/hostedtoolcache
       - name: Checkout
         uses: actions/checkout@v3
       - name: Cache

@@ -55,6 +55,14 @@ fn generate_protobuf() {
         ".pb.Span",
         "#[serde(default)] #[serde(deserialize_with = \"deserialize_null_into_default\")]",
     );
+    config.field_attribute(
+        ".pb.Span.meta_struct",
+        "#[serde(skip_serializing_if = \"::std::collections::HashMap::is_empty\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.spanLinks",
+        "#[serde(skip_serializing_if = \"::prost::alloc::vec::Vec::is_empty\")]",
+    );
 
     config.type_attribute("StatsPayload", "#[derive(Deserialize, Serialize)]");
     config.type_attribute("StatsPayload", "#[serde(rename_all = \"PascalCase\")]");

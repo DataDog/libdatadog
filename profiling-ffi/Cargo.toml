@@ -18,6 +18,7 @@ default = []
 cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
 ddtelemetry-ffi = ["dep:ddtelemetry-ffi"]
 symbolizer = ["symbolizer-ffi"]
+data-pipeline-ffi = ["dep:data-pipeline-ffi"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
@@ -36,3 +37,6 @@ tokio-util = "0.7.1"
 serde_json = { version = "1.0" }
 futures = { version = "0.3", default-features = false }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
+symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"] }
+symbolic-common = "12.8.0"
+data-pipeline-ffi = { path = "../data-pipeline-ffi", default-features = false, optional = true }
