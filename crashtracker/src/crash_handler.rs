@@ -3,6 +3,8 @@
 
 #![cfg(unix)]
 
+use crate::configuration::CrashtrackerReceiverConfig;
+
 use super::collectors::emit_backtrace_by_frames;
 #[cfg(target_os = "linux")]
 use super::collectors::emit_proc_self_maps;
@@ -42,7 +44,7 @@ static RECEIVER: AtomicPtr<std::process::Child> = AtomicPtr::new(ptr::null_mut()
 static METADATA: AtomicPtr<(CrashtrackerMetadata, String)> = AtomicPtr::new(ptr::null_mut());
 static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
 
-fn make_receiver(config: CrashtrackerConfiguration) -> anyhow::Result<std::process::Child> {
+fn make_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<std::process::Child> {
     // TODO: currently create the file in write mode.  Would append make more sense?
     let stderr = if let Some(filename) = &config.stderr_filename {
         File::create(filename)?.into()
@@ -57,14 +59,15 @@ fn make_receiver(config: CrashtrackerConfiguration) -> anyhow::Result<std::proce
     };
 
     let receiver = Command::new(&config.path_to_receiver_binary)
-        .arg("receiver")
+        .args(&config.args)
+        .envs(config.env.clone())
         .stdin(Stdio::piped())
         .stderr(stderr)
         .stdout(stdout)
         .spawn()
         .context(format!(
             "Unable to start process: {}",
-            &config.path_to_receiver_binary
+            config.path_to_receiver_binary
         ))?;
 
     Ok(receiver)
@@ -128,7 +131,7 @@ pub fn update_config(config: CrashtrackerConfiguration) -> anyhow::Result<()> {
 ///     This function uses a compare_and_exchange on an atomic pointer.
 ///     If two simultaneous calls to this function occur, the first will win,
 ///     and the second will cleanup the redundant receiver.
-pub fn ensure_receiver(config: CrashtrackerConfiguration) -> anyhow::Result<()> {
+pub fn ensure_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<()> {
     if !RECEIVER.load(SeqCst).is_null() {
         // Receiver already running
         return Ok(());
@@ -160,7 +163,7 @@ pub fn ensure_receiver(config: CrashtrackerConfiguration) -> anyhow::Result<()> 
 ///     This function uses a compare_and_exchange on an atomic pointer.
 ///     If two simultaneous calls to this function occur, the first will win,
 ///     and the second will cleanup the redundant receiver.
-pub fn update_receiver_after_fork(config: CrashtrackerConfiguration) -> anyhow::Result<()> {
+pub fn update_receiver_after_fork(config: &CrashtrackerReceiverConfig) -> anyhow::Result<()> {
     let new_receiver = Box::into_raw(Box::new(make_receiver(config)?));
     let old_receiver: *mut std::process::Child = RECEIVER.swap(new_receiver, SeqCst);
     anyhow::ensure!(

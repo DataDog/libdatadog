@@ -3,6 +3,7 @@
 #![cfg(unix)]
 
 use crate::{
+    configuration::CrashtrackerReceiverConfig,
     counters::reset_counters,
     crash_handler::{
         ensure_receiver, register_crash_handlers, restore_old_handlers, shutdown_receiver,
@@ -56,6 +57,7 @@ pub fn shutdown_crash_handler() -> anyhow::Result<()> {
 ///     unexpected crash-handling behaviour.
 pub fn on_fork(
     config: CrashtrackerConfiguration,
+    receiver_config: CrashtrackerReceiverConfig,
     metadata: CrashtrackerMetadata,
 ) -> anyhow::Result<()> {
     reset_counters()?;
@@ -65,10 +67,10 @@ pub fn on_fork(
     // https://man7.org/linux/man-pages/man2/sigaltstack.2.html
 
     update_metadata(metadata)?;
-    update_config(config.clone())?;
+    update_config(config)?;
 
     // See function level comment about why we do this.
-    update_receiver_after_fork(config)?;
+    update_receiver_after_fork(&receiver_config)?;
     Ok(())
 }
 
@@ -84,6 +86,7 @@ pub fn on_fork(
 ///     unexpected crash-handling behaviour.
 pub fn init(
     config: CrashtrackerConfiguration,
+    receiver_config: Option<CrashtrackerReceiverConfig>,
     metadata: CrashtrackerMetadata,
 ) -> anyhow::Result<()> {
     // Setup the receiver first, so that if there is a crash detected it has
@@ -91,7 +94,9 @@ pub fn init(
     let create_alt_stack = config.create_alt_stack;
     update_metadata(metadata)?;
     update_config(config.clone())?;
-    ensure_receiver(config)?;
+    if let Some(receiver_config) = &receiver_config {
+        ensure_receiver(receiver_config)?;
+    }
     register_crash_handlers(create_alt_stack)?;
     Ok(())
 }
@@ -130,14 +135,18 @@ fn test_crash() {
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
     let timeout = Duration::from_secs(30);
+    let receiver_config = Some(CrashtrackerReceiverConfig::new(
+        vec![],
+        vec![],
+        path_to_receiver_binary,
+        stderr_filename,
+        stdout_filename,
+    ));
     let config = CrashtrackerConfiguration::new(
         collect_stacktrace,
         create_alt_stack,
         endpoint,
-        path_to_receiver_binary,
         resolve_frames,
-        stderr_filename,
-        stdout_filename,
         timeout,
     )
     .expect("not to fail");
@@ -147,7 +156,7 @@ fn test_crash() {
         "family".to_string(),
         vec![],
     );
-    init(config, metadata).expect("not to fail");
+    init(config, receiver_config, metadata).expect("not to fail");
     begin_profiling_op(crate::ProfilingOpTypes::CollectingSample).expect("Not to fail");
 
     let tag = Tag::new("apple", "banana").expect("tag");
