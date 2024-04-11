@@ -186,10 +186,14 @@ impl CrashInfo {
         Ok(())
     }
 
-    pub fn set_timestamp_to_now(&mut self) -> anyhow::Result<()> {
+    pub fn set_timestamp(&mut self, ts: DateTime<Utc>) -> anyhow::Result<()> {
         anyhow::ensure!(self.timestamp.is_none());
-        self.timestamp = Some(Utc::now());
+        self.timestamp = Some(ts);
         Ok(())
+    }
+
+    pub fn set_timestamp_to_now(&mut self) -> anyhow::Result<()> {
+        self.set_timestamp(Utc::now())
     }
 }
 
