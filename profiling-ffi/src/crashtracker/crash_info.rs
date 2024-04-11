@@ -8,6 +8,7 @@ use crate::crashtracker::{
 };
 use crate::exporter::{self, ProfilingEndpoint};
 use anyhow::Context;
+use chrono::DateTime;
 use ddcommon_ffi::{slice::AsBytes, CharSlice, Slice};
 use std::time::Duration;
 
@@ -168,7 +169,45 @@ pub unsafe extern "C" fn ddog_crashinfo_set_stacktrace(
         }
         crashinfo.set_stacktrace(thread_id, stacktrace_vec)
     })()
-    .context("ddog_crashinfo_set_metadata failed")
+    .context("ddog_crashinfo_set_stacktrace failed")
+    .into()
+}
+
+/// Sets the timestamp to the given unix timestamp
+///
+/// # Safety
+/// `crashinfo` must be a valid pointer to a `CrashInfo` object.
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_crashinfo_set_timestamp(
+    crashinfo: *mut CrashInfo,
+    secs: i64,
+    nsecs: u32,
+) -> CrashtrackerResult {
+    (|| {
+        let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
+        let ts = DateTime::from_timestamp(secs, nsecs)
+            .with_context(|| format!("Invalid timestamp {secs} {nsecs}"))?;
+        crashinfo.set_timestamp(ts)
+    })()
+    .context("ddog_crashinfo_set_timestamp_to_now failed")
+    .into()
+}
+
+/// Sets the timestamp to the current time
+///
+/// # Safety
+/// `crashinfo` must be a valid pointer to a `CrashInfo` object.
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_crashinfo_set_timestamp_to_now(
+    crashinfo: *mut CrashInfo,
+) -> CrashtrackerResult {
+    (|| {
+        let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
+        crashinfo.set_timestamp_to_now()
+    })()
+    .context("ddog_crashinfo_set_timestamp_to_now failed")
     .into()
 }
 
