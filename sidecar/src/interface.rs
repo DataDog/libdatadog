@@ -6,8 +6,8 @@
 #![allow(clippy::needless_collect)]
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashSet};
-use std::iter::zip;
-use std::ops::{DerefMut, Sub};
+use std::iter::{Sum, zip};
+use std::ops::{Add, DerefMut, Sub};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time;
@@ -52,8 +52,9 @@ use ddtelemetry::{
         TelemetryWorkerHandle, MAX_ITEMS,
     },
 };
+use ddtelemetry::worker::TelemetryWorkerStats;
 
-use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
+use crate::log::{MULTI_LOG_FILTER, MULTI_LOG_WRITER, MultiEnvFilterGuard, MultiWriterGuard, TemporarilyRetainedMapStats};
 use crate::{config, log, tracer};
 
 #[datadog_sidecar_macros::extract_request_id]
@@ -87,6 +88,7 @@ pub trait SidecarInterface {
     );
     async fn ping();
     async fn dump() -> String;
+    async fn stats() -> String;
 }
 
 pub trait RequestIdentification {
@@ -97,6 +99,31 @@ pub enum RequestIdentifier {
     InstanceId(InstanceId),
     SessionId(String),
     None,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SidecarStats {
+    pub trace_flusher: TraceFlusherStats,
+    pub sessions: u32,
+    pub session_counter_size: u32,
+    pub runtimes: u32,
+    pub apps: u32,
+    pub active_apps: u32,
+    pub enqueued_apps: u32,
+    pub enqueued_telemetry_data: EnqueuedTelemetryStats,
+    pub telemetry_metrics_contexts: u32,
+    pub telemetry_worker: TelemetryWorkerStats,
+    pub telemetry_worker_errors: u32,
+    pub log_writer: TemporarilyRetainedMapStats,
+    pub log_filter: TemporarilyRetainedMapStats,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TraceFlusherStats {
+    pub agent_config_allocated_shm: u32,
+    pub agent_config_writers: u32,
+    pub agent_configs_last_used_entries: u32,
+    pub send_data_size: u32,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -424,6 +451,45 @@ impl Default for EnqueuedTelemetryData {
     }
 }
 
+#[derive(Default, Serialize, Deserialize)]
+pub struct EnqueuedTelemetryStats {
+    pub dependencies_stored: u32,
+    pub dependencies_unflushed: u32,
+    pub configurations_stored: u32,
+    pub configurations_unflushed: u32,
+    pub integrations_stored: u32,
+    pub integrations_unflushed: u32,
+    pub metrics: u32,
+    pub points: u32,
+    pub actions: u32,
+    pub computed_dependencies: u32,
+}
+
+impl Add for EnqueuedTelemetryStats {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        EnqueuedTelemetryStats {
+            dependencies_stored: self.dependencies_stored + rhs.dependencies_stored,
+            dependencies_unflushed: self.dependencies_unflushed + rhs.dependencies_unflushed,
+            configurations_stored: self.configurations_stored + rhs.configurations_stored,
+            configurations_unflushed: self.configurations_unflushed + rhs.configurations_unflushed,
+            integrations_stored: self.integrations_stored + rhs.integrations_stored,
+            integrations_unflushed: self.integrations_unflushed + rhs.integrations_unflushed,
+            metrics: self.metrics + rhs.metrics,
+            points: self.points + rhs.points,
+            actions: self.actions + rhs.actions,
+            computed_dependencies: self.computed_dependencies + rhs.computed_dependencies,
+        }
+    }
+}
+
+impl Sum for EnqueuedTelemetryStats {
+    fn sum<I: Iterator<Item=Self>>(iter: I) -> Self {
+        iter.fold(Self::default(), |a, b| a + b)
+    }
+}
+
 #[serde_as]
 #[derive(Deserialize)]
 struct ComposerPackages {
@@ -562,6 +628,21 @@ impl EnqueuedTelemetryData {
             completer.complete(packages).await;
         });
         deps
+    }
+
+    pub fn stats(&self) -> EnqueuedTelemetryStats {
+        EnqueuedTelemetryStats {
+            dependencies_stored: self.dependencies.len_stored() as u32,
+            dependencies_unflushed: self.dependencies.len_unflushed() as u32,
+            configurations_stored: self.configurations.len_stored() as u32,
+            configurations_unflushed: self.configurations.len_unflushed() as u32,
+            integrations_stored: self.integrations.len_stored() as u32,
+            integrations_unflushed: self.integrations.len_unflushed() as u32,
+            metrics: self.metrics.len() as u32,
+            points: self.points.len() as u32,
+            actions: self.actions.len() as u32,
+            computed_dependencies: self.computed_dependencies.len() as u32,
+        }
     }
 }
 
@@ -775,6 +856,16 @@ impl TraceFlusher {
             flusher.await
         } else {
             Ok(())
+        }
+    }
+
+    pub fn stats(&self) -> TraceFlusherStats {
+        let rc = self.remote_config.lock().unwrap();
+        TraceFlusherStats {
+            agent_config_allocated_shm: rc.writers.iter().map(|(_, r)| r.writer.size() as u32).sum(),
+            agent_config_writers: rc.writers.len() as u32,
+            agent_configs_last_used_entries: rc.last_used.len() as u32,
+            send_data_size: self.inner.lock().unwrap().traces.send_data_size as u32,
         }
     }
 }
@@ -999,6 +1090,45 @@ impl SidecarServer {
         // send trace payload to our trace flusher
         let data = SendData::new(size, payload, headers, target);
         self.trace_flusher.enqueue(data);
+    }
+
+    pub async fn compute_stats(&self) -> SidecarStats {
+        let mut telemetry_stats_errors = 0;
+        let telemetry_stats = join_all({
+            let sessions = self.sessions.lock().unwrap();
+            let mut futures = vec![];
+            for (_, s) in sessions.iter() {
+                let runtimes = s.runtimes.lock().unwrap();
+                for (_, r) in runtimes.iter() {
+                    let apps = r.apps.lock().unwrap();
+                    for (_, a) in apps.iter() {
+                        if let Some(Some(existing_app)) = a.peek() {
+                            match existing_app.telemetry.stats() {
+                                Ok(future) => futures.push(future),
+                                Err(_) => telemetry_stats_errors += 1,
+                            }
+                        }
+                    }
+                }
+            }
+            futures
+        }).await;
+        let sessions = self.sessions.lock().unwrap();
+        SidecarStats {
+            trace_flusher: self.trace_flusher.stats(),
+            sessions: sessions.len() as u32,
+            session_counter_size: self.session_counter.lock().unwrap().len() as u32,
+            runtimes: sessions.iter().map(|(_, s)| s.runtimes.lock().unwrap().len() as u32).sum(),
+            apps: sessions.iter().map(|(_, s)| s.runtimes.lock().unwrap().iter().map(|(_, r)| r.apps.lock().unwrap().len() as u32).sum::<u32>()).sum(),
+            active_apps: sessions.iter().map(|(_, s)| s.runtimes.lock().unwrap().iter().map(|(_, r)| r.app_or_actions.lock().unwrap().len() as u32).sum::<u32>()).sum(),
+            enqueued_apps: sessions.iter().map(|(_, s)| s.runtimes.lock().unwrap().iter().map(|(_, r)| r.app_or_actions.lock().unwrap().iter().filter(|(_, a)| matches!(a, AppOrQueue::Queue(_))).count() as u32).sum::<u32>()).sum(),
+            enqueued_telemetry_data: sessions.iter().map(|(_, s)| s.runtimes.lock().unwrap().iter().map(|(_, r)| r.app_or_actions.lock().unwrap().iter().filter_map(|(_, a)| match a { AppOrQueue::Queue(q) => Some(q.stats()), _ => None }).sum()).sum()).sum(),
+            telemetry_metrics_contexts: sessions.iter().map(|(_, s)| s.runtimes.lock().unwrap().iter().map(|(_, r)| r.apps.lock().unwrap().iter().map(|(_, a)| a.peek().unwrap_or(&None).as_ref().map_or(0, |w| w.telemetry_metrics.lock().unwrap().len() as u32)).sum::<u32>()).sum::<u32>()).sum(),
+            telemetry_worker_errors: telemetry_stats_errors + telemetry_stats.iter().filter(|v| v.is_err()).count() as u32,
+            telemetry_worker: telemetry_stats.into_iter().filter_map(|v| v.ok()).sum(),
+            log_filter: MULTI_LOG_FILTER.stats(),
+            log_writer: MULTI_LOG_WRITER.stats(),
+        }
     }
 }
 
@@ -1276,6 +1406,16 @@ impl SidecarInterface for SidecarServer {
     fn dump(self, _: Context) -> Self::DumpFut {
         Box::pin(crate::dump::dump())
     }
+
+    type StatsFut = Pin<Box<dyn Send + futures::Future<Output = String>>>;
+
+    fn stats(self, _: Context) -> Self::StatsFut {
+        let this = self.clone();
+        Box::pin(async move {
+            let stats = this.compute_stats().await;
+            simd_json::serde::to_string(&stats).unwrap()
+        })
+    }
 }
 
 pub mod blocking {
@@ -1386,6 +1526,15 @@ pub mod blocking {
         let res = transport.call(SidecarInterfaceRequest::Dump {})?;
         if let SidecarInterfaceResponse::Dump(dump) = res {
             Ok(dump)
+        } else {
+            Ok("".to_string())
+        }
+    }
+
+    pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
+        let res = transport.call(SidecarInterfaceRequest::Stats {})?;
+        if let SidecarInterfaceResponse::Stats(stats) = res {
+            Ok(stats)
         } else {
             Ok("".to_string())
         }

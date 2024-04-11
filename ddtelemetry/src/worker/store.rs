@@ -198,6 +198,14 @@ where
             .iter()
             .flat_map(|i| Some(&self.items.get_idx(*i)?.0))
     }
+
+    pub fn len_unflushed(&self) -> usize {
+        self.unflushed.len()
+    }
+
+    pub fn len_stored(&self) -> usize {
+        self.items.len()
+    }
 }
 
 impl<T> Extend<T> for Store<T>

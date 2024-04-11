@@ -24,9 +24,11 @@ use std::{
     },
     time,
 };
+use std::iter::Sum;
+use std::ops::Add;
 
 use anyhow::Result;
-use futures::future::{self};
+use futures::{future::{self}, channel::oneshot};
 use http::{header, HeaderValue, Request};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -35,6 +37,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
+use crate::metrics::MetricBucketStats;
 
 const CONTINUE: ControlFlow<()> = ControlFlow::Continue(());
 const BREAK: ControlFlow<()> = ControlFlow::Break(());
@@ -74,6 +77,8 @@ pub enum TelemetryActions {
     AddIntegration(Integration),
     AddLog((LogIdentifier, Log)),
     Lifecycle(LifecycleAction),
+    #[serde(skip)]
+    CollectStats(oneshot::Sender<TelemetryWorkerStats>)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,6 +122,49 @@ pub struct TelemetryWorker {
     client: Box<dyn http_client::HttpClient + Sync + Send>,
     deadlines: scheduler::Scheduler<LifecycleAction>,
     data: TelemetryWorkerData,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct TelemetryWorkerStats {
+    pub dependencies_stored: u32,
+    pub dependencies_unflushed: u32,
+    pub configurations_stored: u32,
+    pub configurations_unflushed: u32,
+    pub integrations_stored: u32,
+    pub integrations_unflushed: u32,
+    pub logs: u32,
+    pub metric_contexts: u32,
+    pub metric_buckets: MetricBucketStats,
+}
+
+impl Add for TelemetryWorkerStats {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        TelemetryWorkerStats {
+            dependencies_stored: self.dependencies_stored + rhs.dependencies_stored,
+            dependencies_unflushed: self.dependencies_unflushed + rhs.dependencies_unflushed,
+            configurations_stored: self.configurations_stored + rhs.configurations_stored,
+            configurations_unflushed: self.configurations_unflushed + rhs.configurations_unflushed,
+            integrations_stored: self.integrations_stored + rhs.integrations_stored,
+            integrations_unflushed: self.integrations_unflushed + rhs.integrations_unflushed,
+            logs: self.logs + rhs.logs,
+            metric_contexts: self.metric_contexts + rhs.metric_contexts,
+            metric_buckets: MetricBucketStats {
+                buckets: self.metric_buckets.buckets + rhs.metric_buckets.buckets,
+                series: self.metric_buckets.series + rhs.metric_buckets.series,
+                series_points: self.metric_buckets.series_points + rhs.metric_buckets.series_points,
+                distributions: self.metric_buckets.distributions + self.metric_buckets.distributions,
+                distributions_points: self.metric_buckets.distributions_points + self.metric_buckets.distributions_points,
+            },
+        }
+    }
+}
+
+impl Sum for TelemetryWorkerStats {
+    fn sum<I: Iterator<Item=Self>>(iter: I) -> Self {
+        iter.fold(Self::default(), |a, b| a + b)
+    }
 }
 
 mod serialize {
@@ -245,6 +293,9 @@ impl TelemetryWorker {
                 self.data.started = false;
                 self.deadlines.clear_pending();
                 return BREAK;
+            }
+            CollectStats(stats_sender) => {
+                stats_sender.send(self.stats()).ok();
             }
         };
         CONTINUE
@@ -404,6 +455,9 @@ impl TelemetryWorker {
                 self.data.started = false;
                 self.deadlines.clear_pending();
                 return BREAK;
+            }
+            CollectStats(stats_sender) => {
+                stats_sender.send(self.stats()).ok();
             }
         }
 
@@ -619,6 +673,20 @@ impl TelemetryWorker {
             }
         }
     }
+
+    fn stats(&self) -> TelemetryWorkerStats {
+        TelemetryWorkerStats {
+            dependencies_stored: self.data.dependencies.len_stored() as u32,
+            dependencies_unflushed: self.data.dependencies.len_unflushed() as u32,
+            configurations_stored: self.data.configurations.len_stored() as u32,
+            configurations_unflushed: self.data.configurations.len_unflushed() as u32,
+            integrations_stored: self.data.integrations.len_stored() as u32,
+            integrations_unflushed: self.data.integrations.len_unflushed() as u32,
+            logs: self.data.logs.len() as u32,
+            metric_contexts: self.data.metric_contexts.lock().len() as u32,
+            metric_buckets: self.data.metric_buckets.stats(),
+        }
+    }
 }
 
 struct InnerTelemetryShutdown {
@@ -785,6 +853,12 @@ impl TelemetryWorkerHandle {
 
     pub fn wait_for_shutdown(&self) {
         self.shutdown.wait_for_shutdown();
+    }
+
+    pub fn stats(&self) -> Result<oneshot::Receiver<TelemetryWorkerStats>> {
+        let (sender, receiver) = oneshot::channel();
+        self.sender.try_send(TelemetryActions::CollectStats(sender))?;
+        Ok(receiver)
     }
 }
 

@@ -75,4 +75,8 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> AgentRemoteConfigWriter<T> {
     pub fn write(&self, contents: &[u8]) {
         self.0.write(contents)
     }
+
+    pub fn size(&self) -> usize {
+        self.0.size()
+    }
 }

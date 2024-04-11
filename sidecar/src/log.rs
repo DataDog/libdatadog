@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 use std::{env, io};
+use serde::{Deserialize, Serialize};
 use tracing::level_filters::LevelFilter;
 use tracing::span::{Attributes, Record};
 use tracing::subscriber::Interest;
@@ -65,6 +66,13 @@ unsafe impl<K, V> Sync for TemporarilyRetainedMap<K, V> where
 {
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct TemporarilyRetainedMapStats {
+    pub elements: u32,
+    pub live_counters: u32,
+    pub pending_removal: u32,
+}
+
 impl<K, V> TemporarilyRetainedMap<K, V>
 where
     K: TemporarilyRetainedKeyParser<V> + Clone + Eq + Hash,
@@ -95,6 +103,14 @@ where
         }
 
         TemporarilyRetainedMapGuard { key, map: self }
+    }
+
+    pub fn stats(&self) -> TemporarilyRetainedMapStats {
+        TemporarilyRetainedMapStats {
+            elements: self.maps.read().unwrap().len() as u32,
+            live_counters: self.live_counter.lock().unwrap().len() as u32,
+            pending_removal: self.pending_removal.lock().unwrap().len() as u32,
+        }
     }
 }
 
