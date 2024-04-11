@@ -157,10 +157,10 @@ impl TraceExporter {
 pub struct TraceExporterBuilder {
     host: Option<String>,
     port: Option<u16>,
-    tracer_version: Option<String>,
-    language: Option<String>,
-    language_version: Option<String>,
-    interpreter: Option<String>,
+    tracer_version: String,
+    language: String,
+    language_version: String,
+    language_interpreter: String,
     no_proxy: bool,
 }
 
@@ -176,17 +176,17 @@ impl TraceExporterBuilder {
     }
 
     pub fn set_tracer_version(&mut self, tracer_version: &str) -> &mut TraceExporterBuilder {
-        self.tracer_version = Some(String::from(tracer_version));
+        self.tracer_version = tracer_version.to_owned();
         self
     }
 
     pub fn set_language(&mut self, lang: &str) -> &mut TraceExporterBuilder {
-        self.language = Some(String::from(lang));
+        self.language = lang.to_owned();
         self
     }
 
     pub fn set_language_version(&mut self, lang_version: &str) -> &mut TraceExporterBuilder {
-        self.language_version = Some(String::from(lang_version));
+        self.language_version = lang_version.to_owned();
         self
     }
 
@@ -194,7 +194,7 @@ impl TraceExporterBuilder {
         &mut self,
         lang_interpreter: &str,
     ) -> &mut TraceExporterBuilder {
-        self.interpreter = Some(String::from(lang_interpreter));
+        self.language_interpreter = lang_interpreter.to_owned();
         self
     }
 
@@ -217,16 +217,18 @@ impl TraceExporterBuilder {
             )?,
             api_key: None,
         };
+
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
+
         Ok(TraceExporter {
             endpoint,
             tags: TracerTags {
-                tracer_version: self.tracer_version.clone().unwrap(),
-                language_version: self.language_version.clone().unwrap(),
-                language_interpreter: self.interpreter.clone().unwrap(),
-                language: self.language.clone().unwrap(),
+                tracer_version: std::mem::take(&mut self.tracer_version),
+                language_version: std::mem::take(&mut self.language_version),
+                language_interpreter: std::mem::take(&mut self.language_interpreter),
+                language: std::mem::take(&mut self.language),
             },
             no_proxy: self.no_proxy,
             runtime,
@@ -256,12 +258,11 @@ mod tests {
             exporter.endpoint.url.to_string(),
             "http://192.168.1.1:8127/v0.7/traces"
         );
-        assert_eq!(builder.host.unwrap(), "192.168.1.1");
-        assert_eq!(builder.port.unwrap(), 8127);
-        assert_eq!(builder.tracer_version.unwrap(), "v0.1");
-        assert_eq!(builder.language.unwrap(), "nodejs");
-        assert_eq!(builder.language_version.unwrap(), "1.0");
-        assert_eq!(builder.interpreter.unwrap(), "v8");
+
+        assert_eq!(exporter.tags.tracer_version, "v0.1");
+        assert_eq!(exporter.tags.language, "nodejs");
+        assert_eq!(exporter.tags.language_version, "1.0");
+        assert_eq!(exporter.tags.language_interpreter, "v8");
     }
 
     #[test]
@@ -279,10 +280,10 @@ mod tests {
             exporter.endpoint.url.to_string(),
             "http://127.0.0.1:8126/v0.4/traces"
         );
-        assert_eq!(builder.tracer_version.unwrap(), "v0.1");
-        assert_eq!(builder.language.unwrap(), "nodejs");
-        assert_eq!(builder.language_version.unwrap(), "1.0");
-        assert_eq!(builder.interpreter.unwrap(), "v8");
+        assert_eq!(exporter.tags.tracer_version, "v0.1");
+        assert_eq!(exporter.tags.language, "nodejs");
+        assert_eq!(exporter.tags.language_version, "1.0");
+        assert_eq!(exporter.tags.language_interpreter, "v8");
     }
 
     #[test]
