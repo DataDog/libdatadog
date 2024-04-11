@@ -239,6 +239,7 @@ impl TraceExporterBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn new() {
@@ -284,6 +285,42 @@ mod tests {
         assert_eq!(exporter.tags.language, "nodejs");
         assert_eq!(exporter.tags.language_version, "1.0");
         assert_eq!(exporter.tags.language_interpreter, "v8");
+    }
+    #[test]
+    fn test_from_tracer_tags_to_tracer_header_tags() {
+        let tracer_tags = TracerTags {
+            tracer_version: "v0.1".to_string(),
+            language: "rust".to_string(),
+            language_version: "1.52.1".to_string(),
+            language_interpreter: "rustc".to_string(),
+        };
+
+        let tracer_header_tags: TracerHeaderTags = (&tracer_tags).into();
+
+        assert_eq!(tracer_header_tags.tracer_version, "v0.1");
+        assert_eq!(tracer_header_tags.lang, "rust");
+        assert_eq!(tracer_header_tags.lang_version, "1.52.1");
+        assert_eq!(tracer_header_tags.lang_interpreter, "rustc");
+    }
+
+    #[test]
+    fn test_from_tracer_tags_to_hashmap() {
+        let tracer_tags = TracerTags {
+            tracer_version: "v0.1".to_string(),
+            language: "rust".to_string(),
+            language_version: "1.52.1".to_string(),
+            language_interpreter: "rustc".to_string(),
+        };
+
+        let hashmap: HashMap<&'static str, String> = (&tracer_tags).into();
+
+        assert_eq!(hashmap.get("datadog-meta-tracer-version").unwrap(), "v0.1");
+        assert_eq!(hashmap.get("datadog-meta-lang").unwrap(), "rust");
+        assert_eq!(hashmap.get("datadog-meta-lang-version").unwrap(), "1.52.1");
+        assert_eq!(
+            hashmap.get("datadog-meta-lang-interpreter").unwrap(),
+            "rustc"
+        );
     }
 
     #[test]
