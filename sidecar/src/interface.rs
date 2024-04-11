@@ -934,12 +934,13 @@ impl SidecarServer {
         builder.runtime_id = Some(instance_id.runtime_id.clone());
         builder.application.env = Some(env_name.to_owned());
         let session_info = self.get_session(&instance_id.session_id);
-        let config = session_info
+        let mut config = session_info
             .session_config
             .lock()
             .unwrap()
             .clone()
             .unwrap_or_else(ddtelemetry::config::Config::from_env);
+        config.restartable = true;
 
         // TODO: log errors
         let instance_option = match builder.spawn_with_config(config.clone()).await {

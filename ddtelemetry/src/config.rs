@@ -24,6 +24,7 @@ pub struct Config {
     pub telemetry_debug_logging_enabled: bool,
     pub telemetry_hearbeat_interval: Duration,
     pub direct_submission_enabled: bool,
+    pub restartable: bool,
 }
 
 fn endpoint_with_telemetry_path(
@@ -127,6 +128,7 @@ impl Default for Config {
             telemetry_debug_logging_enabled: false,
             telemetry_hearbeat_interval: Duration::from_secs(60),
             direct_submission_enabled: false,
+            restartable: false,
         }
     }
 }
@@ -178,6 +180,7 @@ impl Config {
             telemetry_debug_logging_enabled: settings.shared_lib_debug,
             telemetry_hearbeat_interval: settings.telemetry_heartbeat_interval,
             direct_submission_enabled: settings.direct_submission_enabled,
+            restartable: false,
         };
         if let Ok(url) = parse_uri(&url) {
             let _res = this.set_endpoint(Endpoint { url, api_key });
