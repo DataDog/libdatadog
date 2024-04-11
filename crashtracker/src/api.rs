@@ -93,7 +93,7 @@ pub fn init(
     // somewhere to go.
     let create_alt_stack = config.create_alt_stack;
     update_metadata(metadata)?;
-    update_config(config.clone())?;
+    update_config(config)?;
     if let Some(receiver_config) = &receiver_config {
         ensure_receiver(receiver_config)?;
     }
