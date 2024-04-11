@@ -18,10 +18,17 @@ int main(int argc, char **argv) {
     return -1;
   }
 
+  ddog_prof_CrashtrackerReceiverConfig receiver_config = {
+    .args = {},
+    .env = {},
+    .path_to_receiver_binary = DDOG_CHARSLICE_C("FIXME - point me to receiver binary path"),
+    .optional_stderr_filename = {},
+    .optional_stdout_filename = {},
+  };
+
   ddog_prof_CrashtrackerConfiguration config = {
     .create_alt_stack = false,
     .endpoint = ddog_prof_Endpoint_agent(DDOG_CHARSLICE_C("http://localhost:8126")),
-    .path_to_receiver_binary = DDOG_CHARSLICE_C("FIXME - point me to receiver binary path"),
     .resolve_frames = DDOG_PROF_CRASHTRACKER_RESOLVE_FRAMES_NEVER,
   };
 
@@ -32,7 +39,7 @@ int main(int argc, char **argv) {
     .tags = NULL,
   };
 
-  ddog_prof_CrashtrackerResult result = ddog_prof_Crashtracker_init(config, metadata);
+  ddog_prof_CrashtrackerResult result = ddog_prof_Crashtracker_init(config, receiver_config, metadata);
   if (result.tag == DDOG_PROF_PROFILE_RESULT_ERR) {
     ddog_CharSlice message = ddog_Error_message(&result.err);
     fprintf(stderr, "%*s\n", (int)message.len, message.ptr);
@@ -41,7 +48,6 @@ int main(int argc, char **argv) {
   }
 
   // raise(SIGSEGV);
-
   char *bug = NULL;
   *bug = 42;
 
