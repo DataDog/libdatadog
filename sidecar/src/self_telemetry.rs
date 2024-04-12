@@ -154,7 +154,7 @@ impl SelfTelemetry {
                 vec![],
                 MetricType::Count,
                 true,
-                MetricNamespace::Sidecar,
+                MetricNamespace::General,
             ),
         };
 
