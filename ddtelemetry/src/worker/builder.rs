@@ -24,6 +24,7 @@ impl ConfigBuilder {
                 .telemetry_hearbeat_interval
                 .unwrap_or(other.telemetry_hearbeat_interval),
             direct_submission_enabled: other.direct_submission_enabled,
+            restartable: other.restartable,
         }
     }
 }
