@@ -154,7 +154,11 @@ impl TelemetryWorker {
         };
 
         // if no action is received, then it means the channel is stopped
-        action.unwrap_or(TelemetryActions::Lifecycle(LifecycleAction::Stop))
+        action.unwrap_or_else(|| {
+            // the worker handle no longer lives - we must remove restartable here to avoid leaks
+            self.config.restartable = false;
+            TelemetryActions::Lifecycle(LifecycleAction::Stop)
+        })
     }
 
     async fn run_metrics_logs(mut self) {
@@ -167,7 +171,11 @@ impl TelemetryWorker {
 
             match self.dispatch_metrics_logs_action(action).await {
                 ControlFlow::Continue(()) => {}
-                ControlFlow::Break(()) => break,
+                ControlFlow::Break(()) => {
+                    if !self.config.restartable {
+                        break;
+                    }
+                }
             };
         }
     }
@@ -234,6 +242,8 @@ impl TelemetryWorker {
                 {
                     self.log_err(&e);
                 }
+                self.data.started = false;
+                self.deadlines.clear_pending();
                 return BREAK;
             }
         };
@@ -252,7 +262,11 @@ impl TelemetryWorker {
 
             match self.dispatch_action(action).await {
                 ControlFlow::Continue(()) => {}
-                ControlFlow::Break(()) => break,
+                ControlFlow::Break(()) => {
+                    if !self.config.restartable {
+                        break;
+                    }
+                }
             };
         }
     }
@@ -387,6 +401,8 @@ impl TelemetryWorker {
                 )
                 .await;
 
+                self.data.started = false;
+                self.deadlines.clear_pending();
                 return BREAK;
             }
         }
