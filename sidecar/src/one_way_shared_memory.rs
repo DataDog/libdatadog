@@ -208,6 +208,12 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
     }
 
     pub fn size(&self) -> usize {
-        self.handle.lock().unwrap().as_ref().unwrap().as_slice().len()
+        self.handle
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .as_slice()
+            .len()
     }
 }

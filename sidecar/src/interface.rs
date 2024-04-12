@@ -6,7 +6,7 @@
 #![allow(clippy::needless_collect)]
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashSet};
-use std::iter::{Sum, zip};
+use std::iter::{zip, Sum};
 use std::ops::{Add, DerefMut, Sub};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -44,6 +44,7 @@ use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::{SendData, TracerHeaderTags};
 use ddcommon::{tag::Tag, Endpoint};
+use ddtelemetry::worker::TelemetryWorkerStats;
 use ddtelemetry::{
     data,
     metrics::{ContextKey, MetricContext},
@@ -52,9 +53,11 @@ use ddtelemetry::{
         TelemetryWorkerHandle, MAX_ITEMS,
     },
 };
-use ddtelemetry::worker::TelemetryWorkerStats;
 
-use crate::log::{MULTI_LOG_FILTER, MULTI_LOG_WRITER, MultiEnvFilterGuard, MultiWriterGuard, TemporarilyRetainedMapStats};
+use crate::log::{
+    MultiEnvFilterGuard, MultiWriterGuard, TemporarilyRetainedMapStats, MULTI_LOG_FILTER,
+    MULTI_LOG_WRITER,
+};
 use crate::{config, log, tracer};
 
 #[datadog_sidecar_macros::extract_request_id]
@@ -485,7 +488,7 @@ impl Add for EnqueuedTelemetryStats {
 }
 
 impl Sum for EnqueuedTelemetryStats {
-    fn sum<I: Iterator<Item=Self>>(iter: I) -> Self {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::default(), |a, b| a + b)
     }
 }
@@ -862,7 +865,7 @@ impl TraceFlusher {
     pub fn stats(&self) -> TraceFlusherStats {
         let rc = self.remote_config.lock().unwrap();
         TraceFlusherStats {
-            agent_config_allocated_shm: rc.writers.iter().map(|(_, r)| r.writer.size() as u32).sum(),
+            agent_config_allocated_shm: rc.writers.values().map(|r| r.writer.size() as u32).sum(),
             agent_config_writers: rc.writers.len() as u32,
             agent_configs_last_used_entries: rc.last_used.len() as u32,
             send_data_size: self.inner.lock().unwrap().traces.send_data_size as u32,
@@ -1112,19 +1115,102 @@ impl SidecarServer {
                 }
             }
             futures
-        }).await;
+        })
+        .await;
         let sessions = self.sessions.lock().unwrap();
         SidecarStats {
             trace_flusher: self.trace_flusher.stats(),
             sessions: sessions.len() as u32,
             session_counter_size: self.session_counter.lock().unwrap().len() as u32,
-            runtimes: sessions.iter().map(|(_, s)| s.runtimes.lock().unwrap().len() as u32).sum(),
-            apps: sessions.iter().map(|(_, s)| s.runtimes.lock().unwrap().iter().map(|(_, r)| r.apps.lock().unwrap().len() as u32).sum::<u32>()).sum(),
-            active_apps: sessions.iter().map(|(_, s)| s.runtimes.lock().unwrap().iter().map(|(_, r)| r.app_or_actions.lock().unwrap().len() as u32).sum::<u32>()).sum(),
-            enqueued_apps: sessions.iter().map(|(_, s)| s.runtimes.lock().unwrap().iter().map(|(_, r)| r.app_or_actions.lock().unwrap().iter().filter(|(_, a)| matches!(a, AppOrQueue::Queue(_))).count() as u32).sum::<u32>()).sum(),
-            enqueued_telemetry_data: sessions.iter().map(|(_, s)| s.runtimes.lock().unwrap().iter().map(|(_, r)| r.app_or_actions.lock().unwrap().iter().filter_map(|(_, a)| match a { AppOrQueue::Queue(q) => Some(q.stats()), _ => None }).sum()).sum()).sum(),
-            telemetry_metrics_contexts: sessions.iter().map(|(_, s)| s.runtimes.lock().unwrap().iter().map(|(_, r)| r.apps.lock().unwrap().iter().map(|(_, a)| a.peek().unwrap_or(&None).as_ref().map_or(0, |w| w.telemetry_metrics.lock().unwrap().len() as u32)).sum::<u32>()).sum::<u32>()).sum(),
-            telemetry_worker_errors: telemetry_stats_errors + telemetry_stats.iter().filter(|v| v.is_err()).count() as u32,
+            runtimes: sessions
+                .values()
+                .map(|s| s.runtimes.lock().unwrap().len() as u32)
+                .sum(),
+            apps: sessions
+                .values()
+                .map(|s| {
+                    s.runtimes
+                        .lock()
+                        .unwrap()
+                        .values()
+                        .map(|r| r.apps.lock().unwrap().len() as u32)
+                        .sum::<u32>()
+                })
+                .sum(),
+            active_apps: sessions
+                .values()
+                .map(|s| {
+                    s.runtimes
+                        .lock()
+                        .unwrap()
+                        .values()
+                        .map(|r| r.app_or_actions.lock().unwrap().len() as u32)
+                        .sum::<u32>()
+                })
+                .sum(),
+            enqueued_apps: sessions
+                .values()
+                .map(|s| {
+                    s.runtimes
+                        .lock()
+                        .unwrap()
+                        .values()
+                        .map(|r| {
+                            r.app_or_actions
+                                .lock()
+                                .unwrap()
+                                .values()
+                                .filter(|a| matches!(a, AppOrQueue::Queue(_)))
+                                .count() as u32
+                        })
+                        .sum::<u32>()
+                })
+                .sum(),
+            enqueued_telemetry_data: sessions
+                .values()
+                .map(|s| {
+                    s.runtimes
+                        .lock()
+                        .unwrap()
+                        .values()
+                        .map(|r| {
+                            r.app_or_actions
+                                .lock()
+                                .unwrap()
+                                .values()
+                                .filter_map(|a| match a {
+                                    AppOrQueue::Queue(q) => Some(q.stats()),
+                                    _ => None,
+                                })
+                                .sum()
+                        })
+                        .sum()
+                })
+                .sum(),
+            telemetry_metrics_contexts: sessions
+                .values()
+                .map(|s| {
+                    s.runtimes
+                        .lock()
+                        .unwrap()
+                        .values()
+                        .map(|r| {
+                            r.apps
+                                .lock()
+                                .unwrap()
+                                .values()
+                                .map(|a| {
+                                    a.peek().unwrap_or(&None).as_ref().map_or(0, |w| {
+                                        w.telemetry_metrics.lock().unwrap().len() as u32
+                                    })
+                                })
+                                .sum::<u32>()
+                        })
+                        .sum::<u32>()
+                })
+                .sum(),
+            telemetry_worker_errors: telemetry_stats_errors
+                + telemetry_stats.iter().filter(|v| v.is_err()).count() as u32,
             telemetry_worker: telemetry_stats.into_iter().filter_map(|v| v.ok()).sum(),
             log_filter: MULTI_LOG_FILTER.stats(),
             log_writer: MULTI_LOG_WRITER.stats(),
@@ -1410,9 +1496,8 @@ impl SidecarInterface for SidecarServer {
     type StatsFut = Pin<Box<dyn Send + futures::Future<Output = String>>>;
 
     fn stats(self, _: Context) -> Self::StatsFut {
-        let this = self.clone();
         Box::pin(async move {
-            let stats = this.compute_stats().await;
+            let stats = self.compute_stats().await;
             simd_json::serde::to_string(&stats).unwrap()
         })
     }

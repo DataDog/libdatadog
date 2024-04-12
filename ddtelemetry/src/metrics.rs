@@ -146,9 +146,9 @@ impl MetricBuckets {
         MetricBucketStats {
             buckets: self.buckets.len() as u32,
             series: self.series.len() as u32,
-            series_points: self.series.iter().map(|(_, v)| v.len() as u32).sum(),
+            series_points: self.series.values().map(|v| v.len() as u32).sum(),
             distributions: self.distributions.len() as u32,
-            distributions_points: self.distributions.iter().map(|(_, v)| v.len() as u32).sum(),
+            distributions_points: self.distributions.values().map(|v| v.len() as u32).sum(),
         }
     }
 }
@@ -169,6 +169,10 @@ pub struct MetricContextGuard<'a> {
 impl<'a> MetricContextGuard<'a> {
     pub fn read(&self, key: ContextKey) -> Option<&MetricContext> {
         self.guard.store.get(key.0 as usize)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.guard.store.is_empty()
     }
 
     pub fn len(&self) -> usize {

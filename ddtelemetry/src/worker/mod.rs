@@ -14,6 +14,8 @@ use crate::{
 };
 use ddcommon::tag::Tag;
 
+use std::iter::Sum;
+use std::ops::Add;
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
@@ -24,11 +26,13 @@ use std::{
     },
     time,
 };
-use std::iter::Sum;
-use std::ops::Add;
 
+use crate::metrics::MetricBucketStats;
 use anyhow::Result;
-use futures::{future::{self}, channel::oneshot};
+use futures::{
+    channel::oneshot,
+    future::{self},
+};
 use http::{header, HeaderValue, Request};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -37,7 +41,6 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
-use crate::metrics::MetricBucketStats;
 
 const CONTINUE: ControlFlow<()> = ControlFlow::Continue(());
 const BREAK: ControlFlow<()> = ControlFlow::Break(());
@@ -78,7 +81,7 @@ pub enum TelemetryActions {
     AddLog((LogIdentifier, Log)),
     Lifecycle(LifecycleAction),
     #[serde(skip)]
-    CollectStats(oneshot::Sender<TelemetryWorkerStats>)
+    CollectStats(oneshot::Sender<TelemetryWorkerStats>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,15 +157,17 @@ impl Add for TelemetryWorkerStats {
                 buckets: self.metric_buckets.buckets + rhs.metric_buckets.buckets,
                 series: self.metric_buckets.series + rhs.metric_buckets.series,
                 series_points: self.metric_buckets.series_points + rhs.metric_buckets.series_points,
-                distributions: self.metric_buckets.distributions + self.metric_buckets.distributions,
-                distributions_points: self.metric_buckets.distributions_points + self.metric_buckets.distributions_points,
+                distributions: self.metric_buckets.distributions
+                    + self.metric_buckets.distributions,
+                distributions_points: self.metric_buckets.distributions_points
+                    + self.metric_buckets.distributions_points,
             },
         }
     }
 }
 
 impl Sum for TelemetryWorkerStats {
-    fn sum<I: Iterator<Item=Self>>(iter: I) -> Self {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::default(), |a, b| a + b)
     }
 }
@@ -857,7 +862,8 @@ impl TelemetryWorkerHandle {
 
     pub fn stats(&self) -> Result<oneshot::Receiver<TelemetryWorkerStats>> {
         let (sender, receiver) = oneshot::channel();
-        self.sender.try_send(TelemetryActions::CollectStats(sender))?;
+        self.sender
+            .try_send(TelemetryActions::CollectStats(sender))?;
         Ok(receiver)
     }
 }

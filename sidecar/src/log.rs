@@ -5,6 +5,7 @@ use crate::config;
 use chrono::{DateTime, Utc};
 use lazy_static::lazy_static;
 use priority_queue::PriorityQueue;
+use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -13,7 +14,6 @@ use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 use std::{env, io};
-use serde::{Deserialize, Serialize};
 use tracing::level_filters::LevelFilter;
 use tracing::span::{Attributes, Record};
 use tracing::subscriber::Interest;
@@ -167,6 +167,10 @@ impl MultiEnvFilter {
 
     pub fn add(&self, key: String) -> TemporarilyRetainedMapGuard<String, EnvFilter> {
         self.map.add(key)
+    }
+
+    pub fn stats(&self) -> TemporarilyRetainedMapStats {
+        self.map.stats()
     }
 
     pub fn collect_logs_created_count(&self) -> HashMap<Level, u32> {
