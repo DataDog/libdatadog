@@ -137,7 +137,7 @@ where
 /// Ensure that the log level stays the same for at least a few seconds after session disconnect
 /// in order to continue logging the sending of data submitted by the session.
 pub struct MultiEnvFilter {
-    pub map: TemporarilyRetainedMap<String, EnvFilter>,
+    map: TemporarilyRetainedMap<String, EnvFilter>,
     logs_created: Mutex<HashMap<Level, u32>>,
 }
 
@@ -147,6 +147,10 @@ impl MultiEnvFilter {
             map: TemporarilyRetainedMap::default(),
             logs_created: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub fn add<'a, 's: 'a>(&'s self, key: String) -> TemporarilyRetainedMapGuard<'a, String, EnvFilter> {
+        self.map.add(key)
     }
 
     pub fn collect_logs_created_count<'a, 's: 'a>(&'s self) -> HashMap<Level, u32> {
@@ -357,8 +361,8 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
 
     // Set initial log level if provided
     if let Ok(env) = env::var("DD_TRACE_LOG_LEVEL") {
-        MULTI_LOG_FILTER.map.add(env); // this also immediately drops it, but will retain it for few
-                                       // seconds during startup
+        MULTI_LOG_FILTER.add(env); // this also immediately drops it, but will retain it for few
+                                   // seconds during startup
     }
     MULTI_LOG_WRITER.add(config::Config::get().log_method); // same than MULTI_LOG_FILTER
 
@@ -433,7 +437,7 @@ mod test {
     fn test_logs_created_counter() {
         enable_logging().ok();
 
-        MULTI_LOG_FILTER.map.add("warn".to_string());
+        MULTI_LOG_FILTER.add("warn".to_string());
         debug!("hi");
         warn!("Bim");
         warn!("Bam");
