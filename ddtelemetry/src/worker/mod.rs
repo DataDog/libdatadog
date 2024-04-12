@@ -633,7 +633,7 @@ impl InnerTelemetryShutdown {
 ///
 /// The worker won't send data to the agent until you call `TelemetryWorkerHandle::send_start`
 ///
-/// To stop the worker, call `TelemetryWorkerHandle::send_stop` which trigger flush aynchronously
+/// To stop the worker, call `TelemetryWorkerHandle::send_stop` which trigger flush asynchronously
 /// then `TelemetryWorkerHandle::wait_for_shutdown`
 pub struct TelemetryWorkerHandle {
     sender: mpsc::Sender<TelemetryActions>,

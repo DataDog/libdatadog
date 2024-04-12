@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::config::Config;
 use crate::interface::SidecarServer;
+use crate::log;
 use crate::watchdog::WatchdogHandle;
+use ddcommon::tag::Tag;
 use ddtelemetry::data::metrics::{MetricNamespace, MetricType};
 use ddtelemetry::metrics::ContextKey;
 use ddtelemetry::worker::{
@@ -21,33 +23,48 @@ struct MetricData<'a> {
     submitted_payloads: ContextKey,
     active_sessions: ContextKey,
     memory_usage: ContextKey,
+    logs_created: ContextKey,
 }
 impl<'a> MetricData<'a> {
-    async fn send(&self, key: ContextKey, value: f64) {
+    async fn send(&self, key: ContextKey, value: f64, tags: Vec<Tag>) {
         let _ = self
             .worker
-            .send_msg(TelemetryActions::AddPoint((value, key, vec![])))
+            .send_msg(TelemetryActions::AddPoint((value, key, tags)))
             .await;
     }
 
     async fn collect_and_send(&self) {
-        futures::future::join_all(vec![
+        let mut futures = vec![
             self.send(
                 self.submitted_payloads,
                 self.server.submitted_payloads.swap(0, Ordering::Relaxed) as f64,
+                vec![],
             ),
             self.send(
                 self.active_sessions,
                 self.server.active_session_count() as f64,
+                vec![],
             ),
             self.send(
                 self.memory_usage,
                 self.sidecar_watchdog
                     .mem_usage_bytes
                     .load(Ordering::Relaxed) as f64,
+                vec![],
             ),
-        ])
-        .await;
+        ];
+        for (level, count) in log::MULTI_LOG_FILTER
+            .collect_logs_created_count()
+            .into_iter()
+        {
+            futures.push(self.send(
+                self.logs_created,
+                count as f64,
+                vec![Tag::new("level", level.as_str().to_lowercase()).unwrap()],
+            ));
+        }
+
+        futures::future::join_all(futures).await;
     }
 }
 
@@ -131,6 +148,13 @@ impl SelfTelemetry {
                 MetricType::Distribution,
                 true,
                 MetricNamespace::Sidecar,
+            ),
+            logs_created: worker.register_metric_context(
+                "logs_created".to_string(),
+                vec![],
+                MetricType::Count,
+                true,
+                MetricNamespace::General,
             ),
         };
 
