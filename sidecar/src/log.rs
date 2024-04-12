@@ -44,7 +44,6 @@ where
     live_counter: Mutex<HashMap<K, i32>>,
     pending_removal: Mutex<PriorityQueue<K, Instant>>,
     pub expire_after: Duration,
-    logs_created: Mutex<HashMap<Level, u32>>,
 }
 
 impl<K, V> Default for TemporarilyRetainedMap<K, V>
@@ -57,7 +56,6 @@ where
             live_counter: Mutex::new(HashMap::new()),
             pending_removal: Mutex::new(PriorityQueue::new()),
             expire_after: Duration::from_secs(5),
-            logs_created: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -97,14 +95,6 @@ where
         }
 
         TemporarilyRetainedMapGuard { key, map: self }
-    }
-
-    pub fn collect_logs_created_count<'a, 's: 'a>(&'s self) -> HashMap<Level, u32> {
-        let mut map = self.logs_created.lock().unwrap();
-        let clone = map.clone();
-        map.clear();
-
-        clone
     }
 }
 
@@ -146,7 +136,28 @@ where
 /// recomputing call site interest all the time.
 /// Ensure that the log level stays the same for at least a few seconds after session disconnect
 /// in order to continue logging the sending of data submitted by the session.
-pub type MultiEnvFilter = TemporarilyRetainedMap<String, EnvFilter>;
+pub struct MultiEnvFilter {
+    pub map: TemporarilyRetainedMap<String, EnvFilter>,
+    logs_created: Mutex<HashMap<Level, u32>>,
+}
+
+impl MultiEnvFilter {
+    fn default() -> Self {
+        MultiEnvFilter {
+            map: TemporarilyRetainedMap::default(),
+            logs_created: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn collect_logs_created_count<'a, 's: 'a>(&'s self) -> HashMap<Level, u32> {
+        let mut map = self.logs_created.lock().unwrap();
+        let clone = map.clone();
+        map.clear();
+
+        clone
+    }
+}
+
 pub type MultiEnvFilterGuard<'a> = TemporarilyRetainedMapGuard<'a, String, EnvFilter>;
 
 impl TemporarilyRetainedKeyParser<EnvFilter> for String {
@@ -166,7 +177,8 @@ impl TemporarilyRetainedKeyParser<EnvFilter> for String {
 
 impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
     fn enabled(&self, meta: &Metadata<'_>, cx: &Context<'_, S>) -> bool {
-        self.maps
+        self.map
+            .maps
             .read()
             .unwrap()
             .values()
@@ -175,7 +187,7 @@ impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
 
     fn callsite_enabled(&self, meta: &'static Metadata<'static>) -> Interest {
         let mut callsite_interest = Interest::never();
-        for f in self.maps.read().unwrap().values() {
+        for f in self.map.maps.read().unwrap().values() {
             let interest = (f as &dyn Filter<S>).callsite_enabled(meta);
             if interest.is_always() {
                 return interest;
@@ -189,6 +201,7 @@ impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
 
     fn event_enabled(&self, event: &Event<'_>, cx: &Context<'_, S>) -> bool {
         let enabled = self
+            .map
             .maps
             .read()
             .unwrap()
@@ -203,7 +216,8 @@ impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
     }
 
     fn max_level_hint(&self) -> Option<LevelFilter> {
-        self.maps
+        self.map
+            .maps
             .read()
             .unwrap()
             .values()
@@ -213,31 +227,31 @@ impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
     }
 
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
-        for f in self.maps.read().unwrap().values() {
+        for f in self.map.maps.read().unwrap().values() {
             (f as &dyn Filter<S>).on_new_span(attrs, id, ctx.clone());
         }
     }
 
     fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
-        for f in self.maps.read().unwrap().values() {
+        for f in self.map.maps.read().unwrap().values() {
             (f as &dyn Filter<S>).on_record(id, values, ctx.clone());
         }
     }
 
     fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
-        for f in self.maps.read().unwrap().values() {
+        for f in self.map.maps.read().unwrap().values() {
             (f as &dyn Filter<S>).on_enter(id, ctx.clone());
         }
     }
 
     fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
-        for f in self.maps.read().unwrap().values() {
+        for f in self.map.maps.read().unwrap().values() {
             (f as &dyn Filter<S>).on_exit(id, ctx.clone());
         }
     }
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
-        for f in self.maps.read().unwrap().values() {
+        for f in self.map.maps.read().unwrap().values() {
             (f as &dyn Filter<S>).on_close(id.clone(), ctx.clone());
         }
     }
@@ -343,8 +357,8 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
 
     // Set initial log level if provided
     if let Ok(env) = env::var("DD_TRACE_LOG_LEVEL") {
-        MULTI_LOG_FILTER.add(env); // this also immediately drops it, but will retain it for few
-                                   // seconds during startup
+        MULTI_LOG_FILTER.map.add(env); // this also immediately drops it, but will retain it for few
+                                       // seconds during startup
     }
     MULTI_LOG_WRITER.add(config::Config::get().log_method); // same than MULTI_LOG_FILTER
 
@@ -419,7 +433,7 @@ mod test {
     fn test_logs_created_counter() {
         enable_logging().ok();
 
-        MULTI_LOG_FILTER.add("warn".to_string());
+        MULTI_LOG_FILTER.map.add("warn".to_string());
         debug!("hi");
         warn!("Bim");
         warn!("Bam");

@@ -1191,7 +1191,7 @@ impl SidecarInterface for SidecarServer {
             .store(config.force_drop_size as u32, Ordering::Relaxed);
 
         session.log_guard.lock().unwrap().replace((
-            log::MULTI_LOG_FILTER.add(config.log_level),
+            log::MULTI_LOG_FILTER.map.add(config.log_level),
             log::MULTI_LOG_WRITER.add(config.log_file),
         ));
 
