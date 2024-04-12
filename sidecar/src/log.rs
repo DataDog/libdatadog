@@ -149,14 +149,11 @@ impl MultiEnvFilter {
         }
     }
 
-    pub fn add<'a, 's: 'a>(
-        &'s self,
-        key: String,
-    ) -> TemporarilyRetainedMapGuard<'a, String, EnvFilter> {
+    pub fn add(&self, key: String) -> TemporarilyRetainedMapGuard<String, EnvFilter> {
         self.map.add(key)
     }
 
-    pub fn collect_logs_created_count<'a, 's: 'a>(&'s self) -> HashMap<Level, u32> {
+    pub fn collect_logs_created_count(&self) -> HashMap<Level, u32> {
         let mut map = self.logs_created.lock().unwrap();
         let clone = map.clone();
         map.clear();
