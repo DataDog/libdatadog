@@ -368,13 +368,14 @@ impl RuntimeInfo {
 struct AppInstance {
     telemetry: TelemetryWorkerHandle,
     telemetry_worker_shutdown: Shared<BoxFuture<'static, Option<()>>>,
-    telemetry_metrics: HashMap<String, ContextKey>,
+    telemetry_metrics: Arc<Mutex<HashMap<String, ContextKey>>>,
 }
 
 impl AppInstance {
     pub fn register_metric(&mut self, metric: MetricContext) {
-        if !self.telemetry_metrics.contains_key(&metric.name) {
-            self.telemetry_metrics.insert(
+        let mut metrics = self.telemetry_metrics.lock().unwrap();
+        if !metrics.contains_key(&metric.name) {
+            metrics.insert(
                 metric.name.clone(),
                 self.telemetry.register_metric_context(
                     metric.name,
@@ -391,7 +392,7 @@ impl AppInstance {
         &self,
         (name, val, tags): (String, f64, Vec<Tag>),
     ) -> TelemetryActions {
-        TelemetryActions::AddPoint((val, *self.telemetry_metrics.get(&name).unwrap(), tags))
+        TelemetryActions::AddPoint((val, *self.telemetry_metrics.lock().unwrap().get(&name).unwrap(), tags))
     }
 }
 
@@ -950,7 +951,7 @@ impl SidecarServer {
                 let instance = AppInstance {
                     telemetry: handle,
                     telemetry_worker_shutdown: worker_join.map(Result::ok).boxed().shared(),
-                    telemetry_metrics: HashMap::new(),
+                    telemetry_metrics: Default::default(),
                 };
 
                 instance.telemetry.send_msgs(inital_actions).await.ok();
