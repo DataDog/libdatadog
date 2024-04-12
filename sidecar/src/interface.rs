@@ -392,7 +392,11 @@ impl AppInstance {
         &self,
         (name, val, tags): (String, f64, Vec<Tag>),
     ) -> TelemetryActions {
-        TelemetryActions::AddPoint((val, *self.telemetry_metrics.lock().unwrap().get(&name).unwrap(), tags))
+        TelemetryActions::AddPoint((
+            val,
+            *self.telemetry_metrics.lock().unwrap().get(&name).unwrap(),
+            tags,
+        ))
     }
 }
 

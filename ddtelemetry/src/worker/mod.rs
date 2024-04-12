@@ -170,7 +170,11 @@ impl TelemetryWorker {
 
             match self.dispatch_metrics_logs_action(action).await {
                 ControlFlow::Continue(()) => {}
-                ControlFlow::Break(()) => if !self.config.restartable { break; },
+                ControlFlow::Break(()) => {
+                    if !self.config.restartable {
+                        break;
+                    }
+                }
             };
         }
     }
@@ -257,7 +261,11 @@ impl TelemetryWorker {
 
             match self.dispatch_action(action).await {
                 ControlFlow::Continue(()) => {}
-                ControlFlow::Break(()) => if !self.config.restartable { break; },
+                ControlFlow::Break(()) => {
+                    if !self.config.restartable {
+                        break;
+                    }
+                }
             };
         }
     }
