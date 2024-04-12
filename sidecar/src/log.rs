@@ -8,7 +8,7 @@ use priority_queue::PriorityQueue;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::ops::Sub;
+use std::ops::{DerefMut, Sub};
 use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
@@ -16,7 +16,7 @@ use std::{env, io};
 use tracing::level_filters::LevelFilter;
 use tracing::span::{Attributes, Record};
 use tracing::subscriber::Interest;
-use tracing::{Event, Id, Metadata, Subscriber};
+use tracing::{Event, Id, Level, Metadata, Subscriber};
 use tracing_log::LogTracer;
 use tracing_subscriber::fmt::format::Writer;
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields, MakeWriter};
@@ -136,7 +136,29 @@ where
 /// recomputing call site interest all the time.
 /// Ensure that the log level stays the same for at least a few seconds after session disconnect
 /// in order to continue logging the sending of data submitted by the session.
-pub type MultiEnvFilter = TemporarilyRetainedMap<String, EnvFilter>;
+pub struct MultiEnvFilter {
+    map: TemporarilyRetainedMap<String, EnvFilter>,
+    logs_created: Mutex<HashMap<Level, u32>>,
+}
+
+impl MultiEnvFilter {
+    fn default() -> Self {
+        MultiEnvFilter {
+            map: TemporarilyRetainedMap::default(),
+            logs_created: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn add(&self, key: String) -> TemporarilyRetainedMapGuard<String, EnvFilter> {
+        self.map.add(key)
+    }
+
+    pub fn collect_logs_created_count(&self) -> HashMap<Level, u32> {
+        let mut map = self.logs_created.lock().unwrap();
+        std::mem::take(map.deref_mut())
+    }
+}
+
 pub type MultiEnvFilterGuard<'a> = TemporarilyRetainedMapGuard<'a, String, EnvFilter>;
 
 impl TemporarilyRetainedKeyParser<EnvFilter> for String {
@@ -156,7 +178,8 @@ impl TemporarilyRetainedKeyParser<EnvFilter> for String {
 
 impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
     fn enabled(&self, meta: &Metadata<'_>, cx: &Context<'_, S>) -> bool {
-        self.maps
+        self.map
+            .maps
             .read()
             .unwrap()
             .values()
@@ -165,7 +188,7 @@ impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
 
     fn callsite_enabled(&self, meta: &'static Metadata<'static>) -> Interest {
         let mut callsite_interest = Interest::never();
-        for f in self.maps.read().unwrap().values() {
+        for f in self.map.maps.read().unwrap().values() {
             let interest = (f as &dyn Filter<S>).callsite_enabled(meta);
             if interest.is_always() {
                 return interest;
@@ -178,15 +201,24 @@ impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
     }
 
     fn event_enabled(&self, event: &Event<'_>, cx: &Context<'_, S>) -> bool {
-        self.maps
+        let enabled = self
+            .map
+            .maps
             .read()
             .unwrap()
             .values()
-            .any(|f| (f as &dyn Filter<S>).event_enabled(event, cx))
+            .any(|f| (f as &dyn Filter<S>).event_enabled(event, cx));
+
+        if enabled {
+            let mut map = self.logs_created.lock().unwrap();
+            *map.entry(event.metadata().level().to_owned()).or_default() += 1;
+        }
+        enabled
     }
 
     fn max_level_hint(&self) -> Option<LevelFilter> {
-        self.maps
+        self.map
+            .maps
             .read()
             .unwrap()
             .values()
@@ -196,31 +228,31 @@ impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
     }
 
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
-        for f in self.maps.read().unwrap().values() {
+        for f in self.map.maps.read().unwrap().values() {
             (f as &dyn Filter<S>).on_new_span(attrs, id, ctx.clone());
         }
     }
 
     fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
-        for f in self.maps.read().unwrap().values() {
+        for f in self.map.maps.read().unwrap().values() {
             (f as &dyn Filter<S>).on_record(id, values, ctx.clone());
         }
     }
 
     fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
-        for f in self.maps.read().unwrap().values() {
+        for f in self.map.maps.read().unwrap().values() {
             (f as &dyn Filter<S>).on_enter(id, ctx.clone());
         }
     }
 
     fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
-        for f in self.maps.read().unwrap().values() {
+        for f in self.map.maps.read().unwrap().values() {
             (f as &dyn Filter<S>).on_exit(id, ctx.clone());
         }
     }
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
-        for f in self.maps.read().unwrap().values() {
+        for f in self.map.maps.read().unwrap().values() {
             (f as &dyn Filter<S>).on_close(id.clone(), ctx.clone());
         }
     }
@@ -338,10 +370,13 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod test {
-    use super::{TemporarilyRetainedKeyParser, TemporarilyRetainedMap};
+    use super::{
+        enable_logging, TemporarilyRetainedKeyParser, TemporarilyRetainedMap, MULTI_LOG_FILTER,
+    };
     use lazy_static::lazy_static;
     use std::sync::atomic::{AtomicI32, Ordering};
     use std::time::Duration;
+    use tracing::{debug, error, warn, Level};
 
     lazy_static! {
         static ref ENABLED: AtomicI32 = AtomicI32::default();
@@ -393,5 +428,26 @@ mod test {
 
         assert_eq!(1, DISABLED.load(Ordering::SeqCst));
         assert_eq!(2, ENABLED.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_logs_created_counter() {
+        enable_logging().ok();
+
+        MULTI_LOG_FILTER.add("warn".to_string());
+        debug!("hi");
+        warn!("Bim");
+        warn!("Bam");
+        error!("Boom");
+        let map = MULTI_LOG_FILTER.collect_logs_created_count();
+        assert_eq!(2, map.len());
+        assert_eq!(map[&Level::WARN], 2);
+        assert_eq!(map[&Level::ERROR], 1);
+
+        debug!("hi");
+        warn!("Bim");
+        let map = MULTI_LOG_FILTER.collect_logs_created_count();
+        assert_eq!(1, map.len());
+        assert_eq!(map[&Level::WARN], 1);
     }
 }
