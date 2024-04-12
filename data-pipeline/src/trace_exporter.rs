@@ -45,7 +45,7 @@ impl<'a> From<&'a TracerTags> for HashMap<&'static str, String> {
 pub struct TraceExporter {
     endpoint: Endpoint,
     tags: TracerTags,
-    no_proxy: bool,
+    use_proxy: bool,
     runtime: Runtime,
 }
 
@@ -55,10 +55,10 @@ impl TraceExporter {
     }
 
     pub fn send(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
-        if self.no_proxy {
-            self.send_deser_ser(data)
-        } else {
+        if self.use_proxy {
             self.send_proxy(data, trace_count)
+        } else {
+            self.send_deser_ser(data)
         }
     }
 
@@ -153,7 +153,6 @@ impl TraceExporter {
     }
 }
 
-#[derive(Default)]
 pub struct TraceExporterBuilder {
     host: Option<String>,
     port: Option<u16>,
@@ -161,7 +160,21 @@ pub struct TraceExporterBuilder {
     language: String,
     language_version: String,
     language_interpreter: String,
-    no_proxy: bool,
+    use_proxy: bool,
+}
+
+impl Default for TraceExporterBuilder {
+    fn default() -> Self {
+        Self {
+            host: None,
+            port: None,
+            tracer_version: String::default(),
+            language: String::default(),
+            language_version: String::default(),
+            language_interpreter: String::default(),
+            use_proxy: true,
+        }
+    }
 }
 
 impl TraceExporterBuilder {
@@ -199,12 +212,12 @@ impl TraceExporterBuilder {
     }
 
     pub fn set_proxy(&mut self, proxy: bool) -> &mut TraceExporterBuilder {
-        self.no_proxy = !proxy;
+        self.use_proxy = proxy;
         self
     }
 
     pub fn build(&mut self) -> anyhow::Result<TraceExporter> {
-        let version = if self.no_proxy { "v0.7" } else { "v0.4" };
+        let version = if self.use_proxy { "v0.4" } else { "v0.7" };
         let endpoint = Endpoint {
             url: hyper::Uri::from_str(
                 format!(
@@ -230,7 +243,7 @@ impl TraceExporterBuilder {
                 language_interpreter: std::mem::take(&mut self.language_interpreter),
                 language: std::mem::take(&mut self.language),
             },
-            no_proxy: self.no_proxy,
+            use_proxy: self.use_proxy,
             runtime,
         })
     }
@@ -286,6 +299,7 @@ mod tests {
         assert_eq!(exporter.tags.language_version, "1.0");
         assert_eq!(exporter.tags.language_interpreter, "v8");
     }
+
     #[test]
     fn test_from_tracer_tags_to_tracer_header_tags() {
         let tracer_tags = TracerTags {
