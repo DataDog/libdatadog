@@ -8,7 +8,7 @@ use priority_queue::PriorityQueue;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::ops::Sub;
+use std::ops::{DerefMut, Sub};
 use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
@@ -155,10 +155,7 @@ impl MultiEnvFilter {
 
     pub fn collect_logs_created_count(&self) -> HashMap<Level, u32> {
         let mut map = self.logs_created.lock().unwrap();
-        let clone = map.clone();
-        map.clear();
-
-        clone
+        std::mem::take(map.deref_mut())
     }
 }
 
