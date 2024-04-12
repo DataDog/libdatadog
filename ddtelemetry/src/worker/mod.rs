@@ -155,6 +155,7 @@ impl TelemetryWorker {
 
         // if no action is received, then it means the channel is stopped
         action.unwrap_or_else(|| {
+            // the worker handle no longer lives - we must remove restartable here to avoid leaks
             self.config.restartable = false;
             TelemetryActions::Lifecycle(LifecycleAction::Stop)
         })

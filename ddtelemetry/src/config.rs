@@ -24,6 +24,8 @@ pub struct Config {
     pub telemetry_debug_logging_enabled: bool,
     pub telemetry_hearbeat_interval: Duration,
     pub direct_submission_enabled: bool,
+    /// Prevents LifecycleAction::Stop from terminating the worker (except if the WorkerHandle is
+    /// dropped)
     pub restartable: bool,
 }
 
