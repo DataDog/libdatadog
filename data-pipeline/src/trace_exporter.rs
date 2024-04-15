@@ -178,45 +178,42 @@ impl Default for TraceExporterBuilder {
 }
 
 impl TraceExporterBuilder {
-    pub fn set_host(&mut self, host: &str) -> &mut TraceExporterBuilder {
+    pub fn set_host(mut self, host: &str) -> TraceExporterBuilder {
         self.host = Some(String::from(host));
         self
     }
 
-    pub fn set_port(&mut self, port: u16) -> &mut TraceExporterBuilder {
+    pub fn set_port(mut self, port: u16) -> TraceExporterBuilder {
         self.port = Some(port);
         self
     }
 
-    pub fn set_tracer_version(&mut self, tracer_version: &str) -> &mut TraceExporterBuilder {
+    pub fn set_tracer_version(mut self, tracer_version: &str) -> TraceExporterBuilder {
         self.tracer_version = tracer_version.to_owned();
         self
     }
 
-    pub fn set_language(&mut self, lang: &str) -> &mut TraceExporterBuilder {
+    pub fn set_language(mut self, lang: &str) -> TraceExporterBuilder {
         self.language = lang.to_owned();
         self
     }
 
-    pub fn set_language_version(&mut self, lang_version: &str) -> &mut TraceExporterBuilder {
+    pub fn set_language_version(mut self, lang_version: &str) -> TraceExporterBuilder {
         self.language_version = lang_version.to_owned();
         self
     }
 
-    pub fn set_language_interpreter(
-        &mut self,
-        lang_interpreter: &str,
-    ) -> &mut TraceExporterBuilder {
+    pub fn set_language_interpreter(mut self, lang_interpreter: &str) -> TraceExporterBuilder {
         self.language_interpreter = lang_interpreter.to_owned();
         self
     }
 
-    pub fn set_proxy(&mut self, proxy: bool) -> &mut TraceExporterBuilder {
+    pub fn set_proxy(mut self, proxy: bool) -> TraceExporterBuilder {
         self.use_proxy = proxy;
         self
     }
 
-    pub fn build(&mut self) -> anyhow::Result<TraceExporter> {
+    pub fn build(mut self) -> anyhow::Result<TraceExporter> {
         let version = if self.use_proxy { "v0.4" } else { "v0.7" };
         let endpoint = Endpoint {
             url: hyper::Uri::from_str(
@@ -256,7 +253,7 @@ mod tests {
 
     #[test]
     fn new() {
-        let mut builder = TraceExporterBuilder::default();
+        let builder = TraceExporterBuilder::default();
         let exporter = builder
             .set_host("192.168.1.1")
             .set_port(8127)
@@ -281,7 +278,7 @@ mod tests {
 
     #[test]
     fn new_defaults() {
-        let mut builder = TraceExporterBuilder::default();
+        let builder = TraceExporterBuilder::default();
         let exporter = builder
             .set_tracer_version("v0.1")
             .set_language("nodejs")
