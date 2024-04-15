@@ -221,7 +221,7 @@ struct SessionInfo {
 
 impl SessionInfo {
     fn get_runtime(&self, runtime_id: &String) -> RuntimeInfo {
-        let mut runtimes = self.runtimes.lock().unwrap();
+        let mut runtimes = self.lock_runtimes();
         match runtimes.get(runtime_id) {
             Some(runtime) => runtime.clone(),
             None => {
@@ -245,9 +245,7 @@ impl SessionInfo {
 
     async fn shutdown(&self) {
         let runtimes: Vec<RuntimeInfo> = self
-            .runtimes
-            .lock()
-            .unwrap()
+            .lock_runtimes()
             .drain()
             .map(|(_, instance)| instance)
             .collect();
@@ -262,9 +260,7 @@ impl SessionInfo {
 
     async fn shutdown_running_instances(&self) {
         let runtimes: Vec<RuntimeInfo> = self
-            .runtimes
-            .lock()
-            .unwrap()
+            .lock_runtimes()
             .iter()
             .map(|(_, instance)| instance.clone())
             .collect();
@@ -278,12 +274,16 @@ impl SessionInfo {
     }
 
     async fn shutdown_runtime(self, runtime_id: &String) {
-        let runtime = match self.runtimes.lock().unwrap().remove(runtime_id) {
+        let runtime = match self.lock_runtimes().remove(runtime_id) {
             Some(rt) => rt,
             None => return,
         };
 
         runtime.shutdown().await
+    }
+
+    fn lock_runtimes(&self) -> MutexGuard<HashMap<String, RuntimeInfo>> {
+        self.runtimes.lock().unwrap()
     }
 
     fn get_telemetry_config(&self) -> MutexGuard<Option<ddtelemetry::config::Config>> {
@@ -342,7 +342,7 @@ impl RuntimeInfo {
         Shared<ManualFuture<Option<AppInstance>>>,
         Option<ManualFutureCompleter<Option<AppInstance>>>,
     ) {
-        let mut apps = self.apps.lock().unwrap();
+        let mut apps = self.lock_apps();
         let key = (service_name.to_owned(), env_name.to_owned());
         if let Some(found) = apps.get(&key) {
             (found.clone(), None)
@@ -362,9 +362,7 @@ impl RuntimeInfo {
         );
 
         let instance_futures: Vec<_> = self
-            .apps
-            .lock()
-            .unwrap()
+            .lock_apps()
             .drain()
             .map(|(_, instance)| instance)
             .collect();
@@ -391,6 +389,17 @@ impl RuntimeInfo {
             "Successfully shut down runtime_id {} for session {}",
             self.instance_id.runtime_id, self.instance_id.session_id
         );
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn lock_apps(
+        &self,
+    ) -> MutexGuard<HashMap<(String, String), Shared<ManualFuture<Option<AppInstance>>>>> {
+        self.apps.lock().unwrap()
+    }
+
+    fn lock_app_or_actions(&self) -> MutexGuard<HashMap<QueueId, AppOrQueue>> {
+        self.app_or_actions.lock().unwrap()
     }
 }
 
@@ -959,12 +968,7 @@ impl SidecarServer {
                 }
             }
             for instance_id in instances {
-                let maybe_session = self
-                    .sessions
-                    .lock()
-                    .unwrap()
-                    .get(&instance_id.session_id)
-                    .cloned();
+                let maybe_session = self.lock_sessions().get(&instance_id.session_id).cloned();
                 if let Some(session) = maybe_session {
                     session.shutdown_runtime(&instance_id.runtime_id).await;
                 }
@@ -977,7 +981,7 @@ impl SidecarServer {
     }
 
     fn get_session(&self, session_id: &String) -> SessionInfo {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.lock_sessions();
         match sessions.get(session_id) {
             Some(session) => session.clone(),
             None => {
@@ -999,7 +1003,7 @@ impl SidecarServer {
     }
 
     async fn stop_session(&self, session_id: &String) {
-        let session = match self.sessions.lock().unwrap().remove(session_id) {
+        let session = match self.lock_sessions().remove(session_id) {
             Some(session) => session,
             None => return,
         };
@@ -1007,6 +1011,10 @@ impl SidecarServer {
         info!("Shutting down session: {}", session_id);
         session.shutdown().await;
         debug!("Successfully shut down session: {}", session_id);
+    }
+
+    fn lock_sessions(&self) -> MutexGuard<HashMap<String, SessionInfo>> {
+        self.sessions.lock().unwrap()
     }
 
     async fn get_app(
@@ -1098,12 +1106,12 @@ impl SidecarServer {
     pub async fn compute_stats(&self) -> SidecarStats {
         let mut telemetry_stats_errors = 0;
         let telemetry_stats = join_all({
-            let sessions = self.sessions.lock().unwrap();
+            let sessions = self.lock_sessions();
             let mut futures = vec![];
             for (_, s) in sessions.iter() {
-                let runtimes = s.runtimes.lock().unwrap();
+                let runtimes = s.lock_runtimes();
                 for (_, r) in runtimes.iter() {
-                    let apps = r.apps.lock().unwrap();
+                    let apps = r.lock_apps();
                     for (_, a) in apps.iter() {
                         if let Some(Some(existing_app)) = a.peek() {
                             match existing_app.telemetry.stats() {
@@ -1117,48 +1125,40 @@ impl SidecarServer {
             futures
         })
         .await;
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.lock_sessions();
         SidecarStats {
             trace_flusher: self.trace_flusher.stats(),
             sessions: sessions.len() as u32,
             session_counter_size: self.session_counter.lock().unwrap().len() as u32,
             runtimes: sessions
                 .values()
-                .map(|s| s.runtimes.lock().unwrap().len() as u32)
+                .map(|s| s.lock_runtimes().len() as u32)
                 .sum(),
             apps: sessions
                 .values()
                 .map(|s| {
-                    s.runtimes
-                        .lock()
-                        .unwrap()
+                    s.lock_runtimes()
                         .values()
-                        .map(|r| r.apps.lock().unwrap().len() as u32)
+                        .map(|r| r.lock_apps().len() as u32)
                         .sum::<u32>()
                 })
                 .sum(),
             active_apps: sessions
                 .values()
                 .map(|s| {
-                    s.runtimes
-                        .lock()
-                        .unwrap()
+                    s.lock_runtimes()
                         .values()
-                        .map(|r| r.app_or_actions.lock().unwrap().len() as u32)
+                        .map(|r| r.lock_app_or_actions().len() as u32)
                         .sum::<u32>()
                 })
                 .sum(),
             enqueued_apps: sessions
                 .values()
                 .map(|s| {
-                    s.runtimes
-                        .lock()
-                        .unwrap()
+                    s.lock_runtimes()
                         .values()
                         .map(|r| {
-                            r.app_or_actions
-                                .lock()
-                                .unwrap()
+                            r.lock_app_or_actions()
                                 .values()
                                 .filter(|a| matches!(a, AppOrQueue::Queue(_)))
                                 .count() as u32
@@ -1169,14 +1169,10 @@ impl SidecarServer {
             enqueued_telemetry_data: sessions
                 .values()
                 .map(|s| {
-                    s.runtimes
-                        .lock()
-                        .unwrap()
+                    s.lock_runtimes()
                         .values()
                         .map(|r| {
-                            r.app_or_actions
-                                .lock()
-                                .unwrap()
+                            r.lock_app_or_actions()
                                 .values()
                                 .filter_map(|a| match a {
                                     AppOrQueue::Queue(q) => Some(q.stats()),
@@ -1190,14 +1186,10 @@ impl SidecarServer {
             telemetry_metrics_contexts: sessions
                 .values()
                 .map(|s| {
-                    s.runtimes
-                        .lock()
-                        .unwrap()
+                    s.lock_runtimes()
                         .values()
                         .map(|r| {
-                            r.apps
-                                .lock()
-                                .unwrap()
+                            r.lock_apps()
                                 .values()
                                 .map(|a| {
                                     a.peek().unwrap_or(&None).as_ref().map_or(0, |w| {
@@ -1266,7 +1258,7 @@ impl SidecarInterface for SidecarServer {
         actions: Vec<SidecarAction>,
     ) -> Self::EnqueueActionsFut {
         let rt_info = self.get_runtime(&instance_id);
-        let mut queue = rt_info.app_or_actions.lock().unwrap();
+        let mut queue = rt_info.lock_app_or_actions();
         match queue.entry(queue_id) {
             Entry::Occupied(mut entry) => match entry.get_mut() {
                 AppOrQueue::Queue(ref mut data) => {
@@ -1324,7 +1316,7 @@ impl SidecarInterface for SidecarServer {
         let (future, completer) = ManualFuture::new();
         let app_or_queue = {
             let rt_info = self.get_runtime(&instance_id);
-            let mut app_or_actions = rt_info.app_or_actions.lock().unwrap();
+            let mut app_or_actions = rt_info.lock_app_or_actions();
             match app_or_actions.get(&queue_id) {
                 Some(AppOrQueue::Queue(_)) => {
                     app_or_actions.insert(queue_id, AppOrQueue::App(future.shared()))
@@ -1365,9 +1357,7 @@ impl SidecarInterface for SidecarServer {
                         matches!(action, TelemetryActions::Lifecycle(LifecycleAction::Stop))
                     }) {
                         self.get_runtime(&instance_id)
-                            .app_or_actions
-                            .lock()
-                            .unwrap()
+                            .lock_app_or_actions()
                             .remove(&queue_id);
                     }
 
