@@ -5,6 +5,7 @@ use crate::config;
 use chrono::{DateTime, Utc};
 use lazy_static::lazy_static;
 use priority_queue::PriorityQueue;
+use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -65,6 +66,13 @@ unsafe impl<K, V> Sync for TemporarilyRetainedMap<K, V> where
 {
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct TemporarilyRetainedMapStats {
+    pub elements: u32,
+    pub live_counters: u32,
+    pub pending_removal: u32,
+}
+
 impl<K, V> TemporarilyRetainedMap<K, V>
 where
     K: TemporarilyRetainedKeyParser<V> + Clone + Eq + Hash,
@@ -95,6 +103,14 @@ where
         }
 
         TemporarilyRetainedMapGuard { key, map: self }
+    }
+
+    pub fn stats(&self) -> TemporarilyRetainedMapStats {
+        TemporarilyRetainedMapStats {
+            elements: self.maps.read().unwrap().len() as u32,
+            live_counters: self.live_counter.lock().unwrap().len() as u32,
+            pending_removal: self.pending_removal.lock().unwrap().len() as u32,
+        }
     }
 }
 
@@ -151,6 +167,10 @@ impl MultiEnvFilter {
 
     pub fn add(&self, key: String) -> TemporarilyRetainedMapGuard<String, EnvFilter> {
         self.map.add(key)
+    }
+
+    pub fn stats(&self) -> TemporarilyRetainedMapStats {
+        self.map.stats()
     }
 
     pub fn collect_logs_created_count(&self) -> HashMap<Level, u32> {

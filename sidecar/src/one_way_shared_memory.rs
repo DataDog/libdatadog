@@ -206,4 +206,14 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
 
         handle.replace(mapped);
     }
+
+    pub fn size(&self) -> usize {
+        self.handle
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .as_slice()
+            .len()
+    }
 }

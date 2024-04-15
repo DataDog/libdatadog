@@ -63,6 +63,15 @@ pub struct MetricBuckets {
     distributions: HashMap<BucketKey, Vec<f64>>,
 }
 
+#[derive(Default, Serialize, Deserialize)]
+pub struct MetricBucketStats {
+    pub buckets: u32,
+    pub series: u32,
+    pub series_points: u32,
+    pub distributions: u32,
+    pub distributions_points: u32,
+}
+
 impl MetricBuckets {
     pub const METRICS_FLUSH_INTERVAL: time::Duration = time::Duration::from_secs(10);
 
@@ -132,6 +141,16 @@ impl MetricBuckets {
             }
         }
     }
+
+    pub fn stats(&self) -> MetricBucketStats {
+        MetricBucketStats {
+            buckets: self.buckets.len() as u32,
+            series: self.series.len() as u32,
+            series_points: self.series.values().map(|v| v.len() as u32).sum(),
+            distributions: self.distributions.len() as u32,
+            distributions_points: self.distributions.values().map(|v| v.len() as u32).sum(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -150,6 +169,14 @@ pub struct MetricContextGuard<'a> {
 impl<'a> MetricContextGuard<'a> {
     pub fn read(&self, key: ContextKey) -> Option<&MetricContext> {
         self.guard.store.get(key.0 as usize)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.guard.store.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.guard.store.len()
     }
 }
 
