@@ -7,7 +7,7 @@ mod queuehasmpap {
     use hashbrown::{hash_map::DefaultHashBuilder, raw::RawTable};
     use std::{
         collections::VecDeque,
-        hash::{BuildHasher, Hash, Hasher},
+        hash::{BuildHasher, Hash},
     };
 
     pub struct QueueHashMap<K, V> {
@@ -126,9 +126,7 @@ mod queuehasmpap {
     }
 
     fn make_hash<T: Hash>(h: &DefaultHashBuilder, i: &T) -> u64 {
-        let mut hasher = h.build_hasher();
-        i.hash(&mut hasher);
-        hasher.finish()
+        h.hash_one(i)
     }
 }
 
