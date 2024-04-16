@@ -20,11 +20,11 @@ use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::slice;
 use std::time::Duration;
 
-use datadog_sidecar::service::InstanceId;
+use datadog_sidecar::service::{InstanceId, QueueId};
 
 use datadog_sidecar::interface::{
     blocking::{self, SidecarTransport},
-    QueueId, RuntimeMeta, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    RuntimeMeta, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
 use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
 use ddcommon::Endpoint;

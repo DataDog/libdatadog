@@ -27,7 +27,6 @@ use manual_future::{ManualFuture, ManualFutureCompleter};
 
 use datadog_ipc::platform::{FileBackedHandle, NamedShmHandle, ShmHandle};
 use datadog_ipc::tarpc::{context::Context, server::Channel};
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, VecSkipError};
 use tokio::select;
@@ -57,7 +56,7 @@ use crate::log::{
 };
 use crate::{config, log, tracer};
 
-use crate::service::InstanceId;
+use crate::service::{InstanceId, QueueId};
 
 #[datadog_sidecar_macros::extract_request_id]
 #[datadog_ipc_macros::impl_transfer_handles]
@@ -172,20 +171,6 @@ impl RuntimeMeta {
             language_name: language_name.into(),
             language_version: language_version.into(),
             tracer_version: tracer_version.into(),
-        }
-    }
-}
-
-#[derive(Default, Copy, Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[repr(transparent)]
-pub struct QueueId {
-    inner: u64,
-}
-
-impl QueueId {
-    pub fn new_unique() -> Self {
-        Self {
-            inner: rand::thread_rng().gen_range(1u64..u64::MAX),
         }
     }
 }
@@ -1485,10 +1470,9 @@ pub mod blocking {
     use datadog_ipc::transport::blocking::BlockingTransport;
 
     use crate::interface::{SerializedTracerHeaderTags, SessionConfig, SidecarAction};
+    use crate::service::{InstanceId, QueueId};
 
-    use super::{
-        InstanceId, QueueId, RuntimeMeta, SidecarInterfaceRequest, SidecarInterfaceResponse,
-    };
+    use super::{RuntimeMeta, SidecarInterfaceRequest, SidecarInterfaceResponse};
 
     pub type SidecarTransport =
         BlockingTransport<SidecarInterfaceResponse, SidecarInterfaceRequest>;
