@@ -57,6 +57,8 @@ use crate::log::{
 };
 use crate::{config, log, tracer};
 
+use crate::service::InstanceId;
+
 #[datadog_sidecar_macros::extract_request_id]
 #[datadog_ipc_macros::impl_transfer_handles]
 #[tarpc::service]
@@ -170,24 +172,6 @@ impl RuntimeMeta {
             language_name: language_name.into(),
             language_version: language_version.into(),
             tracer_version: tracer_version.into(),
-        }
-    }
-}
-
-#[derive(Default, Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct InstanceId {
-    session_id: String,
-    runtime_id: String,
-}
-
-impl InstanceId {
-    pub fn new<T>(session_id: T, runtime_id: T) -> Self
-    where
-        T: Into<String>,
-    {
-        InstanceId {
-            session_id: session_id.into(),
-            runtime_id: runtime_id.into(),
         }
     }
 }
