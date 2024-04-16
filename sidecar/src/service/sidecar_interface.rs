@@ -8,6 +8,7 @@ use crate::service::{
 use anyhow::Result;
 use datadog_ipc::platform::ShmHandle;
 use datadog_ipc::tarpc;
+use crate::dogstatsd::DogStatsDAction;
 
 /// The `SidecarInterface` trait defines the necessary methods for the sidecar service.
 ///
@@ -93,6 +94,17 @@ pub trait SidecarInterface {
         instance_id: InstanceId,
         data: Vec<u8>,
         headers: SerializedTracerHeaderTags,
+    );
+
+    /// Sends DogStatsD actions.
+    ///
+    /// # Arguments
+    ///
+    /// * `instance_id` - The ID of the instance.
+    /// * `actions` - The DogStatsD actions to send.
+    async fn send_dogstatsd_actions(
+        instance_id: InstanceId,
+        actions: Vec<DogStatsDAction>,
     );
 
     /// Sends a ping to the service.
