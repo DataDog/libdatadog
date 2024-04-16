@@ -20,11 +20,11 @@ use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::slice;
 use std::time::Duration;
 
-use datadog_sidecar::service::{InstanceId, QueueId};
+use datadog_sidecar::service::{InstanceId, QueueId, RuntimeMetadata};
 
 use datadog_sidecar::interface::{
     blocking::{self, SidecarTransport},
-    RuntimeMeta, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
 use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
 use ddcommon::Endpoint;
@@ -243,8 +243,8 @@ pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_build(
     language_name: ffi::CharSlice,
     language_version: ffi::CharSlice,
     tracer_version: ffi::CharSlice,
-) -> Box<RuntimeMeta> {
-    let inner = RuntimeMeta::new(
+) -> Box<RuntimeMetadata> {
+    let inner = RuntimeMetadata::new(
         language_name.to_utf8_lossy(),
         language_version.to_utf8_lossy(),
         tracer_version.to_utf8_lossy(),
@@ -255,7 +255,7 @@ pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_build(
 
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_drop(meta: Box<RuntimeMeta>) {
+pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_drop(meta: Box<RuntimeMetadata>) {
     drop(meta)
 }
 
@@ -347,7 +347,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
     queue_id: &QueueId,
-    runtime_meta: &RuntimeMeta,
+    runtime_meta: &RuntimeMetadata,
     service_name: ffi::CharSlice,
     env_name: ffi::CharSlice,
 ) -> MaybeError {

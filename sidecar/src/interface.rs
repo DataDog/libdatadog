@@ -56,7 +56,7 @@ use crate::log::{
 };
 use crate::{config, log, tracer};
 
-use crate::service::{InstanceId, QueueId};
+use crate::service::{InstanceId, QueueId, RuntimeMetadata};
 
 #[datadog_sidecar_macros::extract_request_id]
 #[datadog_ipc_macros::impl_transfer_handles]
@@ -70,7 +70,7 @@ pub trait SidecarInterface {
     async fn register_service_and_flush_queued_actions(
         instance_id: InstanceId,
         queue_id: QueueId,
-        meta: RuntimeMeta,
+        meta: RuntimeMetadata,
         service_name: String,
         env_name: String,
     );
@@ -151,26 +151,6 @@ impl<'a> From<TracerHeaderTags<'a>> for SerializedTracerHeaderTags {
     fn from(value: TracerHeaderTags<'a>) -> Self {
         SerializedTracerHeaderTags {
             data: bincode::serialize(&value).unwrap(),
-        }
-    }
-}
-
-#[derive(Default, Clone, Debug, Serialize, Deserialize)]
-pub struct RuntimeMeta {
-    language_name: String,
-    language_version: String,
-    tracer_version: String,
-}
-
-impl RuntimeMeta {
-    pub fn new<T>(language_name: T, language_version: T, tracer_version: T) -> Self
-    where
-        T: Into<String>,
-    {
-        Self {
-            language_name: language_name.into(),
-            language_version: language_version.into(),
-            tracer_version: tracer_version.into(),
         }
     }
 }
@@ -986,7 +966,7 @@ impl SidecarServer {
     async fn get_app(
         &self,
         instance_id: &InstanceId,
-        runtime_meta: &RuntimeMeta,
+        runtime_meta: &RuntimeMetadata,
         service_name: &str,
         env_name: &str,
         inital_actions: Vec<TelemetryActions>,
@@ -1274,7 +1254,7 @@ impl SidecarInterface for SidecarServer {
         _: Context,
         instance_id: InstanceId,
         queue_id: QueueId,
-        runtime_meta: RuntimeMeta,
+        runtime_meta: RuntimeMetadata,
         service_name: String,
         env_name: String,
     ) -> Self::RegisterServiceAndFlushQueuedActionsFut {
@@ -1472,7 +1452,7 @@ pub mod blocking {
     use crate::interface::{SerializedTracerHeaderTags, SessionConfig, SidecarAction};
     use crate::service::{InstanceId, QueueId};
 
-    use super::{RuntimeMeta, SidecarInterfaceRequest, SidecarInterfaceResponse};
+    use super::{RuntimeMetadata, SidecarInterfaceRequest, SidecarInterfaceResponse};
 
     pub type SidecarTransport =
         BlockingTransport<SidecarInterfaceResponse, SidecarInterfaceRequest>;
@@ -1510,7 +1490,7 @@ pub mod blocking {
         transport: &mut SidecarTransport,
         instance_id: &InstanceId,
         queue_id: &QueueId,
-        runtime_metadata: &RuntimeMeta,
+        runtime_metadata: &RuntimeMetadata,
         service_name: Cow<str>,
         env_name: Cow<str>,
     ) -> io::Result<()> {
