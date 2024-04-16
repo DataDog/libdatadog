@@ -229,6 +229,7 @@ fn encode_bucket(key: BucketKey, bucket: Bucket) -> pb::ClientGroupedStats {
         span_kind: String::new(),
         db_type: String::new(),
         peer_tags: Vec::new(),
+        is_trace_root: false,
     }
 }
 
