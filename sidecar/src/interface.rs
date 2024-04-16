@@ -7,7 +7,6 @@ use std::iter::{zip, Sum};
 use std::ops::{Add, DerefMut, Sub};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::time;
 use std::time::{Duration, Instant, SystemTime};
 use std::{
     collections::HashMap,
@@ -715,7 +714,7 @@ impl TraceFlusher {
         tokio::spawn(async move {
             loop {
                 select! {
-                    _ = tokio::time::sleep(time::Duration::from_millis(
+                    _ = tokio::time::sleep(Duration::from_millis(
                         self.interval.load(Ordering::Relaxed),
                     )) => {},
                     _ = force_flush => {},
@@ -840,8 +839,8 @@ pub struct SidecarServer {
 
 impl SidecarServer {
     pub async fn accept_connection(self, async_channel: AsyncChannel) {
-        let server = datadog_ipc::tarpc::server::BaseChannel::new(
-            datadog_ipc::tarpc::server::Config {
+        let server = tarpc::server::BaseChannel::new(
+            tarpc::server::Config {
                 pending_response_buffer: 10000,
             },
             Transport::from(async_channel),
@@ -969,7 +968,7 @@ impl SidecarServer {
         runtime_meta: &RuntimeMetadata,
         service_name: &str,
         env_name: &str,
-        inital_actions: Vec<TelemetryActions>,
+        initial_actions: Vec<TelemetryActions>,
     ) -> Option<AppInstance> {
         let rt_info = self.get_runtime(instance_id);
 
@@ -1006,7 +1005,7 @@ impl SidecarServer {
                     telemetry_metrics: Default::default(),
                 };
 
-                instance.telemetry.send_msgs(inital_actions).await.ok();
+                instance.telemetry.send_msgs(initial_actions).await.ok();
 
                 instance
                     .telemetry
@@ -1173,27 +1172,6 @@ pub struct SessionConfig {
 }
 
 impl SidecarInterface for SidecarServer {
-    type PingFut = Ready<()>;
-
-    fn ping(self, _: Context) -> Self::PingFut {
-        future::ready(())
-    }
-
-    type ShutdownRuntimeFut = NoResponse;
-    fn shutdown_runtime(self, _: Context, instance_id: InstanceId) -> Self::ShutdownRuntimeFut {
-        let session = self.get_session(&instance_id.session_id);
-        tokio::spawn(async move { session.shutdown_runtime(&instance_id.runtime_id).await });
-
-        no_response()
-    }
-
-    type ShutdownSessionFut = NoResponse;
-
-    fn shutdown_session(self, _: Context, session_id: String) -> Self::ShutdownSessionFut {
-        tokio::spawn(async move { SidecarServer::stop_session(&self, &session_id).await });
-        no_response()
-    }
-
     type EnqueueActionsFut = NoResponse;
 
     fn enqueue_actions(
@@ -1248,7 +1226,6 @@ impl SidecarInterface for SidecarServer {
     }
 
     type RegisterServiceAndFlushQueuedActionsFut = NoResponse;
-
     fn register_service_and_flush_queued_actions(
         self,
         _: Context,
@@ -1372,6 +1349,22 @@ impl SidecarInterface for SidecarServer {
         })
     }
 
+    type ShutdownRuntimeFut = NoResponse;
+
+    fn shutdown_runtime(self, _: Context, instance_id: InstanceId) -> Self::ShutdownRuntimeFut {
+        let session = self.get_session(&instance_id.session_id);
+        tokio::spawn(async move { session.shutdown_runtime(&instance_id.runtime_id).await });
+
+        no_response()
+    }
+
+    type ShutdownSessionFut = NoResponse;
+
+    fn shutdown_session(self, _: Context, session_id: String) -> Self::ShutdownSessionFut {
+        tokio::spawn(async move { SidecarServer::stop_session(&self, &session_id).await });
+        no_response()
+    }
+
     type SendTraceV04ShmFut = NoResponse;
 
     fn send_trace_v04_shm(
@@ -1421,6 +1414,12 @@ impl SidecarInterface for SidecarServer {
         }
 
         no_response()
+    }
+
+    type PingFut = Ready<()>;
+
+    fn ping(self, _: Context) -> Self::PingFut {
+        future::ready(())
     }
 
     type DumpFut = Pin<Box<dyn Send + futures::Future<Output = String>>>;
