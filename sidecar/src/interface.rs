@@ -49,15 +49,12 @@ use ddtelemetry::{
     },
 };
 
-use crate::log::{
-    MultiEnvFilterGuard, MultiWriterGuard, TemporarilyRetainedMapStats, MULTI_LOG_FILTER,
-    MULTI_LOG_WRITER,
-};
-use crate::{config, log, tracer};
+use crate::log::{TemporarilyRetainedMapStats, MULTI_LOG_FILTER, MULTI_LOG_WRITER};
+use crate::{config, log};
 
 use crate::service::{
     InstanceId, QueueId, RequestIdentification, RequestIdentifier, RuntimeMetadata,
-    SerializedTracerHeaderTags, SidecarInterface, SidecarInterfaceRequest,
+    SerializedTracerHeaderTags, SessionInfo, SidecarInterface, SidecarInterfaceRequest,
     SidecarInterfaceResponse,
 };
 
@@ -94,114 +91,6 @@ pub enum SidecarAction {
     PhpComposerTelemetryFile(PathBuf),
 }
 
-#[derive(Default, Clone)]
-struct SessionInfo {
-    runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
-    session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
-    tracer_config: Arc<Mutex<tracer::Config>>,
-    log_guard: Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
-    #[cfg(feature = "tracing")]
-    session_id: String,
-}
-
-impl SessionInfo {
-    fn get_runtime(&self, runtime_id: &String) -> RuntimeInfo {
-        let mut runtimes = self.lock_runtimes();
-        match runtimes.get(runtime_id) {
-            Some(runtime) => runtime.clone(),
-            None => {
-                let mut runtime = RuntimeInfo::default();
-                runtimes.insert(runtime_id.clone(), runtime.clone());
-                #[cfg(feature = "tracing")]
-                if enabled!(Level::INFO) {
-                    runtime.instance_id = InstanceId {
-                        session_id: self.session_id.clone(),
-                        runtime_id: runtime_id.clone(),
-                    };
-                    info!(
-                        "Registering runtime_id {} for session {}",
-                        runtime_id, self.session_id
-                    );
-                }
-                runtime
-            }
-        }
-    }
-
-    async fn shutdown(&self) {
-        let runtimes: Vec<RuntimeInfo> = self
-            .lock_runtimes()
-            .drain()
-            .map(|(_, instance)| instance)
-            .collect();
-
-        let runtimes_shutting_down: Vec<_> = runtimes
-            .into_iter()
-            .map(|rt| tokio::spawn(async move { rt.shutdown().await }))
-            .collect();
-
-        future::join_all(runtimes_shutting_down).await;
-    }
-
-    async fn shutdown_running_instances(&self) {
-        let runtimes: Vec<RuntimeInfo> = self
-            .lock_runtimes()
-            .iter()
-            .map(|(_, instance)| instance.clone())
-            .collect();
-
-        let instances_shutting_down: Vec<_> = runtimes
-            .into_iter()
-            .map(|rt| tokio::spawn(async move { rt.shutdown().await }))
-            .collect();
-
-        future::join_all(instances_shutting_down).await;
-    }
-
-    async fn shutdown_runtime(self, runtime_id: &String) {
-        let runtime = match self.lock_runtimes().remove(runtime_id) {
-            Some(rt) => rt,
-            None => return,
-        };
-
-        runtime.shutdown().await
-    }
-
-    fn lock_runtimes(&self) -> MutexGuard<HashMap<String, RuntimeInfo>> {
-        self.runtimes.lock().unwrap()
-    }
-
-    fn get_telemetry_config(&self) -> MutexGuard<Option<ddtelemetry::config::Config>> {
-        let mut cfg = self.session_config.lock().unwrap();
-
-        if (*cfg).is_none() {
-            *cfg = Some(ddtelemetry::config::Config::from_env())
-        }
-
-        cfg
-    }
-
-    fn modify_telemetry_config<F>(&self, mut f: F)
-    where
-        F: FnMut(&mut ddtelemetry::config::Config),
-    {
-        if let Some(cfg) = &mut *self.get_telemetry_config() {
-            f(cfg)
-        }
-    }
-
-    fn get_trace_config(&self) -> MutexGuard<tracer::Config> {
-        self.tracer_config.lock().unwrap()
-    }
-
-    fn modify_trace_config<F>(&self, mut f: F)
-    where
-        F: FnMut(&mut tracer::Config),
-    {
-        f(&mut self.get_trace_config());
-    }
-}
-
 #[allow(clippy::large_enum_variant)]
 enum AppOrQueue {
     App(Shared<ManualFuture<(String, String)>>),
@@ -210,11 +99,11 @@ enum AppOrQueue {
 
 #[allow(clippy::type_complexity)]
 #[derive(Clone, Default)]
-struct RuntimeInfo {
+pub struct RuntimeInfo {
     apps: Arc<Mutex<HashMap<(String, String), Shared<ManualFuture<Option<AppInstance>>>>>>,
     app_or_actions: Arc<Mutex<HashMap<QueueId, AppOrQueue>>>,
     #[cfg(feature = "tracing")]
-    instance_id: InstanceId,
+    pub instance_id: InstanceId,
 }
 
 impl RuntimeInfo {
@@ -239,7 +128,7 @@ impl RuntimeInfo {
         }
     }
 
-    async fn shutdown(self) {
+    pub async fn shutdown(self) {
         #[cfg(feature = "tracing")]
         info!(
             "Shutting down runtime_id {} for session {}",
