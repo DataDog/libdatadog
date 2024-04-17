@@ -95,17 +95,20 @@ impl<'pprof> Replayer<'pprof> {
             .map(|label| {
                 Ok(api::Label {
                     key: profile_index.get_string(label.key)?,
+                    key_id: 0,
                     str: if label.str == 0 {
                         None
                     } else {
                         Some(profile_index.get_string(label.str)?)
                     },
+                    str_id: 0,
                     num: label.num,
                     num_unit: if label.num_unit == 0 {
                         None
                     } else {
                         Some(profile_index.get_string(label.num_unit)?)
                     },
+                    num_unit_id: 0,
                 })
             })
             .collect();
@@ -158,7 +161,9 @@ impl<'pprof> Replayer<'pprof> {
             memory_limit: mapping.memory_limit,
             file_offset: mapping.file_offset,
             filename: profile_index.get_string(mapping.filename)?,
+            filename_id: 0,
             build_id: profile_index.get_string(mapping.build_id)?,
+            build_id_id: 0,
         })
     }
 
@@ -203,8 +208,11 @@ impl<'pprof> Replayer<'pprof> {
         let function = profile_index.get_function(id)?;
         Ok(api::Function {
             name: profile_index.get_string(function.name)?,
+            name_id: 0,
             system_name: profile_index.get_string(function.system_name)?,
+            system_name_id: 0,
             filename: profile_index.get_string(function.filename)?,
+            filename_id: 0,
             start_line: function.start_line,
         })
     }

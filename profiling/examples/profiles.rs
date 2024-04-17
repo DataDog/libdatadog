@@ -57,7 +57,7 @@ fn main() {
     };
 
     // Intentionally use the current time.
-    let mut profile = Profile::new(SystemTime::now(), &sample_types, Some(period));
+    let mut profile = Profile::new(SystemTime::now(), &sample_types, Some(period), None);
 
     match profile.add_sample(sample, None) {
         Ok(_) => {}
