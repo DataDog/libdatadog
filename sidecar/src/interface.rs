@@ -55,7 +55,10 @@ use crate::log::{
 };
 use crate::{config, log, tracer};
 
-use crate::service::{InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags};
+use crate::service::{
+    InstanceId, QueueId, RequestIdentification, RequestIdentifier, RuntimeMetadata,
+    SerializedTracerHeaderTags,
+};
 
 #[datadog_sidecar_macros::extract_request_id]
 #[datadog_ipc_macros::impl_transfer_handles]
@@ -89,16 +92,6 @@ pub trait SidecarInterface {
     async fn ping();
     async fn dump() -> String;
     async fn stats() -> String;
-}
-
-pub trait RequestIdentification {
-    fn extract_identifier(&self) -> RequestIdentifier;
-}
-
-pub enum RequestIdentifier {
-    InstanceId(InstanceId),
-    SessionId(String),
-    None,
 }
 
 #[derive(Serialize, Deserialize)]
