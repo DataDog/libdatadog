@@ -16,7 +16,7 @@ pub fn main() {
 
     info!("Starting serverless trace mini agent");
 
-    let env_verifier = Arc::new(env_verifier::ServerlessEnvVerifier {});
+    let env_verifier = Arc::new(env_verifier::ServerlessEnvVerifier::default());
 
     let trace_flusher = Arc::new(trace_flusher::ServerlessTraceFlusher {});
     let trace_processor = Arc::new(trace_processor::ServerlessTraceProcessor {});
