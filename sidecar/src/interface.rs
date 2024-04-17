@@ -37,7 +37,7 @@ use crate::config::get_product_endpoint;
 use datadog_ipc::tarpc;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
-use datadog_trace_utils::trace_utils::{SendData, TracerHeaderTags};
+use datadog_trace_utils::trace_utils::SendData;
 use ddcommon::{tag::Tag, Endpoint};
 use ddtelemetry::worker::TelemetryWorkerStats;
 use ddtelemetry::{
@@ -55,7 +55,7 @@ use crate::log::{
 };
 use crate::{config, log, tracer};
 
-use crate::service::{InstanceId, QueueId, RuntimeMetadata};
+use crate::service::{InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags};
 
 #[datadog_sidecar_macros::extract_request_id]
 #[datadog_ipc_macros::impl_transfer_handles]
@@ -132,26 +132,6 @@ pub enum SidecarAction {
     RegisterTelemetryMetric(MetricContext),
     AddTelemetryMetricPoint((String, f64, Vec<Tag>)),
     PhpComposerTelemetryFile(PathBuf),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SerializedTracerHeaderTags {
-    data: Vec<u8>,
-}
-
-impl<'a> From<&'a SerializedTracerHeaderTags> for TracerHeaderTags<'a> {
-    fn from(serialized: &'a SerializedTracerHeaderTags) -> Self {
-        // Panics if deserialization fails (but that shouldn't ever happen)
-        bincode::deserialize(serialized.data.as_slice()).unwrap()
-    }
-}
-
-impl<'a> From<TracerHeaderTags<'a>> for SerializedTracerHeaderTags {
-    fn from(value: TracerHeaderTags<'a>) -> Self {
-        SerializedTracerHeaderTags {
-            data: bincode::serialize(&value).unwrap(),
-        }
-    }
 }
 
 #[derive(Default, Clone)]
@@ -1024,7 +1004,13 @@ impl SidecarServer {
     }
 
     fn send_trace_v04(&self, headers: &SerializedTracerHeaderTags, data: &[u8], target: &Endpoint) {
-        let headers: TracerHeaderTags = headers.into();
+        let headers = match headers.try_into() {
+            Ok(headers) => headers,
+            Err(e) => {
+                error!("Failed to convert SerializedTracerHeaderTags into TracerHeaderTags with error {:?}", e);
+                return;
+            }
+        };
 
         let size = data.len();
         let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_slice(data) {

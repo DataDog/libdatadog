@@ -11,6 +11,7 @@ use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
 use ddcommon_ffi as ffi;
 use libc::c_char;
+use std::convert::TryInto;
 use std::ffi::c_void;
 use std::fs::File;
 #[cfg(unix)]
@@ -20,11 +21,11 @@ use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::slice;
 use std::time::Duration;
 
-use datadog_sidecar::service::{InstanceId, QueueId, RuntimeMetadata};
+use datadog_sidecar::service::{InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags};
 
 use datadog_sidecar::interface::{
     blocking::{self, SidecarTransport},
-    SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    SessionConfig, SidecarAction,
 };
 use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
 use ddcommon::Endpoint;
@@ -431,19 +432,27 @@ pub struct TracerHeaderTags<'a> {
     pub client_computed_stats: bool,
 }
 
-impl<'a> From<&'a TracerHeaderTags<'a>> for SerializedTracerHeaderTags {
-    fn from(tags: &'a TracerHeaderTags<'a>) -> Self {
-        datadog_trace_utils::trace_utils::TracerHeaderTags {
-            lang: &tags.lang.to_utf8_lossy(),
-            lang_version: &tags.lang_version.to_utf8_lossy(),
-            lang_interpreter: &tags.lang_interpreter.to_utf8_lossy(),
-            lang_vendor: &tags.lang_vendor.to_utf8_lossy(),
-            tracer_version: &tags.tracer_version.to_utf8_lossy(),
-            container_id: &tags.container_id.to_utf8_lossy(),
-            client_computed_top_level: tags.client_computed_top_level,
-            client_computed_stats: tags.client_computed_stats,
-        }
-        .into()
+impl<'a> TryInto<SerializedTracerHeaderTags> for &'a TracerHeaderTags<'a> {
+    type Error = std::io::Error;
+
+    fn try_into(self) -> Result<SerializedTracerHeaderTags, Self::Error> {
+        let tags = datadog_trace_utils::trace_utils::TracerHeaderTags {
+            lang: &self.lang.to_utf8_lossy(),
+            lang_version: &self.lang_version.to_utf8_lossy(),
+            lang_interpreter: &self.lang_interpreter.to_utf8_lossy(),
+            lang_vendor: &self.lang_vendor.to_utf8_lossy(),
+            tracer_version: &self.tracer_version.to_utf8_lossy(),
+            container_id: &self.container_id.to_utf8_lossy(),
+            client_computed_top_level: self.client_computed_top_level,
+            client_computed_stats: self.client_computed_stats,
+        };
+
+        tags.try_into().map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Failed to convert TracerHeaderTags to SerializedTracerHeaderTags",
+            )
+        })
     }
 }
 
@@ -455,11 +464,13 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_shm(
     shm_handle: Box<ShmHandle>,
     tracer_header_tags: &TracerHeaderTags,
 ) -> MaybeError {
+    let tracer_header_tags = try_c!(tracer_header_tags.try_into());
+
     try_c!(blocking::send_trace_v04_shm(
         transport,
         instance_id,
         *shm_handle,
-        tracer_header_tags.into(),
+        tracer_header_tags,
     ));
 
     MaybeError::None
@@ -473,11 +484,13 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
     data: ffi::CharSlice,
     tracer_header_tags: &TracerHeaderTags,
 ) -> MaybeError {
+    let tracer_header_tags = try_c!(tracer_header_tags.try_into());
+
     try_c!(blocking::send_trace_v04_bytes(
         transport,
         instance_id,
         data.as_bytes().to_vec(),
-        tracer_header_tags.into(),
+        tracer_header_tags,
     ));
 
     MaybeError::None
