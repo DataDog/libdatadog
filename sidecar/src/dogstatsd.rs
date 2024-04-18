@@ -5,6 +5,7 @@ use datadog_statsd::Client;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 use ddcommon::Endpoint;
+use ddcommon::tag::Tag;
 
 #[derive(Default, Clone)]
 pub struct Config {
@@ -31,8 +32,8 @@ impl Config {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DogStatsDAction {
-    Count(String, f64),
-    Gauge(String, f64),
+    Count(String, f64, Vec<Tag>),
+    Gauge(String, f64, Vec<Tag>),
 }
 
 #[derive(Default)]
@@ -80,10 +81,20 @@ impl Flusher {
             // FIXME: use pipeline?
             for action in actions {
                 match action {
-                    DogStatsDAction::Count(metric, value) => client.count(metric.as_str(), value, &None),
-                    DogStatsDAction::Gauge(metric, value) => client.gauge(metric.as_str(), value, &None),
+                    DogStatsDAction::Count(metric, value, tags) => client.count(metric.as_str(), value, &self.convert_tags(&tags)),
+                    DogStatsDAction::Gauge(metric, value, tags) => client.gauge(metric.as_str(), value, &self.convert_tags(&tags)),
                 }
             }
         }
+    }
+
+    fn convert_tags<'a>(&'a self, tags: &'a Vec<Tag>) -> Option<Vec<&str>> { // FIXME: lifetime...
+        if tags.len() == 0 {
+            return None;
+        }
+
+        Some(tags.into_iter().map(|t| {
+            t.as_ref()
+        }).collect())
     }
 }
