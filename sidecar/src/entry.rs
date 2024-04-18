@@ -16,7 +16,7 @@ use std::{
 use tokio::sync::mpsc;
 
 use crate::interface::blocking::SidecarTransport;
-use crate::interface::SidecarServer;
+use crate::service::SidecarServer;
 use datadog_ipc::platform::AsyncChannel;
 
 use crate::setup::{self, IpcClient, IpcServer, Liaison};

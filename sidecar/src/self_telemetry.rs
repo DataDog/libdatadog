@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 use crate::config::Config;
-use crate::interface::SidecarServer;
 use crate::log;
+use crate::service::SidecarServer;
 use crate::watchdog::WatchdogHandle;
 use ddcommon::tag::Tag;
 use ddtelemetry::data::metrics::{MetricNamespace, MetricType};

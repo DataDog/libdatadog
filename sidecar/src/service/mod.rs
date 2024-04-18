@@ -10,7 +10,7 @@ pub use session_info::SessionInfo;
 pub use sidecar_interface::{
     SidecarInterface, SidecarInterfaceClient, SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
-
+pub use sidecar_server::SidecarServer;
 mod instance_id;
 pub mod queue_id;
 mod request_identification;
@@ -18,3 +18,4 @@ mod runtime_metadata;
 mod serialized_tracer_header_tags;
 mod session_info;
 mod sidecar_interface;
+mod sidecar_server;
