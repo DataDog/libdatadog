@@ -9,7 +9,7 @@ use ddtelemetry::{
 use ffi::slice::AsBytes;
 use std::ptr::NonNull;
 
-use crate::MaybeError;
+use ffi::MaybeError;
 
 #[cfg(not(feature = "expanded_builder_macros"))]
 mod macros;

@@ -32,7 +32,8 @@ use ddtelemetry::{
 };
 use ffi::slice::AsBytes;
 
-use ddtelemetry_ffi::{try_c, MaybeError};
+use ddcommon_ffi::MaybeError;
+use ddtelemetry_ffi::try_c;
 
 #[repr(C)]
 pub struct NativeFile {
