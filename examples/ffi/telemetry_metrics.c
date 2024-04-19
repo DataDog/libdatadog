@@ -12,15 +12,16 @@
 #include <windows.h>
 #endif
 
-
 #define TRY(expr)                                                                                  \
   {                                                                                                \
     ddog_MaybeError err = expr;                                                                    \
-    if (err.tag == DDOG_OPTION_VEC_U8_SOME_VEC_U8) {                                               \
-      fprintf(stderr, "ERROR: %.*s", (int)err.some.len, (char *)err.some.ptr);                     \
+    if (err.tag == DDOG_OPTION_ERROR_SOME_ERROR) {                                                 \
+      ddog_CharSlice message = ddog_Error_message(&err.some);                                      \
+      fprintf(stderr, "ERROR: %.*s", (int)message.len, (char *)message.ptr);                       \
       return 1;                                                                                    \
     }                                                                                              \
   }
+
 #define STR(x) #x
 #define LOG_LOCATION_IDENTIFIER() DDOG_CHARSLICE_C(STR(__FILE__) ":" STR(__LINE__))
 
