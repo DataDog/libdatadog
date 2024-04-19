@@ -10,12 +10,15 @@ use ddcommon::tag::Tag;
 use std::net::{ToSocketAddrs, UdpSocket};
 use std::os::unix::net::UnixDatagram;
 use cadence::prelude::*;
-use cadence::{MetricResult, StatsdClient, UdpMetricSink, UnixMetricSink};
+use cadence::{MetricResult, QueuingMetricSink, StatsdClient, UdpMetricSink, UnixMetricSink};
 use ddcommon::connector::uds::socket_path_from_uri;
 
 /////////////////////////////////////////
 // FIXME: error handling everywhere!!!
 /////////////////////////////////////////
+
+// Queue with a maximum capacity of 32K elements
+const QUEUE_SIZE: usize = 32 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DogStatsDAction {
@@ -60,14 +63,14 @@ impl Flusher {
                     for tag in &tags {
                         builder = builder.with_tag_value(tag.as_ref());
                     }
-                    builder.try_send();
+                    let _ = builder.try_send();
                 },
                 DogStatsDAction::Gauge(metric, value, tags) => {
                     let mut builder = client.gauge_with_tags(metric.as_str(), value);
                     for tag in &tags {
                         builder = builder.with_tag_value(tag.as_ref());
                     }
-                    builder.try_send();
+                    let _ = builder.try_send();
                 },
             }
         }
@@ -92,8 +95,9 @@ fn create_client(endpoint: Option<Endpoint>) -> Result<StatsdClient, &'static st
             let socket = UnixDatagram::unbound().unwrap();
             socket.set_nonblocking(true).unwrap();
             let sink = UnixMetricSink::from(socket_path, socket);
+            let queuing_sink = QueuingMetricSink::with_capacity(sink, QUEUE_SIZE);
 
-            return Ok(StatsdClient::from_sink("", sink));
+            return Ok(StatsdClient::from_sink("", queuing_sink));
         },
         _ => {
             let host = endpoint.url.host().unwrap();
@@ -113,8 +117,9 @@ fn create_client(endpoint: Option<Endpoint>) -> Result<StatsdClient, &'static st
             socket.set_nonblocking(true).unwrap();
 
             let sink = UdpMetricSink::from((host, port), socket).unwrap();
+            let queuing_sink = QueuingMetricSink::with_capacity(sink, QUEUE_SIZE);
 
-            return Ok(StatsdClient::from_sink("", sink));
+            return Ok(StatsdClient::from_sink("", queuing_sink));
         }
     }
 }
