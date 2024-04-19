@@ -521,7 +521,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_count(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
     metric: ffi::CharSlice,
-    value: f64,
+    value: u64,
     tags: ffi::CharSlice,
 ) -> MaybeError {
     let (tags, _) = parse_tags(&tags.to_utf8_lossy());
