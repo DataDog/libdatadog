@@ -71,6 +71,11 @@ impl ExecVec {
         self.ptrs.push(ptr::null());
         self.items.push(item);
     }
+
+    pub fn set(&mut self, index: usize, item: CString) {
+        self.ptrs[index] = item.as_ptr();
+        self.items[index] = item;
+    }
 }
 
 fn write_to_tmp_file(data: &[u8]) -> anyhow::Result<tempfile::NamedTempFile> {
@@ -463,7 +468,7 @@ impl SpawnWorker {
                     anyhow::format_err!("can't convert current executable file to correct path")
                 })?)?;
 
-                argv.items[1] = path.clone();
+                argv.set(1, path.clone());
 
                 let ref_temp_files = &temp_files;
                 Box::new(move || unsafe {
@@ -486,7 +491,7 @@ impl SpawnWorker {
                 )?;
 
                 temp_files.push(path.clone());
-                argv.items[1] = path.clone();
+                argv.set(1, path.clone());
 
                 let ref_temp_files = &temp_files;
                 Box::new(move || unsafe {
