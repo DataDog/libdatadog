@@ -6,7 +6,8 @@ use crate::log;
 use crate::log::{MULTI_LOG_FILTER, MULTI_LOG_WRITER};
 use crate::service::{
     InstanceId, QueueId, RequestIdentification, RequestIdentifier, RuntimeMetadata,
-    SerializedTracerHeaderTags, SessionInfo, SidecarInterface,
+    SerializedTracerHeaderTags, SessionInfo, SidecarInterface, SidecarInterfaceRequest,
+    SidecarInterfaceResponse,
 };
 use datadog_ipc::platform::{AsyncChannel, ShmHandle};
 use datadog_ipc::tarpc;
@@ -22,6 +23,7 @@ use futures::future::{join_all, Ready};
 use manual_future::{ManualFuture, ManualFutureCompleter};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
+
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -29,8 +31,9 @@ use tracing::{debug, enabled, error, info, warn, Level};
 
 use futures::FutureExt;
 
+use crate::service::sidecar_interface::ServeSidecarInterface;
 use datadog_ipc::platform::FileBackedHandle;
-use datadog_ipc::tarpc::server::Channel;
+use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
 
 type NoResponse = Ready<()>;
 
@@ -62,43 +65,15 @@ impl SidecarServer {
             self.clone().serve(),
             100,
         );
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<_>(100);
+        let (tx, rx) = tokio::sync::mpsc::channel::<_>(100);
         let tx = executor.swap_sender(tx);
 
-        let session_counter = self.session_counter.clone();
-        let submitted_payloads = self.submitted_payloads.clone();
-        let session_interceptor = tokio::spawn(async move {
-            let mut sessions = HashSet::new();
-            let mut instances = HashSet::new();
-            loop {
-                let (serve, req) = match rx.recv().await {
-                    None => return (sessions, instances),
-                    Some(s) => s,
-                };
-
-                submitted_payloads.fetch_add(1, Ordering::Relaxed);
-
-                let instance: RequestIdentifier = req.get().extract_identifier();
-                if tx.send((serve, req)).await.is_ok() {
-                    if let RequestIdentifier::InstanceId(ref instance_id) = instance {
-                        instances.insert(instance_id.clone());
-                    }
-                    if let RequestIdentifier::SessionId(session)
-                    | RequestIdentifier::InstanceId(InstanceId {
-                        session_id: session,
-                        ..
-                    }) = instance
-                    {
-                        if sessions.insert(session.clone()) {
-                            match session_counter.lock().unwrap().entry(session) {
-                                Entry::Occupied(mut entry) => entry.insert(entry.get() + 1),
-                                Entry::Vacant(entry) => *entry.insert(1),
-                            };
-                        }
-                    }
-                }
-            }
-        });
+        let session_interceptor = tokio::spawn(session_interceptor(
+            self.session_counter.clone(),
+            self.submitted_payloads.clone(),
+            rx,
+            tx,
+        ));
 
         if let Err(e) = executor.await {
             warn!("Error from executor: {e:?}");
@@ -626,7 +601,7 @@ impl SidecarInterface for SidecarServer {
 
     type PingFut = Ready<()>;
 
-    fn ping(self, _: Context) -> Self::PingFut {
+    fn ping(self, _: Context) -> Ready<()> {
         future::ready(())
     }
 
@@ -643,5 +618,49 @@ impl SidecarInterface for SidecarServer {
             let stats = self.compute_stats().await;
             simd_json::serde::to_string(&stats).unwrap()
         })
+    }
+}
+
+async fn session_interceptor(
+    session_counter: Arc<Mutex<HashMap<String, u32>>>,
+    submitted_payloads: Arc<AtomicU64>,
+    mut rx: tokio::sync::mpsc::Receiver<(
+        ServeSidecarInterface<SidecarServer>,
+        InFlightRequest<SidecarInterfaceRequest, SidecarInterfaceResponse>,
+    )>,
+    tx: tokio::sync::mpsc::Sender<(
+        ServeSidecarInterface<SidecarServer>,
+        InFlightRequest<SidecarInterfaceRequest, SidecarInterfaceResponse>,
+    )>,
+) -> (HashSet<String>, HashSet<InstanceId>) {
+    let mut sessions = HashSet::new();
+    let mut instances = HashSet::new();
+    loop {
+        let (serve, req) = match rx.recv().await {
+            None => return (sessions, instances),
+            Some(s) => s,
+        };
+
+        submitted_payloads.fetch_add(1, Ordering::Relaxed);
+
+        let instance: RequestIdentifier = req.get().extract_identifier();
+        if tx.send((serve, req)).await.is_ok() {
+            if let RequestIdentifier::InstanceId(ref instance_id) = instance {
+                instances.insert(instance_id.clone());
+            }
+            if let RequestIdentifier::SessionId(session)
+            | RequestIdentifier::InstanceId(InstanceId {
+                session_id: session,
+                ..
+            }) = instance
+            {
+                if sessions.insert(session.clone()) {
+                    match session_counter.lock().unwrap().entry(session) {
+                        Entry::Occupied(mut entry) => entry.insert(entry.get() + 1),
+                        Entry::Vacant(entry) => *entry.insert(1),
+                    };
+                }
+            }
+        }
     }
 }
