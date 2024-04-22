@@ -9,13 +9,10 @@ use ddcommon::tag::Tag;
 
 use std::net::{ToSocketAddrs, UdpSocket};
 use std::os::unix::net::UnixDatagram;
+use anyhow::anyhow;
 use cadence::prelude::*;
 use cadence::{MetricResult, QueuingMetricSink, StatsdClient, UdpMetricSink, UnixMetricSink};
 use ddcommon::connector::uds::socket_path_from_uri;
-
-/////////////////////////////////////////
-// FIXME: error handling everywhere!!!
-/////////////////////////////////////////
 
 // Queue with a maximum capacity of 32K elements
 const QUEUE_SIZE: usize = 32 * 1024;
@@ -76,50 +73,57 @@ impl Flusher {
         }
     }
 
-    fn get_client(&mut self) -> Result<&StatsdClient, &str> {
-        let endpoint= self.endpoint.clone();
-        Ok(self.client.get_or_insert_with(|| create_client(endpoint).unwrap())) // FIXME: handle errors
+    fn get_client(&mut self) -> anyhow::Result<&StatsdClient> {
+        let opt = &mut self.client;
+        let client = match opt {
+            Some(client) => client,
+            None => opt.get_or_insert(create_client(self.endpoint.clone())?),
+        };
+
+        Ok(client)
     }
 }
 
-fn create_client(endpoint: Option<Endpoint>) -> Result<StatsdClient, &'static str> {
+fn create_client(endpoint: Option<Endpoint>) -> anyhow::Result<StatsdClient> {
     let endpoint = match endpoint {
         Some(endpoint) => endpoint,
-        None => return Err("no endpoint set"),
+        None => return Err(anyhow!("no endpoint set")),
     };
 
-    match endpoint.url.scheme_str() {
+    return match endpoint.url.scheme_str() {
         Some("unix") => {
-            let socket_path = socket_path_from_uri(&endpoint.url).unwrap();
+            let socket = UnixDatagram::unbound()?;
+            socket.set_nonblocking(true)?;
+            let sink = QueuingMetricSink::with_capacity(
+                UnixMetricSink::from(socket_path_from_uri(&endpoint.url)?, socket),
+                QUEUE_SIZE
+            );
 
-            let socket = UnixDatagram::unbound().unwrap();
-            socket.set_nonblocking(true).unwrap();
-            let sink = UnixMetricSink::from(socket_path, socket);
-            let queuing_sink = QueuingMetricSink::with_capacity(sink, QUEUE_SIZE);
-
-            return Ok(StatsdClient::from_sink("", queuing_sink));
+            Ok(StatsdClient::from_sink("", sink))
         },
         _ => {
-            let host = endpoint.url.host().unwrap();
-            let port = endpoint.url.port().unwrap().as_u16();
+            let host = endpoint.url.host().ok_or(anyhow!("invalid host"))?;
+            let port = endpoint.url.port().ok_or(anyhow!("invalid port"))?.as_u16();
 
             let server_address = (host, port)
-                .to_socket_addrs().unwrap()
+                .to_socket_addrs()?
                 .next()
-                .ok_or_else(|| {}).unwrap();
+                .ok_or(anyhow!("invalid address"))?;
 
             let socket;
             if server_address.is_ipv4() {
-                 socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+                socket = UdpSocket::bind("0.0.0.0:0")?;
             } else {
-                socket = UdpSocket::bind("[::]:0").unwrap();
+                socket = UdpSocket::bind("[::]:0")?;
             }
-            socket.set_nonblocking(true).unwrap();
+            socket.set_nonblocking(true)?;
 
-            let sink = UdpMetricSink::from((host, port), socket).unwrap();
-            let queuing_sink = QueuingMetricSink::with_capacity(sink, QUEUE_SIZE);
+            let sink = QueuingMetricSink::with_capacity(
+                UdpMetricSink::from((host, port), socket)?,
+                QUEUE_SIZE
+            );
 
-            return Ok(StatsdClient::from_sink("", queuing_sink));
+            Ok(StatsdClient::from_sink("", sink))
         }
     }
 }
