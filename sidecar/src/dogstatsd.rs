@@ -48,10 +48,15 @@ impl Flusher {
     }
 
     pub fn send(&mut self, actions: Vec<DogStatsDAction>) {
+        if self.endpoint.is_none() {
+            return;
+        }
+
         let client = match self.get_client() {
             Ok(client) => client,
             Err(msg) => {
-                warn!("Cannot send DogStatsD metrics: {}", msg); // FIXME: avoid logs flood
+                self.endpoint = None;
+                warn!("Cannot send DogStatsD metrics: {}", msg);
                 return;
             }
         };
