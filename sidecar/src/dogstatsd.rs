@@ -11,7 +11,7 @@ use std::net::{ToSocketAddrs, UdpSocket};
 use std::os::unix::net::UnixDatagram;
 use anyhow::anyhow;
 use cadence::prelude::*;
-use cadence::{MetricResult, QueuingMetricSink, StatsdClient, UdpMetricSink, UnixMetricSink};
+use cadence::{Metric, MetricBuilder, MetricResult, QueuingMetricSink, StatsdClient, UdpMetricSink, UnixMetricSink};
 use ddcommon::connector::uds::socket_path_from_uri;
 
 // Queue with a maximum capacity of 32K elements
@@ -54,21 +54,15 @@ impl Flusher {
         };
 
         for action in actions {
-            match action {
+            if let Err(err) = match action {
                 DogStatsDAction::Count(metric, value, tags) => {
-                    let mut builder = client.count_with_tags(metric.as_str(), value);
-                    for tag in &tags {
-                        builder = builder.with_tag_value(tag.as_ref());
-                    }
-                    let _ = builder.try_send();
+                    do_send(client.count_with_tags(metric.as_str(), value), &tags)
                 },
                 DogStatsDAction::Gauge(metric, value, tags) => {
-                    let mut builder = client.gauge_with_tags(metric.as_str(), value);
-                    for tag in &tags {
-                        builder = builder.with_tag_value(tag.as_ref());
-                    }
-                    let _ = builder.try_send();
+                    do_send(client.gauge_with_tags(metric.as_str(), value), &tags)
                 },
+            } {
+                debug!("Error while sending metric: {}", err); // FIXME: log?
             }
         }
     }
@@ -81,6 +75,19 @@ impl Flusher {
         };
 
         Ok(client)
+    }
+}
+
+fn do_send<'a, T>(mut builder: MetricBuilder<'a, '_, T>, tags: &'a Vec<Tag>) -> anyhow::Result<()> // FIXME: lifetime
+where
+    T: Metric + From<String>,
+{
+    for tag in tags {
+        builder = builder.with_tag_value(tag.as_ref());
+    }
+    match builder.try_send() {
+        Ok(_) => Ok(()),
+        Err(err) => Err(anyhow!(err)),
     }
 }
 
