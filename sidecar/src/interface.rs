@@ -54,12 +54,12 @@ use ddtelemetry::{
     },
 };
 
+use crate::dogstatsd::DogStatsDAction;
 use crate::log::{
     MultiEnvFilterGuard, MultiWriterGuard, TemporarilyRetainedMapStats, MULTI_LOG_FILTER,
     MULTI_LOG_WRITER,
 };
 use crate::{config, dogstatsd, log, tracer};
-use crate::dogstatsd::{DogStatsDAction};
 
 #[datadog_sidecar_macros::extract_request_id]
 #[datadog_ipc_macros::impl_transfer_handles]
@@ -90,10 +90,7 @@ pub trait SidecarInterface {
         data: Vec<u8>,
         headers: SerializedTracerHeaderTags,
     );
-    async fn send_dogstatsd_actions(
-        instance_id: InstanceId,
-        actions: Vec<DogStatsDAction>,
-    );
+    async fn send_dogstatsd_actions(instance_id: InstanceId, actions: Vec<DogStatsDAction>);
     async fn ping();
     async fn dump() -> String;
     async fn stats() -> String;
@@ -327,8 +324,8 @@ impl SessionInfo {
     }
 
     fn configure_dogstatsd<F>(&self, mut f: F)
-        where
-            F: FnMut(&mut dogstatsd::Flusher),
+    where
+        F: FnMut(&mut dogstatsd::Flusher),
     {
         f(&mut self.get_dogstatsd());
     }
@@ -1485,7 +1482,9 @@ impl SidecarInterface for SidecarServer {
         actions: Vec<DogStatsDAction>,
     ) -> Self::SendDogstatsdActionsFut {
         tokio::spawn(async move {
-            self.get_session(&instance_id.session_id).get_dogstatsd().send(actions);
+            self.get_session(&instance_id.session_id)
+                .get_dogstatsd()
+                .send(actions);
         });
 
         no_response()
@@ -1538,8 +1537,8 @@ pub mod blocking {
         time::{Duration, Instant},
     };
 
-    use datadog_ipc::transport::blocking::BlockingTransport;
     use crate::dogstatsd::DogStatsDAction;
+    use datadog_ipc::transport::blocking::BlockingTransport;
 
     use crate::interface::{SerializedTracerHeaderTags, SessionConfig, SidecarAction};
 

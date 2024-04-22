@@ -1,18 +1,21 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::fmt::Debug;
-use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn};
-use ddcommon::Endpoint;
 use ddcommon::tag::Tag;
+use ddcommon::Endpoint;
+use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
+use tracing::{debug, info, warn};
 
-use std::net::{ToSocketAddrs, UdpSocket};
-use std::os::unix::net::UnixDatagram;
 use anyhow::anyhow;
 use cadence::prelude::*;
-use cadence::{Metric, MetricBuilder, MetricResult, QueuingMetricSink, StatsdClient, UdpMetricSink, UnixMetricSink};
+use cadence::{
+    Metric, MetricBuilder, MetricResult, QueuingMetricSink, StatsdClient, UdpMetricSink,
+    UnixMetricSink,
+};
 use ddcommon::connector::uds::socket_path_from_uri;
+use std::net::{ToSocketAddrs, UdpSocket};
+use std::os::unix::net::UnixDatagram;
 
 // Queue with a maximum capacity of 32K elements
 const QUEUE_SIZE: usize = 32 * 1024;
@@ -57,10 +60,10 @@ impl Flusher {
             if let Err(err) = match action {
                 DogStatsDAction::Count(metric, value, tags) => {
                     do_send(client.count_with_tags(metric.as_str(), value), &tags)
-                },
+                }
                 DogStatsDAction::Gauge(metric, value, tags) => {
                     do_send(client.gauge_with_tags(metric.as_str(), value), &tags)
-                },
+                }
             } {
                 debug!("Error while sending metric: {}", err); // FIXME: log?
             }
@@ -78,7 +81,8 @@ impl Flusher {
     }
 }
 
-fn do_send<'a, T>(mut builder: MetricBuilder<'a, '_, T>, tags: &'a Vec<Tag>) -> anyhow::Result<()> // FIXME: lifetime
+fn do_send<'a, T>(mut builder: MetricBuilder<'a, '_, T>, tags: &'a Vec<Tag>) -> anyhow::Result<()>
+// FIXME: lifetime
 where
     T: Metric + From<String>,
 {
@@ -103,11 +107,11 @@ fn create_client(endpoint: Option<Endpoint>) -> anyhow::Result<StatsdClient> {
             socket.set_nonblocking(true)?;
             let sink = QueuingMetricSink::with_capacity(
                 UnixMetricSink::from(socket_path_from_uri(&endpoint.url)?, socket),
-                QUEUE_SIZE
+                QUEUE_SIZE,
             );
 
             Ok(StatsdClient::from_sink("", sink))
-        },
+        }
         _ => {
             let host = endpoint.url.host().ok_or(anyhow!("invalid host"))?;
             let port = endpoint.url.port().ok_or(anyhow!("invalid port"))?.as_u16();
@@ -127,10 +131,10 @@ fn create_client(endpoint: Option<Endpoint>) -> anyhow::Result<StatsdClient> {
 
             let sink = QueuingMetricSink::with_capacity(
                 UdpMetricSink::from((host, port), socket)?,
-                QUEUE_SIZE
+                QUEUE_SIZE,
             );
 
             Ok(StatsdClient::from_sink("", sink))
         }
-    }
+    };
 }

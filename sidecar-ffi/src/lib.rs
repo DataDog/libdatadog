@@ -529,9 +529,11 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_count(
     try_c!(blocking::send_dogstatsd_actions(
         transport,
         instance_id,
-        vec![
-            DogStatsDAction::Count(metric.to_utf8_lossy().into_owned(), value, tags),
-        ],
+        vec![DogStatsDAction::Count(
+            metric.to_utf8_lossy().into_owned(),
+            value,
+            tags
+        ),],
     ));
 
     MaybeError::None
@@ -551,9 +553,11 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_gauge(
     try_c!(blocking::send_dogstatsd_actions(
         transport,
         instance_id,
-        vec![
-            DogStatsDAction::Gauge(metric.to_utf8_lossy().into_owned(), value, tags),
-        ],
+        vec![DogStatsDAction::Gauge(
+            metric.to_utf8_lossy().into_owned(),
+            value,
+            tags
+        ),],
     ));
 
     MaybeError::None
