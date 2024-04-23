@@ -34,6 +34,7 @@ use std::os::unix::prelude::FromRawFd;
 use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::slice;
 use std::time::Duration;
+use ddcommon::tag::Tag;
 
 #[repr(C)]
 pub struct NativeFile {
@@ -522,17 +523,15 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_count(
     instance_id: &InstanceId,
     metric: ffi::CharSlice,
     value: u64,
-    tags: ffi::CharSlice,
+    tags: Option<&ddcommon_ffi::Vec<Tag>>,
 ) -> MaybeError {
-    let (tags, _) = parse_tags(&tags.to_utf8_lossy());
-
     try_c!(blocking::send_dogstatsd_actions(
         transport,
         instance_id,
         vec![DogStatsDAction::Count(
             metric.to_utf8_lossy().into_owned(),
             value,
-            tags
+            tags.map(|tags| tags.iter().cloned().collect()).unwrap_or(vec![])
         ),],
     ));
 
@@ -546,17 +545,15 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_gauge(
     instance_id: &InstanceId,
     metric: ffi::CharSlice,
     value: f64,
-    tags: ffi::CharSlice,
+    tags: Option<&ddcommon_ffi::Vec<Tag>>,
 ) -> MaybeError {
-    let (tags, _) = parse_tags(&tags.to_utf8_lossy());
-
     try_c!(blocking::send_dogstatsd_actions(
         transport,
         instance_id,
         vec![DogStatsDAction::Gauge(
             metric.to_utf8_lossy().into_owned(),
             value,
-            tags
+            tags.map(|tags| tags.iter().cloned().collect()).unwrap_or(vec![])
         ),],
     ));
 
