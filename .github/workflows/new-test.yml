@@ -1,0 +1,57 @@
+name: NewTest
+on: [push]
+env: 
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: 1.71.1
+
+jobs:
+  test:
+    name: "cargo test --workspace #${{ matrix.platform }} ${{ matrix.rust_version }}"
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      matrix:
+        platform: [ubuntu-latest]
+        rust_version: [""]
+      fail-fast: false
+    permissions:
+      checks: write
+      pull-requests: write
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v3
+      - name: Cache
+        uses: ./.github/actions/cache
+        with:
+          rust_version: ${{ matrix.rust_version }}
+      - name: Install Rust ${{ matrix.rust_version }}
+        if: ${{ matrix.rust_version != '' }}
+        run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
+      - id: rust-version
+        # On Windows run happens in a PowerShell, so start bash explicitly
+        run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
+      - name: Install cargo nextest
+        uses: taiki-e/install-action@v2.32.20
+        with: 
+          tool: nextest@0.9.68
+      - name: Free Disk Space (Ubuntu only)
+        if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --verbose"
+        run: cargo build --workspace --verbose
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --profile ci --verbose"
+        run: cargo nextest run --profile ci --verbose
+        env:
+          RUST_BACKTRACE: 1
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: target/nextest/**/*.xml
