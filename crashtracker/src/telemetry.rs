@@ -291,7 +291,7 @@ mod tests {
         let payload: serde_json::value::Value =
             serde_json::de::from_str(&fs::read_to_string(&output_filename).unwrap()).unwrap();
         assert_eq!(payload["request_type"], "logs");
-        assert_eq!(payload["application"]["service_name"], "bar");
+        assert_eq!(payload["application"]["service_name"], "foo");
         assert_eq!(payload["application"]["language_name"], "native");
 
         assert_eq!(payload["payload"].as_array().unwrap().len(), 1);
