@@ -11,10 +11,13 @@ use anyhow::anyhow;
 use cadence::prelude::*;
 use cadence::{
     Metric, MetricBuilder, QueuingMetricSink, StatsdClient, UdpMetricSink,
-    UnixMetricSink,
 };
+#[cfg(unix)]
+use cadence::UnixMetricSink;
 use ddcommon::connector::uds::socket_path_from_uri;
 use std::net::{ToSocketAddrs, UdpSocket};
+
+#[cfg(unix)]
 use std::os::unix::net::UnixDatagram;
 
 // Queue with a maximum capacity of 32K elements
@@ -114,6 +117,7 @@ fn create_client(endpoint: Option<Endpoint>) -> anyhow::Result<StatsdClient> {
     };
 
     return match endpoint.url.scheme_str() {
+        #[cfg(unix)]
         Some("unix") => {
             let socket = UnixDatagram::unbound()?;
             socket.set_nonblocking(true)?;
