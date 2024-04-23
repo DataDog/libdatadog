@@ -216,7 +216,7 @@ struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
     session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
-    dogstatsd: Arc<Mutex<dogstatsd::Flusher>>, // FIXME: Move mutex to dogstatsd::Flusher?
+    dogstatsd: Arc<Mutex<dogstatsd::Flusher>>,
     log_guard: Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
     #[cfg(feature = "tracing")]
     session_id: String,
@@ -1232,7 +1232,7 @@ fn no_response() -> NoResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionConfig {
-    pub endpoint: Endpoint, // FIXME: rename to agent_endpoint?
+    pub endpoint: Endpoint,
     pub dogstatsd_endpoint: Endpoint,
     pub flush_interval: Duration,
     pub force_flush_size: usize,

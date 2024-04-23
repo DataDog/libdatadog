@@ -87,7 +87,6 @@ impl Flusher {
 }
 
 fn do_send<'a, T>(mut builder: MetricBuilder<'a, '_, T>, tags: &'a Vec<Tag>) -> anyhow::Result<()>
-// FIXME: lifetime
 where
     T: Metric + From<String>,
 {

@@ -531,7 +531,8 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_count(
         vec![DogStatsDAction::Count(
             metric.to_utf8_lossy().into_owned(),
             value,
-            tags.map(|tags| tags.iter().cloned().collect()).unwrap_or(vec![])
+            tags.map(|tags| tags.iter().cloned().collect())
+                .unwrap_or(vec![])
         ),],
     ));
 
@@ -553,7 +554,8 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_gauge(
         vec![DogStatsDAction::Gauge(
             metric.to_utf8_lossy().into_owned(),
             value,
-            tags.map(|tags| tags.iter().cloned().collect()).unwrap_or(vec![])
+            tags.map(|tags| tags.iter().cloned().collect())
+                .unwrap_or(vec![])
         ),],
     ));
 
