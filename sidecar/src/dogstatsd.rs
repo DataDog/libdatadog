@@ -10,7 +10,7 @@ use tracing::{debug, info, warn};
 use anyhow::anyhow;
 use cadence::prelude::*;
 use cadence::{
-    Metric, MetricBuilder, MetricResult, QueuingMetricSink, StatsdClient, UdpMetricSink,
+    Metric, MetricBuilder, QueuingMetricSink, StatsdClient, UdpMetricSink,
     UnixMetricSink,
 };
 use ddcommon::connector::uds::socket_path_from_uri;
@@ -23,7 +23,9 @@ const QUEUE_SIZE: usize = 32 * 1024;
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DogStatsDAction {
     Count(String, u64, Vec<Tag>),
+    Distribution(String, f64, Vec<Tag>),
     Gauge(String, f64, Vec<Tag>),
+    Histogram(String, f64, Vec<Tag>),
 }
 
 #[derive(Default)]
@@ -66,8 +68,14 @@ impl Flusher {
                 DogStatsDAction::Count(metric, value, tags) => {
                     do_send(client.count_with_tags(metric.as_str(), value), &tags)
                 }
+                DogStatsDAction::Distribution(metric, value, tags) => {
+                    do_send(client.distribution_with_tags(metric.as_str(), value), &tags)
+                }
                 DogStatsDAction::Gauge(metric, value, tags) => {
                     do_send(client.gauge_with_tags(metric.as_str(), value), &tags)
+                }
+                DogStatsDAction::Histogram(metric, value, tags) => {
+                    do_send(client.histogram_with_tags(metric.as_str(), value), &tags)
                 }
             } {
                 debug!("Error while sending metric: {}", err); // FIXME: log?
