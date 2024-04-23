@@ -104,10 +104,8 @@ where
     for tag in tags {
         builder = builder.with_tag_value(tag.as_ref());
     }
-    match builder.try_send() {
-        Ok(_) => Ok(()),
-        Err(err) => Err(anyhow!(err)),
-    }
+    builder.try_send()?;
+    Ok(())
 }
 
 fn create_client(endpoint: Option<Endpoint>) -> anyhow::Result<StatsdClient> {
