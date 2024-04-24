@@ -28,7 +28,7 @@ jobs:
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
       - id: rust-version
         # On Windows run happens in a PowerShell, so start bash explicitly
-        run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
+        run: bash -c 'VER=$(rustc --version); SVER=$(echo "$VER" | cut -d " " -f 2); echo "version=$VER" >> $GITHUB_OUTPUT; echo "short-version=$SVER" >> $GITHUB_OUTPUT'
       - name: Install cargo nextest
         uses: taiki-e/install-action@v2.32.20
         with: 
@@ -44,9 +44,9 @@ jobs:
           large-packages: true
           docker-images: true
           swap-storage: true
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --verbose"
+      - name: "[${{ steps.rust-version.outputs.version }}] cargo build --workspace --verbose"
         run: cargo build --workspace --verbose
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --profile ci --verbose"
+      - name: "[${{ steps.rust-version.outputs.version }}] cargo nextest run --profile ci --verbose"
         run: cargo nextest run --profile ci --verbose
         env:
           RUST_BACKTRACE: 1
@@ -55,7 +55,7 @@ jobs:
         if: success() || failure() # always upload test results unless canceled
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
+          name: test-results-${{ matrix.platform }}-${{ steps.rust-version.outputs.short-version }}
           path: target/nextest/ci/*.xml
 
   publish-test-results:
@@ -71,6 +71,8 @@ jobs:
           uses: actions/download-artifact@v4
           with:
             path: artifacts
+        - name: List Artifacts
+          run: ls -laR artifacts
         - name: Publish Test Results
           uses: EnricoMi/publish-unit-test-result-action@v2
           with:
