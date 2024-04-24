@@ -2,7 +2,7 @@ name: Test
 on: [push]
 env: 
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.69.0
+  RUST_VERSION: 1.71.1
 
 jobs:
   test:
@@ -27,7 +27,8 @@ jobs:
         if: ${{ matrix.rust_version != '' }}
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
       - id: rust-version
-        run: echo "version=$(rustc --version)" >> $GITHUB_OUTPUT
+        # On Windows run happens in a PowerShell, so start bash explicitly
+        run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
       - name: Free Disk Space (Ubuntu only)
         if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
         uses: jlumbroso/free-disk-space@v1.3.1
@@ -54,6 +55,7 @@ jobs:
         env:
           RUSTFLAGS: "-C prefer-dynamic"
           RUST_BACKTRACE: 1
+
   ffi:
     name: "FFI #${{ matrix.platform }} ${{ matrix.rust_version }}"
     runs-on: ${{ matrix.platform }}

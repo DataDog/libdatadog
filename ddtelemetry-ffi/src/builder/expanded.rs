@@ -13,24 +13,21 @@ mod macros {
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_application_service_version(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         telemetry_builder.application.service_version = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
                 Ok(o) => o,
                 Err(e) => {
-                    return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                        {
-                            let res = std::fmt::format(format_args!("{0:?}", e));
-                            res
-                        }
-                        .into_bytes(),
-                    ));
+                    return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        res
+                    }));
                 }
             },
         );
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
@@ -38,7 +35,7 @@ mod macros {
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_application_env(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         telemetry_builder.application.env =
             Some(
                 match (|s: ffi::CharSlice| -> Result<_, String> {
@@ -47,17 +44,14 @@ mod macros {
                 {
                     Ok(o) => o,
                     Err(e) => {
-                        return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                            {
-                                let res = std::fmt::format(format_args!("{0:?}", e));
-                                res
-                            }
-                            .into_bytes(),
-                        ));
+                        return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                            let res = std::fmt::format(format_args!("{0:?}", e));
+                            res
+                        }));
                     }
                 },
             );
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
@@ -65,24 +59,21 @@ mod macros {
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_application_runtime_name(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         telemetry_builder.application.runtime_name = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
                 Ok(o) => o,
                 Err(e) => {
-                    return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                        {
-                            let res = std::fmt::format(format_args!("{0:?}", e));
-                            res
-                        }
-                        .into_bytes(),
-                    ));
+                    return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        res
+                    }));
                 }
             },
         );
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
@@ -90,24 +81,21 @@ mod macros {
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_application_runtime_version(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         telemetry_builder.application.runtime_version = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
                 Ok(o) => o,
                 Err(e) => {
-                    return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                        {
-                            let res = std::fmt::format(format_args!("{0:?}", e));
-                            res
-                        }
-                        .into_bytes(),
-                    ));
+                    return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        res
+                    }));
                 }
             },
         );
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
@@ -115,24 +103,21 @@ mod macros {
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_application_runtime_patches(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         telemetry_builder.application.runtime_patches = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
                 Ok(o) => o,
                 Err(e) => {
-                    return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                        {
-                            let res = std::fmt::format(format_args!("{0:?}", e));
-                            res
-                        }
-                        .into_bytes(),
-                    ));
+                    return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        res
+                    }));
                 }
             },
         );
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
@@ -140,24 +125,21 @@ mod macros {
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_host_container_id(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         telemetry_builder.host.container_id = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
                 Ok(o) => o,
                 Err(e) => {
-                    return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                        {
-                            let res = std::fmt::format(format_args!("{0:?}", e));
-                            res
-                        }
-                        .into_bytes(),
-                    ));
+                    return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        res
+                    }));
                 }
             },
         );
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
@@ -165,24 +147,21 @@ mod macros {
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_host_os(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         telemetry_builder.host.os = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
                 Ok(o) => o,
                 Err(e) => {
-                    return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                        {
-                            let res = std::fmt::format(format_args!("{0:?}", e));
-                            res
-                        }
-                        .into_bytes(),
-                    ));
+                    return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        res
+                    }));
                 }
             },
         );
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
@@ -190,24 +169,21 @@ mod macros {
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_host_kernel_name(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         telemetry_builder.host.kernel_name = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
                 Ok(o) => o,
                 Err(e) => {
-                    return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                        {
-                            let res = std::fmt::format(format_args!("{0:?}", e));
-                            res
-                        }
-                        .into_bytes(),
-                    ));
+                    return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        res
+                    }));
                 }
             },
         );
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
@@ -215,24 +191,21 @@ mod macros {
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_host_kernel_release(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         telemetry_builder.host.kernel_release = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
                 Ok(o) => o,
                 Err(e) => {
-                    return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                        {
-                            let res = std::fmt::format(format_args!("{0:?}", e));
-                            res
-                        }
-                        .into_bytes(),
-                    ));
+                    return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        res
+                    }));
                 }
             },
         );
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
@@ -240,24 +213,21 @@ mod macros {
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_host_kernel_version(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         telemetry_builder.host.kernel_version = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
                 Ok(o) => o,
                 Err(e) => {
-                    return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                        {
-                            let res = std::fmt::format(format_args!("{0:?}", e));
-                            res
-                        }
-                        .into_bytes(),
-                    ));
+                    return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        res
+                    }));
                 }
             },
         );
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
@@ -265,24 +235,21 @@ mod macros {
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_runtime_id(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         telemetry_builder.runtime_id = Some(
             match (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) })(
                 param,
             ) {
                 Ok(o) => o,
                 Err(e) => {
-                    return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                        {
-                            let res = std::fmt::format(format_args!("{0:?}", e));
-                            res
-                        }
-                        .into_bytes(),
-                    ));
+                    return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        res
+                    }));
                 }
             },
         );
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[repr(C)]
     #[allow(dead_code)]
@@ -334,7 +301,7 @@ mod macros {
         telemetry_builder: &mut TelemetryWorkerBuilder,
         property: TelemetryWorkerBuilderStrProperty,
         param: ffi::CharSlice,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         use TelemetryWorkerBuilderStrProperty::*;
         match property {
             ApplicationServiceVersion => {
@@ -345,13 +312,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -364,13 +328,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -383,13 +344,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -402,13 +360,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -421,13 +376,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -440,13 +392,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -460,13 +409,10 @@ mod macros {
                         {
                             Ok(o) => o,
                             Err(e) => {
-                                return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                    {
-                                        let res = std::fmt::format(format_args!("{0:?}", e));
-                                        res
-                                    }
-                                    .into_bytes(),
-                                ));
+                                return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    res
+                                }));
                             }
                         },
                     );
@@ -479,13 +425,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -498,13 +441,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -517,13 +457,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -536,19 +473,16 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
             }
         }
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
@@ -585,17 +519,14 @@ mod macros {
         telemetry_builder: &mut TelemetryWorkerBuilder,
         property: ffi::CharSlice,
         param: ffi::CharSlice,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         let property = match property.try_to_utf8() {
             Ok(o) => o,
             Err(e) => {
-                return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                    {
-                        let res = std::fmt::format(format_args!("{0:?}", e));
-                        res
-                    }
-                    .into_bytes(),
-                ));
+                return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                    let res = std::fmt::format(format_args!("{0:?}", e));
+                    res
+                }));
             }
         };
         match property {
@@ -607,13 +538,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -626,13 +554,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -645,13 +570,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -664,13 +586,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -683,13 +602,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -702,13 +618,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -722,13 +635,10 @@ mod macros {
                         {
                             Ok(o) => o,
                             Err(e) => {
-                                return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                    {
-                                        let res = std::fmt::format(format_args!("{0:?}", e));
-                                        res
-                                    }
-                                    .into_bytes(),
-                                ));
+                                return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    res
+                                }));
                             }
                         },
                     );
@@ -741,13 +651,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -760,13 +667,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -779,13 +683,10 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
@@ -798,20 +699,17 @@ mod macros {
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
             }
-            _ => return crate::MaybeError::None,
+            _ => return ffi::MaybeError::None,
         }
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
@@ -819,21 +717,18 @@ mod macros {
     pub unsafe extern "C" fn ddog_telemetry_builder_with_bool_config_telemetry_debug_logging_enabled(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: bool,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         telemetry_builder.config.telemetry_debug_logging_enabled =
             Some(match (|b: bool| -> Result<_, String> { Ok(b) })(param) {
                 Ok(o) => o,
                 Err(e) => {
-                    return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                        {
-                            let res = std::fmt::format(format_args!("{0:?}", e));
-                            res
-                        }
-                        .into_bytes(),
-                    ));
+                    return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        res
+                    }));
                 }
             });
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[repr(C)]
     #[allow(dead_code)]
@@ -855,7 +750,7 @@ mod macros {
         telemetry_builder: &mut TelemetryWorkerBuilder,
         property: TelemetryWorkerBuilderBoolProperty,
         param: bool,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         use TelemetryWorkerBuilderBoolProperty::*;
         match property {
             ConfigTelemetryDebugLoggingEnabled => {
@@ -863,18 +758,15 @@ mod macros {
                     Some(match (|b: bool| -> Result<_, String> { Ok(b) })(param) {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     });
             }
         }
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
@@ -891,17 +783,14 @@ mod macros {
         telemetry_builder: &mut TelemetryWorkerBuilder,
         property: ffi::CharSlice,
         param: bool,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         let property = match property.try_to_utf8() {
             Ok(o) => o,
             Err(e) => {
-                return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                    {
-                        let res = std::fmt::format(format_args!("{0:?}", e));
-                        res
-                    }
-                    .into_bytes(),
-                ));
+                return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                    let res = std::fmt::format(format_args!("{0:?}", e));
+                    res
+                }));
             }
         };
         match property {
@@ -910,19 +799,16 @@ mod macros {
                     Some(match (|b: bool| -> Result<_, String> { Ok(b) })(param) {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     });
             }
-            _ => return crate::MaybeError::None,
+            _ => return ffi::MaybeError::None,
         }
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
@@ -930,22 +816,19 @@ mod macros {
     pub unsafe extern "C" fn ddog_telemetry_builder_with_endpoint_config_endpoint(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: &Endpoint,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         telemetry_builder.config.endpoint = Some(
             match (|e: &Endpoint| -> Result<_, String> { Ok(e.clone()) })(param) {
                 Ok(o) => o,
                 Err(e) => {
-                    return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                        {
-                            let res = std::fmt::format(format_args!("{0:?}", e));
-                            res
-                        }
-                        .into_bytes(),
-                    ));
+                    return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        res
+                    }));
                 }
             },
         );
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[repr(C)]
     #[allow(dead_code)]
@@ -967,7 +850,7 @@ mod macros {
         telemetry_builder: &mut TelemetryWorkerBuilder,
         property: TelemetryWorkerBuilderEndpointProperty,
         param: &Endpoint,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         use TelemetryWorkerBuilderEndpointProperty::*;
         match property {
             ConfigEndpoint => {
@@ -975,19 +858,16 @@ mod macros {
                     match (|e: &Endpoint| -> Result<_, String> { Ok(e.clone()) })(param) {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
             }
         }
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
     #[no_mangle]
     #[allow(clippy::redundant_closure_call)]
@@ -1004,17 +884,14 @@ mod macros {
         telemetry_builder: &mut TelemetryWorkerBuilder,
         property: ffi::CharSlice,
         param: &Endpoint,
-    ) -> crate::MaybeError {
+    ) -> ffi::MaybeError {
         let property = match property.try_to_utf8() {
             Ok(o) => o,
             Err(e) => {
-                return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                    {
-                        let res = std::fmt::format(format_args!("{0:?}", e));
-                        res
-                    }
-                    .into_bytes(),
-                ));
+                return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                    let res = std::fmt::format(format_args!("{0:?}", e));
+                    res
+                }));
             }
         };
         match property {
@@ -1023,19 +900,16 @@ mod macros {
                     match (|e: &Endpoint| -> Result<_, String> { Ok(e.clone()) })(param) {
                         Ok(o) => o,
                         Err(e) => {
-                            return crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                                {
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
-                                    res
-                                }
-                                .into_bytes(),
-                            ));
+                            return ffi::MaybeError::Some(ddcommon_ffi::Error::from({
+                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                res
+                            }));
                         }
                     },
                 );
             }
-            _ => return crate::MaybeError::None,
+            _ => return ffi::MaybeError::None,
         }
-        crate::MaybeError::None
+        ffi::MaybeError::None
     }
 }

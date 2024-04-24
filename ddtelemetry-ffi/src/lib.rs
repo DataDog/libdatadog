@@ -1,8 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon_ffi as ffi;
-
 pub mod builder;
 pub mod worker_handle;
 
@@ -25,9 +23,9 @@ macro_rules! c_setters {
                 pub unsafe extern "C" fn [<ddog_ $object_name _with_ $property_type_name_snakecase _ $path $(_ $path_rest)* >](
                     $object_name: &mut $object_ty,
                     param: $property_type,
-                ) -> crate::MaybeError {
+                ) -> ffi::MaybeError {
                     $object_name . $path $(.  $path_rest)* = Some(crate::try_c!($convert_fn (param)));
-                    crate::MaybeError::None
+                    ffi::MaybeError::None
                 }
             )+
 
@@ -49,7 +47,7 @@ macro_rules! c_setters {
                 $object_name: &mut $object_ty,
                 property: [<$object_ty $property_type_name_camel_case Property >],
                 param: $property_type,
-            ) -> crate::MaybeError {
+            ) -> ffi::MaybeError {
                 use [<$object_ty $property_type_name_camel_case Property >] ::*;
                 match property {
                     $(
@@ -58,7 +56,7 @@ macro_rules! c_setters {
                         }
                     )+
                 }
-                crate::MaybeError::None
+                ffi::MaybeError::None
             }
 
             #[no_mangle]
@@ -75,7 +73,7 @@ macro_rules! c_setters {
                 $object_name: &mut $object_ty,
                 property: ffi::CharSlice,
                 param: $property_type,
-            ) -> crate::MaybeError {
+            ) -> ffi::MaybeError {
                 let property = crate::try_c!(property.try_to_utf8());
                 match property {
                     $(
@@ -84,9 +82,9 @@ macro_rules! c_setters {
                         }
                     )+
                     // TODO this is an error
-                    _ => return crate::MaybeError::None,
+                    _ => return ffi::MaybeError::None,
                 }
-                crate::MaybeError::None
+                ffi::MaybeError::None
             }
         }
 
@@ -98,11 +96,7 @@ macro_rules! try_c {
     ($failable:expr) => {
         match $failable {
             Ok(o) => o,
-            Err(e) => {
-                return $crate::MaybeError::Some(ddcommon_ffi::Vec::from(
-                    format!("{:?}", e).into_bytes(),
-                ))
-            }
+            Err(e) => return ffi::MaybeError::Some(ddcommon_ffi::Error::from(format!("{:?}", e))),
         }
     };
 }
@@ -110,23 +104,18 @@ macro_rules! try_c {
 #[allow(unused_imports)]
 pub(crate) use c_setters;
 
-pub type MaybeError = ffi::Option<ffi::Vec<u8>>;
-
-#[no_mangle]
-pub extern "C" fn ddog_MaybeError_drop(_: MaybeError) {}
-
 #[cfg(test)]
 mod test_c_ffi {
-    use std::{mem::MaybeUninit, ptr::NonNull};
-
-    use super::*;
     use crate::{builder::*, worker_handle::*};
     use ddcommon::{parse_uri, Endpoint};
+    use ddcommon_ffi as ffi;
     use ddtelemetry::{
         data::metrics::{MetricNamespace, MetricType},
         worker::{TelemetryWorkerBuilder, TelemetryWorkerHandle},
     };
     use ffi::tags::{ddog_Vec_Tag_new, ddog_Vec_Tag_push, PushTagResult};
+    use ffi::MaybeError;
+    use std::{mem::MaybeUninit, ptr::NonNull};
 
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -141,7 +130,7 @@ mod test_c_ffi {
                     ffi::CharSlice::from("language_version"),
                     ffi::CharSlice::from("tracer_version"),
                 ),
-                crate::MaybeError::None
+                MaybeError::None
             );
             let mut builder = builder.assume_init();
 
@@ -151,7 +140,7 @@ mod test_c_ffi {
                     ffi::CharSlice::from("runtime_id"),
                     ffi::CharSlice::from("abcd")
                 ),
-                crate::MaybeError::None,
+                MaybeError::None,
             );
             assert_eq!(builder.runtime_id.as_deref(), Some("abcd"));
 
@@ -161,7 +150,7 @@ mod test_c_ffi {
                     ffi::CharSlice::from("application.runtime_name"),
                     ffi::CharSlice::from("rust")
                 ),
-                crate::MaybeError::None,
+                MaybeError::None,
             );
             assert_eq!(builder.application.runtime_name.as_deref(), Some("rust"));
 
@@ -171,7 +160,7 @@ mod test_c_ffi {
                     ffi::CharSlice::from("host.kernel_version"),
                     ffi::CharSlice::from("ダタドグ")
                 ),
-                crate::MaybeError::None,
+                MaybeError::None,
             );
             assert_eq!(builder.host.kernel_version.as_deref(), Some("ダタドグ"));
 
@@ -198,7 +187,7 @@ mod test_c_ffi {
                     ffi::CharSlice::from("language_version"),
                     ffi::CharSlice::from("tracer_version"),
                 ),
-                crate::MaybeError::None,
+                MaybeError::None,
             );
             let mut builder = builder.assume_init();
 
@@ -208,7 +197,7 @@ mod test_c_ffi {
                     TelemetryWorkerBuilderStrProperty::RuntimeId,
                     ffi::CharSlice::from("abcd")
                 ),
-                crate::MaybeError::None,
+                MaybeError::None,
             );
             assert_eq!(builder.runtime_id.as_deref(), Some("abcd"));
 
@@ -218,7 +207,7 @@ mod test_c_ffi {
                     TelemetryWorkerBuilderStrProperty::ApplicationRuntimeName,
                     ffi::CharSlice::from("rust")
                 ),
-                crate::MaybeError::None,
+                MaybeError::None,
             );
             assert_eq!(builder.application.runtime_name.as_deref(), Some("rust"));
 
@@ -228,7 +217,7 @@ mod test_c_ffi {
                     TelemetryWorkerBuilderStrProperty::HostKernelVersion,
                     ffi::CharSlice::from("ダタドグ")
                 ),
-                crate::MaybeError::None,
+                MaybeError::None,
             );
             assert_eq!(builder.host.kernel_version.as_deref(), Some("ダタドグ"));
         }

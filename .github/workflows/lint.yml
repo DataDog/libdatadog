@@ -20,7 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         # Ignore nightly for now, it fails too often
-        rust_version: ["1.69.0", "stable"]
+        rust_version: ["1.71.1", "stable"]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -31,7 +31,7 @@ jobs:
           rust_version: ${{ matrix.rust_version }}
       - name: Install ${{ matrix.version }} toolchain and clippy
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }} && rustup component add clippy
-      - run: cargo clippy --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.69.0 ] && echo -Aunknown-lints)
+      - run: cargo clippy --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.71.1 ] && echo -Aunknown-lints)
   licensecheck:
     runs-on: ubuntu-latest
     name: "Presence of licence headers"
@@ -74,8 +74,8 @@ jobs:
           # cache key contains current version of cargo-bundle-licenses
           # when upstream version is updated we can bump the cache key version,
           # to cache the latest version of the tool
-          key: "v1-1.3.0"
-      # cargo-bundle-licenses v1.3 doesn't understand path differences due to
+          key: "v1-2.0.0"
+      # cargo-bundle-licenses v2.0 doesn't understand path differences due to
       # sparse vs git index, so force git.
       - run: mkdir -p .cargo && printf "[registries.crates-io]\nprotocol = \"git\"\n" > .cargo/config.toml
       - run: cargo install cargo-bundle-licenses

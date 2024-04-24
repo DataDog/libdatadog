@@ -9,8 +9,7 @@ use ddtelemetry::{
     worker::TelemetryWorkerHandle,
 };
 use ffi::slice::AsBytes;
-
-use crate::MaybeError;
+use ffi::MaybeError;
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]

@@ -36,7 +36,7 @@ resolver = "2"
 # serverless packages wanted to maintain their own version numbers. Some of
 # their depenencies also remain under their own versioning.
 [workspace.package]
-rust-version = "1.69"
+rust-version = "1.71.1"
 edition = "2021"
 version = "8.0.0"
 license = "Apache-2.0"

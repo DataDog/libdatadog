@@ -45,7 +45,7 @@ impl<'a> From<&'a TracerTags> for HashMap<&'static str, String> {
 pub struct TraceExporter {
     endpoint: Endpoint,
     tags: TracerTags,
-    no_proxy: bool,
+    use_proxy: bool,
     runtime: Runtime,
 }
 
@@ -55,10 +55,10 @@ impl TraceExporter {
     }
 
     pub fn send(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
-        if self.no_proxy {
-            self.send_deser_ser(data)
-        } else {
+        if self.use_proxy {
             self.send_proxy(data, trace_count)
+        } else {
+            self.send_deser_ser(data)
         }
     }
 
@@ -153,58 +153,68 @@ impl TraceExporter {
     }
 }
 
-#[derive(Default)]
 pub struct TraceExporterBuilder {
     host: Option<String>,
     port: Option<u16>,
-    tracer_version: Option<String>,
-    language: Option<String>,
-    language_version: Option<String>,
-    interpreter: Option<String>,
-    no_proxy: bool,
+    tracer_version: String,
+    language: String,
+    language_version: String,
+    language_interpreter: String,
+    use_proxy: bool,
+}
+
+impl Default for TraceExporterBuilder {
+    fn default() -> Self {
+        Self {
+            host: None,
+            port: None,
+            tracer_version: String::default(),
+            language: String::default(),
+            language_version: String::default(),
+            language_interpreter: String::default(),
+            use_proxy: true,
+        }
+    }
 }
 
 impl TraceExporterBuilder {
-    pub fn set_host(&mut self, host: &str) -> &mut TraceExporterBuilder {
+    pub fn set_host(mut self, host: &str) -> TraceExporterBuilder {
         self.host = Some(String::from(host));
         self
     }
 
-    pub fn set_port(&mut self, port: u16) -> &mut TraceExporterBuilder {
+    pub fn set_port(mut self, port: u16) -> TraceExporterBuilder {
         self.port = Some(port);
         self
     }
 
-    pub fn set_tracer_version(&mut self, tracer_version: &str) -> &mut TraceExporterBuilder {
-        self.tracer_version = Some(String::from(tracer_version));
+    pub fn set_tracer_version(mut self, tracer_version: &str) -> TraceExporterBuilder {
+        self.tracer_version = tracer_version.to_owned();
         self
     }
 
-    pub fn set_language(&mut self, lang: &str) -> &mut TraceExporterBuilder {
-        self.language = Some(String::from(lang));
+    pub fn set_language(mut self, lang: &str) -> TraceExporterBuilder {
+        self.language = lang.to_owned();
         self
     }
 
-    pub fn set_language_version(&mut self, lang_version: &str) -> &mut TraceExporterBuilder {
-        self.language_version = Some(String::from(lang_version));
+    pub fn set_language_version(mut self, lang_version: &str) -> TraceExporterBuilder {
+        self.language_version = lang_version.to_owned();
         self
     }
 
-    pub fn set_language_interpreter(
-        &mut self,
-        lang_interpreter: &str,
-    ) -> &mut TraceExporterBuilder {
-        self.interpreter = Some(String::from(lang_interpreter));
+    pub fn set_language_interpreter(mut self, lang_interpreter: &str) -> TraceExporterBuilder {
+        self.language_interpreter = lang_interpreter.to_owned();
         self
     }
 
-    pub fn set_proxy(&mut self, proxy: bool) -> &mut TraceExporterBuilder {
-        self.no_proxy = !proxy;
+    pub fn set_proxy(mut self, proxy: bool) -> TraceExporterBuilder {
+        self.use_proxy = proxy;
         self
     }
 
-    pub fn build(&mut self) -> anyhow::Result<TraceExporter> {
-        let version = if self.no_proxy { "v0.7" } else { "v0.4" };
+    pub fn build(mut self) -> anyhow::Result<TraceExporter> {
+        let version = if self.use_proxy { "v0.4" } else { "v0.7" };
         let endpoint = Endpoint {
             url: hyper::Uri::from_str(
                 format!(
@@ -217,18 +227,20 @@ impl TraceExporterBuilder {
             )?,
             api_key: None,
         };
+
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
+
         Ok(TraceExporter {
             endpoint,
             tags: TracerTags {
-                tracer_version: self.tracer_version.clone().unwrap(),
-                language_version: self.language_version.clone().unwrap(),
-                language_interpreter: self.interpreter.clone().unwrap(),
-                language: self.language.clone().unwrap(),
+                tracer_version: std::mem::take(&mut self.tracer_version),
+                language_version: std::mem::take(&mut self.language_version),
+                language_interpreter: std::mem::take(&mut self.language_interpreter),
+                language: std::mem::take(&mut self.language),
             },
-            no_proxy: self.no_proxy,
+            use_proxy: self.use_proxy,
             runtime,
         })
     }
@@ -237,10 +249,11 @@ impl TraceExporterBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn new() {
-        let mut builder = TraceExporterBuilder::default();
+        let builder = TraceExporterBuilder::default();
         let exporter = builder
             .set_host("192.168.1.1")
             .set_port(8127)
@@ -256,17 +269,16 @@ mod tests {
             exporter.endpoint.url.to_string(),
             "http://192.168.1.1:8127/v0.7/traces"
         );
-        assert_eq!(builder.host.unwrap(), "192.168.1.1");
-        assert_eq!(builder.port.unwrap(), 8127);
-        assert_eq!(builder.tracer_version.unwrap(), "v0.1");
-        assert_eq!(builder.language.unwrap(), "nodejs");
-        assert_eq!(builder.language_version.unwrap(), "1.0");
-        assert_eq!(builder.interpreter.unwrap(), "v8");
+
+        assert_eq!(exporter.tags.tracer_version, "v0.1");
+        assert_eq!(exporter.tags.language, "nodejs");
+        assert_eq!(exporter.tags.language_version, "1.0");
+        assert_eq!(exporter.tags.language_interpreter, "v8");
     }
 
     #[test]
     fn new_defaults() {
-        let mut builder = TraceExporterBuilder::default();
+        let builder = TraceExporterBuilder::default();
         let exporter = builder
             .set_tracer_version("v0.1")
             .set_language("nodejs")
@@ -279,10 +291,47 @@ mod tests {
             exporter.endpoint.url.to_string(),
             "http://127.0.0.1:8126/v0.4/traces"
         );
-        assert_eq!(builder.tracer_version.unwrap(), "v0.1");
-        assert_eq!(builder.language.unwrap(), "nodejs");
-        assert_eq!(builder.language_version.unwrap(), "1.0");
-        assert_eq!(builder.interpreter.unwrap(), "v8");
+        assert_eq!(exporter.tags.tracer_version, "v0.1");
+        assert_eq!(exporter.tags.language, "nodejs");
+        assert_eq!(exporter.tags.language_version, "1.0");
+        assert_eq!(exporter.tags.language_interpreter, "v8");
+    }
+
+    #[test]
+    fn test_from_tracer_tags_to_tracer_header_tags() {
+        let tracer_tags = TracerTags {
+            tracer_version: "v0.1".to_string(),
+            language: "rust".to_string(),
+            language_version: "1.52.1".to_string(),
+            language_interpreter: "rustc".to_string(),
+        };
+
+        let tracer_header_tags: TracerHeaderTags = (&tracer_tags).into();
+
+        assert_eq!(tracer_header_tags.tracer_version, "v0.1");
+        assert_eq!(tracer_header_tags.lang, "rust");
+        assert_eq!(tracer_header_tags.lang_version, "1.52.1");
+        assert_eq!(tracer_header_tags.lang_interpreter, "rustc");
+    }
+
+    #[test]
+    fn test_from_tracer_tags_to_hashmap() {
+        let tracer_tags = TracerTags {
+            tracer_version: "v0.1".to_string(),
+            language: "rust".to_string(),
+            language_version: "1.52.1".to_string(),
+            language_interpreter: "rustc".to_string(),
+        };
+
+        let hashmap: HashMap<&'static str, String> = (&tracer_tags).into();
+
+        assert_eq!(hashmap.get("datadog-meta-tracer-version").unwrap(), "v0.1");
+        assert_eq!(hashmap.get("datadog-meta-lang").unwrap(), "rust");
+        assert_eq!(hashmap.get("datadog-meta-lang-version").unwrap(), "1.52.1");
+        assert_eq!(
+            hashmap.get("datadog-meta-lang-interpreter").unwrap(),
+            "rustc"
+        );
     }
 
     #[test]

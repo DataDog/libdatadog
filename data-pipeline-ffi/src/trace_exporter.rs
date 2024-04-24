@@ -18,7 +18,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
     language_version: CharSlice,
     language_interpreter: CharSlice,
 ) -> *mut TraceExporter {
-    let mut builder = TraceExporterBuilder::default();
+    let builder = TraceExporterBuilder::default();
 
     let exporter = builder
         .set_host(host.to_utf8_lossy().as_ref())

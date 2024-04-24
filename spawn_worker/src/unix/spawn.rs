@@ -26,50 +26,40 @@ mod linux {
     }
 }
 
-use std::fs::File;
+mod helper {
+    use nix::libc;
+    use std::{ffi::CString, ptr};
 
-use std::io;
-use std::ops::RangeInclusive;
-use std::{
-    env,
-    ffi::{self, CString, OsString},
-    fs::Permissions,
-    io::{Seek, Write},
-    os::unix::prelude::{AsRawFd, OsStringExt, PermissionsExt},
-    ptr,
-};
-
-use io_lifetimes::OwnedFd;
-
-use nix::{sys::wait::WaitStatus, unistd::Pid};
-
-use crate::fork::{fork, Fork};
-use nix::libc;
-
-struct ExecVec {
-    items: Vec<CString>,
-    // Always NULL ptr terminated
-    ptrs: Vec<*const libc::c_char>,
-}
-
-impl ExecVec {
-    fn as_ptr(&self) -> *const *const libc::c_char {
-        self.ptrs.as_ptr()
+    pub struct ExecVec {
+        items: Vec<CString>,
+        // Always NULL ptr terminated
+        ptrs: Vec<*const libc::c_char>,
     }
 
-    fn empty() -> Self {
-        Self {
-            items: vec![],
-            ptrs: vec![std::ptr::null()],
+    impl ExecVec {
+        pub fn as_ptr(&self) -> *const *const libc::c_char {
+            self.ptrs.as_ptr()
         }
-    }
 
-    pub fn push(&mut self, item: CString) {
-        let l = self.ptrs.len();
-        // replace previous trailing null with ptr to the item
-        self.ptrs[l - 1] = item.as_ptr();
-        self.ptrs.push(ptr::null());
-        self.items.push(item);
+        pub fn empty() -> Self {
+            Self {
+                items: vec![],
+                ptrs: vec![ptr::null()],
+            }
+        }
+
+        pub fn push(&mut self, item: CString) {
+            let l = self.ptrs.len();
+            // replace previous trailing null with ptr to the item
+            self.ptrs[l - 1] = item.as_ptr();
+            self.ptrs.push(ptr::null());
+            self.items.push(item);
+        }
+
+        pub fn set(&mut self, index: usize, item: CString) {
+            self.ptrs[index] = item.as_ptr();
+            self.items[index] = item;
+        }
     }
 }
 
@@ -85,6 +75,25 @@ fn write_to_tmp_file(data: &[u8]) -> anyhow::Result<tempfile::NamedTempFile> {
     Ok(tmp_file)
 }
 
+use std::fs::File;
+
+use std::io;
+use std::ops::RangeInclusive;
+use std::{
+    env,
+    ffi::{self, CString, OsString},
+    fs::Permissions,
+    io::{Seek, Write},
+    os::unix::prelude::{AsRawFd, OsStringExt, PermissionsExt},
+};
+
+use io_lifetimes::OwnedFd;
+
+use nix::{sys::wait::WaitStatus, unistd::Pid};
+
+use crate::fork::{fork, Fork};
+use nix::libc;
+
 #[derive(Clone)]
 pub enum SpawnMethod {
     #[cfg(target_os = "linux")]
@@ -94,6 +103,7 @@ pub enum SpawnMethod {
     Exec,
 }
 
+use crate::unix::spawn::helper::ExecVec;
 use crate::{LibDependency, Target};
 
 impl Target {
@@ -463,7 +473,7 @@ impl SpawnWorker {
                     anyhow::format_err!("can't convert current executable file to correct path")
                 })?)?;
 
-                argv.items[1] = path.clone();
+                argv.set(1, path.clone());
 
                 let ref_temp_files = &temp_files;
                 Box::new(move || unsafe {
@@ -486,7 +496,7 @@ impl SpawnWorker {
                 )?;
 
                 temp_files.push(path.clone());
-                argv.items[1] = path.clone();
+                argv.set(1, path.clone());
 
                 let ref_temp_files = &temp_files;
                 Box::new(move || unsafe {
