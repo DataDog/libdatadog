@@ -46,6 +46,7 @@ struct TelemetryCrashInfoMessage<'a> {
     pub files: &'a HashMap<String, Vec<String>>,
     pub metadata: Option<&'a CrashtrackerMetadata>,
     pub os_info: &'a os_info::Info,
+    pub tags: &'a HashMap<String, String>,
 }
 
 pub struct TelemetryCrashUploader {
@@ -128,6 +129,7 @@ impl TelemetryCrashUploader {
             files: &crash_info.files,
             metadata: crash_info.metadata.as_ref(),
             os_info: &crash_info.os_info,
+            tags: &crash_info.tags,
         })?;
 
         let stack_trace = serde_json::to_string(&crash_info.stacktrace)?;
@@ -182,9 +184,6 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
     }
     for (counter, value) in &crash_info.counters {
         write!(&mut tags, ",{}:{}", counter, value)?;
-    }
-    for (key, value) in &crash_info.tags {
-        write!(&mut tags, ",{}:{}", key, value)?;
     }
     Ok(tags)
 }
