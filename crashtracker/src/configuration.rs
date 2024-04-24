@@ -18,11 +18,46 @@ pub struct CrashtrackerConfiguration {
     pub collect_stacktrace: bool,
     pub create_alt_stack: bool,
     pub endpoint: Option<Endpoint>,
-    pub path_to_receiver_binary: String,
     pub resolve_frames: CrashtrackerResolveFrames,
+    pub timeout: Duration,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CrashtrackerReceiverConfig {
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+    pub path_to_receiver_binary: String,
     pub stderr_filename: Option<String>,
     pub stdout_filename: Option<String>,
-    pub timeout: Duration,
+}
+
+impl CrashtrackerReceiverConfig {
+    pub fn new(
+        args: Vec<String>,
+        env: Vec<(String, String)>,
+        path_to_receiver_binary: String,
+        stderr_filename: Option<String>,
+        stdout_filename: Option<String>,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            !path_to_receiver_binary.is_empty(),
+            "Expected a receiver binary"
+        );
+        anyhow::ensure!(
+            stderr_filename.is_none() && stdout_filename.is_none()
+                || stderr_filename != stdout_filename,
+            "Can't give the same filename for stderr
+        and stdout, they will conflict with each other"
+        );
+
+        Ok(Self {
+            args,
+            env,
+            path_to_receiver_binary,
+            stderr_filename,
+            stdout_filename,
+        })
+    }
 }
 
 impl CrashtrackerConfiguration {
@@ -31,27 +66,14 @@ impl CrashtrackerConfiguration {
         collect_stacktrace: bool,
         create_alt_stack: bool,
         endpoint: Option<Endpoint>,
-        path_to_receiver_binary: String,
         resolve_frames: CrashtrackerResolveFrames,
-        stderr_filename: Option<String>,
-        stdout_filename: Option<String>,
         timeout: Duration,
     ) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            !path_to_receiver_binary.is_empty(),
-            "Expected a receiver binary"
-        );
-        anyhow::ensure!(stderr_filename.is_none() && stdout_filename.is_none() || stderr_filename != stdout_filename,
-        "Can't give the same filename for stderr and stdout, they will conflict with each other"
-    );
         Ok(Self {
             collect_stacktrace,
             create_alt_stack,
             endpoint,
-            path_to_receiver_binary,
             resolve_frames,
-            stderr_filename,
-            stdout_filename,
             timeout,
         })
     }
