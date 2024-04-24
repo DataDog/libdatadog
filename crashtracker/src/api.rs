@@ -135,13 +135,16 @@ fn test_crash() {
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
     let timeout = Duration::from_secs(30);
-    let receiver_config = Some(CrashtrackerReceiverConfig::new(
-        vec![],
-        vec![],
-        path_to_receiver_binary,
-        stderr_filename,
-        stdout_filename,
-    ));
+    let receiver_config = Some(
+        CrashtrackerReceiverConfig::new(
+            vec![],
+            vec![],
+            path_to_receiver_binary,
+            stderr_filename,
+            stdout_filename,
+        )
+        .expect("Not to fail"),
+    );
     let config = CrashtrackerConfiguration::new(
         collect_stacktrace,
         create_alt_stack,

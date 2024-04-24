@@ -68,13 +68,13 @@ impl<'a> TryFrom<CrashtrackerReceiverConfig<'a>>
         let path_to_receiver_binary = value.path_to_receiver_binary.try_to_utf8()?.to_string();
         let stderr_filename = option_from_char_slice(value.optional_stderr_filename)?;
         let stdout_filename = option_from_char_slice(value.optional_stdout_filename)?;
-        Ok(Self::new(
+        Self::new(
             args,
             env,
             path_to_receiver_binary,
             stderr_filename,
             stdout_filename,
-        ))
+        )
     }
 }
 

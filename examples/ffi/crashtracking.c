@@ -21,7 +21,7 @@ int main(int argc, char **argv) {
   ddog_prof_CrashtrackerReceiverConfig receiver_config = {
       .args = {},
       .env = {},
-      .path_to_receiver_binary = DDOG_CHARSLICE_C("FIXME - point me to receiver binary path"),
+      .path_to_receiver_binary = DDOG_CHARSLICE_C("SET ME TO THE ACTUAL PATH ON YOUR MACHINE"),
       .optional_stderr_filename = {},
       .optional_stdout_filename = {},
   };
@@ -48,7 +48,12 @@ int main(int argc, char **argv) {
     return -1;
   }
 
-  // raise(SIGSEGV);
+#ifdef EXPLICIT_RAISE_SEGV
+  // Test raising SEGV explicitly, to ensure chaining works
+  // properly in this case
+  raise(SIGSEGV);
+#endif
+
   char *bug = NULL;
   *bug = 42;
 

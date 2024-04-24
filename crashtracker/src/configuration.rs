@@ -38,14 +38,25 @@ impl CrashtrackerReceiverConfig {
         path_to_receiver_binary: String,
         stderr_filename: Option<String>,
         stdout_filename: Option<String>,
-    ) -> Self {
-        Self {
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            !path_to_receiver_binary.is_empty(),
+            "Expected a receiver binary"
+        );
+        anyhow::ensure!(
+            stderr_filename.is_none() && stdout_filename.is_none()
+                || stderr_filename != stdout_filename,
+            "Can't give the same filename for stderr
+        and stdout, they will conflict with each other"
+        );
+
+        Ok(Self {
             args,
             env,
             path_to_receiver_binary,
             stderr_filename,
             stdout_filename,
-        }
+        })
     }
 }
 
@@ -58,13 +69,6 @@ impl CrashtrackerConfiguration {
         resolve_frames: CrashtrackerResolveFrames,
         timeout: Duration,
     ) -> anyhow::Result<Self> {
-        //     anyhow::ensure!(
-        //         !path_to_receiver_binary.is_empty(),
-        //         "Expected a receiver binary"
-        //     );
-        //     anyhow::ensure!(stderr_filename.is_none() && stdout_filename.is_none() ||
-        // stderr_filename != stdout_filename,     "Can't give the same filename for stderr
-        // and stdout, they will conflict with each other" );
         Ok(Self {
             collect_stacktrace,
             create_alt_stack,

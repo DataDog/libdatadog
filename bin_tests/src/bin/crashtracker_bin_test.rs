@@ -49,7 +49,7 @@ mod unix {
                 receiver_binary,
                 Some(stderr_filename),
                 Some(stdout_filename),
-            )),
+            )?),
             CrashtrackerMetadata {
                 profiling_library_name: "libdatadog".to_owned(),
                 profiling_library_version: "1.0.0".to_owned(),
