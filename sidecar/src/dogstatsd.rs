@@ -9,11 +9,9 @@ use tracing::{debug, info, warn};
 
 use anyhow::anyhow;
 use cadence::prelude::*;
-use cadence::{
-    Metric, MetricBuilder, QueuingMetricSink, StatsdClient, UdpMetricSink,
-};
 #[cfg(unix)]
 use cadence::UnixMetricSink;
+use cadence::{Metric, MetricBuilder, QueuingMetricSink, StatsdClient, UdpMetricSink};
 use ddcommon::connector::uds::socket_path_from_uri;
 use std::net::{ToSocketAddrs, UdpSocket};
 
@@ -29,6 +27,10 @@ pub enum DogStatsDAction {
     Distribution(String, f64, Vec<Tag>),
     Gauge(String, f64, Vec<Tag>),
     Histogram(String, f64, Vec<Tag>),
+    // Cadence only support i64 type as value
+    // but Golang implementation uses string (https://github.com/DataDog/datadog-go/blob/331d24832f7eac97b091efd696278fe2c4192b29/statsd/statsd.go#L230)
+    // and PHP implementation uses float or string (https://github.com/DataDog/php-datadogstatsd/blob/0efdd1c38f6d3dd407efbb899ad1fd2e5cd18085/src/DogStatsd.php#L251)
+    Set(String, u64, Vec<Tag>),
 }
 
 #[derive(Default)]
@@ -79,6 +81,9 @@ impl Flusher {
                 }
                 DogStatsDAction::Histogram(metric, value, tags) => {
                     do_send(client.histogram_with_tags(metric.as_str(), value), &tags)
+                }
+                DogStatsDAction::Set(metric, value, tags) => {
+                    do_send(client.set_with_tags(metric.as_str(), value as i64), &tags)
                 }
             } {
                 debug!("Error while sending metric: {}", err); // FIXME: log?

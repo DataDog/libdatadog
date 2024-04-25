@@ -607,3 +607,26 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_histogram(
 
     MaybeError::None
 }
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    metric: ffi::CharSlice,
+    value: u64,
+    tags: Option<&ddcommon_ffi::Vec<Tag>>,
+) -> MaybeError {
+    try_c!(blocking::send_dogstatsd_actions(
+        transport,
+        instance_id,
+        vec![DogStatsDAction::Set(
+            metric.to_utf8_lossy().into_owned(),
+            value,
+            tags.map(|tags| tags.iter().cloned().collect())
+                .unwrap_or(vec![])
+        ),],
+    ));
+
+    MaybeError::None
+}
