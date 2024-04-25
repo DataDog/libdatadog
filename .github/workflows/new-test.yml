@@ -46,8 +46,15 @@ jobs:
           swap-storage: true
       - name: "[${{ steps.rust-version.outputs.version }}] cargo build --workspace --verbose"
         run: cargo build --workspace --verbose
-      - name: "[${{ steps.rust-version.outputs.version }}] cargo nextest run --profile ci --verbose"
-        run: cargo nextest run --profile ci --verbose
+      - name: "[${{ steps.rust-version.outputs.version }} WIN] cargo nextest run --profile ci --verbose"
+        if: ${{ matrix.platform == 'windows-latest' }}
+        run: cargo nextest run --profile ci-win --verbose
+        env:
+          RUST_BACKTRACE: 1
+          # TODO we need to create multiple junit files for the different test runs
+      - name: "[${{ steps.rust-version.outputs.version }} UBU] cargo nextest run --profile ci --verbose"
+        if: ${{ matrix.platform == 'ubuntu-latest' }}
+        run: cargo nextest run --profile ci-ubu --verbose
         env:
           RUST_BACKTRACE: 1
           # TODO we need to create multiple junit files for the different test runs
@@ -56,7 +63,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ matrix.platform }}-${{ steps.rust-version.outputs.short-version }}
-          path: target/nextest/ci/*.xml
+          path: target/nextest/ci*/*.xml
 
   publish-test-results:
       name: "Publish Tests Results"

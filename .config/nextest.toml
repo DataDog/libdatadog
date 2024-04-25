@@ -23,3 +23,37 @@ report-name = "nextest-run"
 store-success-output = false
 # Include the stdout and stderr in the JUnit report for failures.
 store-failure-output = true
+
+[profile.ci-win]
+# Print out output for failing tests as soon as they fail, and also at the end
+# of the run (for easy scrollability).
+failure-output = "immediate-final"
+# Do not cancel the test run on the first failure.
+fail-fast = false
+
+[profile.ci-win.junit]
+# Output a JUnit report into the given file inside 'store.dir/<profile-name>'.
+path = "junit-win.xml"
+# The name of the top-level "report" element in JUnit report.
+report-name = "nextest-run-win"
+# Don't include stdout and stderr in the JUnit report for successes.
+store-success-output = false
+# Include the stdout and stderr in the JUnit report for failures.
+store-failure-output = true
+
+[profile.ci-ubu]
+# Print out output for failing tests as soon as they fail, and also at the end
+# of the run (for easy scrollability).
+failure-output = "immediate-final"
+# Do not cancel the test run on the first failure.
+fail-fast = false
+
+[profile.ci-ubu.junit]
+# Output a JUnit report into the given file inside 'store.dir/<profile-name>'.
+path = "junit-ubu.xml"
+# The name of the top-level "report" element in JUnit report.
+report-name = "nextest-run-ubu"
+# Don't include stdout and stderr in the JUnit report for successes.
+store-success-output = false
+# Include the stdout and stderr in the JUnit report for failures.
+store-failure-output = true
