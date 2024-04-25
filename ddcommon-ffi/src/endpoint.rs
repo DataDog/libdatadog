@@ -50,10 +50,4 @@ pub extern "C" fn ddog_endpoint_from_api_key_and_site(
 }
 
 #[no_mangle]
-#[must_use]
-pub extern "C" fn ddog_endpoint_empty() -> Box<Endpoint> {
-    Box::new(Endpoint::default())
-}
-
-#[no_mangle]
 pub extern "C" fn ddog_endpoint_drop(_: Box<Endpoint>) {}

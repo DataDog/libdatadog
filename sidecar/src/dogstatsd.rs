@@ -40,12 +40,12 @@ pub struct Flusher {
 impl Flusher {
     pub fn set_endpoint(&mut self, endpoint: Endpoint) {
         self.client = None;
-        match endpoint.url.host() {
-            None => {
-                info!("DogStatsD is disabled");
+        match endpoint.api_key {
+            Some(_) => {
+                info!("DogStatsD is not available in agentless mode");
                 self.endpoint = None;
             }
-            Some(_) => {
+            None => {
                 debug!("Updating DogStatsD endpoint to {}", endpoint.url.clone());
                 self.endpoint = Some(endpoint);
             }
