@@ -57,6 +57,10 @@ impl<T: Clone + Eq> Scheduler<T> {
     pub fn schedule_event(&mut self, event: T) -> Result<(), T> {
         self.schedule_event_with_from(event, self.now.now())
     }
+
+    pub fn clear_pending(&mut self) {
+        self.deadlines.clear();
+    }
 }
 
 #[derive(Debug)]

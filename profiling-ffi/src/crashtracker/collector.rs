@@ -49,12 +49,14 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_shutdown() -> CrashtrackerResult
 ///     unexpected crash-handling behaviour.
 pub unsafe extern "C" fn ddog_prof_Crashtracker_update_on_fork(
     config: CrashtrackerConfiguration,
+    receiver_config: CrashtrackerReceiverConfig,
     metadata: CrashtrackerMetadata,
 ) -> CrashtrackerResult {
     (|| {
         let config = config.try_into()?;
+        let receiver_config = receiver_config.try_into()?;
         let metadata = metadata.try_into()?;
-        datadog_crashtracker::on_fork(config, metadata)
+        datadog_crashtracker::on_fork(config, receiver_config, metadata)
     })()
     .context("ddog_prof_Crashtracker_update_on_fork failed")
     .into()
@@ -93,12 +95,14 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_receiver_entry_point() -> Crasht
 ///     unexpected crash-handling behaviour.
 pub unsafe extern "C" fn ddog_prof_Crashtracker_init(
     config: CrashtrackerConfiguration,
+    receiver_config: CrashtrackerReceiverConfig,
     metadata: CrashtrackerMetadata,
 ) -> CrashtrackerResult {
     (|| {
         let config = config.try_into()?;
+        let receiver_config = Some(receiver_config.try_into()?);
         let metadata = metadata.try_into()?;
-        datadog_crashtracker::init(config, metadata)
+        datadog_crashtracker::init(config, receiver_config, metadata)
     })()
     .context("ddog_prof_Crashtracker_init failed")
     .into()

@@ -26,6 +26,8 @@ members = [
   "tests/spawn_from_lib",
   "serverless",
   "bin_tests",
+  "data-pipeline",
+  "data-pipeline-ffi"
 ]
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"
@@ -34,9 +36,9 @@ resolver = "2"
 # serverless packages wanted to maintain their own version numbers. Some of
 # their depenencies also remain under their own versioning.
 [workspace.package]
-rust-version = "1.69"
+rust-version = "1.71.1"
 edition = "2021"
-version = "7.0.0"
+version = "8.0.0"
 license = "Apache-2.0"
 
 [profile.dev]

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use std::process;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use datadog_trace_utils::trace_utils;
@@ -61,7 +62,64 @@ pub trait EnvVerifier {
     ) -> trace_utils::MiniAgentMetadata;
 }
 
-pub struct ServerlessEnvVerifier {}
+pub struct ServerlessEnvVerifier {
+    gmc: Arc<Box<dyn GoogleMetadataClient + Send + Sync>>,
+}
+
+impl Default for ServerlessEnvVerifier {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ServerlessEnvVerifier {
+    pub fn new() -> Self {
+        Self {
+            gmc: Arc::new(Box::new(GoogleMetadataClientWrapper {})),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_google_metadata_client(
+        gmc: Box<dyn GoogleMetadataClient + Send + Sync>,
+    ) -> Self {
+        Self { gmc: Arc::new(gmc) }
+    }
+
+    async fn verify_gcp_environment_or_exit(
+        &self,
+        verify_env_timeout: u64,
+    ) -> trace_utils::MiniAgentMetadata {
+        let gcp_metadata_request = ensure_gcp_function_environment(self.gmc.as_ref().as_ref());
+        let gcp_metadata = match tokio::time::timeout(
+            Duration::from_millis(verify_env_timeout),
+            gcp_metadata_request,
+        )
+        .await
+        {
+            Ok(result) => match result {
+                Ok(metadata) => {
+                    debug!("Successfully fetched Google Metadata.");
+                    metadata
+                }
+                Err(err) => {
+                    error!("The Mini Agent can only be run in Google Cloud Functions & Azure Functions. Verification has failed, shutting down now. Error: {err}");
+                    process::exit(1);
+                }
+            },
+            Err(_) => {
+                error!("Google Metadata request timeout of {verify_env_timeout} ms exceeded. Using default values.");
+                GCPMetadata::default()
+            }
+        };
+        trace_utils::MiniAgentMetadata {
+            gcp_project_id: Some(gcp_metadata.project.project_id),
+            gcp_region: Some(get_region_from_gcp_region_string(
+                gcp_metadata.instance.region,
+            )),
+        }
+    }
+}
 
 #[async_trait]
 impl EnvVerifier for ServerlessEnvVerifier {
@@ -77,41 +135,11 @@ impl EnvVerifier for ServerlessEnvVerifier {
                 trace_utils::MiniAgentMetadata::default()
             }
             trace_utils::EnvironmentType::CloudFunction => {
-                return verify_gcp_environment_or_exit(verify_env_timeout).await;
+                return self
+                    .verify_gcp_environment_or_exit(verify_env_timeout)
+                    .await;
             }
         }
-    }
-}
-
-async fn verify_gcp_environment_or_exit(verify_env_timeout: u64) -> trace_utils::MiniAgentMetadata {
-    let gcp_metadata_request =
-        ensure_gcp_function_environment(Box::new(GoogleMetadataClientWrapper {}));
-    let gcp_metadata = match tokio::time::timeout(
-        Duration::from_millis(verify_env_timeout),
-        gcp_metadata_request,
-    )
-    .await
-    {
-        Ok(result) => match result {
-            Ok(metadata) => {
-                debug!("Successfully fetched Google Metadata.");
-                metadata
-            }
-            Err(err) => {
-                error!("The Mini Agent can only be run in Google Cloud Functions & Azure Functions. Verification has failed, shutting down now. Error: {err}");
-                process::exit(1);
-            }
-        },
-        Err(_) => {
-            error!("Google Metadata request timeout of {verify_env_timeout} ms exceeded. Using default values.");
-            GCPMetadata::default()
-        }
-    };
-    trace_utils::MiniAgentMetadata {
-        gcp_project_id: Some(gcp_metadata.project.project_id),
-        gcp_region: Some(get_region_from_gcp_region_string(
-            gcp_metadata.instance.region,
-        )),
     }
 }
 
@@ -132,7 +160,7 @@ fn get_region_from_gcp_region_string(str: String) -> String {
 /// GoogleMetadataClient trait is used so we can mock a google metadata server response in unit
 /// tests
 #[async_trait]
-trait GoogleMetadataClient {
+pub(crate) trait GoogleMetadataClient {
     async fn get_metadata(&self) -> anyhow::Result<Response<Body>>;
 }
 struct GoogleMetadataClientWrapper {}
@@ -159,7 +187,7 @@ impl GoogleMetadataClient for GoogleMetadataClientWrapper {
 /// If true, returns Metadata from the Google Cloud environment.
 /// Otherwise, returns an error with the verification failure reason.
 async fn ensure_gcp_function_environment(
-    metadata_client: Box<dyn GoogleMetadataClient + Send + Sync>,
+    metadata_client: &(dyn GoogleMetadataClient + Send + Sync),
 ) -> anyhow::Result<GCPMetadata> {
     let response = metadata_client.get_metadata().await.map_err(|err| {
         anyhow::anyhow!("Can't communicate with Google Metadata Server. Error: {err}")
@@ -290,7 +318,7 @@ mod tests {
     use hyper::{Body, Response, StatusCode};
     use serde_json::json;
     use serial_test::serial;
-    use std::{fs, path::Path};
+    use std::{fs, path::Path, time::Duration};
 
     use crate::env_verifier::{
         ensure_azure_function_environment, ensure_gcp_function_environment,
@@ -311,7 +339,9 @@ mod tests {
                 anyhow::bail!("Random Error")
             }
         }
-        let res = ensure_gcp_function_environment(Box::new(MockGoogleMetadataClient {})).await;
+        let gmc =
+            Box::new(MockGoogleMetadataClient {}) as Box<dyn GoogleMetadataClient + Send + Sync>;
+        let res = ensure_gcp_function_environment(gmc.as_ref()).await;
         assert!(res.is_err());
         assert_eq!(
             res.unwrap_err().to_string(),
@@ -332,7 +362,9 @@ mod tests {
                     .unwrap())
             }
         }
-        let res = ensure_gcp_function_environment(Box::new(MockGoogleMetadataClient {})).await;
+        let gmc =
+            Box::new(MockGoogleMetadataClient {}) as Box<dyn GoogleMetadataClient + Send + Sync>;
+        let res = ensure_gcp_function_environment(gmc.as_ref()).await;
         assert!(res.is_err());
         assert_eq!(
             res.unwrap_err().to_string(),
@@ -354,7 +386,9 @@ mod tests {
                     .unwrap())
             }
         }
-        let res = ensure_gcp_function_environment(Box::new(MockGoogleMetadataClient {})).await;
+        let gmc =
+            Box::new(MockGoogleMetadataClient {}) as Box<dyn GoogleMetadataClient + Send + Sync>;
+        let res = ensure_gcp_function_environment(gmc.as_ref()).await;
         assert!(res.is_err());
         assert_eq!(
             res.unwrap_err().to_string(),
@@ -386,7 +420,9 @@ mod tests {
                     .unwrap())
             }
         }
-        let res = ensure_gcp_function_environment(Box::new(MockGoogleMetadataClient {})).await;
+        let gmc =
+            Box::new(MockGoogleMetadataClient {}) as Box<dyn GoogleMetadataClient + Send + Sync>;
+        let res = ensure_gcp_function_environment(gmc.as_ref()).await;
         assert!(res.is_ok());
         assert_eq!(
             res.unwrap(),
@@ -398,23 +434,37 @@ mod tests {
                     project_id: "my-project".to_string()
                 }
             }
-        )
+        );
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_gcp_verify_environment_timeout_exceeded_gives_unknown_values() {
-        let env_verifier = ServerlessEnvVerifier {};
+        struct MockGoogleMetadataClient {}
+        #[async_trait]
+        impl GoogleMetadataClient for MockGoogleMetadataClient {
+            async fn get_metadata(&self) -> anyhow::Result<Response<Body>> {
+                // Sleep for 5 seconds to let the timeout trigger
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                Ok(Response::builder()
+                    .status(StatusCode::OK)
+                    .body(Body::empty())
+                    .unwrap())
+            }
+        }
+        let gmc =
+            Box::new(MockGoogleMetadataClient {}) as Box<dyn GoogleMetadataClient + Send + Sync>;
+        let env_verifier = ServerlessEnvVerifier::new_with_google_metadata_client(gmc);
         let res = env_verifier
-            .verify_environment(0, &trace_utils::EnvironmentType::CloudFunction, "linux")
-            .await; // set the verify_env_timeout to timeout immediately
+            .verify_environment(100, &trace_utils::EnvironmentType::CloudFunction, "linux")
+            .await; // set the verify_env_timeout to a small value to trigger the timeout
         assert_eq!(
             res,
             trace_utils::MiniAgentMetadata {
                 gcp_project_id: Some("unknown".to_string()),
                 gcp_region: Some("unknown".to_string()),
             }
-        )
+        );
     }
 
     #[test]

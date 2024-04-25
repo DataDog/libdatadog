@@ -15,6 +15,17 @@ fi
 
 set -eu
 
+ARG_FEATURES=""
+
+while getopts f: flag
+do
+    case "${flag}" in
+        f) ARG_FEATURES=${OPTARG}
+            shift
+            shift
+    esac
+done
+
 destdir="$1"
 
 if [ $CARGO_TARGET_DIR = $destdir ]; then
@@ -107,6 +118,10 @@ if [[ "$symbolizer" -eq 1 ]]; then
     FEATURES="--features cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,symbolizer"
 fi
 
+if [[ ! -z ${ARG_FEATURES} ]]; then
+    FEATURES="$FEATURES,$ARG_FEATURES"
+fi
+
 # build inside the crate to use the config.toml file
 ( cd profiling-ffi && DESTDIR="$destdir" cargo build ${FEATURES} --release --target "${target}")
 
@@ -170,7 +185,15 @@ echo "Building tools"
 DESTDIR=$destdir cargo build --package tools --bins
 
 echo "Generating $destdir/include/libdatadog headers..."
-"$CARGO_TARGET_DIR"/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h" "$destdir/include/datadog/telemetry.h"
+# ADD headers based on selected features.
+HEADERS="$destdir/include/datadog/common.h $destdir/include/datadog/profiling.h $destdir/include/datadog/telemetry.h"
+case $ARG_FEATURES in
+    *data-pipeline-ffi*)
+        HEADERS="$HEADERS $destdir/include/datadog/data-pipeline.h"
+        ;;
+esac
+
+"$CARGO_TARGET_DIR"/debug/dedup_headers $HEADERS
 
 # Don't build the crashtracker on windows
 if [[ "$target" != "x86_64-pc-windows-msvc" ]]; then

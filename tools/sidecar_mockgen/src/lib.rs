@@ -47,18 +47,33 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
         if sym.is_definition() {
             if let Ok(name) = sym.name() {
                 if missing_symbols.remove(name) {
+                    // strip leading underscore
+                    #[cfg(target_os = "macos")]
+                    let name = &name[1..];
                     _ = match sym.kind() {
                         SymbolKind::Text => writeln!(generated, "void {}() {{}}", name),
                         // Ignore symbols of size 0, like _GLOBAL_OFFSET_TABLE_ on alpine
-                        SymbolKind::Data => {
+                        SymbolKind::Data | SymbolKind::Unknown => {
                             if sym.size() > 0 {
                                 writeln!(generated, "char {}[{}];", name, sym.size())
                             } else {
-                                Ok(())
+                                #[cfg(not(target_os = "macos"))]
+                                let ret = Ok(());
+                                #[cfg(target_os = "macos")]
+                                let ret = writeln!(generated, "char {}[1];", name);
+                                ret
                             }
                         }
                         SymbolKind::Tls => {
-                            writeln!(generated, "__thread char {}[{}];", name, sym.size())
+                            if sym.size() > 0 {
+                                writeln!(generated, "__thread char {}[{}];", name, sym.size())
+                            } else {
+                                #[cfg(not(target_os = "macos"))]
+                                let ret = Ok(());
+                                #[cfg(target_os = "macos")]
+                                let ret = writeln!(generated, "__thread char {}[1];", name);
+                                ret
+                            }
                         }
                         _ => Ok(()),
                     };

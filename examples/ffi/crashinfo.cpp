@@ -112,6 +112,10 @@ int main(void) {
 
   add_stacktrace(crashinfo);
 
+  // Datadog IPO at 2019-09-19T13:30:00Z = 1568899800 unix
+  check_result(ddog_crashinfo_set_timestamp(crashinfo.get(), 1568899800, 0),
+               "Failed to set timestamp");
+
   auto endpoint = ddog_Endpoint_file(to_slice_c_char("file://tmp/test.txt"));
   check_result(ddog_crashinfo_upload_to_endpoint(crashinfo.get(), endpoint, 1),
                "Failed to export to file");

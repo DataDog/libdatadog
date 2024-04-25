@@ -6,8 +6,8 @@
 #![allow(clippy::needless_collect)]
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashSet};
-use std::iter::zip;
-use std::ops::{DerefMut, Sub};
+use std::iter::{zip, Sum};
+use std::ops::{Add, DerefMut, Sub};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time;
@@ -44,6 +44,7 @@ use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::{SendData, TracerHeaderTags};
 use ddcommon::{tag::Tag, Endpoint};
+use ddtelemetry::worker::TelemetryWorkerStats;
 use ddtelemetry::{
     data,
     metrics::{ContextKey, MetricContext},
@@ -53,7 +54,10 @@ use ddtelemetry::{
     },
 };
 
-use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
+use crate::log::{
+    MultiEnvFilterGuard, MultiWriterGuard, TemporarilyRetainedMapStats, MULTI_LOG_FILTER,
+    MULTI_LOG_WRITER,
+};
 use crate::{config, log, tracer};
 
 #[datadog_sidecar_macros::extract_request_id]
@@ -87,6 +91,7 @@ pub trait SidecarInterface {
     );
     async fn ping();
     async fn dump() -> String;
+    async fn stats() -> String;
 }
 
 pub trait RequestIdentification {
@@ -97,6 +102,31 @@ pub enum RequestIdentifier {
     InstanceId(InstanceId),
     SessionId(String),
     None,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SidecarStats {
+    pub trace_flusher: TraceFlusherStats,
+    pub sessions: u32,
+    pub session_counter_size: u32,
+    pub runtimes: u32,
+    pub apps: u32,
+    pub active_apps: u32,
+    pub enqueued_apps: u32,
+    pub enqueued_telemetry_data: EnqueuedTelemetryStats,
+    pub telemetry_metrics_contexts: u32,
+    pub telemetry_worker: TelemetryWorkerStats,
+    pub telemetry_worker_errors: u32,
+    pub log_writer: TemporarilyRetainedMapStats,
+    pub log_filter: TemporarilyRetainedMapStats,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TraceFlusherStats {
+    pub agent_config_allocated_shm: u32,
+    pub agent_config_writers: u32,
+    pub agent_configs_last_used_entries: u32,
+    pub send_data_size: u32,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -191,7 +221,7 @@ struct SessionInfo {
 
 impl SessionInfo {
     fn get_runtime(&self, runtime_id: &String) -> RuntimeInfo {
-        let mut runtimes = self.runtimes.lock().unwrap();
+        let mut runtimes = self.lock_runtimes();
         match runtimes.get(runtime_id) {
             Some(runtime) => runtime.clone(),
             None => {
@@ -215,9 +245,7 @@ impl SessionInfo {
 
     async fn shutdown(&self) {
         let runtimes: Vec<RuntimeInfo> = self
-            .runtimes
-            .lock()
-            .unwrap()
+            .lock_runtimes()
             .drain()
             .map(|(_, instance)| instance)
             .collect();
@@ -232,9 +260,7 @@ impl SessionInfo {
 
     async fn shutdown_running_instances(&self) {
         let runtimes: Vec<RuntimeInfo> = self
-            .runtimes
-            .lock()
-            .unwrap()
+            .lock_runtimes()
             .iter()
             .map(|(_, instance)| instance.clone())
             .collect();
@@ -248,12 +274,16 @@ impl SessionInfo {
     }
 
     async fn shutdown_runtime(self, runtime_id: &String) {
-        let runtime = match self.runtimes.lock().unwrap().remove(runtime_id) {
+        let runtime = match self.lock_runtimes().remove(runtime_id) {
             Some(rt) => rt,
             None => return,
         };
 
         runtime.shutdown().await
+    }
+
+    fn lock_runtimes(&self) -> MutexGuard<HashMap<String, RuntimeInfo>> {
+        self.runtimes.lock().unwrap()
     }
 
     fn get_telemetry_config(&self) -> MutexGuard<Option<ddtelemetry::config::Config>> {
@@ -312,7 +342,7 @@ impl RuntimeInfo {
         Shared<ManualFuture<Option<AppInstance>>>,
         Option<ManualFutureCompleter<Option<AppInstance>>>,
     ) {
-        let mut apps = self.apps.lock().unwrap();
+        let mut apps = self.lock_apps();
         let key = (service_name.to_owned(), env_name.to_owned());
         if let Some(found) = apps.get(&key) {
             (found.clone(), None)
@@ -332,9 +362,7 @@ impl RuntimeInfo {
         );
 
         let instance_futures: Vec<_> = self
-            .apps
-            .lock()
-            .unwrap()
+            .lock_apps()
             .drain()
             .map(|(_, instance)| instance)
             .collect();
@@ -362,19 +390,31 @@ impl RuntimeInfo {
             self.instance_id.runtime_id, self.instance_id.session_id
         );
     }
+
+    #[allow(clippy::type_complexity)]
+    fn lock_apps(
+        &self,
+    ) -> MutexGuard<HashMap<(String, String), Shared<ManualFuture<Option<AppInstance>>>>> {
+        self.apps.lock().unwrap()
+    }
+
+    fn lock_app_or_actions(&self) -> MutexGuard<HashMap<QueueId, AppOrQueue>> {
+        self.app_or_actions.lock().unwrap()
+    }
 }
 
 #[derive(Clone)]
 struct AppInstance {
     telemetry: TelemetryWorkerHandle,
     telemetry_worker_shutdown: Shared<BoxFuture<'static, Option<()>>>,
-    telemetry_metrics: HashMap<String, ContextKey>,
+    telemetry_metrics: Arc<Mutex<HashMap<String, ContextKey>>>,
 }
 
 impl AppInstance {
     pub fn register_metric(&mut self, metric: MetricContext) {
-        if !self.telemetry_metrics.contains_key(&metric.name) {
-            self.telemetry_metrics.insert(
+        let mut metrics = self.telemetry_metrics.lock().unwrap();
+        if !metrics.contains_key(&metric.name) {
+            metrics.insert(
                 metric.name.clone(),
                 self.telemetry.register_metric_context(
                     metric.name,
@@ -391,7 +431,11 @@ impl AppInstance {
         &self,
         (name, val, tags): (String, f64, Vec<Tag>),
     ) -> TelemetryActions {
-        TelemetryActions::AddPoint((val, *self.telemetry_metrics.get(&name).unwrap(), tags))
+        TelemetryActions::AddPoint((
+            val,
+            *self.telemetry_metrics.lock().unwrap().get(&name).unwrap(),
+            tags,
+        ))
     }
 }
 
@@ -416,6 +460,45 @@ impl Default for EnqueuedTelemetryData {
             actions: Vec::new(),
             computed_dependencies: Vec::new(),
         }
+    }
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct EnqueuedTelemetryStats {
+    pub dependencies_stored: u32,
+    pub dependencies_unflushed: u32,
+    pub configurations_stored: u32,
+    pub configurations_unflushed: u32,
+    pub integrations_stored: u32,
+    pub integrations_unflushed: u32,
+    pub metrics: u32,
+    pub points: u32,
+    pub actions: u32,
+    pub computed_dependencies: u32,
+}
+
+impl Add for EnqueuedTelemetryStats {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        EnqueuedTelemetryStats {
+            dependencies_stored: self.dependencies_stored + rhs.dependencies_stored,
+            dependencies_unflushed: self.dependencies_unflushed + rhs.dependencies_unflushed,
+            configurations_stored: self.configurations_stored + rhs.configurations_stored,
+            configurations_unflushed: self.configurations_unflushed + rhs.configurations_unflushed,
+            integrations_stored: self.integrations_stored + rhs.integrations_stored,
+            integrations_unflushed: self.integrations_unflushed + rhs.integrations_unflushed,
+            metrics: self.metrics + rhs.metrics,
+            points: self.points + rhs.points,
+            actions: self.actions + rhs.actions,
+            computed_dependencies: self.computed_dependencies + rhs.computed_dependencies,
+        }
+    }
+}
+
+impl Sum for EnqueuedTelemetryStats {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::default(), |a, b| a + b)
     }
 }
 
@@ -557,6 +640,21 @@ impl EnqueuedTelemetryData {
             completer.complete(packages).await;
         });
         deps
+    }
+
+    pub fn stats(&self) -> EnqueuedTelemetryStats {
+        EnqueuedTelemetryStats {
+            dependencies_stored: self.dependencies.len_stored() as u32,
+            dependencies_unflushed: self.dependencies.len_unflushed() as u32,
+            configurations_stored: self.configurations.len_stored() as u32,
+            configurations_unflushed: self.configurations.len_unflushed() as u32,
+            integrations_stored: self.integrations.len_stored() as u32,
+            integrations_unflushed: self.integrations.len_unflushed() as u32,
+            metrics: self.metrics.len() as u32,
+            points: self.points.len() as u32,
+            actions: self.actions.len() as u32,
+            computed_dependencies: self.computed_dependencies.len() as u32,
+        }
     }
 }
 
@@ -772,6 +870,16 @@ impl TraceFlusher {
             Ok(())
         }
     }
+
+    pub fn stats(&self) -> TraceFlusherStats {
+        let rc = self.remote_config.lock().unwrap();
+        TraceFlusherStats {
+            agent_config_allocated_shm: rc.writers.values().map(|r| r.writer.size() as u32).sum(),
+            agent_config_writers: rc.writers.len() as u32,
+            agent_configs_last_used_entries: rc.last_used.len() as u32,
+            send_data_size: self.inner.lock().unwrap().traces.send_data_size as u32,
+        }
+    }
 }
 
 #[derive(Default, Clone)]
@@ -860,12 +968,7 @@ impl SidecarServer {
                 }
             }
             for instance_id in instances {
-                let maybe_session = self
-                    .sessions
-                    .lock()
-                    .unwrap()
-                    .get(&instance_id.session_id)
-                    .cloned();
+                let maybe_session = self.lock_sessions().get(&instance_id.session_id).cloned();
                 if let Some(session) = maybe_session {
                     session.shutdown_runtime(&instance_id.runtime_id).await;
                 }
@@ -878,7 +981,7 @@ impl SidecarServer {
     }
 
     fn get_session(&self, session_id: &String) -> SessionInfo {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.lock_sessions();
         match sessions.get(session_id) {
             Some(session) => session.clone(),
             None => {
@@ -900,7 +1003,7 @@ impl SidecarServer {
     }
 
     async fn stop_session(&self, session_id: &String) {
-        let session = match self.sessions.lock().unwrap().remove(session_id) {
+        let session = match self.lock_sessions().remove(session_id) {
             Some(session) => session,
             None => return,
         };
@@ -908,6 +1011,10 @@ impl SidecarServer {
         info!("Shutting down session: {}", session_id);
         session.shutdown().await;
         debug!("Successfully shut down session: {}", session_id);
+    }
+
+    fn lock_sessions(&self) -> MutexGuard<HashMap<String, SessionInfo>> {
+        self.sessions.lock().unwrap()
     }
 
     async fn get_app(
@@ -934,12 +1041,13 @@ impl SidecarServer {
         builder.runtime_id = Some(instance_id.runtime_id.clone());
         builder.application.env = Some(env_name.to_owned());
         let session_info = self.get_session(&instance_id.session_id);
-        let config = session_info
+        let mut config = session_info
             .session_config
             .lock()
             .unwrap()
             .clone()
             .unwrap_or_else(ddtelemetry::config::Config::from_env);
+        config.restartable = true;
 
         // TODO: log errors
         let instance_option = match builder.spawn_with_config(config.clone()).await {
@@ -949,7 +1057,7 @@ impl SidecarServer {
                 let instance = AppInstance {
                     telemetry: handle,
                     telemetry_worker_shutdown: worker_join.map(Result::ok).boxed().shared(),
-                    telemetry_metrics: HashMap::new(),
+                    telemetry_metrics: Default::default(),
                 };
 
                 instance.telemetry.send_msgs(inital_actions).await.ok();
@@ -993,6 +1101,112 @@ impl SidecarServer {
         // send trace payload to our trace flusher
         let data = SendData::new(size, payload, headers, target);
         self.trace_flusher.enqueue(data);
+    }
+
+    pub async fn compute_stats(&self) -> SidecarStats {
+        let mut telemetry_stats_errors = 0;
+        let telemetry_stats = join_all({
+            let sessions = self.lock_sessions();
+            let mut futures = vec![];
+            for (_, s) in sessions.iter() {
+                let runtimes = s.lock_runtimes();
+                for (_, r) in runtimes.iter() {
+                    let apps = r.lock_apps();
+                    for (_, a) in apps.iter() {
+                        if let Some(Some(existing_app)) = a.peek() {
+                            match existing_app.telemetry.stats() {
+                                Ok(future) => futures.push(future),
+                                Err(_) => telemetry_stats_errors += 1,
+                            }
+                        }
+                    }
+                }
+            }
+            futures
+        })
+        .await;
+        let sessions = self.lock_sessions();
+        SidecarStats {
+            trace_flusher: self.trace_flusher.stats(),
+            sessions: sessions.len() as u32,
+            session_counter_size: self.session_counter.lock().unwrap().len() as u32,
+            runtimes: sessions
+                .values()
+                .map(|s| s.lock_runtimes().len() as u32)
+                .sum(),
+            apps: sessions
+                .values()
+                .map(|s| {
+                    s.lock_runtimes()
+                        .values()
+                        .map(|r| r.lock_apps().len() as u32)
+                        .sum::<u32>()
+                })
+                .sum(),
+            active_apps: sessions
+                .values()
+                .map(|s| {
+                    s.lock_runtimes()
+                        .values()
+                        .map(|r| r.lock_app_or_actions().len() as u32)
+                        .sum::<u32>()
+                })
+                .sum(),
+            enqueued_apps: sessions
+                .values()
+                .map(|s| {
+                    s.lock_runtimes()
+                        .values()
+                        .map(|r| {
+                            r.lock_app_or_actions()
+                                .values()
+                                .filter(|a| matches!(a, AppOrQueue::Queue(_)))
+                                .count() as u32
+                        })
+                        .sum::<u32>()
+                })
+                .sum(),
+            enqueued_telemetry_data: sessions
+                .values()
+                .map(|s| {
+                    s.lock_runtimes()
+                        .values()
+                        .map(|r| {
+                            r.lock_app_or_actions()
+                                .values()
+                                .filter_map(|a| match a {
+                                    AppOrQueue::Queue(q) => Some(q.stats()),
+                                    _ => None,
+                                })
+                                .sum()
+                        })
+                        .sum()
+                })
+                .sum(),
+            telemetry_metrics_contexts: sessions
+                .values()
+                .map(|s| {
+                    s.lock_runtimes()
+                        .values()
+                        .map(|r| {
+                            r.lock_apps()
+                                .values()
+                                .map(|a| {
+                                    a.peek().unwrap_or(&None).as_ref().map_or(0, |w| {
+                                        w.telemetry_metrics.lock().unwrap().len() as u32
+                                    })
+                                })
+                                .sum::<u32>()
+                        })
+                        .sum::<u32>()
+                })
+                .sum(),
+            telemetry_worker_errors: telemetry_stats_errors
+                + telemetry_stats.iter().filter(|v| v.is_err()).count() as u32,
+            telemetry_worker: telemetry_stats.into_iter().filter_map(|v| v.ok()).sum(),
+            log_filter: MULTI_LOG_FILTER.stats(),
+            log_writer: MULTI_LOG_WRITER.stats(),
+        }
     }
 }
 
@@ -1044,7 +1258,7 @@ impl SidecarInterface for SidecarServer {
         actions: Vec<SidecarAction>,
     ) -> Self::EnqueueActionsFut {
         let rt_info = self.get_runtime(&instance_id);
-        let mut queue = rt_info.app_or_actions.lock().unwrap();
+        let mut queue = rt_info.lock_app_or_actions();
         match queue.entry(queue_id) {
             Entry::Occupied(mut entry) => match entry.get_mut() {
                 AppOrQueue::Queue(ref mut data) => {
@@ -1102,7 +1316,7 @@ impl SidecarInterface for SidecarServer {
         let (future, completer) = ManualFuture::new();
         let app_or_queue = {
             let rt_info = self.get_runtime(&instance_id);
-            let mut app_or_actions = rt_info.app_or_actions.lock().unwrap();
+            let mut app_or_actions = rt_info.lock_app_or_actions();
             match app_or_actions.get(&queue_id) {
                 Some(AppOrQueue::Queue(_)) => {
                     app_or_actions.insert(queue_id, AppOrQueue::App(future.shared()))
@@ -1143,9 +1357,7 @@ impl SidecarInterface for SidecarServer {
                         matches!(action, TelemetryActions::Lifecycle(LifecycleAction::Stop))
                     }) {
                         self.get_runtime(&instance_id)
-                            .app_or_actions
-                            .lock()
-                            .unwrap()
+                            .lock_app_or_actions()
                             .remove(&queue_id);
                     }
 
@@ -1270,6 +1482,15 @@ impl SidecarInterface for SidecarServer {
     fn dump(self, _: Context) -> Self::DumpFut {
         Box::pin(crate::dump::dump())
     }
+
+    type StatsFut = Pin<Box<dyn Send + futures::Future<Output = String>>>;
+
+    fn stats(self, _: Context) -> Self::StatsFut {
+        Box::pin(async move {
+            let stats = self.compute_stats().await;
+            simd_json::serde::to_string(&stats).unwrap()
+        })
+    }
 }
 
 pub mod blocking {
@@ -1380,6 +1601,15 @@ pub mod blocking {
         let res = transport.call(SidecarInterfaceRequest::Dump {})?;
         if let SidecarInterfaceResponse::Dump(dump) = res {
             Ok(dump)
+        } else {
+            Ok("".to_string())
+        }
+    }
+
+    pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
+        let res = transport.call(SidecarInterfaceRequest::Stats {})?;
+        if let SidecarInterfaceResponse::Stats(stats) = res {
+            Ok(stats)
         } else {
             Ok("".to_string())
         }

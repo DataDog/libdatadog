@@ -2,7 +2,7 @@ name: Test
 on: [push]
 env: 
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.69.0
+  RUST_VERSION: 1.71.1
 
 jobs:
   test:
@@ -27,7 +27,8 @@ jobs:
         if: ${{ matrix.rust_version != '' }}
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
       - id: rust-version
-        run: echo "version=$(rustc --version)" >> $GITHUB_OUTPUT
+        # On Windows run happens in a PowerShell, so start bash explicitly
+        run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
       - name: Free Disk Space (Ubuntu only)
         if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
         uses: jlumbroso/free-disk-space@v1.3.1
@@ -54,6 +55,7 @@ jobs:
         env:
           RUSTFLAGS: "-C prefer-dynamic"
           RUST_BACKTRACE: 1
+
   ffi:
     name: "FFI #${{ matrix.platform }} ${{ matrix.rust_version }}"
     runs-on: ${{ matrix.platform }}
@@ -97,7 +99,7 @@ jobs:
       - name: "Generate profiling FFI"
         shell: bash
         run: |
-           ./build-profiling-ffi.sh ${OUTPUT_FOLDER}/profiling
+           ./build-profiling-ffi.sh -f data-pipeline-ffi ${OUTPUT_FOLDER}/profiling
 
       - name: "Generate Telemetry FFI"
         shell: bash
@@ -113,7 +115,7 @@ jobs:
           path: ${{ github.workspace }}/artifacts
           retention-days: 1
 
-      - name: "(Windows) Test building C bindings - dynamic link vc runtime"
+      - name: "(Windows) Test building Profiling C bindings - dynamic link vc runtime"
         if: ${{ matrix.platform == 'windows-latest' }}
         shell: bash
         run: |
@@ -123,7 +125,7 @@ jobs:
           cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DVCRUNTIME_LINK_TYPE=DLL
           cmake --build .
 
-      - name: "(Windows) Test building C bindings - static link vc runtime"
+      - name: "(Windows) Test building Profiling C bindings - static link vc runtime"
         if: ${{ matrix.platform == 'windows-latest' }}
         shell: bash
         run: |
@@ -133,7 +135,7 @@ jobs:
           cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DVCRUNTIME_LINK_TYPE=STATIC
           cmake --build .
 
-      - name: "Test building C bindings"
+      - name: "Test building Profiling C bindings"
         shell: bash
         if: ${{ matrix.platform != 'windows-latest' }}
         run: |
@@ -149,6 +151,7 @@ jobs:
             cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling
             cmake --build .
           fi
+
   cross-centos7:
     name: build and test using cross - on centos7
     runs-on: ubuntu-latest
@@ -156,6 +159,8 @@ jobs:
       group: ci-${{ github.ref }}-cross-centos7
       cancel-in-progress: true
     steps:
+      - name: Remove unused tools cache
+        run: rm -rf /opt/hostedtoolcache
       - name: Checkout
         uses: actions/checkout@v3
       - name: Cache
