@@ -6,19 +6,17 @@ use std::time::Duration;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CrashtrackerResolveFrames {
-    Never,
-    /// Resolving frames in process is experimental, and can fail/crash
-    ExperimentalInProcess,
-    InReceiver,
+pub enum CrashtrackerStacktraceCollectionOptions {
+    DontCollectStacktrace,
+    CollectStacktraceButDoNotResolveSymbols,
+    CollectStacktraceAndResolveSymbolsInReceiver,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashtrackerConfiguration {
-    pub collect_stacktrace: bool,
     pub create_alt_stack: bool,
     pub endpoint: Option<Endpoint>,
-    pub resolve_frames: CrashtrackerResolveFrames,
+    pub resolve_frames: CrashtrackerStacktraceCollectionOptions,
     pub timeout: Duration,
 }
 
@@ -63,14 +61,12 @@ impl CrashtrackerReceiverConfig {
 impl CrashtrackerConfiguration {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        collect_stacktrace: bool,
         create_alt_stack: bool,
         endpoint: Option<Endpoint>,
-        resolve_frames: CrashtrackerResolveFrames,
+        resolve_frames: CrashtrackerStacktraceCollectionOptions,
         timeout: Duration,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            collect_stacktrace,
             create_alt_stack,
             endpoint,
             resolve_frames,

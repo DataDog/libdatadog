@@ -39,8 +39,7 @@ mod unix {
                     url: ddcommon::parse_uri(&format!("file://{}", output_filename))?,
                     api_key: None,
                 }),
-                resolve_frames: crashtracker::CrashtrackerResolveFrames::Never,
-                collect_stacktrace: true,
+                resolve_frames: crashtracker::CrashtrackerStacktraceCollectionOptions::CollectStacktraceButDoNotResolveSymbols,
                 timeout,
             },
             Some(CrashtrackerReceiverConfig::new(

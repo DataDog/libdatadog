@@ -8,7 +8,7 @@ use crate::configuration::CrashtrackerReceiverConfig;
 use super::collectors::emit_backtrace_by_frames;
 #[cfg(target_os = "linux")]
 use super::collectors::emit_proc_self_maps;
-use super::configuration::{CrashtrackerConfiguration, CrashtrackerResolveFrames};
+use super::configuration::{CrashtrackerConfiguration, CrashtrackerStacktraceCollectionOptions};
 use super::constants::*;
 use super::counters::emit_counters;
 use super::crash_info::CrashtrackerMetadata;
@@ -331,13 +331,8 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     // In fact, if we look into the code here, we see mallocs.
     // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
     // Do this last, so even if it crashes, we still get the other info.
-    if config.collect_stacktrace {
-        unsafe {
-            emit_backtrace_by_frames(
-                pipe,
-                config.resolve_frames == CrashtrackerResolveFrames::ExperimentalInProcess,
-            )?
-        };
+    if config.resolve_frames != CrashtrackerStacktraceCollectionOptions::DontCollectStacktrace {
+        unsafe { emit_backtrace_by_frames(pipe)? };
     }
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
 

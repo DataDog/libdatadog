@@ -10,7 +10,8 @@ use crate::{
         update_receiver_after_fork,
     },
     crash_info::CrashtrackerMetadata,
-    update_config, update_metadata, CrashtrackerConfiguration, CrashtrackerResolveFrames,
+    update_config, update_metadata, CrashtrackerConfiguration,
+    CrashtrackerStacktraceCollectionOptions,
 };
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
@@ -127,11 +128,11 @@ fn test_crash() {
         api_key: None,
     });
 
-    let collect_stacktrace = true;
     let path_to_receiver_binary =
         "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
     let create_alt_stack = true;
-    let resolve_frames = CrashtrackerResolveFrames::InReceiver;
+    let resolve_frames =
+        CrashtrackerStacktraceCollectionOptions::CollectStacktraceAndResolveSymbolsInReceiver;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
     let timeout = Duration::from_secs(30);
@@ -145,14 +146,9 @@ fn test_crash() {
         )
         .expect("Not to fail"),
     );
-    let config = CrashtrackerConfiguration::new(
-        collect_stacktrace,
-        create_alt_stack,
-        endpoint,
-        resolve_frames,
-        timeout,
-    )
-    .expect("not to fail");
+    let config =
+        CrashtrackerConfiguration::new(create_alt_stack, endpoint, resolve_frames, timeout)
+            .expect("not to fail");
     let metadata = CrashtrackerMetadata::new(
         "libname".to_string(),
         "version".to_string(),
