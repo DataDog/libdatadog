@@ -5,13 +5,14 @@ use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use anyhow::anyhow;
 use cadence::prelude::*;
 #[cfg(unix)]
 use cadence::UnixMetricSink;
 use cadence::{Metric, MetricBuilder, QueuingMetricSink, StatsdClient, UdpMetricSink};
+#[cfg(unix)]
 use ddcommon::connector::uds::socket_path_from_uri;
 use std::net::{ToSocketAddrs, UdpSocket};
 
@@ -86,7 +87,7 @@ impl Flusher {
                     do_send(client.set_with_tags(metric.as_str(), value as i64), &tags)
                 }
             } {
-                debug!("Error while sending metric: {}", err); // FIXME: log?
+                error!("Error while sending metric: {}", err);
             }
         }
     }
