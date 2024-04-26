@@ -141,12 +141,11 @@ fn create_client(endpoint: Option<Endpoint>) -> anyhow::Result<StatsdClient> {
                 .next()
                 .ok_or(anyhow!("invalid address"))?;
 
-            let socket;
-            if server_address.is_ipv4() {
-                socket = UdpSocket::bind("0.0.0.0:0")?;
+            let socket = if server_address.is_ipv4() {
+                UdpSocket::bind("0.0.0.0:0")?
             } else {
-                socket = UdpSocket::bind("[::]:0")?;
-            }
+                UdpSocket::bind("[::]:0")?
+            };
             socket.set_nonblocking(true)?;
 
             let sink = QueuingMetricSink::with_capacity(

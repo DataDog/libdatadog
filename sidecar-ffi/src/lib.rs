@@ -532,7 +532,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_count(
             metric.to_utf8_lossy().into_owned(),
             value,
             tags.map(|tags| tags.iter().cloned().collect())
-                .unwrap_or(vec![])
+                .unwrap_or_default()
         ),],
     ));
 
@@ -555,7 +555,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_distribution(
             metric.to_utf8_lossy().into_owned(),
             value,
             tags.map(|tags| tags.iter().cloned().collect())
-                .unwrap_or(vec![])
+                .unwrap_or_default()
         ),],
     ));
 
@@ -578,7 +578,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_gauge(
             metric.to_utf8_lossy().into_owned(),
             value,
             tags.map(|tags| tags.iter().cloned().collect())
-                .unwrap_or(vec![])
+                .unwrap_or_default()
         ),],
     ));
 
@@ -601,7 +601,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_histogram(
             metric.to_utf8_lossy().into_owned(),
             value,
             tags.map(|tags| tags.iter().cloned().collect())
-                .unwrap_or(vec![])
+                .unwrap_or_default()
         ),],
     ));
 
@@ -624,7 +624,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
             metric.to_utf8_lossy().into_owned(),
             value,
             tags.map(|tags| tags.iter().cloned().collect())
-                .unwrap_or(vec![])
+                .unwrap_or_default()
         ),],
     ));
 
