@@ -60,7 +60,7 @@ mod telemetry;
 #[cfg(unix)]
 pub use api::*;
 pub use configuration::{
-    CrashtrackerConfiguration, CrashtrackerReceiverConfig, CrashtrackerStacktraceCollectionOptions,
+    CrashtrackerConfiguration, CrashtrackerReceiverConfig, StacktraceCollection,
 };
 pub use constants::*;
 pub use counters::{begin_profiling_op, end_profiling_op, reset_counters, ProfilingOpTypes};

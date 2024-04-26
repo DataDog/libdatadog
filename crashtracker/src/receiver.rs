@@ -12,9 +12,7 @@ pub fn resolve_frames(
     config: &CrashtrackerConfiguration,
     crash_info: &mut CrashInfo,
 ) -> anyhow::Result<()> {
-    if config.resolve_frames
-        == CrashtrackerStacktraceCollectionOptions::CollectStacktraceAndResolveSymbolsInReceiver
-    {
+    if config.resolve_frames == StacktraceCollection::Enabled {
         // The receiver is the direct child of the crashing process
         // TODO: This pid should be sent over the wire, so that
         // it can be used in a sidecar.

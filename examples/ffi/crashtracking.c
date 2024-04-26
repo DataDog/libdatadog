@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
   ddog_prof_CrashtrackerConfiguration config = {
       .create_alt_stack = false,
       .endpoint = ddog_prof_Endpoint_agent(DDOG_CHARSLICE_C("http://localhost:8126")),
-      .resolve_frames = DDOG_PROF_CRASHTRACKER_STACKTRACE_COLLECTION_OPTIONS_COLLECT_STACKTRACE_BUT_DO_NOT_RESOLVE_SYMBOLS,
+      .resolve_frames = DDOG_PROF_STACKTRACE_COLLECTION_WITHOUT_SYMBOLS,
   };
 
   ddog_prof_CrashtrackerMetadata metadata = {

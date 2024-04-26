@@ -10,8 +10,7 @@ use crate::{
         update_receiver_after_fork,
     },
     crash_info::CrashtrackerMetadata,
-    update_config, update_metadata, CrashtrackerConfiguration,
-    CrashtrackerStacktraceCollectionOptions,
+    update_config, update_metadata, CrashtrackerConfiguration, StacktraceCollection,
 };
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
@@ -131,8 +130,7 @@ fn test_crash() {
     let path_to_receiver_binary =
         "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
     let create_alt_stack = true;
-    let resolve_frames =
-        CrashtrackerStacktraceCollectionOptions::CollectStacktraceAndResolveSymbolsInReceiver;
+    let resolve_frames = StacktraceCollection::Enabled;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
     let timeout = Duration::from_secs(30);

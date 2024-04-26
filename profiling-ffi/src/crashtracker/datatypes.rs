@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::exporter::{self, ProfilingEndpoint};
-pub use datadog_crashtracker::{CrashtrackerStacktraceCollectionOptions, ProfilingOpTypes};
+pub use datadog_crashtracker::{ProfilingOpTypes, StacktraceCollection};
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use ddcommon_ffi::{Error, Slice, StringWrapper};
@@ -31,7 +31,7 @@ pub struct CrashtrackerConfiguration<'a> {
     pub create_alt_stack: bool,
     /// The endpoint to send the crash report to (can be a file://)
     pub endpoint: ProfilingEndpoint<'a>,
-    pub resolve_frames: CrashtrackerStacktraceCollectionOptions,
+    pub resolve_frames: StacktraceCollection,
     pub timeout_secs: u64,
 }
 

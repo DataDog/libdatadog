@@ -209,7 +209,7 @@ mod tests {
                     url: hyper::Uri::from_static("http://localhost:8126/profiling/v1/input"),
                     api_key: None,
                 }),
-                resolve_frames: crate::CrashtrackerStacktraceCollectionOptions::CollectStacktraceButDoNotResolveSymbols,
+                resolve_frames: crate::StacktraceCollection::WithoutSymbols,
                 timeout: time::Duration::from_secs(30),
             },
         )

@@ -4,19 +4,25 @@ use ddcommon::Endpoint;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// Stacktrace collection occurs in the context of a crashing process.
+/// If the stack is sufficiently corruputed, it is possible (but unlikely),
+/// for stack trace collection itself to crash.
+/// We recommend fully enabling stacktrace collection, but having an environment
+/// variable to allow downgrading the collector.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CrashtrackerStacktraceCollectionOptions {
-    DontCollectStacktrace,
-    CollectStacktraceButDoNotResolveSymbols,
-    CollectStacktraceAndResolveSymbolsInReceiver,
+pub enum StacktraceCollection {
+    /// Stacktrace collection occurs in the
+    Disabled,
+    WithoutSymbols,
+    Enabled,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashtrackerConfiguration {
     pub create_alt_stack: bool,
     pub endpoint: Option<Endpoint>,
-    pub resolve_frames: CrashtrackerStacktraceCollectionOptions,
+    pub resolve_frames: StacktraceCollection,
     pub timeout: Duration,
 }
 
@@ -63,7 +69,7 @@ impl CrashtrackerConfiguration {
     pub fn new(
         create_alt_stack: bool,
         endpoint: Option<Endpoint>,
-        resolve_frames: CrashtrackerStacktraceCollectionOptions,
+        resolve_frames: StacktraceCollection,
         timeout: Duration,
     ) -> anyhow::Result<Self> {
         Ok(Self {
