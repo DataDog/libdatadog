@@ -157,3 +157,112 @@ fn create_client(endpoint: Option<Endpoint>) -> anyhow::Result<StatsdClient> {
         }
     };
 }
+
+#[cfg(test)]
+mod test {
+    use crate::dogstatsd::DogStatsDAction::{Count, Distribution, Gauge, Histogram, Set};
+    use crate::dogstatsd::{create_client, Flusher};
+    #[cfg(unix)]
+    use ddcommon::connector::uds::socket_path_to_uri;
+    use ddcommon::tag::Tag;
+    use ddcommon::Endpoint;
+    use http::Uri;
+    use std::net;
+    use std::time::Duration;
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_flusher() {
+        let socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
+        let _ = socket.set_read_timeout(Some(Duration::from_millis(500)));
+
+        let mut flusher = Flusher::default();
+        flusher.set_endpoint(Endpoint {
+            url: socket
+                .local_addr()
+                .unwrap()
+                .to_string()
+                .as_str()
+                .parse::<Uri>()
+                .unwrap(),
+            api_key: None,
+        });
+        flusher.send(vec![
+            Count(
+                "test_count".to_string(),
+                3,
+                vec![Tag::new("foo", "bar").unwrap()],
+            ),
+            Distribution("test_distribution".to_string(), 4.2, vec![]),
+            Gauge("test_gauge".to_string(), 7.6, vec![]),
+            Histogram("test_histogram".to_string(), 8.0, vec![]),
+            Set(
+                "test_set".to_string(),
+                9,
+                vec![Tag::new("the", "end").unwrap()],
+            ),
+        ]);
+
+        fn read(socket: &net::UdpSocket) -> String {
+            let mut buf = [0; 100];
+            socket.recv(&mut buf).expect("No data");
+            let datagram = String::from_utf8_lossy(buf.strip_suffix(&[0]).unwrap());
+            datagram.trim_matches(char::from(0)).to_string()
+        }
+
+        assert_eq!("test_count:3|c|#foo:bar", read(&socket));
+        assert_eq!("test_distribution:4.2|d", read(&socket));
+        assert_eq!("test_gauge:7.6|g", read(&socket));
+        assert_eq!("test_histogram:8|h", read(&socket));
+        assert_eq!("test_set:9|s|#the:end", read(&socket));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_create_client_udp() {
+        let res = create_client(None);
+        assert!(res.is_err());
+        assert_eq!("no endpoint set", res.unwrap_err().to_string().as_str());
+
+        let res = create_client(Some(Endpoint::default()));
+        assert!(res.is_err());
+        assert_eq!("invalid host", res.unwrap_err().to_string().as_str());
+
+        let res = create_client(Some(Endpoint {
+            url: "localhost:99999".parse::<Uri>().unwrap(),
+            api_key: None,
+        }));
+        assert!(res.is_err());
+        assert_eq!("invalid port", res.unwrap_err().to_string().as_str());
+
+        let res = create_client(Some(Endpoint {
+            url: "localhost:80".parse::<Uri>().unwrap(),
+            api_key: None,
+        }));
+        assert!(res.is_ok());
+
+        let res = create_client(Some(Endpoint {
+            url: "http://localhost:80".parse::<Uri>().unwrap(),
+            api_key: None,
+        }));
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)]
+    fn test_create_client_unix_domain_socket() {
+        let res = create_client(Some(Endpoint {
+            url: "unix://localhost:80".parse::<Uri>().unwrap(),
+            api_key: None,
+        }));
+        assert!(res.is_err());
+        assert_eq!("invalid url", res.unwrap_err().to_string().as_str());
+
+        let res = create_client(Some(Endpoint {
+            url: socket_path_to_uri("/path/to/a/socket.sock".as_ref()).unwrap(),
+            api_key: None,
+        }));
+        assert!(res.is_ok());
+    }
+}
