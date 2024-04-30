@@ -80,7 +80,10 @@ jobs:
             path: artifacts
         - name: List Artifacts
           run: ls -laR artifacts
-        - name: Publish Test Results
-          uses: EnricoMi/publish-unit-test-result-action@v2
+        - name: Report Test Results
+          uses: mikepenz/action-junit-report@v4
           with:
-            files: "artifacts/**/*.xml"
+            report_paths: "artifacts/**/*.xml"
+            check_name: "Report Test Results"
+            check_title_template: "Foo '{{FILE_NAME}}' bar '{{SUITE_NAME}}' baz '{{TEST_NAME}}'"
+            job_name: "Publish Test Results"
