@@ -8,8 +8,7 @@ use anyhow::Context;
 #[cfg(unix)]
 use blazesym::symbolize::{Process, Source, Symbolizer};
 use chrono::{DateTime, Utc};
-use datadog_profiling::exporter::{self, Tag};
-use ddcommon::Endpoint;
+use ddcommon::{tag::Tag, Endpoint};
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 use std::time::Duration;
@@ -224,7 +223,7 @@ impl CrashInfo {
                     .ok_or_else(|| anyhow::format_err!("empty path for upload to file"))?
                     .as_str(),
             )?;
-        } 
+        }
         Ok(None)
     }
 
