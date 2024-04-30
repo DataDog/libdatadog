@@ -12,6 +12,7 @@ pub enum Error {
     CannotEstablishTlsConnection,
     NoValidCertifacteRootsFound,
     WindowsNamedPipeUnsupported,
+    TlsUnsupported,
 }
 
 impl fmt::Display for Error {
@@ -27,6 +28,7 @@ impl fmt::Display for Error {
                 "missing or not valid system HTTPS/TLS certificate roots"
             }
             Self::WindowsNamedPipeUnsupported => "windows named pipes unsupported",
+            Self::TlsUnsupported => "TLS is unsupported",
         })
     }
 }

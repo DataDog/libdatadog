@@ -8,5 +8,5 @@ version = "0.0.1"
 proc-macro = true
 
 [dependencies]
-syn = "^2"
-quote = "^1"
+syn = { version = "^2", features = ["full", "proc-macro", "parsing", "printing"], default-features = false }
+quote = { version = "^1", features = ["proc-macro"], default-features = false }

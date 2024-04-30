@@ -14,7 +14,7 @@ anyhow = "1.0"
 current_platform = "0.2.0"
 datadog-profiling = { path = "../profiling" }
 datadog-crashtracker = { path = "../crashtracker" }
-ddcommon = { path = "../ddcommon" }
+ddcommon = { path = "../ddcommon", default-features = false}
 tempfile = "3.3" 
 serde_json = { version = "1.0" }
 hyper = { version = "0.14", default-features = false }

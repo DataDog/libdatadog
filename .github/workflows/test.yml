@@ -55,6 +55,10 @@ jobs:
         env:
           RUSTFLAGS: "-C prefer-dynamic"
           RUST_BACKTRACE: 1
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo test --package ddcommon --no-default-features --features native-tls"
+        run: cargo test --package ddcommon --no-default-features --features native-tls
+        env:
+          RUST_BACKTRACE: 1
 
   ffi:
     name: "FFI #${{ matrix.platform }} ${{ matrix.rust_version }}"
