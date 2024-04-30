@@ -5,10 +5,71 @@ use bytes::Bytes;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils::{self, SendData, TracerHeaderTags};
 use ddcommon::{connector, Endpoint};
-use hyper::{Body, Client, Method};
+use hyper::http::uri::PathAndQuery;
+use hyper::{Body, Client, Method, Uri};
 use log::error;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
 use tokio::runtime::Runtime;
+
+/// TraceExporterInputFormat represents the format of the input traces.
+/// The input format can be either Proxy or V0.4, where V0.4 is the default.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[repr(C)]
+pub enum TraceExporterInputFormat {
+    /// Proxy format is used when the traces are to be sent to the agent without processing them.
+    /// The whole payload is sent as is to the agent.
+    Proxy,
+    #[default]
+    V04,
+}
+
+/// TraceExporterOutputFormat represents the format of the output traces.
+/// The output format can be either V0.4 or v0.7, where V0.4 is the default.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[repr(C)]
+pub enum TraceExporterOutputFormat {
+    #[default]
+    V04,
+    V07,
+}
+
+impl TraceExporterOutputFormat {
+    /// Add the agent trace endpoint path to the URL.
+    fn add_path(&self, url: &Uri) -> Uri {
+        add_path(
+            url,
+            match self {
+                TraceExporterOutputFormat::V04 => "/v0.4/traces",
+                TraceExporterOutputFormat::V07 => "/v0.7/traces",
+            },
+        )
+    }
+}
+
+/// Add a path to the URL.
+///
+/// # Arguments
+///
+/// * `url` - The URL to which the path is to be added.
+/// * `path` - The path to be added to the URL.
+fn add_path(url: &Uri, path: &str) -> Uri {
+    let p_and_q = url.path_and_query();
+    let new_p_and_q = match p_and_q {
+        Some(pq) => {
+            let mut p = pq.path().to_string();
+            if p.ends_with('/') {
+                p.pop();
+            }
+            p.push_str(path);
+            PathAndQuery::from_str(p.as_str())
+        }
+        None => PathAndQuery::from_str(path),
+    }
+    .unwrap();
+    let mut parts = url.clone().into_parts();
+    parts.path_and_query = Some(new_p_and_q);
+    Uri::from_parts(parts).unwrap()
+}
 
 struct TracerTags {
     tracer_version: String,
@@ -45,7 +106,10 @@ impl<'a> From<&'a TracerTags> for HashMap<&'static str, String> {
 pub struct TraceExporter {
     endpoint: Endpoint,
     tags: TracerTags,
-    use_proxy: bool,
+    input_format: TraceExporterInputFormat,
+    output_format: TraceExporterOutputFormat,
+    // TODO - do something with the response callback - https://datadoghq.atlassian.net/browse/APMSP-1019
+    _response_callback: Option<Box<dyn ResponseCallback>>,
     runtime: Runtime,
 }
 
@@ -55,15 +119,26 @@ impl TraceExporter {
     }
 
     pub fn send(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
-        if self.use_proxy {
-            self.send_proxy(data, trace_count)
-        } else {
-            self.send_deser_ser(data)
+        match self.input_format {
+            TraceExporterInputFormat::Proxy => self.send_proxy(data, trace_count),
+            TraceExporterInputFormat::V04 => self.send_deser_ser(data),
         }
     }
 
     fn send_proxy(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
-        let uri = self.endpoint.url.clone();
+        self.send_data_to_url(
+            data,
+            trace_count,
+            self.output_format.add_path(&self.endpoint.url),
+        )
+    }
+
+    fn send_data_to_url(
+        &self,
+        data: &[u8],
+        trace_count: usize,
+        uri: Uri,
+    ) -> Result<String, String> {
         self.runtime
             .block_on(async {
                 let mut req_builder = hyper::Request::builder()
@@ -116,6 +191,7 @@ impl TraceExporter {
 
     fn send_deser_ser(&self, data: &[u8]) -> Result<String, String> {
         let size = data.len();
+        // TODO base on input format
         let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_slice(data) {
             Ok(res) => res,
             Err(err) => {
@@ -131,103 +207,115 @@ impl TraceExporter {
 
         let header_tags: TracerHeaderTags<'_> = (&self.tags).into();
 
-        let tracer_payload =
-            trace_utils::collect_trace_chunks(traces, &header_tags, |_chunk, _root_span_index| {});
-
-        let send_data = SendData::new(size, tracer_payload, header_tags, &self.endpoint);
-        self.runtime.block_on(async {
-            match send_data.send().await {
-                Ok(response) => match hyper::body::to_bytes(response.into_body()).await {
-                    Ok(body) => Ok(String::from_utf8_lossy(&body).to_string()),
-                    Err(err) => {
-                        error!("Error reading agent response body: {err}");
-                        Ok(String::from("{}"))
-                    }
-                },
-                Err(err) => {
-                    error!("Error sending traces: {err}");
+        match self.output_format {
+            TraceExporterOutputFormat::V04 => rmp_serde::to_vec_named(&traces).map_or_else(
+                |err| {
+                    error!("Error serializing traces: {err}");
                     Ok(String::from("{}"))
-                }
+                },
+                |res| {
+                    self.send_data_to_url(
+                        &res,
+                        traces.len(),
+                        self.output_format.add_path(&self.endpoint.url),
+                    )
+                },
+            ),
+            TraceExporterOutputFormat::V07 => {
+                let tracer_payload = trace_utils::collect_trace_chunks(
+                    traces,
+                    &header_tags,
+                    |_chunk, _root_span_index| {},
+                );
+
+                let endpoint = Endpoint {
+                    url: self.output_format.add_path(&self.endpoint.url),
+                    ..self.endpoint.clone()
+                };
+                let send_data = SendData::new(size, tracer_payload, header_tags, &endpoint);
+                self.runtime.block_on(async {
+                    match send_data.send().await {
+                        Ok(response) => match hyper::body::to_bytes(response.into_body()).await {
+                            Ok(body) => Ok(String::from_utf8_lossy(&body).to_string()),
+                            Err(err) => {
+                                error!("Error reading agent response body: {err}");
+                                Ok(String::from("{}"))
+                            }
+                        },
+                        Err(err) => {
+                            error!("Error sending traces: {err}");
+                            Ok(String::from("{}"))
+                        }
+                    }
+                })
             }
-        })
-    }
-}
-
-pub struct TraceExporterBuilder {
-    host: Option<String>,
-    port: Option<u16>,
-    tracer_version: String,
-    language: String,
-    language_version: String,
-    language_interpreter: String,
-    use_proxy: bool,
-}
-
-impl Default for TraceExporterBuilder {
-    fn default() -> Self {
-        Self {
-            host: None,
-            port: None,
-            tracer_version: String::default(),
-            language: String::default(),
-            language_version: String::default(),
-            language_interpreter: String::default(),
-            use_proxy: true,
         }
     }
 }
 
+#[derive(Default)]
+pub struct TraceExporterBuilder {
+    url: Option<String>,
+    tracer_version: String,
+    language: String,
+    language_version: String,
+    language_interpreter: String,
+    input_format: TraceExporterInputFormat,
+    output_format: TraceExporterOutputFormat,
+    response_callback: Option<Box<dyn ResponseCallback>>,
+}
+
 impl TraceExporterBuilder {
-    pub fn set_host(mut self, host: &str) -> TraceExporterBuilder {
-        self.host = Some(String::from(host));
+    pub fn set_url(mut self, url: &str) -> Self {
+        self.url = Some(url.to_owned());
         self
     }
 
-    pub fn set_port(mut self, port: u16) -> TraceExporterBuilder {
-        self.port = Some(port);
-        self
-    }
-
-    pub fn set_tracer_version(mut self, tracer_version: &str) -> TraceExporterBuilder {
+    pub fn set_tracer_version(mut self, tracer_version: &str) -> Self {
         self.tracer_version = tracer_version.to_owned();
         self
     }
 
-    pub fn set_language(mut self, lang: &str) -> TraceExporterBuilder {
+    pub fn set_language(mut self, lang: &str) -> Self {
         self.language = lang.to_owned();
         self
     }
 
-    pub fn set_language_version(mut self, lang_version: &str) -> TraceExporterBuilder {
+    pub fn set_language_version(mut self, lang_version: &str) -> Self {
         self.language_version = lang_version.to_owned();
         self
     }
 
-    pub fn set_language_interpreter(mut self, lang_interpreter: &str) -> TraceExporterBuilder {
+    pub fn set_language_interpreter(mut self, lang_interpreter: &str) -> Self {
         self.language_interpreter = lang_interpreter.to_owned();
         self
     }
 
-    pub fn set_proxy(mut self, proxy: bool) -> TraceExporterBuilder {
-        self.use_proxy = proxy;
+    pub fn set_input_format(mut self, input_format: TraceExporterInputFormat) -> Self {
+        self.input_format = input_format;
+        self
+    }
+
+    pub fn set_output_format(mut self, output_format: TraceExporterOutputFormat) -> Self {
+        self.output_format = output_format;
+        self
+    }
+
+    pub fn set_response_callback(mut self, response_callback: Box<dyn ResponseCallback>) -> Self {
+        self.response_callback = Some(response_callback);
         self
     }
 
     pub fn build(mut self) -> anyhow::Result<TraceExporter> {
-        let version = if self.use_proxy { "v0.4" } else { "v0.7" };
         let endpoint = Endpoint {
             url: hyper::Uri::from_str(
-                format!(
-                    "http://{}:{}/{}/traces",
-                    self.host.as_ref().unwrap_or(&"127.0.0.1".to_string()),
-                    self.port.unwrap_or(8126),
-                    version
-                )
-                .as_str(),
+                self.url
+                    .to_owned()
+                    .unwrap_or(String::from("http://127.0.0.1:8126/"))
+                    .as_str(),
             )?,
             api_key: None,
         };
-
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -240,10 +328,16 @@ impl TraceExporterBuilder {
                 language_interpreter: std::mem::take(&mut self.language_interpreter),
                 language: std::mem::take(&mut self.language),
             },
-            use_proxy: self.use_proxy,
+            input_format: self.input_format,
+            output_format: self.output_format,
+            _response_callback: self.response_callback,
             runtime,
         })
     }
+}
+
+pub trait ResponseCallback {
+    fn call(&self, response: &str);
 }
 
 #[cfg(test)]
@@ -255,21 +349,24 @@ mod tests {
     fn new() {
         let builder = TraceExporterBuilder::default();
         let exporter = builder
-            .set_host("192.168.1.1")
-            .set_port(8127)
-            .set_proxy(false)
+            .set_url("http://192.168.1.1:8127/")
             .set_tracer_version("v0.1")
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8")
+            .set_input_format(TraceExporterInputFormat::Proxy)
+            .set_output_format(TraceExporterOutputFormat::V07)
             .build()
             .unwrap();
 
         assert_eq!(
-            exporter.endpoint.url.to_string(),
+            exporter
+                .output_format
+                .add_path(&exporter.endpoint.url)
+                .to_string(),
             "http://192.168.1.1:8127/v0.7/traces"
         );
-
+        assert_eq!(exporter.input_format, TraceExporterInputFormat::Proxy);
         assert_eq!(exporter.tags.tracer_version, "v0.1");
         assert_eq!(exporter.tags.language, "nodejs");
         assert_eq!(exporter.tags.language_version, "1.0");
@@ -288,9 +385,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            exporter.endpoint.url.to_string(),
+            exporter
+                .output_format
+                .add_path(&exporter.endpoint.url)
+                .to_string(),
             "http://127.0.0.1:8126/v0.4/traces"
         );
+        assert_eq!(exporter.input_format, TraceExporterInputFormat::V04);
         assert_eq!(exporter.tags.tracer_version, "v0.1");
         assert_eq!(exporter.tags.language, "nodejs");
         assert_eq!(exporter.tags.language_version, "1.0");
@@ -333,9 +434,4 @@ mod tests {
             "rustc"
         );
     }
-
-    #[test]
-    fn configure() {}
-    #[test]
-    fn export() {}
 }
