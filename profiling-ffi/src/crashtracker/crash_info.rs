@@ -10,7 +10,6 @@ use crate::exporter::{self, ProfilingEndpoint};
 use anyhow::Context;
 use chrono::DateTime;
 use ddcommon_ffi::{slice::AsBytes, CharSlice, Slice};
-use std::time::Duration;
 
 /// Create a new crashinfo, and returns an opaque reference to it.
 /// # Safety
@@ -239,13 +238,12 @@ pub unsafe extern "C" fn ddog_crashinfo_upload_to_telemetry(
 pub unsafe extern "C" fn ddog_crashinfo_upload_to_endpoint(
     crashinfo: *mut CrashInfo,
     endpoint: ProfilingEndpoint,
-    timeout_secs: u64,
+    _timeout_secs: u64,
 ) -> CrashtrackerResult {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         let endpoint = exporter::try_to_endpoint(endpoint)?;
-        let timeout = Duration::from_secs(timeout_secs);
-        crashinfo.upload_to_endpoint(endpoint, timeout)?;
+        crashinfo.upload_to_endpoint(endpoint)?;
         anyhow::Ok(())
     })()
     .context("ddog_crashinfo_upload_to_endpoint failed")

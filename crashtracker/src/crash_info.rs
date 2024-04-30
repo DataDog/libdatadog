@@ -11,7 +11,6 @@ use chrono::{DateTime, Utc};
 use ddcommon::{tag::Tag, Endpoint};
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
-use std::time::Duration;
 use std::{collections::HashMap, fs::File, io::BufReader};
 use uuid::Uuid;
 
@@ -210,7 +209,6 @@ impl CrashInfo {
     pub fn upload_to_endpoint(
         &self,
         endpoint: Endpoint,
-        timeout: Duration,
     ) -> anyhow::Result<Option<hyper::Response<hyper::Body>>> {
         // Using scheme "file" currently fails:
         // error trying to connect: Unsupported scheme file
