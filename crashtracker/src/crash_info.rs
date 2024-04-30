@@ -208,64 +208,6 @@ impl CrashInfo {
         Ok(())
     }
 
-    /// Package the CrashInfo as a json file `crash_info.json` associated with
-    /// an empty profile, and upload it to the profiling endpoint given in
-    /// `endpoint`.
-    /// SIGNAL SAFETY:
-    ///     Uploading the data involve both allocation and synchronization and
-    ///     should not be done inside a signal handler.
-    pub fn upload_to_dd(
-        &self,
-        endpoint: Endpoint,
-        timeout: Duration,
-    ) -> anyhow::Result<hyper::Response<hyper::Body>> {
-        fn make_tag(key: &str, value: &str) -> anyhow::Result<Tag> {
-            match Tag::new(key, value) {
-                Ok(tag) => Ok(tag),
-                Err(e) => anyhow::bail!("{}", e),
-            }
-        }
-
-        let data = serde_json::to_vec(self)?;
-        let metadata = &self.metadata.as_ref().context("Missing metadata")?;
-
-        let is_crash_tag = make_tag("is_crash", "yes")?;
-        let tags = Some(
-            metadata
-                .tags
-                .iter()
-                .cloned()
-                .chain([is_crash_tag])
-                .collect(),
-        );
-        let time = Utc::now();
-        let crash_file = exporter::File {
-            name: "crash-info.json",
-            bytes: &data,
-        };
-        let exporter = exporter::ProfileExporter::new(
-            metadata.profiling_library_name.clone(),
-            metadata.profiling_library_version.clone(),
-            metadata.family.clone(),
-            tags,
-            endpoint,
-        )?;
-        let request = exporter.build(
-            time,
-            time,
-            &[crash_file],
-            &[],
-            None,
-            None,
-            None,
-            None,
-            timeout,
-        )?;
-        let response = exporter.send(request, None)?;
-        //TODO, do we need to wait a bit for the agent to finish upload?
-        Ok(response)
-    }
-
     pub fn upload_to_endpoint(
         &self,
         endpoint: Endpoint,
@@ -282,10 +224,8 @@ impl CrashInfo {
                     .ok_or_else(|| anyhow::format_err!("empty path for upload to file"))?
                     .as_str(),
             )?;
-            Ok(None)
-        } else {
-            Ok(Some(self.upload_to_dd(endpoint, timeout)?))
-        }
+        } 
+        Ok(None)
     }
 
     pub fn upload_to_telemetry(&self, config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
