@@ -6,7 +6,7 @@ env:
 
 jobs:
   test:
-    name: "cargo test --workspace #${{ matrix.platform }} ${{ matrix.rust_version }}"
+    name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] cargo test --workspace"
     runs-on: ${{ matrix.platform }}
     strategy:
       matrix:
@@ -58,32 +58,37 @@ jobs:
         env:
           RUST_BACKTRACE: 1
           # TODO we need to create multiple junit files for the different test runs
-      - name: "Save Test Results"
-        if: success() || failure() # always upload test results unless canceled
-        uses: actions/upload-artifact@v4
+      - name: Report Test Results
+        if: success() || failure() 
+        uses: mikepenz/action-junit-report@v4
         with:
-          name: test-results-${{ matrix.platform }}-${{ steps.rust-version.outputs.short-version }}
-          path: target/nextest/ci*/*.xml
+          report_paths: "target/nextest/ci*/*.xml"
+          check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
 
-  publish-test-results:
-      name: "Publish Tests Results"
-      needs: test
-      runs-on: ubuntu-latest
-      permissions:
-        checks: write
-        pull-requests: write
-      if: success() || failure() 
-      steps:
-        - name: Download Artifacts
-          uses: actions/download-artifact@v4
-          with:
-            path: artifacts
-        - name: List Artifacts
-          run: ls -laR artifacts
-        - name: Report Test Results
-          uses: mikepenz/action-junit-report@v4
-          with:
-            report_paths: "artifacts/**/*.xml"
-            check_name: "Report Test Results"
-            check_title_template: "Foo '{{FILE_NAME}}' bar '{{SUITE_NAME}}' baz '{{TEST_NAME}}'"
-            job_name: "Publish Test Results"
+      # - name: "Save Test Results"
+      #   if: success() || failure() # always upload test results unless canceled
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: test-results-${{ matrix.platform }}-${{ steps.rust-version.outputs.short-version }}
+      #     path: target/nextest/ci*/*.xml
+
+  # publish-test-results:
+  #     name: "Publish Tests Results"
+  #     needs: test
+  #     runs-on: ubuntu-latest
+  #     permissions:
+  #       checks: write
+  #       pull-requests: write
+  #     if: success() || failure() 
+  #     steps:
+  #       - name: Download Artifacts
+  #         uses: actions/download-artifact@v4
+  #         with:
+  #           path: artifacts
+  #       - name: List Artifacts
+  #         run: ls -laR artifacts
+  #       - name: Report Test Results
+  #         uses: mikepenz/action-junit-report@v4
+  #         with:
+  #           report_paths: "artifacts/**/*.xml"
+  #           check_name: "Report Test Results"
