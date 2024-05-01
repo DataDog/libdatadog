@@ -83,6 +83,7 @@ pub mod os {
     use core::ptr;
 
     pub fn page_size() -> Result<usize, AllocError> {
+        // SAFETY: calling sysconf with correct arguments.
         let result = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         validate_page_size!(result)
     }
@@ -99,7 +100,8 @@ pub mod os {
             let len = size as libc::size_t;
             let prot = libc::PROT_READ | libc::PROT_WRITE;
             let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
-            // SAFETY: creates a new mapping (no weird behavior), akin to malloc.
+            // SAFETY: these args create a new mapping (no weird behavior),
+            // akin to malloc.
             let result = unsafe { libc::mmap(null, len, prot, flags, -1, 0) };
 
             if result == libc::MAP_FAILED {
@@ -158,6 +160,8 @@ pub mod os {
             let null = ptr::null_mut();
             let alloc_type = Memory::MEM_COMMIT | Memory::MEM_RESERVE;
             let protection = Memory::PAGE_READWRITE;
+            // SAFETY: these args create a new allocation (no weird behavior),
+            // akin to malloc.
             let result = unsafe { Memory::VirtualAlloc(null, size, alloc_type, protection) };
 
             match ptr::NonNull::new(result.cast::<u8>()) {
@@ -240,13 +244,14 @@ mod tests {
         let layout = Layout::from_size_align(size, page_size).unwrap();
         let wide_ptr = alloc.allocate(layout).unwrap();
         let actual_size = wide_ptr.len();
-        unsafe { alloc.deallocate(wide_ptr.cast(), layout) };
 
         // Should be a multiple of page size.
         assert_eq!(0, actual_size % page_size);
 
         // Shouldn't ever be smaller than what was asked for.
         assert!(actual_size >= size);
+
+        unsafe { alloc.deallocate(wide_ptr.cast(), layout) };
     }
 
     #[test]

@@ -31,7 +31,8 @@ impl<A: Allocator> LinearAllocator<A> {
     /// [LinearAllocator] will utilize this excess.
     pub fn new_in(layout: Layout, allocator: A) -> Result<Self, AllocError> {
         let allocation = allocator.allocate(layout)?;
-        // SAFETY: this is the size/align of the actual allocation.
+        // SAFETY: this is the size/align of the actual allocation, so it must
+        // be valid since the object exists.
         let allocation_layout =
             unsafe { Layout::from_size_align(allocation.len(), layout.align()).unwrap_unchecked() };
         Ok(Self {
@@ -77,11 +78,11 @@ impl<A: Allocator> Drop for LinearAllocator<A> {
 
 unsafe impl<A: Allocator> Allocator for LinearAllocator<A> {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        // todo: optimize
-
         // Find the needed allocation size including the necessary alignment.
         let size = self.used_bytes();
-        // SAFETY: todo
+        // SAFETY: base_ptr + size will always be in the allocated range, or
+        // be the legally allowed one-past-the-end. If it doesn't fit, that's
+        // a serious bug elsewhere in our logic.
         let align_offset = unsafe { self.base_ptr().add(size) }.align_offset(layout.align());
         let needed_size = align_offset.checked_add(layout.size()).ok_or(AllocError)?;
         let remaining_capacity = self.reserved_bytes() - size;
@@ -92,12 +93,18 @@ unsafe impl<A: Allocator> Allocator for LinearAllocator<A> {
         }
 
         // Create a wide pointer to the correct place and len.
-        // SAFETY: todo
-        let thin_ptr = unsafe { self.base_ptr().add(size + align_offset) };
-        debug_assert_eq!(0, thin_ptr.align_offset(layout.align()));
-        let wide_ptr = slice_from_raw_parts_mut(thin_ptr, layout.size());
+        let wide_ptr = {
+            // SAFETY: just checked above that base_ptr + align_offset + size
+            // of the requested layout fits within the underlying allocation.
+            let thin_ptr = unsafe { self.base_ptr().add(size + align_offset) };
 
-        // SAFETY: derived from the underlying allocation pointer, checked capacity.
+            // Do a debug check that the pointer is actually aligned.
+            debug_assert_eq!(0, thin_ptr.align_offset(layout.align()));
+            slice_from_raw_parts_mut(thin_ptr, layout.size())
+        };
+
+        // SAFETY: derived from the underlying allocation pointer, so it is
+        // inherently not null.
         let non_null = unsafe { NonNull::new_unchecked(wide_ptr) };
 
         // Update the size before returning.
@@ -105,7 +112,9 @@ unsafe impl<A: Allocator> Allocator for LinearAllocator<A> {
         Ok(non_null)
     }
 
-    unsafe fn deallocate(&self, _ptr: NonNull<u8>, _layout: Layout) {}
+    unsafe fn deallocate(&self, _ptr: NonNull<u8>, _layout: Layout) {
+        // This is an arena. It does batch de-allocation when dropped.
+    }
 }
 
 #[cfg(test)]

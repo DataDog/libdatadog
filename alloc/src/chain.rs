@@ -60,6 +60,8 @@ struct ChainNode<A: Allocator> {
 impl<A: Allocator> ChainNode<A> {
     #[inline]
     fn prev_ptr(&self) -> *mut ChainNode<A> {
+        // SAFETY: all references are temporary and do not escape local scope,
+        // preventing multiple references.
         unsafe { (*self.prev.get()).as_mut_ptr() }
     }
 }
@@ -73,14 +75,20 @@ impl<A: Allocator> ChainNode<A> {
 }
 
 impl<A: Allocator + Clone> ChainAllocator<A> {
+    /// The amount of bytes used by the [ChainAllocator] at the start of each
+    /// chunk of the chain for bookkeeping.
+    pub const CHAIN_NODE_OVERHEAD: usize = size_of::<ChainNode<A>>();
+
     /// The individual nodes need to be big enough that the overhead of a chain
     /// is worth it. This is somewhat arbitrarily chosen at the moment.
-    const MIN_NODE_SIZE: usize = 4 * size_of::<ChainNode<A>>();
+    const MIN_NODE_SIZE: usize = 4 * Self::CHAIN_NODE_OVERHEAD;
 
     /// Creates a new [ChainAllocator]. The `chunk_size_hint` is used as a
-    /// size hint when creating new chunks. Note that there is a minimum size,
-    /// which can change from release to release, and this may not be a
-    /// suitable minimum for your purpose.
+    /// size hint when creating new chunks of the chain. Note that the
+    /// [ChainAllocator] will use some bytes at the beginning of each chunk of
+    /// the chain. The number of bytes is [Self::CHAIN_NODE_OVERHEAD]. Keep
+    /// this in mind when sizing your hint if you are trying to be precise,
+    /// such as making sure a specific object fits.
     pub const fn new_in(chunk_size_hint: usize, allocator: A) -> Self {
         Self {
             top: UnsafeCell::new(ChainNodePtr::new()),
@@ -227,28 +235,40 @@ unsafe impl<A: Allocator + Clone> Allocator for ChainAllocator<A> {
         result
     }
 
-    unsafe fn deallocate(&self, _ptr: NonNull<u8>, _layout: Layout) {}
+    unsafe fn deallocate(&self, _ptr: NonNull<u8>, _layout: Layout) {
+        // This is an arena. It does batch de-allocation when dropped.
+    }
 }
 
 impl<A: Allocator + Clone> Drop for ChainAllocator<A> {
     fn drop(&mut self) {
+        // SAFETY: top node is alive, type is fine to `read` because it is
+        // behind a cell type, so it will not get double-dropped.
         let mut chain_node_ptr = unsafe { self.top.get().read() };
 
         loop {
             match chain_node_ptr.ptr {
                 None => break,
-                Some(nonnull) => {
-                    // SAFETY: todo
+                Some(non_null) => {
+                    // SAFETY: the chunk hasn't been dropped yet, so the ptr
+                    // to the chunk is alive. The prev pointer of the chunk is
+                    // moved to the stack before the chunk is dropped, so it's
+                    // alive and valid after the chunk is dropped below.
                     chain_node_ptr = unsafe {
-                        core::ptr::addr_of!((*nonnull.as_ptr()).prev)
+                        core::ptr::addr_of!((*non_null.as_ptr()).prev)
                             .read()
                             .get()
                             .read()
                     };
 
-                    // SAFETY: todo
+                    // SAFETY: the chunk hasn't been dropped yet, and the
+                    // linear allocator lives in the chunk. Moving it to the
+                    // stack before dropping it avoids a fringe lifetime issue
+                    // which could happen occur with drop_in_place instead.
                     let alloc =
-                        unsafe { core::ptr::addr_of_mut!((*nonnull.as_ptr()).linear).read() };
+                        unsafe { core::ptr::addr_of_mut!((*non_null.as_ptr()).linear).read() };
+
+                    // The drop will happen anyway, but being explicit.
                     drop(alloc);
                 }
             }
