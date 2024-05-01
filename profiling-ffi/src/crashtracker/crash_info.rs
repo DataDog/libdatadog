@@ -209,26 +209,7 @@ pub unsafe extern "C" fn ddog_crashinfo_set_timestamp_to_now(
     .into()
 }
 
-/// Exports `crashinfo` to the Instrumentation Telemetry backend
-///
-/// # Safety
-/// `crashinfo` must be a valid pointer to a `CrashInfo` object.
-#[no_mangle]
-#[must_use]
-pub unsafe extern "C" fn ddog_crashinfo_upload_to_telemetry(
-    crashinfo: *mut CrashInfo,
-    config: CrashtrackerConfiguration,
-) -> CrashtrackerResult {
-    (|| {
-        let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
-        let config = config.try_into()?;
-        crashinfo.upload_to_telemetry(&config)
-    })()
-    .context("ddog_crashinfo_upload_to_telemetry failed")
-    .into()
-}
-
-/// Exports `crashinfo` to the profiling backend at `endpoint`
+/// Exports `crashinfo` to the backend at `endpoint`
 /// Note that we support the "file://" endpoint for local file output.
 /// # Safety
 /// `crashinfo` must be a valid pointer to a `CrashInfo` object.

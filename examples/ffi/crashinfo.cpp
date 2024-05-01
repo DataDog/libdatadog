@@ -122,6 +122,6 @@ int main(void) {
       .timeout_secs = 1,
   };
 
-  check_result(ddog_crashinfo_upload_to_telemetry(crashinfo.get(), config),
+  check_result(ddog_crashinfo_upload_to_endpoint(crashinfo.get(), config),
                "Failed to export to file");
 }

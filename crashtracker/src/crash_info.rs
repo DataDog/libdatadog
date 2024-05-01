@@ -207,9 +207,7 @@ impl CrashInfo {
     }
 
     pub fn upload_to_endpoint(&self, config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
-        // Using scheme "file" currently fails:
-        // error trying to connect: Unsupported scheme file
-        // Instead, manually support it.
+        // If we're debugging to a file, dump the actual crashinfo into a json
         if let Some(endpoint) = &config.endpoint {
             if Some("file") == endpoint.url.scheme_str() {
                 self.to_file(
@@ -221,10 +219,10 @@ impl CrashInfo {
                 )?;
             }
         }
-        Ok(())
+        self.upload_to_telemetry(config)
     }
 
-    pub fn upload_to_telemetry(&self, config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
+    fn upload_to_telemetry(&self, config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
         if let Some(metadata) = &self.metadata {
             if let Ok(uploader) = TelemetryCrashUploader::new(metadata, config) {
                 uploader.upload_to_telemetry(self, config.timeout)?;
