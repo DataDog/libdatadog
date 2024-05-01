@@ -1,4 +1,5 @@
 *                       @Datadog/libdatadog-core
+alloc/                  @Datadog/libdatadog-profiling
 build-profiling-ffi.sh  @Datadog/libdatadog-profiling
 crashtracker/           @Datadog/libdatadog-profiling
 profiling*/             @Datadog/libdatadog-profiling
