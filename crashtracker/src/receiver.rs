@@ -6,7 +6,6 @@ use self::stacktrace::StackFrame;
 use super::*;
 use anyhow::Context;
 use nix::unistd::getppid;
-use std::time::Duration;
 
 pub fn resolve_frames(
     config: &CrashtrackerConfiguration,
