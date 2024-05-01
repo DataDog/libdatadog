@@ -749,7 +749,6 @@ dependencies = [
  "backtrace",
  "blazesym",
  "chrono",
- "datadog-profiling",
  "ddcommon",
  "ddtelemetry",
  "http",

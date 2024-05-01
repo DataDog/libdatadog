@@ -6,7 +6,6 @@ use self::stacktrace::StackFrame;
 use super::*;
 use anyhow::Context;
 use nix::unistd::getppid;
-use std::time::Duration;
 
 pub fn resolve_frames(
     config: &CrashtrackerConfiguration,
@@ -36,26 +35,12 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
         CrashReportStatus::NoCrash => Ok(()),
         CrashReportStatus::CrashReport(config, mut crash_info) => {
             resolve_frames(&config, &mut crash_info)?;
-
-            if let Some(endpoint) = &config.endpoint {
-                // TODO Experiment to see if 30 is the right number.
-                crash_info.upload_to_endpoint(endpoint.clone(), Duration::from_secs(30))?;
-            }
-            crash_info.upload_to_telemetry(&config)?;
-
-            Ok(())
+            crash_info.upload_to_endpoint(&config)
         }
         CrashReportStatus::PartialCrashReport(config, mut crash_info, stdin_state) => {
             eprintln!("Failed to fully receive crash.  Exit state was: {stdin_state:?}");
             resolve_frames(&config, &mut crash_info)?;
-
-            if let Some(endpoint) = &config.endpoint {
-                // TODO Experiment to see if 30 is the right number.
-                crash_info.upload_to_endpoint(endpoint.clone(), Duration::from_secs(30))?;
-            }
-            crash_info.upload_to_telemetry(&config)?;
-
-            Ok(())
+            crash_info.upload_to_endpoint(&config)
         }
     }
 }

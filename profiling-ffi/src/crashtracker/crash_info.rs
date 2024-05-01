@@ -6,11 +6,9 @@ use crate::crashtracker::{
     crashinfo_ptr_to_inner, option_from_char_slice, CrashInfo, CrashInfoNewResult,
     CrashtrackerResult, StackFrame,
 };
-use crate::exporter::{self, ProfilingEndpoint};
 use anyhow::Context;
 use chrono::DateTime;
 use ddcommon_ffi::{slice::AsBytes, CharSlice, Slice};
-use std::time::Duration;
 
 /// Create a new crashinfo, and returns an opaque reference to it.
 /// # Safety
@@ -211,26 +209,7 @@ pub unsafe extern "C" fn ddog_crashinfo_set_timestamp_to_now(
     .into()
 }
 
-/// Exports `crashinfo` to the Instrumentation Telemetry backend
-///
-/// # Safety
-/// `crashinfo` must be a valid pointer to a `CrashInfo` object.
-#[no_mangle]
-#[must_use]
-pub unsafe extern "C" fn ddog_crashinfo_upload_to_telemetry(
-    crashinfo: *mut CrashInfo,
-    config: CrashtrackerConfiguration,
-) -> CrashtrackerResult {
-    (|| {
-        let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
-        let config = config.try_into()?;
-        crashinfo.upload_to_telemetry(&config)
-    })()
-    .context("ddog_crashinfo_upload_to_telemetry failed")
-    .into()
-}
-
-/// Exports `crashinfo` to the profiling backend at `endpoint`
+/// Exports `crashinfo` to the backend at `endpoint`
 /// Note that we support the "file://" endpoint for local file output.
 /// # Safety
 /// `crashinfo` must be a valid pointer to a `CrashInfo` object.
@@ -238,15 +217,12 @@ pub unsafe extern "C" fn ddog_crashinfo_upload_to_telemetry(
 #[must_use]
 pub unsafe extern "C" fn ddog_crashinfo_upload_to_endpoint(
     crashinfo: *mut CrashInfo,
-    endpoint: ProfilingEndpoint,
-    timeout_secs: u64,
+    config: CrashtrackerConfiguration,
 ) -> CrashtrackerResult {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
-        let endpoint = exporter::try_to_endpoint(endpoint)?;
-        let timeout = Duration::from_secs(timeout_secs);
-        crashinfo.upload_to_endpoint(endpoint, timeout)?;
-        anyhow::Ok(())
+        let config = config.try_into()?;
+        crashinfo.upload_to_endpoint(&config)
     })()
     .context("ddog_crashinfo_upload_to_endpoint failed")
     .into()
