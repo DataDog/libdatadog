@@ -8,7 +8,7 @@ use anyhow::Context;
 #[cfg(unix)]
 use blazesym::symbolize::{Process, Source, Symbolizer};
 use chrono::{DateTime, Utc};
-use ddcommon::{tag::Tag, Endpoint};
+use ddcommon::tag::Tag;
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 use std::{collections::HashMap, fs::File, io::BufReader};
@@ -206,23 +206,22 @@ impl CrashInfo {
         Ok(())
     }
 
-    pub fn upload_to_endpoint(
-        &self,
-        endpoint: Endpoint,
-    ) -> anyhow::Result<Option<hyper::Response<hyper::Body>>> {
+    pub fn upload_to_endpoint(&self, config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
         // Using scheme "file" currently fails:
         // error trying to connect: Unsupported scheme file
         // Instead, manually support it.
-        if Some("file") == endpoint.url.scheme_str() {
-            self.to_file(
-                endpoint
-                    .url
-                    .path_and_query()
-                    .ok_or_else(|| anyhow::format_err!("empty path for upload to file"))?
-                    .as_str(),
-            )?;
+        if let Some(endpoint) = &config.endpoint {
+            if Some("file") == endpoint.url.scheme_str() {
+                self.to_file(
+                    endpoint
+                        .url
+                        .path_and_query()
+                        .ok_or_else(|| anyhow::format_err!("empty path for upload to file"))?
+                        .as_str(),
+                )?;
+            }
         }
-        Ok(None)
+        Ok(())
     }
 
     pub fn upload_to_telemetry(&self, config: &CrashtrackerConfiguration) -> anyhow::Result<()> {

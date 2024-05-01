@@ -6,7 +6,6 @@ use crate::crashtracker::{
     crashinfo_ptr_to_inner, option_from_char_slice, CrashInfo, CrashInfoNewResult,
     CrashtrackerResult, StackFrame,
 };
-use crate::exporter::{self};
 use anyhow::Context;
 use chrono::DateTime;
 use ddcommon_ffi::{slice::AsBytes, CharSlice, Slice};
@@ -241,9 +240,8 @@ pub unsafe extern "C" fn ddog_crashinfo_upload_to_endpoint(
 ) -> CrashtrackerResult {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
-        let endpoint = exporter::try_to_endpoint(config.endpoint)?;
-        crashinfo.upload_to_endpoint(endpoint)?;
-        anyhow::Ok(())
+        let config = config.try_into()?;
+        crashinfo.upload_to_endpoint(&config)
     })()
     .context("ddog_crashinfo_upload_to_endpoint failed")
     .into()

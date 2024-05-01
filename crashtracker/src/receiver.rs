@@ -35,24 +35,14 @@ pub fn receiver_entry_point() -> anyhow::Result<()> {
         CrashReportStatus::NoCrash => Ok(()),
         CrashReportStatus::CrashReport(config, mut crash_info) => {
             resolve_frames(&config, &mut crash_info)?;
-
-            if let Some(endpoint) = &config.endpoint {
-                crash_info.upload_to_endpoint(endpoint.clone())?;
-            }
-            crash_info.upload_to_telemetry(&config)?;
-
-            Ok(())
+            crash_info.upload_to_endpoint(&config)?;
+            crash_info.upload_to_telemetry(&config)
         }
         CrashReportStatus::PartialCrashReport(config, mut crash_info, stdin_state) => {
             eprintln!("Failed to fully receive crash.  Exit state was: {stdin_state:?}");
             resolve_frames(&config, &mut crash_info)?;
-
-            if let Some(endpoint) = &config.endpoint {
-                crash_info.upload_to_endpoint(endpoint.clone())?;
-            }
-            crash_info.upload_to_telemetry(&config)?;
-
-            Ok(())
+            crash_info.upload_to_endpoint(&config)?;
+            crash_info.upload_to_telemetry(&config)
         }
     }
 }
