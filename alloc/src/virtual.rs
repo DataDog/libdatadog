@@ -108,11 +108,11 @@ pub mod os {
                 return Err(AllocError);
             }
 
-            let slice = ptr::slice_from_raw_parts_mut(result.cast(), size);
             // SAFETY: from my understanding of the spec, it's not possible to get
             // a mapping which starts at 0 (aka null) when MAP_FIXED wasn't given
             // and the specified address is 0.
-            Ok(unsafe { ptr::NonNull::new_unchecked(slice) })
+            let addr = unsafe { ptr::NonNull::new_unchecked(result.cast()) };
+            Ok(ptr::NonNull::slice_from_raw_parts(addr, size))
         }
 
         unsafe fn deallocate(&self, nonnull: ptr::NonNull<u8>, layout: Layout) {
@@ -165,13 +165,7 @@ pub mod os {
             let result = unsafe { Memory::VirtualAlloc(null, size, alloc_type, protection) };
 
             match ptr::NonNull::new(result.cast::<u8>()) {
-                Some(addr) => {
-                    // todo: on rust 1.70+ use NonNull::slice_from_raw_parts to
-                    //       avoid another use of unsafe.
-                    let slice = ptr::slice_from_raw_parts_mut(addr.as_ptr(), size);
-                    // SAFETY: `addr` is `NonNull`, so inherently not null.
-                    Ok(unsafe { ptr::NonNull::new_unchecked(slice) })
-                }
+                Some(addr) => Ok(ptr::NonNull::slice_from_raw_parts(addr, size)),
                 None => Err(AllocError),
             }
         }
