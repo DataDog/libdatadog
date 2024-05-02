@@ -1,8 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-// TODO: APM-1076 - This file contains a fair amount of expects. While in most cases it is unlikely
-// we will ever hit these, we should consider adding more robust error handling.
 use crate::config::get_product_endpoint;
 use crate::interface::{
     AppOrQueue, RuntimeInfo, SessionConfig, SidecarAction, SidecarStats, TraceFlusher,
@@ -46,17 +44,36 @@ fn no_response() -> NoResponse {
     future::ready(())
 }
 
+/// The `SidecarServer` struct represents a server that handles sidecar operations.
+///
+/// It maintains a list of active sessions and a counter for each session.
+/// It also holds a reference to a `TraceFlusher` for sending trace data,
+/// and a `Mutex` guarding an optional `ManualFutureCompleter` for telemetry configuration.
 #[derive(Default, Clone)]
 pub struct SidecarServer {
-    pub trace_flusher: Arc<TraceFlusher>,
+    /// An `Arc` wrapped `TraceFlusher` used for sending trace data.
+    pub(crate) trace_flusher: Arc<TraceFlusher>,
+    /// A `Mutex` guarded `HashMap` that stores active sessions.
     sessions: Arc<Mutex<HashMap<String, SessionInfo>>>,
+    /// A `Mutex` guarded `HashMap` that keeps a count of each session.
     session_counter: Arc<Mutex<HashMap<String, u32>>>,
+    /// A `Mutex` guarded optional `ManualFutureCompleter` for telemetry configuration.
     pub self_telemetry_config:
         Arc<Mutex<Option<ManualFutureCompleter<ddtelemetry::config::Config>>>>,
+    /// Keeps track of the number of submitted payloads.
     pub submitted_payloads: Arc<AtomicU64>,
 }
 
 impl SidecarServer {
+    /// Accepts a new connection and starts processing requests.
+    ///
+    /// This function creates a new `tarpc` server with the provided `async_channel` and starts
+    /// processing incoming requests. It also starts a session interceptor to keep track of active
+    /// sessions and submitted payload counts.
+    ///
+    /// # Arguments
+    ///
+    /// * `async_channel`: An `AsyncChannel` that represents the connection to the client.
     pub async fn accept_connection(self, async_channel: AsyncChannel) {
         let server = tarpc::server::BaseChannel::new(
             tarpc::server::Config {
@@ -87,6 +104,21 @@ impl SidecarServer {
             .await;
     }
 
+    /// Returns the number of active sidecar sessions.
+    ///
+    /// # Returns
+    ///
+    /// * `usize`: The number of active sessions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use datadog_sidecar::service::SidecarServer;
+    ///
+    /// let server = SidecarServer::default();
+    /// let active_sessions = server.active_session_count();
+    /// println!("Number of active sessions: {}", active_sessions);
+    /// ```
     pub fn active_session_count(&self) -> usize {
         self.session_counter
             .lock()
@@ -269,6 +301,33 @@ impl SidecarServer {
         self.trace_flusher.enqueue(data);
     }
 
+    /// Computes and returns stats for the SidecarServer.
+    ///
+    /// This function aggregates various statistics such as the number of active sessions,
+    /// telemetry worker errors, and submitted payloads. It also includes statistics related
+    /// to the trace flusher, log filter, and log writer.
+    ///
+    /// # Returns
+    ///
+    /// * `SidecarStats`: A struct containing various statistics related to the SidecarServer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// if cfg!(not(miri)) {
+    ///     use datadog_sidecar::service::SidecarServer;
+    ///
+    ///     #[tokio::main]
+    ///     async fn stats_example() {
+    ///         let server = SidecarServer::default();
+    ///         let stats = server.compute_stats().await;
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// # Async
+    ///
+    /// This function is async and should be awaited.
     pub async fn compute_stats(&self) -> SidecarStats {
         let mut telemetry_stats_errors = 0;
         let telemetry_stats = join_all({
@@ -720,3 +779,5 @@ async fn session_interceptor(
         }
     }
 }
+
+// TODO: APMSP-1079 - Unit tests are sparse for the sidecar server. We should add more.
