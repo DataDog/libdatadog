@@ -6,9 +6,11 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::{future, Future, FutureExt, TryFutureExt};
-use hyper_rustls::HttpsConnector;
+use futures::{Future, FutureExt};
 use pin_project::pin_project;
+
+#[cfg(any(feature = "rustls", feature = "native-tls"))]
+use futures::future;
 
 #[pin_project(project=ConnStreamProj)]
 #[derive(Debug)]
@@ -17,16 +19,21 @@ pub enum ConnStream {
         #[pin]
         transport: tokio::net::TcpStream,
     },
-    Tls {
+    #[cfg(feature = "rustls")]
+    Rtls {
         #[pin]
         transport: Box<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>,
+    },
+    #[cfg(feature = "native-tls")]
+    Ntls {
+        #[pin]
+        transport: Box<hyper_tls::TlsStream<tokio::net::TcpStream>>,
     },
     #[cfg(unix)]
     Udp {
         #[pin]
         transport: tokio::net::UnixStream,
     },
-
     #[cfg(windows)]
     NamedPipe {
         #[pin]
@@ -78,11 +85,13 @@ impl ConnStream {
         })
     }
 
-    pub fn from_https_connector_with_uri(
-        c: &mut HttpsConnector<HttpConnector>,
+    #[cfg(feature = "rustls")]
+    pub fn from_https_connector_with_uri_rtls(
+        c: &mut hyper_rustls::HttpsConnector<HttpConnector>,
         uri: hyper::Uri,
         require_tls: bool,
     ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> {
+        use futures::TryFutureExt;
         c.call(uri).and_then(move |stream| match stream {
             // move only require_tls
             hyper_rustls::MaybeHttpsStream::Http(t) => {
@@ -94,7 +103,30 @@ impl ConnStream {
                     future::ready(Ok(ConnStream::Tcp { transport: t }))
                 }
             }
-            hyper_rustls::MaybeHttpsStream::Https(t) => future::ready(Ok(ConnStream::Tls {
+            hyper_rustls::MaybeHttpsStream::Https(t) => future::ready(Ok(ConnStream::Rtls {
+                transport: Box::from(t),
+            })),
+        })
+    }
+    #[cfg(feature = "native-tls")]
+    pub fn from_https_connector_with_uri_ntls(
+        c: &mut hyper_tls::HttpsConnector<HttpConnector>,
+        uri: hyper::Uri,
+        require_tls: bool,
+    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> {
+        use futures::TryFutureExt;
+        c.call(uri).and_then(move |stream| match stream {
+            // move only require_tls
+            hyper_tls::MaybeHttpsStream::Http(t) => {
+                if require_tls {
+                    future::ready(Err(
+                        super::errors::Error::CannotEstablishTlsConnection.into()
+                    ))
+                } else {
+                    future::ready(Ok(ConnStream::Tcp { transport: t }))
+                }
+            }
+            hyper_tls::MaybeHttpsStream::Https(t) => future::ready(Ok(ConnStream::Ntls {
                 transport: Box::from(t),
             })),
         })
@@ -109,7 +141,10 @@ impl tokio::io::AsyncRead for ConnStream {
     ) -> Poll<std::io::Result<()>> {
         match self.project() {
             ConnStreamProj::Tcp { transport } => transport.poll_read(cx, buf),
-            ConnStreamProj::Tls { transport } => transport.poll_read(cx, buf),
+            #[cfg(feature = "rustls")]
+            ConnStreamProj::Rtls { transport } => transport.poll_read(cx, buf),
+            #[cfg(feature = "native-tls")]
+            ConnStreamProj::Ntls { transport } => transport.poll_read(cx, buf),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_read(cx, buf),
             #[cfg(windows)]
@@ -122,8 +157,14 @@ impl hyper::client::connect::Connection for ConnStream {
     fn connected(&self) -> hyper::client::connect::Connected {
         match self {
             Self::Tcp { transport } => transport.connected(),
-            Self::Tls { transport } => {
+            #[cfg(feature = "rustls")]
+            Self::Rtls { transport } => {
                 let (tcp, _) = transport.get_ref();
+                tcp.connected()
+            }
+            #[cfg(feature = "native-tls")]
+            Self::Ntls { transport } => {
+                let tcp = transport.get_ref().get_ref().get_ref();
                 tcp.connected()
             }
             #[cfg(unix)]
@@ -142,7 +183,10 @@ impl tokio::io::AsyncWrite for ConnStream {
     ) -> Poll<Result<usize, std::io::Error>> {
         match self.project() {
             ConnStreamProj::Tcp { transport } => transport.poll_write(cx, buf),
-            ConnStreamProj::Tls { transport } => transport.poll_write(cx, buf),
+            #[cfg(feature = "rustls")]
+            ConnStreamProj::Rtls { transport } => transport.poll_write(cx, buf),
+            #[cfg(feature = "native-tls")]
+            ConnStreamProj::Ntls { transport } => transport.poll_write(cx, buf),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_write(cx, buf),
             #[cfg(windows)]
@@ -156,7 +200,10 @@ impl tokio::io::AsyncWrite for ConnStream {
     ) -> Poll<Result<(), std::io::Error>> {
         match self.project() {
             ConnStreamProj::Tcp { transport } => transport.poll_shutdown(cx),
-            ConnStreamProj::Tls { transport } => transport.poll_shutdown(cx),
+            #[cfg(feature = "rustls")]
+            ConnStreamProj::Rtls { transport } => transport.poll_shutdown(cx),
+            #[cfg(feature = "native-tls")]
+            ConnStreamProj::Ntls { transport } => transport.poll_shutdown(cx),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_shutdown(cx),
             #[cfg(windows)]
@@ -167,7 +214,10 @@ impl tokio::io::AsyncWrite for ConnStream {
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
         match self.project() {
             ConnStreamProj::Tcp { transport } => transport.poll_flush(cx),
-            ConnStreamProj::Tls { transport } => transport.poll_flush(cx),
+            #[cfg(feature = "rustls")]
+            ConnStreamProj::Rtls { transport } => transport.poll_flush(cx),
+            #[cfg(feature = "native-tls")]
+            ConnStreamProj::Ntls { transport } => transport.poll_flush(cx),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_flush(cx),
             #[cfg(windows)]

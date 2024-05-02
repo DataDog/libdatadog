@@ -11,6 +11,11 @@ license.workspace = true
 [lib]
 crate-type = ["lib"]
 
+[features]
+default = ["rustls"]
+rustls = [ "dep:hyper-rustls", "dep:rustls", "dep:rustls-native-certs", "dep:tokio-rustls" ]
+native-tls = [ "dep:hyper-tls" ]
+
 [dependencies]
 anyhow = "1.0"
 futures = "0.3"
@@ -28,15 +33,16 @@ hyper-rustls = { version = "0.23", default-features = false, features = [
     "native-tokio",
     "http1",
     "tls12",
-] }
+], optional = true }
+hyper-tls = { version = "0.5", default-features = false, optional = true }
 lazy_static = "1.4"
 log = { version = "0.4" }
 pin-project = "1"
 regex = "1.5"
-rustls = { version = "0.20.4", default-features = false }
-rustls-native-certs = { version = "0.6" }
+rustls = { version = "0.20.4", default-features = false, optional = true}
+rustls-native-certs = { version = "0.6", optional = true }
 tokio = { version = "1.23", features = ["rt", "macros"] }
-tokio-rustls = { version = "0.23" }
+tokio-rustls = { version = "0.23", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 
 [dev-dependencies]

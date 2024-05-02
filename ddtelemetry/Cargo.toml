@@ -11,7 +11,7 @@ tracing = ["tracing/std"]
 
 [dependencies]
 anyhow = { version = "1.0" }
-ddcommon = { path = "../ddcommon" }
+ddcommon = { path = "../ddcommon" } # TODO: can we use native-tls?
 futures = { version = "0.3", default-features = false }
 http = "0.2"
 hyper = { version = "0.14", features = ["client"], default-features = false }
@@ -32,3 +32,4 @@ hashbrown = { version = "0.12", features = ["raw"] }
 
 [dev-dependencies]
 tracing-subscriber = "0.3.18"
+tokio = { version = "1.23", features = ["rt-multi-thread"] }

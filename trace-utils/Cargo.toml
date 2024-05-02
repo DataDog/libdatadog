@@ -9,7 +9,6 @@ license.workspace = true
 [dependencies]
 anyhow = "1.0"
 hyper = { version = "0.14", features = ["client", "server"] }
-hyper-rustls = {version = "0.23", default-features = false, features = ["native-tokio", "http1", "tls12"]}
 serde = { version = "1.0.145", features = ["derive"] }
 prost = "0.11.6"
 rmp-serde = "1.1.1"
@@ -17,7 +16,7 @@ log = "0.4"
 serde_json = "1.0"
 flate2 = "1.0"
 futures = { version = "0.3", default-features = false }
-ddcommon = { path = "../ddcommon" }
+ddcommon = { path = "../ddcommon", default-features = false }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-normalization = { path = "../trace-normalization" }
 

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
+use hyper::{Body, Client, Request, StatusCode};
+use hyper_rustls::HttpsConnectorBuilder;
 use log::{debug, error, info};
 use std::{sync::Arc, time};
 use tokio::sync::{mpsc::Receiver, Mutex};
@@ -67,25 +69,44 @@ impl StatsFlusher for ServerlessStatsFlusher {
 
         debug!("Stats payload to be sent: {stats_payload:?}");
 
-        let serialized_stats_payload = match stats_utils::serialize_stats_payload(stats_payload) {
-            Ok(res) => res,
+        let stats_request = match stats_utils::create_stats_request(
+            stats_payload,
+            &config.trace_stats_intake,
+            config.trace_stats_intake.api_key.as_ref().unwrap(),
+        ) {
+            Ok(req) => req,
             Err(err) => {
                 error!("Failed to serialize stats payload, dropping stats: {err}");
                 return;
             }
         };
 
-        match stats_utils::send_stats_payload(
-            serialized_stats_payload,
-            &config.trace_stats_intake,
-            config.trace_stats_intake.api_key.as_ref().unwrap(),
-        )
-        .await
-        {
+        match send_stats_payload(stats_request).await {
             Ok(_) => info!("Successfully flushed stats"),
             Err(e) => {
                 error!("Error sending stats: {e:?}")
             }
         }
+    }
+}
+
+pub async fn send_stats_payload(req: Request<Body>) -> anyhow::Result<()> {
+    let connector = HttpsConnectorBuilder::new()
+        .with_native_roots()
+        .https_only()
+        .enable_http1()
+        .build();
+
+    let client: Client<_, hyper::Body> = Client::builder().build(connector);
+    match client.request(req).await {
+        Ok(response) => {
+            if response.status() != StatusCode::ACCEPTED {
+                let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+                let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
+                anyhow::bail!("Server did not accept trace stats: {response_body}");
+            }
+            Ok(())
+        }
+        Err(e) => anyhow::bail!("Failed to send trace stats: {e}"),
     }
 }

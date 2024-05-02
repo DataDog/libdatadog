@@ -16,7 +16,7 @@ percent-encoding = "2.1"
 log = "0.4"
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-utils = { path = "../trace-utils" }
-ddcommon = { path = "../ddcommon" }
+ddcommon = { path = "../ddcommon", default-features = false}
 
 [dev-dependencies]
 duplicate = "0.4.1"

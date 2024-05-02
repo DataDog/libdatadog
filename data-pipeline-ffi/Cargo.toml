@@ -16,12 +16,14 @@ crate-type = ["lib", "staticlib", "cdylib"]
 [features]
 default = ["cbindgen"]
 cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+rustls = ["data-pipeline/rustls"]
+native-tls = ["data-pipeline/native-tls"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
 
 [dependencies]
-data-pipeline = { path = "../data-pipeline" }
+data-pipeline = { path = "../data-pipeline", default-features = false}
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 bytes = "1.4"
 libc = "0.2.153"

@@ -6,7 +6,6 @@ use futures::{future, FutureExt};
 use hyper::client::HttpConnector;
 
 use lazy_static::lazy_static;
-use rustls::ClientConfig;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -24,8 +23,11 @@ use conn_stream::{ConnStream, ConnStreamError};
 
 #[derive(Clone)]
 pub enum Connector {
-    Http(hyper::client::HttpConnector),
-    Https(hyper_rustls::HttpsConnector<hyper::client::HttpConnector>),
+    Http(HttpConnector),
+    #[cfg(feature = "rustls")]
+    HttpsR(hyper_rustls::HttpsConnector<HttpConnector>),
+    #[cfg(feature = "native-tls")]
+    HttpsN(hyper_tls::HttpsConnector<HttpConnector>),
 }
 
 lazy_static! {
@@ -39,11 +41,34 @@ impl Default for Connector {
 }
 
 impl Connector {
+    #[cfg(all(feature = "rustls", not(feature = "native-tls")))]
     pub fn new() -> Self {
-        match build_https_connector() {
-            Ok(connector) => Connector::Https(connector),
+        match build_https_connector_rtls() {
+            Ok(connector) => Connector::HttpsR(connector),
             Err(_) => Connector::Http(HttpConnector::new()),
         }
+    }
+
+    #[cfg(all(feature = "native-tls", not(feature = "rustls")))]
+    pub fn new() -> Self {
+        match build_https_connector_ntls() {
+            Ok(connector) => Connector::HttpsN(connector),
+            Err(_) => Connector::Http(HttpConnector::new()),
+        }
+    }
+
+    #[cfg(all(feature = "rustls", feature = "native-tls"))]
+    pub fn new() -> Self {
+        // This method is only here to make clippy happy when used with --all-features
+        let _ = build_https_connector_rtls();
+        let _ = build_https_connector_ntls();
+        panic!("Only one of the features 'rustls' or 'native-tls' can be enabled for this crate");
+    }
+
+    #[cfg(not(any(feature = "rustls", feature = "native-tls")))]
+    pub fn new() -> Self {
+        // This method is only here to avoid compilation errors when no TLS feature is enabled
+        panic!("Either feature \"rustls\" or \"native-tls\" must be enabled for this crate.");
     }
 
     fn build_conn_stream<'a>(
@@ -62,17 +87,22 @@ impl Connector {
                     ConnStream::from_http_connector_with_uri(c, uri).boxed()
                 }
             }
-            Self::Https(c) => {
-                ConnStream::from_https_connector_with_uri(c, uri, require_tls).boxed()
+            #[cfg(feature = "rustls")]
+            Self::HttpsR(c) => {
+                ConnStream::from_https_connector_with_uri_rtls(c, uri, require_tls).boxed()
+            }
+            #[cfg(feature = "native-tls")]
+            Self::HttpsN(c) => {
+                ConnStream::from_https_connector_with_uri_ntls(c, uri, require_tls).boxed()
             }
         }
     }
 }
 
-fn build_https_connector(
-) -> anyhow::Result<hyper_rustls::HttpsConnector<hyper::client::HttpConnector>> {
+#[cfg(feature = "rustls")]
+fn build_https_connector_rtls() -> anyhow::Result<hyper_rustls::HttpsConnector<HttpConnector>> {
     let certs = load_root_certs()?;
-    let client_config = ClientConfig::builder()
+    let client_config = rustls::ClientConfig::builder()
         .with_safe_defaults()
         .with_root_certificates(certs)
         .with_no_client_auth();
@@ -83,6 +113,7 @@ fn build_https_connector(
         .build())
 }
 
+#[cfg(feature = "rustls")]
 fn load_root_certs() -> anyhow::Result<rustls::RootCertStore> {
     let mut roots = rustls::RootCertStore::empty();
 
@@ -96,6 +127,13 @@ fn load_root_certs() -> anyhow::Result<rustls::RootCertStore> {
         return Err(errors::Error::NoValidCertifacteRootsFound.into());
     }
     Ok(roots)
+}
+
+#[cfg(feature = "native-tls")]
+fn build_https_connector_ntls() -> anyhow::Result<hyper_tls::HttpsConnector<HttpConnector>> {
+    let mut tls_connector = hyper_tls::HttpsConnector::new();
+    tls_connector.https_only(true);
+    Ok(tls_connector)
 }
 
 impl hyper::service::Service<hyper::Uri> for Connector {
@@ -119,16 +157,16 @@ impl hyper::service::Service<hyper::Uri> for Connector {
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self {
             Connector::Http(c) => c.poll_ready(cx).map_err(|e| e.into()),
-            Connector::Https(c) => c.poll_ready(cx),
+            #[cfg(feature = "rustls")]
+            Connector::HttpsR(c) => c.poll_ready(cx),
+            #[cfg(feature = "native-tls")]
+            Connector::HttpsN(c) => c.poll_ready(cx),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use hyper::service::Service;
-    use std::env;
-
     use super::*;
 
     #[test]
@@ -141,9 +179,12 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "rustls")]
     /// Verify that Connector will only allow non tls connections if root certificates
     /// are not found
     async fn test_missing_root_certificates_only_allow_http_connections() {
+        use hyper::service::Service;
+        use std::env;
         const ENV_SSL_CERT_FILE: &str = "SSL_CERT_FILE";
         let old_value = env::var(ENV_SSL_CERT_FILE).unwrap_or_default();
 

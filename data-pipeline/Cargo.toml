@@ -7,6 +7,12 @@ license.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+# We do not enable any TLS support by default so that it can be added by the consuming crates
+default = []
+rustls = ["ddcommon/rustls"]
+native-tls = ["ddcommon/native-tls"]
+
 [dependencies]
 anyhow = { version = "1.0" }
 futures = { version = "0.3", default-features = false }
@@ -16,7 +22,7 @@ rmp-serde = "1.1.1"
 bytes = "1.4"
 tokio = {version = "1.23", features = ["rt"], default-features = false}
 
-ddcommon = { path = "../ddcommon" }
+ddcommon = { path = "../ddcommon", default-features = false }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-utils = { path = "../trace-utils" }
 datadog-trace-normalization = { path = "../trace-normalization" }

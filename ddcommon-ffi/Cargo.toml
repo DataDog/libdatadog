@@ -16,6 +16,6 @@ cbindgen = ["build_common/cbindgen"]
 build_common = { path = "../build-common" }
 
 [dependencies]
-ddcommon = { path = "../ddcommon" }
+ddcommon = { path = "../ddcommon", default-features = false}
 anyhow = "1.0"
 hyper = {version = "0.14", default-features = false}
