@@ -40,12 +40,14 @@ impl SessionInfo {
     /// # Examples
     ///
     /// ```
-    /// use datadog_sidecar::service::SessionInfo;
+    /// if cfg!(not(miri)) {
+    ///     use datadog_sidecar::service::SessionInfo;
     ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let session_info = SessionInfo::default();
-    ///     let runtime_info = session_info.get_runtime(&"runtime1".to_string());
+    ///     #[tokio::main]
+    ///     async fn get_runtime_example() {
+    ///         let session_info = SessionInfo::default();
+    ///         let runtime_info = session_info.get_runtime(&"runtime1".to_string());
+    ///     }
     /// }
     /// ```
     // DEV-TODO: This function should likely either be refactored or have its name changed as its
@@ -78,12 +80,14 @@ impl SessionInfo {
     /// # Examples
     ///
     /// ```
-    /// use datadog_sidecar::service::SessionInfo;
+    /// if cfg!(not(miri)) {
+    ///     use datadog_sidecar::service::SessionInfo;
     ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let session_info = SessionInfo::default();
-    ///     session_info.shutdown().await;
+    ///     #[tokio::main]
+    ///     async fn shutdown_example() {
+    ///         let session_info = SessionInfo::default();
+    ///         session_info.shutdown().await;
+    ///     }
     /// }
     /// ```
     pub async fn shutdown(&self) {
@@ -105,12 +109,14 @@ impl SessionInfo {
     /// # Examples
     ///
     /// ```
-    /// use datadog_sidecar::service::SessionInfo;
+    /// if cfg!(not(miri)) {
+    ///     use datadog_sidecar::service::SessionInfo;
     ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let session_info = SessionInfo::default();
-    ///     session_info.shutdown_running_instances().await;
+    ///     #[tokio::main]
+    ///     async fn shutdown_running_instances_example() {
+    ///         let session_info = SessionInfo::default();
+    ///         session_info.shutdown_running_instances().await;
+    ///     }
     /// }
     /// ```
     pub async fn shutdown_running_instances(&self) {
@@ -137,21 +143,25 @@ impl SessionInfo {
     /// # Examples
     ///
     /// ```
-    /// use datadog_sidecar::service::SessionInfo;
+    /// if cfg!(not(miri)) {
+    ///     use datadog_sidecar::service::SessionInfo;
     ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let session_info = SessionInfo::default();
-    ///     session_info.shutdown_runtime(&"runtime1".to_string()).await;
+    ///     #[tokio::main]
+    ///     async fn shutdown_runtime_example() {
+    ///         let session_info = SessionInfo::default();
+    ///         session_info.shutdown_runtime("runtime1").await;
+    ///     }
     /// }
     /// ```
-    pub async fn shutdown_runtime(&self, runtime_id: &String) {
-        let runtime = match self.lock_runtimes().remove(runtime_id) {
-            Some(rt) => rt,
-            None => return,
+    pub async fn shutdown_runtime(&self, runtime_id: &str) {
+        let maybe_runtime = {
+            let mut runtimes = self.lock_runtimes();
+            runtimes.remove(runtime_id)
         };
 
-        runtime.shutdown().await
+        if let Some(runtime) = maybe_runtime {
+            runtime.shutdown().await;
+        }
     }
 
     pub fn lock_runtimes(&self) -> MutexGuard<HashMap<String, crate::interface::RuntimeInfo>> {
