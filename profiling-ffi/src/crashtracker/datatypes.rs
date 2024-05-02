@@ -92,7 +92,13 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
         let endpoint = unsafe { Some(exporter::try_to_endpoint(value.endpoint)?) };
         let resolve_frames = value.resolve_frames;
         let timeout = Duration::from_secs(value.timeout_secs);
-        Self::new(additional_files, create_alt_stack, endpoint, resolve_frames, timeout)
+        Self::new(
+            additional_files,
+            create_alt_stack,
+            endpoint,
+            resolve_frames,
+            timeout,
+        )
     }
 }
 
