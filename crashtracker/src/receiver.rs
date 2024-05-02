@@ -76,7 +76,7 @@ fn process_line(
         StdinState::Config => {
             if config.is_some() {
                 // The config might contain sensitive data, don't log it.
-                eprint!("Unexpected double config");
+                eprintln!("Unexpected double config");
             }
             std::mem::swap(config, &mut Some(serde_json::from_str(&line)?));
             StdinState::Config
@@ -97,7 +97,7 @@ fn process_line(
         }
 
         StdinState::Done => {
-            eprint!("Unexpected line after crashreport is done: {line}");
+            eprintln!("Unexpected line after crashreport is done: {line}");
             StdinState::Done
         }
 
@@ -153,7 +153,7 @@ fn process_line(
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => StdinState::Done,
         StdinState::Waiting => {
             //TODO: Do something here?
-            eprint!("Unexpected line while receiving crashreport: {line}");
+            eprintln!("Unexpected line while receiving crashreport: {line}");
             StdinState::Waiting
         }
     };
@@ -187,12 +187,12 @@ fn receive_report(stream: impl std::io::BufRead) -> anyhow::Result<CrashReportSt
         return Ok(CrashReportStatus::NoCrash);
     }
 
-    #[cfg(target_os = "linux")]
-    crashinfo.add_file("/proc/meminfo")?;
-    #[cfg(target_os = "linux")]
-    crashinfo.add_file("/proc/cpuinfo")?;
-
     let config = config.context("Missing crashtracker configuration")?;
+    for filename in &config.additional_files {
+        crashinfo
+            .add_file(filename)
+            .unwrap_or_else(|e| eprintln!("Unable to add file {filename}: {e}"));
+    }
 
     // If we were waiting for data when stdin closed, let our caller know that
     // we only have partial data.

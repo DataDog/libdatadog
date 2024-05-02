@@ -28,6 +28,7 @@ pub struct CrashtrackerReceiverConfig<'a> {
 
 #[repr(C)]
 pub struct CrashtrackerConfiguration<'a> {
+    pub additional_files: Slice<'a, CharSlice<'a>>,
     pub create_alt_stack: bool,
     /// The endpoint to send the crash report to (can be a file://)
     pub endpoint: ProfilingEndpoint<'a>,
@@ -80,11 +81,24 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
 {
     type Error = anyhow::Error;
     fn try_from(value: CrashtrackerConfiguration<'a>) -> anyhow::Result<Self> {
+        let additional_files = {
+            let mut vec = Vec::with_capacity(value.additional_files.len());
+            for x in value.additional_files.iter() {
+                vec.push(x.try_to_utf8()?.to_string());
+            }
+            vec
+        };
         let create_alt_stack = value.create_alt_stack;
         let endpoint = unsafe { Some(exporter::try_to_endpoint(value.endpoint)?) };
         let resolve_frames = value.resolve_frames;
         let timeout = Duration::from_secs(value.timeout_secs);
-        Self::new(create_alt_stack, endpoint, resolve_frames, timeout)
+        Self::new(
+            additional_files,
+            create_alt_stack,
+            endpoint,
+            resolve_frames,
+            timeout,
+        )
     }
 }
 
