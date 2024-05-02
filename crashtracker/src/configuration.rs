@@ -20,6 +20,8 @@ pub enum StacktraceCollection {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashtrackerConfiguration {
+    // Paths to any additional files to track, if any
+    pub additional_files: Vec<String>,
     pub create_alt_stack: bool,
     pub endpoint: Option<Endpoint>,
     pub resolve_frames: StacktraceCollection,
@@ -65,14 +67,15 @@ impl CrashtrackerReceiverConfig {
 }
 
 impl CrashtrackerConfiguration {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
+        additional_files: Vec<String>,
         create_alt_stack: bool,
         endpoint: Option<Endpoint>,
         resolve_frames: StacktraceCollection,
         timeout: Duration,
     ) -> anyhow::Result<Self> {
         Ok(Self {
+            additional_files,
             create_alt_stack,
             endpoint,
             resolve_frames,

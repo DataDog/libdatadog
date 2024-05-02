@@ -272,22 +272,22 @@ impl TraceExporterBuilder {
     }
 
     pub fn set_tracer_version(mut self, tracer_version: &str) -> Self {
-        self.tracer_version = tracer_version.to_owned();
+        tracer_version.clone_into(&mut self.tracer_version);
         self
     }
 
     pub fn set_language(mut self, lang: &str) -> Self {
-        self.language = lang.to_owned();
+        lang.clone_into(&mut self.language);
         self
     }
 
     pub fn set_language_version(mut self, lang_version: &str) -> Self {
-        self.language_version = lang_version.to_owned();
+        lang_version.clone_into(&mut self.language_version);
         self
     }
 
     pub fn set_language_interpreter(mut self, lang_interpreter: &str) -> Self {
-        self.language_interpreter = lang_interpreter.to_owned();
+        lang_interpreter.clone_into(&mut self.language_interpreter);
         self
     }
 

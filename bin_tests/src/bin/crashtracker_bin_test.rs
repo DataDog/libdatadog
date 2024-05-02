@@ -34,6 +34,7 @@ mod unix {
         let timeout = Duration::from_secs(30);
         crashtracker::init(
             CrashtrackerConfiguration {
+                additional_files: vec![],
                 create_alt_stack: true,
                 endpoint: Some(ddcommon::Endpoint {
                     url: ddcommon::parse_uri(&format!("file://{}", output_filename))?,

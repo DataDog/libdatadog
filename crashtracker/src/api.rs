@@ -145,7 +145,7 @@ fn test_crash() {
         .expect("Not to fail"),
     );
     let config =
-        CrashtrackerConfiguration::new(create_alt_stack, endpoint, resolve_frames, timeout)
+        CrashtrackerConfiguration::new(vec![], create_alt_stack, endpoint, resolve_frames, timeout)
             .expect("not to fail");
     let metadata = CrashtrackerMetadata::new(
         "libname".to_string(),
