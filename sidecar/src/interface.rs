@@ -988,7 +988,7 @@ impl SidecarServer {
                 let mut session = SessionInfo::default();
                 #[cfg(feature = "tracing")]
                 if enabled!(Level::INFO) {
-                    session.session_id = session_id.clone();
+                    session.session_id.clone_from(session_id);
                     info!("Initializing new session: {}", session_id);
                 }
                 sessions.insert(session_id.clone(), session.clone());
