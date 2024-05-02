@@ -189,8 +189,8 @@ fn receive_report(stream: impl std::io::BufRead) -> anyhow::Result<CrashReportSt
 
     #[cfg(target_os = "linux")]
     crashinfo.add_file("/proc/meminfo")?;
-    #[cfg(target_os = "linux")]
-    crashinfo.add_file("/proc/cpuinfo")?;
+    // #[cfg(target_os = "linux")]
+    // crashinfo.add_file("/proc/cpuinfo")?;
 
     let config = config.context("Missing crashtracker configuration")?;
 
