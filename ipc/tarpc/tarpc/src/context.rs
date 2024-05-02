@@ -147,6 +147,7 @@ impl Context {
 }
 
 /// An extension trait for [`tracing::Span`] for propagating tarpc Contexts.
+#[allow(dead_code)]
 pub(crate) trait SpanExt {
     /// Sets the given context on this span. Newly-created spans will be children of the given
     /// context's trace context.
