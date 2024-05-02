@@ -78,7 +78,12 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile) {
         .context("reading crashtracker profiling payload")
         .unwrap();
     let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile)
-        .context("deserializing crashtracker profiling payload to json")
+        .with_context(|| {
+            format!(
+                "deserializing crashtracker profiling payload to json\n: {}",
+                String::from_utf8_lossy(&crash_profile)
+            )
+        })
         .unwrap();
     assert_eq!(
         serde_json::json!({
