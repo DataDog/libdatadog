@@ -33,6 +33,7 @@ mod serialized_tracer_header_tags;
 mod session_info;
 mod sidecar_interface;
 mod sidecar_server;
+pub mod telemetry;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionConfig {

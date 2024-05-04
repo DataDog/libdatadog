@@ -6,9 +6,10 @@ use crate::interface::{SidecarStats, TraceFlusher};
 use crate::log;
 use crate::log::{MULTI_LOG_FILTER, MULTI_LOG_WRITER};
 use crate::service::{
-    AppOrQueue, InstanceId, QueueId, RequestIdentification, RequestIdentifier, RuntimeInfo,
-    RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SessionInfo, SidecarAction,
-    SidecarInterface, SidecarInterfaceRequest, SidecarInterfaceResponse,
+    sidecar_interface::ServeSidecarInterface, telemetry::AppInstance, AppOrQueue, InstanceId,
+    QueueId, RequestIdentification, RequestIdentifier, RuntimeInfo, RuntimeMetadata,
+    SerializedTracerHeaderTags, SessionConfig, SessionInfo, SidecarAction, SidecarInterface,
+    SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
 use datadog_ipc::platform::{AsyncChannel, ShmHandle};
 use datadog_ipc::tarpc;
@@ -32,7 +33,6 @@ use tracing::{debug, enabled, error, info, warn, Level};
 
 use futures::FutureExt;
 
-use crate::service::sidecar_interface::ServeSidecarInterface;
 use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
 
@@ -211,7 +211,7 @@ impl SidecarServer {
         service_name: &str,
         env_name: &str,
         initial_actions: Vec<TelemetryActions>,
-    ) -> Option<crate::interface::AppInstance> {
+    ) -> Option<AppInstance> {
         let rt_info = self.get_runtime(instance_id);
 
         // let (app_future, completer) = rt_info.get_app(service_name, env_name);
@@ -243,7 +243,7 @@ impl SidecarServer {
             Ok((handle, worker_join)) => {
                 info!("spawning telemetry worker {config:?}");
 
-                let instance = crate::interface::AppInstance {
+                let instance = AppInstance {
                     telemetry: handle,
                     telemetry_worker_shutdown: worker_join.map(Result::ok).boxed().shared(),
                     telemetry_metrics: Default::default(),

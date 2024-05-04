@@ -16,7 +16,7 @@ use std::{
 use anyhow::Result;
 
 use futures::{
-    future::{join_all, BoxFuture, Shared},
+    future::{join_all, Shared},
     FutureExt,
 };
 use lazy_static::lazy_static;
@@ -38,15 +38,15 @@ use ddcommon::{tag::Tag, Endpoint};
 use ddtelemetry::worker::TelemetryWorkerStats;
 use ddtelemetry::{
     data,
-    metrics::{ContextKey, MetricContext},
-    worker::{store::Store, TelemetryActions, TelemetryWorkerHandle, MAX_ITEMS},
+    metrics::MetricContext,
+    worker::{store::Store, TelemetryActions, MAX_ITEMS},
 };
 
 use crate::log::TemporarilyRetainedMapStats;
 
 use crate::service::{
-    RuntimeMetadata, SerializedTracerHeaderTags, SidecarAction, SidecarInterfaceRequest,
-    SidecarInterfaceResponse,
+    telemetry::AppInstance, RuntimeMetadata, SerializedTracerHeaderTags, SidecarAction,
+    SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
 
 #[derive(Serialize, Deserialize)]
@@ -72,42 +72,6 @@ pub struct TraceFlusherStats {
     pub agent_config_writers: u32,
     pub agent_configs_last_used_entries: u32,
     pub send_data_size: u32,
-}
-
-#[derive(Clone)]
-pub struct AppInstance {
-    pub(crate) telemetry: TelemetryWorkerHandle,
-    pub(crate) telemetry_worker_shutdown: Shared<BoxFuture<'static, Option<()>>>,
-    pub(crate) telemetry_metrics: Arc<Mutex<HashMap<String, ContextKey>>>,
-}
-
-impl AppInstance {
-    pub fn register_metric(&mut self, metric: MetricContext) {
-        let mut metrics = self.telemetry_metrics.lock().unwrap();
-        if !metrics.contains_key(&metric.name) {
-            metrics.insert(
-                metric.name.clone(),
-                self.telemetry.register_metric_context(
-                    metric.name,
-                    metric.tags,
-                    metric.metric_type,
-                    metric.common,
-                    metric.namespace,
-                ),
-            );
-        }
-    }
-
-    pub fn to_telemetry_point(
-        &self,
-        (name, val, tags): (String, f64, Vec<Tag>),
-    ) -> TelemetryActions {
-        TelemetryActions::AddPoint((
-            val,
-            *self.telemetry_metrics.lock().unwrap().get(&name).unwrap(),
-            tags,
-        ))
-    }
 }
 
 pub(crate) struct EnqueuedTelemetryData {
