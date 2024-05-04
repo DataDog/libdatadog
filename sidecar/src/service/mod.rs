@@ -4,7 +4,7 @@
 pub use instance_id::InstanceId;
 pub use queue_id::QueueId;
 pub use request_identification::{RequestIdentification, RequestIdentifier};
-pub use runtime_info::RuntimeInfo;
+pub use runtime_info::{RuntimeInfo, SharedAppManualFut};
 pub use runtime_metadata::RuntimeMetadata;
 pub use serialized_tracer_header_tags::SerializedTracerHeaderTags;
 pub use session_info::SessionInfo;

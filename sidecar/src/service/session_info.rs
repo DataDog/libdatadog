@@ -21,11 +21,12 @@ use crate::service::{InstanceId, RuntimeInfo};
 #[derive(Default, Clone)]
 pub struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
-    pub session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
+    pub(crate) session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
-    pub log_guard: Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
+    pub(crate) log_guard:
+        Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
     #[cfg(feature = "tracing")]
-    pub session_id: String,
+    pub(crate) session_id: String,
 }
 
 impl SessionInfo {

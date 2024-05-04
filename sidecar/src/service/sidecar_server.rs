@@ -214,9 +214,11 @@ impl SidecarServer {
     ) -> Option<crate::interface::AppInstance> {
         let rt_info = self.get_runtime(instance_id);
 
-        let (app_future, completer) = rt_info.get_app(service_name, env_name);
-        if completer.is_none() {
-            return app_future.await;
+        // let (app_future, completer) = rt_info.get_app(service_name, env_name);
+        let manual_app_future = rt_info.get_app(service_name, env_name);
+
+        if manual_app_future.completer.is_none() {
+            return manual_app_future.app_future.await;
         }
 
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
@@ -261,11 +263,12 @@ impl SidecarServer {
                 None
             }
         };
-        completer
+        manual_app_future
+            .completer
             .expect("Completed expected Some ManualFuture for application instance, but found none")
             .complete(instance_option)
             .await;
-        app_future.await
+        manual_app_future.app_future.await
     }
 
     fn send_trace_v04(&self, headers: &SerializedTracerHeaderTags, data: &[u8], target: &Endpoint) {

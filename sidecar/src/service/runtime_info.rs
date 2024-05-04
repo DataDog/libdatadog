@@ -1,5 +1,8 @@
-use crate::interface::{AppInstance, AppOrQueue};
-use crate::service::{InstanceId, QueueId};
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+use crate::service::telemetry::AppInstance;
+use crate::service::{AppOrQueue, InstanceId, QueueId};
 use ddtelemetry::worker::{LifecycleAction, TelemetryActions};
 use futures::{
     future::{self, join_all, Shared},
@@ -10,38 +13,61 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::{debug, info};
 
-#[allow(clippy::type_complexity)]
+type AppMap = HashMap<(String, String), Shared<ManualFuture<Option<AppInstance>>>>;
+
+/// `SharedAppManualFut` is a struct that contains a shared future of an `AppInstance` and its
+/// completer. The `app_future` is a shared future that may contain an `Option<AppInstance>`.
+/// The `completer` is used to complete the `app_future`.
+pub struct SharedAppManualFut {
+    pub app_future: Shared<ManualFuture<Option<AppInstance>>>,
+    pub completer: Option<ManualFutureCompleter<Option<AppInstance>>>,
+}
+
+/// `RuntimeInfo` is a struct that contains information about a runtime.
+/// It contains a map of apps and a map of app or actions.
+/// Each app is represented by a shared future that may contain an `Option<AppInstance>`.
+/// Each action is represented by an `AppOrQueue` enum. Combining apps and actions are necessary
+/// because service and env names are not known until later in the initialization process.
 #[derive(Clone, Default)]
-pub struct RuntimeInfo {
-    pub(crate) apps:
-        Arc<Mutex<HashMap<(String, String), Shared<ManualFuture<Option<AppInstance>>>>>>,
+pub(crate) struct RuntimeInfo {
+    pub(crate) apps: Arc<Mutex<AppMap>>,
     app_or_actions: Arc<Mutex<HashMap<QueueId, AppOrQueue>>>,
     #[cfg(feature = "tracing")]
     pub instance_id: InstanceId,
 }
 
 impl RuntimeInfo {
-    #[allow(clippy::type_complexity)]
-    pub(crate) fn get_app(
-        &self,
-        service_name: &str,
-        env_name: &str,
-    ) -> (
-        Shared<ManualFuture<Option<AppInstance>>>,
-        Option<ManualFutureCompleter<Option<AppInstance>>>,
-    ) {
+    /// Retrieves the `AppInstance` for a given service name and environment name.
+    ///
+    /// # Arguments
+    ///
+    /// * `service_name` - A string slice that holds the name of the service.
+    /// * `env_name` - A string slice that holds the name of the environment.
+    ///
+    /// # Returns
+    ///
+    /// * `SharedAppManualFut` - A struct that contains the shared future of the `AppInstance` and
+    ///   its completer.
+    pub(crate) fn get_app(&self, service_name: &str, env_name: &str) -> SharedAppManualFut {
         let mut apps = self.lock_apps();
         let key = (service_name.to_owned(), env_name.to_owned());
         if let Some(found) = apps.get(&key) {
-            (found.clone(), None)
+            SharedAppManualFut {
+                app_future: found.clone(),
+                completer: None,
+            }
         } else {
             let (future, completer) = ManualFuture::new();
             let shared = future.shared();
             apps.insert(key, shared.clone());
-            (shared, Some(completer))
+            SharedAppManualFut {
+                app_future: shared,
+                completer: Some(completer),
+            }
         }
     }
-
+    /// Shuts down the runtime.
+    /// This involves shutting down all the instances in the runtime.
     pub async fn shutdown(self) {
         #[cfg(feature = "tracing")]
         info!(
@@ -79,14 +105,26 @@ impl RuntimeInfo {
         );
     }
 
-    #[allow(clippy::type_complexity)]
-    pub(crate) fn lock_apps(
-        &self,
-    ) -> MutexGuard<HashMap<(String, String), Shared<ManualFuture<Option<AppInstance>>>>> {
+    // TODO: APMSP-1076 Investigate if we can encapsulate the stats computation functionality so we
+    // don't have to expose apps publicly.
+    /// Locks the apps map and returns a mutable reference to it.
+    ///
+    /// # Returns
+    ///
+    /// * `<MutexGuard<AppMap>>` - A mutable reference to the apps map.
+    pub(crate) fn lock_apps(&self) -> MutexGuard<AppMap> {
         self.apps.lock().unwrap()
     }
 
+    /// Locks the app or actions map and returns a mutable reference to it.
+    ///
+    /// # Returns
+    ///
+    /// * `MutexGuard<HashMap<QueueId, AppOrQueue>>` - A mutable reference to the app or actions
+    ///   map.
     pub(crate) fn lock_app_or_actions(&self) -> MutexGuard<HashMap<QueueId, AppOrQueue>> {
         self.app_or_actions.lock().unwrap()
     }
 }
+
+// TODO-EK: Add tests for RuntimeInfo or add TODO comment before merging
