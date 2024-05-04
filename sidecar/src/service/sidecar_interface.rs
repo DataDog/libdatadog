@@ -1,10 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::interface::{SessionConfig, SidecarAction};
 use crate::service::{
     InstanceId, QueueId, RequestIdentification, RequestIdentifier, RuntimeMetadata,
-    SerializedTracerHeaderTags,
+    SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
 use anyhow::Result;
 use datadog_ipc::platform::ShmHandle;

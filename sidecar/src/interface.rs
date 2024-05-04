@@ -42,11 +42,11 @@ use ddtelemetry::{
     worker::{store::Store, TelemetryActions, TelemetryWorkerHandle, MAX_ITEMS},
 };
 
-use crate::config;
 use crate::log::TemporarilyRetainedMapStats;
 
 use crate::service::{
-    RuntimeMetadata, SerializedTracerHeaderTags, SidecarInterfaceRequest, SidecarInterfaceResponse,
+    RuntimeMetadata, SerializedTracerHeaderTags, SidecarAction, SidecarInterfaceRequest,
+    SidecarInterfaceResponse,
 };
 
 #[derive(Serialize, Deserialize)]
@@ -72,20 +72,6 @@ pub struct TraceFlusherStats {
     pub agent_config_writers: u32,
     pub agent_configs_last_used_entries: u32,
     pub send_data_size: u32,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub enum SidecarAction {
-    Telemetry(TelemetryActions),
-    RegisterTelemetryMetric(MetricContext),
-    AddTelemetryMetricPoint((String, f64, Vec<Tag>)),
-    PhpComposerTelemetryFile(PathBuf),
-}
-
-#[allow(clippy::large_enum_variant)]
-pub(crate) enum AppOrQueue {
-    App(Shared<ManualFuture<(String, String)>>),
-    Queue(EnqueuedTelemetryData),
 }
 
 #[derive(Clone)]
@@ -567,16 +553,6 @@ impl TraceFlusher {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SessionConfig {
-    pub endpoint: Endpoint,
-    pub flush_interval: Duration,
-    pub force_flush_size: usize,
-    pub force_drop_size: usize,
-    pub log_level: String,
-    pub log_file: config::LogMethod,
-}
-
 pub mod blocking {
     use datadog_ipc::platform::ShmHandle;
     use std::{
@@ -587,8 +563,8 @@ pub mod blocking {
 
     use datadog_ipc::transport::blocking::BlockingTransport;
 
-    use crate::interface::{SerializedTracerHeaderTags, SessionConfig, SidecarAction};
-    use crate::service::{InstanceId, QueueId};
+    use crate::interface::{SerializedTracerHeaderTags, SidecarAction};
+    use crate::service::{InstanceId, QueueId, SessionConfig};
 
     use super::{RuntimeMetadata, SidecarInterfaceRequest, SidecarInterfaceResponse};
 
