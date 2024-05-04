@@ -10,13 +10,13 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex},
 };
 
 use anyhow::Result;
 
 use futures::{
-    future::{self, join_all, BoxFuture, Shared},
+    future::{join_all, BoxFuture, Shared},
     FutureExt,
 };
 use lazy_static::lazy_static;
@@ -39,15 +39,14 @@ use ddtelemetry::worker::TelemetryWorkerStats;
 use ddtelemetry::{
     data,
     metrics::{ContextKey, MetricContext},
-    worker::{store::Store, LifecycleAction, TelemetryActions, TelemetryWorkerHandle, MAX_ITEMS},
+    worker::{store::Store, TelemetryActions, TelemetryWorkerHandle, MAX_ITEMS},
 };
 
 use crate::config;
 use crate::log::TemporarilyRetainedMapStats;
 
 use crate::service::{
-    InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SidecarInterfaceRequest,
-    SidecarInterfaceResponse,
+    RuntimeMetadata, SerializedTracerHeaderTags, SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
 
 #[derive(Serialize, Deserialize)]
@@ -87,87 +86,6 @@ pub enum SidecarAction {
 pub(crate) enum AppOrQueue {
     App(Shared<ManualFuture<(String, String)>>),
     Queue(EnqueuedTelemetryData),
-}
-
-#[allow(clippy::type_complexity)]
-#[derive(Clone, Default)]
-pub struct RuntimeInfo {
-    pub(crate) apps:
-        Arc<Mutex<HashMap<(String, String), Shared<ManualFuture<Option<AppInstance>>>>>>,
-    app_or_actions: Arc<Mutex<HashMap<QueueId, AppOrQueue>>>,
-    #[cfg(feature = "tracing")]
-    pub instance_id: InstanceId,
-}
-
-impl RuntimeInfo {
-    #[allow(clippy::type_complexity)]
-    pub(crate) fn get_app(
-        &self,
-        service_name: &str,
-        env_name: &str,
-    ) -> (
-        Shared<ManualFuture<Option<AppInstance>>>,
-        Option<ManualFutureCompleter<Option<AppInstance>>>,
-    ) {
-        let mut apps = self.lock_apps();
-        let key = (service_name.to_owned(), env_name.to_owned());
-        if let Some(found) = apps.get(&key) {
-            (found.clone(), None)
-        } else {
-            let (future, completer) = ManualFuture::new();
-            let shared = future.shared();
-            apps.insert(key, shared.clone());
-            (shared, Some(completer))
-        }
-    }
-
-    pub async fn shutdown(self) {
-        #[cfg(feature = "tracing")]
-        info!(
-            "Shutting down runtime_id {} for session {}",
-            self.instance_id.runtime_id, self.instance_id.session_id
-        );
-
-        let instance_futures: Vec<_> = self
-            .lock_apps()
-            .drain()
-            .map(|(_, instance)| instance)
-            .collect();
-        let instances: Vec<_> = join_all(instance_futures).await;
-        let instances_shutting_down: Vec<_> = instances
-            .into_iter()
-            .map(|instance| {
-                tokio::spawn(async move {
-                    if let Some(instance) = instance {
-                        instance
-                            .telemetry
-                            .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop))
-                            .await
-                            .ok();
-                        instance.telemetry_worker_shutdown.await;
-                    }
-                })
-            })
-            .collect();
-        future::join_all(instances_shutting_down).await;
-
-        #[cfg(feature = "tracing")]
-        debug!(
-            "Successfully shut down runtime_id {} for session {}",
-            self.instance_id.runtime_id, self.instance_id.session_id
-        );
-    }
-
-    #[allow(clippy::type_complexity)]
-    pub(crate) fn lock_apps(
-        &self,
-    ) -> MutexGuard<HashMap<(String, String), Shared<ManualFuture<Option<AppInstance>>>>> {
-        self.apps.lock().unwrap()
-    }
-
-    pub(crate) fn lock_app_or_actions(&self) -> MutexGuard<HashMap<QueueId, AppOrQueue>> {
-        self.app_or_actions.lock().unwrap()
-    }
 }
 
 #[derive(Clone)]

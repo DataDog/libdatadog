@@ -13,14 +13,14 @@ use tracing::{enabled, info, Level};
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::tracer;
 
-use crate::service::InstanceId;
+use crate::service::{InstanceId, RuntimeInfo};
 /// `SessionInfo` holds information about a session.
 ///
 /// It contains a list of runtimes, session configuration, tracer configuration, and log guards.
 /// It also has methods to manage the runtimes and configurations.
 #[derive(Default, Clone)]
 pub struct SessionInfo {
-    runtimes: Arc<Mutex<HashMap<String, crate::interface::RuntimeInfo>>>,
+    runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
     pub session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
     pub log_guard: Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
@@ -52,12 +52,12 @@ impl SessionInfo {
     /// ```
     // DEV-TODO: This function should likely either be refactored or have its name changed as its
     // performing a get or insert operation.
-    pub fn get_runtime(&self, runtime_id: &String) -> crate::interface::RuntimeInfo {
+    pub fn get_runtime(&self, runtime_id: &String) -> RuntimeInfo {
         let mut runtimes = self.lock_runtimes();
         match runtimes.get(runtime_id) {
             Some(runtime) => runtime.clone(),
             None => {
-                let mut runtime = crate::interface::RuntimeInfo::default();
+                let mut runtime = RuntimeInfo::default();
                 runtimes.insert(runtime_id.clone(), runtime.clone());
                 #[cfg(feature = "tracing")]
                 if enabled!(Level::INFO) {
@@ -91,7 +91,7 @@ impl SessionInfo {
     /// }
     /// ```
     pub async fn shutdown(&self) {
-        let runtimes: Vec<crate::interface::RuntimeInfo> = self
+        let runtimes: Vec<RuntimeInfo> = self
             .lock_runtimes()
             .drain()
             .map(|(_, instance)| instance)
@@ -120,7 +120,7 @@ impl SessionInfo {
     /// }
     /// ```
     pub async fn shutdown_running_instances(&self) {
-        let runtimes: Vec<crate::interface::RuntimeInfo> = self
+        let runtimes: Vec<RuntimeInfo> = self
             .lock_runtimes()
             .drain()
             .map(|(_, instance)| instance)
@@ -164,7 +164,7 @@ impl SessionInfo {
         }
     }
 
-    pub fn lock_runtimes(&self) -> MutexGuard<HashMap<String, crate::interface::RuntimeInfo>> {
+    pub fn lock_runtimes(&self) -> MutexGuard<HashMap<String, RuntimeInfo>> {
         self.runtimes.lock().unwrap()
     }
 

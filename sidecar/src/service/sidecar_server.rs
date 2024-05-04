@@ -2,13 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::config::get_product_endpoint;
-use crate::interface::{
-    AppOrQueue, RuntimeInfo, SessionConfig, SidecarAction, SidecarStats, TraceFlusher,
-};
+use crate::interface::{AppOrQueue, SessionConfig, SidecarAction, SidecarStats, TraceFlusher};
 use crate::log;
 use crate::log::{MULTI_LOG_FILTER, MULTI_LOG_WRITER};
 use crate::service::{
-    InstanceId, QueueId, RequestIdentification, RequestIdentifier, RuntimeMetadata,
+    InstanceId, QueueId, RequestIdentification, RequestIdentifier, RuntimeInfo, RuntimeMetadata,
     SerializedTracerHeaderTags, SessionInfo, SidecarInterface, SidecarInterfaceRequest,
     SidecarInterfaceResponse,
 };
