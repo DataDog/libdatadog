@@ -34,6 +34,7 @@ mod session_info;
 mod sidecar_interface;
 mod sidecar_server;
 pub mod telemetry;
+pub(crate) mod tracing;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionConfig {
