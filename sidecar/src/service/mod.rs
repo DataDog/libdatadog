@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::config;
-use crate::interface::EnqueuedTelemetryData;
+use crate::service::telemetry::enqueued_telemetry_data::EnqueuedTelemetryData;
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddtelemetry::metrics::MetricContext;

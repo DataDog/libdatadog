@@ -5,6 +5,7 @@ use crate::config::get_product_endpoint;
 use crate::interface::{SidecarStats, TraceFlusher};
 use crate::log;
 use crate::log::{MULTI_LOG_FILTER, MULTI_LOG_WRITER};
+use crate::service::EnqueuedTelemetryData;
 use crate::service::{
     sidecar_interface::ServeSidecarInterface, telemetry::AppInstance, AppOrQueue, InstanceId,
     QueueId, RequestIdentification, RequestIdentifier, RuntimeInfo, RuntimeMetadata,
@@ -487,19 +488,14 @@ impl SidecarInterface for SidecarServer {
                         };
                         if let Some(mut app) = app_future.await {
                             let actions =
-                                crate::interface::EnqueuedTelemetryData::process_immediately(
-                                    actions, &mut app,
-                                )
-                                .await;
+                                EnqueuedTelemetryData::process_immediately(actions, &mut app).await;
                             app.telemetry.send_msgs(actions).await.ok();
                         }
                     });
                 }
             },
             Entry::Vacant(entry) => {
-                entry.insert(AppOrQueue::Queue(
-                    crate::interface::EnqueuedTelemetryData::processed(actions),
-                ));
+                entry.insert(AppOrQueue::Queue(EnqueuedTelemetryData::processed(actions)));
             }
         }
 
@@ -525,9 +521,7 @@ impl SidecarInterface for SidecarServer {
                 Some(AppOrQueue::Queue(_)) => {
                     app_or_actions.insert(queue_id, AppOrQueue::App(future.shared()))
                 }
-                None => Some(AppOrQueue::Queue(
-                    crate::interface::EnqueuedTelemetryData::default(),
-                )),
+                None => Some(AppOrQueue::Queue(EnqueuedTelemetryData::default())),
                 _ => None,
             }
         };

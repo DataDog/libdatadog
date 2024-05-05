@@ -1,53 +1,36 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::agent_remote_config::AgentRemoteConfigWriter;
+use crate::log::TemporarilyRetainedMapStats;
+use crate::service::{
+    telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats, RuntimeMetadata,
+    SerializedTracerHeaderTags, SidecarAction, SidecarInterfaceRequest, SidecarInterfaceResponse,
+};
+use anyhow::Result;
+use datadog_ipc::platform::NamedShmHandle;
+use datadog_trace_utils::trace_utils;
+use datadog_trace_utils::trace_utils::SendData;
+use ddcommon::Endpoint;
+use ddtelemetry::data;
+use ddtelemetry::worker::TelemetryWorkerStats;
+use futures::future::join_all;
+use manual_future::{ManualFuture, ManualFutureCompleter};
+use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, VecSkipError};
 use std::collections::hash_map::Entry;
 use std::collections::BTreeMap;
-use std::iter::{zip, Sum};
-use std::ops::{Add, DerefMut, Sub};
-use std::path::PathBuf;
+use std::iter::zip;
+use std::ops::DerefMut;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
-
-use anyhow::Result;
-
-use futures::{
-    future::{join_all, Shared},
-    FutureExt,
-};
-use lazy_static::lazy_static;
-use manual_future::{ManualFuture, ManualFutureCompleter};
-
-use datadog_ipc::platform::NamedShmHandle;
-
-use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, VecSkipError};
 use tokio::select;
 use tokio::task::{JoinError, JoinHandle};
-use tracing::{debug, error, info, warn};
-
-use crate::agent_remote_config::AgentRemoteConfigWriter;
-
-use datadog_trace_utils::trace_utils;
-use datadog_trace_utils::trace_utils::SendData;
-use ddcommon::{tag::Tag, Endpoint};
-use ddtelemetry::worker::TelemetryWorkerStats;
-use ddtelemetry::{
-    data,
-    metrics::MetricContext,
-    worker::{store::Store, TelemetryActions, MAX_ITEMS},
-};
-
-use crate::log::TemporarilyRetainedMapStats;
-
-use crate::service::{
-    telemetry::AppInstance, RuntimeMetadata, SerializedTracerHeaderTags, SidecarAction,
-    SidecarInterfaceRequest, SidecarInterfaceResponse,
-};
+use tracing::{debug, error, info};
 
 #[derive(Serialize, Deserialize)]
 pub struct SidecarStats {
@@ -74,246 +57,12 @@ pub struct TraceFlusherStats {
     pub send_data_size: u32,
 }
 
-pub(crate) struct EnqueuedTelemetryData {
-    dependencies: Store<data::Dependency>,
-    configurations: Store<data::Configuration>,
-    integrations: Store<data::Integration>,
-    pub(crate) metrics: Vec<MetricContext>,
-    pub(crate) points: Vec<(String, f64, Vec<Tag>)>,
-    pub(crate) actions: Vec<TelemetryActions>,
-    computed_dependencies: Vec<Shared<ManualFuture<Arc<Vec<data::Dependency>>>>>,
-}
-
-impl Default for EnqueuedTelemetryData {
-    fn default() -> Self {
-        Self {
-            dependencies: Store::new(MAX_ITEMS),
-            configurations: Store::new(MAX_ITEMS),
-            integrations: Store::new(MAX_ITEMS),
-            metrics: Vec::new(),
-            points: Vec::new(),
-            actions: Vec::new(),
-            computed_dependencies: Vec::new(),
-        }
-    }
-}
-
-#[derive(Default, Serialize, Deserialize)]
-pub struct EnqueuedTelemetryStats {
-    pub dependencies_stored: u32,
-    pub dependencies_unflushed: u32,
-    pub configurations_stored: u32,
-    pub configurations_unflushed: u32,
-    pub integrations_stored: u32,
-    pub integrations_unflushed: u32,
-    pub metrics: u32,
-    pub points: u32,
-    pub actions: u32,
-    pub computed_dependencies: u32,
-}
-
-impl Add for EnqueuedTelemetryStats {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        EnqueuedTelemetryStats {
-            dependencies_stored: self.dependencies_stored + rhs.dependencies_stored,
-            dependencies_unflushed: self.dependencies_unflushed + rhs.dependencies_unflushed,
-            configurations_stored: self.configurations_stored + rhs.configurations_stored,
-            configurations_unflushed: self.configurations_unflushed + rhs.configurations_unflushed,
-            integrations_stored: self.integrations_stored + rhs.integrations_stored,
-            integrations_unflushed: self.integrations_unflushed + rhs.integrations_unflushed,
-            metrics: self.metrics + rhs.metrics,
-            points: self.points + rhs.points,
-            actions: self.actions + rhs.actions,
-            computed_dependencies: self.computed_dependencies + rhs.computed_dependencies,
-        }
-    }
-}
-
-impl Sum for EnqueuedTelemetryStats {
-    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.fold(Self::default(), |a, b| a + b)
-    }
-}
-
+// TODO-EK: Re-eval access scope before merging
 #[serde_as]
 #[derive(Deserialize)]
-struct ComposerPackages {
+pub struct ComposerPackages {
     #[serde_as(as = "VecSkipError<_>")]
-    packages: Vec<data::Dependency>,
-}
-
-impl EnqueuedTelemetryData {
-    pub fn process(&mut self, actions: Vec<SidecarAction>) {
-        for action in actions {
-            match action {
-                SidecarAction::Telemetry(TelemetryActions::AddConfig(c)) => {
-                    self.configurations.insert(c)
-                }
-                SidecarAction::Telemetry(TelemetryActions::AddDependecy(d)) => {
-                    self.dependencies.insert(d)
-                }
-                SidecarAction::Telemetry(TelemetryActions::AddIntegration(i)) => {
-                    self.integrations.insert(i)
-                }
-                SidecarAction::Telemetry(other) => self.actions.push(other),
-                SidecarAction::PhpComposerTelemetryFile(composer_path) => self
-                    .computed_dependencies
-                    .push(Self::extract_composer_telemetry(composer_path).shared()),
-
-                SidecarAction::RegisterTelemetryMetric(m) => self.metrics.push(m),
-                SidecarAction::AddTelemetryMetricPoint(p) => self.points.push(p),
-            }
-        }
-    }
-
-    pub fn processed(action: Vec<SidecarAction>) -> Self {
-        let mut data = Self::default();
-        data.process(action);
-        data
-    }
-
-    pub(crate) async fn extract_telemetry_actions(&mut self, actions: &mut Vec<TelemetryActions>) {
-        for computed_deps in self.computed_dependencies.clone() {
-            for d in computed_deps.await.iter() {
-                actions.push(TelemetryActions::AddDependecy(d.clone()));
-            }
-        }
-        for d in self.dependencies.unflushed() {
-            actions.push(TelemetryActions::AddDependecy(d.clone()));
-        }
-        for c in self.configurations.unflushed() {
-            actions.push(TelemetryActions::AddConfig(c.clone()));
-        }
-        for i in self.integrations.unflushed() {
-            actions.push(TelemetryActions::AddIntegration(i.clone()));
-        }
-    }
-
-    pub async fn process_immediately(
-        sidecar_actions: Vec<SidecarAction>,
-        app: &mut AppInstance,
-    ) -> Vec<TelemetryActions> {
-        let mut actions = vec![];
-        for action in sidecar_actions {
-            match action {
-                SidecarAction::Telemetry(t) => actions.push(t),
-                SidecarAction::PhpComposerTelemetryFile(path) => {
-                    for nested in Self::extract_composer_telemetry(path).await.iter() {
-                        actions.push(TelemetryActions::AddDependecy(nested.clone()));
-                    }
-                }
-                SidecarAction::RegisterTelemetryMetric(metric) => app.register_metric(metric),
-                SidecarAction::AddTelemetryMetricPoint(point) => {
-                    actions.push(app.to_telemetry_point(point));
-                }
-            }
-        }
-        actions
-    }
-
-    // This parses a vendor/composer/installed.json file. It caches the parsed result for a while.
-    fn extract_composer_telemetry(path: PathBuf) -> ManualFuture<Arc<Vec<data::Dependency>>> {
-        let (deps, completer) = ManualFuture::new();
-        tokio::spawn(async {
-            type ComposerCache = HashMap<PathBuf, (SystemTime, Arc<Vec<data::Dependency>>)>;
-            lazy_static! {
-                static ref COMPOSER_CACHE: tokio::sync::Mutex<ComposerCache> =
-                    tokio::sync::Mutex::new(Default::default());
-                static ref LAST_CACHE_CLEAN: AtomicU64 = AtomicU64::new(0);
-            }
-
-            let mut cache = COMPOSER_CACHE.lock().await;
-            let packages = match tokio::fs::metadata(&path).await.and_then(|m| m.modified()) {
-                Err(e) => {
-                    warn!("Failed to report dependencies from {path:?}, could not read modification time: {e:?}");
-                    Arc::new(vec![])
-                }
-                Ok(modification) => {
-                    let now = SystemTime::now();
-                    if let Some((last_update, actions)) = cache.get(&path) {
-                        if modification < *last_update {
-                            completer.complete(actions.clone()).await;
-                            return;
-                        }
-                    }
-                    async fn parse(path: &PathBuf) -> Result<Vec<data::Dependency>> {
-                        let mut json = tokio::fs::read(&path).await?;
-                        #[cfg(not(target_arch = "x86"))]
-                        let parsed: ComposerPackages = simd_json::from_slice(json.as_mut_slice())?;
-                        #[cfg(target_arch = "x86")]
-                        let parsed = ComposerPackages { packages: vec![] }; // not interested in 32 bit
-                        Ok(parsed.packages)
-                    }
-                    let packages = Arc::new(parse(&path).await.unwrap_or_else(|e| {
-                        warn!("Failed to report dependencies from {path:?}: {e:?}");
-                        vec![]
-                    }));
-                    cache.insert(path, (now, packages.clone()));
-                    // cheap way to avoid unbounded caching
-                    const CACHE_INTERVAL: u64 = 2000;
-                    let last_clean = LAST_CACHE_CLEAN.load(Ordering::Relaxed);
-                    let now_secs = Instant::now().elapsed().as_secs();
-                    if now_secs > last_clean + CACHE_INTERVAL
-                        && LAST_CACHE_CLEAN
-                            .compare_exchange(
-                                last_clean,
-                                now_secs,
-                                Ordering::SeqCst,
-                                Ordering::Acquire,
-                            )
-                            .is_ok()
-                    {
-                        cache.retain(|_, (inserted, _)| {
-                            *inserted > now.sub(Duration::from_secs(CACHE_INTERVAL))
-                        });
-                    }
-                    packages
-                }
-            };
-            completer.complete(packages).await;
-        });
-        deps
-    }
-
-    pub fn stats(&self) -> EnqueuedTelemetryStats {
-        EnqueuedTelemetryStats {
-            dependencies_stored: self.dependencies.len_stored() as u32,
-            dependencies_unflushed: self.dependencies.len_unflushed() as u32,
-            configurations_stored: self.configurations.len_stored() as u32,
-            configurations_unflushed: self.configurations.len_unflushed() as u32,
-            integrations_stored: self.integrations.len_stored() as u32,
-            integrations_unflushed: self.integrations.len_unflushed() as u32,
-            metrics: self.metrics.len() as u32,
-            points: self.points.len() as u32,
-            actions: self.actions.len() as u32,
-            computed_dependencies: self.computed_dependencies.len() as u32,
-        }
-    }
-}
-
-#[tokio::test]
-#[cfg_attr(miri, ignore)]
-async fn test_extract_composer_telemetry() {
-    let data = EnqueuedTelemetryData::extract_composer_telemetry(
-        concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/installed.json").into(),
-    )
-    .await;
-    assert_eq!(
-        data,
-        vec![
-            data::Dependency {
-                name: "g1a/composer-test-scenarios".to_string(),
-                version: None
-            },
-            data::Dependency {
-                name: "datadog/dd-trace".to_string(),
-                version: Some("dev-master".to_string())
-            },
-        ]
-        .into()
-    );
+    pub packages: Vec<data::Dependency>,
 }
 
 #[derive(Default)]
