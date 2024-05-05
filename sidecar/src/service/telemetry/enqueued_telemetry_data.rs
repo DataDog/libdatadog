@@ -1,6 +1,17 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use ddcommon::tag::Tag;
+use ddtelemetry::data;
+use ddtelemetry::metrics::MetricContext;
+use ddtelemetry::worker::store::Store;
+use ddtelemetry::worker::{TelemetryActions, MAX_ITEMS};
+use futures::future::Shared;
+use futures::FutureExt;
+use lazy_static::lazy_static;
+use manual_future::ManualFuture;
+use serde::Deserialize;
+use serde_with::{serde_as, VecSkipError};
 use std::collections::HashMap;
 use std::ops::Sub;
 use std::path::PathBuf;
@@ -8,18 +19,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
-use futures::future::Shared;
-use futures::FutureExt;
-use lazy_static::lazy_static;
-use manual_future::ManualFuture;
 use tracing::warn;
-use serde::Deserialize;
-use serde_with::{serde_as, VecSkipError};
-use ddcommon::tag::Tag;
-use ddtelemetry::data;
-use ddtelemetry::metrics::MetricContext;
-use ddtelemetry::worker::store::Store;
-use ddtelemetry::worker::{TelemetryActions, MAX_ITEMS};
 
 use super::enqueued_telemetry_stats::EnqueuedTelemetryStats;
 use crate::service::telemetry::AppInstance;

@@ -1,43 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, VecSkipError};
-
-use ddtelemetry::data;
-use ddtelemetry::worker::TelemetryWorkerStats;
-
-use crate::log::TemporarilyRetainedMapStats;
 use crate::service::{
-    telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats,
-    tracing::trace_flusher::TraceFlusherStats, RuntimeMetadata, SerializedTracerHeaderTags,
-    SidecarAction, SidecarInterfaceRequest, SidecarInterfaceResponse,
+    RuntimeMetadata, SerializedTracerHeaderTags, SidecarAction, SidecarInterfaceRequest,
+    SidecarInterfaceResponse,
 };
-
-#[derive(Serialize, Deserialize)]
-pub struct SidecarStats {
-    pub trace_flusher: TraceFlusherStats,
-    pub sessions: u32,
-    pub session_counter_size: u32,
-    pub runtimes: u32,
-    pub apps: u32,
-    pub active_apps: u32,
-    pub enqueued_apps: u32,
-    pub enqueued_telemetry_data: EnqueuedTelemetryStats,
-    pub telemetry_metrics_contexts: u32,
-    pub telemetry_worker: TelemetryWorkerStats,
-    pub telemetry_worker_errors: u32,
-    pub log_writer: TemporarilyRetainedMapStats,
-    pub log_filter: TemporarilyRetainedMapStats,
-}
-
-// TODO-EK: Re-eval access scope before merging
-#[serde_as]
-#[derive(Deserialize)]
-pub struct ComposerPackages {
-    #[serde_as(as = "VecSkipError<_>")]
-    pub packages: Vec<data::Dependency>,
-}
 
 pub mod blocking {
     use std::{

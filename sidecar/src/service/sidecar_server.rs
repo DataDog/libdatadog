@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::config::get_product_endpoint;
-use crate::interface::SidecarStats;
 use crate::log;
 use crate::log::{MULTI_LOG_FILTER, MULTI_LOG_WRITER};
+use crate::service::telemetry::SidecarStats;
 use crate::service::EnqueuedTelemetryData;
 use crate::service::{
     sidecar_interface::ServeSidecarInterface, telemetry::AppInstance, tracing::TraceFlusher,
