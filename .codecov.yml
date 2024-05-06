@@ -1,0 +1,77 @@
+comment:
+  layout: "condensed_header, diff, flags, components"
+  
+component_management:
+  individual_components:
+    - component_id: crashtracker  # this is an identifier that should not be changed
+      name: crashtracker  # this is a display name, and can be changed freely
+      paths:
+        - crashtracker
+    - component_id: data-pipeline  # this is an identifier that should not be changed
+      name: data-pipeline  # this is a display name, and can be changed freely
+      paths:
+        - data-pipeline
+    - component_id: data-pipeline-ffi  # this is an identifier that should not be changed
+      name: data-pipeline-ffi  # this is a display name, and can be changed freely
+      paths:
+        - data-pipeline-ffi
+    - component_id: ddcommon  # this is an identifier that should not be changed
+      name: ddcommon  # this is a display name, and can be changed freely
+      paths:
+        - ddcommon
+    - component_id: ddcommon-ffi  # this is an identifier that should not be changed
+      name: ddcommon-ffi  # this is a display name, and can be changed freely
+      paths:
+        - ddcommon-ffi
+    - component_id: ddtelemetry  # this is an identifier that should not be changed
+      name: ddtelemetry  # this is a display name, and can be changed freely
+      paths:
+        - ddtelemetry
+    - component_id: ipc  # this is an identifier that should not be changed
+      name: ipc  # this is a display name, and can be changed freely
+      paths:
+        - ipc
+    - component_id: profiling  # this is an identifier that should not be changed
+      name: profiling  # this is a display name, and can be changed freely
+      paths:
+        - profiling
+    - component_id: profiling-ffi  # this is an identifier that should not be changed
+      name: profiling-ffi  # this is a display name, and can be changed freely
+      paths:
+        - profiling-ffi
+    - component_id: serverless  # this is an identifier that should not be changed
+      name: serverless  # this is a display name, and can be changed freely
+      paths:
+        - serverless
+    - component_id: sidecar  # this is an identifier that should not be changed
+      name: sidecar  # this is a display name, and can be changed freely
+      paths:
+        - sidecar
+    - component_id: sidecar-ffi  # this is an identifier that should not be changed
+      name: sidecar-ffi  # this is a display name, and can be changed freely
+      paths:
+        - sidecar-ffi
+    - component_id: spawn-worker  # this is an identifier that should not be changed
+      name: spawn-worker  # this is a display name, and can be changed freely
+      paths:
+        - spawn_worker
+    - component_id: trace-mini-agent  # this is an identifier that should not be changed
+      name: trace-mini-agent  # this is a display name, and can be changed freely
+      paths:
+        - trace-mini-agent
+    - component_id: trace-normalization  # this is an identifier that should not be changed
+      name: trace-normalization  # this is a display name, and can be changed freely
+      paths:
+        - trace-normalization
+    - component_id: trace-obfuscation  # this is an identifier that should not be changed
+      name: trace-obfuscation  # this is a display name, and can be changed freely
+      paths:
+        - trace-obfuscation
+    - component_id: trace-protobuf  # this is an identifier that should not be changed
+      name: trace-protobuf  # this is a display name, and can be changed freely
+      paths:
+        - trace-protobuf
+    - component_id: trace-utils  # this is an identifier that should not be changed
+      name: trace-utils  # this is a display name, and can be changed freely
+      paths:
+        - trace-utils

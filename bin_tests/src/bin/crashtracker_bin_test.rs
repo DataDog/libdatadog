@@ -16,6 +16,7 @@ mod unix {
 
     use datadog_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerMetadata,
+        CrashtrackerReceiverConfig,
     };
     use datadog_profiling::exporter::Tag;
 
@@ -33,18 +34,22 @@ mod unix {
         let timeout = Duration::from_secs(30);
         crashtracker::init(
             CrashtrackerConfiguration {
+                additional_files: vec![],
                 create_alt_stack: true,
                 endpoint: Some(ddcommon::Endpoint {
                     url: ddcommon::parse_uri(&format!("file://{}", output_filename))?,
                     api_key: None,
                 }),
-                path_to_receiver_binary: receiver_binary,
-                resolve_frames: crashtracker::CrashtrackerResolveFrames::Never,
-                stderr_filename: Some(stderr_filename),
-                stdout_filename: Some(stdout_filename),
-                collect_stacktrace: true,
+                resolve_frames: crashtracker::StacktraceCollection::WithoutSymbols,
                 timeout,
             },
+            Some(CrashtrackerReceiverConfig::new(
+                vec![],
+                vec![],
+                receiver_binary,
+                Some(stderr_filename),
+                Some(stdout_filename),
+            )?),
             CrashtrackerMetadata {
                 profiling_library_name: "libdatadog".to_owned(),
                 profiling_library_version: "1.0.0".to_owned(),

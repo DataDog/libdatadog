@@ -17,7 +17,7 @@ int main(void) {
   ddog_prof_Profile_NewResult new_result = ddog_prof_Profile_new(sample_types, &period, NULL);
   if (new_result.tag != DDOG_PROF_PROFILE_NEW_RESULT_OK) {
     ddog_CharSlice message = ddog_Error_message(&new_result.err);
-    fprintf(stderr, "%*s", (int)message.len, message.ptr);
+    fprintf(stderr, "%.*s", (int)message.len, message.ptr);
     ddog_Error_drop(&new_result.err);
     exit(EXIT_FAILURE);
   }
@@ -50,7 +50,7 @@ int main(void) {
     ddog_prof_Profile_Result add_result = ddog_prof_Profile_add(profile, sample, 0);
     if (add_result.tag != DDOG_PROF_PROFILE_RESULT_OK) {
       ddog_CharSlice message = ddog_Error_message(&add_result.err);
-      fprintf(stderr, "%*s", (int)message.len, message.ptr);
+      fprintf(stderr, "%.*s", (int)message.len, message.ptr);
       ddog_Error_drop(&add_result.err);
     }
   }
@@ -61,7 +61,7 @@ int main(void) {
   ddog_prof_Profile_Result reset_result = ddog_prof_Profile_reset(profile, NULL);
   if (reset_result.tag != DDOG_PROF_PROFILE_RESULT_OK) {
     ddog_CharSlice message = ddog_Error_message(&reset_result.err);
-    fprintf(stderr, "%*s", (int)message.len, message.ptr);
+    fprintf(stderr, "%.*s", (int)message.len, message.ptr);
     ddog_Error_drop(&reset_result.err);
   }
   ddog_prof_Profile_drop(profile);

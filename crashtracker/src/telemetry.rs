@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::time::{self, SystemTime};
 
-use super::{CrashInfo, CrashtrackerConfiguration, CrashtrackerMetadata};
+use super::{CrashInfo, CrashtrackerConfiguration, CrashtrackerMetadata, StackFrame};
 use anyhow::Ok;
 use ddtelemetry::{
     build_host,
@@ -42,9 +42,11 @@ macro_rules! parse_tags {
 /// This struct represents the part of the crash_info that we are sending in the
 /// log `message` field as a json
 struct TelemetryCrashInfoMessage<'a> {
+    pub additional_stacktraces: &'a HashMap<String, Vec<StackFrame>>,
     pub files: &'a HashMap<String, Vec<String>>,
     pub metadata: Option<&'a CrashtrackerMetadata>,
     pub os_info: &'a os_info::Info,
+    pub tags: &'a HashMap<String, String>,
 }
 
 pub struct TelemetryCrashUploader {
@@ -123,9 +125,11 @@ impl TelemetryCrashUploader {
         let metadata = &self.metadata;
 
         let message = serde_json::to_string(&TelemetryCrashInfoMessage {
+            additional_stacktraces: &crash_info.additional_stacktraces,
             files: &crash_info.files,
             metadata: crash_info.metadata.as_ref(),
             os_info: &crash_info.os_info,
+            tags: &crash_info.tags,
         })?;
 
         let stack_trace = serde_json::to_string(&crash_info.stacktrace)?;
@@ -200,16 +204,13 @@ mod tests {
         TelemetryCrashUploader::new(
             &new_test_prof_metadata(),
             &crate::CrashtrackerConfiguration {
+                additional_files: vec![],
                 create_alt_stack: true,
                 endpoint: Some(Endpoint {
                     url: hyper::Uri::from_static("http://localhost:8126/profiling/v1/input"),
                     api_key: None,
                 }),
-                path_to_receiver_binary: String::new(),
-                resolve_frames: crate::CrashtrackerResolveFrames::Never,
-                stderr_filename: None,
-                stdout_filename: None,
-                collect_stacktrace: true,
+                resolve_frames: crate::StacktraceCollection::WithoutSymbols,
                 timeout: time::Duration::from_secs(30),
             },
         )
