@@ -24,6 +24,7 @@ pub use sidecar_server::SidecarServer;
 use std::path::PathBuf;
 use std::time::Duration;
 
+pub mod blocking;
 mod instance_id;
 pub mod queue_id;
 mod request_identification;

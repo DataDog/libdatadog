@@ -25,8 +25,8 @@ use datadog_sidecar::service::{
     InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
 
-use datadog_sidecar::interface::blocking::{self, SidecarTransport};
 use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
+use datadog_sidecar::service::blocking::{self, SidecarTransport};
 use ddcommon::Endpoint;
 use ddtelemetry::{
     data::{self, Dependency, Integration},

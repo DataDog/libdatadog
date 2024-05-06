@@ -4,7 +4,6 @@ pub mod agent_remote_config;
 pub mod config;
 mod dump;
 pub mod entry;
-pub mod interface;
 #[cfg(feature = "tracing")]
 pub mod log;
 pub mod one_way_shared_memory;
