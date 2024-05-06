@@ -44,26 +44,29 @@ jobs:
           large-packages: true
           docker-images: true
           swap-storage: true
+      - name: "remove nextest ci directory"
+        shell: bash
+        run: rm -rf target/nextest/ci
       - name: "[${{ steps.rust-version.outputs.version }}] cargo build --workspace --verbose"
         run: cargo build --workspace --verbose
       - name: "[${{ steps.rust-version.outputs.version }} WIN] cargo nextest run --profile ci --verbose"
         if: ${{ matrix.platform == 'windows-latest' }}
-        run: cargo nextest run --profile ci-win --verbose
+        run: cargo nextest run --profile ci --verbose
         env:
           RUST_BACKTRACE: 1
-          # TODO we need to create multiple junit files for the different test runs
+          # TODO do we need to create multiple junit files for the different test runs?
       - name: "[${{ steps.rust-version.outputs.version }} UBU] cargo nextest run --profile ci --verbose"
         if: ${{ matrix.platform == 'ubuntu-latest' }}
-        run: cargo nextest run --profile ci-ubu --verbose
+        run: cargo nextest run --profile ci --verbose
         env:
           RUST_BACKTRACE: 1
-          # TODO we need to create multiple junit files for the different test runs
+          # TODO do we need to create multiple junit files for the different test runs
       - name: Report Test Results
         if: success() || failure() 
         uses: mikepenz/action-junit-report@v4
         with:
-          report_paths: "target/nextest/ci*/*.xml"
-          check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
+          report_paths: "target/nextest/ci/*.xml"
+          #check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
 
       # - name: "Save Test Results"
       #   if: success() || failure() # always upload test results unless canceled
