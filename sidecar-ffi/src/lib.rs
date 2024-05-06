@@ -9,7 +9,20 @@ use datadog_sidecar::agent_remote_config::{
 };
 use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
+use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
+use datadog_sidecar::service::{
+    blocking::{self, SidecarTransport},
+    InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+};
+use ddcommon::Endpoint;
 use ddcommon_ffi as ffi;
+use ddcommon_ffi::MaybeError;
+use ddtelemetry::{
+    data::{self, Dependency, Integration},
+    worker::{LifecycleAction, TelemetryActions},
+};
+use ddtelemetry_ffi::try_c;
+use ffi::slice::AsBytes;
 use libc::c_char;
 use std::convert::TryInto;
 use std::ffi::c_void;
@@ -20,22 +33,6 @@ use std::os::unix::prelude::FromRawFd;
 use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::slice;
 use std::time::Duration;
-
-use datadog_sidecar::service::{
-    InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
-};
-
-use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
-use datadog_sidecar::service::blocking::{self, SidecarTransport};
-use ddcommon::Endpoint;
-use ddtelemetry::{
-    data::{self, Dependency, Integration},
-    worker::{LifecycleAction, TelemetryActions},
-};
-use ffi::slice::AsBytes;
-
-use ddcommon_ffi::MaybeError;
-use ddtelemetry_ffi::try_c;
 
 #[repr(C)]
 pub struct NativeFile {

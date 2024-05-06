@@ -19,7 +19,7 @@ use crate::service::{InstanceId, RuntimeInfo};
 /// It contains a list of runtimes, session configuration, tracer configuration, and log guards.
 /// It also has methods to manage the runtimes and configurations.
 #[derive(Default, Clone)]
-pub struct SessionInfo {
+pub(crate) struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
     pub(crate) session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
@@ -37,23 +37,9 @@ impl SessionInfo {
     /// # Arguments
     ///
     /// * `runtime_id` - The ID of the runtime.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// if cfg!(not(miri)) {
-    ///     use datadog_sidecar::service::SessionInfo;
-    ///
-    ///     #[tokio::main]
-    ///     async fn get_runtime_example() {
-    ///         let session_info = SessionInfo::default();
-    ///         let runtime_info = session_info.get_runtime(&"runtime1".to_string());
-    ///     }
-    /// }
-    /// ```
-    // DEV-TODO: This function should likely either be refactored or have its name changed as its
-    // performing a get or insert operation.
-    pub fn get_runtime(&self, runtime_id: &String) -> RuntimeInfo {
+    // TODO: APM-1076 This function should either be refactored or have its name changed as its
+    // performing a get or create operation.
+    pub(crate) fn get_runtime(&self, runtime_id: &String) -> RuntimeInfo {
         let mut runtimes = self.lock_runtimes();
         match runtimes.get(runtime_id) {
             Some(runtime) => runtime.clone(),
@@ -77,21 +63,7 @@ impl SessionInfo {
     }
 
     /// Shuts down all runtimes in the session.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// if cfg!(not(miri)) {
-    ///     use datadog_sidecar::service::SessionInfo;
-    ///
-    ///     #[tokio::main]
-    ///     async fn shutdown_example() {
-    ///         let session_info = SessionInfo::default();
-    ///         session_info.shutdown().await;
-    ///     }
-    /// }
-    /// ```
-    pub async fn shutdown(&self) {
+    pub(crate) async fn shutdown(&self) {
         let runtimes: Vec<RuntimeInfo> = self
             .lock_runtimes()
             .drain()
@@ -105,22 +77,9 @@ impl SessionInfo {
 
         future::join_all(runtimes_shutting_down).await;
     }
+
     /// Shuts down all running instances in the session.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// if cfg!(not(miri)) {
-    ///     use datadog_sidecar::service::SessionInfo;
-    ///
-    ///     #[tokio::main]
-    ///     async fn shutdown_running_instances_example() {
-    ///         let session_info = SessionInfo::default();
-    ///         session_info.shutdown_running_instances().await;
-    ///     }
-    /// }
-    /// ```
-    pub async fn shutdown_running_instances(&self) {
+    pub(crate) async fn shutdown_running_instances(&self) {
         let runtimes: Vec<RuntimeInfo> = self
             .lock_runtimes()
             .drain()
@@ -140,21 +99,7 @@ impl SessionInfo {
     /// # Arguments
     ///
     /// * `runtime_id` - The ID of the runtime.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// if cfg!(not(miri)) {
-    ///     use datadog_sidecar::service::SessionInfo;
-    ///
-    ///     #[tokio::main]
-    ///     async fn shutdown_runtime_example() {
-    ///         let session_info = SessionInfo::default();
-    ///         session_info.shutdown_runtime("runtime1").await;
-    ///     }
-    /// }
-    /// ```
-    pub async fn shutdown_runtime(&self, runtime_id: &str) {
+    pub(crate) async fn shutdown_runtime(&self, runtime_id: &str) {
         let maybe_runtime = {
             let mut runtimes = self.lock_runtimes();
             runtimes.remove(runtime_id)
@@ -165,11 +110,11 @@ impl SessionInfo {
         }
     }
 
-    pub fn lock_runtimes(&self) -> MutexGuard<HashMap<String, RuntimeInfo>> {
+    pub(crate) fn lock_runtimes(&self) -> MutexGuard<HashMap<String, RuntimeInfo>> {
         self.runtimes.lock().unwrap()
     }
 
-    pub fn get_telemetry_config(&self) -> MutexGuard<Option<ddtelemetry::config::Config>> {
+    pub(crate) fn get_telemetry_config(&self) -> MutexGuard<Option<ddtelemetry::config::Config>> {
         let mut cfg = self.session_config.lock().unwrap();
 
         if (*cfg).is_none() {
@@ -179,7 +124,7 @@ impl SessionInfo {
         cfg
     }
 
-    pub fn modify_telemetry_config<F>(&self, mut f: F)
+    pub(crate) fn modify_telemetry_config<F>(&self, mut f: F)
     where
         F: FnMut(&mut ddtelemetry::config::Config),
     {
@@ -188,11 +133,11 @@ impl SessionInfo {
         }
     }
 
-    pub fn get_trace_config(&self) -> MutexGuard<tracer::Config> {
+    pub(crate) fn get_trace_config(&self) -> MutexGuard<tracer::Config> {
         self.tracer_config.lock().unwrap()
     }
 
-    pub fn modify_trace_config<F>(&self, mut f: F)
+    pub(crate) fn modify_trace_config<F>(&self, mut f: F)
     where
         F: FnMut(&mut tracer::Config),
     {

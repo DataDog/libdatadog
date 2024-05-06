@@ -108,16 +108,6 @@ impl SidecarServer {
     /// # Returns
     ///
     /// * `usize`: The number of active sessions.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use datadog_sidecar::service::SidecarServer;
-    ///
-    /// let server = SidecarServer::default();
-    /// let active_sessions = server.active_session_count();
-    /// println!("Number of active sessions: {}", active_sessions);
-    /// ```
     pub fn active_session_count(&self) -> usize {
         self.session_counter
             .lock()
@@ -312,25 +302,7 @@ impl SidecarServer {
     /// # Returns
     ///
     /// * `SidecarStats`: A struct containing various statistics related to the SidecarServer.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// if cfg!(not(miri)) {
-    ///     use datadog_sidecar::service::SidecarServer;
-    ///
-    ///     #[tokio::main]
-    ///     async fn stats_example() {
-    ///         let server = SidecarServer::default();
-    ///         let stats = server.compute_stats().await;
-    ///     }
-    /// }
-    /// ```
-    ///
-    /// # Async
-    ///
-    /// This function is async and should be awaited.
-    pub async fn compute_stats(&self) -> SidecarStats {
+    pub(crate) async fn compute_stats(&self) -> SidecarStats {
         let mut telemetry_stats_errors = 0;
         let telemetry_stats = join_all({
             let sessions = self.lock_sessions();

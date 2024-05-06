@@ -18,9 +18,9 @@ type AppMap = HashMap<(String, String), Shared<ManualFuture<Option<AppInstance>>
 /// `SharedAppManualFut` is a struct that contains a shared future of an `AppInstance` and its
 /// completer. The `app_future` is a shared future that may contain an `Option<AppInstance>`.
 /// The `completer` is used to complete the `app_future`.
-pub struct SharedAppManualFut {
-    pub app_future: Shared<ManualFuture<Option<AppInstance>>>,
-    pub completer: Option<ManualFutureCompleter<Option<AppInstance>>>,
+pub(crate) struct SharedAppManualFut {
+    pub(crate) app_future: Shared<ManualFuture<Option<AppInstance>>>,
+    pub(crate) completer: Option<ManualFutureCompleter<Option<AppInstance>>>,
 }
 
 /// `RuntimeInfo` is a struct that contains information about a runtime.
@@ -33,7 +33,7 @@ pub(crate) struct RuntimeInfo {
     pub(crate) apps: Arc<Mutex<AppMap>>,
     app_or_actions: Arc<Mutex<HashMap<QueueId, AppOrQueue>>>,
     #[cfg(feature = "tracing")]
-    pub instance_id: InstanceId,
+    pub(crate) instance_id: InstanceId,
 }
 
 impl RuntimeInfo {
@@ -68,7 +68,7 @@ impl RuntimeInfo {
     }
     /// Shuts down the runtime.
     /// This involves shutting down all the instances in the runtime.
-    pub async fn shutdown(self) {
+    pub(crate) async fn shutdown(self) {
         #[cfg(feature = "tracing")]
         info!(
             "Shutting down runtime_id {} for session {}",
@@ -127,4 +127,4 @@ impl RuntimeInfo {
     }
 }
 
-// TODO-EK: Add tests for RuntimeInfo or add TODO comment before merging
+// TODO: APM-1079 - Add unit tests for RuntimeInfo

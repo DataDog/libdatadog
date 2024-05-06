@@ -25,27 +25,27 @@ use tracing::{debug, error, info};
 /// for agent config, agent config writers, last used entries in agent configs, and the size of send
 /// data.
 #[derive(Serialize, Deserialize)]
-pub struct TraceFlusherStats {
-    pub agent_config_allocated_shm: u32,
-    pub agent_config_writers: u32,
-    pub agent_configs_last_used_entries: u32,
-    pub send_data_size: u32,
+pub(crate) struct TraceFlusherStats {
+    pub(crate) agent_config_allocated_shm: u32,
+    pub(crate) agent_config_writers: u32,
+    pub(crate) agent_configs_last_used_entries: u32,
+    pub(crate) send_data_size: u32,
 }
 
 struct AgentRemoteConfig {
-    pub writer: AgentRemoteConfigWriter<NamedShmHandle>,
-    pub last_write: Instant,
+    writer: AgentRemoteConfigWriter<NamedShmHandle>,
+    last_write: Instant,
 }
 
 #[derive(Default)]
 struct AgentRemoteConfigs {
-    pub writers: HashMap<Endpoint, AgentRemoteConfig>,
-    pub last_used: BTreeMap<Instant, Endpoint>,
+    writers: HashMap<Endpoint, AgentRemoteConfig>,
+    last_used: BTreeMap<Instant, Endpoint>,
 }
 #[derive(Default)]
 struct TraceFlusherData {
-    pub traces: TraceSendData,
-    pub flusher: Option<JoinHandle<()>>,
+    traces: TraceSendData,
+    flusher: Option<JoinHandle<()>>,
 }
 
 /// `TraceFlusher` is a structure that manages the flushing of traces.
@@ -54,9 +54,9 @@ struct TraceFlusherData {
 #[derive(Default)]
 pub(crate) struct TraceFlusher {
     inner: Mutex<TraceFlusherData>,
-    pub interval: AtomicU64,
-    pub min_force_flush_size: AtomicU32,
-    pub min_force_drop_size: AtomicU32, // put a limit on memory usage
+    pub(crate) interval: AtomicU64,
+    pub(crate) min_force_flush_size: AtomicU32,
+    pub(crate) min_force_drop_size: AtomicU32, // put a limit on memory usage
     remote_config: Mutex<AgentRemoteConfigs>,
 }
 
@@ -67,7 +67,7 @@ impl TraceFlusher {
     /// # Arguments
     ///
     /// * `data` - A `SendData` instance that needs to be added to the traces.
-    pub fn enqueue(self: &Arc<Self>, data: SendData) {
+    pub(crate) fn enqueue(self: &Arc<Self>, data: SendData) {
         let mut flush_data = self.inner.lock().unwrap();
         let flush_data = flush_data.deref_mut();
 
@@ -99,11 +99,7 @@ impl TraceFlusher {
     /// * A `Result` which is `Ok` if the flusher task successfully joins, or `Err` if the flusher
     ///   task panics.
     /// If the flusher task is not running, it returns `Ok`.
-    ///
-    /// # Async
-    ///
-    /// This function is asynchronous and needs to be awaited.
-    pub async fn join(&self) -> anyhow::Result<(), JoinError> {
+    pub(crate) async fn join(&self) -> anyhow::Result<(), JoinError> {
         let flusher = {
             let mut flush_data = self.inner.lock().unwrap();
             self.interval.store(0, Ordering::SeqCst);
@@ -126,7 +122,7 @@ impl TraceFlusher {
     /// This method retrieves the statistics of the trace flusher, including the count of allocated
     /// shared memory for agent config, agent config writers, last used entries in agent
     /// configs, and the size of send data.
-    pub fn stats(&self) -> TraceFlusherStats {
+    pub(crate) fn stats(&self) -> TraceFlusherStats {
         let rc = self.remote_config.lock().unwrap();
         TraceFlusherStats {
             agent_config_allocated_shm: rc.writers.values().map(|r| r.writer.size() as u32).sum(),

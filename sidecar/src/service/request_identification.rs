@@ -4,7 +4,7 @@
 use crate::service::InstanceId;
 
 /// The `RequestIdentification` trait provides a method for extracting a request identifier.
-pub trait RequestIdentification {
+pub(crate) trait RequestIdentification {
     /// Extracts the identifier from the request.
     ///
     /// # Returns
@@ -17,7 +17,7 @@ pub trait RequestIdentification {
 ///
 /// This enum is used in conjunction with the `RequestIdentification` trait to provide a flexible
 /// way of identifying a request.
-pub enum RequestIdentifier {
+pub(crate) enum RequestIdentifier {
     /// Represents a request identified by an instance ID.
     InstanceId(InstanceId),
     /// Represents a request identified by a session ID.
