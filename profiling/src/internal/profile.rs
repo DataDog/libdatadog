@@ -499,7 +499,7 @@ impl Profile {
 
         for label in sample.labels.iter() {
             if let Some(duplicate) = seen.insert(label.key, label) {
-                anyhow::bail!("Duplicate label on sample: {:?} {:?}", duplicate, label);
+                anyhow::bail!("Duplicate label on sample: {:?}", duplicate);
             }
 
             if label.key == "local root span id" {
