@@ -6,7 +6,7 @@ env:
 
 jobs:
   test:
-    name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] cargo test --workspace"
+    name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] cargo nextest --workspace"
     runs-on: ${{ matrix.platform }}
     strategy:
       matrix:
@@ -46,7 +46,7 @@ jobs:
           swap-storage: true
       - name: "remove nextest ci directory"
         shell: bash
-        run: rm -rf target/nextest/ci
+        run: rm -rf target/nextest/ci*
       - name: "[${{ steps.rust-version.outputs.version }}] cargo build --workspace --verbose"
         run: cargo build --workspace --verbose
       - name: "[${{ steps.rust-version.outputs.version }} WIN] cargo nextest run --profile ci --verbose"
@@ -66,7 +66,7 @@ jobs:
         uses: mikepenz/action-junit-report@v4
         with:
           report_paths: "target/nextest/ci/*.xml"
-          #check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
+          check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
 
       # - name: "Save Test Results"
       #   if: success() || failure() # always upload test results unless canceled
