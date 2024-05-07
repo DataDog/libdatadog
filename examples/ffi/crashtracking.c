@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
   ddog_prof_CrashtrackerConfiguration config = {
       .create_alt_stack = false,
       .endpoint = ddog_prof_Endpoint_agent(DDOG_CHARSLICE_C("http://localhost:8126")),
-      .resolve_frames = DDOG_PROF_CRASHTRACKER_RESOLVE_FRAMES_NEVER,
+      .resolve_frames = DDOG_PROF_STACKTRACE_COLLECTION_WITHOUT_SYMBOLS,
   };
 
   ddog_prof_CrashtrackerMetadata metadata = {
@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
       ddog_prof_Crashtracker_init(config, receiver_config, metadata);
   if (result.tag == DDOG_PROF_PROFILE_RESULT_ERR) {
     ddog_CharSlice message = ddog_Error_message(&result.err);
-    fprintf(stderr, "%*s\n", (int)message.len, message.ptr);
+    fprintf(stderr, "%.*s\n", (int)message.len, message.ptr);
     ddog_Error_drop(&result.err);
     return -1;
   }

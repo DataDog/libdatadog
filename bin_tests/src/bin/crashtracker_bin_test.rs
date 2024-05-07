@@ -34,13 +34,13 @@ mod unix {
         let timeout = Duration::from_secs(30);
         crashtracker::init(
             CrashtrackerConfiguration {
+                additional_files: vec![],
                 create_alt_stack: true,
                 endpoint: Some(ddcommon::Endpoint {
                     url: ddcommon::parse_uri(&format!("file://{}", output_filename))?,
                     api_key: None,
                 }),
-                resolve_frames: crashtracker::CrashtrackerResolveFrames::Never,
-                collect_stacktrace: true,
+                resolve_frames: crashtracker::StacktraceCollection::WithoutSymbols,
                 timeout,
             },
             Some(CrashtrackerReceiverConfig::new(

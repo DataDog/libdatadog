@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::exporter::{self, ProfilingEndpoint};
-pub use datadog_crashtracker::{CrashtrackerResolveFrames, ProfilingOpTypes};
+pub use datadog_crashtracker::{ProfilingOpTypes, StacktraceCollection};
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use ddcommon_ffi::{Error, Slice, StringWrapper};
@@ -28,13 +28,11 @@ pub struct CrashtrackerReceiverConfig<'a> {
 
 #[repr(C)]
 pub struct CrashtrackerConfiguration<'a> {
-    /// Should the crashtracker attempt to collect a stacktrace for the crash
-    pub collect_stacktrace: bool,
+    pub additional_files: Slice<'a, CharSlice<'a>>,
     pub create_alt_stack: bool,
     /// The endpoint to send the crash report to (can be a file://)
     pub endpoint: ProfilingEndpoint<'a>,
-    /// Whether/when we should attempt to resolve frames
-    pub resolve_frames: CrashtrackerResolveFrames,
+    pub resolve_frames: StacktraceCollection,
     pub timeout_secs: u64,
 }
 
@@ -83,13 +81,19 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
 {
     type Error = anyhow::Error;
     fn try_from(value: CrashtrackerConfiguration<'a>) -> anyhow::Result<Self> {
-        let collect_stacktrace = value.collect_stacktrace;
+        let additional_files = {
+            let mut vec = Vec::with_capacity(value.additional_files.len());
+            for x in value.additional_files.iter() {
+                vec.push(x.try_to_utf8()?.to_string());
+            }
+            vec
+        };
         let create_alt_stack = value.create_alt_stack;
         let endpoint = unsafe { Some(exporter::try_to_endpoint(value.endpoint)?) };
         let resolve_frames = value.resolve_frames;
         let timeout = Duration::from_secs(value.timeout_secs);
         Self::new(
-            collect_stacktrace,
+            additional_files,
             create_alt_stack,
             endpoint,
             resolve_frames,

@@ -8,7 +8,7 @@ use crate::configuration::CrashtrackerReceiverConfig;
 use super::collectors::emit_backtrace_by_frames;
 #[cfg(target_os = "linux")]
 use super::collectors::emit_proc_self_maps;
-use super::configuration::{CrashtrackerConfiguration, CrashtrackerResolveFrames};
+use super::configuration::{CrashtrackerConfiguration, StacktraceCollection};
 use super::constants::*;
 use super::counters::emit_counters;
 use super::crash_info::CrashtrackerMetadata;
@@ -312,8 +312,10 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     anyhow::ensure!(!metadata_ptr.is_null(), "No crashtracking metadata");
     let (_metadata, metadata_string) = unsafe { metadata_ptr.as_ref().context("metadata ptr")? };
 
-    let mut unix_stream =
-        UnixStream::connect(super::receiver::SOCKET_PATH).expect(&format!("Could not create stream {}",super::receiver::SOCKET_PATH));
+    let mut unix_stream = UnixStream::connect(super::receiver::SOCKET_PATH).context(format!(
+        "Could not create stream {}",
+        super::receiver::SOCKET_PATH
+    ))?;
     let pipe = &mut unix_stream;
     eprintln!("got here");
 
@@ -340,21 +342,16 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     // In fact, if we look into the code here, we see mallocs.
     // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
     // Do this last, so even if it crashes, we still get the other info.
-    if config.collect_stacktrace {
-        unsafe {
-            emit_backtrace_by_frames(
-                pipe,
-                config.resolve_frames == CrashtrackerResolveFrames::ExperimentalInProcess,
-            )?
-        };
+    if config.resolve_frames != StacktraceCollection::Disabled {
+        unsafe { emit_backtrace_by_frames(pipe)? };
     }
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
 
     pipe.flush()?;
 
     unix_stream
-    .shutdown(std::net::Shutdown::Write)
-    .context("Could not shutdown writing on the stream")?;
+        .shutdown(std::net::Shutdown::Write)
+        .context("Could not shutdown writing on the stream")?;
     eprintln!("shutdown the stream");
     // https://doc.rust-lang.org/std/process/struct.Child.html#method.wait
     // The stdin handle to the child process, if any, will be closed before waiting.

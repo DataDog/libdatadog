@@ -4,21 +4,27 @@ use ddcommon::Endpoint;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// Stacktrace collection occurs in the context of a crashing process.
+/// If the stack is sufficiently corruputed, it is possible (but unlikely),
+/// for stack trace collection itself to crash.
+/// We recommend fully enabling stacktrace collection, but having an environment
+/// variable to allow downgrading the collector.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CrashtrackerResolveFrames {
-    Never,
-    /// Resolving frames in process is experimental, and can fail/crash
-    ExperimentalInProcess,
-    InReceiver,
+pub enum StacktraceCollection {
+    /// Stacktrace collection occurs in the
+    Disabled,
+    WithoutSymbols,
+    Enabled,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashtrackerConfiguration {
-    pub collect_stacktrace: bool,
+    // Paths to any additional files to track, if any
+    pub additional_files: Vec<String>,
     pub create_alt_stack: bool,
     pub endpoint: Option<Endpoint>,
-    pub resolve_frames: CrashtrackerResolveFrames,
+    pub resolve_frames: StacktraceCollection,
     pub timeout: Duration,
 }
 
@@ -61,16 +67,15 @@ impl CrashtrackerReceiverConfig {
 }
 
 impl CrashtrackerConfiguration {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        collect_stacktrace: bool,
+        additional_files: Vec<String>,
         create_alt_stack: bool,
         endpoint: Option<Endpoint>,
-        resolve_frames: CrashtrackerResolveFrames,
+        resolve_frames: StacktraceCollection,
         timeout: Duration,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            collect_stacktrace,
+            additional_files,
             create_alt_stack,
             endpoint,
             resolve_frames,

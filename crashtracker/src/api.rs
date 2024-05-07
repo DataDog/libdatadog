@@ -10,11 +10,8 @@ use crate::{
         update_receiver_after_fork,
     },
     crash_info::CrashtrackerMetadata,
-    update_config, update_metadata, CrashtrackerConfiguration, CrashtrackerResolveFrames,
+    update_config, update_metadata, CrashtrackerConfiguration,
 };
-use ddcommon::tag::Tag;
-use ddcommon::Endpoint;
-use std::{thread::sleep, time::Duration};
 
 /// Cleans up after the crash-tracker:
 /// Unregister the crash handler, restore the previous handler (if any), and
@@ -112,11 +109,12 @@ pub fn init(
 // mkdir /tmp/crashreports
 // look in /tmp/crashreports for the crash reports and output files
 // Commented out since `ignore` doesn't work in CI.
-#[test]
+//#[test]
 fn test_crash() {
-    use crate::begin_profiling_op;
+    use crate::{begin_profiling_op, StacktraceCollection};
     use chrono::Utc;
-    use ddcommon::parse_uri;
+    use ddcommon::{parse_uri, tag::Tag, Endpoint};
+    use std::time::Duration;
 
     let time = Utc::now().to_rfc3339();
     let dir = "/tmp/crashreports/";
@@ -127,11 +125,10 @@ fn test_crash() {
         api_key: None,
     });
 
-    let collect_stacktrace = true;
     let path_to_receiver_binary =
         "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
     let create_alt_stack = true;
-    let resolve_frames = CrashtrackerResolveFrames::InReceiver;
+    let resolve_frames = StacktraceCollection::Enabled;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
     let timeout = Duration::from_secs(30);
@@ -145,14 +142,9 @@ fn test_crash() {
         )
         .expect("Not to fail"),
     );
-    let config = CrashtrackerConfiguration::new(
-        collect_stacktrace,
-        create_alt_stack,
-        endpoint,
-        resolve_frames,
-        timeout,
-    )
-    .expect("not to fail");
+    let config =
+        CrashtrackerConfiguration::new(vec![], create_alt_stack, endpoint, resolve_frames, timeout)
+            .expect("not to fail");
     let metadata = CrashtrackerMetadata::new(
         "libname".to_string(),
         "version".to_string(),
@@ -171,8 +163,8 @@ fn test_crash() {
     );
     update_metadata(metadata2).expect("metadata");
 
-    sleep(Duration::from_secs(2));
-    
+    std::thread::sleep(Duration::from_secs(2));
+
     let p: *const u32 = std::ptr::null();
     let q = unsafe { *p };
     assert_eq!(q, 3);

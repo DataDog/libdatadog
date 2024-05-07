@@ -49,7 +49,7 @@ fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
     s.name = normalized_name;
 
     if s.resource.is_empty() {
-        s.resource = s.name.clone();
+        s.resource.clone_from(&s.name)
     }
 
     // ParentID, TraceID and SpanID set in the client could be the same

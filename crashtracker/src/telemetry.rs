@@ -204,13 +204,13 @@ mod tests {
         TelemetryCrashUploader::new(
             &new_test_prof_metadata(),
             &crate::CrashtrackerConfiguration {
+                additional_files: vec![],
                 create_alt_stack: true,
                 endpoint: Some(Endpoint {
                     url: hyper::Uri::from_static("http://localhost:8126/profiling/v1/input"),
                     api_key: None,
                 }),
-                resolve_frames: crate::CrashtrackerResolveFrames::Never,
-                collect_stacktrace: true,
+                resolve_frames: crate::StacktraceCollection::WithoutSymbols,
                 timeout: time::Duration::from_secs(30),
             },
         )

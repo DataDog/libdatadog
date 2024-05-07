@@ -389,6 +389,7 @@ impl<T> Request<T> {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) trait PollContext<T> {
     fn context<C>(self, context: C) -> Poll<Option<anyhow::Result<T>>>
     where

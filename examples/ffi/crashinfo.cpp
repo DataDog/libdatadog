@@ -99,6 +99,7 @@ int main(void) {
       .tags = &tags,
   };
 
+  // TODO: We should set more tags that are expected by telemetry
   check_result(ddog_crashinfo_set_metadata(crashinfo.get(), metadata), "Failed to add metadata");
   check_result(ddog_crashinfo_add_tag(crashinfo.get(), to_slice_c_char("best hockey team"),
                                       to_slice_c_char("Habs")),
@@ -116,8 +117,11 @@ int main(void) {
   check_result(ddog_crashinfo_set_timestamp(crashinfo.get(), 1568899800, 0),
                "Failed to set timestamp");
 
-  auto endpoint = ddog_Endpoint_file(to_slice_c_char("file://tmp/test.txt"));
-  check_result(ddog_crashinfo_upload_to_endpoint(crashinfo.get(), endpoint, 1),
+  ddog_prof_CrashtrackerConfiguration config = {
+      .endpoint = ddog_Endpoint_file(to_slice_c_char("file://tmp/test")),
+      .timeout_secs = 1,
+  };
+
+  check_result(ddog_crashinfo_upload_to_endpoint(crashinfo.get(), config),
                "Failed to export to file");
-  ddog_prof_Option_U32 opt;
 }
