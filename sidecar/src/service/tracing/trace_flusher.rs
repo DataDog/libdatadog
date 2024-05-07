@@ -42,10 +42,36 @@ struct AgentRemoteConfigs {
     writers: HashMap<Endpoint, AgentRemoteConfig>,
     last_used: BTreeMap<Instant, Endpoint>,
 }
+
 #[derive(Default)]
 struct TraceFlusherData {
     traces: TraceSendData,
     flusher: Option<JoinHandle<()>>,
+}
+
+#[derive(Default)]
+pub struct TraceFlusherMetrics {
+    pub api_requests: u64,
+    pub api_responses_count_per_code: HashMap<u16, u64>,
+    pub api_errors_timeout: u64,
+    pub api_errors_network: u64,
+    pub api_errors_status_code: u64,
+}
+
+impl TraceFlusherMetrics {
+    fn update(&mut self, result: &SendDataResult) {
+        self.api_requests += result.requests_count;
+        self.api_errors_timeout += result.errors_timeout;
+        self.api_errors_network += result.errors_network;
+        self.api_errors_status_code += result.errors_status_code;
+
+        for (status_code, count) in &result.responses_count_per_code {
+            *self
+                .api_responses_count_per_code
+                .entry(*status_code)
+                .or_default() += count;
+        }
+    }
 }
 
 /// `TraceFlusher` is a structure that manages the flushing of traces.
@@ -58,6 +84,7 @@ pub(crate) struct TraceFlusher {
     pub(crate) min_force_flush_size: AtomicU32,
     pub(crate) min_force_drop_size: AtomicU32, // put a limit on memory usage
     remote_config: Mutex<AgentRemoteConfigs>,
+    pub metrics: Mutex<TraceFlusherMetrics>,
 }
 
 impl TraceFlusher {
@@ -131,6 +158,12 @@ impl TraceFlusher {
             send_data_size: self.inner.lock().unwrap().traces.send_data_size as u32,
         }
     }
+    
+    pub fn collect_metrics(&self) -> TraceFlusherMetrics {
+        std::mem::take(&mut self.metrics.lock().unwrap())
+    }
+
+
     fn write_remote_configs(&self, endpoint: Endpoint, contents: Vec<u8>) {
         let configs = &mut *self.remote_config.lock().unwrap();
 
@@ -201,7 +234,8 @@ impl TraceFlusher {
                     futures.push(send_data.send());
                 }
                 for (endpoint, response) in zip(intake_target, join_all(futures).await) {
-                    match response {
+                    self.metrics.lock().unwrap().update(&response);
+                    match response.last_result {
                         Ok(response) => {
                             if endpoint.api_key.is_none() {
                                 // not when intake

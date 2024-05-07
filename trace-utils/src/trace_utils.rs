@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hyper::http::HeaderValue;
@@ -177,6 +177,80 @@ where
     Ok(buf)
 }
 
+#[derive(Debug)]
+pub enum SendRequestError {
+    Hyper(hyper::Error),
+    Any(anyhow::Error),
+}
+
+pub struct SendDataResult {
+    pub last_result: anyhow::Result<Response<Body>>,
+    pub requests_count: u64,
+    pub responses_count_per_code: HashMap<u16, u64>,
+    pub errors_timeout: u64,
+    pub errors_network: u64,
+    pub errors_status_code: u64,
+}
+
+impl SendDataResult {
+    fn new() -> SendDataResult {
+        SendDataResult {
+            last_result: Err(anyhow!("No requests sent")),
+            requests_count: 0,
+            responses_count_per_code: Default::default(),
+            errors_timeout: 0,
+            errors_network: 0,
+            errors_status_code: 0,
+        }
+    }
+
+    async fn update(
+        &mut self,
+        res: Result<Response<Body>, SendRequestError>,
+        expected_status: StatusCode,
+    ) {
+        self.requests_count += 1;
+        match res {
+            Ok(response) => {
+                *self
+                    .responses_count_per_code
+                    .entry(response.status().as_u16())
+                    .or_default() += 1;
+                self.last_result = if response.status() == expected_status {
+                    Ok(response)
+                } else {
+                    self.errors_status_code += 1;
+
+                    let body_bytes = hyper::body::to_bytes(response.into_body()).await;
+                    let response_body = String::from_utf8(body_bytes.unwrap_or_default().to_vec())
+                        .unwrap_or_default();
+                    Err(anyhow::format_err!(
+                        "Server did not accept traces: {response_body}"
+                    ))
+                }
+            }
+            Err(e) => match e {
+                SendRequestError::Hyper(e) => {
+                    if e.is_timeout() {
+                        self.errors_timeout += 1;
+                    } else {
+                        self.errors_network += 1;
+                    }
+                    self.last_result = Err(anyhow!(e));
+                }
+                SendRequestError::Any(e) => {
+                    self.last_result = Err(e);
+                }
+            },
+        }
+    }
+
+    fn error(mut self, err: anyhow::Error) -> SendDataResult {
+        self.last_result = Err(err);
+        self
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SendData {
     tracer_payloads: Vec<pb::TracerPayload>,
@@ -210,7 +284,7 @@ impl SendData {
         self.size
     }
 
-    pub async fn send<'a>(self) -> anyhow::Result<Response<Body>> {
+    pub async fn send<'a>(self) -> SendDataResult {
         let target = &self.target;
 
         let mut req = hyper::Request::builder()
@@ -228,36 +302,38 @@ impl SendData {
         async fn send_request(
             req: HttpRequestBuilder,
             payload: Vec<u8>,
-            expected_status: StatusCode,
-        ) -> anyhow::Result<Response<Body>> {
-            let req = req.body(Body::from(payload))?;
+        ) -> Result<Response<Body>, SendRequestError> {
+            let req = req
+                .body(Body::from(payload))
+                .map_err(|e| SendRequestError::Any(anyhow!(e)))?;
 
-            match Client::builder()
+            Client::builder()
                 .build(connector::Connector::default())
                 .request(req)
                 .await
-            {
-                Ok(response) => {
-                    if response.status() != expected_status {
-                        let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
-                        let response_body =
-                            String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                        anyhow::bail!("Server did not accept traces: {response_body}");
-                    }
-                    Ok(response)
-                }
-                Err(e) => anyhow::bail!("Failed to send traces: {e}"),
-            }
+                .map_err(SendRequestError::Hyper)
         }
+
+        let mut result = SendDataResult::new();
 
         if target.api_key.is_some() {
             req = req.header("Content-type", "application/x-protobuf");
 
             let agent_payload = construct_agent_payload(self.tracer_payloads);
-            let serialized_trace_payload = serialize_proto_payload(&agent_payload)
-                .context("Failed to serialize trace agent payload, dropping traces")?;
+            let serialized_trace_payload = match serialize_proto_payload(&agent_payload)
+                .context("Failed to serialize trace agent payload, dropping traces")
+            {
+                Ok(p) => p,
+                Err(e) => return result.error(e),
+            };
 
-            send_request(req, serialized_trace_payload, StatusCode::ACCEPTED).await
+            result
+                .update(
+                    send_request(req, serialized_trace_payload).await,
+                    StatusCode::ACCEPTED,
+                )
+                .await;
+            result
         } else {
             req = req.header("Content-type", "application/msgpack");
 
@@ -278,20 +354,22 @@ impl SendData {
                     .unwrap()
                     .extend(template.headers.clone());
 
-                futures.push(send_request(
-                    builder,
-                    rmp_serde::to_vec_named(&tracer_payload)?,
-                    StatusCode::OK,
-                ));
+                let payload = match rmp_serde::to_vec_named(&tracer_payload) {
+                    Ok(p) => p,
+                    Err(e) => return result.error(anyhow!(e)),
+                };
+
+                futures.push(send_request(builder, payload));
             }
-            let mut last_response = Err(anyhow::format_err!("No futures completed...?!"));
             loop {
                 match futures.next().await {
-                    Some(response) => match response {
-                        Ok(response) => last_response = Ok(response),
-                        Err(e) => return Err(e),
-                    },
-                    None => return last_response,
+                    Some(response) => {
+                        result.update(response, StatusCode::OK).await;
+                        if result.last_result.is_err() {
+                            return result;
+                        }
+                    }
+                    None => return result,
                 }
             }
         }
