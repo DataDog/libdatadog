@@ -24,7 +24,7 @@ pub unsafe extern "C" fn memfd_create(name: libc::c_void, flags: libc::c_uint) -
 }
 
 #[cfg(test)]
-mod tests {
+mod single_threaded_tests {
     use io_lifetimes::OwnedFd;
     use pretty_assertions::assert_eq;
     use std::{
@@ -90,8 +90,8 @@ mod tests {
         assert_eq!(reference_meta, &current_meta);
     }
 
+    // tests checks global FD state - so it needs to run single-threaded
     #[test]
-    #[ignore] // tests checks global FD state - so it needs to run in non-parallel mode
     fn test_channel_metadata_only_provides_valid_owned() {
         let reference = get_open_file_descriptors(None).unwrap();
         let mut meta = ChannelMetadata::default();

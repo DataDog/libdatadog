@@ -1,0 +1,36 @@
+[store]
+dir = "target/nextest"
+
+[test-groups]
+single-threaded = { max-threads = 1 }
+
+[profile.default]
+# Show tests with status skip/pass/slow/fail while running.
+status-level = "skip"
+# Only show tests with status slow/fail at the end of the run.
+final-status-level = "slow"
+# Print out output for failing tests as soon as they fail.
+failure-output = "immediate"
+# Stop the test run on the first failure.
+fail-fast = true
+
+[[profile.default.overrides]]
+filter = 'test(::single_threaded_tests::)'
+test-group = 'single-threaded'
+
+[profile.ci]
+# Print out output for failing tests as soon as they fail, and also at the end
+# of the run (for easy scrollability).
+failure-output = "immediate-final"
+# Do not cancel the test run on the first failure.
+fail-fast = false
+
+[profile.ci.junit]
+# Output a JUnit report into the given file inside 'store.dir/<profile-name>'.
+path = "junit.xml"
+# The name of the top-level "report" element in JUnit report.
+report-name = "nextest-run"
+# Don't include stdout and stderr in the JUnit report for successes.
+store-success-output = false
+# Include the stdout and stderr in the JUnit report for failures.
+store-failure-output = true

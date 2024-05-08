@@ -29,6 +29,13 @@ jobs:
       - id: rust-version
         # On Windows run happens in a PowerShell, so start bash explicitly
         run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
+      - name: Install cargo nextest
+        uses: taiki-e/install-action@v2
+        with: 
+          tool: nextest@0.9.68
+      - name: "Remove nextest CI report"
+        shell: bash
+        run: rm -rf target/nextest/ci/junit.xml
       - name: Free Disk Space (Ubuntu only)
         if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
         uses: jlumbroso/free-disk-space@v1.3.1
@@ -42,19 +49,23 @@ jobs:
           swap-storage: true
       - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --verbose"
         run: cargo build --workspace --verbose
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo test --workspace --verbose"
-        run: cargo test --workspace --verbose
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --profile ci --verbose"
+        # Run doc tests with cargo test and run tests with nextest and generate junit.xml
+        run: cargo test --workspace --doc --verbose && cargo nextest run --workspace --profile ci --verbose
         env:
           RUST_BACKTRACE: 1
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo test --workspace --verbose -- --ignored --test-threads=1"
-        run: cargo test --workspace --verbose -- --ignored --test-threads=1
-        env:
-          RUST_BACKTRACE: 1
-      - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo test --package test_spawn_from_lib --features prefer-dynamic -- --ignored"
-        run: cargo test --package test_spawn_from_lib --features prefer-dynamic -- --ignored
+      - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic"
+        run: cargo nextest run --package test_spawn_from_lib --features prefer-dynamic
         env:
           RUSTFLAGS: "-C prefer-dynamic"
           RUST_BACKTRACE: 1
+      - name: Report Test Results
+        if: success() || failure() 
+        uses: mikepenz/action-junit-report@v4
+        with:
+          report_paths: "target/nextest/ci/junit.xml"
+          check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
+          include_passed: true
 
   ffi:
     name: "FFI #${{ matrix.platform }} ${{ matrix.rust_version }}"
@@ -94,7 +105,8 @@ jobs:
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
 
       - id: rust-version
-        run: echo "version=$(rustc --version)" >> $GITHUB_OUTPUT
+        # On Windows run happens in a PowerShell, so start bash explicitly
+        run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
 
       - name: "Generate profiling FFI"
         shell: bash
@@ -168,8 +180,9 @@ jobs:
         with:
           rust_version: cross-centos7
       - run: cargo install cross || true
-      - run: cross build --all
-      - run: cross test --all
+      - run: cross build --workspace --target x86_64-unknown-linux-gnu
+      - run: cross test --workspace --target x86_64-unknown-linux-gnu -- --skip "::single_threaded_tests::"
+      - run: cross test --workspace --target x86_64-unknown-linux-gnu --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1
 
   ffi_bake:
     strategy:

@@ -143,7 +143,7 @@ impl<'a> From<&'a str> for Slice<'a, c_char> {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use std::os::raw::c_char;
 
     use crate::slice::*;

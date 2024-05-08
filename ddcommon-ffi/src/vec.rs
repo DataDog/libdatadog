@@ -114,7 +114,7 @@ impl<T> Default for Vec<T> {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     #[test]

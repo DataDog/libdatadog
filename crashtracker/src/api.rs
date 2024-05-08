@@ -10,11 +10,8 @@ use crate::{
         update_receiver_after_fork,
     },
     crash_info::CrashtrackerMetadata,
-    update_config, update_metadata, CrashtrackerConfiguration, StacktraceCollection,
+    update_config, update_metadata, CrashtrackerConfiguration,
 };
-use ddcommon::tag::Tag;
-use ddcommon::Endpoint;
-use std::time::Duration;
 
 /// Cleans up after the crash-tracker:
 /// Unregister the crash handler, restore the previous handler (if any), and
@@ -101,22 +98,21 @@ pub fn init(
     Ok(())
 }
 
-#[ignore]
-#[allow(dead_code)]
-// Ignored tests are still run in CI.
-// To test, uncomment the line below than run manually
 // We can't run this in the main test runner because it (deliberately) crashes,
 // and would make all following tests unrunable.
 // To run this test,
 // ./build-profiling-ffi /tmp/libdatadog
 // mkdir /tmp/crashreports
 // look in /tmp/crashreports for the crash reports and output files
-// Commented out since `ignore` doesn't work in CI.
-//#[test]
+#[ignore]
+#[test]
 fn test_crash() {
-    use crate::begin_profiling_op;
+    use crate::{begin_profiling_op, StacktraceCollection};
     use chrono::Utc;
     use ddcommon::parse_uri;
+    use ddcommon::tag::Tag;
+    use ddcommon::Endpoint;
+    use std::time::Duration;
 
     let time = Utc::now().to_rfc3339();
     let dir = "/tmp/crashreports/";
