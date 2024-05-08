@@ -29,5 +29,5 @@ bash build-profiling-ffi.sh /opt/libdatadog
 
 #### Build Dependencies
 
-- Rust 1.71 or newer with cargo. Some platforms may need protoc; others have it shipped in prost-build.
-- You'll also need `cmake` and `protoc`.
+- Rust 1.71 or newer with cargo
+- `cmake` and `protoc`
