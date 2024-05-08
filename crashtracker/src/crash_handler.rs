@@ -33,6 +33,11 @@ struct OldHandlers {
     pub sigsegv: SigAction,
 }
 
+enum ReceiverType {
+    ForkedProcess(std::process::Child),
+    UnixSocket(String),
+}
+
 // These represent data used by the crashtracker.
 // Using mutexes inside a signal handler is not allowed, so use `AtomicPtr`
 // instead to get atomicity.
@@ -41,7 +46,7 @@ struct OldHandlers {
 // `Box::from_raw` to recreate the box, then dropping it.
 static ALTSTACK_INIT: AtomicBool = AtomicBool::new(false);
 static OLD_HANDLERS: AtomicPtr<OldHandlers> = AtomicPtr::new(ptr::null_mut());
-static RECEIVER: AtomicPtr<std::process::Child> = AtomicPtr::new(ptr::null_mut());
+static RECEIVER: AtomicPtr<ReceiverType> = AtomicPtr::new(ptr::null_mut());
 static METADATA: AtomicPtr<(CrashtrackerMetadata, String)> = AtomicPtr::new(ptr::null_mut());
 static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
 
@@ -138,16 +143,24 @@ pub fn ensure_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<()
         return Ok(());
     }
 
-    let new_receiver = Box::into_raw(Box::new(make_receiver(config)?));
+    let new_receiver = Box::into_raw(Box::new(ReceiverType::ForkedProcess(make_receiver(
+        config,
+    )?)));
     let res = RECEIVER.compare_exchange(ptr::null_mut(), new_receiver, SeqCst, SeqCst);
     if res.is_err() {
         // Race condition: Someone else setup the receiver between check and now.
-        // Cleanup after ourselves
+        // Cleanup after ourselves (extracting back into a box ensures it will
+        // be dropped when we return).
         // Safety: we just took it from a box above, and own the only ref since
         // the compare_exchange failed.
-        let mut new_receiver = unsafe { Box::from_raw(new_receiver) };
-        new_receiver.kill()?;
-        new_receiver.wait()?;
+        let receiver = unsafe { Box::from_raw(new_receiver) };
+        match *receiver {
+            ReceiverType::ForkedProcess(mut child) => {
+                child.kill()?;
+                child.wait()?;
+            }
+            ReceiverType::UnixSocket(_) => (),
+        }
     }
 
     Ok(())
@@ -165,20 +178,30 @@ pub fn ensure_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<()
 ///     If two simultaneous calls to this function occur, the first will win,
 ///     and the second will cleanup the redundant receiver.
 pub fn update_receiver_after_fork(config: &CrashtrackerReceiverConfig) -> anyhow::Result<()> {
-    let new_receiver = Box::into_raw(Box::new(make_receiver(config)?));
-    let old_receiver: *mut std::process::Child = RECEIVER.swap(new_receiver, SeqCst);
+    let new_receiver = Box::into_raw(Box::new(ReceiverType::ForkedProcess(make_receiver(
+        config,
+    )?)));
+    let old_receiver = RECEIVER.swap(new_receiver, SeqCst);
     anyhow::ensure!(
         !old_receiver.is_null(),
         "Error updating crash handler receiver: receiver did not already exist"
     );
     // Safety: This was only ever created out of Box::into_raw
-    let mut old_receiver = unsafe { Box::from_raw(old_receiver) };
-    // Close the stdin handle so we don't have two open copies
-    // TODO: dropping the old receiver at the end of this function might do this automatically?
-    drop(old_receiver.stdin.take());
-    drop(old_receiver.stdout.take());
-    drop(old_receiver.stderr.take());
-    // Leave the old one running, since its being used by another fork
+    let old_receiver = unsafe { Box::from_raw(old_receiver) };
+    match *old_receiver {
+        ReceiverType::ForkedProcess(mut old_receiver) => {
+            // Close the stdin handle so we don't have two open copies
+            // TODO: dropping the old receiver at the end of this function might do this
+            // automatically?
+            drop(old_receiver.stdin.take());
+            drop(old_receiver.stdout.take());
+            drop(old_receiver.stderr.take());
+            // Leave the old one running, since its being used by another fork
+        }
+        ReceiverType::UnixSocket(path) => {
+            anyhow::bail!("tried to update crashtracker receiver process after fork, but the target was actually a unix socket: {path}")
+        }
+    }
 
     Ok(())
 }
@@ -202,9 +225,14 @@ pub fn shutdown_receiver() -> anyhow::Result<()> {
     if !old_receiver.is_null() {
         // Safety: This only comes from a `Box::into_raw`, and was checked for
         // null above
-        let mut old_receiver = unsafe { Box::from_raw(old_receiver) };
-        old_receiver.kill()?;
-        old_receiver.wait()?;
+        let old_receiver = unsafe { Box::from_raw(old_receiver) };
+        match *old_receiver {
+            ReceiverType::ForkedProcess(mut child) => {
+                child.kill()?;
+                child.wait()?;
+            }
+            ReceiverType::UnixSocket(_) => (),
+        }
     }
     Ok(())
 }
@@ -290,6 +318,12 @@ fn emit_siginfo(w: &mut impl Write, signum: i32) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn emit_crashreport(w: &mut impl Write) -> anyhow::Result<()> {
+    
+}
+
+
+
 fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     static NUM_TIMES_CALLED: AtomicU64 = AtomicU64::new(0);
     if NUM_TIMES_CALLED.fetch_add(1, SeqCst) > 0 {
@@ -312,10 +346,7 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     anyhow::ensure!(!metadata_ptr.is_null(), "No crashtracking metadata");
     let (_metadata, metadata_string) = unsafe { metadata_ptr.as_ref().context("metadata ptr")? };
 
-    let mut unix_stream = UnixStream::connect(super::receiver::SOCKET_PATH).context(format!(
-        "Could not create stream {}",
-        super::receiver::SOCKET_PATH
-    ))?;
+    let mut unix_stream = UnixStream::connect(super::receiver::SOCKET_PATH)?;
     let pipe = &mut unix_stream;
     eprintln!("got here");
 
