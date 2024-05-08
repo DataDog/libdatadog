@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub(crate) use trace_flusher::TraceFlusher;
-
 use trace_send_data::TraceSendData;
+
 pub(crate) mod trace_flusher;
-pub(crate) mod trace_send_data;
+mod trace_send_data;

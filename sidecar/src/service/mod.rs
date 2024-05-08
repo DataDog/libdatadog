@@ -8,8 +8,6 @@ use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddtelemetry::metrics::MetricContext;
 use ddtelemetry::worker::TelemetryActions;
-use futures::future::Shared;
-use manual_future::ManualFuture;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -57,10 +55,4 @@ pub enum SidecarAction {
     RegisterTelemetryMetric(MetricContext),
     AddTelemetryMetricPoint((String, f64, Vec<Tag>)),
     PhpComposerTelemetryFile(PathBuf),
-}
-
-#[allow(clippy::large_enum_variant)]
-pub(crate) enum AppOrQueue {
-    App(Shared<ManualFuture<(String, String)>>),
-    Queue(EnqueuedTelemetryData),
 }

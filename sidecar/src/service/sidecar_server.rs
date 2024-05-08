@@ -3,14 +3,14 @@
 
 use crate::config::get_product_endpoint;
 use crate::log;
-use crate::log::{MULTI_LOG_FILTER, MULTI_LOG_WRITER};
-use crate::service::telemetry::SidecarStats;
-use crate::service::EnqueuedTelemetryData;
+use crate::log::{TemporarilyRetainedMapStats, MULTI_LOG_FILTER, MULTI_LOG_WRITER};
 use crate::service::{
-    sidecar_interface::ServeSidecarInterface, telemetry::AppInstance, tracing::TraceFlusher,
-    AppOrQueue, InstanceId, QueueId, RequestIdentification, RequestIdentifier, RuntimeInfo,
-    RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SessionInfo, SidecarAction,
-    SidecarInterface, SidecarInterfaceRequest, SidecarInterfaceResponse,
+    sidecar_interface::ServeSidecarInterface,
+    telemetry::{AppInstance, AppOrQueue},
+    tracing::TraceFlusher,
+    EnqueuedTelemetryData, InstanceId, QueueId, RequestIdentification, RequestIdentifier,
+    RuntimeInfo, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SessionInfo,
+    SidecarAction, SidecarInterface, SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
 use datadog_ipc::platform::{AsyncChannel, ShmHandle};
 use datadog_ipc::tarpc;
@@ -20,7 +20,9 @@ use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::SendData;
 use ddcommon::Endpoint;
-use ddtelemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerBuilder};
+use ddtelemetry::worker::{
+    LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerStats,
+};
 use futures::future;
 use futures::future::{join_all, Ready};
 use manual_future::{ManualFuture, ManualFutureCompleter};
@@ -33,7 +35,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::{debug, enabled, error, info, warn, Level};
 
 use futures::FutureExt;
+use serde::{Deserialize, Serialize};
 
+use crate::service::telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats;
+use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
 
@@ -41,6 +46,23 @@ type NoResponse = Ready<()>;
 
 fn no_response() -> NoResponse {
     future::ready(())
+}
+
+#[derive(Serialize, Deserialize)]
+struct SidecarStats {
+    trace_flusher: TraceFlusherStats,
+    sessions: u32,
+    session_counter_size: u32,
+    runtimes: u32,
+    apps: u32,
+    active_apps: u32,
+    enqueued_apps: u32,
+    enqueued_telemetry_data: EnqueuedTelemetryStats,
+    telemetry_metrics_contexts: u32,
+    telemetry_worker: TelemetryWorkerStats,
+    telemetry_worker_errors: u32,
+    log_writer: TemporarilyRetainedMapStats,
+    log_filter: TemporarilyRetainedMapStats,
 }
 
 /// The `SidecarServer` struct represents a server that handles sidecar operations.
@@ -293,16 +315,7 @@ impl SidecarServer {
         self.trace_flusher.enqueue(data);
     }
 
-    /// Computes and returns stats for the SidecarServer.
-    ///
-    /// This function aggregates various statistics such as the number of active sessions,
-    /// telemetry worker errors, and submitted payloads. It also includes statistics related
-    /// to the trace flusher, log filter, and log writer.
-    ///
-    /// # Returns
-    ///
-    /// * `SidecarStats`: A struct containing various statistics related to the SidecarServer.
-    pub(crate) async fn compute_stats(&self) -> SidecarStats {
+    async fn compute_stats(&self) -> SidecarStats {
         let mut telemetry_stats_errors = 0;
         let telemetry_stats = join_all({
             let sessions = self.lock_sessions();

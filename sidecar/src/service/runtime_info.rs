@@ -1,8 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::service::telemetry::AppInstance;
-use crate::service::{AppOrQueue, InstanceId, QueueId};
+use crate::service::{
+    telemetry::{AppInstance, AppOrQueue},
+    InstanceId, QueueId,
+};
 use ddtelemetry::worker::{LifecycleAction, TelemetryActions};
 use futures::{
     future::{self, join_all, Shared},
