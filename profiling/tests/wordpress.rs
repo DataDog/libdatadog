@@ -16,8 +16,11 @@ fn php_location<'a>(name: &'a str, filename: &'a str, line: i64) -> api::Locatio
         address: 0,
         function: api::Function {
             name,
+            name_id: 0,
             system_name: "",
+            system_name_id: 0,
             filename,
+            filename_id: 0,
             start_line: 0,
         },
         line,

@@ -151,6 +151,7 @@ fn main() -> anyhow::Result<()> {
         replayer.start_time,
         &replayer.sample_types,
         replayer.period,
+        None,
     );
 
     // Before benchmarking, let's calculate some statistics.

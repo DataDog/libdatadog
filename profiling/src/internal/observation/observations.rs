@@ -9,6 +9,7 @@ use super::trimmed_observation::{ObservationLength, TrimmedObservation};
 use crate::internal::Timestamp;
 use std::collections::HashMap;
 
+#[derive(Debug)]
 struct NonEmptyObservations {
     // Samples with no timestamps are aggregated in-place as each observation is added
     aggregated_data: HashMap<Sample, TrimmedObservation>,
@@ -19,7 +20,7 @@ struct NonEmptyObservations {
     timestamped_samples_count: usize,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Observations {
     inner: Option<NonEmptyObservations>,
 }

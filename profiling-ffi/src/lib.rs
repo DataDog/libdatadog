@@ -12,6 +12,7 @@ use chrono::{DateTime, TimeZone, Utc};
 mod crashtracker;
 mod exporter;
 mod profiles;
+mod string_storage;
 
 pub use crashtracker::*;
 // re-export telemetry ffi

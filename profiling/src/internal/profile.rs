@@ -5,10 +5,15 @@ use self::api::UpscalingInfo;
 use super::*;
 use crate::api;
 use crate::collections::identifiable::*;
+use crate::collections::string_storage::{
+    ManagedStringStorage, SimpleStringStorage, StringStorage,
+};
 use crate::pprof::sliced_proto::*;
 use crate::serializer::CompressedProtobufSerializer;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::RwLock;
 use std::time::{Duration, SystemTime};
 
 pub struct Profile {
@@ -23,7 +28,8 @@ pub struct Profile {
     sample_types: Vec<ValueType>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
-    strings: FxIndexSet<Box<str>>,
+    strings: Box<dyn StringStorage>,
+    string_storage: Option<Rc<RwLock<ManagedStringStorage>>>,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
 }
@@ -33,6 +39,34 @@ pub struct EncodedProfile {
     pub end: SystemTime,
     pub buffer: Vec<u8>,
     pub endpoints_stats: ProfiledEndpointsStats,
+}
+
+struct ExtractedValueType {
+    r#type: Rc<str>,
+    unit: Rc<str>,
+}
+
+impl<'a> From<&'a ExtractedValueType> for api::ValueType<'a> {
+    fn from(val: &'a ExtractedValueType) -> Self {
+        api::ValueType {
+            r#type: &val.r#type,
+            unit: &val.unit,
+        }
+    }
+}
+
+struct ExtractedPeriod {
+    r#type: ExtractedValueType,
+    value: i64,
+}
+
+impl<'a> From<&'a ExtractedPeriod> for api::Period<'a> {
+    fn from(val: &'a ExtractedPeriod) -> Self {
+        api::Period {
+            r#type: (&val.r#type).into(),
+            value: val.value,
+        }
+    }
 }
 
 /// Public API
@@ -76,15 +110,31 @@ impl Profile {
             .labels
             .iter()
             .map(|label| {
-                let key = self.intern(label.key);
-                let internal_label = if let Some(s) = label.str {
-                    let str = self.intern(s);
-                    Label::str(key, str)
+                let key: StringId;
+                let internal_label: Label;
+                if label.key_id > 0 || label.str_id > 0 || label.num_unit_id > 0 {
+                    key = self.resolve(label.key_id);
+                    internal_label = if label.str_id > 0 {
+                        Label::str(key, self.resolve(label.str_id))
+                    } else {
+                        let num_unit = if label.num_unit_id > 0 {
+                            Some(self.resolve(label.num_unit_id))
+                        } else {
+                            None
+                        };
+                        Label::num(key, label.num, num_unit)
+                    };
                 } else {
-                    let num = label.num;
-                    let num_unit = label.num_unit.map(|s| self.intern(s));
-                    Label::num(key, num, num_unit)
-                };
+                    key = self.intern(label.key);
+                    internal_label = if let Some(s) = label.str {
+                        let str = self.intern(s);
+                        Label::str(key, str)
+                    } else {
+                        let num = label.num;
+                        let num_unit = label.num_unit.map(|s| self.intern(s));
+                        Label::num(key, num, num_unit)
+                    };
+                }
 
                 self.labels.dedup(internal_label)
             })
@@ -123,10 +173,30 @@ impl Profile {
         Ok(())
     }
 
-    pub fn get_string(&self, id: StringId) -> &str {
-        self.strings
-            .get_index(id.to_offset())
-            .expect("StringId to have a valid interned index")
+    pub fn get_string(&self, id: StringId) -> Rc<str> {
+        self.strings.get_string(id)
+    }
+
+    pub fn resolve(&mut self, id: u32) -> StringId {
+        self.string_storage
+            .as_ref()
+            .expect("Resolution from id requires managed string storage")
+            .read()
+            .expect("acquisition of write lock on string storage should succeed")
+            .get_seq_num(id, self.strings.as_mut())
+    }
+
+    pub fn intern(&mut self, item: &str) -> StringId {
+        /*let str_rc: Rc<str> = self.string_storage.as_ref().map_or_else(
+            || item.into(),
+            |ss| {
+                ss.write()
+                    .expect("acquisition of write lock on string storage should succeed")
+                    .intern(item)
+                    .1
+            },
+        );*/
+        self.strings.intern(item.into())
     }
 
     /// Creates a profile with `start_time`.
@@ -139,6 +209,7 @@ impl Profile {
         start_time: SystemTime,
         sample_types: &[api::ValueType],
         period: Option<api::Period>,
+        string_storage: Option<Rc<RwLock<ManagedStringStorage>>>,
     ) -> Self {
         /* Do not use Profile's default() impl here or it will cause a stack
          * overflow, since that default impl calls this method.
@@ -155,7 +226,8 @@ impl Profile {
             sample_types: vec![],
             stack_traces: Default::default(),
             start_time,
-            strings: Default::default(),
+            strings: Box::new(SimpleStringStorage::new()),
+            string_storage,
             timestamp_key: Default::default(),
             upscaling_rules: Default::default(),
         };
@@ -199,19 +271,19 @@ impl Profile {
          * not generally guaranteed, so we can't just copy the underlying
          * structures.
          */
-        let sample_types: Vec<api::ValueType> = self.extract_api_sample_types()?;
-
-        let period = self.period.map(|t| api::Period {
-            r#type: api::ValueType {
-                r#type: self.get_string(t.1.r#type),
-                unit: self.get_string(t.1.unit),
-            },
-            value: t.0,
-        });
+        let sample_types = self.extract_api_sample_types()?;
+        let period = self.extract_period();
 
         let start_time = start_time.unwrap_or_else(SystemTime::now);
-        let mut profile = Profile::new(start_time, &sample_types, period);
-
+        let mut profile = Profile::new(
+            start_time,
+            &sample_types
+                .iter()
+                .map(|x| x.into())
+                .collect::<Vec<api::ValueType>>(),
+            period.as_ref().map(|x| x.into()),
+            self.string_storage.clone(),
+        );
         std::mem::swap(&mut *self, &mut profile);
         Ok(profile)
     }
@@ -333,9 +405,19 @@ impl Profile {
 /// Private helper functions
 impl Profile {
     fn add_function(&mut self, function: &api::Function) -> FunctionId {
-        let name = self.intern(function.name);
-        let system_name = self.intern(function.system_name);
-        let filename = self.intern(function.filename);
+        let name: StringId;
+        let system_name: StringId;
+        let filename: StringId;
+
+        if function.name_id > 0 || function.system_name_id > 0 || function.filename_id > 0 {
+            name = self.resolve(function.name_id);
+            system_name = self.resolve(function.system_name_id);
+            filename = self.resolve(function.filename_id);
+        } else {
+            name = self.intern(function.name);
+            system_name = self.intern(function.system_name);
+            filename = self.intern(function.filename)
+        }
 
         let start_line = function.start_line;
         self.functions.dedup(Function {
@@ -358,8 +440,16 @@ impl Profile {
     }
 
     fn add_mapping(&mut self, mapping: &api::Mapping) -> MappingId {
-        let filename = self.intern(mapping.filename);
-        let build_id = self.intern(mapping.build_id);
+        let filename: StringId;
+        let build_id: StringId;
+
+        if mapping.filename_id > 0 || mapping.build_id_id > 0 {
+            filename = self.resolve(mapping.filename_id);
+            build_id = self.resolve(mapping.build_id_id);
+        } else {
+            filename = self.intern(mapping.filename);
+            build_id = self.intern(mapping.build_id);
+        }
 
         self.mappings.dedup(Mapping {
             memory_start: mapping.memory_start,
@@ -374,16 +464,25 @@ impl Profile {
         self.stack_traces.dedup(StackTrace { locations })
     }
 
-    fn extract_api_sample_types(&self) -> anyhow::Result<Vec<api::ValueType>> {
-        let sample_types = self
+    fn extract_api_sample_types(&self) -> anyhow::Result<Vec<ExtractedValueType>> {
+        Ok(self
             .sample_types
             .iter()
-            .map(|sample_type| api::ValueType {
+            .map(|sample_type| ExtractedValueType {
                 r#type: self.get_string(sample_type.r#type),
                 unit: self.get_string(sample_type.unit),
             })
-            .collect();
-        Ok(sample_types)
+            .collect())
+    }
+
+    fn extract_period(&self) -> Option<ExtractedPeriod> {
+        self.period.map(|period| ExtractedPeriod {
+            r#type: ExtractedValueType {
+                r#type: self.get_string(period.1.r#type),
+                unit: self.get_string(period.1.unit),
+            },
+            value: period.0,
+        })
     }
 
     /// Fetches the endpoint information for the label. There may be errors,
@@ -431,7 +530,10 @@ impl Profile {
             }
         });
         if let Some(label) = label {
-            self.get_endpoint_for_label(label)
+            self.get_endpoint_for_label(label).map_err(|err| {
+                println!("label with error: {:?}", label);
+                err
+            })
         } else {
             Ok(None)
         }
@@ -455,25 +557,6 @@ impl Profile {
             .expect("StackTraceId {st} to exist in profile")
     }
 
-    /// Interns the `str` as a string, returning the id in the string table.
-    /// The empty string is guaranteed to have an id of [StringId::ZERO].
-    fn intern(&mut self, item: &str) -> StringId {
-        // For performance, delay converting the [&str] to a [String] until
-        // after it has been determined to not exist in the set. This avoids
-        // temporary allocations.
-        let index = match self.strings.get_index_of(item) {
-            Some(index) => index,
-            None => {
-                let (index, _inserted) = self.strings.insert_full(item.into());
-                // This wouldn't make any sense; the item couldn't be found so
-                // we try to insert it, but suddenly it exists now?
-                debug_assert!(_inserted);
-                index
-            }
-        };
-        StringId::from_offset(index)
-    }
-
     fn translate_and_enrich_sample_labels(
         &self,
         sample: Sample,
@@ -495,16 +578,21 @@ impl Profile {
 
     /// Validates labels
     fn validate_sample_labels(&mut self, sample: &api::Sample) -> anyhow::Result<()> {
-        let mut seen: HashMap<&str, &api::Label> = HashMap::new();
+        let mut seen_str: HashMap<&str, &api::Label> = HashMap::new();
+        let mut seen_id: HashMap<u32, &api::Label> = HashMap::new();
 
         for label in sample.labels.iter() {
-            if let Some(duplicate) = seen.insert(label.key, label) {
+            if label.key_id > 0 {
+                if let Some(duplicate) = seen_id.insert(label.key_id, label) {
+                    anyhow::bail!("Duplicate label on sample: {:?} {:?}", duplicate, label);
+                }
+            } else if let Some(duplicate) = seen_str.insert(label.key, label) {
                 anyhow::bail!("Duplicate label on sample: {:?} {:?}", duplicate, label);
             }
 
             if label.key == "local root span id" {
                 anyhow::ensure!(
-                    label.str.is_none() && label.num != 0,
+                    label.str.is_none() && label.str_id == 0 && label.num != 0,
                     "Invalid \"local root span id\" label: {:?}",
                     label
                 );
@@ -549,7 +637,7 @@ mod api_test {
             r#type: "samples",
             unit: "count",
         }];
-        let mut profiles = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profiles = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let expected_id = StringId::from_offset(profiles.interned_strings_count());
 
@@ -589,8 +677,11 @@ mod api_test {
                 mapping,
                 function: api::Function {
                     name: "phpinfo",
+                    name_id: 0,
                     system_name: "phpinfo",
+                    system_name_id: 0,
                     filename: "index.php",
+                    filename_id: 0,
                     start_line: 0,
                 },
                 ..Default::default()
@@ -603,7 +694,7 @@ mod api_test {
             },
         ];
 
-        let mut profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile = Profile::new(SystemTime::now(), &sample_types, None, None);
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
 
         profile
@@ -645,8 +736,11 @@ mod api_test {
             mapping,
             function: api::Function {
                 name: "test",
+                name_id: 0,
                 system_name: "test",
+                system_name_id: 0,
                 filename: "index.php",
+                filename_id: 0,
                 start_line: 3,
             },
             ..Default::default()
@@ -655,8 +749,11 @@ mod api_test {
             mapping,
             function: api::Function {
                 name: "test",
+                name_id: 0,
                 system_name: "test",
+                system_name_id: 0,
                 filename: "index.php",
+                filename_id: 0,
                 start_line: 4,
             },
             ..Default::default()
@@ -687,7 +784,7 @@ mod api_test {
             labels,
         };
 
-        let mut profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile = Profile::new(SystemTime::now(), &sample_types, None, None);
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
 
         profile
@@ -845,8 +942,8 @@ mod api_test {
         assert_eq!(profile.sample_types, prev.sample_types);
 
         // The string table should have at least the empty string.
-        assert!(!profile.strings.is_empty());
-        assert_eq!("", profile.get_string(StringId::ZERO));
+        assert_ne!(profile.interned_strings_count(), 0);
+        assert!(profile.get_string(StringId::ZERO).is_empty());
     }
 
     #[test]
@@ -874,8 +971,14 @@ mod api_test {
         // table offsets may not match).
         let (value, period_type) = profile.period.expect("profile to have a period");
         assert_eq!(value, period.0);
-        assert_eq!(profile.get_string(period_type.r#type), "wall-time");
-        assert_eq!(profile.get_string(period_type.unit), "nanoseconds");
+        assert_eq!(
+            profile.get_string(period_type.r#type).to_string(),
+            "wall-time"
+        );
+        assert_eq!(
+            profile.get_string(period_type.unit).to_string(),
+            "nanoseconds"
+        );
     }
 
     #[test]
@@ -885,13 +988,16 @@ mod api_test {
             unit: "nanoseconds",
         }];
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let id_label = api::Label {
             key: "local root span id",
+            key_id: 0,
             str: Some("10"), // bad value, should use .num instead for local root span id
+            str_id: 0,
             num: 0,
             num_unit: None,
+            num_unit_id: 0,
         };
 
         let sample = api::Sample {
@@ -916,27 +1022,36 @@ mod api_test {
             },
         ];
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let id_label = api::Label {
             key: "local root span id",
+            key_id: 0,
             str: None,
+            str_id: 0,
             num: 10,
             num_unit: None,
+            num_unit_id: 0,
         };
 
         let id2_label = api::Label {
             key: "local root span id",
+            key_id: 0,
             str: None,
+            str_id: 0,
             num: 11,
             num_unit: None,
+            num_unit_id: 0,
         };
 
         let other_label = api::Label {
             key: "other",
+            key_id: 0,
             str: Some("test"),
+            str_id: 0,
             num: 0,
             num_unit: None,
+            num_unit_id: 0,
         };
 
         let sample1 = api::Sample {
@@ -1032,7 +1147,7 @@ mod api_test {
             },
         ];
 
-        let profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let encoded_profile = profile
             .serialize_into_compressed_pprof(None, None)
@@ -1055,7 +1170,7 @@ mod api_test {
             },
         ];
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let one_endpoint = "my endpoint";
         profile.add_endpoint_count(Cow::from(one_endpoint), 1)?;
@@ -1087,20 +1202,26 @@ mod api_test {
             unit: "nanoseconds",
         }];
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let labels = vec![
             api::Label {
                 key: "local root span id",
+                key_id: 0,
                 str: None,
+                str_id: 0,
                 num: 5738080760940355267_i64,
                 num_unit: None,
+                num_unit_id: 0,
             },
             api::Label {
                 key: "local root span id",
+                key_id: 0,
                 str: None,
+                str_id: 0,
                 num: 8182855815056056749_i64,
                 num_unit: None,
+                num_unit_id: 0,
             },
         ];
 
@@ -1126,13 +1247,16 @@ mod api_test {
             },
         ];
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let id_label = api::Label {
             key: "my label",
+            key_id: 0,
             str: Some("coco"),
+            str_id: 0,
             num: 0,
             num_unit: None,
+            num_unit_id: 0,
         };
 
         let sample1 = api::Sample {
@@ -1172,9 +1296,12 @@ mod api_test {
     fn create_label(key: &'static str, str: Option<&'static str>) -> api::Label<'static> {
         api::Label {
             key,
+            key_id: 0,
             str,
+            str_id: 0,
             num: 0,
             num_unit: None,
+            num_unit_id: 0,
         }
     }
 
@@ -1182,7 +1309,7 @@ mod api_test {
     fn test_upscaling_by_value_a_zero_value() {
         let sample_types = create_samples_types();
 
-        let mut profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1210,7 +1337,7 @@ mod api_test {
     fn test_upscaling_by_value_on_one_value() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1238,7 +1365,7 @@ mod api_test {
     fn test_upscaling_by_value_on_one_value_with_poisson() {
         let sample_types = create_samples_types();
 
-        let mut profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1270,7 +1397,7 @@ mod api_test {
     fn test_upscaling_by_value_on_zero_value_with_poisson() {
         let sample_types = create_samples_types();
 
-        let mut profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1302,7 +1429,7 @@ mod api_test {
     fn test_cannot_add_a_rule_with_invalid_poisson_info() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1349,7 +1476,7 @@ mod api_test {
     fn test_upscaling_by_value_on_two_values() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1366,8 +1493,11 @@ mod api_test {
             mapping,
             function: api::Function {
                 name: "{main}",
+                name_id: 0,
                 system_name: "{main}",
+                system_name_id: 0,
                 filename: "index.php",
+                filename_id: 0,
                 start_line: 0,
             },
             address: 0,
@@ -1406,7 +1536,7 @@ mod api_test {
     fn test_upscaling_by_value_on_two_value_with_two_rules() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1423,8 +1553,11 @@ mod api_test {
             mapping,
             function: api::Function {
                 name: "{main}",
+                name_id: 0,
                 system_name: "{main}",
+                system_name_id: 0,
                 filename: "index.php",
+                filename_id: 0,
                 start_line: 0,
             },
             ..Default::default()
@@ -1471,7 +1604,7 @@ mod api_test {
     fn test_no_upscaling_by_label_if_no_match() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let id_label = create_label("my_label", Some("coco"));
 
@@ -1527,7 +1660,7 @@ mod api_test {
     fn test_upscaling_by_label_on_one_value() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let id_label = create_label("my label", Some("coco"));
 
@@ -1562,7 +1695,7 @@ mod api_test {
     fn test_upscaling_by_label_on_only_sample_out_of_two() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let id_label = create_label("my label", Some("coco"));
 
@@ -1581,8 +1714,11 @@ mod api_test {
             mapping,
             function: api::Function {
                 name: "{main}",
+                name_id: 0,
                 system_name: "{main}",
+                system_name_id: 0,
                 filename: "index.php",
+                filename_id: 0,
                 start_line: 0,
             },
             ..Default::default()
@@ -1624,7 +1760,7 @@ mod api_test {
     fn test_upscaling_by_label_with_two_different_rules_on_two_different_sample() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let id_no_match_label = create_label("another label", Some("do not care"));
 
@@ -1645,8 +1781,11 @@ mod api_test {
             mapping,
             function: api::Function {
                 name: "{main}",
+                name_id: 0,
                 system_name: "{main}",
+                system_name_id: 0,
                 filename: "index.php",
+                filename_id: 0,
                 start_line: 0,
             },
             ..Default::default()
@@ -1654,9 +1793,12 @@ mod api_test {
 
         let id_label2 = api::Label {
             key: "my other label",
+            key_id: 0,
             str: Some("foobar"),
+            str_id: 0,
             num: 10,
             num_unit: None,
+            num_unit_id: 0,
         };
 
         let sample2 = api::Sample {
@@ -1708,7 +1850,7 @@ mod api_test {
     fn test_upscaling_by_label_on_two_values() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let id_label = create_label("my label", Some("coco"));
 
@@ -1744,7 +1886,7 @@ mod api_test {
     fn test_upscaling_by_value_and_by_label_different_values() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let id_label = create_label("my label", Some("coco"));
 
@@ -1787,7 +1929,7 @@ mod api_test {
     fn test_add_same_byvalue_rule_twice() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         // adding same offsets
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
@@ -1824,7 +1966,7 @@ mod api_test {
     fn test_add_two_bylabel_rules_with_overlap_on_values() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         // adding same offsets
         let mut value_offsets: Vec<usize> = vec![0, 2];
@@ -1874,7 +2016,7 @@ mod api_test {
     fn test_fail_if_bylabel_rule_and_by_value_rule_with_overlap_on_values() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         // adding same offsets
         let mut value_offsets: Vec<usize> = vec![0, 2];
@@ -1928,7 +2070,7 @@ mod api_test {
     fn test_add_rule_with_offset_out_of_bound() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         // adding same offsets
         let by_value_offsets: Vec<usize> = vec![0, 4];
@@ -1947,7 +2089,7 @@ mod api_test {
     fn test_add_rule_with_offset_out_of_bound_poisson_function() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         // adding same offsets
         let by_value_offsets: Vec<usize> = vec![0, 4];
@@ -1970,7 +2112,7 @@ mod api_test {
     fn test_add_rule_with_offset_out_of_bound_poisson_function2() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         // adding same offsets
         let by_value_offsets: Vec<usize> = vec![0, 4];
@@ -1993,7 +2135,7 @@ mod api_test {
     fn test_add_rule_with_offset_out_of_bound_poisson_function3() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         // adding same offsets
         let by_value_offsets: Vec<usize> = vec![0, 4];
@@ -2016,7 +2158,7 @@ mod api_test {
     fn test_fails_when_adding_byvalue_rule_collinding_on_offset_with_existing_bylabel_rule() {
         let sample_types = create_samples_types();
 
-        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let id_label = create_label("my label", Some("coco"));
 
@@ -2062,13 +2204,16 @@ mod api_test {
             },
         ];
 
-        let mut profile = Profile::new(SystemTime::now(), &sample_types, None);
+        let mut profile = Profile::new(SystemTime::now(), &sample_types, None, None);
 
         let id_label = api::Label {
             key: "local root span id",
+            key_id: 0,
             str: None,
+            str_id: 0,
             num: 10,
             num_unit: None,
+            num_unit_id: 0,
         };
 
         let large_span_id = u64::MAX;
@@ -2077,9 +2222,12 @@ mod api_test {
 
         let id2_label = api::Label {
             key: "local root span id",
+            key_id: 0,
             str: None,
+            str_id: 0,
             num: large_num,
             num_unit: None,
+            num_unit_id: 0,
         };
 
         let sample1 = api::Sample {

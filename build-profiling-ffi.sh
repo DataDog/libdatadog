@@ -4,45 +4,48 @@
 # SPDX-License-Identifier: Apache-2.0
 
 get_abs_filename() {
-  # $1 : relative filename
-  echo "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+	# $1 : relative filename
+	echo "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 }
 
 # Location to place all artifacts
-if [ -z $CARGO_TARGET_DIR ] ; then
-    export CARGO_TARGET_DIR=$PWD/target
+if [ -z $CARGO_TARGET_DIR ]; then
+	export CARGO_TARGET_DIR=$PWD/target
 fi
 
 set -eu
 
 ARG_FEATURES=""
 
-while getopts f: flag
-do
-    case "${flag}" in
-        f) ARG_FEATURES=${OPTARG}
-            shift
-            shift
-    esac
+while getopts f: flag; do
+	case "${flag}" in
+	f)
+		ARG_FEATURES=${OPTARG}
+		shift
+		shift
+		;;
+	esac
 done
 
 destdir="$1"
 
 if [ $CARGO_TARGET_DIR = $destdir ]; then
-    echo "Error: CARGO_TARGET_DIR and destdir cannot be the same"
-    exit 1
+	echo "Error: CARGO_TARGET_DIR and destdir cannot be the same"
+	exit 1
 fi
 
 mkdir -v -p "$destdir/include/datadog" "$destdir/lib/pkgconfig" "$destdir/cmake"
 
-version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < profiling-ffi/Cargo.toml)
+version=$(awk -F\" '$1 ~ /^version/ { print $2 }' <profiling-ffi/Cargo.toml)
 target="$(rustc -vV | awk '/^host:/ { print $2 }')"
+profile="${CARGO_PROFILE:-release}"
 shared_library_suffix=".so"
 static_library_suffix=".a"
 library_prefix="lib"
 remove_rpath=0
 fix_macos_rpath=0
 symbolizer=0
+strip_soname=0
 
 # Rust provides this note about the link libraries:
 # note: Link against the following native artifacts when linking against this
@@ -54,76 +57,81 @@ symbolizer=0
 # provided. At least on Alpine, libgcc_s may not even exist in the users'
 # images, so -static-libgcc is recommended there.
 case "$target" in
-    "x86_64-alpine-linux-musl"|"aarch64-alpine-linux-musl")
-        expected_native_static_libs=" -lssp_nonshared -lgcc_s -lc"
-        native_static_libs=" -lssp_nonshared -lc"
-        # on alpine musl, Rust adds some weird runpath to cdylibs
-        remove_rpath=1
-        symbolizer=1
-        ;;
+"x86_64-alpine-linux-musl" | "aarch64-alpine-linux-musl")
+	expected_native_static_libs=" -lssp_nonshared -lgcc_s -lc"
+	native_static_libs=" -lssp_nonshared -lc"
+	# on alpine musl, Rust adds some weird runpath to cdylibs
+	remove_rpath=1
+	symbolizer=1
+	strip_soname=1
+	;;
 
-    "x86_64-apple-darwin"|"aarch64-apple-darwin")
-        expected_native_static_libs=" -framework Security -framework CoreFoundation -liconv -lSystem -lresolv -lc -lm -liconv"
-        native_static_libs="${expected_native_static_libs}"
+"x86_64-apple-darwin" | "aarch64-apple-darwin")
+	expected_native_static_libs=" -framework Security -framework CoreFoundation -liconv -lSystem -lresolv -lc -lm -liconv"
+	native_static_libs="${expected_native_static_libs}"
 
-        shared_library_suffix=".dylib"
-        # fix usage of library in macos via rpath
-        fix_macos_rpath=1
-        ;;
+	shared_library_suffix=".dylib"
+	# fix usage of library in macos via rpath
+	fix_macos_rpath=1
+	;;
 
-    "x86_64-unknown-linux-gnu"|"aarch64-unknown-linux-gnu")
-        expected_native_static_libs=" -ldl -lrt -lpthread -lgcc_s -lc -lm -lrt -lpthread -lutil -ldl -lutil"
-        native_static_libs=" -ldl -lrt -lpthread -lc -lm -lrt -lpthread -lutil -ldl -lutil"
-        symbolizer=1
-        ;;
+"x86_64-unknown-linux-gnu" | "aarch64-unknown-linux-gnu")
+	expected_native_static_libs=" -ldl -lrt -lpthread -lgcc_s -lc -lm -lrt -lpthread -lutil -ldl -lutil"
+	native_static_libs=" -ldl -lrt -lpthread -lc -lm -lrt -lpthread -lutil -ldl -lutil"
+	symbolizer=1
+	strip_soname=1
+	;;
 
-    "x86_64-pc-windows-msvc")
-        expected_native_static_libs="" # I don't know what to expect
-        native_static_libs="" # I don't know what to expect
-        shared_library_suffix=".dll"
-        static_library_suffix=".lib"
-        library_prefix=""
-        ;;
+"x86_64-pc-windows-msvc")
+	expected_native_static_libs="" # I don't know what to expect
+	native_static_libs=""          # I don't know what to expect
+	shared_library_suffix=".dll"
+	static_library_suffix=".lib"
+	library_prefix=""
+	;;
 
-    *)
-        >&2 echo "Unknown platform '${target}'"
-        exit 1
-        ;;
+*)
+	>&2 echo "Unknown platform '${target}'"
+	exit 1
+	;;
 esac
 
 echo "Recognized platform '${target}'. Adding libs: ${native_static_libs}"
-sed < profiling-ffi/datadog_profiling.pc.in "s/@Datadog_VERSION@/${version}/g" \
-    > "$destdir/lib/pkgconfig/datadog_profiling.pc"
+sed <profiling-ffi/datadog_profiling.pc.in "s/@Datadog_VERSION@/${version}/g" \
+	>"$destdir/lib/pkgconfig/datadog_profiling.pc"
 
-sed < profiling-ffi/datadog_profiling_with_rpath.pc.in "s/@Datadog_VERSION@/${version}/g" \
-    > "$destdir/lib/pkgconfig/datadog_profiling_with_rpath.pc"
+sed <profiling-ffi/datadog_profiling_with_rpath.pc.in "s/@Datadog_VERSION@/${version}/g" \
+	>"$destdir/lib/pkgconfig/datadog_profiling_with_rpath.pc"
 
-sed < profiling-ffi/datadog_profiling-static.pc.in "s/@Datadog_VERSION@/${version}/g" \
-    | sed "s/@Datadog_LIBRARIES@/${native_static_libs}/g" \
-    > "$destdir/lib/pkgconfig/datadog_profiling-static.pc"
+sed <profiling-ffi/datadog_profiling-static.pc.in "s/@Datadog_VERSION@/${version}/g" |
+	sed "s/@Datadog_LIBRARIES@/${native_static_libs}/g" \
+		>"$destdir/lib/pkgconfig/datadog_profiling-static.pc"
 
 # strip leading white space as per CMake policy CMP0004.
 ffi_libraries="$(echo "${native_static_libs}" | sed -e 's/^[[:space:]]*//')"
 
-sed < cmake/DatadogConfig.cmake.in \
-    > "$destdir/cmake/DatadogConfig.cmake" \
-    "s/@Datadog_LIBRARIES@/${ffi_libraries}/g"
+sed <cmake/DatadogConfig.cmake.in > \
+"$destdir/cmake/DatadogConfig.cmake" \
+	"s/@Datadog_LIBRARIES@/${ffi_libraries}/g"
 
 cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
-
 
 datadog_profiling_ffi="datadog-profiling-ffi"
 FEATURES="--features cbindgen,datadog-profiling-ffi/ddtelemetry-ffi"
 if [[ "$symbolizer" -eq 1 ]]; then
-    FEATURES="--features cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,symbolizer"
+	FEATURES="--features cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,symbolizer"
 fi
 
 if [[ ! -z ${ARG_FEATURES} ]]; then
-    FEATURES="$FEATURES,$ARG_FEATURES"
+	FEATURES="$FEATURES,$ARG_FEATURES"
 fi
 
 # build inside the crate to use the config.toml file
-( cd profiling-ffi && DESTDIR="$destdir" cargo build ${FEATURES} --release --target "${target}")
+profile_arg="--release"
+if [[ "$profile" = "debug" ]]; then
+	profile_arg=""
+fi
+(cd profiling-ffi && DESTDIR="$destdir" cargo build ${FEATURES} $profile_arg --target "${target}")
 
 # Remove _ffi suffix when copying
 shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"
@@ -132,30 +140,37 @@ shared_library_rename="${library_prefix}datadog_profiling${shared_library_suffix
 static_library_name="${library_prefix}datadog_profiling_ffi${static_library_suffix}"
 static_library_rename="${library_prefix}datadog_profiling${static_library_suffix}"
 
-cp -v "$CARGO_TARGET_DIR/${target}/release/${shared_library_name}" "$destdir/lib/${shared_library_rename}"
-cp -v "$CARGO_TARGET_DIR/${target}/release/${static_library_name}" "$destdir/lib/${static_library_rename}"
+cp -v "$CARGO_TARGET_DIR/${target}/${profile}/${shared_library_name}" "$destdir/lib/${shared_library_rename}"
+cp -v "$CARGO_TARGET_DIR/${target}/${profile}/${static_library_name}" "$destdir/lib/${static_library_rename}"
 
 shared_library_name="${shared_library_rename}"
 static_library_name="${static_library_rename}"
 
+# Because of the rename above, if the library has a soname (which would likely be set to the old name with the _ffi suffix)
+# we need to remove it otherwise when dynamically loading it'll try to find a library with the _ffi suffix which will not
+# exist.
+if [[ "$strip_soname" -eq 1 ]]; then
+	patchelf --set-soname "" "$destdir/lib/${shared_library_name}"
+fi
+
 if [[ "$remove_rpath" -eq 1 ]]; then
-    patchelf --remove-rpath "$destdir/lib/${shared_library_name}"
+	patchelf --remove-rpath "$destdir/lib/${shared_library_name}"
 fi
 
 if [[ "$fix_macos_rpath" -eq 1 ]]; then
-    install_name_tool -id @rpath/${shared_library_name} "$destdir/lib/${shared_library_name}"
+	install_name_tool -id @rpath/${shared_library_name} "$destdir/lib/${shared_library_name}"
 fi
 
 # objcopy might not be available on macOS
-if command -v objcopy > /dev/null && [[ "$target" != "x86_64-pc-windows-msvc" ]]; then
-    # Remove .llvmbc section which is not useful for clients
-    objcopy --remove-section .llvmbc "$destdir/lib/${static_library_name}"
+if command -v objcopy >/dev/null && [[ "$target" != "x86_64-pc-windows-msvc" ]]; then
+	# Remove .llvmbc section which is not useful for clients
+	objcopy --remove-section .llvmbc "$destdir/lib/${static_library_name}"
 
-    # Ship debug information separate from shared library, so that downstream packages can selectively include it
-    # https://sourceware.org/gdb/onlinedocs/gdb/Separate-Debug-Files.html
-    objcopy --only-keep-debug "$destdir/lib/$shared_library_name" "$destdir/lib/$shared_library_name.debug"
-    strip -S "$destdir/lib/$shared_library_name"
-    objcopy --add-gnu-debuglink="$destdir/lib/$shared_library_name.debug" "$destdir/lib/$shared_library_name"
+	# Ship debug information separate from shared library, so that downstream packages can selectively include it
+	# https://sourceware.org/gdb/onlinedocs/gdb/Separate-Debug-Files.html
+	objcopy --only-keep-debug "$destdir/lib/$shared_library_name" "$destdir/lib/$shared_library_name.debug"
+	strip -S "$destdir/lib/$shared_library_name"
+	objcopy --add-gnu-debuglink="$destdir/lib/$shared_library_name.debug" "$destdir/lib/$shared_library_name"
 fi
 
 echo "Checking that native-static-libs are as expected for this platform..."
@@ -170,14 +185,14 @@ echo "Expected native-static-libs:${expected_native_static_libs}"
 # Raise an error only if some libs are in actual libs but not in expected libs.
 
 # trim leading and trailing spaces, then split the string on " -" by inserting new lines and sort lines while removing duplicates
-unique_expected_libs=$(echo "$expected_native_static_libs "| awk '{ gsub(/^[ \t]+|[ \t]+$/, "");gsub(/ +-/,"\n-")};1' | sort -u)
-unique_libs=$(echo "$actual_native_static_libs "| awk '{ gsub(/^[ \t]+|[ \t]+$/, "");gsub(/ +-/,"\n-")};1' | sort -u)
+unique_expected_libs=$(echo "$expected_native_static_libs " | awk '{ gsub(/^[ \t]+|[ \t]+$/, "");gsub(/ +-/,"\n-")};1' | sort -u)
+unique_libs=$(echo "$actual_native_static_libs " | awk '{ gsub(/^[ \t]+|[ \t]+$/, "");gsub(/ +-/,"\n-")};1' | sort -u)
 
 unexpected_native_libs=$(comm -13 <(echo "$unique_expected_libs") <(echo "$unique_libs"))
 if [ -n "$unexpected_native_libs" ]; then
-    echo "Error - More native static libraries are required for linking than expected:" 1>&2
-    echo "$unexpected_native_libs" 1>&2
-    exit 1
+	echo "Error - More native static libraries are required for linking than expected:" 1>&2
+	echo "$unexpected_native_libs" 1>&2
+	exit 1
 fi
 cd -
 
@@ -188,28 +203,28 @@ echo "Generating $destdir/include/libdatadog headers..."
 # ADD headers based on selected features.
 HEADERS="$destdir/include/datadog/common.h $destdir/include/datadog/profiling.h $destdir/include/datadog/telemetry.h"
 case $ARG_FEATURES in
-    *data-pipeline-ffi*)
-        HEADERS="$HEADERS $destdir/include/datadog/data-pipeline.h"
-        ;;
+*data-pipeline-ffi*)
+	HEADERS="$HEADERS $destdir/include/datadog/data-pipeline.h"
+	;;
 esac
 
 "$CARGO_TARGET_DIR"/debug/dedup_headers $HEADERS
 
 # Don't build the crashtracker on windows
 if [[ "$target" != "x86_64-pc-windows-msvc" ]]; then
-    echo "Building binaries"
-    # $destdir might be relative. Get an absolute path that will work when we cd
-    export ABS_DESTDIR=$(get_abs_filename $destdir)
-    export CRASHTRACKER_BUILD_DIR=$CARGO_TARGET_DIR/build/crashtracker-receiver
-    export CRASHTRACKER_SRC_DIR=$PWD/crashtracker
-    # Always start with a clean directory
-    [ -d $CRASHTRACKER_BUILD_DIR ] && rm -r $CRASHTRACKER_BUILD_DIR
-    mkdir -p $CRASHTRACKER_BUILD_DIR
-    cd $CRASHTRACKER_BUILD_DIR
-    cmake -S $CRASHTRACKER_SRC_DIR -DDatadog_ROOT=$ABS_DESTDIR
-    cmake --build .
-    mkdir -p $ABS_DESTDIR/bin
-    cp libdatadog-crashtracking-receiver $ABS_DESTDIR/bin
+	echo "Building binaries"
+	# $destdir might be relative. Get an absolute path that will work when we cd
+	export ABS_DESTDIR=$(get_abs_filename $destdir)
+	export CRASHTRACKER_BUILD_DIR=$CARGO_TARGET_DIR/build/crashtracker-receiver
+	export CRASHTRACKER_SRC_DIR=$PWD/crashtracker
+	# Always start with a clean directory
+	[ -d $CRASHTRACKER_BUILD_DIR ] && rm -r $CRASHTRACKER_BUILD_DIR
+	mkdir -p $CRASHTRACKER_BUILD_DIR
+	cd $CRASHTRACKER_BUILD_DIR
+	cmake -S $CRASHTRACKER_SRC_DIR -DDatadog_ROOT=$ABS_DESTDIR
+	cmake --build .
+	mkdir -p $ABS_DESTDIR/bin
+	cp libdatadog-crashtracking-receiver $ABS_DESTDIR/bin
 fi
 
 echo "Done."
