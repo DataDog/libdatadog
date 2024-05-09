@@ -119,22 +119,28 @@ impl<A: Allocator + Clone> ChainAllocator<A> {
             .allocate(chain_layout)?
             .as_ptr()
             .cast::<ChainNode<A>>();
-        let chain_node = ChainNode {
-            prev: UnsafeCell::new(ChainNodePtr {
-                // SAFETY: todo
-                ptr: unsafe { (*top).ptr },
-            }),
-            linear,
+        let chain_node = {
+            // SAFETY: If non-null, this is a valid pointer, and the reference
+            // is temporary, as all references for the chain nodes are.
+            let ptr = unsafe { (*top).ptr };
+            ChainNode {
+                prev: UnsafeCell::new(ChainNodePtr { ptr }),
+                linear,
+            }
         };
 
-        // SAFETY: todo
+        // SAFETY: this is a write operation to freshly allocated memory which
+        // has the correct layout.
         unsafe { chain_node_addr.write(chain_node) };
 
         let chain_node_ptr = ChainNodePtr {
             // SAFETY: derived from allocation (not null).
             ptr: Some(unsafe { NonNull::new_unchecked(chain_node_addr) }),
         };
-        // SAFETY: todo
+
+        // SAFETY: the value is just a pointer, no drops need to occur.
+        // Additionally, references are always temporary for the top, so this
+        // write will not violate aliasing rules.
         unsafe { self.top.get().write(chain_node_ptr) };
 
         Ok(())
@@ -142,7 +148,8 @@ impl<A: Allocator + Clone> ChainAllocator<A> {
 
     fn capacity_helper(mut ptr: *mut ChainNode<A>) -> usize {
         let mut capacity = 0_usize;
-        // SAFETY:
+        // SAFETY: if non-null, it's a valid pointer. The reference is
+        // short-lived as usual to avoid aliasing issues.
         while let Some(chain_node) = unsafe { ptr.as_ref() } {
             capacity += chain_node.linear.reserved_bytes();
             ptr = chain_node.prev_ptr();
@@ -195,11 +202,10 @@ impl<A: Allocator + Clone> ChainAllocator<A> {
         // Only need to look at the top node of the chain, all the previous
         // nodes are considered full.
         let chain_ptr = self.top.get();
-        // SAFETY: todo
-        match unsafe { (*chain_ptr).as_ref() } {
-            None => 0,
-            Some(chain_node) => chain_node.remaining_capacity(),
-        }
+        // SAFETY: If non-null, this is a valid pointer, and the reference is
+        // temporary, as all references for the chain nodes are.
+        let top = unsafe { (*chain_ptr).as_ref() };
+        top.map(ChainNode::remaining_capacity).unwrap_or(0)
     }
 }
 
