@@ -381,7 +381,6 @@ impl Profile {
                 None
             }
         });
-
         if let Some(label) = label {
             self.get_endpoint_for_label(label)
         } else {
