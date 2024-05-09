@@ -60,10 +60,10 @@ impl<'pprof> Replayer<'pprof> {
     ) -> anyhow::Result<Vec<api::ValueType<'pprof>>> {
         let mut sample_types = Vec::with_capacity(profile_index.pprof.sample_types.len());
         for sample_type in profile_index.pprof.sample_types.iter() {
-            sample_types.push(api::ValueType {
-                r#type: profile_index.get_string(sample_type.r#type)?,
-                unit: profile_index.get_string(sample_type.unit)?,
-            })
+            sample_types.push(api::ValueType::new(
+                profile_index.get_string(sample_type.r#type)?,
+                profile_index.get_string(sample_type.unit)?,
+            ))
         }
         Ok(sample_types)
     }
@@ -75,10 +75,10 @@ impl<'pprof> Replayer<'pprof> {
 
         match profile_index.pprof.period_type {
             Some(period_type) => {
-                let r#type = api::ValueType {
-                    r#type: profile_index.get_string(period_type.r#type)?,
-                    unit: profile_index.get_string(period_type.unit)?,
-                };
+                let r#type = api::ValueType::new(
+                    profile_index.get_string(period_type.r#type)?,
+                    profile_index.get_string(period_type.unit)?,
+                );
                 Ok(Some(api::Period { r#type, value }))
             }
             None => Ok(None),
