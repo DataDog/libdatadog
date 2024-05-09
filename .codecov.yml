@@ -7,6 +7,10 @@ component_management:
       name: crashtracker  # this is a display name, and can be changed freely
       paths:
         - crashtracker
+    - component_id: datadog-alloc  # this is an identifier that should not be changed
+      name: datadog-alloc  # this is a display name, and can be changed freely
+      paths:
+        - alloc
     - component_id: data-pipeline  # this is an identifier that should not be changed
       name: data-pipeline  # this is a display name, and can be changed freely
       paths:
