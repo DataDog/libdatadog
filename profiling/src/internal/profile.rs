@@ -372,8 +372,9 @@ impl Profile {
     fn get_endpoint_for_labels(&self, label_set_id: LabelSetId) -> anyhow::Result<Option<Label>> {
         let label = self.get_label_set(label_set_id)?.iter().find_map(|id| {
             let label = self.get_label(*id);
-            if label.is_ok()
-                && label.as_ref().unwrap().get_key() == self.endpoints.local_root_span_id_label
+            if label
+                .as_ref()
+                .is_ok_and(|l| l.get_key() == self.endpoints.local_root_span_id_label)
             {
                 Some(label.unwrap())
             } else {
