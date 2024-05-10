@@ -30,11 +30,7 @@ RSpec.describe Libdatadog do
       end
     end
 
-    context "when no binaries are available in the vendor directory" do
-      describe ".available_binaries" do
-        it { expect(Libdatadog.available_binaries).to be_empty }
-      end
-
+    shared_examples_for "libdatadog not in usable state" do
       describe ".pkgconfig_folder" do
         it { expect(Libdatadog.pkgconfig_folder).to be nil }
       end
@@ -42,6 +38,18 @@ RSpec.describe Libdatadog do
       describe ".path_to_crashtracking_receiver_binary" do
         it { expect(Libdatadog.path_to_crashtracking_receiver_binary).to be nil }
       end
+
+      describe ".ld_library_path" do
+        it { expect(Libdatadog.ld_library_path).to be nil }
+      end
+    end
+
+    context "when no binaries are available in the vendor directory" do
+      describe ".available_binaries" do
+        it { expect(Libdatadog.available_binaries).to be_empty }
+      end
+
+      it_behaves_like "libdatadog not in usable state"
     end
 
     context "when vendor directory does not exist" do
@@ -51,13 +59,7 @@ RSpec.describe Libdatadog do
         it { expect(Libdatadog.available_binaries).to be_empty }
       end
 
-      describe ".pkgconfig_folder" do
-        it { expect(Libdatadog.pkgconfig_folder).to be nil }
-      end
-
-      describe ".path_to_crashtracking_receiver_binary" do
-        it { expect(Libdatadog.path_to_crashtracking_receiver_binary).to be nil }
-      end
+      it_behaves_like "libdatadog not in usable state"
     end
 
     context "when binaries are available in the vendor directory" do
@@ -71,7 +73,7 @@ RSpec.describe Libdatadog do
       end
 
       context "for the current platform" do
-        let(:pkgconfig_folder) { "#{temporary_directory}/#{Gem::Platform.local}/some/folder/containing/the/pkgconfig/file" }
+        let(:pkgconfig_folder) { "#{temporary_directory}/#{Gem::Platform.local}/some/folder/containing/the/lib/pkgconfig" }
 
         before do
           create_dummy_pkgconfig_file(pkgconfig_folder)
@@ -130,16 +132,18 @@ RSpec.describe Libdatadog do
             )
           end
         end
+
+        describe ".ld_library_path" do
+          it "returns the full path to the libdatadog lib directory" do
+            expect(Libdatadog.ld_library_path).to eq(
+              "#{temporary_directory}/#{Gem::Platform.local}/some/folder/containing/the/lib"
+            )
+          end
+        end
       end
 
       context "but not for the current platform" do
-        describe ".pkgconfig_folder" do
-          it { expect(Libdatadog.pkgconfig_folder).to be nil }
-        end
-
-        describe ".path_to_crashtracking_receiver_binary" do
-          it { expect(Libdatadog.path_to_crashtracking_receiver_binary).to be nil }
-        end
+        it_behaves_like "libdatadog not in usable state"
       end
     end
   end
