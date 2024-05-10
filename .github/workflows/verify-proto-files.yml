@@ -14,49 +14,23 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: diff agent_payload.proto
         working-directory: trace-protobuf/src/pb
-        continue-on-error: true
-        id: agent_payload_proto
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file agent_payload.proto --tag ${{ env.DATADOG_AGENT_TAG }}
-
-      - uses: mainmatter/continue-on-error-comment@b2606cc5ef2525ec21692999676a19f047e3e082 # v1.2
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          outcome: ${{ steps.agent_payload_proto.outcome }}
-          test-id: Verify trace-protobuf agent_payload_proto
       - name: diff tracer_payload.proto
+        if: success() || failure()
         working-directory: trace-protobuf/src/pb
-        continue-on-error: true
-        id: tracer_payload_proto
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file tracer_payload.proto --tag ${{ env.DATADOG_AGENT_TAG }}
-      - uses: mainmatter/continue-on-error-comment@b2606cc5ef2525ec21692999676a19f047e3e082 # v1.2
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          outcome: ${{ steps.tracer_payload_proto.outcome }}
-          test-id: Verify trace-protobuf tracer_payload_proto
       - name: diff stats.proto
+        if: success() || failure()
         working-directory: trace-protobuf/src/pb
-        continue-on-error: true
-        id: stats_proto
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file stats.proto --tag ${{ env.DATADOG_AGENT_TAG }}
-      - uses: mainmatter/continue-on-error-comment@b2606cc5ef2525ec21692999676a19f047e3e082 # v1.2
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          outcome: ${{ steps.stats_proto.outcome }}
-          test-id: Verify trace-protobuf stats_proto
       - name: diff span.proto
+        if: success() || failure()
         working-directory: trace-protobuf/src/pb
-        continue-on-error: true
-        id: span_proto
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file span.proto --tag ${{ env.DATADOG_AGENT_TAG }}
-      - uses: mainmatter/continue-on-error-comment@b2606cc5ef2525ec21692999676a19f047e3e082 # v1.2
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          outcome: ${{ steps.span_proto.outcome }}
-          test-id: Verify trace-protobuf span_proto
