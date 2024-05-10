@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::api::UpscalingInfo;
+use anyhow::Context;
 
 #[derive(Debug)]
 pub struct UpscalingRule {
@@ -85,7 +86,7 @@ impl UpscalingRules {
                 let (_, rules) = self
                     .rules
                     .get_index_mut(index)
-                    .ok_or(anyhow::anyhow!("Already existing rules"))?;
+                    .context("Already existing rules")?;
                 rules.push(rule);
             }
         };
