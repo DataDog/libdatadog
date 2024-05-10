@@ -85,7 +85,7 @@ pub fn into_pprof_iter<T: PprofItem>(
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     #[test]

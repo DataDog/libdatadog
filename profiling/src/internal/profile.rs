@@ -12,6 +12,14 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
 pub struct Profile {
+    /// When profiles are reset, the sample-types need to be preserved. This
+    /// maintains them in a way that does not depend on the string table. The
+    /// Option part is this is taken from the old profile and moved to the new
+    /// one.
+    owned_sample_types: Option<Box<[OwnedValueType]>>,
+    /// When profiles are reset, the period needs to be preserved. This
+    /// stores it in a way that does not depend on the string table.
+    owned_period: Option<OwnedPeriod>,
     endpoints: Endpoints,
     functions: FxIndexSet<Function>,
     labels: FxIndexSet<Label>,
@@ -123,94 +131,37 @@ impl Profile {
         Ok(())
     }
 
-    pub fn get_string(&self, id: StringId) -> &str {
-        self.strings
-            .get_index(id.to_offset())
-            .expect("StringId to have a valid interned index")
-    }
-
     /// Creates a profile with `start_time`.
     /// Initializes the string table to hold:
     ///  - "" (the empty string)
     ///  - "local root span id"
     ///  - "trace endpoint"
     /// All other fields are default.
+    #[inline]
     pub fn new(
         start_time: SystemTime,
         sample_types: &[api::ValueType],
         period: Option<api::Period>,
     ) -> Self {
-        /* Do not use Profile's default() impl here or it will cause a stack
-         * overflow, since that default impl calls this method.
-         */
-        let mut profile = Self {
-            endpoints: Default::default(),
-            functions: Default::default(),
-            labels: Default::default(),
-            label_sets: Default::default(),
-            locations: Default::default(),
-            mappings: Default::default(),
-            observations: Observations::new(sample_types.len()),
-            period: None,
-            sample_types: vec![],
-            stack_traces: Default::default(),
+        Self::new_internal(
+            Self::backup_period(period),
+            Self::backup_sample_types(sample_types),
             start_time,
-            strings: Default::default(),
-            timestamp_key: Default::default(),
-            upscaling_rules: Default::default(),
-        };
-
-        // Ensure the empty string is the first inserted item and has a 0 id.
-        let _id = profile.intern("");
-        debug_assert!(_id == StringId::ZERO);
-
-        profile.endpoints.local_root_span_id_label = profile.intern("local root span id");
-        profile.endpoints.endpoint_label = profile.intern("trace endpoint");
-        profile.timestamp_key = profile.intern("end_timestamp_ns");
-
-        profile.sample_types = sample_types
-            .iter()
-            .map(|vt| ValueType {
-                r#type: profile.intern(vt.r#type),
-                unit: profile.intern(vt.unit),
-            })
-            .collect();
-
-        if let Some(period) = period {
-            profile.period = Some((
-                period.value,
-                ValueType {
-                    r#type: profile.intern(period.r#type.r#type),
-                    unit: profile.intern(period.r#type.unit),
-                },
-            ));
-        };
-
-        profile
+        )
     }
 
     /// Resets all data except the sample types and period.
     /// Returns the previous Profile on success.
+    #[inline]
     pub fn reset_and_return_previous(
         &mut self,
         start_time: Option<SystemTime>,
     ) -> anyhow::Result<Profile> {
-        /* We have to map over the types because the order of the strings is
-         * not generally guaranteed, so we can't just copy the underlying
-         * structures.
-         */
-        let sample_types: Vec<api::ValueType> = self.extract_api_sample_types()?;
-
-        let period = self.period.map(|t| api::Period {
-            r#type: api::ValueType {
-                r#type: self.get_string(t.1.r#type),
-                unit: self.get_string(t.1.unit),
-            },
-            value: t.0,
-        });
-
-        let start_time = start_time.unwrap_or_else(SystemTime::now);
-        let mut profile = Profile::new(start_time, &sample_types, period);
+        let mut profile = Profile::new_internal(
+            self.owned_period.take(),
+            self.owned_sample_types.take(),
+            start_time.unwrap_or_else(SystemTime::now),
+        );
 
         std::mem::swap(&mut *self, &mut profile);
         Ok(profile)
@@ -374,16 +325,14 @@ impl Profile {
         self.stack_traces.dedup(StackTrace { locations })
     }
 
-    fn extract_api_sample_types(&self) -> anyhow::Result<Vec<api::ValueType>> {
-        let sample_types = self
-            .sample_types
-            .iter()
-            .map(|sample_type| api::ValueType {
-                r#type: self.get_string(sample_type.r#type),
-                unit: self.get_string(sample_type.unit),
-            })
-            .collect();
-        Ok(sample_types)
+    #[inline]
+    fn backup_period(src: Option<api::Period>) -> Option<OwnedPeriod> {
+        src.as_ref().map(OwnedPeriod::from)
+    }
+
+    #[inline]
+    fn backup_sample_types(src: &[api::ValueType]) -> Option<Box<[OwnedValueType]>> {
+        Some(src.iter().map(OwnedValueType::from).collect())
     }
 
     /// Fetches the endpoint information for the label. There may be errors,
@@ -392,8 +341,7 @@ impl Profile {
     fn get_endpoint_for_label(&self, label: &Label) -> anyhow::Result<Option<Label>> {
         anyhow::ensure!(
             label.get_key() == self.endpoints.local_root_span_id_label,
-            "bug: get_endpoint_for_label should only be called on labels with the key \"local root span id\", called on label with key \"{}\"",
-            self.get_string(label.get_key())
+            "bug: get_endpoint_for_label should only be called on labels with the key \"local root span id\""
         );
 
         anyhow::ensure!(
@@ -474,6 +422,73 @@ impl Profile {
         StringId::from_offset(index)
     }
 
+    /// Creates a profile from the period, sample types, and start time using
+    /// the owned values.
+    #[inline(never)]
+    fn new_internal(
+        owned_period: Option<OwnedPeriod>,
+        owned_sample_types: Option<Box<[OwnedValueType]>>,
+        start_time: SystemTime,
+    ) -> Self {
+        let mut profile = Self {
+            owned_period,
+            owned_sample_types,
+            endpoints: Default::default(),
+            functions: Default::default(),
+            labels: Default::default(),
+            label_sets: Default::default(),
+            locations: Default::default(),
+            mappings: Default::default(),
+            observations: Default::default(),
+            period: None,
+            sample_types: vec![],
+            stack_traces: Default::default(),
+            start_time,
+            strings: Default::default(),
+            timestamp_key: Default::default(),
+            upscaling_rules: Default::default(),
+        };
+
+        let _id = profile.intern("");
+        debug_assert!(_id == StringId::ZERO);
+
+        profile.endpoints.local_root_span_id_label = profile.intern("local root span id");
+        profile.endpoints.endpoint_label = profile.intern("trace endpoint");
+        profile.timestamp_key = profile.intern("end_timestamp_ns");
+
+        // Break "cannot borrow `*self` as mutable because it is also borrowed
+        // as immutable" by moving it out, borrowing it, and putting it back.
+        let owned_sample_types = profile.owned_sample_types.take();
+        profile.sample_types = match &owned_sample_types {
+            None => Vec::new(),
+            Some(sample_types) => sample_types
+                .iter()
+                .map(|sample_type| ValueType {
+                    r#type: profile.intern(&sample_type.typ),
+                    unit: profile.intern(&sample_type.unit),
+                })
+                .collect(),
+        };
+        profile.owned_sample_types = owned_sample_types;
+
+        // Break "cannot borrow `*self` as mutable because it is also borrowed
+        // as immutable" by moving it out, borrowing it, and putting it back.
+        let owned_period = profile.owned_period.take();
+        if let Some(OwnedPeriod { value, typ }) = &owned_period {
+            profile.period = Some((
+                *value,
+                ValueType {
+                    r#type: profile.intern(&typ.typ),
+                    unit: profile.intern(&typ.unit),
+                },
+            ));
+        };
+        profile.owned_period = owned_period;
+
+        profile.observations = Observations::new(profile.sample_types.len());
+        profile
+    }
+
     fn translate_and_enrich_sample_labels(
         &self,
         sample: Sample,
@@ -540,15 +555,12 @@ impl Profile {
 }
 
 #[cfg(test)]
-mod api_test {
+mod api_tests {
     use super::*;
 
     #[test]
     fn interning() {
-        let sample_types = vec![api::ValueType {
-            r#type: "samples",
-            unit: "count",
-        }];
+        let sample_types = [api::ValueType::new("samples", "count")];
         let mut profiles = Profile::new(SystemTime::now(), &sample_types, None);
 
         let expected_id = StringId::from_offset(profiles.interned_strings_count());
@@ -563,15 +575,9 @@ mod api_test {
 
     #[test]
     fn api() {
-        let sample_types = vec![
-            api::ValueType {
-                r#type: "samples",
-                unit: "count",
-            },
-            api::ValueType {
-                r#type: "wall-time",
-                unit: "nanoseconds",
-            },
+        let sample_types = [
+            api::ValueType::new("samples", "count"),
+            api::ValueType::new("wall-time", "nanoseconds"),
         ];
 
         let mapping = api::Mapping {
@@ -621,10 +627,7 @@ mod api_test {
     }
 
     fn provide_distinct_locations() -> Profile {
-        let sample_types = vec![api::ValueType {
-            r#type: "samples",
-            unit: "count",
-        }];
+        let sample_types = [api::ValueType::new("samples", "count")];
 
         let mapping = api::Mapping {
             filename: "php",
@@ -846,7 +849,6 @@ mod api_test {
 
         // The string table should have at least the empty string.
         assert!(!profile.strings.is_empty());
-        assert_eq!("", profile.get_string(StringId::ZERO));
     }
 
     #[test]
@@ -854,36 +856,32 @@ mod api_test {
         /* The previous test (reset) checked quite a few properties already, so
          * this one will focus only on the period.
          */
-        let mut profile = provide_distinct_locations();
-
-        let period = (
-            10_000_000,
-            ValueType {
-                r#type: profile.intern("wall-time"),
-                unit: profile.intern("nanoseconds"),
-            },
-        );
-        profile.period = Some(period);
+        let sample_types: &[api::ValueType] = &[api::ValueType::new("wall-time", "nanoseconds")];
+        let period = api::Period {
+            r#type: sample_types[0],
+            value: 10_000_000,
+        };
+        let mut profile = Profile::new(SystemTime::now(), sample_types, Some(period));
 
         let prev = profile
             .reset_and_return_previous(None)
             .expect("reset to succeed");
-        assert_eq!(Some(period), prev.period);
 
         // Resolve the string values to check that they match (their string
         // table offsets may not match).
-        let (value, period_type) = profile.period.expect("profile to have a period");
-        assert_eq!(value, period.0);
-        assert_eq!(profile.get_string(period_type.r#type), "wall-time");
-        assert_eq!(profile.get_string(period_type.unit), "nanoseconds");
+        for (value, period_type) in [profile.period.unwrap(), prev.period.unwrap()] {
+            assert_eq!(value, period.value);
+            let strings = profile.strings.iter().collect::<Vec<_>>();
+            let r#type: &str = strings[period_type.r#type.to_offset()];
+            let unit: &str = strings[period_type.unit.to_offset()];
+            assert_eq!(r#type, period.r#type.r#type);
+            assert_eq!(unit, period.r#type.unit);
+        }
     }
 
     #[test]
     fn adding_local_root_span_id_with_string_value_fails() {
-        let sample_types = vec![api::ValueType {
-            r#type: "wall-time",
-            unit: "nanoseconds",
-        }];
+        let sample_types = [api::ValueType::new("wall-time", "nanoseconds")];
 
         let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
@@ -905,15 +903,9 @@ mod api_test {
 
     #[test]
     fn lazy_endpoints() -> anyhow::Result<()> {
-        let sample_types = vec![
-            api::ValueType {
-                r#type: "samples",
-                unit: "count",
-            },
-            api::ValueType {
-                r#type: "wall-time",
-                unit: "nanoseconds",
-            },
+        let sample_types = [
+            api::ValueType::new("samples", "count"),
+            api::ValueType::new("wall-time", "nanoseconds"),
         ];
 
         let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
@@ -1021,15 +1013,9 @@ mod api_test {
 
     #[test]
     fn endpoint_counts_empty_test() {
-        let sample_types = vec![
-            api::ValueType {
-                r#type: "samples",
-                unit: "count",
-            },
-            api::ValueType {
-                r#type: "wall-time",
-                unit: "nanoseconds",
-            },
+        let sample_types = [
+            api::ValueType::new("samples", "count"),
+            api::ValueType::new("wall-time", "nanoseconds"),
         ];
 
         let profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
@@ -1044,15 +1030,9 @@ mod api_test {
 
     #[test]
     fn endpoint_counts_test() -> anyhow::Result<()> {
-        let sample_types = vec![
-            api::ValueType {
-                r#type: "samples",
-                unit: "count",
-            },
-            api::ValueType {
-                r#type: "wall-time",
-                unit: "nanoseconds",
-            },
+        let sample_types = [
+            api::ValueType::new("samples", "count"),
+            api::ValueType::new("wall-time", "nanoseconds"),
         ];
 
         let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
@@ -1082,10 +1062,7 @@ mod api_test {
 
     #[test]
     fn local_root_span_id_label_cannot_occur_more_than_once() {
-        let sample_types = vec![api::ValueType {
-            r#type: "wall-time",
-            unit: "nanoseconds",
-        }];
+        let sample_types = [api::ValueType::new("wall-time", "nanoseconds")];
 
         let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
@@ -1116,14 +1093,8 @@ mod api_test {
     #[test]
     fn test_no_upscaling_if_no_rules() {
         let sample_types = vec![
-            api::ValueType {
-                r#type: "samples",
-                unit: "count",
-            },
-            api::ValueType {
-                r#type: "wall-time",
-                unit: "nanoseconds",
-            },
+            api::ValueType::new("samples", "count"),
+            api::ValueType::new("wall-time", "nanoseconds"),
         ];
 
         let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
@@ -1154,18 +1125,9 @@ mod api_test {
 
     fn create_samples_types() -> Vec<api::ValueType<'static>> {
         vec![
-            api::ValueType {
-                r#type: "samples",
-                unit: "count",
-            },
-            api::ValueType {
-                r#type: "wall-time",
-                unit: "nanoseconds",
-            },
-            api::ValueType {
-                r#type: "cpu-time",
-                unit: "nanoseconds",
-            },
+            api::ValueType::new("samples", "count"),
+            api::ValueType::new("wall-time", "nanoseconds"),
+            api::ValueType::new("cpu-time", "nanoseconds"),
         ]
     }
 

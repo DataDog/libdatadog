@@ -459,7 +459,7 @@ pub unsafe extern "C" fn ddog_CancellationToken_drop(token: Option<&mut Cancella
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
     use ddcommon_ffi::Slice;
     use serde_json::json;

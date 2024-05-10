@@ -9,17 +9,8 @@ use std::time::SystemTime;
 
 // Keep this in-sync with profiles.c
 fn main() {
-    let walltime = api::ValueType {
-        r#type: "wall-time",
-        unit: "nanoseconds",
-    };
-    let sample_types = vec![
-        api::ValueType {
-            r#type: "samples",
-            unit: "count",
-        },
-        walltime,
-    ];
+    let walltime = api::ValueType::new("wall-time", "nanoseconds");
+    let sample_types = [api::ValueType::new("samples", "count"), walltime];
 
     let period = api::Period {
         r#type: walltime,
