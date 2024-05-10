@@ -7,6 +7,7 @@ use crate::api;
 use crate::collections::identifiable::*;
 use crate::pprof::sliced_proto::*;
 use crate::serializer::CompressedProtobufSerializer;
+use anyhow::Context;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
@@ -371,12 +372,12 @@ impl Profile {
 
     fn get_endpoint_for_labels(&self, label_set_id: LabelSetId) -> anyhow::Result<Option<Label>> {
         let label = self.get_label_set(label_set_id)?.iter().find_map(|id| {
-            let label = self.get_label(*id);
-            if label
-                .as_ref()
-                .is_ok_and(|l| l.get_key() == self.endpoints.local_root_span_id_label)
-            {
-                Some(label.unwrap())
+            if let Ok(label) = self.get_label(*id) {
+                if label.get_key() == self.endpoints.local_root_span_id_label {
+                    Some(label)
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -391,19 +392,19 @@ impl Profile {
     fn get_label(&self, id: LabelId) -> anyhow::Result<&Label> {
         self.labels
             .get_index(id.to_offset())
-            .ok_or(anyhow::anyhow!("LabelId to have a valid interned index"))
+            .context("LabelId to have a valid interned index")
     }
 
     fn get_label_set(&self, id: LabelSetId) -> anyhow::Result<&LabelSet> {
         self.label_sets
             .get_index(id.to_offset())
-            .ok_or(anyhow::anyhow!("LabelSetId to have a valid interned index"))
+            .context("LabelSetId to have a valid interned index")
     }
 
     fn get_stacktrace(&self, st: StackTraceId) -> anyhow::Result<&StackTrace> {
         self.stack_traces
             .get_index(st.to_raw_id())
-            .ok_or(anyhow::anyhow!("StackTraceId {:?} to exist in profile", st))
+            .with_context(|| format!("StackTraceId {:?} to exist in profile", st))
     }
 
     /// Interns the `str` as a string, returning the id in the string table.
