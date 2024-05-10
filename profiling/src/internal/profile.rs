@@ -374,13 +374,10 @@ impl Profile {
         let label = self.get_label_set(label_set_id)?.iter().find_map(|id| {
             if let Ok(label) = self.get_label(*id) {
                 if label.get_key() == self.endpoints.local_root_span_id_label {
-                    Some(label)
-                } else {
-                    None
+                    return Some(label);
                 }
-            } else {
-                None
             }
+            None
         });
         if let Some(label) = label {
             self.get_endpoint_for_label(label)
