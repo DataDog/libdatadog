@@ -85,7 +85,7 @@ impl UpscalingRules {
                 let (_, rules) = self
                     .rules
                     .get_index_mut(index)
-                    .expect("Already existing rules");
+                    .ok_or(anyhow::anyhow!("Already existing rules"))?;
                 rules.push(rule);
             }
         };
