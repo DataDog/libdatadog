@@ -83,10 +83,9 @@ impl UpscalingRules {
                 self.rules.insert((label_name_id, label_value_id), rules);
             }
             Some(index) => {
-                let (_, rules) = self
-                    .rules
-                    .get_index_mut(index)
-                    .context("Already existing rules")?;
+                let (_, rules) = self.rules.get_index_mut(index).with_context(|| {
+                    format!("Expected upscaling rules to exist for index {}", index)
+                })?;
                 rules.push(rule);
             }
         };
