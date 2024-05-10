@@ -18,13 +18,13 @@ jobs:
       fail-fast: false
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Cache
         uses: ./.github/actions/cache
         with:
           rust_version: ${{ matrix.rust_version }}
       - name: Install Rust ${{ matrix.rust_version }}
-        if: ${{ matrix.rust_version != '' }}
+        if: matrix.rust_version != ''
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
       - id: rust-version
         # On Windows run happens in a PowerShell, so start bash explicitly
@@ -40,12 +40,12 @@ jobs:
         if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
         uses: jlumbroso/free-disk-space@v1.3.1
         with:
-          tool-cache: true
+          tool-cache: false
           android: true
           dotnet: true
           haskell: true
-          large-packages: true
-          docker-images: true
+          large-packages: false
+          docker-images: false
           swap-storage: true
       - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --verbose"
         run: cargo build --workspace --verbose
@@ -80,7 +80,7 @@ jobs:
     steps:
 
       - name: Checkout sources
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup output dir
         shell: bash
@@ -101,12 +101,24 @@ jobs:
         run: rustup install nightly
 
       - name: Install Rust ${{ matrix.rust_version }}
-        if: ${{ matrix.rust_version != '' }}
+        if: matrix.rust_version != ''
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
 
       - id: rust-version
         # On Windows run happens in a PowerShell, so start bash explicitly
         run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
+
+      - name: Free Disk Space (Ubuntu only)
+        if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: true
 
       - name: "Generate profiling FFI"
         shell: bash
@@ -119,8 +131,9 @@ jobs:
            ./build-telemetry-ffi.sh ${OUTPUT_FOLDER}/telemetry
 
       - name: 'Publish libdatadog'
-        uses: actions/upload-artifact@v3
-        if: '${{ always() }}'
+        uses: actions/upload-artifact@v4
+        # Only upload the artifacts built with the default Rust version
+        if: (success() || failure()) && matrix.rust_version == ''
         with:
           if-no-files-found: error
           name: libdatadog.${{ matrix.platform }}
@@ -128,7 +141,7 @@ jobs:
           retention-days: 1
 
       - name: "(Windows) Test building Profiling C bindings - dynamic link vc runtime"
-        if: ${{ matrix.platform == 'windows-latest' }}
+        if: matrix.platform == 'windows-latest'
         shell: bash
         run: |
           set -e
@@ -138,7 +151,7 @@ jobs:
           cmake --build .
 
       - name: "(Windows) Test building Profiling C bindings - static link vc runtime"
-        if: ${{ matrix.platform == 'windows-latest' }}
+        if: matrix.platform == 'windows-latest'
         shell: bash
         run: |
           set -e
@@ -149,7 +162,7 @@ jobs:
 
       - name: "Test building Profiling C bindings"
         shell: bash
-        if: ${{ matrix.platform != 'windows-latest' }}
+        if: matrix.platform != 'windows-latest'
         run: |
           set -e
           mkdir examples/ffi/build
@@ -171,10 +184,18 @@ jobs:
       group: ci-${{ github.ref }}-cross-centos7
       cancel-in-progress: true
     steps:
-      - name: Remove unused tools cache
-        run: rm -rf /opt/hostedtoolcache
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: true
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Cache
         uses: ./.github/actions/cache
         with:
@@ -200,15 +221,15 @@ jobs:
     steps:
       -
         name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       -
         name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
         with:
-          config: .github/buildkitd-16-cores.toml
+          buildkitd-config: .github/buildkitd-16-cores.toml
       -
         name: Build and Generate FFI
-        uses: docker/bake-action@v2
+        uses: docker/bake-action@v4.5.0
         with:
           targets: ${{ matrix.target }}
           set: |

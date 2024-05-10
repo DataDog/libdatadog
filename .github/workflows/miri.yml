@@ -8,13 +8,13 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
     steps:
-    - uses: actions/checkout@v2
-    - uses: actions-rs/toolchain@v1
-      with:
-        profile: minimal
-        toolchain: nightly
-        override: true
-        components: miri
+    - uses: actions/checkout@v4
+    - name: Set up Rust
+      run: |
+        set -e
+        rustup set profile minimal
+        rustup toolchain install nightly --component miri 
+        rustup default nightly
     - uses: taiki-e/install-action@v2
       with: 
         tool: nextest@0.9.68
