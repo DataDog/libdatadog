@@ -742,7 +742,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_reset(
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     #[test]

@@ -344,7 +344,7 @@ impl<'a> TryFrom<&'a pprof::Profile> for Profile<'a> {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     #[test]

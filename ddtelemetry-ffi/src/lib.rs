@@ -105,7 +105,7 @@ macro_rules! try_c {
 pub(crate) use c_setters;
 
 #[cfg(test)]
-mod test_c_ffi {
+mod tests {
     use crate::{builder::*, worker_handle::*};
     use ddcommon::{parse_uri, Endpoint};
     use ddcommon_ffi as ffi;
