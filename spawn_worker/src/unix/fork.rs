@@ -60,7 +60,7 @@ pub fn set_default_child_panic_handler() {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod single_threaded_tests {
     use io_lifetimes::OwnedFd;
     use std::{
         io::{Read, Write},
@@ -73,7 +73,8 @@ pub mod tests {
     use crate::{assert_child_exit, fork::set_default_child_panic_handler, getpid};
 
     #[test]
-    #[ignore]
+    #[cfg_attr(miri, ignore)]
+    #[cfg_attr(coverage_nightly, ignore)] // this fails on nightly coverage
     fn test_fork_subprocess() {
         let (mut sock_a, sock_b) = UnixStream::pair().unwrap();
         let pid = unsafe {
@@ -107,21 +108,26 @@ pub mod tests {
         assert_eq!(format!("child-{pid}"), out);
     }
 
-    #[test]
-    #[ignore]
     #[cfg(unix)]
-    fn test_fork_trigger_error() {
-        let pid = unsafe {
-            super::fork_fn((), |_| {
-                set_default_child_panic_handler();
+    mod skip_root_tests {
+        use crate::{assert_child_exit, fork::set_default_child_panic_handler};
 
-                // Limit the number of processes the child process tree is able to contain
-                rlimit::setrlimit(rlimit::Resource::NPROC, 1, 1).unwrap();
-                let err = crate::fork::fork_fn((), |_| {}).unwrap_err();
-                assert_eq!(std::io::ErrorKind::WouldBlock, err.kind());
-            })
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn test_fork_trigger_error() {
+            let pid = unsafe {
+                super::super::fork_fn((), |_| {
+                    set_default_child_panic_handler();
+
+                    // Limit the number of processes the child process tree is able to contain.
+                    // This does not work when the test is run as root.
+                    rlimit::setrlimit(rlimit::Resource::NPROC, 1, 1).unwrap();
+                    let err = crate::fork::fork_fn((), |_| {}).unwrap_err();
+                    assert_eq!(std::io::ErrorKind::WouldBlock, err.kind());
+                })
+            }
+            .unwrap();
+            assert_child_exit!(pid);
         }
-        .unwrap();
-        assert_child_exit!(pid);
     }
 }

@@ -1,35 +1,59 @@
 profiling:
-- profiling/**/*
-- profiling-ffi/**/*
+- changed-files:
+  - any-glob-to-any-file: [
+      'profiling/**/*',
+      'profiling-ffi/**/*',
+    ]
 
 common:
-- ddcommon/**/*
-- ddcommon-ffi/**/*
+- changed-files:
+  - any-glob-to-any-file: [
+      'ddcommon/**/*',
+      'ddcommon-ffi/**/*',
+    ]
 
 ci-build:
-- .github/**/*
-- .gitlab-ci.yml
-- windows/**/*
-- build-*
+- changed-files:
+  - any-glob-to-any-file: [
+      '.github/**/*',
+      '.gitlab-ci.yml',
+      'windows/**/*',
+      'build-*',
+    ]
 
 mini-agent:
-- trace-mini-agent/**/*
-- serverless/**/*
-- trace-normalization/**/*
-- trace-obfuscation/**/*
-- trace-utils/**/*
+- changed-files:
+  - any-glob-to-any-file: [
+      'trace-mini-agent/**/*',
+      'serverless/**/*',
+      'trace-normalization/**/*',
+      'trace-obfuscation/**/*',
+      'trace-utils/**/*',
+    ]
 
 telemetry:
-- ddtelemetry/**/*
-- ddtelemetry-ffi/**/*
+- changed-files:
+  - any-glob-to-any-file: [
+      'ddtelemetry/**/*',
+      'ddtelemetry-ffi/**/*',
+    ]
 
 dogstatsd:
-- dogstatsd-collector/**/*
+- changed-files:
+  - any-glob-to-any-file: [
+      'dogstatsd-collector/**/*',
+    ]
 
 sidecar:
-- sidecar/**/*
-- sidecar-ffi/**/*
+- changed-files:
+  - any-glob-to-any-file: [
+      'sidecar/**/*',
+      'sidecar-ffi/**/*',
+    ]
 
 data-pipeline:
-- data-pipeline/**/*
-- data-pipeline-ffi/**/*
+- changed-files:
+  - any-glob-to-any-file: [
+      'data-pipeline/**/*',
+      'data-pipeline-ffi/**/*',
+    ]

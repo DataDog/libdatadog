@@ -555,7 +555,7 @@ impl Profile {
 }
 
 #[cfg(test)]
-mod api_test {
+mod api_tests {
     use super::*;
 
     #[test]

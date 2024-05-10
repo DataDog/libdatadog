@@ -141,7 +141,7 @@ impl Drop for NonEmptyObservations {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
     use crate::collections::identifiable::*;
     use crate::internal::{LabelSetId, StackTraceId};

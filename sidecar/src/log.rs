@@ -389,7 +389,7 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::{
         enable_logging, TemporarilyRetainedKeyParser, TemporarilyRetainedMap, MULTI_LOG_FILTER,
     };
