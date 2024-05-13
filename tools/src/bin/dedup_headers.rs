@@ -13,7 +13,7 @@ use std::io::{self, BufReader, BufWriter, Read, Seek, Write};
 
 fn collect_definitions(header: &str) -> Vec<regex::Match<'_>> {
     lazy_static::lazy_static! {
-        static ref HEADER_TYPE_DECL_RE: Regex = RegexBuilder::new(r"^(/\*\*.*?\*/\n)?(#define [a-zA-Z_0-9]+ [^\n]+|typedef (struct|enum) [a-zA-Z_0-9]+ +(\{.*?\} )?[a-zA-Z_0-9]+;)\n+")
+        static ref HEADER_TYPE_DECL_RE: Regex = RegexBuilder::new(r"^(/\*\*([^*]|\*+[^*/])*\*+/\n)?(#define [a-zA-Z_0-9]+ [^\n]+|typedef (struct|enum) [a-zA-Z_0-9]+ +(\{.*?\} )?[a-zA-Z_0-9]+;)\n+")
             .multi_line(true)
             .dot_matches_new_line(true)
             .build()
@@ -92,4 +92,73 @@ fn main() {
     }
     base_new_parts.push(&base_header_content[base_defs.last().unwrap().end()..]);
     write_parts(&mut BufWriter::new(&base_header), &base_new_parts).unwrap();
+}
+
+#[test]
+fn collect_definitions_comments() {
+    let header = r"/**
+ * `QueueId` is a struct that represents a unique identifier for a queue.
+ * It contains a single field, `inner`, which is a 64-bit unsigned integer.
+ */
+typedef uint64_t ddog_QueueId;
+
+/**
+ * Holds the raw parts of a Rust Vec; it should only be created from Rust,
+ * never from C.
+ **/
+typedef struct ddog_Vec_U8 {
+  const uint8_t *ptr;
+  uintptr_t len;
+  uintptr_t capacity;
+} ddog_Vec_U8;
+";
+    let matches = collect_definitions(header);
+
+    assert_eq!(matches.len(), 1);
+    assert_eq!(
+        matches[0].as_str(),
+        r"/**
+ * Holds the raw parts of a Rust Vec; it should only be created from Rust,
+ * never from C.
+ **/
+typedef struct ddog_Vec_U8 {
+  const uint8_t *ptr;
+  uintptr_t len;
+  uintptr_t capacity;
+} ddog_Vec_U8;
+"
+    );
+
+    let header = r"/** foo */
+typedef struct ddog_Vec_U8 {
+  const uint8_t *ptr;
+} ddog_Vec_U8;
+";
+    let matches = collect_definitions(header);
+
+    assert_eq!(matches.len(), 1);
+    assert_eq!(
+        matches[0].as_str(),
+        r"/** foo */
+typedef struct ddog_Vec_U8 {
+  const uint8_t *ptr;
+} ddog_Vec_U8;
+"
+    );
+
+    let header = r"/** foo **/ */
+typedef struct ddog_Vec_U8 {
+  const uint8_t *ptr;
+} ddog_Vec_U8;
+";
+    let matches = collect_definitions(header);
+
+    assert_eq!(matches.len(), 1);
+    assert_eq!(
+        matches[0].as_str(),
+        r"typedef struct ddog_Vec_U8 {
+  const uint8_t *ptr;
+} ddog_Vec_U8;
+"
+    );
 }

@@ -7,6 +7,7 @@ use crate::api;
 use crate::collections::identifiable::*;
 use crate::pprof::sliced_proto::*;
 use crate::serializer::CompressedProtobufSerializer;
+use anyhow::Context;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
@@ -213,7 +214,7 @@ impl Profile {
         for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
             let labels = self.translate_and_enrich_sample_labels(sample, timestamp)?;
             let location_ids: Vec<_> = self
-                .get_stacktrace(sample.stacktrace)
+                .get_stacktrace(sample.stacktrace)?
                 .locations
                 .iter()
                 .map(Id::to_raw_id)
@@ -370,13 +371,13 @@ impl Profile {
     }
 
     fn get_endpoint_for_labels(&self, label_set_id: LabelSetId) -> anyhow::Result<Option<Label>> {
-        let label = self.get_label_set(label_set_id).iter().find_map(|id| {
-            let label = self.get_label(*id);
-            if label.get_key() == self.endpoints.local_root_span_id_label {
-                Some(label)
-            } else {
-                None
+        let label = self.get_label_set(label_set_id)?.iter().find_map(|id| {
+            if let Ok(label) = self.get_label(*id) {
+                if label.get_key() == self.endpoints.local_root_span_id_label {
+                    return Some(label);
+                }
             }
+            None
         });
         if let Some(label) = label {
             self.get_endpoint_for_label(label)
@@ -385,22 +386,22 @@ impl Profile {
         }
     }
 
-    fn get_label(&self, id: LabelId) -> &Label {
+    fn get_label(&self, id: LabelId) -> anyhow::Result<&Label> {
         self.labels
             .get_index(id.to_offset())
-            .expect("LabelId to have a valid interned index")
+            .context("LabelId to have a valid interned index")
     }
 
-    fn get_label_set(&self, id: LabelSetId) -> &LabelSet {
+    fn get_label_set(&self, id: LabelSetId) -> anyhow::Result<&LabelSet> {
         self.label_sets
             .get_index(id.to_offset())
-            .expect("LabelSetId to have a valid interned index")
+            .context("LabelSetId to have a valid interned index")
     }
 
-    fn get_stacktrace(&self, st: StackTraceId) -> &StackTrace {
+    fn get_stacktrace(&self, st: StackTraceId) -> anyhow::Result<&StackTrace> {
         self.stack_traces
             .get_index(st.to_raw_id())
-            .expect("StackTraceId {st} to exist in profile")
+            .with_context(|| format!("StackTraceId {:?} to exist in profile", st))
     }
 
     /// Interns the `str` as a string, returning the id in the string table.
@@ -494,18 +495,16 @@ impl Profile {
         sample: Sample,
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<Vec<pprof::Label>> {
-        let labels: Vec<_> = self
-            .get_label_set(sample.labels)
+        self.get_label_set(sample.labels)?
             .iter()
-            .map(|l| self.get_label(*l).into())
+            .map(|l| self.get_label(*l).map(pprof::Label::from))
             .chain(
-                self.get_endpoint_for_labels(sample.labels)?
-                    .map(pprof::Label::from),
+                self.get_endpoint_for_labels(sample.labels)
+                    .transpose()
+                    .map(|res| res.map(pprof::Label::from)),
             )
-            .chain(timestamp.map(|ts| Label::num(self.timestamp_key, ts.get(), None).into()))
-            .collect();
-
-        Ok(labels)
+            .chain(timestamp.map(|ts| Ok(Label::num(self.timestamp_key, ts.get(), None).into())))
+            .collect()
     }
 
     /// Validates labels
