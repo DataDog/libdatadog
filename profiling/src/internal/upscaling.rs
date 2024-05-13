@@ -84,7 +84,7 @@ impl UpscalingRules {
             }
             Some(index) => {
                 let (_, rules) = self.rules.get_index_mut(index).with_context(|| {
-                    format!("Expected upscaling rules to exist for index {}", index)
+                    format!("Expected upscaling rules to exist for index {index}")
                 })?;
                 rules.push(rule);
             }
