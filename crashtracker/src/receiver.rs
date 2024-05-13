@@ -6,7 +6,7 @@ use self::stacktrace::StackFrame;
 use super::*;
 use anyhow::Context;
 use nix::unistd::getppid;
-use std::{io::BufReader, os::unix::net::UnixListener};
+use std::{io::{Read, BufReader}, os::unix::net::UnixListener};
 
 pub fn resolve_frames(
     config: &CrashtrackerConfiguration,
@@ -37,6 +37,18 @@ pub fn get_unix_socket(socket_path: &str) -> anyhow::Result<UnixListener> {
 
 pub const SOCKET_PATH: &str = "/tmp/crash-report-socket";
 
+pub fn reciever_entry_point_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<()> {
+    let listener = get_unix_socket(socket_path)?;
+    let (unix_stream, _) = listener.accept().expect("to accept a connection");
+    let stream = BufReader::new(unix_stream);
+    receiver_entry_point(stream)
+}
+
+pub fn receiver_entry_point_stdin() -> anyhow::Result<()> {
+    let stream = std::io::stdin().lock();
+    receiver_entry_point(stream)
+}
+
 /// Receives data from a crash collector via a pipe on `stdin`, formats it into
 /// `CrashInfo` json, and emits it to the endpoint/file defined in `config`.
 ///
@@ -46,14 +58,7 @@ pub const SOCKET_PATH: &str = "/tmp/crash-report-socket";
 ///
 /// See comments in [profiling/crashtracker/mod.rs] for a full architecture
 /// description.
-pub fn receiver_entry_point() -> anyhow::Result<()> {
-    println!("start entry point");
-    // TODO
-    let listener = get_unix_socket(SOCKET_PATH)?;
-    let (unix_stream, _) = listener.accept().expect("to accept a connection");
-    let stream = BufReader::new(unix_stream);
-    //    let stream = std::io::stdin().lock();
-    println!("opened stream");
+fn receiver_entry_point(stream: impl std::io::BufRead) -> anyhow::Result<()> {
     match receive_report(stream)? {
         CrashReportStatus::NoCrash => Ok(()),
         CrashReportStatus::CrashReport(config, mut crash_info) => {

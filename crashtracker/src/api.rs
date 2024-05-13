@@ -6,8 +6,7 @@ use crate::{
     configuration::CrashtrackerReceiverConfig,
     counters::reset_counters,
     crash_handler::{
-        ensure_receiver, register_crash_handlers, restore_old_handlers, shutdown_receiver,
-        update_receiver_after_fork,
+        ensure_receiver, ensure_socket, register_crash_handlers, restore_old_handlers, shutdown_receiver, update_receiver_after_fork
     },
     crash_info::CrashtrackerMetadata,
     update_config, update_metadata, CrashtrackerConfiguration,
@@ -81,9 +80,9 @@ pub fn on_fork(
 /// ATOMICITY:
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
-pub fn init(
+pub fn init_with_receiver(
     config: CrashtrackerConfiguration,
-    receiver_config: Option<CrashtrackerReceiverConfig>,
+    receiver_config: CrashtrackerReceiverConfig,
     metadata: CrashtrackerMetadata,
 ) -> anyhow::Result<()> {
     // Setup the receiver first, so that if there is a crash detected it has
@@ -91,9 +90,32 @@ pub fn init(
     let create_alt_stack = config.create_alt_stack;
     update_metadata(metadata)?;
     update_config(config)?;
-    if let Some(receiver_config) = &receiver_config {
-        ensure_receiver(receiver_config)?;
-    }
+    ensure_receiver(&receiver_config)?;
+    register_crash_handlers(create_alt_stack)?;
+    Ok(())
+}
+
+/// Initialize the crash-tracking infrastructure.
+///
+/// PRECONDITIONS:
+///     None.
+/// SAFETY:
+///     Crash-tracking functions are not reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function is not atomic. A crash during its execution may lead to
+///     unexpected crash-handling behaviour.
+pub fn init_with_unix_socket(
+    config: CrashtrackerConfiguration,
+    socket_path: &str,
+    metadata: CrashtrackerMetadata,
+) -> anyhow::Result<()> {
+    // Setup the receiver first, so that if there is a crash detected it has
+    // somewhere to go.
+    let create_alt_stack = config.create_alt_stack;
+    update_metadata(metadata)?;
+    update_config(config)?;
+    ensure_socket(socket_path)?;
     register_crash_handlers(create_alt_stack)?;
     Ok(())
 }
@@ -151,7 +173,7 @@ fn test_crash() {
         "family".to_string(),
         vec![],
     );
-    init(config, receiver_config, metadata).expect("not to fail");
+    init_with_receiver(config, receiver_config, metadata).expect("not to fail");
     begin_profiling_op(crate::ProfilingOpTypes::CollectingSample).expect("Not to fail");
 
     let tag = Tag::new("apple", "banana").expect("tag");

@@ -32,7 +32,7 @@ mod unix {
         let stderr_filename = args.next().context("Unexpected number of arguments")?;
         let stdout_filename = args.next().context("Unexpected number of arguments")?;
         let timeout = Duration::from_secs(30);
-        crashtracker::init(
+        crashtracker::init_with_receiver(
             CrashtrackerConfiguration {
                 additional_files: vec![],
                 create_alt_stack: true,
