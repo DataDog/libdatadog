@@ -11,16 +11,22 @@ license.workspace = true
 [lib]
 crate-type = ["lib"]
 
+[[bench]]
+name = "main"
+harness = false
+
 [dependencies]
 anyhow = "1.0"
 bitmaps = "3.2.0"
 bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
+datadog-alloc = {path = "../alloc"}
 ddcommon = {path = "../ddcommon"}
 derivative = "2.2.0"
 futures = { version = "0.3", default-features = false }
 futures-core = {version = "0.3.0", default-features = false}
 futures-util = {version = "0.3.0", default-features = false}
+hashbrown = { version = "0.14", default-features = false, features = ["allocator-api2"] }
 http = "0.2"
 http-body = "0.4"
 hyper = {version = "0.14", features = ["client"], default-features = false}
@@ -38,3 +44,6 @@ serde_json = {version = "1.0"}
 tokio = {version = "1.23", features = ["rt", "macros"]}
 tokio-util = "0.7.1"
 byteorder = { version = "1.5", features = ["std"] }
+
+[dev-dependencies]
+criterion = "0.5.1"

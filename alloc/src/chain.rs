@@ -104,13 +104,15 @@ impl<A: Allocator + Clone> ChainAllocator<A> {
 
     #[cold]
     #[inline(never)]
-    fn grow(&self) -> Result<(), AllocError> {
+    fn grow(&self, min_size: usize) -> Result<(), AllocError> {
         let top = self.top.get();
         let chain_layout = Layout::new::<ChainNode<A>>();
 
+        let node_size = min_size.max(self.node_size);
         let linear = {
-            let layout = Layout::from_size_align(self.node_size, chain_layout.align())
-                .map_err(|_| AllocError)?;
+            let layout = Layout::from_size_align(node_size, chain_layout.align())
+                .map_err(|_| AllocError)?
+                .pad_to_align();
             LinearAllocator::new_in(layout, self.allocator.clone())?
         };
 
@@ -214,16 +216,14 @@ unsafe impl<A: Allocator + Clone> Allocator for ChainAllocator<A> {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         let layout = layout.pad_to_align();
 
-        // Too large for ChainAllocator to deal with.
-        let header_overhead = size_of::<ChainNode<A>>();
-        let maximum_capacity = self.node_size - header_overhead;
-        if layout.size() > maximum_capacity {
-            return Err(AllocError);
-        }
-
         let remaining_capacity = self.remaining_capacity();
         if layout.size() > remaining_capacity {
-            self.grow()?;
+            let header_overhead = size_of::<ChainNode<A>>();
+            let min_size = layout
+                .size()
+                .checked_add(header_overhead)
+                .ok_or(AllocError)?;
+            self.grow(min_size)?;
         }
 
         // At this point:
@@ -298,6 +298,32 @@ mod tests {
         unsafe { allocator.deallocate(ptr.cast(), layout) };
     }
 
+    #[test]
+    fn test_large_allocations() {
+        let allocator = ChainAllocator::new_in(4096, Global);
+
+        // Force an allocation, so it makes a chunk of the minimum size.
+        {
+            let ptr = allocator.allocate(Layout::new::<u8>()).unwrap();
+            unsafe { allocator.deallocate(ptr.cast(), Layout::new::<u8>()) };
+        }
+        // Should be a bit less than 4096, but use this over hard-coding a
+        // number, to make it more resilient to implementation changes.
+        let remaining_capacity = allocator.remaining_capacity();
+
+        // Now make something bigger than the chunk.
+        let size = 4 * (remaining_capacity + 1);
+        let layout = Layout::from_size_align(size, 1).unwrap();
+        let ptr = allocator.allocate(layout).unwrap();
+        let actual_size = ptr.len();
+        assert!(
+            actual_size >= size,
+            "failed to allocate large allocation, expected at least {size} bytes, saw {actual_size}"
+        );
+        // Doesn't return memory, just ensuring we don't panic.
+        unsafe { allocator.deallocate(ptr.cast(), layout) };
+    }
+
     #[track_caller]
     fn fill_to_capacity<A: Allocator + Clone>(allocator: &ChainAllocator<A>) {
         let remaining_capacity = allocator.remaining_capacity();
@@ -306,9 +332,8 @@ mod tests {
             let ptr = allocator.allocate(layout).unwrap();
             // Doesn't return memory, just ensuring we don't panic.
             unsafe { allocator.deallocate(ptr.cast(), layout) };
+            assert_eq!(0, allocator.remaining_capacity());
         }
-        let remaining_capacity = allocator.remaining_capacity();
-        assert_eq!(0, remaining_capacity);
     }
 
     #[test]
