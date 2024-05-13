@@ -9,13 +9,14 @@ use datadog_sidecar::agent_remote_config::{
 };
 use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
+use datadog_sidecar::dogstatsd::DogStatsDAction;
 use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
 use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
     InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
+use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
-use datadog_sidecar::dogstatsd::DogStatsDAction;
 use ddcommon_ffi as ffi;
 use ddcommon_ffi::MaybeError;
 use ddtelemetry::{
@@ -34,7 +35,6 @@ use std::os::unix::prelude::FromRawFd;
 use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::slice;
 use std::time::Duration;
-use ddcommon::tag::Tag;
 
 #[repr(C)]
 pub struct NativeFile {
@@ -242,8 +242,8 @@ pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_build(
     language_name: ffi::CharSlice,
     language_version: ffi::CharSlice,
     tracer_version: ffi::CharSlice,
-) -> Box<RuntimeMeta> {
-    let inner = RuntimeMeta::new(
+) -> Box<RuntimeMetadata> {
+    let inner = RuntimeMetadata::new(
         language_name.to_utf8_lossy(),
         language_version.to_utf8_lossy(),
         tracer_version.to_utf8_lossy(),
@@ -254,7 +254,7 @@ pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_build(
 
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_drop(meta: Box<RuntimeMeta>) {
+pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_drop(meta: Box<RuntimeMetadata>) {
     drop(meta)
 }
 
@@ -346,7 +346,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
     queue_id: &QueueId,
-    runtime_meta: &RuntimeMeta,
+    runtime_meta: &RuntimeMetadata,
     service_name: ffi::CharSlice,
     env_name: ffi::CharSlice,
 ) -> MaybeError {
@@ -432,19 +432,27 @@ pub struct TracerHeaderTags<'a> {
     pub client_computed_stats: bool,
 }
 
-impl<'a> From<&'a TracerHeaderTags<'a>> for SerializedTracerHeaderTags {
-    fn from(tags: &'a TracerHeaderTags<'a>) -> Self {
-        datadog_trace_utils::trace_utils::TracerHeaderTags {
-            lang: &tags.lang.to_utf8_lossy(),
-            lang_version: &tags.lang_version.to_utf8_lossy(),
-            lang_interpreter: &tags.lang_interpreter.to_utf8_lossy(),
-            lang_vendor: &tags.lang_vendor.to_utf8_lossy(),
-            tracer_version: &tags.tracer_version.to_utf8_lossy(),
-            container_id: &tags.container_id.to_utf8_lossy(),
-            client_computed_top_level: tags.client_computed_top_level,
-            client_computed_stats: tags.client_computed_stats,
-        }
-        .into()
+impl<'a> TryInto<SerializedTracerHeaderTags> for &'a TracerHeaderTags<'a> {
+    type Error = std::io::Error;
+
+    fn try_into(self) -> Result<SerializedTracerHeaderTags, Self::Error> {
+        let tags = datadog_trace_utils::trace_utils::TracerHeaderTags {
+            lang: &self.lang.to_utf8_lossy(),
+            lang_version: &self.lang_version.to_utf8_lossy(),
+            lang_interpreter: &self.lang_interpreter.to_utf8_lossy(),
+            lang_vendor: &self.lang_vendor.to_utf8_lossy(),
+            tracer_version: &self.tracer_version.to_utf8_lossy(),
+            container_id: &self.container_id.to_utf8_lossy(),
+            client_computed_top_level: self.client_computed_top_level,
+            client_computed_stats: self.client_computed_stats,
+        };
+
+        tags.try_into().map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Failed to convert TracerHeaderTags to SerializedTracerHeaderTags",
+            )
+        })
     }
 }
 
@@ -456,11 +464,13 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_shm(
     shm_handle: Box<ShmHandle>,
     tracer_header_tags: &TracerHeaderTags,
 ) -> MaybeError {
+    let tracer_header_tags = try_c!(tracer_header_tags.try_into());
+
     try_c!(blocking::send_trace_v04_shm(
         transport,
         instance_id,
         *shm_handle,
-        tracer_header_tags.into(),
+        tracer_header_tags,
     ));
 
     MaybeError::None
@@ -474,11 +484,13 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
     data: ffi::CharSlice,
     tracer_header_tags: &TracerHeaderTags,
 ) -> MaybeError {
+    let tracer_header_tags = try_c!(tracer_header_tags.try_into());
+
     try_c!(blocking::send_trace_v04_bytes(
         transport,
         instance_id,
         data.as_bytes().to_vec(),
-        tracer_header_tags.into(),
+        tracer_header_tags,
     ));
 
     MaybeError::None

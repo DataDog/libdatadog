@@ -145,13 +145,13 @@ impl SessionInfo {
         f(&mut self.get_trace_config());
     }
 
-    fn get_dogstatsd(&self) -> MutexGuard<dogstatsd::Flusher> {
+    pub(crate) fn get_dogstatsd(&self) -> MutexGuard<dogstatsd::Flusher> {
         self.dogstatsd.lock().unwrap()
     }
 
-    fn configure_dogstatsd<F>(&self, mut f: F)
-        where
-            F: FnMut(&mut dogstatsd::Flusher),
+    pub(crate) fn configure_dogstatsd<F>(&self, mut f: F)
+    where
+        F: FnMut(&mut dogstatsd::Flusher),
     {
         f(&mut self.get_dogstatsd());
     }

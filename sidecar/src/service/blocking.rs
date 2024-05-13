@@ -5,6 +5,7 @@ use super::{
     InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
     SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
+use crate::dogstatsd::DogStatsDAction;
 use datadog_ipc::platform::ShmHandle;
 use datadog_ipc::transport::blocking::BlockingTransport;
 use std::{
@@ -12,7 +13,6 @@ use std::{
     io,
     time::{Duration, Instant},
 };
-use crate::dogstatsd::DogStatsDAction;
 
 /// `SidecarTransport` is a type alias for the `BlockingTransport` struct from the `datadog_ipc`
 /// crate. It is used for sending `SidecarInterfaceRequest` and receiving

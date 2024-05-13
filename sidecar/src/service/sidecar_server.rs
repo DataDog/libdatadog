@@ -37,11 +37,11 @@ use tracing::{debug, enabled, error, info, warn, Level};
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 
+use crate::dogstatsd::DogStatsDAction;
 use crate::service::telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats;
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
-use crate::dogstatsd::DogStatsDAction;
 
 type NoResponse = Ready<()>;
 
