@@ -89,7 +89,7 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
             vec
         };
         let create_alt_stack = value.create_alt_stack;
-        let endpoint = unsafe { Some(exporter::try_to_endpoint(value.endpoint)?) };
+        let endpoint = unsafe { exporter::try_to_endpoint(value.endpoint).ok() };
         let resolve_frames = value.resolve_frames;
         let timeout = Duration::from_secs(value.timeout_secs);
         Self::new(
