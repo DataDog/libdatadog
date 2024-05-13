@@ -6,6 +6,7 @@ use crate::agent_remote_config::AgentRemoteConfigWriter;
 use datadog_ipc::platform::NamedShmHandle;
 use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::SendData;
+use datadog_trace_utils::trace_utils::SendDataResult;
 use ddcommon::Endpoint;
 use futures::future::join_all;
 use manual_future::ManualFuture;
@@ -98,7 +99,7 @@ impl TraceFlusher {
         let mut flush_data = self.inner.lock().unwrap();
         let flush_data = flush_data.deref_mut();
 
-        flush_data.traces.send_data_size += data.size();
+        flush_data.traces.send_data_size += data.size;
 
         if flush_data.traces.send_data_size
             > self.min_force_drop_size.load(Ordering::Relaxed) as usize
@@ -158,11 +159,10 @@ impl TraceFlusher {
             send_data_size: self.inner.lock().unwrap().traces.send_data_size as u32,
         }
     }
-    
+
     pub fn collect_metrics(&self) -> TraceFlusherMetrics {
         std::mem::take(&mut self.metrics.lock().unwrap())
     }
-
 
     fn write_remote_configs(&self, endpoint: Endpoint, contents: Vec<u8>) {
         let configs = &mut *self.remote_config.lock().unwrap();
