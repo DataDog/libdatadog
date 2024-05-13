@@ -3,6 +3,7 @@
 
 [workspace]
 members = [
+  "alloc",
   "crashtracker",
   "profiling",
   "profiling-ffi",

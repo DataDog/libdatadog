@@ -742,6 +742,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-alloc"
+version = "9.0.0"
+dependencies = [
+ "allocator-api2",
+ "libc",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "datadog-crashtracker"
 version = "9.0.0"
 dependencies = [
