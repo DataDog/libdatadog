@@ -5,6 +5,6 @@ pub mod api;
 pub mod collections;
 pub mod exporter;
 pub mod internal;
-mod iter;
+pub mod iter;
 pub mod pprof;
 pub mod serializer;
