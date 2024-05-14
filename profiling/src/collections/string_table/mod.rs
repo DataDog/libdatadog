@@ -117,10 +117,7 @@ impl StringTable {
     /// was originally inserted.
     ///
     /// # Panics
-    /// This panics if the allocator fails to allocate. This could happen for
-    /// a few reasons:
-    ///  - It failed to acquire a chunk.
-    ///  - The string is too large (larger than a chunk size, for example)
+    /// This panics if the allocator fails to allocate a new chunk/node.
     pub fn intern(&mut self, str: &str) -> StringId {
         let set = &mut self.strings;
         match set.get_index_of(str) {
