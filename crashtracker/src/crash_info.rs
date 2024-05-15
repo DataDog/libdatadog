@@ -42,21 +42,39 @@ impl CrashtrackerMetadata {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SigInfo {
     pub signum: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub signame: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashInfo {
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    #[serde(default)]
     pub additional_stacktraces: HashMap<String, Vec<StackFrame>>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    #[serde(default)]
     pub counters: HashMap<String, i64>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    #[serde(default)]
     pub files: HashMap<String, Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub metadata: Option<CrashtrackerMetadata>,
     pub os_info: os_info::Info,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub siginfo: Option<SigInfo>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub stacktrace: Vec<StackFrame>,
     pub incomplete: bool,
     /// Any additional data goes here
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    #[serde(default)]
     pub tags: HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub timestamp: Option<DateTime<Utc>>,
     pub uuid: Uuid,
 }
