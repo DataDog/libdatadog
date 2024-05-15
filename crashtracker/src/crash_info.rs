@@ -48,6 +48,20 @@ pub struct SigInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Mapping {
+    base_idx: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    build_id: Option<String>,
+    end_idx: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    hash: Option<String>,
+    // TODO: is this the right way to identify the module?
+    name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashInfo {
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     #[serde(default)]
@@ -58,6 +72,9 @@ pub struct CrashInfo {
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     #[serde(default)]
     pub files: HashMap<String, Vec<String>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
+    pub mappings: Vec<Mapping>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub metadata: Option<CrashtrackerMetadata>,
@@ -124,6 +141,7 @@ impl CrashInfo {
             counters: HashMap::new(),
             files: HashMap::new(),
             incomplete: false,
+            mappings: vec![],
             metadata: None,
             os_info,
             siginfo: None,
