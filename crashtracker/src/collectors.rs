@@ -4,6 +4,8 @@
 
 use anyhow::Context;
 
+use crate::StacktraceCollection;
+
 use super::constants::*;
 use std::{
     fs::File,
@@ -22,7 +24,10 @@ use std::{
 ///     https://github.com/rust-lang/backtrace-rs/issues/414
 ///     Calculating the `ip` of the frames seems safe, but resolving the frames
 ///     sometimes crashes.
-pub unsafe fn emit_backtrace_by_frames(w: &mut impl Write) -> anyhow::Result<()> {
+pub unsafe fn emit_backtrace_by_frames(
+    w: &mut impl Write,
+    resolve_frames: StacktraceCollection,
+) -> anyhow::Result<()> {
     // https://docs.rs/backtrace/latest/backtrace/index.html
     writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
     backtrace::trace_unsynchronized(|frame| {
@@ -35,6 +40,53 @@ pub unsafe fn emit_backtrace_by_frames(w: &mut impl Write) -> anyhow::Result<()>
         }
         write!(w, "\"sp\": \"{:?}\", ", frame.sp()).unwrap();
         write!(w, "\"symbol_address\": \"{:?}\"", frame.symbol_address()).unwrap();
+        if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
+            write!(w, ", \"names\": [").unwrap();
+
+            let mut first = true;
+            // This can give multiple answers in the case of inlined functions
+            // https://docs.rs/backtrace/latest/backtrace/fn.resolve.html
+            // Store them all into an array of names
+            unsafe {
+                backtrace::resolve_frame_unsynchronized(frame, |symbol| {
+                    if !first {
+                        write!(w, ", ").unwrap();
+                    }
+                    write!(w, "{{").unwrap();
+                    let mut comma_needed = false;
+                    if let Some(name) = symbol.name() {
+                        write!(w, "\"name\": \"{}\"", name).unwrap();
+                        comma_needed = true;
+                    }
+                    if let Some(filename) = symbol.filename() {
+                        if comma_needed {
+                            write!(w, ", ").unwrap();
+                        }
+                        write!(w, "\"filename\": {:?}", filename).unwrap();
+                        comma_needed = true;
+                    }
+                    if let Some(colno) = symbol.colno() {
+                        if comma_needed {
+                            write!(w, ", ").unwrap();
+                        }
+                        write!(w, "\"colno\": {}", colno).unwrap();
+                        comma_needed = true;
+                    }
+
+                    if let Some(lineno) = symbol.lineno() {
+                        if comma_needed {
+                            write!(w, ", ").unwrap();
+                        }
+                        write!(w, "\"lineno\": {}", lineno).unwrap();
+                    }
+
+                    write!(w, "}}").unwrap();
+
+                    first = false;
+                });
+            }
+            write!(w, "]").unwrap();
+        }
         writeln!(w, "}}").unwrap();
         true // keep going to the next frame
     });
