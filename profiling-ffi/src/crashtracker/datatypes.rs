@@ -31,6 +31,9 @@ pub struct CrashtrackerConfiguration<'a> {
     pub additional_files: Slice<'a, CharSlice<'a>>,
     pub create_alt_stack: bool,
     /// The endpoint to send the crash report to (can be a file://)
+    ///
+    /// If ProfilingEndpoint is left to a zero value (enum value for Agent + empty charslice),
+    /// the crashtracker will infer the agent host from env variables.
     pub endpoint: ProfilingEndpoint<'a>,
     pub resolve_frames: StacktraceCollection,
     pub timeout_secs: u64,
