@@ -47,6 +47,11 @@ pub struct SigInfo {
     pub signame: Option<String>,
 }
 
+/// Given an absolute pointer address in the stacktrace, a mapping contains
+/// the information needed for the backend to (1) figure out which binary it
+/// came from and (2) get the relative offset in the binary.
+/// If the binary's debug symbols are registered, the backend can use this to
+/// generate names on the stack trace.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Mapping {
     base_idx: usize,
