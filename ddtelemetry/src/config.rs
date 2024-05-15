@@ -177,7 +177,7 @@ impl Config {
                 .as_ref()
                 .map(|pipe_name| format!("windows:{pipe_name}"));
             #[cfg(not(windows))]
-            None
+            return None;
         })
         .or_else(|| match (&settings.agent_host, settings.trace_agent_port) {
             (None, None) => None,
@@ -245,9 +245,9 @@ impl Config {
 
     /// set_host sets the host telemetry should connect to.
     ///
-    /// It handles http(s?), and unix and windows pipes of the format (unix)|(windows)://<path to object>
-    /// If the host_url is http/https, any path will be ignored and replaced by the appropriate
-    /// telemetry endpoint path
+    /// It handles http(s?), and unix and windows pipes of the format (unix)|(windows)://<path to
+    /// object> If the host_url is http/https, any path will be ignored and replaced by the
+    /// appropriate telemetry endpoint path
     pub fn set_host(&mut self, host_url: &str) -> anyhow::Result<()> {
         let api_key = self.endpoint.take().and_then(|e| e.api_key);
         self.set_endpoint(Endpoint {

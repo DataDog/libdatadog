@@ -82,9 +82,8 @@ where
 /// TODO: we should properly handle malformed urls
 /// * For windows and unix schemes:
 ///     * For compatibility reasons with existing implementation this parser stores the encoded path
-///       in authority section as there is no existing standard
-///       [see](https://github.com/whatwg/url/issues/577) that covers this. We need to pick one hack
-///       or another
+///       in authority section as there is no existing standard [see](https://github.com/whatwg/url/issues/577)
+///       that covers this. We need to pick one hack or another
 ///     * For windows, interprets everything after windows: as path
 ///     * For unix, interprets everything after unix:// as path
 /// * For file scheme implementation will simply backfill missing authority section
