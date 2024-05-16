@@ -1,5 +1,6 @@
 [package]
 name = "ddtelemetry"
+description = "Telemetry client allowing to send data as described in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#telemetry-collection"
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true
