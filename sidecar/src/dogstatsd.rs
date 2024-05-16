@@ -22,6 +22,7 @@ use std::os::unix::net::UnixDatagram;
 // Queue with a maximum capacity of 32K elements
 const QUEUE_SIZE: usize = 32 * 1024;
 
+/// The `DogStatsDAction` enum gathers the metric types that can be sent to the DogStatsD server.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DogStatsDAction {
     Count(String, i64, Vec<Tag>),
@@ -43,14 +44,14 @@ pub struct Flusher {
 impl Flusher {
     pub fn set_endpoint(&mut self, endpoint: Endpoint) {
         self.client = None;
-        match endpoint.api_key {
+        self.endpoint = match endpoint.api_key {
             Some(_) => {
                 info!("DogStatsD is not available in agentless mode");
-                self.endpoint = None;
+                None
             }
             None => {
-                debug!("Updating DogStatsD endpoint to {}", endpoint.url.clone());
-                self.endpoint = Some(endpoint);
+                debug!("Updating DogStatsD endpoint to {}", endpoint.url);
+                Some(endpoint)
             }
         }
     }
