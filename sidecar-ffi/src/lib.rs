@@ -534,7 +534,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_count(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
     metric: ffi::CharSlice,
-    value: u64,
+    value: i64,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
 ) -> MaybeError {
     try_c!(blocking::send_dogstatsd_actions(
@@ -626,7 +626,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
     metric: ffi::CharSlice,
-    value: u64,
+    value: i64,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
 ) -> MaybeError {
     try_c!(blocking::send_dogstatsd_actions(

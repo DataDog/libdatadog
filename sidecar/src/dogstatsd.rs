@@ -24,14 +24,14 @@ const QUEUE_SIZE: usize = 32 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DogStatsDAction {
-    Count(String, u64, Vec<Tag>),
+    Count(String, i64, Vec<Tag>),
     Distribution(String, f64, Vec<Tag>),
     Gauge(String, f64, Vec<Tag>),
     Histogram(String, f64, Vec<Tag>),
     // Cadence only support i64 type as value
     // but Golang implementation uses string (https://github.com/DataDog/datadog-go/blob/331d24832f7eac97b091efd696278fe2c4192b29/statsd/statsd.go#L230)
     // and PHP implementation uses float or string (https://github.com/DataDog/php-datadogstatsd/blob/0efdd1c38f6d3dd407efbb899ad1fd2e5cd18085/src/DogStatsd.php#L251)
-    Set(String, u64, Vec<Tag>),
+    Set(String, i64, Vec<Tag>),
 }
 
 #[derive(Default)]
@@ -84,7 +84,7 @@ impl Flusher {
                     do_send(client.histogram_with_tags(metric.as_str(), value), &tags)
                 }
                 DogStatsDAction::Set(metric, value, tags) => {
-                    do_send(client.set_with_tags(metric.as_str(), value as i64), &tags)
+                    do_send(client.set_with_tags(metric.as_str(), value), &tags)
                 }
             } {
                 error!("Error while sending metric: {}", err);
@@ -193,6 +193,7 @@ mod test {
                 3,
                 vec![Tag::new("foo", "bar").unwrap()],
             ),
+            Count("test_neg_count".to_string(), -2, vec![]),
             Distribution("test_distribution".to_string(), 4.2, vec![]),
             Gauge("test_gauge".to_string(), 7.6, vec![]),
             Histogram("test_histogram".to_string(), 8.0, vec![]),
@@ -201,6 +202,7 @@ mod test {
                 9,
                 vec![Tag::new("the", "end").unwrap()],
             ),
+            Set("test_neg_set".to_string(), -1, vec![]),
         ]);
 
         fn read(socket: &net::UdpSocket) -> String {
@@ -211,10 +213,12 @@ mod test {
         }
 
         assert_eq!("test_count:3|c|#foo:bar", read(&socket));
+        assert_eq!("test_neg_count:-2|c", read(&socket));
         assert_eq!("test_distribution:4.2|d", read(&socket));
         assert_eq!("test_gauge:7.6|g", read(&socket));
         assert_eq!("test_histogram:8|h", read(&socket));
         assert_eq!("test_set:9|s|#the:end", read(&socket));
+        assert_eq!("test_neg_set:-1|s", read(&socket));
     }
 
     #[test]
