@@ -1,6 +1,12 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+/// These strings came from a WordPress profile, although it's unknown which
+/// profiler version generated it. It was made from setting up a WordPress
+/// demo app of some kind. It's extracted from this file (relative to root):
+///  * `profiling/tests/wordpress.pprof.lz4`
+/// For various tests such as using MIRI, it's too slow to decompress, open,
+/// parse, and extract the strings on-demand.
 pub const WORDPRESS_STRINGS: [&str; 1059] = [
 	"",
 	"sample",

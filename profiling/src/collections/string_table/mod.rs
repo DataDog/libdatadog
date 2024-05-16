@@ -267,11 +267,9 @@ mod tests {
         test_from_src(cases);
     }
 
-    /// Test inserting strings from a real WordPress profile, although it's
-    /// unknown at this point which profiler version generated it. It's a small
-    /// sample. Here we're checking that we don't panic or otherwise fail, and
-    /// that the total number of strings and the bytes of those strings match
-    /// the profile.
+    /// Test inserting strings from a WordPress profile.
+    /// Here we're checking that we don't panic or otherwise fail, and that
+    /// the total number of strings and the bytes of those strings match.
     #[test]
     fn test_wordpress() {
         test_from_src(&wordpress_test_data::WORDPRESS_STRINGS);
