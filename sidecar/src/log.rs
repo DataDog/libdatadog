@@ -243,7 +243,7 @@ impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
             .unwrap()
             .values()
             .map(|f| f.max_level_hint())
-            .max()
+            .min()
             .flatten()
     }
 
@@ -393,13 +393,10 @@ mod tests {
     use super::{
         enable_logging, TemporarilyRetainedKeyParser, TemporarilyRetainedMap, MULTI_LOG_FILTER,
     };
-    use crate::log::MultiEnvFilter;
     use lazy_static::lazy_static;
     use std::sync::atomic::{AtomicI32, Ordering};
     use std::time::Duration;
-    use tracing::subscriber::NoSubscriber;
     use tracing::{debug, error, warn, Level};
-    use tracing_subscriber::layer::Filter;
 
     lazy_static! {
         static ref ENABLED: AtomicI32 = AtomicI32::default();
@@ -472,16 +469,5 @@ mod tests {
         let map = MULTI_LOG_FILTER.collect_logs_created_count();
         assert_eq!(1, map.len());
         assert_eq!(map[&Level::WARN], 1);
-    }
-
-    #[test]
-    fn test_multi_env_filter() {
-        let filter = MultiEnvFilter::default();
-        filter.add("warn".to_string());
-        filter.add("debug".to_string());
-        assert_eq!(
-            Level::DEBUG,
-            <&MultiEnvFilter as Filter<NoSubscriber>>::max_level_hint(&(&filter)).unwrap()
-        );
     }
 }

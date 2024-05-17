@@ -5,6 +5,7 @@ use crate::service::{
     telemetry::{AppInstance, AppOrQueue},
     InstanceId, QueueId,
 };
+use ddtelemetry::worker::{LifecycleAction, TelemetryActions};
 use futures::{
     future::{self, join_all, Shared},
     FutureExt,
@@ -87,7 +88,11 @@ impl RuntimeInfo {
             .map(|instance| {
                 tokio::spawn(async move {
                     if let Some(instance) = instance {
-                        drop(instance.telemetry); // start shutdown
+                        instance
+                            .telemetry
+                            .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop))
+                            .await
+                            .ok();
                         instance.telemetry_worker_shutdown.await;
                     }
                 })
