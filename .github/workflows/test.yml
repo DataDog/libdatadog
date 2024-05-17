@@ -67,6 +67,15 @@ jobs:
           check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
           include_passed: true
 
+      - name: 'Publish target'
+        uses: actions/upload-artifact@v4
+        if: (success() || failure()) && matrix.platform == 'windows-latest'
+        with:
+          if-no-files-found: error
+          name: target_folder.${{ matrix.platform }}
+          path: ${{ github.workspace }}/target\debug\deps\datadog_ipc_macros*
+          retention-days: 1
+
   ffi:
     name: "FFI #${{ matrix.platform }} ${{ matrix.rust_version }}"
     runs-on: ${{ matrix.platform }}
