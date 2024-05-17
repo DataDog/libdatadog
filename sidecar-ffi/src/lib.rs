@@ -37,7 +37,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_remote_config::fetch::ConfigInvariants;
-use datadog_remote_config::Target;
+use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use datadog_sidecar::shm_remote_config::RemoteConfigReader;
 
 #[repr(C)]
@@ -203,11 +203,17 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
     service_name: ffi::CharSlice,
     env_name: ffi::CharSlice,
     app_version: ffi::CharSlice,
+    remote_config_products: *const RemoteConfigProduct,
+    remote_config_products_count: usize,
+    remote_config_capabilities: *const RemoteConfigCapabilities,
+    remote_config_capabilities_count: usize,
 ) -> Box<RemoteConfigReader> {
     Box::new(RemoteConfigReader::new(&ConfigInvariants {
         language: language.to_utf8_lossy().into(),
         tracer_version: tracer_version.to_utf8_lossy().into(),
         endpoint: endpoint.clone(),
+        products: slice::from_raw_parts(remote_config_products, remote_config_products_count).to_vec(),
+        capabilities: slice::from_raw_parts(remote_config_capabilities, remote_config_capabilities_count).to_vec(),
     }, &Arc::new(Target {
         service: service_name.to_utf8_lossy().into(),
         env: env_name.to_utf8_lossy().into(),
@@ -477,6 +483,10 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     force_drop_size: usize,
     log_level: ffi::CharSlice,
     log_path: ffi::CharSlice,
+    remote_config_products: *const RemoteConfigProduct,
+    remote_config_products_count: usize,
+    remote_config_capabilities: *const RemoteConfigCapabilities,
+    remote_config_capabilities_count: usize,
 ) -> MaybeError {
     try_c!(blocking::set_session_config(
         transport,
@@ -496,6 +506,8 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             } else {
                 LogMethod::File(String::from(log_path.to_utf8_lossy()).into())
             },
+            remote_config_products: slice::from_raw_parts(remote_config_products, remote_config_products_count).to_vec(),
+            remote_config_capabilities: slice::from_raw_parts(remote_config_capabilities, remote_config_capabilities_count).to_vec(),
         },
     ));
 

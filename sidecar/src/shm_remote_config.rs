@@ -19,7 +19,7 @@ use std::time::Duration;
 use priority_queue::PriorityQueue;
 use tokio::time::Instant;
 use tracing::{debug, error, trace, warn};
-use zwohash::{HashSet, ZwoHasher};
+use zwohash::ZwoHasher;
 use crate::primary_sidecar_identifier;
 
 pub struct RemoteConfigWriter(OneWayShmWriter<NamedShmHandle>);
@@ -247,7 +247,7 @@ pub struct RemoteConfigManager {
     active_reader: Option<RemoteConfigReader>,
     encountered_targets: HashMap<Arc<Target>, (RemoteConfigReader, Vec<String>)>,
     unexpired_targets: PriorityQueue<Arc<Target>, Reverse<Instant>>,
-    active_configs: HashSet<String>,
+    active_configs: HashMap<String, RemoteConfigPath>,
     last_read_configs: Vec<String>,
     check_configs: Vec<String>,
 }
@@ -300,7 +300,7 @@ impl RemoteConfigManager {
                         }
                     }
                     self.last_read_configs = configs;
-                    self.check_configs = self.active_configs.iter().cloned().collect();
+                    self.check_configs = self.active_configs.keys().cloned().collect();
                 }
 
                 while let Some((_, Reverse(instant))) = self.unexpired_targets.peek() {
@@ -315,17 +315,23 @@ impl RemoteConfigManager {
         while let Some(config) = self.check_configs.pop() {
             if !self.last_read_configs.contains(&config) {
                 trace!("Removing remote config file {config}");
-                self.active_configs.remove(&config);
-                return RemoteConfigUpdate::Remove(RemoteConfigPath::try_parse(&config).unwrap());
+                if let Some(path) = self.active_configs.remove(&config) {
+                    return RemoteConfigUpdate::Remove(path);
+                }
             }
         }
 
         while let Some(config) = self.last_read_configs.pop() {
-            if !self.active_configs.contains(&config) {
+            if !self.active_configs.contains_key(&config) {
                 match read_config(&config) {
                     Ok(parsed) => {
                         trace!("Adding remote config file {config}: {parsed:?}");
-                        self.active_configs.insert(config);
+                        self.active_configs.insert(config, RemoteConfigPath {
+                            source: parsed.source.clone(),
+                            product: (&parsed.data).into(),
+                            config_id: parsed.config_id.clone(),
+                            name: parsed.name.clone(),
+                        });
                         return RemoteConfigUpdate::Add(parsed);
                     }
                     Err(e) => warn!("Failed reading remote config file {config}; skipping: {e:?}"),
@@ -342,15 +348,7 @@ impl RemoteConfigManager {
             if let Some(reader) = self.active_reader.take() {
                 // Reconstruct currently active configurations
                 if self.check_configs.is_empty() {
-                    if current_configs.is_empty() {
-                        current_configs = self.active_configs.iter().cloned().collect();
-                    } else {
-                        let mut pending = self.active_configs.clone();
-                        for config in current_configs {
-                            pending.insert(config);
-                        }
-                        current_configs = pending.into_iter().collect();
-                    }
+                    current_configs.extend(self.active_configs.keys().cloned());
                 }
                 self.encountered_targets.insert(old_target.clone(), (reader, current_configs));
                 self.unexpired_targets.push(old_target, Reverse(Instant::now()));
@@ -368,14 +366,14 @@ impl RemoteConfigManager {
     /// Sets the currently active target.
     pub fn track_target(&mut self, target: &Arc<Target>) {
         self.set_target(Some(target.clone()));
-        self.check_configs = self.active_configs.iter().cloned().collect();
+        self.check_configs = self.active_configs.keys().cloned().collect();
     }
 
     /// Resets the currently active target. The next configuration change polls will emit Remove()
     /// for all current tracked active configurations.
     pub fn reset_target(&mut self) {
         self.set_target(None);
-        self.check_configs = self.active_configs.iter().cloned().collect();
+        self.check_configs = self.active_configs.keys().cloned().collect();
     }
 
     pub fn get_target(&self) -> Option<&Arc<Target>> {

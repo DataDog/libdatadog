@@ -315,7 +315,9 @@ impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static> 
                 {
                     let mut status = status.lock().unwrap();
                     if let KnownTargetStatus::RemoveAt(instant) = *status {
-                        if instant < Instant::now() {
+                        // Voluntarily give up the semaphore for services in RemoveAt status if
+                        // there are only few available permits
+                        if inner_this.fetcher_semaphore.available_permits() < 10 || instant < Instant::now() {
                             // We need to signal that we're in progress of removing to avoid race conditions
                             *status = KnownTargetStatus::Removing(shared_future.clone());
                             // break here to drop mutex guard and avoid having status and services locked simultaneously

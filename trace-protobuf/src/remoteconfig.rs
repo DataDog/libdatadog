@@ -3,50 +3,6 @@
 
 use serde::{Deserialize, Serialize};
 
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ConfigMetas {
-    #[prost(message, repeated, tag = "1")]
-    pub roots: ::prost::alloc::vec::Vec<TopMeta>,
-    #[prost(message, optional, tag = "2")]
-    pub timestamp: ::core::option::Option<TopMeta>,
-    #[prost(message, optional, tag = "3")]
-    pub snapshot: ::core::option::Option<TopMeta>,
-    #[prost(message, optional, tag = "4")]
-    pub top_targets: ::core::option::Option<TopMeta>,
-    #[prost(message, repeated, tag = "5")]
-    pub delegated_targets: ::prost::alloc::vec::Vec<DelegatedMeta>,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct DirectorMetas {
-    #[prost(message, repeated, tag = "1")]
-    pub roots: ::prost::alloc::vec::Vec<TopMeta>,
-    #[prost(message, optional, tag = "2")]
-    pub timestamp: ::core::option::Option<TopMeta>,
-    #[prost(message, optional, tag = "3")]
-    pub snapshot: ::core::option::Option<TopMeta>,
-    #[prost(message, optional, tag = "4")]
-    pub targets: ::core::option::Option<TopMeta>,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct DelegatedMeta {
-    #[prost(uint64, tag = "1")]
-    pub version: u64,
-    #[prost(string, tag = "2")]
-    pub role: ::prost::alloc::string::String,
-    #[prost(bytes = "vec", tag = "3")]
-    pub raw: ::prost::alloc::vec::Vec<u8>,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct TopMeta {
-    #[prost(uint64, tag = "1")]
-    pub version: u64,
-    #[prost(bytes = "vec", tag = "2")]
-    pub raw: ::prost::alloc::vec::Vec<u8>,
-}
 #[derive(Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -56,61 +12,6 @@ pub struct File {
     #[prost(bytes = "vec", tag = "2")]
     #[serde(with = "serde_bytes")]
     pub raw: ::prost::alloc::vec::Vec<u8>,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct LatestConfigsRequest {
-    #[prost(string, tag = "1")]
-    pub hostname: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub agent_version: ::prost::alloc::string::String,
-    /// timestamp and snapshot versions move in tandem so they are the same.
-    #[prost(uint64, tag = "3")]
-    pub current_config_snapshot_version: u64,
-    #[prost(uint64, tag = "9")]
-    pub current_config_root_version: u64,
-    #[prost(uint64, tag = "8")]
-    pub current_director_root_version: u64,
-    #[prost(string, repeated, tag = "4")]
-    pub products: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, repeated, tag = "5")]
-    pub new_products: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(message, repeated, tag = "6")]
-    pub active_clients: ::prost::alloc::vec::Vec<Client>,
-    #[prost(bytes = "vec", tag = "10")]
-    pub backend_client_state: ::prost::alloc::vec::Vec<u8>,
-    #[prost(bool, tag = "11")]
-    pub has_error: bool,
-    #[prost(string, tag = "12")]
-    pub error: ::prost::alloc::string::String,
-    #[prost(string, tag = "13")]
-    pub trace_agent_env: ::prost::alloc::string::String,
-    #[prost(string, tag = "14")]
-    pub org_uuid: ::prost::alloc::string::String,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct LatestConfigsResponse {
-    #[prost(message, optional, tag = "1")]
-    pub config_metas: ::core::option::Option<ConfigMetas>,
-    #[prost(message, optional, tag = "2")]
-    pub director_metas: ::core::option::Option<DirectorMetas>,
-    #[prost(message, repeated, tag = "3")]
-    pub target_files: ::prost::alloc::vec::Vec<File>,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct OrgDataResponse {
-    #[prost(string, tag = "1")]
-    pub uuid: ::prost::alloc::string::String,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct OrgStatusResponse {
-    #[prost(bool, tag = "1")]
-    pub enabled: bool,
-    #[prost(bool, tag = "2")]
-    pub authorized: bool,
 }
 #[derive(Deserialize, Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -250,57 +151,4 @@ pub struct ClientGetConfigsResponse {
     #[prost(string, repeated, tag = "4")]
     #[serde(default)]
     pub client_configs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct FileMetaState {
-    #[prost(uint64, tag = "1")]
-    pub version: u64,
-    #[prost(string, tag = "2")]
-    pub hash: ::prost::alloc::string::String,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct GetStateConfigResponse {
-    #[prost(map = "string, message", tag = "1")]
-    pub config_state: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        FileMetaState,
-    >,
-    #[prost(map = "string, message", tag = "2")]
-    pub director_state: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        FileMetaState,
-    >,
-    #[prost(map = "string, string", tag = "3")]
-    pub target_filenames: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
-    #[prost(message, repeated, tag = "4")]
-    pub active_clients: ::prost::alloc::vec::Vec<Client>,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct TracerPredicateV1 {
-    #[prost(string, tag = "1")]
-    pub client_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub service: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
-    pub environment: ::prost::alloc::string::String,
-    #[prost(string, tag = "4")]
-    pub app_version: ::prost::alloc::string::String,
-    #[prost(string, tag = "5")]
-    pub tracer_version: ::prost::alloc::string::String,
-    #[prost(string, tag = "6")]
-    pub language: ::prost::alloc::string::String,
-    #[prost(string, tag = "7")]
-    pub runtime_id: ::prost::alloc::string::String,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct TracerPredicates {
-    #[prost(message, repeated, tag = "1")]
-    pub tracer_predicates_v1: ::prost::alloc::vec::Vec<TracerPredicateV1>,
 }
