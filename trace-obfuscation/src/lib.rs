@@ -1,9 +1,14 @@
-// Unless explicitly stated otherwise all files in this repository are licensed
-// under the Apache License Version 2.0. This product includes software
-// developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
-// Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 #![deny(clippy::all)]
 
 pub mod credit_cards;
+pub mod http;
+pub mod memcached;
+pub mod obfuscate;
+pub mod obfuscation_config;
+pub mod redis;
+pub mod redis_tokenizer;
 pub mod replacer;
+pub mod sql;

@@ -1,11 +1,12 @@
-# Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-# This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
 
 [package]
 name = "datadog-profiling"
-version = "2.1.0"
-edition = "2021"
-license = "Apache-2.0"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["lib"]
@@ -24,15 +25,16 @@ http = "0.2"
 http-body = "0.4"
 hyper = {version = "0.14", features = ["client"], default-features = false}
 hyper-multipart-rfc7578 = "0.7.0"
-indexmap = "1.8"
+indexmap = "2.2"
 libc = "0.2"
 lz4_flex = { version = "0.9", default-features = false, features = ["std", "safe-encode", "frame"] }
 mime = "0.3.16"
 mime_guess = {version = "2.0", default-features = false}
 percent-encoding = "2.1"
-prost = "0.11"
+prost = "0.12"
 rustc-hash = { version = "1.1", default-features = false }
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
 tokio = {version = "1.23", features = ["rt", "macros"]}
 tokio-util = "0.7.1"
+byteorder = { version = "1.5", features = ["std"] }

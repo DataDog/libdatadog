@@ -1,7 +1,8 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use ddcommon::HttpRequestBuilder;
+use http::uri::Parts;
 use http::{Request, Response};
 use hyper::Body;
 use std::{
@@ -40,19 +41,26 @@ pub fn request_builder(c: &Config) -> anyhow::Result<HttpRequestBuilder> {
 }
 
 pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
-    if let Some(ref p) = c.mock_client_file {
-        Box::new(MockClient {
-            file: Arc::new(Mutex::new(Box::new(
-                File::create(p).expect("Couldn't open mock client file"),
-            ))),
-        })
-    } else {
-        Box::new(HyperClient {
-            inner: hyper::Client::builder()
-                .pool_idle_timeout(std::time::Duration::from_secs(30))
-                .build(ddcommon::connector::Connector::new()),
-        })
+    if let Some(Parts {
+        scheme: Some(scheme),
+        path_and_query: Some(path),
+        ..
+    }) = c.endpoint.as_ref().map(|e| e.url.clone().into_parts())
+    {
+        if scheme.as_str() == "file" {
+            return Box::new(MockClient {
+                file: Arc::new(Mutex::new(Box::new(
+                    File::create(path.path()).expect("Couldn't open mock client file"),
+                ))),
+            });
+        }
     }
+
+    Box::new(HyperClient {
+        inner: hyper::Client::builder()
+            .pool_idle_timeout(std::time::Duration::from_secs(30))
+            .build(ddcommon::connector::Connector::default()),
+    })
 }
 
 pub struct HyperClient {
@@ -97,6 +105,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_mock_client() {
         let output: Vec<u8> = Vec::new();
         let c = MockClient {

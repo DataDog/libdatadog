@@ -1,15 +1,15 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use crate::slice::CharSlice;
 use crate::vec::Vec;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 
 /// Please treat this as opaque; do not reach into it, and especially don't
 /// write into it! The most relevant APIs are:
 /// * `ddog_Error_message`, to get the message as a slice.
 /// * `ddog_Error_drop`.
-#[derive(Debug)]
+#[derive(PartialEq, Eq)]
 #[repr(C)]
 pub struct Error {
     /// This is a String stuffed into the vec.
@@ -26,6 +26,12 @@ impl AsRef<str> for Error {
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_ref())
+    }
+}
+
+impl Debug for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("Error(\"{}\")", self.as_ref()))
     }
 }
 
@@ -96,7 +102,12 @@ pub unsafe extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
 #[no_mangle]
 pub unsafe extern "C" fn ddog_Error_message(error: Option<&Error>) -> CharSlice {
     match error {
-        None => CharSlice::default(),
+        None => CharSlice::empty(),
         Some(err) => CharSlice::from(err.as_ref()),
     }
 }
+
+pub type MaybeError = crate::Option<Error>;
+
+#[no_mangle]
+pub extern "C" fn ddog_MaybeError_drop(_: MaybeError) {}

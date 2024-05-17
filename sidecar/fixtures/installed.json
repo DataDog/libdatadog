@@ -1,0 +1,15 @@
+{
+  "packages": [
+    {
+      "invalid": "?"
+    },
+    {
+      "name": "g1a/composer-test-scenarios"
+    },
+    {
+      "name": "datadog/dd-trace",
+      "version": "dev-master",
+      "version_normalized": "dev-master"
+    }
+  ]
+}

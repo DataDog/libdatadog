@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use std::{
     env,
@@ -104,6 +104,7 @@ impl ImprovedBuild {
 
     pub fn emit_rerun_if_env_changed(&mut self, emit: bool) -> &mut Self {
         self.emit_rerun_if_env_changed = emit;
+        self.cc_build.emit_rerun_if_env_changed(emit);
         self
     }
 
@@ -178,7 +179,9 @@ impl ImprovedBuild {
         }
 
         let compiler = self.cc_build.try_get_compiler()?;
-        let output_path = self.get_out_dir()?.join(output);
+        let output_path = self
+            .get_out_dir()
+            .map_or(output.into(), |path| path.join(output));
 
         let mut cmd = compiler.to_command();
 

@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 #[doc(hidden)]
 pub const fn validate_cstr_contents(bytes: &[u8]) {
@@ -54,18 +54,18 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_invalid_cstr_with_extra_null_character() {
-        cstr!("/dev/null\0\0");
+        _ = cstr!("/dev/null\0\0");
     }
 
     #[test]
     #[should_panic]
     fn test_invalid_cstr_u8_without_terminatid_nul() {
-        cstr_u8!(b"/dev/null");
+        _ = cstr_u8!(b"/dev/null");
     }
 
     #[test]
     #[should_panic]
     fn test_invalid_cstr_with_nul_character() {
-        cstr!("/dev/\0null");
+        _ = cstr!("/dev/\0null");
     }
 }

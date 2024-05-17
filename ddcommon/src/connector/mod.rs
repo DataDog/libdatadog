@@ -1,10 +1,11 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use futures::future::BoxFuture;
 use futures::{future, FutureExt};
 use hyper::client::HttpConnector;
 
+use lazy_static::lazy_static;
 use rustls::ClientConfig;
 use std::future::Future;
 use std::pin::Pin;
@@ -27,9 +28,13 @@ pub enum Connector {
     Https(hyper_rustls::HttpsConnector<hyper::client::HttpConnector>),
 }
 
+lazy_static! {
+    static ref DEFAULT_CONNECTOR: Connector = Connector::new();
+}
+
 impl Default for Connector {
     fn default() -> Self {
-        Self::new()
+        DEFAULT_CONNECTOR.clone()
     }
 }
 
@@ -127,6 +132,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     /// Verify that the Connector type implements the correct bound Connect + Clone
     /// to be able to use the hyper::Client
     fn test_hyper_client_from_connector() {
@@ -134,6 +140,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     /// Verify that Connector will only allow non tls connections if root certificates
     /// are not found
     async fn test_missing_root_certificates_only_allow_http_connections() {

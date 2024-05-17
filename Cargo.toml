@@ -1,34 +1,54 @@
-# Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-# This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
 
 [workspace]
 members = [
+  "alloc",
+  "crashtracker",
   "profiling",
   "profiling-ffi",
+  "profiling-replayer",
   "ddcommon",
   "ddcommon-ffi",
   "ddtelemetry",
   "ddtelemetry-ffi",
   "tools",
   "ipc",
+  "ipc/macros",
+  "sidecar",
+  "sidecar/macros",
+  "sidecar-ffi",
   "tools/cc_utils",
+  "tools/sidecar_mockgen",
   "trace-normalization",
   "trace-obfuscation",
   "trace-utils",
   "spawn_worker",
   "tests/spawn_from_lib",
-  "serverless"
+  "serverless",
+  "bin_tests",
+  "data-pipeline",
+  "data-pipeline-ffi"
 ]
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"
+
+# These are used by many packages, but not all. For instance, the sidecar and
+# serverless packages wanted to maintain their own version numbers. Some of
+# their depenencies also remain under their own versioning.
+[workspace.package]
+rust-version = "1.71.1"
+edition = "2021"
+version = "9.0.0"
+license = "Apache-2.0"
 
 [profile.dev]
 debug = 2 # full debug info
 
 [profile.release]
-codegen-units = 1 
+codegen-units = 1
 debug = 1 # line tables only
-lto = true 
+lto = true
 opt-level = "s" # optimize for size
 
 [profile.release.package.datadog-serverless-trace-mini-agent]

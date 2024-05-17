@@ -1,4 +1,4 @@
-ARG ALPINE_BASE_IMAGE="alpine:3.17"
+ARG ALPINE_BASE_IMAGE="alpine:3.18"
 ARG CARGO_BUILD_INCREMENTAL="true"
 ARG CARGO_NET_RETRY="2"
 ARG BUILDER_IMAGE=debian_builder
@@ -23,6 +23,7 @@ RUN apk update \
   && apk add --no-cache \
     build-base \
     cargo \
+    cmake \
     curl \
     git \
     make \
@@ -71,12 +72,20 @@ RUN cargo search nothing --limit 1
 
 # create stubs to cache compilation of dependendencies
 COPY [ "Cargo.lock", "Cargo.toml", "./"]
-COPY "ddcommon/Cargo.toml" "ddcommon/" 
+COPY "alloc/Cargo.toml" "alloc/"
+COPY "build-common/Cargo.toml" "build-common/"
+COPY "crashtracker/Cargo.toml" "crashtracker/"
+COPY "ddcommon/Cargo.toml" "ddcommon/"
 COPY "ddcommon-ffi/Cargo.toml" "ddcommon-ffi/" 
 COPY "ddtelemetry/Cargo.toml" "ddtelemetry/"
 COPY "ddtelemetry-ffi/Cargo.toml" "ddtelemetry-ffi/"
 COPY "profiling/Cargo.toml" "profiling/"
 COPY "profiling-ffi/Cargo.toml" "profiling-ffi/"
+COPY "profiling-replayer/Cargo.toml" "profiling-replayer/"
+COPY "sidecar/Cargo.toml" "sidecar/"
+COPY "sidecar/macros/Cargo.toml" "sidecar/macros/"
+COPY "sidecar-ffi/Cargo.toml" "sidecar-ffi/"
+COPY "symbolizer-ffi/Cargo.toml" "symbolizer-ffi/"
 COPY "trace-normalization/Cargo.toml" "trace-normalization/"
 COPY "trace-obfuscation/Cargo.toml" "trace-obfuscation/"
 COPY "trace-protobuf/Cargo.toml" "trace-protobuf/"
@@ -84,12 +93,20 @@ COPY "trace-mini-agent/Cargo.toml" "trace-mini-agent/"
 COPY "trace-utils/Cargo.toml" "trace-utils/"
 COPY "tools/Cargo.toml" "tools/"
 COPY "tools/cc_utils/Cargo.toml" "tools/cc_utils/"
+COPY "tools/sidecar_mockgen/Cargo.toml" "tools/sidecar_mockgen/"
 COPY "spawn_worker/Cargo.toml" "spawn_worker/"
 COPY "serverless/Cargo.toml" "serverless/"
 COPY "tests/spawn_from_lib/Cargo.toml" "tests/spawn_from_lib/"
 COPY "ipc/Cargo.toml" "ipc/"
+COPY "ipc/macros/Cargo.toml" "ipc/macros/"
+COPY "ipc/tarpc/Cargo.toml" "ipc/tarpc/"
+COPY "ipc/tarpc/tarpc/Cargo.toml" "ipc/tarpc/tarpc/"
+COPY "ipc/tarpc/plugins/Cargo.toml" "ipc/tarpc/plugins/"
+COPY "data-pipeline/Cargo.toml" "data-pipeline/"
+COPY "data-pipeline-ffi/Cargo.toml" "data-pipeline-ffi/"
+COPY "bin_tests/Cargo.toml"  "bin_tests/"
 RUN find -name "Cargo.toml" | sed -e s#Cargo.toml#src/lib.rs#g | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
-RUN echo trace-obfuscation/benches/replace_trace_tags_bench.rs ipc/benches/ipc.rs trace-obfuscation/benches/credit_cards_bench.rs tools/src/bin/dedup_headers.rs ddtelemetry/examples/tm-worker-test.rs | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
+RUN echo trace-obfuscation/benches/trace_obfuscation.rs tools/src/bin/dedup_headers.rs tools/sidecar_mockgen/src/bin/sidecar_mockgen.rs ddtelemetry/examples/tm-worker-test.rs ipc/tarpc/tarpc/examples/compression.rs ipc/tarpc/tarpc/examples/custom_transport.rs ipc/tarpc/tarpc/examples/pubsub.rs ipc/tarpc/tarpc/examples/readme.rs ipc/tarpc/tarpc/examples/tracing.rs ipc/tarpc/tarpc/tests/compile_fail.rs ipc/tarpc/tarpc/tests/dataservice.rs ipc/tarpc/tarpc/tests/service_functional.rs bin_tests/src/bin/crashtracker_bin_test.rs bin_tests/src/bin/test_the_tests.rs | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
 
 # cache dependencies
 RUN cargo fetch --locked

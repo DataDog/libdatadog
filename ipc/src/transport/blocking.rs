@@ -1,10 +1,9 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use std::{
     io::{self, Read, Write},
     mem::MaybeUninit,
-    os::unix::net::UnixStream,
     pin::Pin,
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
@@ -26,39 +25,25 @@ use crate::{
 use super::DefaultCodec;
 
 pub struct BlockingTransport<IncomingItem, OutgoingItem> {
-    pid: libc::pid_t,
     requests_id: Arc<AtomicU64>,
     transport: FramedBlocking<Response<IncomingItem>, ClientMessage<OutgoingItem>>,
 }
 
-impl<IncomingItem, OutgoingItem> Clone for BlockingTransport<IncomingItem, OutgoingItem> {
-    fn clone(&self) -> Self {
-        Self {
-            pid: self.pid,
-            requests_id: self.requests_id.clone(),
-            transport: self.transport.clone(),
-        }
-    }
-}
-
 impl<IncomingItem, OutgoingItem> From<Channel> for BlockingTransport<IncomingItem, OutgoingItem> {
     fn from(c: Channel) -> Self {
-        let pid = unsafe { libc::getpid() };
         BlockingTransport {
-            pid,
             requests_id: Arc::from(AtomicU64::new(0)),
             transport: c.into(),
         }
     }
 }
 
-impl<IncomingItem, OutgoingItem> From<UnixStream>
+#[cfg(unix)]
+impl<IncomingItem, OutgoingItem> From<std::os::unix::net::UnixStream>
     for BlockingTransport<IncomingItem, OutgoingItem>
 {
-    fn from(s: UnixStream) -> Self {
-        let pid = unsafe { libc::getpid() };
+    fn from(s: std::os::unix::net::UnixStream) -> Self {
         BlockingTransport {
-            pid,
             requests_id: Arc::from(AtomicU64::new(0)),
             transport: Channel::from(s).into(),
         }
@@ -93,14 +78,15 @@ where
                         let dst = &mut *(dst as *mut _ as *mut [MaybeUninit<u8>]);
                         let mut buf_window = tokio::io::ReadBuf::uninit(dst);
                         // this implementation is based on Tokio async read implementation,
-                        // it is performing an UB operation by using uninitiallized memory - although in practice its somewhat defined
+                        // it is performing an UB operation by using uninitiallized memory -
+                        // although in practice its somewhat defined
                         // there are still some unknowns WRT to future behaviors
 
-                        // TODO: make sure this optimization is really needed - once BenchPlatform is connected to libdatadog
-                        // benchmark unfilled_mut vs initialize_unfilled - and if the difference is negligible - then lets switch to
-                        // implementation that doesn't use UB.
-                        let b = &mut *(buf_window.unfilled_mut()
-                            as *mut [std::mem::MaybeUninit<u8>]
+                        // TODO: make sure this optimization is really needed - once BenchPlatform
+                        // is connected to libdatadog benchmark unfilled_mut
+                        // vs initialize_unfilled - and if the difference is negligible - then lets
+                        // switch to implementation that doesn't use UB.
+                        let b = &mut *(buf_window.unfilled_mut() as *mut [MaybeUninit<u8>]
                             as *mut [u8]);
 
                         let n = self.channel.read(b)?;
@@ -125,7 +111,7 @@ where
     }
 
     fn do_send(&mut self, req: OutgoingItem) -> Result<(), io::Error> {
-        let msg = self.channel.metadata.create_message(req)?;
+        let msg = self.channel.create_message(req)?;
 
         let mut buf = BytesMut::new();
         let data = self.serde_codec.as_mut().serialize(&msg)?;
@@ -142,17 +128,6 @@ impl<IncomingItem, OutgoingItem> From<Channel> for FramedBlocking<IncomingItem, 
             read_buffer: BytesMut::with_capacity(4000),
             channel: c,
             serde_codec: Box::pin(Default::default()),
-        }
-    }
-}
-
-impl<IncomingItem, OutgoingItem> Clone for FramedBlocking<IncomingItem, OutgoingItem> {
-    fn clone(&self) -> Self {
-        Self {
-            codec: self.codec.clone(),
-            serde_codec: Box::pin(Default::default()),
-            read_buffer: self.read_buffer.clone(),
-            channel: self.channel.clone(),
         }
     }
 }
@@ -191,6 +166,13 @@ where
 
     pub fn set_write_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
         self.transport.channel.set_write_timeout(timeout)
+    }
+
+    pub fn is_closed(&self) -> bool {
+        // The blocking transport is not supposed to be readable on the client side unless it's a
+        // response. So, outside of waiting for a response, it will never be readable unless
+        // the server side closed its socket.
+        self.transport.channel.probe_readable()
     }
 
     pub fn send(&mut self, item: OutgoingItem) -> io::Result<()> {

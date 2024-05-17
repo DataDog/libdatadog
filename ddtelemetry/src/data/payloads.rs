@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use crate::data::metrics;
 
@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
 pub struct Dependency {
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 }
 
@@ -16,11 +15,8 @@ pub struct Dependency {
 pub struct Integration {
     pub name: String,
     pub enabled: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub compatible: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_enabled: Option<bool>,
 }
 
@@ -66,12 +62,23 @@ pub struct GenerateMetrics {
     pub series: Vec<metrics::Serie>,
 }
 
+#[derive(Serialize, Debug)]
+pub struct Distributions {
+    pub series: Vec<metrics::Distribution>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Log {
     pub message: String,
     pub level: LogLevel,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: u32,
+
+    #[serde(default)]
     pub stack_trace: Option<String>,
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub tags: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub is_sensitive: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]

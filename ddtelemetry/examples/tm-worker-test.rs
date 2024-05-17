@@ -1,12 +1,13 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
-use std::{error::Error, time::Duration};
+use std::{
+    error::Error,
+    time::{Duration, Instant},
+};
 
 use ddcommon::tag::Tag;
 use ddtelemetry::{data, worker};
-use tokio::time::Instant;
-use tracing::Level;
 
 macro_rules! timeit {
     ($op_name:literal, $op:block) => {{
@@ -22,39 +23,65 @@ macro_rules! timeit {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    #[cfg(feature = "tracing")]
     tracing_subscriber::fmt()
-        .with_max_level(Level::DEBUG)
+        .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    let handle = worker::TelemetryWorkerBuilder::new(
+    let mut builder = worker::TelemetryWorkerBuilder::new(
         "paul-mac".into(),
         "test_rust".into(),
         "rust".into(),
         "1.56".into(),
         "none".into(),
-    )
-    .run()?;
+    );
+    builder.config.telemetry_debug_logging_enabled = Some(true);
+    builder.config.endpoint = Some(ddcommon::Endpoint {
+        url: ddcommon::parse_uri("file://./tm-worker-test.output").unwrap(),
+        api_key: None,
+    });
+    builder.config.telemetry_hearbeat_interval = Some(Duration::from_secs(1));
 
-    let test_telemetry_ping_metric = handle.register_metric_context(
+    let handle = builder.run()?;
+
+    let ping_metric = handle.register_metric_context(
         "test_telemetry.ping".into(),
         Vec::new(),
         data::metrics::MetricType::Count,
         false,
-        data::metrics::MetricNamespace::Trace,
+        data::metrics::MetricNamespace::Telemetry,
     );
+
+    let dist_metric = handle.register_metric_context(
+        "test_telemetry.dist".into(),
+        Vec::new(),
+        data::metrics::MetricType::Distribution,
+        true,
+        data::metrics::MetricNamespace::Telemetry,
+    );
+
     handle.send_start().unwrap();
 
-    handle
-        .add_point(1.0, &test_telemetry_ping_metric, Vec::new())
-        .unwrap();
+    handle.add_point(1.0, &ping_metric, Vec::new()).unwrap();
+
+    handle.add_point(1.0, &dist_metric, Vec::new()).unwrap();
+    handle.add_point(2.0, &dist_metric, Vec::new()).unwrap();
 
     let tags = vec![Tag::from_value("foo:bar").unwrap()];
+    handle.add_point(2.0, &ping_metric, tags.clone()).unwrap();
+    handle.add_point(1.8, &dist_metric, tags).unwrap();
+
     handle
-        .add_point(2.0, &test_telemetry_ping_metric, tags)
+        .add_log(
+            "init.log",
+            "Hello there!".into(),
+            data::LogLevel::Debug,
+            None,
+        )
         .unwrap();
 
     timeit!("sleep", {
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        std::thread::sleep(std::time::Duration::from_secs(11));
     });
 
     handle
@@ -82,15 +109,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         )
         .unwrap();
 
-    handle
-        .add_point(2.0, &test_telemetry_ping_metric, Vec::new())
-        .unwrap();
+    handle.add_point(2.0, &ping_metric, Vec::new()).unwrap();
+    handle.add_point(2.3, &dist_metric, Vec::new()).unwrap();
 
     // About 200ms (the time it takes to send a app-closing request)
     timeit!("shutdown", {
         handle.send_stop().unwrap();
-        handle.cancel_requests_with_deadline(Instant::now() + Duration::from_millis(10));
-        handle.wait_for_shutdown();
+        handle.wait_for_shutdown_deadline(Instant::now() + Duration::from_millis(10));
     });
 
     Ok(())

@@ -1,17 +1,25 @@
 [package]
 name = "datadog-trace-mini-agent"
+description = "A subset of the trace agent that is shipped alongside tracers in a few serverless use cases (GCF and Azure Consumptions plan)"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0"
 hyper = { version = "0.14", default-features = false, features = ["server"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"]}
 async-trait = "0.1.64"
 log = "0.4"
+serde = { version = "1.0.145", features = ["derive"] }
 serde_json = "1.0"
+ddcommon = { path = "../ddcommon" }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-utils = { path = "../trace-utils" }
 datadog-trace-normalization = { path = "../trace-normalization" }
+datadog-trace-obfuscation = { path = "../trace-obfuscation" }
 
 [dev-dependencies]
 rmp-serde = "1.1.1"
+serial_test = "2.0.0"
+duplicate = "0.4.1"
+tempfile = "3.3.0"

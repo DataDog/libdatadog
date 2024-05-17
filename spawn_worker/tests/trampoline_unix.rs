@@ -1,8 +1,8 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 #![cfg(unix)]
 use std::{
-    ffi::CString,
     fs::File,
     io::{Read, Seek},
 };
@@ -18,18 +18,19 @@ fn rewind_and_read(file: &mut File) -> anyhow::Result<String> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_spawning_trampoline_worker() {
     let mut stdout = tempfile::tempfile().unwrap();
     let mut stderr = tempfile::tempfile().unwrap();
 
     let child = unsafe { SpawnWorker::new() }
-        .target(Target::Manual(
-            CString::new("__dummy_mirror_test").unwrap(),
-            CString::new("symbol_name").unwrap(),
+        .target(Target::ManualTrampoline(
+            "__dummy_mirror_test".to_string(),
+            "symbol_name".to_string(),
         ))
         .stdin(Stdio::Null)
-        .stdout(stdout.try_clone().unwrap())
-        .stderr(stderr.try_clone().unwrap())
+        .stdout(&stdout)
+        .stderr(&stderr)
         .spawn()
         .unwrap();
 

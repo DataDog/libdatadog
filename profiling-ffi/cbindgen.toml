@@ -1,10 +1,12 @@
-# Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-# This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
 
 language = "C"
+cpp_compat = true
 tab_width = 2
-header = """// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc."""
+header = """// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+"""
 include_guard = "DDOG_PROFILING_H"
 style = "both"
 pragma_once = true
@@ -21,7 +23,6 @@ renaming_overrides_prefixing = true
 "ByteSlice" = "ddog_ByteSlice"
 "CancellationToken" = "ddog_CancellationToken"
 "CharSlice" = "ddog_CharSlice"
-"Endpoint" = "ddog_Endpoint"
 "Error" = "ddog_Error"
 "HttpStatus" = "ddog_HttpStatus"
 "Slice_CChar" = "ddog_Slice_CChar"
@@ -32,16 +33,17 @@ renaming_overrides_prefixing = true
 "Vec_Tag" = "ddog_Vec_Tag"
 "Vec_U8" = "ddog_Vec_U8"
 
+"ProfilingEndpoint" = "ddog_prof_Endpoint"
 "ExporterNewResult" = "ddog_prof_Exporter_NewResult"
 "File" = "ddog_prof_Exporter_File"
-"ProfileAddResult" = "ddog_prof_Profile_AddResult"
 "ProfileExporter" = "ddog_prof_Exporter"
+"ProfileNewResult" = "ddog_prof_Profile_NewResult"
+"ProfileResult" = "ddog_prof_Profile_Result"
 "Request" = "ddog_prof_Exporter_Request"
 "RequestBuildResult" = "ddog_prof_Exporter_Request_BuildResult"
 "SendResult" = "ddog_prof_Exporter_SendResult"
 "SerializeResult" = "ddog_prof_Profile_SerializeResult"
 "Slice_File" = "ddog_prof_Exporter_Slice_File"
-"UpscalingRuleAddResult" = "ddog_prof_Profile_UpscalingRuleAddResult"
 
 [export.mangle]
 rename_types = "PascalCase"
@@ -55,4 +57,5 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["ddcommon", "ddcommon-ffi", "datadog-profiling", "ux"]
+include = ["ddcommon", "ddcommon-ffi", "datadog-profiling", "datadog-crashtracker", "ux"]
+

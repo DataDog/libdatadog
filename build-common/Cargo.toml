@@ -1,0 +1,18 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "build_common"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = []
+cbindgen = []
+
+[dependencies]
+cbindgen = {version = "0.26"}
+serde = "1.0"
+serde_json = "1.0"

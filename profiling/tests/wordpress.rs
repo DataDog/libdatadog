@@ -1,7 +1,8 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
-use datadog_profiling::profile::*;
+use datadog_profiling::api;
+use datadog_profiling::pprof;
 use lz4_flex::frame::FrameDecoder;
 use prost::Message;
 use std::fs::File;
@@ -13,20 +14,19 @@ fn php_location<'a>(name: &'a str, filename: &'a str, line: i64) -> api::Locatio
     api::Location {
         mapping: api::Mapping::default(),
         address: 0,
-        lines: vec![api::Line {
-            function: api::Function {
-                name,
-                system_name: "",
-                filename,
-                start_line: 0,
-            },
-            line,
-        }],
-        is_folded: false,
+        function: api::Function {
+            name,
+            system_name: "",
+            filename,
+            start_line: 0,
+        },
+        line,
     }
 }
 
 #[test]
+// This test is too slow for miri
+#[cfg_attr(miri, ignore)]
 fn wordpress() {
     let compressed_size = 101824_u64;
     let uncompressed_size = 200692_u64;

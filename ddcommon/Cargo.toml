@@ -1,11 +1,12 @@
-# Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-# This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
 
 [package]
-edition = "2021"
-license = "Apache-2.0"
 name = "ddcommon"
-version = "2.1.0"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["lib"]
@@ -13,21 +14,31 @@ crate-type = ["lib"]
 [dependencies]
 anyhow = "1.0"
 futures = "0.3"
-futures-core = {version = "0.3.0", default-features = false}
-futures-util = {version = "0.3.0", default-features = false}
+futures-core = { version = "0.3.0", default-features = false }
+futures-util = { version = "0.3.0", default-features = false }
 hex = "0.4"
-hyper = {version = "0.14", features = ["http1", "client", "tcp", "stream"], default-features = false}
-hyper-rustls = {version = "0.23", default-features = false, features = ["native-tokio", "http1", "tls12"]}
+http = "0.2"
+hyper = { version = "0.14", features = [
+    "http1",
+    "client",
+    "tcp",
+    "stream",
+], default-features = false }
+hyper-rustls = { version = "0.23", default-features = false, features = [
+    "native-tokio",
+    "http1",
+    "tls12",
+] }
 lazy_static = "1.4"
-log = {version = "0.4"}
+log = { version = "0.4" }
 pin-project = "1"
 regex = "1.5"
-rustls = {version = "0.20.4", default-features = false}
-rustls-native-certs = {version = "0.6"}
-tokio = {version = "1.23", features = ["rt", "macros"]}
-tokio-rustls = {version = "0.23"}
-serde = {version = "1.0", features = ["derive"]}
+rustls = { version = "0.20.4", default-features = false }
+rustls-native-certs = { version = "0.6" }
+tokio = { version = "1.23", features = ["rt", "macros"] }
+tokio-rustls = { version = "0.23" }
+serde = { version = "1.0", features = ["derive"] }
 
 [dev-dependencies]
-indexmap = "1.8"
+indexmap = "2.2"
 maplit = "1.0"

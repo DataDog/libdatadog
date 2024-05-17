@@ -1,18 +1,21 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
-use std::{borrow::Cow, str::FromStr};
+use std::{borrow::Cow, ops::Deref, str::FromStr};
 
 use hyper::{
     header::HeaderValue,
     http::uri::{self},
 };
+use serde::de::Error;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod azure_app_services;
 pub mod connector;
 pub mod container_id;
 #[macro_use]
 pub mod cstr;
+pub mod config;
 pub mod tag;
 
 pub mod header {
@@ -27,17 +30,62 @@ pub type HttpClient = hyper::Client<connector::Connector, hyper::Body>;
 pub type HttpResponse = hyper::Response<hyper::Body>;
 pub type HttpRequestBuilder = hyper::http::request::Builder;
 
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct Endpoint {
+    #[serde(serialize_with = "serialize_uri", deserialize_with = "deserialize_uri")]
     pub url: hyper::Uri,
     pub api_key: Option<Cow<'static, str>>,
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
+struct SerializedUri<'a> {
+    scheme: Option<Cow<'a, str>>,
+    authority: Option<Cow<'a, str>>,
+    path_and_query: Option<Cow<'a, str>>,
+}
+
+fn serialize_uri<S>(uri: &hyper::Uri, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let parts = uri.clone().into_parts();
+    let uri = SerializedUri {
+        scheme: parts.scheme.as_ref().map(|s| Cow::Borrowed(s.as_str())),
+        authority: parts.authority.as_ref().map(|s| Cow::Borrowed(s.as_str())),
+        path_and_query: parts
+            .path_and_query
+            .as_ref()
+            .map(|s| Cow::Borrowed(s.as_str())),
+    };
+    uri.serialize(serializer)
+}
+
+fn deserialize_uri<'de, D>(deserializer: D) -> Result<hyper::Uri, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let uri = SerializedUri::deserialize(deserializer)?;
+    let mut builder = hyper::Uri::builder();
+    if let Some(v) = uri.authority {
+        builder = builder.authority(v.deref());
+    }
+    if let Some(v) = uri.scheme {
+        builder = builder.scheme(v.deref());
+    }
+    if let Some(v) = uri.path_and_query {
+        builder = builder.path_and_query(v.deref());
+    }
+
+    builder.build().map_err(Error::custom)
+}
+
 // TODO: we should properly handle malformed urls
-// for windows and unix schemes:
-//    for compatibility reasons with existing implementation this parser stores the encoded path in authority section
-//    as there is no existing standard https://github.com/whatwg/url/issues/577 that covers this. We need to pick one hack or another
-// for file scheme implementation will simply backfill missing authority section
+// * For windows and unix schemes:
+//     * For compatibility reasons with existing implementation this parser stores the encoded path
+//       in authority section as there is no existing standard
+//       [see](https://github.com/whatwg/url/issues/577) that covers this. We need to pick one hack
+//       or another
+// * For file scheme implementation will simply backfill missing authority section
 pub fn parse_uri(uri: &str) -> anyhow::Result<hyper::Uri> {
     let scheme_pos = if let Some(scheme_pos) = uri.find("://") {
         scheme_pos

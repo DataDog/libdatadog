@@ -1,17 +1,26 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+#[cfg(not(windows))]
 use criterion::{criterion_group, criterion_main, Criterion};
-use datadog_ipc::example_interface::{
-    ExampleInterfaceRequest, ExampleInterfaceResponse, ExampleServer, ExampleTransport,
+#[cfg(not(windows))]
+use datadog_ipc::{
+    example_interface::{
+        ExampleInterfaceRequest, ExampleInterfaceResponse, ExampleServer, ExampleTransport,
+    },
+    platform::Channel,
 };
+#[cfg(not(windows))]
 use std::{
-    os::unix::net::UnixStream as StdUnixStream,
+    os::unix::net::UnixStream,
     thread::{self},
 };
-use tokio::{net::UnixStream, runtime};
+#[cfg(not(windows))]
+use tokio::runtime;
 
+#[cfg(not(windows))]
 fn criterion_benchmark(c: &mut Criterion) {
-    let (sock_a, sock_b) = StdUnixStream::pair().unwrap();
+    let (sock_a, sock_b) = UnixStream::pair().unwrap();
 
     let worker = thread::spawn(move || {
         let rt = runtime::Builder::new_current_thread()
@@ -20,10 +29,9 @@ fn criterion_benchmark(c: &mut Criterion) {
             .unwrap();
         let _g = rt.enter();
         sock_a.set_nonblocking(true).unwrap();
-        let socket = UnixStream::from_std(sock_a).unwrap();
         let server = ExampleServer::default();
 
-        rt.block_on(server.accept_connection(socket));
+        rt.block_on(server.accept_connection(Channel::from(sock_a)));
     });
 
     let mut transport = ExampleTransport::from(sock_b);
@@ -48,5 +56,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     worker.join().unwrap();
 }
 
+#[cfg(not(windows))]
 criterion_group!(benches, criterion_benchmark);
+
+#[cfg(not(windows))]
 criterion_main!(benches);
+
+#[cfg(windows)]
+fn main() {
+    println!("IPC benches not implemented for Windows")
+}

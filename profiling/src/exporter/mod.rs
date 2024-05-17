@@ -1,9 +1,9 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use std::borrow::Cow;
 use std::future;
-use std::io::Cursor;
+use std::io::{Cursor, Write};
 
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
@@ -11,17 +11,14 @@ pub use ddcommon::tag::Tag;
 pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
 use lz4_flex::frame::FrameEncoder;
-use mime;
 use serde_json::json;
-use std::io::Write;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
-use ddcommon::{azure_app_services, connector, HttpClient, HttpResponse};
+use ddcommon::{azure_app_services, connector, Endpoint, HttpClient, HttpResponse};
 
 pub mod config;
 mod errors;
-pub use ddcommon::Endpoint;
 
 #[cfg(unix)]
 pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
@@ -29,7 +26,7 @@ pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
 #[cfg(windows)]
 pub use connector::named_pipe::{named_pipe_path_from_uri, named_pipe_path_to_uri};
 
-use crate::profile::profiled_endpoints::ProfiledEndpointsStats;
+use crate::internal::ProfiledEndpointsStats;
 
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
 
@@ -91,6 +88,10 @@ impl Request {
         self.req.headers()
     }
 
+    pub fn body(self) -> hyper::Body {
+        self.req.into_body()
+    }
+
     async fn send(
         self,
         client: &HttpClient,
@@ -121,10 +122,11 @@ impl ProfileExporter {
     /// * `profiling_library_name` - Profiling library name, usually dd-trace-something, e.g. "dd-trace-rb". See
     ///   https://datadoghq.atlassian.net/wiki/spaces/PROF/pages/1538884229/Client#Header-values (Datadog internal link)
     ///   for a list of common values.
-    /// * `profliling_library_version` - Version used when publishing the profiling library to a package manager
+    /// * `profiling_library_version` - Version used when publishing the profiling library to a
+    ///   package manager
     /// * `family` - Profile family, e.g. "ruby"
-    /// * `tags` - Tags to include with every profile reported by this exporter. It's also possible to include
-    ///   profile-specific tags, see `additional_tags` on `build`.
+    /// * `tags` - Tags to include with every profile reported by this exporter. It's also possible
+    ///   to include profile-specific tags, see `additional_tags` on `build`.
     /// * `endpoint` - Configuration for reporting data
     pub fn new<F, N, V>(
         profiling_library_name: N,
@@ -148,14 +150,26 @@ impl ProfileExporter {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     /// Build a Request object representing the profile information provided.
+    ///
+    /// For details on the `internal_metadata` parameter, please reference the Datadog-internal
+    /// "RFC: Attaching internal metadata to pprof profiles".
+    /// If you use this parameter, please update the RFC with your use-case, so we can keep track of
+    /// how this is getting used.
+    ///
+    /// For details on the `info` parameter, please reference the Datadog-internal
+    /// "RFC: Pprof System Info Support".
     pub fn build(
         &self,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
-        files: &[File],
+        files_to_compress_and_export: &[File],
+        files_to_export_unmodified: &[File],
         additional_tags: Option<&Vec<Tag>>,
         endpoint_counts: Option<&ProfiledEndpointsStats>,
+        internal_metadata: Option<serde_json::Value>,
+        info: Option<serde_json::Value>,
         timeout: std::time::Duration,
     ) -> anyhow::Result<Request> {
         let mut form = multipart::Form::default();
@@ -203,7 +217,11 @@ impl ProfileExporter {
 
         tags_profiler.pop(); // clean up the trailing comma
 
-        let attachments: Vec<String> = files.iter().map(|file| file.name.to_owned()).collect();
+        let attachments: Vec<String> = files_to_compress_and_export
+            .iter()
+            .chain(files_to_export_unmodified.iter())
+            .map(|file| file.name.to_owned())
+            .collect();
 
         let event = json!({
             "attachments": attachments,
@@ -213,6 +231,8 @@ impl ProfileExporter {
             "family": self.family.as_ref(),
             "version": "4",
             "endpoint_counts" : endpoint_counts,
+            "internal": internal_metadata.unwrap_or_else(|| json!({})),
+            "info": info.unwrap_or_else(|| json!({})),
         })
         .to_string();
 
@@ -225,14 +245,32 @@ impl ProfileExporter {
             mime::APPLICATION_JSON,
         );
 
-        for file in files {
-            let mut encoder = FrameEncoder::new(Vec::new());
+        for file in files_to_compress_and_export {
+            // We tend to have good compression ratios for the pprof files,
+            // especially with timeline enabled. Not all files compress this
+            // well, but these are just initial Vec sizes, not a hard-bound.
+            // Using 1/10 gives us a better start than starting at zero, while
+            // not reserving too much for things that compress really well, and
+            // power-of-two capacities are almost always the best performing.
+            let capacity = (file.bytes.len() / 10).next_power_of_two();
+            let buffer = Vec::with_capacity(capacity);
+            let mut encoder = FrameEncoder::new(buffer);
             encoder.write_all(file.bytes)?;
             let encoded = encoder.finish()?;
-            /* The Datadog RFC examples strip off the file extension, but the exact behavior isn't
-             * specified. This does the simple thing of using the filename without modification for
-             * the form name because intake does not care about these name of the form field for
-             * these attachments.
+            /* The Datadog RFC examples strip off the file extension, but the exact behavior
+             * isn't specified. This does the simple thing of using the filename
+             * without modification for the form name because intake does not care
+             * about these name of the form field for these attachments.
+             */
+            form.add_reader_file(file.name, Cursor::new(encoded), file.name);
+        }
+
+        for file in files_to_export_unmodified {
+            let encoded = file.bytes.to_vec();
+            /* The Datadog RFC examples strip off the file extension, but the exact behavior
+             * isn't specified. This does the simple thing of using the filename
+             * without modification for the form name because intake does not care
+             * about these name of the form field for these attachments.
              */
             form.add_reader_file(file.name, Cursor::new(encoded), file.name)
         }
@@ -271,7 +309,7 @@ impl Exporter {
         // Set idle to 0, which prevents the pipe being broken every 2nd request
         let client = hyper::Client::builder()
             .pool_max_idle_per_host(0)
-            .build(connector::Connector::new());
+            .build(connector::Connector::default());
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;

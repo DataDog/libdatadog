@@ -1,18 +1,21 @@
-ddprof*/            @Datadog/libdatadog-profiling
-*.pc.in             @Datadog/libdatadog-profiling
-ddtelemetry/        @Datadog/libdatadog-telemetry
-ruby/               @Datadog/libdatadog-ruby
-*                   @Datadog/libdatadog-core
-Cargo.*             @Datadog/libdatadog
-.gitignore          @Datadog/libdatadog
-.gitlab-ci.yaml     @Datadog/libdatadog
-LICENSE*            @Datadog/libdatadog
-NOTICE              @Datadog/libdatadog
-rustfmt.toml        @Datadog/libdatadog
-README.md           @Datadog/libdatadog
-trace-normalization @Datadog/serverless
-trace-obfuscation   @Datadog/serverless
-trace-protobuf      @Datadog/serverless
-trace-mini-agent    @Datadog/serverless
-trace-utils         @Datadog/serverless
-serverless          @Datadog/serverless
+*                       @Datadog/libdatadog-core
+alloc/                  @Datadog/libdatadog-profiling
+build-profiling-ffi.sh  @Datadog/libdatadog-profiling
+crashtracker/           @Datadog/libdatadog-profiling
+profiling*/             @Datadog/libdatadog-profiling
+ddtelemetry*/           @Datadog/libdatadog-telemetry
+ruby/                   @Datadog/libdatadog-ruby
+Cargo.*                 @Datadog/libdatadog
+.gitignore              @Datadog/libdatadog
+.gitlab-ci.yaml         @Datadog/libdatadog
+LICENSE*                @Datadog/libdatadog
+NOTICE                  @Datadog/libdatadog
+rustfmt.toml            @Datadog/libdatadog
+README.md               @Datadog/libdatadog
+trace-normalization     @Datadog/serverless @Datadog/libdatadog-apm
+trace-obfuscation       @Datadog/serverless @Datadog/libdatadog-apm
+trace-protobuf          @Datadog/serverless @Datadog/libdatadog-apm
+trace-mini-agent        @Datadog/serverless
+trace-utils             @Datadog/serverless @Datadog/libdatadog-apm
+serverless              @Datadog/serverless
+data-pipeline*/         @Datadog/libdatadog-apm

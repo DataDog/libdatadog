@@ -1,23 +1,16 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
-use datadog_profiling::profile::{api, Profile};
+use datadog_profiling::api;
+use datadog_profiling::internal::Profile;
 use std::io::Write;
 use std::process::exit;
+use std::time::SystemTime;
 
 // Keep this in-sync with profiles.c
 fn main() {
-    let walltime = api::ValueType {
-        r#type: "wall-time",
-        unit: "nanoseconds",
-    };
-    let sample_types = vec![
-        api::ValueType {
-            r#type: "samples",
-            unit: "count",
-        },
-        walltime,
-    ];
+    let walltime = api::ValueType::new("wall-time", "nanoseconds");
+    let sample_types = [api::ValueType::new("samples", "count"), walltime];
 
     let period = api::Period {
         r#type: walltime,
@@ -32,26 +25,21 @@ fn main() {
         locations: vec![
             api::Location {
                 mapping,
-                lines: vec![api::Line {
-                    function: api::Function {
-                        name: "phpinfo",
-                        filename: "/srv/public/index.php",
-                        ..Default::default()
-                    },
-                    line: 3,
-                }],
+                function: api::Function {
+                    name: "phpinfo",
+                    filename: "/srv/public/index.php",
+                    ..Default::default()
+                },
+                line: 3,
                 ..Default::default()
             },
             api::Location {
                 mapping,
-                lines: vec![api::Line {
-                    function: api::Function {
-                        name: "{main}",
-                        filename: "/srv/public/index.php",
-                        ..Default::default()
-                    },
-                    line: 0,
-                }],
+                function: api::Function {
+                    name: "{main}",
+                    filename: "/srv/public/index.php",
+                    ..Default::default()
+                },
                 ..Default::default()
             },
         ],
@@ -59,21 +47,15 @@ fn main() {
         labels: vec![],
     };
 
-    // Not setting .start_time intentionally to use the current time.
-    let mut profile: Profile = Profile::builder()
-        .sample_types(sample_types)
-        .period(Some(period))
-        .build();
+    // Intentionally use the current time.
+    let mut profile = Profile::new(SystemTime::now(), &sample_types, Some(period));
 
-    match profile.add(sample) {
-        Ok(id) => {
-            let index: u64 = id.into();
-            assert_eq!(index, 1)
-        }
+    match profile.add_sample(sample, None) {
+        Ok(_) => {}
         Err(_) => exit(1),
     }
 
-    match profile.serialize(None, None) {
+    match profile.serialize_into_compressed_pprof(None, None) {
         Ok(encoded_profile) => {
             let buffer = &encoded_profile.buffer;
             assert!(buffer.len() > 100);

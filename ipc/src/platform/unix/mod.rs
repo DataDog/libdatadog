@@ -1,11 +1,9 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 mod platform_handle;
-pub use platform_handle::*;
 
 mod channel;
-pub use async_channel::*;
 pub use channel::*;
 
 pub mod locks;
@@ -14,8 +12,19 @@ pub mod sockets;
 mod message;
 pub use message::*;
 
+mod mem_handle;
+pub(crate) use mem_handle::*;
+
+#[no_mangle]
+#[cfg(polyfill_glibc_memfd)]
+/// # Safety
+/// Emulating memfd create, has the same safety level than libc::memfd_create
+pub unsafe extern "C" fn memfd_create(name: libc::c_void, flags: libc::c_uint) -> libc::c_int {
+    libc::syscall(libc::SYS_memfd_create, name, flags) as libc::c_int
+}
+
 #[cfg(test)]
-mod tests {
+mod single_threaded_tests {
     use io_lifetimes::OwnedFd;
     use pretty_assertions::assert_eq;
     use std::{
@@ -27,7 +36,7 @@ mod tests {
 
     use crate::platform::{metadata::ChannelMetadata, unix::message::MAX_FDS};
 
-    use super::PlatformHandle;
+    use super::super::PlatformHandle;
 
     fn assert_platform_handle_is_valid_file(
         handle: PlatformHandle<OwnedFd>,
@@ -81,8 +90,8 @@ mod tests {
         assert_eq!(reference_meta, &current_meta);
     }
 
+    // tests checks global FD state - so it needs to run single-threaded
     #[test]
-    #[ignore] // tests checks global FD state - so it needs to run in non-parallel mode
     fn test_channel_metadata_only_provides_valid_owned() {
         let reference = get_open_file_descriptors(None).unwrap();
         let mut meta = ChannelMetadata::default();
@@ -114,7 +123,7 @@ mod tests {
         let mut handles = meta.drain_to_send();
         let second_batch = meta.drain_to_send();
 
-        handles.extend(second_batch.into_iter());
+        handles.extend(second_batch);
         assert_eq!(MAX_FDS * 2, handles.len());
         assert_eq!(0, meta.drain_to_send().len());
 

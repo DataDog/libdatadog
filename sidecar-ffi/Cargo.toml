@@ -1,0 +1,25 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "datadog-sidecar-ffi"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+ddtelemetry = { path = "../ddtelemetry" }
+datadog-sidecar = { path = "../sidecar" }
+datadog-trace-utils = { path = "../trace-utils" }
+datadog-ipc = { path = "../ipc" }
+ddcommon = { path = "../ddcommon" }
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false }
+paste = "1"
+libc = "0.2"
+
+[dev-dependencies]
+hyper = { version = "0.14", default-features = false }
+tempfile = {version = "3.3"}

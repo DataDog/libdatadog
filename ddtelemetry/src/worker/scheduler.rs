@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use std::time::{Duration, Instant};
 
@@ -56,6 +56,10 @@ impl<T: Clone + Eq> Scheduler<T> {
 
     pub fn schedule_event(&mut self, event: T) -> Result<(), T> {
         self.schedule_event_with_from(event, self.now.now())
+    }
+
+    pub fn clear_pending(&mut self) {
+        self.deadlines.clear();
     }
 }
 

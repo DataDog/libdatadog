@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use std::{
     io,
@@ -70,9 +70,10 @@ impl FLock {
     /// once Self is dropped, the lock is released
     pub fn try_rw_lock<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let mut this = Self::open(&path)?;
+        #[allow(clippy::unnecessary_cast)]
+        let l_type = libc::F_WRLCK as i16;
         let lock = libc::flock {
-            #[allow(clippy::unnecessary_cast)]
-            l_type: libc::F_WRLCK as i16,
+            l_type,
             l_whence: 0,
             l_start: 0,
             l_len: 0,

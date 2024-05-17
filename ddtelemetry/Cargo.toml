@@ -1,43 +1,35 @@
 [package]
-edition = "2021"
-license = "Apache 2.0"
 name = "ddtelemetry"
-version = "2.1.0"
-
-[dependencies]
-anyhow = {version = "1.0"}
-ddcommon = {path = "../ddcommon"}
-futures = { version = "0.3", default-features = false }
-http = "0.2"
-hyper = {version = "0.14", features = ["client"], default-features = false}
-lazy_static = "1.4"
-pin-project = "1"
-
-datadog-ipc = {path = "../ipc"}
-
-rand = "0.8.3"
-regex = {version = "1"}
-serde = {version = "1.0", features = ["derive"]}
-serde_json = {version = "1.0"}
-spawn_worker = {path = "../spawn_worker"}
-sys-info = {version = "0.9.0"}
-tokio = {version = "1.23", features = ["sync", "io-util", "signal"]}
-tokio-util = {version = "0.7", features = ["codec"]}
-
-io-lifetimes = {version = "1.0"}
-tracing = {version = "0.1", default-features = false, features = ["std"]}
-tracing-subscriber = {version = "0.3", default-features = false, features = ["std", "fmt"]}
-uuid = {version = "1.3", features = ["v4"]}
-hashbrown = {version = "0.12", features = ["raw"]}
+description = "Telemetry client allowing to send data as described in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#telemetry-collection"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
 
 [features]
 default = []
+tracing = ["tracing/std"]
+
+[dependencies]
+anyhow = { version = "1.0" }
+ddcommon = { path = "../ddcommon" }
+futures = { version = "0.3", default-features = false }
+http = "0.2"
+hyper = { version = "0.14", features = ["client"], default-features = false }
+lazy_static = "1.4"
+pin-project = "1"
+
+regex = { version = "1" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0" }
+sys-info = { version = "0.9.0" }
+tokio = { version = "1.23", features = ["sync", "io-util"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+
+io-lifetimes = { version = "1.0" }
+tracing = { version = "0.1", default-features = false }
+uuid = { version = "1.3", features = ["v4"] }
+hashbrown = { version = "0.12", features = ["raw"] }
 
 [dev-dependencies]
-libc = {version = "0.2"}
-tempfile = {version = "3.3"}
-
-[target.'cfg(not(windows))'.dependencies]
-libc = {version = "0.2"}
-nix = {version = "0.24", features = ["fs", "socket"]}
-sendfd = {version = "0.4", features = ["tokio"]}
+tracing-subscriber = "0.3.18"

@@ -1,6 +1,9 @@
+// protoc -I. -I$GOPATH/src --gogofaster_out=. span.proto tracer_payload.proto agent_payload.proto
+
 syntax = "proto3";
 
 package pb;
+option go_package = "pkg/proto/pbgo/trace"; // golang
 
 import "tracer_payload.proto";
 
@@ -20,4 +23,6 @@ message AgentPayload {
         double targetTPS = 8;
         // errorTPS holds `ErrorTPS` value in AgentConfig.
         double errorTPS = 9;
+        // rareSamplerEnabled holds `RareSamplerEnabled` value in AgentConfig
+        bool rareSamplerEnabled = 10;
 }

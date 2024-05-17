@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 
-# Unless explicitly stated otherwise all files in this repository are licensed
-# under the Apache License Version 2.0. This product includes software developed
-# at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+get_abs_filename() {
+  # $1 : relative filename
+  echo "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+}
 
 # Location to place all artifacts
 if [ -z $CARGO_TARGET_DIR ] ; then
@@ -11,7 +15,23 @@ fi
 
 set -eu
 
+ARG_FEATURES=""
+
+while getopts f: flag
+do
+    case "${flag}" in
+        f) ARG_FEATURES=${OPTARG}
+            shift
+            shift
+    esac
+done
+
 destdir="$1"
+
+if [ $CARGO_TARGET_DIR = $destdir ]; then
+    echo "Error: CARGO_TARGET_DIR and destdir cannot be the same"
+    exit 1
+fi
 
 mkdir -v -p "$destdir/include/datadog" "$destdir/lib/pkgconfig" "$destdir/cmake"
 
@@ -22,6 +42,7 @@ static_library_suffix=".a"
 library_prefix="lib"
 remove_rpath=0
 fix_macos_rpath=0
+symbolizer=0
 
 # Rust provides this note about the link libraries:
 # note: Link against the following native artifacts when linking against this
@@ -38,6 +59,7 @@ case "$target" in
         native_static_libs=" -lssp_nonshared -lc"
         # on alpine musl, Rust adds some weird runpath to cdylibs
         remove_rpath=1
+        symbolizer=1
         ;;
 
     "x86_64-apple-darwin"|"aarch64-apple-darwin")
@@ -52,6 +74,7 @@ case "$target" in
     "x86_64-unknown-linux-gnu"|"aarch64-unknown-linux-gnu")
         expected_native_static_libs=" -ldl -lrt -lpthread -lgcc_s -lc -lm -lrt -lpthread -lutil -ldl -lutil"
         native_static_libs=" -ldl -lrt -lpthread -lc -lm -lrt -lpthread -lutil -ldl -lutil"
+        symbolizer=1
         ;;
 
     "x86_64-pc-windows-msvc")
@@ -88,11 +111,19 @@ sed < cmake/DatadogConfig.cmake.in \
 
 cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
-export RUSTFLAGS="${RUSTFLAGS:- -C relocation-model=pic}"
 
 datadog_profiling_ffi="datadog-profiling-ffi"
-echo "Building the ${datadog_profiling_ffi} crate (may take some time)..."
-cargo build --package="${datadog_profiling_ffi}" --release --target "${target}"
+FEATURES="--features cbindgen,datadog-profiling-ffi/ddtelemetry-ffi"
+if [[ "$symbolizer" -eq 1 ]]; then
+    FEATURES="--features cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,symbolizer"
+fi
+
+if [[ ! -z ${ARG_FEATURES} ]]; then
+    FEATURES="$FEATURES,$ARG_FEATURES"
+fi
+
+# build inside the crate to use the config.toml file
+( cd profiling-ffi && DESTDIR="$destdir" cargo build ${FEATURES} --release --target "${target}")
 
 # Remove _ffi suffix when copying
 shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"
@@ -151,15 +182,34 @@ fi
 cd -
 
 echo "Building tools"
-cargo build --package tools --bins
+DESTDIR=$destdir cargo build --package tools --bins
 
 echo "Generating $destdir/include/libdatadog headers..."
-cbindgen --crate ddcommon-ffi \
-    --config ddcommon-ffi/cbindgen.toml \
-    --output "$destdir/include/datadog/common.h"
-cbindgen --crate "${datadog_profiling_ffi}" \
-    --config profiling-ffi/cbindgen.toml \
-    --output "$destdir/include/datadog/profiling.h"
-"$CARGO_TARGET_DIR"/debug/dedup_headers "$destdir/include/datadog/common.h" "$destdir/include/datadog/profiling.h"
+# ADD headers based on selected features.
+HEADERS="$destdir/include/datadog/common.h $destdir/include/datadog/profiling.h $destdir/include/datadog/telemetry.h"
+case $ARG_FEATURES in
+    *data-pipeline-ffi*)
+        HEADERS="$HEADERS $destdir/include/datadog/data-pipeline.h"
+        ;;
+esac
+
+"$CARGO_TARGET_DIR"/debug/dedup_headers $HEADERS
+
+# Don't build the crashtracker on windows
+if [[ "$target" != "x86_64-pc-windows-msvc" ]]; then
+    echo "Building binaries"
+    # $destdir might be relative. Get an absolute path that will work when we cd
+    export ABS_DESTDIR=$(get_abs_filename $destdir)
+    export CRASHTRACKER_BUILD_DIR=$CARGO_TARGET_DIR/build/crashtracker-receiver
+    export CRASHTRACKER_SRC_DIR=$PWD/crashtracker
+    # Always start with a clean directory
+    [ -d $CRASHTRACKER_BUILD_DIR ] && rm -r $CRASHTRACKER_BUILD_DIR
+    mkdir -p $CRASHTRACKER_BUILD_DIR
+    cd $CRASHTRACKER_BUILD_DIR
+    cmake -S $CRASHTRACKER_SRC_DIR -DDatadog_ROOT=$ABS_DESTDIR
+    cmake --build .
+    mkdir -p $ABS_DESTDIR/bin
+    cp libdatadog-crashtracking-receiver $ABS_DESTDIR/bin
+fi
 
 echo "Done."

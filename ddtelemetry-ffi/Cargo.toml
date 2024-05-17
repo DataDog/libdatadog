@@ -1,18 +1,28 @@
-# Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-# This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
 
 [package]
 name = "ddtelemetry-ffi"
-version = "2.1.0"
-edition = "2021"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]
 
+[features]
+default = ["cbindgen", "expanded_builder_macros"]
+cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen", "expanded_builder_macros"]
+expanded_builder_macros = []
+
+[build-dependencies]
+build_common = { path = "../build-common" }
+
 [dependencies]
 ddtelemetry = { path = "../ddtelemetry" }
-datadog-ipc = { path = "../ipc" }
-ddcommon-ffi = { path = "../ddcommon-ffi" }
+ddcommon = { path = "../ddcommon" }
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 paste = "1"
 libc = "0.2"
 
