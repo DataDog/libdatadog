@@ -61,6 +61,7 @@ libc = { version = "0.2" }
 
 # watchdog and self telemetry
 memory-stats = { version = "1.0.0" }
+cadence = "1.3.0"
 
 [dependencies.windows]
 features = [

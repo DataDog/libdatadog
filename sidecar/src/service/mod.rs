@@ -42,6 +42,7 @@ pub(crate) mod tracing;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionConfig {
     pub endpoint: Endpoint,
+    pub dogstatsd_endpoint: Endpoint,
     pub flush_interval: Duration,
     pub force_flush_size: usize,
     pub force_drop_size: usize,

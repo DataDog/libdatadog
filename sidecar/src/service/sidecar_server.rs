@@ -37,6 +37,7 @@ use tracing::{debug, enabled, error, info, warn, Level};
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 
+use crate::dogstatsd::DogStatsDAction;
 use crate::service::telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats;
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use datadog_ipc::platform::FileBackedHandle;
@@ -577,6 +578,9 @@ impl SidecarInterface for SidecarServer {
             );
             cfg.set_endpoint(endpoint).ok();
         });
+        session.configure_dogstatsd(|dogstatsd| {
+            dogstatsd.set_endpoint(config.dogstatsd_endpoint.clone());
+        });
         self.trace_flusher
             .interval
             .store(config.flush_interval.as_millis() as u64, Ordering::Relaxed);
@@ -683,6 +687,23 @@ impl SidecarInterface for SidecarServer {
                 self.send_trace_v04(&headers, data.as_slice(), &endpoint);
             });
         }
+
+        no_response()
+    }
+
+    type SendDogstatsdActionsFut = NoResponse;
+
+    fn send_dogstatsd_actions(
+        self,
+        _: Context,
+        instance_id: InstanceId,
+        actions: Vec<DogStatsDAction>,
+    ) -> Self::SendDogstatsdActionsFut {
+        tokio::spawn(async move {
+            self.get_session(&instance_id.session_id)
+                .get_dogstatsd()
+                .send(actions);
+        });
 
         no_response()
     }
