@@ -5,6 +5,7 @@ use super::{
     InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
     SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
+use crate::dogstatsd::DogStatsDAction;
 use datadog_ipc::platform::ShmHandle;
 use datadog_ipc::transport::blocking::BlockingTransport;
 use std::{
@@ -182,6 +183,28 @@ pub fn send_trace_v04_shm(
         instance_id: instance_id.clone(),
         handle,
         headers,
+    })
+}
+
+/// Sends DogStatsD actions.
+///
+/// # Arguments
+///
+/// * `transport` - The transport used for communication.
+/// * `instance_id` - The ID of the instance.
+/// * `actions` - The DogStatsD actions to send.
+///
+/// # Returns
+///
+/// An `io::Result<()>` indicating the result of the operation.
+pub fn send_dogstatsd_actions(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    actions: Vec<DogStatsDAction>,
+) -> io::Result<()> {
+    transport.send(SidecarInterfaceRequest::SendDogstatsdActions {
+        instance_id: instance_id.clone(),
+        actions,
     })
 }
 
