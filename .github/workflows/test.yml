@@ -19,6 +19,18 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Get Dependencies
+        if: (success() || failure()) && matrix.platform == 'windows-latest'
+        run: |
+          echo "$(Join-Path -Path (rustc --print sysroot) -ChildPath bin)" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "$(Join-Path -Path (rustc --print sysroot) -ChildPath bin)"
+          echo "----"
+          echo $env:RUST_HOME
+          echo "----"
+          echo $env:RUSTUP_HOME
+          echo "-----"
+
       - name: Cache
         uses: ./.github/actions/cache
         with:
@@ -59,6 +71,15 @@ jobs:
         env:
           RUSTFLAGS: "-C prefer-dynamic"
           RUST_BACKTRACE: 1
+      - name: Get Dependencies
+        if: (success() || failure()) && matrix.platform == 'windows-latest'
+        run: |
+          mkdir depends
+          cd depends
+          curl -OL https://github.com/lucasg/Dependencies/releases/download/v1.11.1/Dependencies_x64_Release.zip
+          7z x Dependencies_x64_Release.zip
+          .\Dependencies.exe -chain D:\a\libdatadog\libdatadog\target\debug\deps\datadog_ipc_macros-24212d08e4e0faca.exe -depth 1
+
       - name: Report Test Results
         if: success() || failure() 
         uses: mikepenz/action-junit-report@v4
