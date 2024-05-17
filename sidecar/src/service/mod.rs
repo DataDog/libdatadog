@@ -11,6 +11,7 @@ use ddtelemetry::worker::TelemetryActions;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
+use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 
 // public types we want to bring up to top level of service:: scope
 pub use instance_id::InstanceId;
@@ -51,6 +52,8 @@ pub struct SessionConfig {
     pub force_drop_size: usize,
     pub log_level: String,
     pub log_file: config::LogMethod,
+    pub remote_config_products: Vec<RemoteConfigProduct>,
+    pub remote_config_capabilities: Vec<RemoteConfigCapabilities>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

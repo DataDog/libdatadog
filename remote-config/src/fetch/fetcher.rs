@@ -8,14 +8,15 @@ use sha2::{Digest, Sha256, Sha512};
 use tracing::{debug, trace, warn};
 use datadog_trace_protobuf::remoteconfig::{ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState, TargetFileHash, TargetFileMeta};
 use ddcommon::{connector, Endpoint};
-use crate::{RemoteConfigPath, Target};
+use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use crate::targets::TargetsList;
 
 const PROD_INTAKE_SUBDOMAIN: &str = "config";
 
-/// Manages files.
+/// Manages config files.
 /// Presents store() and update() operations.
-/// It is recommended to minimize the overhead of these operations as they
+/// It is recommended to minimize the overhead of these operations as they will be invoked while
+/// a lock across all ConfigFetchers referencing the same ConfigFetcherState is held.
 pub trait FileStorage {
     type StoredFile;
 
@@ -32,6 +33,8 @@ pub struct ConfigInvariants {
     pub language: String,
     pub tracer_version: String,
     pub endpoint: Endpoint,
+    pub products: Vec<RemoteConfigProduct>,
+    pub capabilities: Vec<RemoteConfigCapabilities>,
 }
 
 struct StoredTargetFile<S> {
@@ -112,6 +115,8 @@ impl<S: FileStorage> ConfigFetcher<S> {
     ///  - stores new files,
     ///  - returns all currently active files.
     /// It also makes sure that old files are dropped before new files are inserted.
+    ///
+    /// Returns None if nothing changed. Otherwise Some(active configs).
     pub async fn fetch_once(
         &mut self,
         runtime_id: &str,
@@ -119,7 +124,12 @@ impl<S: FileStorage> ConfigFetcher<S> {
         config_id: &str,
         last_error: Option<String>,
         opaque_state: &mut OpaqueState,
-    ) -> anyhow::Result<Vec<Arc<S::StoredFile>>> {
+    ) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
+        if self.state.endpoint.api_key.is_some() {
+            // Using remote config talking to the backend directly is not supported.
+            return Ok(Some(vec![]));
+        }
+
         let Target { service, env, app_version } = (*target).clone();
 
         let mut cached_target_files = vec![];
@@ -141,8 +151,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
                     backend_client_state: std::mem::take(&mut opaque_state.client_state),
                 }),
                 id: config_id.into(),
-                // TODO maybe not hardcode requested products?
-                products: vec!["APM_TRACING".to_string(), "LIVE_DEBUGGING".to_string()],
+                products: self.state.invariants.products.iter().map(|p| p.to_string()).collect(),
                 is_tracer: true,
                 client_tracer: Some(ClientTracer {
                     runtime_id: runtime_id.to_string(),
@@ -157,13 +166,12 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 is_agent: false,
                 client_agent: None,
                 last_seen: 0,
-                capabilities: vec![],
+                capabilities: self.state.invariants.capabilities.iter().map(|c| *c as u8).collect(),
             }),
             cached_target_files,
         };
         let json = serde_json::to_string(&config_req)?;
 
-        // TODO: directly talking to datadog endpoint (once signatures are validated)
         let req = self.state.endpoint
             .into_request_builder(concat!("Sidecar/", env!("CARGO_PKG_VERSION")))?;
         let response = Client::builder()
@@ -174,15 +182,21 @@ impl<S: FileStorage> ConfigFetcher<S> {
         let status = response.status();
         let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
         if status != StatusCode::OK {
+            // Not active
+            if status == StatusCode::NOT_FOUND {
+                trace!("Requested remote config and but remote config not active");
+                return Ok(Some(vec![]));
+            }
+
             let response_body =
                 String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-            anyhow::bail!("Server did not accept traces: {response_body}");
+            anyhow::bail!("Server did not accept remote config request: {response_body}");
         }
 
-        // Agent remote config not active or broken or similar
+        // Nothing changed
         if body_bytes.len() <= 3 {
-            trace!("Requested remote config, but not active; received: {}", String::from_utf8_lossy(body_bytes.as_ref()));
-            return Ok(vec![]);
+            trace!("Requested remote config and got an empty reply");
+            return Ok(None);
         }
 
         let response: ClientGetConfigsResponse =
@@ -190,7 +204,6 @@ impl<S: FileStorage> ConfigFetcher<S> {
 
         let decoded_targets = base64::engine::general_purpose::STANDARD.decode(response.targets.as_slice())?;
         let targets_list = TargetsList::try_parse(decoded_targets.as_slice()).map_err(|e| anyhow::Error::msg(e).context(format!("Decoded targets reply: {}", String::from_utf8_lossy(decoded_targets.as_slice()))))?;
-        // TODO: eventually also verify the targets_list.signatures for FIPS compliance.
 
         opaque_state.client_state = targets_list.signed.custom.opaque_backend_state.as_bytes().to_vec();
         if let Some(interval) = targets_list.signed.custom.agent_refresh_interval {
@@ -290,7 +303,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
             }
         }
 
-        Ok(configs)
+        Ok(Some(configs))
     }
 }
 

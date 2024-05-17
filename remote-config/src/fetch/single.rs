@@ -23,7 +23,7 @@ impl<S: FileStorage> SingleFetcher<S> {
         }
     }
 
-    pub async fn fetch_once(&mut self) -> anyhow::Result<Vec<Arc<S::StoredFile>>> {
+    pub async fn fetch_once(&mut self) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
         self.fetcher.fetch_once(self.runtime_id.as_str(), self.target.clone(), self.config_id.as_str(), self.last_error.take(), &mut self.opaque_state).await
     }
 }

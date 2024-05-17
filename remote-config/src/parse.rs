@@ -1,6 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use serde::{Deserialize, Serialize};
 use datadog_live_debugger::LiveDebuggingData;
 use crate::dynamic_configuration::data::DynamicConfigFile;
 
@@ -10,7 +11,8 @@ pub enum RemoteConfigSource {
     Employee,
 }
 
-#[derive(Copy, Clone, Eq, Hash, PartialEq)]
+#[repr(C)]
+#[derive(Debug, Copy, Clone, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum RemoteConfigProduct {
     ApmTracing,
     LiveDebugger,
@@ -89,6 +91,15 @@ impl RemoteConfigData {
                 RemoteConfigData::LiveDebugger(parsed)
             }
         })
+    }
+}
+
+impl From<&RemoteConfigData> for RemoteConfigProduct {
+    fn from(value: &RemoteConfigData) -> Self {
+        match value {
+            RemoteConfigData::DynamicConfig(_) => RemoteConfigProduct::ApmTracing,
+            RemoteConfigData::LiveDebugger(_) => RemoteConfigProduct::LiveDebugger,
+        }
     }
 }
 

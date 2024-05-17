@@ -221,7 +221,8 @@ impl SharedFetcher {
             });
 
             match fetched {
-                Ok(files) => {
+                Ok(None) => { /* unchanged */ },
+                Ok(Some(files)) => {
                     for file in files.iter() {
                         file.incref();
                     }

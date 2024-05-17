@@ -625,6 +625,8 @@ impl SidecarInterface for SidecarServer {
             language: config.language,
             tracer_version: config.tracer_version,
             endpoint: config.endpoint,
+            products: config.remote_config_products,
+            capabilities: config.remote_config_capabilities,
         });
         self.trace_flusher
             .interval_ms
