@@ -184,6 +184,7 @@ mod tests {
         }
     }
 
+    // cargo +nightly bolero test internal::observation::trimmed_observation::tests::fuzz_trimmed_observation -T 1min
     #[test]
     fn fuzz_trimmed_observation() {
         bolero::check!().with_type::<Vec<i64>>().for_each(|v| {
