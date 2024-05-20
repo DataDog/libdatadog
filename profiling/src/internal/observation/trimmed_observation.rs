@@ -12,7 +12,7 @@ use std::mem;
 /// slice are the same as when we trimmed it.
 #[repr(transparent)]
 #[derive(Copy, Clone, Default, Debug)]
-pub(super) struct ObservationLength(pub usize);
+pub(super) struct ObservationLength(usize);
 
 impl ObservationLength {
     pub fn eq(&self, other: usize) -> bool {
