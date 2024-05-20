@@ -28,6 +28,9 @@ struct MetricData<'a> {
     trace_api_requests: ContextKey,
     trace_api_responses: ContextKey,
     trace_api_errors: ContextKey,
+    trace_api_bytes: ContextKey,
+    trace_chunk_sent: ContextKey,
+    trace_chunk_dropped: ContextKey,
 }
 impl<'a> MetricData<'a> {
     async fn send(&self, key: ContextKey, value: f64, tags: Vec<Tag>) {
@@ -69,7 +72,6 @@ impl<'a> MetricData<'a> {
                 vec![Tag::new("level", level.as_str().to_lowercase()).unwrap()],
             ));
         }
-
         if trace_metrics.api_requests > 0 {
             futures.push(self.send(
                 self.trace_api_requests,
@@ -96,6 +98,27 @@ impl<'a> MetricData<'a> {
                 self.trace_api_errors,
                 trace_metrics.api_errors_status_code as f64,
                 vec![tag!("type", "status_code")],
+            ));
+        }
+        if trace_metrics.bytes_sent > 0 {
+            futures.push(self.send(
+                self.trace_api_bytes,
+                trace_metrics.bytes_sent as f64,
+                vec![],
+            ));
+        }
+        if trace_metrics.chunks_sent > 0 {
+            futures.push(self.send(
+                self.trace_chunk_sent,
+                trace_metrics.chunks_sent as f64,
+                vec![],
+            ));
+        }
+        if trace_metrics.chunks_dropped > 0 {
+            futures.push(self.send(
+                self.trace_chunk_dropped,
+                trace_metrics.chunks_dropped as f64,
+                vec![],
             ));
         }
         for (status_code, count) in &trace_metrics.api_responses_count_per_code {
@@ -214,6 +237,27 @@ impl SelfTelemetry {
             ),
             trace_api_errors: worker.register_metric_context(
                 "trace_api.errors".to_string(),
+                vec![],
+                MetricType::Count,
+                true,
+                MetricNamespace::Tracers,
+            ),
+            trace_api_bytes: worker.register_metric_context(
+                "trace_api_bytes".to_string(),
+                vec![],
+                MetricType::Count,
+                true,
+                MetricNamespace::Tracers,
+            ),
+            trace_chunk_sent: worker.register_metric_context(
+                "trace_chunk_sent".to_string(),
+                vec![],
+                MetricType::Count,
+                true,
+                MetricNamespace::Tracers,
+            ),
+            trace_chunk_dropped: worker.register_metric_context(
+                "trace_chunk_dropped".to_string(),
                 vec![],
                 MetricType::Count,
                 true,

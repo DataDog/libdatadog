@@ -42,14 +42,14 @@ pub async fn get_traces_from_request_body(
 
 // Tags gathered from a trace's root span
 #[derive(Default)]
-struct RootSpanTags<'a> {
+pub struct RootSpanTags<'a> {
     pub env: &'a str,
     pub app_version: &'a str,
     pub hostname: &'a str,
     pub runtime_id: &'a str,
 }
 
-fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
+pub fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
     pb::TraceChunk {
         priority: normalizer::SamplerPriority::None as i32,
         origin: "".to_string(),
@@ -59,7 +59,7 @@ fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
     }
 }
 
-fn construct_tracer_payload(
+pub fn construct_tracer_payload(
     chunks: Vec<pb::TraceChunk>,
     tracer_tags: &TracerHeaderTags,
     root_span_tags: RootSpanTags,
@@ -81,9 +81,9 @@ fn construct_tracer_payload(
 pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
     // TODO trace payloads with identical data except for chunk could be merged?
 
-    data.sort_unstable_by(|a, b| a.target.url.to_string().cmp(&b.target.url.to_string()));
+    data.sort_unstable_by(|a, b| a.get_target().url.to_string().cmp(&b.get_target().url.to_string()));
     data.dedup_by(|a, b| {
-        if a.target.url == b.target.url {
+        if a.get_target().url == b.get_target().url {
             // Size is only an approximation. In practice it won't vary much, but be safe here.
             // We also don't care about the exact maximum size, like two 25 MB or one 50 MB request
             // has similar results. The primary goal here is avoiding many small requests.

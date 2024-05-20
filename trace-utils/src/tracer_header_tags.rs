@@ -21,7 +21,7 @@ macro_rules! parse_string_header {
     }
 }
 
-#[derive(Default, Debug, Serialize, Deserialize)]
+#[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct TracerHeaderTags<'a> {
     pub lang: &'a str,
     pub lang_version: &'a str,
@@ -79,5 +79,82 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
             tags.client_computed_stats = true;
         }
         tags
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyper::HeaderMap;
+
+    #[test]
+    fn tags_to_hashmap() {
+        let header_tags = TracerHeaderTags {
+            lang: "test-lang",
+            lang_version: "2.0",
+            lang_interpreter: "interpreter",
+            lang_vendor: "vendor",
+            tracer_version: "1.0",
+            container_id: "id",
+            client_computed_top_level: false,
+            client_computed_stats: false,
+        };
+
+        let map: HashMap<&'static str, String> = header_tags.into();
+
+        assert_eq!(map.len(), 6);
+        assert_eq!(map.get("datadog-meta-lang").unwrap(), "test-lang");
+        assert_eq!(map.get("datadog-meta-lang-version").unwrap(), "2.0");
+        assert_eq!(map.get("datadog-meta-lang-interpreter").unwrap(), "interpreter");
+        assert_eq!(map.get("datadog-meta-lang-vendor").unwrap(), "vendor");
+        assert_eq!(map.get("datadog-meta-tracer-version").unwrap(), "1.0");
+        assert_eq!(map.get("datadog-container-id").unwrap(), "id");
+    }
+    #[test]
+    fn tags_to_hashmap_empty_value() {
+        let header_tags = TracerHeaderTags {
+            lang: "test-lang",
+            lang_version: "2.0",
+            lang_interpreter: "interpreter",
+            lang_vendor: "vendor",
+            tracer_version: "1.0",
+            container_id: "",
+            client_computed_top_level: false,
+            client_computed_stats: false,
+        };
+
+        let map: HashMap<&'static str, String> = header_tags.into();
+
+        assert_eq!(map.len(), 5);
+        assert_eq!(map.get("datadog-meta-lang").unwrap(), "test-lang");
+        assert_eq!(map.get("datadog-meta-lang-version").unwrap(), "2.0");
+        assert_eq!(map.get("datadog-meta-lang-interpreter").unwrap(), "interpreter");
+        assert_eq!(map.get("datadog-meta-lang-vendor").unwrap(), "vendor");
+        assert_eq!(map.get("datadog-meta-tracer-version").unwrap(), "1.0");
+        assert_eq!(map.get("datadog-container-id"), None);
+    }
+
+    #[test]
+    fn header_map_to_tags() {
+        let mut header_map = HeaderMap::new();
+
+        header_map.insert("datadog-meta-lang", "test-lang".parse().unwrap());
+        header_map.insert("datadog-meta-lang-version", "2.0".parse().unwrap());
+        header_map.insert("datadog-meta-lang-interpreter", "interpreter".parse().unwrap());
+        header_map.insert("datadog-meta-lang-vendor", "vendor".parse().unwrap());
+        header_map.insert("datadog-meta-tracer-version", "1.0".parse().unwrap());
+        header_map.insert("datadog-container-id", "id".parse().unwrap());
+        header_map.insert("datadog-client-computed-stats", "true".parse().unwrap());
+
+        let tags: TracerHeaderTags = (&header_map).into();
+
+        assert_eq!(tags.lang, "test-lang");
+        assert_eq!(tags.lang_vendor, "vendor");
+        assert_eq!(tags.lang_version, "2.0");
+        assert_eq!(tags.tracer_version, "1.0");
+        assert_eq!(tags.lang_interpreter, "interpreter");
+        assert_eq!(tags.container_id, "id");
+        assert!(tags.client_computed_stats);
+        assert!(!tags.client_computed_top_level);
     }
 }

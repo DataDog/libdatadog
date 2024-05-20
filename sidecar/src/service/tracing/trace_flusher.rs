@@ -61,6 +61,9 @@ pub struct TraceFlusherMetrics {
     pub api_errors_timeout: u64,
     pub api_errors_network: u64,
     pub api_errors_status_code: u64,
+    pub bytes_sent: u64,
+    pub chunks_sent: u64,
+    pub chunks_dropped: u64,
 }
 
 impl TraceFlusherMetrics {
@@ -69,6 +72,9 @@ impl TraceFlusherMetrics {
         self.api_errors_timeout += result.errors_timeout;
         self.api_errors_network += result.errors_network;
         self.api_errors_status_code += result.errors_status_code;
+        self.bytes_sent += result.bytes_sent;
+        self.chunks_sent += result.chunks_sent;
+        self.chunks_dropped += result.chunks_dropped;
 
         for (status_code, count) in &result.responses_count_per_code {
             *self
@@ -113,7 +119,7 @@ impl TraceFlusher {
         let mut flush_data = self.inner.lock().unwrap();
         let flush_data = flush_data.deref_mut();
 
-        flush_data.traces.send_data_size += data.size;
+        flush_data.traces.send_data_size += data.len();
 
         if flush_data.traces.send_data_size
             > self.min_force_drop_size_bytes.load(Ordering::Relaxed) as usize
@@ -233,7 +239,7 @@ impl TraceFlusher {
         let mut futures: Vec<_> = Vec::new();
         let mut intake_target: Vec<_> = Vec::new();
         for send_data in send_data {
-            intake_target.push(send_data.target.clone());
+            intake_target.push(send_data.get_target().clone());
             futures.push(send_data.send());
         }
         for (endpoint, response) in zip(intake_target, join_all(futures).await) {
