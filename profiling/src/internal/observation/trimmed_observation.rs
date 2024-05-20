@@ -87,7 +87,7 @@ impl TrimmedObservation {
     }
 
     /// Safety: the ObservationLength must have come from the same profile as the Observation
-    unsafe fn into_boxed_slice(mut self, len: ObservationLength) -> Box<[i64]> {
+    pub unsafe fn into_boxed_slice(mut self, len: ObservationLength) -> Box<[i64]> {
         unsafe {
             let s: &mut [i64] = std::slice::from_raw_parts_mut(
                 mem::replace(&mut self.data, std::ptr::null_mut()),
@@ -98,7 +98,7 @@ impl TrimmedObservation {
     }
 
     /// Safety: the ObservationLength must have come from the same profile as the Observation
-    pub(super) unsafe fn into_vec(mut self, len: ObservationLength) -> Vec<i64> {
+    pub unsafe fn into_vec(mut self, len: ObservationLength) -> Vec<i64> {
         unsafe {
             // We built this from a vec.  Put it back together again.
             Vec::from_raw_parts(
