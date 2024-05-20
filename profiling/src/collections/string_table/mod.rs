@@ -202,6 +202,42 @@ impl IntoLendingIterator for StringTable {
 mod tests {
     use super::*;
 
+    /// This is a fuzz test for the allocation optimized `StringTable`.
+    /// It checks both safety (lack of crashes / sanitizer failures),
+    /// as well as functional correctness (the table should behave like an
+    /// ordered set).  
+    /// Limitations:
+    ///   - The length of strings appears to be limited: `assert!(string.len() < 50);` failed, but
+    ///     `100` passed (in 10s)
+    ///   - Since iterating is destructive, can only check the string values once.
+    #[test]
+    fn fuzz_string_table() {
+        bolero::check!()
+            .with_type::<Vec<String>>()
+            .for_each(|strings| {
+                let mut golden_list = vec![""];
+                let mut golden_set = std::collections::HashSet::from([""]);
+                let mut st = StringTable::new();
+                for string in strings {
+                    assert_eq!(st.len(), golden_set.len());
+                    st.intern(&string);
+                    if golden_set.insert(&string) {
+                        golden_list.push(&string);
+                    }
+                }
+                assert_eq!(st.len(), golden_list.len());
+                assert_eq!(st.len(), golden_set.len());
+
+                // Check that the strings remain in order
+                let mut it = st.into_lending_iter();
+                let mut idx = 0;
+                while let Some(s) = it.next() {
+                    assert_eq!(s, golden_list[idx]);
+                    idx += 1;
+                }
+            })
+    }
+
     #[test]
     fn test_basics() {
         let mut table = StringTable::new();
