@@ -10,7 +10,7 @@
 
 mod observations;
 mod timestamped_observations;
-mod trimmed_observation;
+pub mod trimmed_observation;
 
 // We keep trimmed_observation private, to ensure that only maps can make and
 // operate on trimmed objects, which helps ensure safety.
