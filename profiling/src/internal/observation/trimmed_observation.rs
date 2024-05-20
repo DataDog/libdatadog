@@ -184,4 +184,31 @@ mod tests {
             assert_eq!(*b, vec![1, 2]);
         }
     }
+
+    #[test]
+    fn fuzz_trimmed_observation() {
+        bolero::check!().with_type::<Vec<i64>>().for_each(|v| {
+            let o = ObservationLength::new(v.len());
+            {
+                let t = TrimmedObservation::new(v.clone(), o);
+                unsafe {
+                    t.consume(o);
+                }
+            }
+            {
+                let mut t = TrimmedObservation::new(v.clone(), o);
+                unsafe {
+                    assert_eq!(&t.as_mut_slice(o), &v);
+                    assert_eq!(t.into_boxed_slice(o).as_ref(), v.as_slice());
+                }
+            }
+            {
+                let mut t = TrimmedObservation::new(v.clone(), o);
+                unsafe {
+                    assert_eq!(&t.as_mut_slice(o), &v);
+                    assert_eq!(&t.into_vec(o), v);
+                }
+            }
+        })
+    }
 }
