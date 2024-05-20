@@ -210,20 +210,30 @@ mod tests {
     ///   - The length of strings appears to be limited: `assert!(string.len() < 50);` failed, but
     ///     `100` passed (in 10s)
     ///   - Since iterating is destructive, can only check the string values once.
+    /// `cargo +nightly bolero test collections::string_table::tests::fuzz_string_table -T 1min`
     #[test]
     fn fuzz_string_table() {
         bolero::check!()
             .with_type::<Vec<String>>()
             .for_each(|strings| {
+                // Compare our optimized implementation against a "golden" version
+                // from the standard library.
                 let mut golden_list = vec![""];
                 let mut golden_set = std::collections::HashSet::from([""]);
                 let mut st = StringTable::new();
+
                 for string in strings {
                     assert_eq!(st.len(), golden_set.len());
-                    st.intern(&string);
                     if golden_set.insert(&string) {
                         golden_list.push(&string);
                     }
+
+                    let str_id = st.intern(&string);
+                    // The str_id should refer to the id_th string interned
+                    // on the list.  We can't look inside the `StringTable`
+                    // in a non-desctrive way, but fortunatly we have the
+                    // `golden_list` to compare against.
+                    assert_eq!(string, golden_list[str_id.to_offset()]);
                 }
                 assert_eq!(st.len(), golden_list.len());
                 assert_eq!(st.len(), golden_set.len());
