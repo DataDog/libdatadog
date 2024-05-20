@@ -78,6 +78,10 @@ impl<A: Allocator> Drop for LinearAllocator<A> {
 
 unsafe impl<A: Allocator> Allocator for LinearAllocator<A> {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        if layout.size() == 0 {
+            return Err(AllocError);
+        }
+
         // Find the needed allocation size including the necessary alignment.
         let size = self.used_bytes();
         // SAFETY: base_ptr + size will always be in the allocated range, or

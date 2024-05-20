@@ -94,6 +94,10 @@ pub mod os {
         }
 
         fn allocate_zeroed(&self, layout: Layout) -> Result<ptr::NonNull<[u8]>, AllocError> {
+            if layout.size() == 0 {
+                return Err(AllocError);
+            }
+
             let size = super::layout_to_page_size(layout)?;
 
             let null = ptr::null_mut();
