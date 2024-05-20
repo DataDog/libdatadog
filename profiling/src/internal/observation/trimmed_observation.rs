@@ -12,8 +12,7 @@ use std::mem;
 /// slice are the same as when we trimmed it.
 #[repr(transparent)]
 #[derive(Copy, Clone, Default, Debug)]
-#[cfg_attr(feature = "fuzz", derive(arbitrary::Arbitrary))]
-pub struct ObservationLength(pub usize);
+pub(super) struct ObservationLength(pub usize);
 
 impl ObservationLength {
     pub fn eq(&self, other: usize) -> bool {
@@ -38,7 +37,7 @@ impl ObservationLength {
 /// This panics if you attempt to create an Observation with a data vector
 /// of the wrong length.
 #[repr(transparent)]
-pub struct TrimmedObservation {
+pub(super) struct TrimmedObservation {
     data: *mut i64,
 }
 
@@ -87,7 +86,7 @@ impl TrimmedObservation {
     }
 
     /// Safety: the ObservationLength must have come from the same profile as the Observation
-    pub unsafe fn into_boxed_slice(mut self, len: ObservationLength) -> Box<[i64]> {
+    unsafe fn into_boxed_slice(mut self, len: ObservationLength) -> Box<[i64]> {
         unsafe {
             let s: &mut [i64] = std::slice::from_raw_parts_mut(
                 mem::replace(&mut self.data, std::ptr::null_mut()),
@@ -98,7 +97,7 @@ impl TrimmedObservation {
     }
 
     /// Safety: the ObservationLength must have come from the same profile as the Observation
-    pub unsafe fn into_vec(mut self, len: ObservationLength) -> Vec<i64> {
+    pub(super) unsafe fn into_vec(mut self, len: ObservationLength) -> Vec<i64> {
         unsafe {
             // We built this from a vec.  Put it back together again.
             Vec::from_raw_parts(

@@ -7,7 +7,7 @@ mod function;
 mod label;
 mod location;
 mod mapping;
-pub mod observation;
+mod observation;
 mod owned_types;
 mod profile;
 mod sample;
