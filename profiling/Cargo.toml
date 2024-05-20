@@ -17,6 +17,7 @@ harness = false
 
 [dependencies]
 anyhow = "1.0"
+arbitrary = { version = "1", features = ["derive"], optional = true }
 bitmaps = "3.2.0"
 bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
@@ -48,4 +49,3 @@ byteorder = { version = "1.5", features = ["std"] }
 [dev-dependencies]
 bolero = "0.10.1"
 criterion = "0.5.1"
-
