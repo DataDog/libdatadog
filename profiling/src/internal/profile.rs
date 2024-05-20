@@ -5,6 +5,8 @@ use self::api::UpscalingInfo;
 use super::*;
 use crate::api;
 use crate::collections::identifiable::*;
+use crate::collections::string_table::StringTable;
+use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::pprof::sliced_proto::*;
 use crate::serializer::CompressedProtobufSerializer;
 use anyhow::Context;
@@ -32,7 +34,7 @@ pub struct Profile {
     sample_types: Vec<ValueType>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
-    strings: FxIndexSet<Box<str>>,
+    strings: StringTable,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
 }
@@ -257,7 +259,8 @@ impl Profile {
             encoder.encode(ProfileFunctionsEntry::from(item))?;
         }
 
-        for item in self.strings.into_iter() {
+        let mut lender = self.strings.into_lending_iter();
+        while let Some(item) = lender.next() {
             encoder.encode_string_table_entry(item)?;
         }
 
@@ -406,21 +409,9 @@ impl Profile {
 
     /// Interns the `str` as a string, returning the id in the string table.
     /// The empty string is guaranteed to have an id of [StringId::ZERO].
+    #[inline]
     fn intern(&mut self, item: &str) -> StringId {
-        // For performance, delay converting the [&str] to a [String] until
-        // after it has been determined to not exist in the set. This avoids
-        // temporary allocations.
-        let index = match self.strings.get_index_of(item) {
-            Some(index) => index,
-            None => {
-                let (index, _inserted) = self.strings.insert_full(item.into());
-                // This wouldn't make any sense; the item couldn't be found so
-                // we try to insert it, but suddenly it exists now?
-                debug_assert!(_inserted);
-                index
-            }
-        };
-        StringId::from_offset(index)
+        self.strings.intern(item)
     }
 
     /// Creates a profile from the period, sample types, and start time using
@@ -847,7 +838,7 @@ mod api_tests {
         assert_eq!(profile.sample_types, prev.sample_types);
 
         // The string table should have at least the empty string.
-        assert!(!profile.strings.is_empty());
+        assert!(profile.strings.len() > 0);
     }
 
     #[test]
@@ -855,12 +846,12 @@ mod api_tests {
         /* The previous test (reset) checked quite a few properties already, so
          * this one will focus only on the period.
          */
-        let sample_types: &[api::ValueType] = &[api::ValueType::new("wall-time", "nanoseconds")];
+        let sample_types = [api::ValueType::new("wall-time", "nanoseconds")];
         let period = api::Period {
             r#type: sample_types[0],
             value: 10_000_000,
         };
-        let mut profile = Profile::new(SystemTime::now(), sample_types, Some(period));
+        let mut profile = Profile::new(SystemTime::now(), &sample_types, Some(period));
 
         let prev = profile
             .reset_and_return_previous(None)
@@ -868,11 +859,16 @@ mod api_tests {
 
         // Resolve the string values to check that they match (their string
         // table offsets may not match).
+        let mut strings = Vec::with_capacity(profile.strings.len());
+        let mut strings_iter = profile.strings.into_lending_iter();
+        while let Some(item) = strings_iter.next() {
+            strings.push(Box::from(String::from(item)));
+        }
+
         for (value, period_type) in [profile.period.unwrap(), prev.period.unwrap()] {
             assert_eq!(value, period.value);
-            let strings = profile.strings.iter().collect::<Vec<_>>();
-            let r#type: &str = strings[period_type.r#type.to_offset()];
-            let unit: &str = strings[period_type.unit.to_offset()];
+            let r#type: &str = &strings[period_type.r#type.to_offset()];
+            let unit: &str = &strings[period_type.unit.to_offset()];
             assert_eq!(r#type, period.r#type.r#type);
             assert_eq!(unit, period.r#type.unit);
         }
