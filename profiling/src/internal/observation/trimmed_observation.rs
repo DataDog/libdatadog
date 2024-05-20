@@ -123,15 +123,6 @@ impl Drop for TrimmedObservation {
     }
 }
 
-#[cfg(feature = "fuzz")]
-impl<'a> arbitrary::Arbitrary<'a> for TrimmedObservation {
-    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        let v = Vec::<i64>::arbitrary(u)?;
-        let len = ObservationLength::new(v.len());
-        Ok(TrimmedObservation::new(v, len))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
