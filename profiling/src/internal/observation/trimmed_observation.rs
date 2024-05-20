@@ -12,7 +12,8 @@ use std::mem;
 /// slice are the same as when we trimmed it.
 #[repr(transparent)]
 #[derive(Copy, Clone, Default, Debug)]
-pub(super) struct ObservationLength(usize);
+#[cfg_attr(feature = "fuzz", derive(arbitrary::Arbitrary))]
+pub struct ObservationLength(pub usize);
 
 impl ObservationLength {
     pub fn eq(&self, other: usize) -> bool {
@@ -37,7 +38,7 @@ impl ObservationLength {
 /// This panics if you attempt to create an Observation with a data vector
 /// of the wrong length.
 #[repr(transparent)]
-pub(super) struct TrimmedObservation {
+pub struct TrimmedObservation {
     data: *mut i64,
 }
 
@@ -119,6 +120,15 @@ impl Drop for TrimmedObservation {
             std::ptr::null_mut(),
             "Dropped TrimmedObservation that still owned data."
         );
+    }
+}
+
+#[cfg(feature = "fuzz")]
+impl<'a> arbitrary::Arbitrary<'a> for TrimmedObservation {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let v = Vec::<i64>::arbitrary(u)?;
+        let len = ObservationLength::new(v.len());
+        Ok(TrimmedObservation::new(v, len))
     }
 }
 
