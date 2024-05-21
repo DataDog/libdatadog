@@ -109,3 +109,46 @@ impl Iterator for TimestampedObservationsIter {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bolero::{generator::*, TypeGenerator};
+
+    use super::*;
+
+    fn gen_sample_vec(len: usize) -> impl ValueGenerator<Output = Vec<Sample>> {
+        Vec::<Sample>::gen().with().len(len)
+    }
+
+    fn gen_timestamp_vec(len: usize) -> impl ValueGenerator<Output = Vec<Timestamp>> {
+        Vec::<Timestamp>::gen().with().len(len)
+    }
+
+    fn gen_values_vec_vec(
+        len: usize,
+        sample_types_len: usize,
+    ) -> impl ValueGenerator<Output = Vec<Vec<i64>>> {
+        Vec::<Vec<i64>>::gen()
+            .with()
+            .values(Vec::<i64>::gen().with().len(sample_types_len))
+            .len(len)
+    }
+
+    #[test]
+    fn fuzz_timestamped_observations() {
+        bolero::check!()
+            .with_generator(<(usize, usize)>::gen().and_then_gen(
+                |(num_items, sample_types_len)| {
+                    Vec::<(Sample, Timestamp, Vec<i64>)>::gen()
+                        .with()
+                        .values((
+                            Sample::gen(),
+                            Timestamp::gen(),
+                            Vec::<i64>::gen().with().len(sample_types_len),
+                        ))
+                        .len(num_items)
+                },
+            ))
+            .for_each(|items| for (_sample, _ts, _values) in items {});
+    }
+}
