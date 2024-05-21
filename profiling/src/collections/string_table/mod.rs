@@ -255,11 +255,11 @@ mod tests {
 
                 for string in strings {
                     assert_eq!(st.len(), golden_set.len());
-                    if golden_set.insert(&string) {
-                        golden_list.push(&string);
+                    if golden_set.insert(string) {
+                        golden_list.push(string);
                     }
 
-                    let str_id = st.intern(&string);
+                    let str_id = st.intern(string);
                     // The str_id should refer to the id_th string interned
                     // on the list.  We can't look inside the `StringTable`
                     // in a non-desctrive way, but fortunately we have the
