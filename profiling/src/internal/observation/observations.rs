@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 struct NonEmptyObservations {
     // Samples with no timestamps are aggregated in-place as each observation is added
-    aggregated_data: HashMap<Sample, TrimmedObservation>,
+    aggregated_data: AggregatedObservations,
     // Samples with timestamps are all separately kept (so we can know the exact values at the
     // given timestamp)
     timestamped_data: TimestampedObservations,
@@ -29,7 +29,7 @@ impl Observations {
     pub fn new(observations_len: usize) -> Self {
         Observations {
             inner: Some(NonEmptyObservations {
-                aggregated_data: Default::default(),
+                aggregated_data: AggregatedObservations::new(observations_len),
                 timestamped_data: TimestampedObservations::new(observations_len),
                 obs_len: ObservationLength::new(observations_len),
                 timestamped_samples_count: 0,
@@ -61,16 +61,8 @@ impl Observations {
         if let Some(ts) = timestamp {
             observations.timestamped_data.add(sample, ts, values)?;
             observations.timestamped_samples_count += 1;
-        } else if let Some(v) = observations.aggregated_data.get_mut(&sample) {
-            // SAFETY: This method is only way to build one of these, and at
-            // the top we already checked the length matches.
-            unsafe { v.as_mut_slice(obs_len) }
-                .iter_mut()
-                .zip(values)
-                .for_each(|(a, b)| *a += b);
         } else {
-            let trimmed = TrimmedObservation::new(values, obs_len);
-            observations.aggregated_data.insert(sample, trimmed);
+            observations.aggregated_data.add(sample, values)?;
         }
 
         Ok(())
@@ -93,6 +85,62 @@ impl Observations {
             .as_ref()
             .map(|o| o.timestamped_samples_count)
             .unwrap_or(0)
+    }
+}
+
+#[derive(Default)]
+struct AggregatedObservations {
+    obs_len: ObservationLength,
+    data: HashMap<Sample, TrimmedObservation>,
+}
+
+impl AggregatedObservations {
+    pub fn new(obs_len: usize) -> Self {
+        AggregatedObservations {
+            obs_len: ObservationLength::new(obs_len),
+            data: Default::default(),
+        }
+    }
+
+    fn add(&mut self, sample: Sample, values: Vec<i64>) -> anyhow::Result<()> {
+        if let Some(v) = self.data.get_mut(&sample) {
+            // SAFETY: This method is only way to build one of these, and at
+            // the top we already checked the length matches.
+            unsafe { v.as_mut_slice(self.obs_len) }
+                .iter_mut()
+                .zip(values)
+                // HACK: fix this
+                .for_each(|(a, b)| match a.checked_add(b) {
+                    Some(sum) => *a = sum,
+                    None => {
+                        if b > 0 {
+                            *a = i64::MAX;
+                        } else {
+                            *a = i64::MIN;
+                        }
+                    }
+                });
+        } else {
+            let trimmed = TrimmedObservation::new(values, self.obs_len);
+            self.data.insert(sample, trimmed);
+        }
+
+        Ok(())
+    }
+
+    fn len(&self) -> usize {
+        self.data.len()
+    }
+}
+
+impl Drop for AggregatedObservations {
+    fn drop(&mut self) {
+        let o = self.obs_len;
+        self.data.drain().for_each(|(_, v)| {
+            // SAFETY: The only way to build one of these is through
+            // [Self::add], which already checked that the length was correct.
+            unsafe { v.consume(o) };
+        });
     }
 }
 
@@ -119,24 +167,13 @@ impl IntoIterator for Observations {
             )
             .into_iter()
             .map(|(s, t, o)| (s, Some(t), o));
-            let aggregated_data_it = std::mem::take(&mut observations.aggregated_data)
+            let aggregated_data_it = std::mem::take(&mut observations.aggregated_data.data)
                 .into_iter()
                 .map(|(s, o)| (s, None, o))
                 .map(move |(s, t, o)| (s, t, unsafe { o.into_vec(observations.obs_len) }));
             timestamped_data_it.chain(aggregated_data_it)
         });
         ObservationsIntoIter { it: Box::new(it) }
-    }
-}
-
-impl Drop for NonEmptyObservations {
-    fn drop(&mut self) {
-        let o = self.obs_len;
-        self.aggregated_data.drain().for_each(|(_, v)| {
-            // SAFETY: The only way to build one of these is through
-            // [Self::add], which already checked that the length was correct.
-            unsafe { v.consume(o) };
-        });
     }
 }
 
@@ -366,15 +403,28 @@ mod tests {
 
                 (observations_len, ts_samples, no_ts_samples)
             })
-            .for_each(|(observations_len, ts_samples, _no_ts_samples)| {
+            .for_each(|(observations_len, ts_samples, no_ts_samples)| {
+                let obs_len = ObservationLength::new(*observations_len);
+
                 let mut o = Observations::new(*observations_len);
                 assert!(o.is_empty());
 
                 for (s, ts, v) in ts_samples {
                     o.add(s.clone(), Some(ts.clone()), v.clone()).unwrap();
                 }
-
                 assert_eq!(o.timestamped_samples_count(), ts_samples.len());
+
+                let mut aggregated_observations = AggregatedObservations::new(*observations_len);
+
+                for (s, v) in no_ts_samples {
+                    o.add(s.clone(), None, v.clone()).unwrap();
+                    aggregated_observations.add(s.clone(), v.clone()).unwrap();
+                }
+
+                assert_eq!(
+                    o.aggregated_samples_count(),
+                    aggregated_observations.data.len()
+                );
 
                 let mut iter = o.into_iter();
                 for (expected_sample, expected_ts, expected_values) in ts_samples.iter() {
@@ -383,6 +433,17 @@ mod tests {
                     assert_eq!(*expected_ts, ts.unwrap());
                     assert_eq!(*expected_values, values);
                 }
+
+                while let Some((sample, ts, values)) = iter.next() {
+                    assert!(ts.is_none());
+                    assert!(aggregated_observations.data.contains_key(&sample));
+                    let expected_values = aggregated_observations.data.remove(&sample).unwrap();
+                    unsafe {
+                        let b = expected_values.into_vec(obs_len);
+                        assert_eq!(*b, values);
+                    }
+                }
+                assert!(aggregated_observations.data.is_empty());
             });
     }
 }
