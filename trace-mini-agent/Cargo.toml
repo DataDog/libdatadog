@@ -1,5 +1,6 @@
 [package]
 name = "datadog-trace-mini-agent"
+description = "A subset of the trace agent that is shipped alongside tracers in a few serverless use cases (GCF and Azure Consumptions plan)"
 version = "0.1.0"
 edition = "2021"
 

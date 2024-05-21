@@ -24,6 +24,9 @@ struct MetricData<'a> {
     active_sessions: ContextKey,
     memory_usage: ContextKey,
     logs_created: ContextKey,
+    trace_api_requests: ContextKey,
+    trace_api_responses: ContextKey,
+    trace_api_errors: ContextKey,
 }
 impl<'a> MetricData<'a> {
     async fn send(&self, key: ContextKey, value: f64, tags: Vec<Tag>) {
@@ -34,6 +37,8 @@ impl<'a> MetricData<'a> {
     }
 
     async fn collect_and_send(&self) {
+        let trace_metrics = self.server.trace_flusher.collect_metrics();
+
         let mut futures = vec![
             self.send(
                 self.submitted_payloads,
@@ -61,6 +66,42 @@ impl<'a> MetricData<'a> {
                 self.logs_created,
                 count as f64,
                 vec![Tag::new("level", level.as_str().to_lowercase()).unwrap()],
+            ));
+        }
+
+        if trace_metrics.api_requests > 0 {
+            futures.push(self.send(
+                self.trace_api_requests,
+                trace_metrics.api_requests as f64,
+                vec![],
+            ));
+        }
+        if trace_metrics.api_errors_network > 0 {
+            futures.push(self.send(
+                self.trace_api_errors,
+                trace_metrics.api_errors_network as f64,
+                vec![Tag::new("type", "network").unwrap()],
+            ));
+        }
+        if trace_metrics.api_errors_timeout > 0 {
+            futures.push(self.send(
+                self.trace_api_errors,
+                trace_metrics.api_errors_timeout as f64,
+                vec![Tag::new("type", "timeout").unwrap()],
+            ));
+        }
+        if trace_metrics.api_errors_status_code > 0 {
+            futures.push(self.send(
+                self.trace_api_errors,
+                trace_metrics.api_errors_status_code as f64,
+                vec![Tag::new("type", "status_code").unwrap()],
+            ));
+        }
+        for (status_code, count) in &trace_metrics.api_responses_count_per_code {
+            futures.push(self.send(
+                self.trace_api_responses,
+                *count as f64,
+                vec![Tag::new("status_code", status_code.to_string().as_str()).unwrap()],
             ));
         }
 
@@ -155,6 +196,27 @@ impl SelfTelemetry {
                 MetricType::Count,
                 true,
                 MetricNamespace::General,
+            ),
+            trace_api_requests: worker.register_metric_context(
+                "trace_api.requests".to_string(),
+                vec![],
+                MetricType::Count,
+                true,
+                MetricNamespace::Tracers,
+            ),
+            trace_api_responses: worker.register_metric_context(
+                "trace_api.responses".to_string(),
+                vec![],
+                MetricType::Count,
+                true,
+                MetricNamespace::Tracers,
+            ),
+            trace_api_errors: worker.register_metric_context(
+                "trace_api.errors".to_string(),
+                vec![],
+                MetricType::Count,
+                true,
+                MetricNamespace::Tracers,
             ),
         };
 

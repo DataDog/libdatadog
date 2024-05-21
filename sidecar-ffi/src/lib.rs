@@ -9,11 +9,13 @@ use datadog_sidecar::agent_remote_config::{
 };
 use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
+use datadog_sidecar::dogstatsd::DogStatsDAction;
 use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
 use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
     InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
+use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddcommon_ffi as ffi;
 use ddcommon_ffi::MaybeError;
@@ -389,7 +391,8 @@ pub extern "C" fn ddog_sidecar_is_closed(transport: &mut Box<SidecarTransport>) 
 pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     transport: &mut Box<SidecarTransport>,
     session_id: ffi::CharSlice,
-    endpoint: &Endpoint,
+    agent_endpoint: &Endpoint,
+    dogstatsd_endpoint: &Endpoint,
     flush_interval_milliseconds: u64,
     force_flush_size: usize,
     force_drop_size: usize,
@@ -400,7 +403,8 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
         transport,
         session_id.to_utf8_lossy().into(),
         &SessionConfig {
-            endpoint: endpoint.clone(),
+            endpoint: agent_endpoint.clone(),
+            dogstatsd_endpoint: dogstatsd_endpoint.clone(),
             flush_interval: Duration::from_millis(flush_interval_milliseconds),
             force_flush_size,
             force_drop_size,
@@ -522,4 +526,119 @@ pub unsafe extern "C" fn ddog_sidecar_stats(
     let buf = slice::from_raw_parts_mut(malloced, size);
     buf.copy_from_slice(str.as_bytes());
     ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_dogstatsd_count(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    metric: ffi::CharSlice,
+    value: i64,
+    tags: Option<&ddcommon_ffi::Vec<Tag>>,
+) -> MaybeError {
+    try_c!(blocking::send_dogstatsd_actions(
+        transport,
+        instance_id,
+        vec![DogStatsDAction::Count(
+            metric.to_utf8_lossy().into_owned(),
+            value,
+            tags.map(|tags| tags.iter().cloned().collect())
+                .unwrap_or_default()
+        ),],
+    ));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_dogstatsd_distribution(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    metric: ffi::CharSlice,
+    value: f64,
+    tags: Option<&ddcommon_ffi::Vec<Tag>>,
+) -> MaybeError {
+    try_c!(blocking::send_dogstatsd_actions(
+        transport,
+        instance_id,
+        vec![DogStatsDAction::Distribution(
+            metric.to_utf8_lossy().into_owned(),
+            value,
+            tags.map(|tags| tags.iter().cloned().collect())
+                .unwrap_or_default()
+        ),],
+    ));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_dogstatsd_gauge(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    metric: ffi::CharSlice,
+    value: f64,
+    tags: Option<&ddcommon_ffi::Vec<Tag>>,
+) -> MaybeError {
+    try_c!(blocking::send_dogstatsd_actions(
+        transport,
+        instance_id,
+        vec![DogStatsDAction::Gauge(
+            metric.to_utf8_lossy().into_owned(),
+            value,
+            tags.map(|tags| tags.iter().cloned().collect())
+                .unwrap_or_default()
+        ),],
+    ));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_dogstatsd_histogram(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    metric: ffi::CharSlice,
+    value: f64,
+    tags: Option<&ddcommon_ffi::Vec<Tag>>,
+) -> MaybeError {
+    try_c!(blocking::send_dogstatsd_actions(
+        transport,
+        instance_id,
+        vec![DogStatsDAction::Histogram(
+            metric.to_utf8_lossy().into_owned(),
+            value,
+            tags.map(|tags| tags.iter().cloned().collect())
+                .unwrap_or_default()
+        ),],
+    ));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    metric: ffi::CharSlice,
+    value: i64,
+    tags: Option<&ddcommon_ffi::Vec<Tag>>,
+) -> MaybeError {
+    try_c!(blocking::send_dogstatsd_actions(
+        transport,
+        instance_id,
+        vec![DogStatsDAction::Set(
+            metric.to_utf8_lossy().into_owned(),
+            value,
+            tags.map(|tags| tags.iter().cloned().collect())
+                .unwrap_or_default()
+        ),],
+    ));
+
+    MaybeError::None
 }

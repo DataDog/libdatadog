@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::dogstatsd::DogStatsDAction;
 use crate::service::{
     InstanceId, QueueId, RequestIdentification, RequestIdentifier, RuntimeMetadata,
     SerializedTracerHeaderTags, SessionConfig, SidecarAction,
@@ -94,6 +95,14 @@ pub trait SidecarInterface {
         data: Vec<u8>,
         headers: SerializedTracerHeaderTags,
     );
+
+    /// Sends DogStatsD actions.
+    ///
+    /// # Arguments
+    ///
+    /// * `instance_id` - The ID of the instance.
+    /// * `actions` - The DogStatsD actions to send.
+    async fn send_dogstatsd_actions(instance_id: InstanceId, actions: Vec<DogStatsDAction>);
 
     /// Sends a ping to the service.
     async fn ping();

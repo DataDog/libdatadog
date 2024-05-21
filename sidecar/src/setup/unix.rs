@@ -65,7 +65,10 @@ impl Liaison for SharedDirLiaison {
         if self.socket_path.exists() {
             // if socket is already listening, then creating listener is not available
             if platform::sockets::is_listening(&self.socket_path)? {
-                debug!("already_listening");
+                debug!(
+                    "The sidecar's socket is already listening ({})",
+                    self.socket_path.as_path().display()
+                );
                 return Ok(None);
             }
             fs::remove_file(&self.socket_path)?;

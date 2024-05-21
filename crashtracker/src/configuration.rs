@@ -15,7 +15,8 @@ pub enum StacktraceCollection {
     /// Stacktrace collection occurs in the
     Disabled,
     WithoutSymbols,
-    Enabled,
+    EnabledWithInprocessSymbols,
+    EnabledWithSymbolsInReceiver,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
