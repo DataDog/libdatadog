@@ -125,6 +125,7 @@ impl Drop for TrimmedObservation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bolero::TypeGenerator;
 
     #[test]
     fn as_mut_test() {
@@ -184,8 +185,9 @@ mod tests {
         }
     }
 
-    // cargo +nightly bolero test
-    // internal::observation::trimmed_observation::tests::fuzz_trimmed_observation -T 1min
+    // A fuzz test for TrimmedObservation. It creates a `Vec<i64>` with length (0..=64)
+    // https://github.com/camshaft/bolero/blob/f401669697ffcbe7f34cbfd09fd57b93d5df734c/lib/bolero-generator/src/alloc/mod.rs#L17
+    // and the integers in it are unbounded, then it's used to create a TrimmedObservation.
     #[test]
     fn fuzz_trimmed_observation() {
         bolero::check!().with_type::<Vec<i64>>().for_each(|v| {
@@ -197,19 +199,65 @@ mod tests {
                 }
             }
             {
-                let mut t = TrimmedObservation::new(v.clone(), o);
+                let t = TrimmedObservation::new(v.clone(), o);
                 unsafe {
-                    assert_eq!(&t.as_mut_slice(o), &v);
                     assert_eq!(t.into_boxed_slice(o).as_ref(), v.as_slice());
                 }
             }
             {
-                let mut t = TrimmedObservation::new(v.clone(), o);
+                let t = TrimmedObservation::new(v.clone(), o);
                 unsafe {
-                    assert_eq!(&t.as_mut_slice(o), &v);
                     assert_eq!(&t.into_vec(o), v);
                 }
             }
         })
+    }
+
+    #[derive(Debug, TypeGenerator)]
+    enum Operation {
+        Add(i64),
+        Sub(i64),
+        Mul(i64),
+        Div(i64),
+    }
+
+    #[test]
+    fn fuzz_mutations() {
+        bolero::check!()
+            .with_type::<(Vec<i64>, Vec<Operation>)>()
+            .for_each(|(v, ops)| {
+                let o = ObservationLength::new(v.len());
+                let mut t = TrimmedObservation::new(v.clone(), o);
+
+                let mut v = v.clone();
+                for op in ops {
+                    let slice = unsafe { t.as_mut_slice(o) };
+
+                    slice.iter_mut().zip(v.iter_mut()).for_each(|(a, b)| {
+                        let func = match op {
+                            Operation::Add(x) => Box::new(|y: i64| y.checked_add(*x))
+                                as Box<dyn Fn(_) -> Option<i64>>,
+                            Operation::Sub(x) => Box::new(|y: i64| y.checked_sub(*x)),
+                            Operation::Mul(x) => Box::new(|y: i64| y.checked_mul(*x)),
+                            Operation::Div(x) => Box::new(|y: i64| y.checked_div(*x)),
+                        };
+                        match (func(*a), func(*b)) {
+                            (Some(c), Some(d)) => {
+                                *a = c;
+                                *b = d;
+                                assert_eq!(a, b);
+                            }
+                            (None, None) => {}
+                            _ => {
+                                panic!("a: {}, b: {}", a, b);
+                            }
+                        }
+                    });
+                }
+
+                unsafe {
+                    t.consume(o);
+                }
+            })
     }
 }
