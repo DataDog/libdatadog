@@ -1,39 +1,21 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use anyhow::Context;
-use futures::stream::FuturesUnordered;
-use futures::StreamExt;
-use hyper::http::HeaderValue;
-use hyper::{body::Buf, Body, Client, HeaderMap, Method, Response, StatusCode};
+use hyper::{body::Buf, Body};
 use log::{error, info};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub use crate::send_data::SendData;
+pub use crate::send_data::SendDataResult;
+pub use crate::tracer_header_tags::TracerHeaderTags;
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
 use datadog_trace_protobuf::pb::TraceChunk;
-use ddcommon::{connector, Endpoint, HttpRequestBuilder};
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
 /// Span metric the tracer sets to denote a top level span
 const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
-
-macro_rules! parse_string_header {
-    (
-        $header_map:ident,
-        { $($header_key:literal => $($field:ident).+ ,)+ }
-    ) => {
-        $(
-            if let Some(header_value) = $header_map.get($header_key) {
-                if let Ok(h) = header_value.to_str() {
-                    $($field).+ = h;
-                }
-            }
-        )+
-    }
-}
 
 /// First value of returned tuple is the payload size
 pub async fn get_traces_from_request_body(
@@ -56,90 +38,16 @@ pub async fn get_traces_from_request_body(
     Ok((size, traces))
 }
 
-#[derive(Default, Debug, Serialize, Deserialize)]
-pub struct TracerHeaderTags<'a> {
-    pub lang: &'a str,
-    pub lang_version: &'a str,
-    pub lang_interpreter: &'a str,
-    pub lang_vendor: &'a str,
-    pub tracer_version: &'a str,
-    pub container_id: &'a str,
-    // specifies that the client has marked top-level spans, when set. Any non-empty value will
-    // mean 'yes'.
-    pub client_computed_top_level: bool,
-    // specifies whether the client has computed stats so that the agent doesn't have to. Any
-    // non-empty value will mean 'yes'.
-    pub client_computed_stats: bool,
-}
-
-impl<'a> From<TracerHeaderTags<'a>> for HashMap<&'static str, String> {
-    fn from(tags: TracerHeaderTags<'a>) -> HashMap<&'static str, String> {
-        let mut headers = HashMap::from([
-            ("datadog-meta-lang", tags.lang.to_string()),
-            ("datadog-meta-lang-version", tags.lang_version.to_string()),
-            (
-                "datadog-meta-lang-interpreter",
-                tags.lang_interpreter.to_string(),
-            ),
-            ("datadog-meta-lang-vendor", tags.lang_vendor.to_string()),
-            (
-                "datadog-meta-tracer-version",
-                tags.tracer_version.to_string(),
-            ),
-            ("datadog-container-id", tags.container_id.to_string()),
-        ]);
-        headers.retain(|_, v| !v.is_empty());
-        headers
-    }
-}
-
-impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
-    fn from(headers: &'a HeaderMap<HeaderValue>) -> Self {
-        let mut tags = TracerHeaderTags::default();
-        parse_string_header!(
-            headers,
-            {
-                "datadog-meta-lang" => tags.lang,
-                "datadog-meta-lang-version" => tags.lang_version,
-                "datadog-meta-lang-interpreter" => tags.lang_interpreter,
-                "datadog-meta-lang-vendor" => tags.lang_vendor,
-                "datadog-meta-tracer-version" => tags.tracer_version,
-                "datadog-container-id" => tags.container_id,
-            }
-        );
-        if headers.get("datadog-client-computed-top-level").is_some() {
-            tags.client_computed_top_level = true;
-        }
-        if headers.get("datadog-client-computed-stats").is_some() {
-            tags.client_computed_stats = true;
-        }
-        tags
-    }
-}
-
 // Tags gathered from a trace's root span
 #[derive(Default)]
-pub struct RootSpanTags<'a> {
+struct RootSpanTags<'a> {
     pub env: &'a str,
     pub app_version: &'a str,
     pub hostname: &'a str,
     pub runtime_id: &'a str,
 }
 
-pub fn construct_agent_payload(tracer_payloads: Vec<pb::TracerPayload>) -> pb::AgentPayload {
-    pb::AgentPayload {
-        host_name: "".to_string(),
-        env: "".to_string(),
-        agent_version: "".to_string(),
-        error_tps: 60.0,
-        target_tps: 60.0,
-        tags: HashMap::new(),
-        tracer_payloads,
-        rare_sampler_enabled: false,
-    }
-}
-
-pub fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
+fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
     pb::TraceChunk {
         priority: normalizer::SamplerPriority::None as i32,
         origin: "".to_string(),
@@ -149,7 +57,7 @@ pub fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
     }
 }
 
-pub fn construct_tracer_payload(
+fn construct_tracer_payload(
     chunks: Vec<pb::TraceChunk>,
     tracer_tags: &TracerHeaderTags,
     root_span_tags: RootSpanTags,
@@ -168,141 +76,6 @@ pub fn construct_tracer_payload(
     }
 }
 
-pub fn serialize_proto_payload<T>(payload: &T) -> anyhow::Result<Vec<u8>>
-where
-    T: prost::Message,
-{
-    let mut buf = Vec::with_capacity(payload.encoded_len());
-    payload.encode(&mut buf)?;
-    Ok(buf)
-}
-
-#[derive(Debug, Clone)]
-pub struct SendData {
-    tracer_payloads: Vec<pb::TracerPayload>,
-    size: usize, // have a rough size estimate to force flushing if it's large
-    pub target: Endpoint,
-    headers: HashMap<&'static str, String>,
-}
-
-impl SendData {
-    pub fn new(
-        size: usize,
-        tracer_payload: pb::TracerPayload,
-        tracer_header_tags: TracerHeaderTags,
-        target: &Endpoint,
-    ) -> SendData {
-        let headers = if let Some(api_key) = &target.api_key {
-            HashMap::from([("DD-API-KEY", api_key.as_ref().to_string())])
-        } else {
-            tracer_header_tags.into()
-        };
-
-        SendData {
-            tracer_payloads: vec![tracer_payload],
-            size,
-            target: target.clone(),
-            headers,
-        }
-    }
-
-    pub fn size(&self) -> usize {
-        self.size
-    }
-
-    pub async fn send<'a>(self) -> anyhow::Result<Response<Body>> {
-        let target = &self.target;
-
-        let mut req = hyper::Request::builder()
-            .uri(target.url.clone())
-            .header(
-                hyper::header::USER_AGENT,
-                concat!("Tracer/", env!("CARGO_PKG_VERSION")),
-            )
-            .method(Method::POST);
-
-        for (key, value) in &self.headers {
-            req = req.header(*key, value);
-        }
-
-        async fn send_request(
-            req: HttpRequestBuilder,
-            payload: Vec<u8>,
-            expected_status: StatusCode,
-        ) -> anyhow::Result<Response<Body>> {
-            let req = req.body(Body::from(payload))?;
-
-            match Client::builder()
-                .build(connector::Connector::default())
-                .request(req)
-                .await
-            {
-                Ok(response) => {
-                    if response.status() != expected_status {
-                        let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
-                        let response_body =
-                            String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                        anyhow::bail!("Server did not accept traces: {response_body}");
-                    }
-                    Ok(response)
-                }
-                Err(e) => anyhow::bail!("Failed to send traces: {e}"),
-            }
-        }
-
-        if target.api_key.is_some() {
-            req = req.header("Content-type", "application/x-protobuf");
-
-            let agent_payload = construct_agent_payload(self.tracer_payloads);
-            let serialized_trace_payload = serialize_proto_payload(&agent_payload)
-                .context("Failed to serialize trace agent payload, dropping traces")?;
-
-            send_request(req, serialized_trace_payload, StatusCode::ACCEPTED).await
-        } else {
-            req = req.header("Content-type", "application/msgpack");
-
-            let (template, _) = req.body(()).unwrap().into_parts();
-
-            let mut futures = FuturesUnordered::new();
-            for tracer_payload in self.tracer_payloads.into_iter() {
-                let mut builder = HttpRequestBuilder::new()
-                    .method(template.method.clone())
-                    .uri(template.uri.clone())
-                    .version(template.version)
-                    .header(
-                        "X-Datadog-Trace-Count",
-                        tracer_payload.chunks.len().to_string(),
-                    );
-                builder
-                    .headers_mut()
-                    .unwrap()
-                    .extend(template.headers.clone());
-
-                futures.push(send_request(
-                    builder,
-                    rmp_serde::to_vec_named(&tracer_payload)?,
-                    StatusCode::OK,
-                ));
-            }
-            let mut last_response = Err(anyhow::format_err!("No futures completed...?!"));
-            loop {
-                match futures.next().await {
-                    Some(response) => match response {
-                        Ok(response) => last_response = Ok(response),
-                        Err(e) => return Err(e),
-                    },
-                    None => return last_response,
-                }
-            }
-        }
-    }
-
-    // For testing
-    pub fn get_payloads(&self) -> &Vec<pb::TracerPayload> {
-        &self.tracer_payloads
-    }
-}
-
 pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
     // TODO trace payloads with identical data except for chunk could be merged?
 
@@ -318,7 +91,7 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
     data
 }
 
-pub fn get_root_span_index(trace: &Vec<pb::Span>) -> anyhow::Result<usize> {
+fn get_root_span_index(trace: &Vec<pb::Span>) -> anyhow::Result<usize> {
     if trace.is_empty() {
         anyhow::bail!("Cannot find root span index in an empty trace.");
     }
