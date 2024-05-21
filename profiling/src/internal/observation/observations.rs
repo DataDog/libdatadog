@@ -131,6 +131,21 @@ impl AggregatedObservations {
     fn len(&self) -> usize {
         self.data.len()
     }
+
+    #[allow(dead_code)]
+    fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    #[allow(dead_code)]
+    fn contains_key(&self, sample: &Sample) -> bool {
+        self.data.contains_key(sample)
+    }
+
+    #[allow(dead_code)]
+    fn remove(&mut self, sample: &Sample) -> Option<TrimmedObservation> {
+        self.data.remove(sample)
+    }
 }
 
 impl Drop for AggregatedObservations {
@@ -433,7 +448,7 @@ mod tests {
 
                 assert_eq!(
                     o.aggregated_samples_count(),
-                    aggregated_observations.data.len()
+                    aggregated_observations.len()
                 );
 
                 let mut iter = o.into_iter();
@@ -449,14 +464,14 @@ mod tests {
 
                 for (sample, ts, values) in iter {
                     assert!(ts.is_none());
-                    assert!(aggregated_observations.data.contains_key(&sample));
-                    let expected_values = aggregated_observations.data.remove(&sample).unwrap();
+                    assert!(aggregated_observations.contains_key(&sample));
+                    let expected_values = aggregated_observations.remove(&sample).unwrap();
                     unsafe {
                         let b = expected_values.into_vec(obs_len);
                         assert_eq!(*b, values);
                     }
                 }
-                assert!(aggregated_observations.data.is_empty());
+                assert!(aggregated_observations.is_empty());
             });
     }
 }
