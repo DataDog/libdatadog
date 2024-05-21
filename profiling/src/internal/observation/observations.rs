@@ -381,7 +381,13 @@ mod tests {
 
     #[test]
     fn fuzz_observations() {
+        // Generates 1. length of observations, 2. number of samples with timestamps, 3. number of
+        // samples without timestamps. Then, 2 and 3 are used to generate the samples vectors
+        // The body of this test simply adds these samples to the Observations and then uses the
+        // iterator to check that the samples are the same as added.
         bolero::check!()
+            // TODO: Figure out sane limits for these numbers. We don't simply want to go up to
+            // usize::MAX as that would result in crashes with too large Vec allocations.
             .with_generator(((1..=1024usize), (1..1024usize), (1..1024usize)))
             .and_then(|(observations_len, num_ts_samples, num_samples)| {
                 let ts_samples = Vec::<(Sample, Timestamp, Vec<i64>)>::gen()
