@@ -20,5 +20,6 @@ jobs:
         tool: cargo-bolero
     - run: |
         set -e
-        cargo bolero test collections::string_table::tests::fuzz_string_table -T 1min
-        cargo bolero test collections::string_table::tests::fuzz_arena_allocator -T 1min
+        (cd profiling && cargo bolero test collections::string_table::tests::fuzz_string_table -T 1min)
+        (cd profiling && cargo bolero test collections::string_table::tests::fuzz_arena_allocator -T 1min)
+
