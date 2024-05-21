@@ -116,24 +116,6 @@ mod tests {
 
     use super::*;
 
-    fn gen_sample_vec(len: usize) -> impl ValueGenerator<Output = Vec<Sample>> {
-        Vec::<Sample>::gen().with().len(len)
-    }
-
-    fn gen_timestamp_vec(len: usize) -> impl ValueGenerator<Output = Vec<Timestamp>> {
-        Vec::<Timestamp>::gen().with().len(len)
-    }
-
-    fn gen_values_vec_vec(
-        len: usize,
-        sample_types_len: usize,
-    ) -> impl ValueGenerator<Output = Vec<Vec<i64>>> {
-        Vec::<Vec<i64>>::gen()
-            .with()
-            .values(Vec::<i64>::gen().with().len(sample_types_len))
-            .len(len)
-    }
-
     #[test]
     fn fuzz_timestamped_observations() {
         bolero::check!()
@@ -147,8 +129,26 @@ mod tests {
                             Vec::<i64>::gen().with().len(sample_types_len),
                         ))
                         .len(num_items)
+                        .filter_gen(|v| v.len() > 0)
                 },
             ))
-            .for_each(|items| for (_sample, _ts, _values) in items {});
+            .for_each(|items| {
+                let sample_types_len = items[0].2.len();
+                let mut timestamped_obs = TimestampedObservations::new(sample_types_len);
+
+                for (sample, ts, values) in items {
+                    timestamped_obs
+                        .add(sample.clone(), ts.clone(), values.clone())
+                        .unwrap();
+                }
+
+                let mut iter = timestamped_obs.into_iter();
+                for (expected_sample, expected_ts, expected_values) in items.iter() {
+                    let (sample, ts, values) = iter.next().unwrap();
+                    assert_eq!(*expected_sample, sample);
+                    assert_eq!(*expected_ts, ts);
+                    assert_eq!(*expected_values, values);
+                }
+            });
     }
 }
