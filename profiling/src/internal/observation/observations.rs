@@ -145,6 +145,7 @@ mod tests {
     use super::*;
     use crate::collections::identifiable::*;
     use crate::internal::{LabelSetId, StackTraceId};
+    use bolero::generator::*;
     use std::num::NonZeroI64;
 
     #[test]
@@ -339,5 +340,49 @@ mod tests {
         });
         // Two of the samples were aggregated, so three total samples at the end
         assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn fuzz_observations() {
+        bolero::check!()
+            .with_generator(((1..=1024usize), (1..1024usize), (1..1024usize)))
+            .and_then(|(observations_len, num_ts_samples, num_samples)| {
+                let ts_samples = Vec::<(Sample, Timestamp, Vec<i64>)>::gen()
+                    .with()
+                    .values((
+                        Sample::gen(),
+                        Timestamp::gen(),
+                        Vec::<i64>::gen().with().len(observations_len),
+                    ))
+                    .len(num_ts_samples);
+
+                let no_ts_samples = Vec::<(Sample, Vec<i64>)>::gen()
+                    .with()
+                    .values((
+                        Sample::gen(),
+                        Vec::<i64>::gen().with().len(observations_len),
+                    ))
+                    .len(num_samples);
+
+                (observations_len, ts_samples, no_ts_samples)
+            })
+            .for_each(|(observations_len, ts_samples, _no_ts_samples)| {
+                let mut o = Observations::new(*observations_len);
+                assert!(o.is_empty());
+
+                for (s, ts, v) in ts_samples {
+                    o.add(s.clone(), Some(ts.clone()), v.clone()).unwrap();
+                }
+
+                assert_eq!(o.timestamped_samples_count(), ts_samples.len());
+
+                let mut iter = o.into_iter();
+                for (expected_sample, expected_ts, expected_values) in ts_samples.iter() {
+                    let (sample, ts, values) = iter.next().unwrap();
+                    assert_eq!(*expected_sample, sample);
+                    assert_eq!(*expected_ts, ts.unwrap());
+                    assert_eq!(*expected_values, values);
+                }
+            });
     }
 }
