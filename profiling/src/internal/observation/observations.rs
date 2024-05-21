@@ -96,23 +96,13 @@ impl Observations {
     }
 }
 
-pub struct ObservationsIntoIter {
-    it: Box<dyn Iterator<Item = <ObservationsIntoIter as IntoIterator>::Item>>,
-}
-
-impl Iterator for ObservationsIntoIter {
-    type Item = (Sample, Option<Timestamp>, Vec<i64>);
-    fn next(&mut self) -> Option<Self::Item> {
-        self.it.next()
-    }
-}
 
 impl IntoIterator for Observations {
     type Item = (Sample, Option<Timestamp>, Vec<i64>);
-    type IntoIter = ObservationsIntoIter;
+    type IntoIter = impl Iterator<Item = (Sample, Option<Timestamp>, Vec<i64>)>;
 
     fn into_iter(self) -> Self::IntoIter {
-        let it = self.inner.into_iter().flat_map(|mut observations| {
+        self.inner.into_iter().flat_map(|mut observations| {
             let timestamped_data_it = std::mem::replace(
                 &mut observations.timestamped_data,
                 TimestampedObservations::with_no_backing_store(),
@@ -124,8 +114,7 @@ impl IntoIterator for Observations {
                 .map(|(s, o)| (s, None, o))
                 .map(move |(s, t, o)| (s, t, unsafe { o.into_vec(observations.obs_len) }));
             timestamped_data_it.chain(aggregated_data_it)
-        });
-        ObservationsIntoIter { it: Box::new(it) }
+        })
     }
 }
 
