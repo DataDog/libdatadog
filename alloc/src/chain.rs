@@ -291,6 +291,32 @@ mod tests {
     use allocator_api2::alloc::Global;
 
     #[test]
+    fn fuzz() {
+        bolero::check!()
+            .with_type::<(usize, usize, u32)>()
+            .for_each(|(size_hint, size, align_bits)| {
+                let allocator = ChainAllocator::new_in(*size_hint, Global);
+                if *size == 0 {return};
+                assert!(false);
+
+                // for now, only test 2**8 alignments
+                if *align_bits > 8 {return};
+                let Some(align) = 2usize.checked_pow(*align_bits) else {
+                    return;
+                };
+                assert!(false);
+
+                let Ok(layout) = Layout::from_size_align(*size, align) else {
+                    return;
+                };
+                let ptr = allocator.allocate(layout).unwrap();
+                // deallocate doesn't return memory to the allocator, but it shouldn't
+                // panic, as that prevents its use in containers like Vec.
+                unsafe { allocator.deallocate(ptr.cast(), layout) };
+            })
+    }
+
+    #[test]
     fn test_basics() {
         let allocator = ChainAllocator::new_in(4096, Global);
         let layout = Layout::new::<[u8; 8]>();

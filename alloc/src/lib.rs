@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 
 mod chain;
 mod linear;
