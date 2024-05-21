@@ -392,19 +392,12 @@ mod tests {
             .and_then(|(observations_len, num_ts_samples, num_samples)| {
                 let ts_samples = Vec::<(Sample, Timestamp, Vec<i64>)>::gen()
                     .with()
-                    .values((
-                        Sample::gen(),
-                        Timestamp::gen(),
-                        Vec::<i64>::gen().with().len(observations_len),
-                    ))
+                    .values((Sample::gen(), Timestamp::gen(), Vec::<i64>::gen()))
                     .len(num_ts_samples);
 
                 let no_ts_samples = Vec::<(Sample, Vec<i64>)>::gen()
                     .with()
-                    .values((
-                        Sample::gen(),
-                        Vec::<i64>::gen().with().len(observations_len),
-                    ))
+                    .values((Sample::gen(), Vec::<i64>::gen()))
                     .len(num_samples);
 
                 (observations_len, ts_samples, no_ts_samples)
@@ -415,16 +408,27 @@ mod tests {
                 let mut o = Observations::new(*observations_len);
                 assert!(o.is_empty());
 
+                let mut ts_samples_added = 0;
+
                 for (s, ts, v) in ts_samples {
-                    o.add(*s, Some(*ts), v.clone()).unwrap();
+                    if v.len() == *observations_len {
+                        o.add(*s, Some(*ts), v.clone()).unwrap();
+                        ts_samples_added += 1;
+                    } else {
+                        assert!(o.add(*s, Some(*ts), v.clone()).is_err());
+                    }
                 }
-                assert_eq!(o.timestamped_samples_count(), ts_samples.len());
+                assert_eq!(o.timestamped_samples_count(), ts_samples_added);
 
                 let mut aggregated_observations = AggregatedObservations::new(*observations_len);
 
                 for (s, v) in no_ts_samples {
-                    o.add(*s, None, v.clone()).unwrap();
-                    aggregated_observations.add(*s, v.clone()).unwrap();
+                    if v.len() == *observations_len {
+                        o.add(*s, None, v.clone()).unwrap();
+                        aggregated_observations.add(*s, v.clone()).unwrap();
+                    } else {
+                        assert!(o.add(*s, None, v.clone()).is_err());
+                    }
                 }
 
                 assert_eq!(
@@ -434,6 +438,9 @@ mod tests {
 
                 let mut iter = o.into_iter();
                 for (expected_sample, expected_ts, expected_values) in ts_samples.iter() {
+                    if expected_values.len() != *observations_len {
+                        continue;
+                    }
                     let (sample, ts, values) = iter.next().unwrap();
                     assert_eq!(*expected_sample, sample);
                     assert_eq!(*expected_ts, ts.unwrap());
