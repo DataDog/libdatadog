@@ -245,8 +245,13 @@ impl Config {
 
     /// set_host sets the host telemetry should connect to.
     ///
-    /// It handles http(s?), and unix and windows pipes of the format (unix)|(windows)://<path to
-    /// object> If the host_url is http/https, any path will be ignored and replaced by the
+    /// It handles the following schemes
+    /// * http/https
+    /// * unix sockets unix://\<path to the socket>
+    /// * windows pipes of the format windows:\<pipe name>
+    /// * files, with the format file://\<path to the file>
+    ///
+    ///  If the host_url is http/https, any path will be ignored and replaced by the
     /// appropriate telemetry endpoint path
     pub fn set_host_from_url(&mut self, host_url: &str) -> anyhow::Result<()> {
         let api_key = self.endpoint.take().and_then(|e| e.api_key);
