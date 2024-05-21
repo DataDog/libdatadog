@@ -19,17 +19,9 @@ pub(crate) fn fuzzer_inner_loop<A: crate::Allocator>(
 ) {
     use core::alloc::Layout;
 
-    if size == 0 || size > max_size {
-        return;
-    };
     if idx >= size {
         return;
     }
-
-    // Exit early if the alignment alone would be too big
-    if align_bits > 32 {
-        return;
-    };
 
     let align = 1usize << align_bits;
     let layout = Layout::from_size_align(size, align).unwrap();

@@ -127,27 +127,29 @@ mod tests {
     use crate::utils::*;
     use allocator_api2::alloc::Global;
 
-    /// https://doc.rust-lang.org/beta/std/primitive.pointer.html#method.is_aligned_to
-    /// Convenience function until the std lib standardizes this.
-    fn is_aligned_to<T: ?Sized>(p: *const T, align: usize) -> bool {
-        (p as *const u8 as usize) % align == 0
-    }
-
     #[test]
     fn fuzz() {
+        // avoid SUMMARY: libFuzzer: out-of-memory
+        const MAX_SIZE: usize = 0x10000000;
+
+        use bolero::TypeGenerator;
+        let size_hint = 0..=MAX_SIZE;
+        let align_bits = 0..=32;
+        let size = 0..=MAX_SIZE;
+        let idx = 0..=MAX_SIZE;
+        let val = u8::gen();
+        let allocs = Vec::<(usize, u32, usize, u8)>::gen()
+            .with()
+            .values((size, align_bits, idx, val));
         bolero::check!()
-            .with_type::<(usize, Vec<(usize, u32, usize, u8)>)>()
+            .with_generator((size_hint, allocs))
             .for_each(|(size_hint, size_align_vec)| {
-                const MAX_SIZE: usize = 0x10000000;
-                // avoid SUMMARY: libFuzzer: out-of-memory
-                if *size_hint > MAX_SIZE {
-                    return;
-                }
                 let allocator = LinearAllocator::new_in(
                     Layout::from_size_align(*size_hint, 1).unwrap(),
                     Global,
                 )
                 .unwrap();
+
                 for (size, align_bits, idx, val) in size_align_vec {
                     fuzzer_inner_loop(&allocator, *size, *align_bits, *idx, *val, MAX_SIZE)
                 }
