@@ -5,6 +5,7 @@
 
 mod chain;
 mod linear;
+mod utils;
 mod r#virtual;
 
 pub use chain::*;

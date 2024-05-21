@@ -285,60 +285,23 @@ impl<A: Allocator + Clone> Drop for ChainAllocator<A> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::*;
     use allocator_api2::alloc::Global;
-
-    /// https://doc.rust-lang.org/beta/std/primitive.pointer.html#method.is_aligned_to
-    /// Convenience function until the std lib standardizes this.
-    fn is_aligned_to<T: ?Sized>(p: *const T, align: usize) -> bool {
-        (p as *const u8 as usize) % align == 0
-    }
 
     #[test]
     fn fuzz() {
         bolero::check!()
             .with_type::<(usize, Vec<(usize, u32, usize, u8)>)>()
             .for_each(|(size_hint, size_align_vec)| {
-                const MAX_SIZE: usize = 0x10000000;
                 // avoid SUMMARY: libFuzzer: out-of-memory
+                const MAX_SIZE: usize = 0x10000000;
                 if *size_hint > MAX_SIZE {
                     return;
                 }
                 let allocator = ChainAllocator::new_in(*size_hint, Global);
 
                 for (size, align_bits, idx, val) in size_align_vec {
-                    if *size == 0 || *size > MAX_SIZE {
-                        return;
-                    };
-                    if idx >= size {
-                        return;
-                    }
-
-                    // Exit early if the alignment alone would be too big
-                    if *align_bits > 32 {
-                        return;
-                    };
-
-                    let align = 1usize << *align_bits;
-                    let layout = Layout::from_size_align(*size, align).unwrap();
-
-                    if layout.pad_to_align().size() > MAX_SIZE {
-                        return;
-                    };
-
-                    if let Ok(mut ptr) = allocator.allocate(layout) {
-                        assert!(is_aligned_to(ptr.as_ptr(), align));
-                        let obj = unsafe { ptr.as_mut() };
-                        // The object is guaranteed to be at least size, but can be larger
-                        assert!(obj.len() >= *size);
-
-                        // Test that writing and reading a random index in the object works.
-                        obj[*idx] = *val;
-                        assert_eq!(obj[*idx], *val);
-
-                        // deallocate doesn't return memory to the allocator, but it shouldn't
-                        // panic, as that prevents its use in containers like Vec.
-                        unsafe { allocator.deallocate(ptr.cast(), layout) };
-                    }
+                    fuzzer_inner_loop(&allocator, *size, *align_bits, *idx, *val, MAX_SIZE)
                 }
             })
     }
