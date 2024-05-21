@@ -214,6 +214,9 @@ impl<A: Allocator + Clone> ChainAllocator<A> {
 unsafe impl<A: Allocator + Clone> Allocator for ChainAllocator<A> {
     #[cfg_attr(debug_assertions, track_caller)]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        if layout.size() == 0 {
+            return Err(AllocError);
+        }
         let layout = layout.pad_to_align();
 
         let remaining_capacity = self.remaining_capacity();

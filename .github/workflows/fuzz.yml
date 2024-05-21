@@ -1,0 +1,25 @@
+name: Fuzz test
+on:
+  push:
+
+jobs:
+  run-fuzz:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Rust
+      run: |
+        set -e
+        rustup set profile minimal
+        rustup toolchain install nightly 
+        rustup default nightly
+    - uses: taiki-e/install-action@v2
+      with: 
+        tool: cargo-bolero
+    - run: |
+        set -e
+        (cd profiling && cargo bolero test collections::string_table::tests::fuzz_string_table -T 1min)
+        (cd profiling && cargo bolero test collections::string_table::tests::fuzz_arena_allocator -T 1min)
+
