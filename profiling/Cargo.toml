@@ -44,7 +44,6 @@ serde_json = {version = "1.0"}
 tokio = {version = "1.23", features = ["rt", "macros"]}
 tokio-util = "0.7.1"
 byteorder = { version = "1.5", features = ["std"] }
-bolero-generator = "0.10.2"
 
 [dev-dependencies]
 bolero = "0.10.1"
