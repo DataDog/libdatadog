@@ -51,6 +51,7 @@ fn endpoint_with_telemetry_path(
 
 /// Settings gathers configuration options we receive from the environment
 /// (either through env variable, or that could be set from the )
+#[derive(Debug)]
 pub struct Settings {
     // Env parameter
     pub agent_host: Option<String>,
