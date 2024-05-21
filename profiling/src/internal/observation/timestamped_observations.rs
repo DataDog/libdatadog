@@ -112,9 +112,8 @@ impl Iterator for TimestampedObservationsIter {
 
 #[cfg(test)]
 mod tests {
-    use bolero::{generator::*, TypeGenerator};
-
     use super::*;
+    use bolero::generator::*;
 
     #[test]
     fn fuzz_timestamped_observations() {
