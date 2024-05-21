@@ -416,15 +416,15 @@ mod tests {
                 assert!(o.is_empty());
 
                 for (s, ts, v) in ts_samples {
-                    o.add(s.clone(), Some(ts.clone()), v.clone()).unwrap();
+                    o.add(*s, Some(*ts), v.clone()).unwrap();
                 }
                 assert_eq!(o.timestamped_samples_count(), ts_samples.len());
 
                 let mut aggregated_observations = AggregatedObservations::new(*observations_len);
 
                 for (s, v) in no_ts_samples {
-                    o.add(s.clone(), None, v.clone()).unwrap();
-                    aggregated_observations.add(s.clone(), v.clone()).unwrap();
+                    o.add(*s, None, v.clone()).unwrap();
+                    aggregated_observations.add(*s, v.clone()).unwrap();
                 }
 
                 assert_eq!(
@@ -440,7 +440,7 @@ mod tests {
                     assert_eq!(*expected_values, values);
                 }
 
-                while let Some((sample, ts, values)) = iter.next() {
+                for (sample, ts, values) in iter {
                     assert!(ts.is_none());
                     assert!(aggregated_observations.data.contains_key(&sample));
                     let expected_values = aggregated_observations.data.remove(&sample).unwrap();
