@@ -248,7 +248,7 @@ impl Config {
     /// It handles http(s?), and unix and windows pipes of the format (unix)|(windows)://<path to
     /// object> If the host_url is http/https, any path will be ignored and replaced by the
     /// appropriate telemetry endpoint path
-    pub fn set_host(&mut self, host_url: &str) -> anyhow::Result<()> {
+    pub fn set_host_from_url(&mut self, host_url: &str) -> anyhow::Result<()> {
         let api_key = self.endpoint.take().and_then(|e| e.api_key);
         self.set_endpoint(Endpoint {
             url: parse_uri(host_url)?,
@@ -364,7 +364,7 @@ mod tests {
     fn test_config_set_url() {
         let mut cfg = Config::default();
 
-        cfg.set_host("http://example.com/any_path_will_be_ignored")
+        cfg.set_host_from_url("http://example.com/any_path_will_be_ignored")
             .unwrap();
 
         assert_eq!(
@@ -383,7 +383,7 @@ mod tests {
 
         for (input, expected) in cases {
             let mut cfg = Config::default();
-            cfg.set_host(input).unwrap();
+            cfg.set_host_from_url(input).unwrap();
 
             assert_eq!(
                 "file",
@@ -414,7 +414,7 @@ mod tests {
     fn test_config_set_url_unix_socket() {
         let mut cfg = Config::default();
 
-        cfg.set_host("unix:///compatiliby/path").unwrap();
+        cfg.set_host_from_url("unix:///compatiliby/path").unwrap();
         assert_eq!(
             "unix://2f636f6d706174696c6962792f70617468/telemetry/proxy/api/v2/apmtelemetry",
             cfg.clone().endpoint.unwrap().url.to_string()
@@ -431,7 +431,7 @@ mod tests {
     fn test_config_set_url_windows_pipe() {
         let mut cfg = Config::default();
 
-        cfg.set_host("windows:C:\\system32\\foo").unwrap();
+        cfg.set_host_from_url("windows:C:\\system32\\foo").unwrap();
         assert_eq!(
             "windows://433a5c73797374656d33325c666f6f/telemetry/proxy/api/v2/apmtelemetry",
             cfg.clone().endpoint.unwrap().url.to_string()

@@ -70,7 +70,7 @@ impl TelemetryCrashUploader {
 
             // ignore result because what are we going to do?
             let _ = if endpoint.url.scheme_str() == Some("file") {
-                cfg.set_host(&format!("file://{}.telemetry", endpoint.url.path()))
+                cfg.set_host_from_url(&format!("file://{}.telemetry", endpoint.url.path()))
             } else {
                 cfg.set_endpoint(endpoint.clone())
             };
@@ -261,7 +261,7 @@ mod tests {
         let mut t = new_test_uploader();
 
         t.cfg
-            .set_host(&format!("file://{}", output_filename.to_str().unwrap()))
+            .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
             .unwrap();
 
         let mut counters = HashMap::new();
