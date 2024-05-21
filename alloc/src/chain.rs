@@ -238,7 +238,11 @@ unsafe impl<A: Allocator + Clone> Allocator for ChainAllocator<A> {
 
         debug_assert!(chain_node.remaining_capacity() >= layout.size());
 
-        chain_node.linear.allocate(layout)
+        let result = chain_node.linear.allocate(layout);
+        #[cfg(not(fuzzing))]
+        // If this fails, there's a bug in the allocator.
+        debug_assert!(result.is_ok());
+        result
     }
 
     unsafe fn deallocate(&self, _ptr: NonNull<u8>, _layout: Layout) {
@@ -295,7 +299,16 @@ mod tests {
 
         use bolero::TypeGenerator;
         let size_hint = 0..=MAX_SIZE;
-        let align_bits = 0..=32;
+        // Giving large values for align bits can lead to failed allocations
+        // This would normally be OK, since the fuzz-test is resilient to this.
+        // However, the chain allocator has a debug assert that allocs don't fail,
+        // which means that running this in unit-test mode DOES spuriously fail.
+        // Clamping the size in unit-test mode avoids the problem while not losing
+        // coverage in fuzz test mode.
+        #[cfg(not(fuzzing))]
+        let align_bits = 0..3;
+        #[cfg(fuzzing)]
+        let align_bits = 0..32;
         let size = 0..=MAX_SIZE;
         let idx = 0..=MAX_SIZE;
         let val = u8::gen();
