@@ -96,7 +96,6 @@ impl Observations {
     }
 }
 
-
 impl IntoIterator for Observations {
     type Item = (Sample, Option<Timestamp>, Vec<i64>);
     type IntoIter = impl Iterator<Item = (Sample, Option<Timestamp>, Vec<i64>)>;
