@@ -119,7 +119,6 @@ mod tests {
     #[test]
     fn fuzz_timestamped_observations() {
         bolero::check!()
-
             .with_generator(((1..=1024 as usize), (1..=1024 as usize)).and_then_gen(
                 |(num_items, sample_types_len)| {
                     Vec::<(Sample, Timestamp, Vec<i64>)>::gen()
