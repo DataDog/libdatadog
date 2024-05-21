@@ -234,7 +234,7 @@ impl TraceExporter {
                 };
                 let send_data = SendData::new(size, tracer_payload, header_tags, &endpoint);
                 self.runtime.block_on(async {
-                    match send_data.send().await {
+                    match send_data.send().await.last_result {
                         Ok(response) => match hyper::body::to_bytes(response.into_body()).await {
                             Ok(body) => Ok(String::from_utf8_lossy(&body).to_string()),
                             Err(err) => {

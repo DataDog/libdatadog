@@ -56,7 +56,7 @@ impl TraceFlusher for ServerlessTraceFlusher {
         info!("Flushing {} traces", traces.len());
 
         for traces in trace_utils::coalesce_send_data(traces) {
-            match traces.send().await {
+            match traces.send().await.last_result {
                 Ok(_) => info!("Successfully flushed traces"),
                 Err(e) => {
                     error!("Error sending trace: {e:?}")
