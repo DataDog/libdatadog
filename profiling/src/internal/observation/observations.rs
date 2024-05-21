@@ -109,17 +109,7 @@ impl AggregatedObservations {
             unsafe { v.as_mut_slice(self.obs_len) }
                 .iter_mut()
                 .zip(values)
-                // HACK: fix this
-                .for_each(|(a, b)| match a.checked_add(b) {
-                    Some(sum) => *a = sum,
-                    None => {
-                        if b > 0 {
-                            *a = i64::MAX;
-                        } else {
-                            *a = i64::MIN;
-                        }
-                    }
-                });
+                .for_each(|(a, b)| *a = a.saturating_add(b));
         } else {
             let trimmed = TrimmedObservation::new(values, self.obs_len);
             self.data.insert(sample, trimmed);
@@ -446,10 +436,7 @@ mod tests {
                     }
                 }
 
-                assert_eq!(
-                    o.aggregated_samples_count(),
-                    aggregated_observations.len()
-                );
+                assert_eq!(o.aggregated_samples_count(), aggregated_observations.len());
 
                 let mut iter = o.into_iter();
                 for (expected_sample, expected_ts, expected_values) in ts_samples.iter() {
