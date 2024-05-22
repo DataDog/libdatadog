@@ -189,6 +189,13 @@ mod tests {
     #[test]
     fn fuzz() {
         use bolero::TypeGenerator;
+
+        #[cfg(miri)]
+        const MAX_SIZE: usize = 1_000_000;
+
+        #[cfg(not(miri))]
+        const MAX_SIZE: usize = isize::MAX as usize;
+
         let align_bits = 0..=32;
         let size = usize::gen();
         let idx = usize::gen();
@@ -202,14 +209,7 @@ mod tests {
                 let allocator = VirtualAllocator {};
 
                 for (size, align_bits, idx, val) in size_align_vec {
-                    fuzzer_inner_loop(
-                        &allocator,
-                        *size,
-                        *align_bits,
-                        *idx,
-                        *val,
-                        isize::MAX as usize,
-                    )
+                    fuzzer_inner_loop(&allocator, *size, *align_bits, *idx, *val, MAX_SIZE)
                 }
             })
     }
