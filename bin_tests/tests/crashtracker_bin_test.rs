@@ -90,7 +90,7 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile) {
 
 fn assert_telemetry_message(crash_telemetry: &[u8]) {
     let telemetry_payload: serde_json::Value =
-        serde_json::from_slice::<serde_json::Value>(&crash_telemetry)
+        serde_json::from_slice::<serde_json::Value>(crash_telemetry)
             .context("deserializing crashtracker telemetry payload to json")
             .unwrap();
     assert_eq!(telemetry_payload["request_type"], "logs");
@@ -152,8 +152,7 @@ fn crash_tracking_empty_endpoint() {
         .unwrap();
 
     let (mut stream, _) = listener.accept().unwrap();
-    let mut out = Vec::new();
-    out.resize(65536, 0);
+    let mut out = vec![0; 65536];
     let read = stream.read(&mut out).unwrap();
 
     stream
