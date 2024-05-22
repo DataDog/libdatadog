@@ -32,7 +32,7 @@ jobs:
           awk 'NR%2{printf "%s\t", $0; next}1' | \
           while read -r package test;
           do
-            echo "****** Starting bolero test for $package $test ******"
+            echo "****** Starting bolero test for $package $test ******" 1>&2
             cargo bolero test -T 1min --package $package $test
           done
           popd
