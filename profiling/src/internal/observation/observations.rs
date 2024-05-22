@@ -195,10 +195,7 @@ mod tests {
     use crate::collections::identifiable::*;
     use crate::internal::{LabelSetId, StackTraceId};
     use bolero::generator::*;
-    use bolero_generator::alloc_generators::VecGenerator;
-    use bolero_generator::TypeValueGenerator;
     use std::num::NonZeroI64;
-    use std::ops::RangeInclusive;
 
     #[test]
     fn add_and_iter_test() {
@@ -487,7 +484,7 @@ mod tests {
                 (observations_len, ts_samples, no_ts_samples)
             })
             .for_each(|(observations_len, ts_samples, no_ts_samples)| {
-                fuzz_inner(&observations_len, &ts_samples, &no_ts_samples);
+                fuzz_inner(observations_len, ts_samples, no_ts_samples);
             });
     }
 
@@ -511,11 +508,11 @@ mod tests {
                 (ts_samples, no_ts_samples)
             })
             .for_each(|(ts_samples, no_ts_samples)| {
-                fuzz_inner(&ts_samples[0].2.len(), &ts_samples, &no_ts_samples);
+                fuzz_inner(&ts_samples[0].2.len(), ts_samples, no_ts_samples);
                 // Here we also call the fuzz_inner with observation_length from samples without
                 // timestamps to ensure that we cover the case where no timestamped samples are
                 // added.
-                fuzz_inner(&no_ts_samples[0].1.len(), &ts_samples, &no_ts_samples);
+                fuzz_inner(&no_ts_samples[0].1.len(), ts_samples, no_ts_samples);
             });
     }
 }
