@@ -21,4 +21,4 @@ jobs:
     - uses: sergeysova/jq-action@v2
     - run: |
         set -e
-        cargo bolero list | jq -r '[.package, .test] | @tsv' | while read -r package test; do cargo +nightly bolero test -T 1min --package $package $test ; done
+        cargo bolero list | jq -r '[.package, .test] | @tsv' | while read -r package test; do cargo bolero test -T 1min --package $package $test ; done
