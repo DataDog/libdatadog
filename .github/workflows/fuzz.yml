@@ -23,11 +23,11 @@ jobs:
         DIRS="alloc profiling"
         for dir in $DIRS;
         do
-        : # cargo bolero list outputs {"package":"package-name","test":"test-name"}
+          # cargo bolero list outputs {"package":"package-name","test":"test-name"}
           cd $dir && cargo bolero list | \
-          : # And the following command will parse package-name's and test-name's one in each line
+          # And the following command will parse package-name's and test-name's one in each line
           grep -oP '"(package|test)"\s*:\s*"\K[^"]+' | \
-          : # awk will stitch package and test names back separated by a tab
+          # awk will stitch package and test names back separated by a tab
           awk 'NR%2{printf "%s\t", $0; next}1' | \
           while read -r package test;
           do
