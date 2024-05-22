@@ -453,9 +453,9 @@ mod tests {
     fn fuzz_with_same_obs_len() {
         // TODO: Figure out sane limits for these numbers. We don't simply want to go up to
         // usize::MAX as that would result in crashes with too large Vec allocations.
-        let obs_len_gen = 1..=1024usize;
-        let num_ts_samples_gen = 1..1024usize;
-        let num_samples_gen = 1..1024usize;
+        let obs_len_gen = if cfg!(miri) { 1..=16usize } else { 1..=1024usize };
+        let num_ts_samples_gen = if cfg!(miri) { 1..=16usize } else { 1..=1024usize };
+        let num_samples_gen = if cfg!(miri) { 1..=16usize } else { 1..=1024usize };
 
         // Generates 1. length of observations, 2. number of samples with timestamps, 3. number of
         // samples without timestamps. Then, 2 and 3 are used to generate the samples vectors
@@ -490,8 +490,8 @@ mod tests {
 
     #[test]
     fn fuzz_with_random_obs_len() {
-        let num_ts_samples_gen = 1..1024usize;
-        let num_samples_gen = 1..1024usize;
+        let num_ts_samples_gen = if cfg!(miri) { 1..=16usize } else { 1..=1024usize };
+        let num_samples_gen = if cfg!(miri) { 1..=16usize } else { 1..=1024usize };
 
         bolero::check!()
             .with_generator((num_ts_samples_gen, num_samples_gen))
