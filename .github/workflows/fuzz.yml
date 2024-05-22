@@ -24,7 +24,7 @@ jobs:
         for dir in $DIRS;
         do
           # cargo bolero list outputs {"package":"package-name","test":"test-name"}
-          cd $dir && cargo bolero list | \
+          (cd $dir && cargo bolero list | \
           # And the following command will parse package-name's and test-name's one in each line
           grep -oP '"(package|test)"\s*:\s*"\K[^"]+' | \
           # awk will stitch package and test names back separated by a tab
@@ -33,5 +33,5 @@ jobs:
           do
             echo "Starting bolero test for $package $test"
             cargo bolero test -T 1min --package $package $test
-          done
+          done)
         done
