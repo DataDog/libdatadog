@@ -3,7 +3,9 @@
 
 /// https://doc.rust-lang.org/beta/std/primitive.pointer.html#method.is_aligned_to
 /// Convenience function until the std lib standardizes this.
-#[allow(dead_code)]
+/// Currently only used in test code, so doing the power of two bit mask stuff the stdlib does
+/// would be overkill.
+#[cfg(test)]
 pub(crate) fn is_aligned_to<T: ?Sized>(p: *const T, align: usize) -> bool {
     (p as *const u8 as usize) % align == 0
 }
