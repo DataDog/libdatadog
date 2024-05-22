@@ -67,7 +67,7 @@ impl<A: Allocator> LinearAllocator<A> {
     }
 
     /// Determine if the given layout will fit in the current allocator
-    fn has_capacity_for(&self, layout: Layout) -> bool {
+    pub fn has_capacity_for(&self, layout: Layout) -> bool {
         // SAFETY: base_ptr + size will always be in the allocated range, or
         // be the legally allowed one-past-the-end. If it doesn't fit, that's
         // a serious bug elsewhere in our logic.

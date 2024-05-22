@@ -72,6 +72,10 @@ impl<A: Allocator> ChainNode<A> {
     fn remaining_capacity(&self) -> usize {
         self.linear.remaining_capacity()
     }
+
+    fn has_capacity_for(&self, layout: Layout) -> bool {
+        self.linear.has_capacity_for(layout)
+    }
 }
 
 impl<A: Allocator + Clone> ChainAllocator<A> {
@@ -209,6 +213,21 @@ impl<A: Allocator + Clone> ChainAllocator<A> {
         let top = unsafe { (*chain_ptr).as_ref() };
         top.map(ChainNode::remaining_capacity).unwrap_or(0)
     }
+
+    /// Can the requested `layout` be allocated without requesting more
+    /// from the underlying allocator.
+    pub fn has_capacity_for(&self, layout: Layout) -> bool {
+        // Only need to look at the top node of the chain, all the previous
+        // nodes are considered full.
+        let chain_ptr = self.top.get();
+        // SAFETY: If non-null, this is a valid pointer, and the reference is
+        // temporary, as all references for the chain nodes are.
+        if let Some(top) = unsafe { (*chain_ptr).as_ref() } {
+            top.has_capacity_for(layout)
+        } else {
+            false
+        }
+    }
 }
 
 unsafe impl<A: Allocator + Clone> Allocator for ChainAllocator<A> {
@@ -219,15 +238,20 @@ unsafe impl<A: Allocator + Clone> Allocator for ChainAllocator<A> {
         }
         let layout = layout.pad_to_align();
 
-        let remaining_capacity = self.remaining_capacity();
-        if layout.size() > remaining_capacity {
+        if !self.has_capacity_for(layout) {
             let header_overhead = size_of::<ChainNode<A>>();
             let min_size = layout
                 .size()
                 .checked_add(header_overhead)
                 .ok_or(AllocError)?;
-            self.grow(min_size)?;
+            // The item may have an alignment requirement. `align-1` bytes are sufficient to give
+            // space for padding.
+            let min_size_with_alignment =
+                min_size.checked_add(layout.align() - 1).ok_or(AllocError)?;
+
+            self.grow(min_size_with_alignment)?;
         }
+        debug_assert!(self.has_capacity_for(layout));
 
         // At this point:
         //  1. There's a top node.
@@ -239,7 +263,7 @@ unsafe impl<A: Allocator + Clone> Allocator for ChainAllocator<A> {
         debug_assert!(chain_node.remaining_capacity() >= layout.size());
 
         let result = chain_node.linear.allocate(layout);
-        #[cfg(not(fuzzing))]
+        //#[cfg(not(fuzzing))]
         // If this fails, there's a bug in the allocator.
         debug_assert!(result.is_ok());
         result
@@ -301,13 +325,13 @@ mod tests {
         let size_hint = 0..=MAX_SIZE;
         // Giving large values for align bits can lead to failed allocations
         // This would normally be OK, since the fuzz-test is resilient to this.
-        // However, the chain allocator has a debug assert that allocs don't fail,
-        // which means that running this in unit-test mode DOES spuriously fail.
-        // Clamping the size in unit-test mode avoids the problem while not losing
-        // coverage in fuzz test mode.
-        #[cfg(not(fuzzing))]
-        let align_bits = 0..3;
-        #[cfg(fuzzing)]
+        // However, the chain allocator has a debug assert that allocs don't fail, which means that
+        // running this in unit-test mode DOES spuriously fail.
+        // Clamping the size in unit-test mode avoids the problem while not losing coverage in fuzz
+        // test mode.
+        // #[cfg(not(fuzzing))]
+        // let align_bits = 0..3;
+        // #[cfg(fuzzing)]
         let align_bits = 0..32;
         let size = 0..=MAX_SIZE;
         let idx = 0..=MAX_SIZE;
