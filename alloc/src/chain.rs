@@ -263,7 +263,6 @@ unsafe impl<A: Allocator + Clone> Allocator for ChainAllocator<A> {
         debug_assert!(chain_node.remaining_capacity() >= layout.size());
 
         let result = chain_node.linear.allocate(layout);
-        //#[cfg(not(fuzzing))]
         // If this fails, there's a bug in the allocator.
         debug_assert!(result.is_ok());
         result
@@ -329,9 +328,6 @@ mod tests {
         // running this in unit-test mode DOES spuriously fail.
         // Clamping the size in unit-test mode avoids the problem while not losing coverage in fuzz
         // test mode.
-        // #[cfg(not(fuzzing))]
-        // let align_bits = 0..3;
-        // #[cfg(fuzzing)]
         let align_bits = 0..32;
         let size = 0..=MAX_SIZE;
         let idx = 0..=MAX_SIZE;
