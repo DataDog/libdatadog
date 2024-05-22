@@ -18,4 +18,6 @@ trace-protobuf          @Datadog/serverless @Datadog/libdatadog-apm
 trace-mini-agent        @Datadog/serverless
 trace-utils             @Datadog/serverless @Datadog/libdatadog-apm
 serverless              @Datadog/serverless
+sidecar                 @Datadog/libdatadog-php @Datadog/libdatadog-apm
+sidecar-ffi             @Datadog/libdatadog-php @Datadog/libdatadog-apm
 data-pipeline*/         @Datadog/libdatadog-apm
