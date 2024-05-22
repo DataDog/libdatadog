@@ -1192,6 +1192,7 @@ dependencies = [
  "anyhow",
  "bitmaps",
  "bolero",
+ "bolero-generator",
  "byteorder",
  "bytes",
  "chrono",
