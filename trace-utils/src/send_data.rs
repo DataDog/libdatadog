@@ -136,17 +136,26 @@ impl SendData {
         }
     }
     pub async fn send<'a>(self) -> SendDataResult {
-        let target = &self.target;
-
-        let req = self.create_request_builder();
-
         if self.use_protobuf() {
-            self.send_with_protobuf(req).await
+            self.send_with_protobuf().await
         } else {
-            self.send_with_msgpack(req).await
+            self.send_with_msgpack().await
         }
     }
-    
+
+    // Hyper doesn't allow you to send a ref to a request, and you can't clone it. So we have to
+    // build a new one for every send attempt.
+    async fn send_payload(
+        &self,
+        content_type: &'static str,
+        payload: Vec<u8>,
+    ) -> Result<Response<Body>, SendRequestError> {
+        let mut req = self.create_request_builder();
+        req = req.header("Content-type", content_type);
+
+        self.send_request(req, payload).await
+    }
+
     fn use_protobuf(&self) -> bool {
         self.target.api_key.is_some()
     }
@@ -183,10 +192,8 @@ impl SendData {
             .map_err(SendRequestError::Hyper)
     }
 
-    async fn send_with_protobuf(&self, mut req: HttpRequestBuilder) -> SendDataResult {
+    async fn send_with_protobuf(&self) -> SendDataResult {
         let mut result = SendDataResult::new();
-
-        req = req.header("Content-type", "application/x-protobuf");
 
         let agent_payload = construct_agent_payload(self.tracer_payloads.clone());
         let serialized_trace_payload = match serialize_proto_payload(&agent_payload)
@@ -198,7 +205,8 @@ impl SendData {
 
         result
             .update(
-                self.send_request(req, serialized_trace_payload).await,
+                self.send_payload("application/x-protobuf", serialized_trace_payload)
+                    .await,
                 StatusCode::ACCEPTED,
             )
             .await;
@@ -206,9 +214,10 @@ impl SendData {
         result
     }
 
-    async fn send_with_msgpack(&self, mut req: HttpRequestBuilder) -> SendDataResult {
+    async fn send_with_msgpack(&self) -> SendDataResult {
         let mut result = SendDataResult::new();
-
+        // TODO-EK: This is temporary
+        let mut req = self.create_request_builder();
         req = req.header("Content-type", "application/msgpack");
 
         let (template, _) = req.body(()).unwrap().into_parts();
@@ -232,8 +241,7 @@ impl SendData {
                 Ok(p) => p,
                 Err(e) => return result.error(anyhow!(e)),
             };
-
-            futures.push(self.send_request(builder, payload));
+            futures.push(self.send_payload("application/msgpack", payload));
         }
         loop {
             match futures.next().await {
