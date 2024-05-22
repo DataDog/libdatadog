@@ -642,3 +642,12 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
 
     MaybeError::None
 }
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub extern "C" fn ddog_sidecar_reconnect(
+    transport: &mut Box<SidecarTransport>,
+    factory: unsafe extern "C" fn() -> Option<Box<SidecarTransport>>,
+) {
+    transport.reconnect(|| unsafe { factory() });
+}
