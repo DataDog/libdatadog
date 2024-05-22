@@ -12,6 +12,7 @@ cmake-build-debug
 deliverables
 target
 tmp
+__fuzz__
 
 #==============================================================================#
 # Files to ignore
