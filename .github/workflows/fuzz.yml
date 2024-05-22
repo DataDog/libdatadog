@@ -13,10 +13,10 @@ jobs:
       run: |
         set -e
         rustup set profile minimal
-        rustup toolchain install nightly 
+        rustup toolchain install nightly
         rustup default nightly
     - uses: taiki-e/install-action@v2
-      with: 
+      with:
         tool: cargo-bolero
     - run: |
         set -e
@@ -25,5 +25,7 @@ jobs:
         (cd alloc && cargo bolero test virtual_alloc::tests::fuzz -T 1min)
         (cd profiling && cargo bolero test collections::string_table::tests::fuzz_arena_allocator -T 1min)
         (cd profiling && cargo bolero test collections::string_table::tests::fuzz_string_table -T 1min)
-
-
+        (cd profiling && cargo bolero test internal::observation::trimmed_observation::tests::fuzz_trimmed_observation -T 1min)
+        (cd profiling && cargo bolero test internal::observation::trimmed_observation::tests::fuzz_mutations -T 1min)
+        (cd profiling && cargo bolero test internal::observation::observations::tests::fuzz_with_same_obs_len -T 1min)
+        (cd profiling && cargo bolero test internal::observation::observations::tests::fuzz_with_random_obs_len -T 1min)
