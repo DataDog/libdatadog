@@ -344,22 +344,6 @@ impl<'a> TryFrom<&'a pprof::Profile> for Profile<'a> {
 }
 
 #[cfg(test)]
-pub mod OwnedApi {
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    #[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
-    pub struct ValueType {
-        pub typ: String,
-        pub unit: String,
-    }
-
-    impl<'a> From<&'a ValueType> for super::ValueType<'a> {
-        fn from(value: &'a ValueType) -> Self {
-            super::ValueType::new(&value.typ, &value.unit)
-        }
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
 

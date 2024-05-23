@@ -550,7 +550,7 @@ mod api_tests {
         use bolero::TypeGenerator;
 
         bolero::check!()
-            .with_generator(Vec::<api::OwnedApi::ValueType>::gen())
+            .with_generator(Vec::<owned_types::ValueType>::gen())
             .for_each(|val| {
                 let sample_types: Vec<_> = val.iter().map(api::ValueType::from).collect();
                 Profile::new(SystemTime::now(), &sample_types, None);
