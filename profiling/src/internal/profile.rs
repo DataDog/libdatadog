@@ -22,7 +22,7 @@ pub struct Profile {
     owned_sample_types: Option<Box<[owned_types::ValueType]>>,
     /// When profiles are reset, the period needs to be preserved. This
     /// stores it in a way that does not depend on the string table.
-    owned_period: Option<owned_types::OwnedPeriod>,
+    owned_period: Option<owned_types::Period>,
     endpoints: Endpoints,
     functions: FxIndexSet<Function>,
     labels: FxIndexSet<Label>,
@@ -331,8 +331,8 @@ impl Profile {
     }
 
     #[inline]
-    fn backup_period(src: Option<api::Period>) -> Option<owned_types::OwnedPeriod> {
-        src.as_ref().map(owned_types::OwnedPeriod::from)
+    fn backup_period(src: Option<api::Period>) -> Option<owned_types::Period> {
+        src.as_ref().map(owned_types::Period::from)
     }
 
     #[inline]
@@ -419,7 +419,7 @@ impl Profile {
     /// the owned values.
     #[inline(never)]
     fn new_internal(
-        owned_period: Option<owned_types::OwnedPeriod>,
+        owned_period: Option<owned_types::Period>,
         owned_sample_types: Option<Box<[owned_types::ValueType]>>,
         start_time: SystemTime,
     ) -> Self {
@@ -467,7 +467,7 @@ impl Profile {
         // Break "cannot borrow `*self` as mutable because it is also borrowed
         // as immutable" by moving it out, borrowing it, and putting it back.
         let owned_period = profile.owned_period.take();
-        if let Some(owned_types::OwnedPeriod { value, typ }) = &owned_period {
+        if let Some(owned_types::Period { value, typ }) = &owned_period {
             profile.period = Some((
                 *value,
                 ValueType {

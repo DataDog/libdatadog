@@ -21,12 +21,12 @@ impl<'a> From<&'a api::ValueType<'a>> for ValueType {
 }
 
 #[derive(Clone)]
-pub struct OwnedPeriod {
+pub struct Period {
     pub typ: ValueType,
     pub value: i64,
 }
 
-impl<'a> From<&'a api::Period<'a>> for OwnedPeriod {
+impl<'a> From<&'a api::Period<'a>> for Period {
     #[inline]
     fn from(period: &'a api::Period<'a>) -> Self {
         Self {
