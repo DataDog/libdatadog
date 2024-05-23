@@ -1,17 +1,18 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::api::{Period, ValueType};
+use crate::api;
 
 #[derive(Clone)]
-pub struct OwnedValueType {
+#[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
+pub struct ValueType {
     pub typ: Box<str>,
     pub unit: Box<str>,
 }
 
-impl<'a> From<&'a ValueType<'a>> for OwnedValueType {
+impl<'a> From<&'a api::ValueType<'a>> for ValueType {
     #[inline]
-    fn from(value_type: &'a ValueType<'a>) -> Self {
+    fn from(value_type: &'a api::ValueType<'a>) -> Self {
         Self {
             typ: String::from(value_type.r#type).into(),
             unit: String::from(value_type.unit).into(),
@@ -21,15 +22,15 @@ impl<'a> From<&'a ValueType<'a>> for OwnedValueType {
 
 #[derive(Clone)]
 pub struct OwnedPeriod {
-    pub typ: OwnedValueType,
+    pub typ: ValueType,
     pub value: i64,
 }
 
-impl<'a> From<&'a Period<'a>> for OwnedPeriod {
+impl<'a> From<&'a api::Period<'a>> for OwnedPeriod {
     #[inline]
-    fn from(period: &'a Period<'a>) -> Self {
+    fn from(period: &'a api::Period<'a>) -> Self {
         Self {
-            typ: OwnedValueType::from(&period.r#type),
+            typ: ValueType::from(&period.r#type),
             value: period.value,
         }
     }
