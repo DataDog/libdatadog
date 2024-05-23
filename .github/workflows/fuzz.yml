@@ -22,6 +22,7 @@ jobs:
         set -e
         (cd alloc && cargo bolero test chain::tests::fuzz -T 1min)
         (cd alloc && cargo bolero test linear::tests::fuzz -T 1min)
+        (cd alloc && cargo bolero test virtual_alloc::tests::fuzz -T 1min)
         (cd profiling && cargo bolero test collections::string_table::tests::fuzz_arena_allocator -T 1min)
         (cd profiling && cargo bolero test collections::string_table::tests::fuzz_string_table -T 1min)
         (cd profiling && cargo bolero test internal::observation::trimmed_observation::tests::fuzz_trimmed_observation -T 1min)
