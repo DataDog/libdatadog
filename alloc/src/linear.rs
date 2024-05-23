@@ -65,6 +65,20 @@ impl<A: Allocator> LinearAllocator<A> {
     fn base_ptr(&self) -> *mut u8 {
         self.allocation_ptr.as_ptr()
     }
+
+    /// Determine if the given layout will fit in the current allocator
+    pub fn has_capacity_for(&self, layout: Layout) -> bool {
+        // SAFETY: base_ptr + size will always be in the allocated range, or
+        // be the legally allowed one-past-the-end. If it doesn't fit, that's
+        // a serious bug elsewhere in our logic.
+        let align_offset =
+            unsafe { self.base_ptr().add(self.used_bytes()) }.align_offset(layout.align());
+        if let Some(needed_size) = align_offset.checked_add(layout.size()) {
+            self.remaining_capacity() >= needed_size
+        } else {
+            false
+        }
+    }
 }
 
 impl<A: Allocator> Drop for LinearAllocator<A> {
@@ -78,6 +92,10 @@ impl<A: Allocator> Drop for LinearAllocator<A> {
 
 unsafe impl<A: Allocator> Allocator for LinearAllocator<A> {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        if layout.size() == 0 {
+            return Err(AllocError);
+        }
+
         // Find the needed allocation size including the necessary alignment.
         let size = self.used_bytes();
         // SAFETY: base_ptr + size will always be in the allocated range, or
@@ -120,15 +138,48 @@ unsafe impl<A: Allocator> Allocator for LinearAllocator<A> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::*;
     use allocator_api2::alloc::Global;
+
+    #[test]
+    fn fuzz() {
+        // avoid SUMMARY: libFuzzer: out-of-memory
+        const MAX_SIZE: usize = 0x10000000;
+
+        use bolero::TypeGenerator;
+        let size_hint = 0..=MAX_SIZE;
+        let align_bits = 0..=32;
+        let size = 0..=MAX_SIZE;
+        let idx = 0..=MAX_SIZE;
+        let val = u8::gen();
+        let allocs = Vec::<(usize, u32, usize, u8)>::gen()
+            .with()
+            .values((size, align_bits, idx, val));
+        bolero::check!()
+            .with_generator((size_hint, allocs))
+            .for_each(|(size_hint, size_align_vec)| {
+                let allocator = LinearAllocator::new_in(
+                    Layout::from_size_align(*size_hint, 1).unwrap(),
+                    Global,
+                )
+                .unwrap();
+
+                for (size, align_bits, idx, val) in size_align_vec {
+                    fuzzer_inner_loop(&allocator, *size, *align_bits, *idx, *val, MAX_SIZE)
+                }
+            })
+    }
 
     #[test]
     fn test_basics() -> Result<(), AllocError> {
         let alloc = LinearAllocator::new_in(Layout::array::<u8>(24).unwrap(), Global)?;
         const WIDTH: usize = 8;
         let layout = Layout::new::<[u8; WIDTH]>();
+        assert!(alloc.has_capacity_for(layout));
         let first = alloc.allocate(layout)?;
+        assert!(alloc.has_capacity_for(layout));
         let second = alloc.allocate(layout)?;
+        assert!(alloc.has_capacity_for(layout));
         let third = alloc.allocate(layout)?;
 
         assert_ne!(first.as_ptr(), second.as_ptr());
@@ -151,6 +202,7 @@ mod tests {
         }
 
         // No capacity left.
+        assert!(!alloc.has_capacity_for(Layout::new::<bool>()));
         _ = alloc.allocate(Layout::new::<bool>()).unwrap_err();
 
         Ok(())
@@ -262,9 +314,13 @@ mod alignment_tests {
         };
 
         // To test alignment, allocate smallest to largest.
+        assert!(alloc.has_capacity_for(layout_u8));
         let ptr_u8 = alloc.allocate(layout_u8).unwrap();
+        assert!(alloc.has_capacity_for(layout_u16));
         let ptr_u16 = alloc.allocate(layout_u16).unwrap();
+        assert!(alloc.has_capacity_for(layout_u32));
         let ptr_u32 = alloc.allocate(layout_u32).unwrap();
+        assert!(alloc.has_capacity_for(layout_u64));
         let ptr_u64 = alloc.allocate(layout_u64).unwrap();
 
         // LinearAllocator doesn't over-allocate, so we can test exact widths.
@@ -298,7 +354,8 @@ mod alignment_tests {
 
         // There _may_ be a little bit of space left, depends on if the
         // underlying allocator over-allocates. But it should not panic.
-        _ = alloc.allocate(layout_u64);
+        let has_capacity = alloc.has_capacity_for(layout_u64);
+        assert_eq!(has_capacity, alloc.allocate(layout_u64).is_ok())
     }
     #[test]
     fn test_alignment_1() {

@@ -19,6 +19,15 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+      # For some reason, the windows toolchain does not always have the
+      # std-*.dll in its path, so sometimes there are failures like:
+      # > for `datadog-ipc-macros`, command
+      # > `'D:\a\libdatadog\libdatadog\target\debug\deps\datadog_ipc_macros-24212d08e4e0faca.exe' --list --format terse`
+      # > exited with code 0xc0000135: The specified module could not be found. (os error 126)
+      - name: Add toolchain bin folder to PATH
+        if: matrix.platform == 'windows-latest'
+        run: |
+          echo "$(Join-Path -Path (rustc --print sysroot) -ChildPath bin)" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Cache
         uses: ./.github/actions/cache
         with:

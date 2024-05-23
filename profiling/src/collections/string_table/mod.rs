@@ -15,6 +15,11 @@ use std::alloc::Layout;
 pub trait ArenaAllocator: Allocator {
     /// Copies the str into the arena, and returns a slice to the new str.
     fn allocate(&self, str: &str) -> Result<&str, AllocError> {
+        // TODO: We might want each allocator to return its own empty string
+        // so we can debug where the value came from.
+        if str.is_empty() {
+            return Ok("");
+        }
         let layout = Layout::for_value(str);
         let uninit_ptr = Allocator::allocate(self, layout)?;
 
@@ -201,6 +206,78 @@ impl IntoLendingIterator for StringTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fuzz_arena_allocator() {
+        bolero::check!()
+            .with_type::<(usize, Vec<String>)>()
+            .for_each(|(size_hint, strings)| {
+                // If the size_hint is insanely large, get allowed allocation
+                // failures.  These are not interesting, so avoid them.
+                if *size_hint > 4 * 1024 * 1024 * 1024 {
+                    return;
+                }
+                let bytes = ChainAllocator::new_in(*size_hint, VirtualAllocator {});
+                let mut allocated_strings = vec![];
+                for string in strings {
+                    let s =
+                        ArenaAllocator::allocate(&bytes, string).expect("allocation to succeed");
+                    assert_eq!(s, string);
+                    allocated_strings.push(s);
+                }
+                assert_eq!(strings.len(), allocated_strings.len());
+                strings
+                    .iter()
+                    .zip(allocated_strings.iter())
+                    .for_each(|(s, t)| assert_eq!(s, t));
+            });
+    }
+
+    /// This is a fuzz test for the allocation optimized `StringTable`.
+    /// It checks both safety (lack of crashes / sanitizer failures),
+    /// as well as functional correctness (the table should behave like an
+    /// ordered set).  
+    /// Limitations:
+    ///   - The crate used here to generate Strings internally has a default range for the length of
+    ///     a string, (0..=64) We should experiment with longer strings to see what happens. https://github.com/camshaft/bolero/blob/f401669697ffcbe7f34cbfd09fd57b93d5df734c/lib/bolero-generator/src/alloc/mod.rs#L17
+    ///   - Since iterating is destructive, can only check the string values once.
+    /// `cargo +nightly bolero test collections::string_table::tests::fuzz_string_table -T 1min`
+    #[test]
+    fn fuzz_string_table() {
+        bolero::check!()
+            .with_type::<Vec<String>>()
+            .for_each(|strings| {
+                // Compare our optimized implementation against a "golden" version
+                // from the standard library.
+                let mut golden_list = vec![""];
+                let mut golden_set = std::collections::HashSet::from([""]);
+                let mut st = StringTable::new();
+
+                for string in strings {
+                    assert_eq!(st.len(), golden_set.len());
+                    if golden_set.insert(string) {
+                        golden_list.push(string);
+                    }
+
+                    let str_id = st.intern(string);
+                    // The str_id should refer to the id_th string interned
+                    // on the list.  We can't look inside the `StringTable`
+                    // in a non-desctrive way, but fortunately we have the
+                    // `golden_list` to compare against.
+                    assert_eq!(string, golden_list[str_id.to_offset()]);
+                }
+                assert_eq!(st.len(), golden_list.len());
+                assert_eq!(st.len(), golden_set.len());
+
+                // Check that the strings remain in order
+                let mut it = st.into_lending_iter();
+                let mut idx = 0;
+                while let Some(s) = it.next() {
+                    assert_eq!(s, golden_list[idx]);
+                    idx += 1;
+                }
+            })
+    }
 
     #[test]
     fn test_basics() {

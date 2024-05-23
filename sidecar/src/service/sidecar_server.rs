@@ -582,13 +582,13 @@ impl SidecarInterface for SidecarServer {
             dogstatsd.set_endpoint(config.dogstatsd_endpoint.clone());
         });
         self.trace_flusher
-            .interval
+            .interval_ms
             .store(config.flush_interval.as_millis() as u64, Ordering::Relaxed);
         self.trace_flusher
-            .min_force_flush_size
+            .min_force_flush_size_bytes
             .store(config.force_flush_size as u32, Ordering::Relaxed);
         self.trace_flusher
-            .min_force_drop_size
+            .min_force_drop_size_bytes
             .store(config.force_drop_size as u32, Ordering::Relaxed);
 
         session
