@@ -570,6 +570,9 @@ mod api_tests {
                         r.unwrap_err();
                     }
                 }
+                // TODO, set actual values here
+                // TODO, evaluate the result
+                profile.serialize_into_compressed_pprof(None, None).unwrap();
             })
     }
 
