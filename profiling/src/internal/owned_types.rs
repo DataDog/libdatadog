@@ -187,6 +187,18 @@ impl<'a> From<&'a Sample> for api::Sample<'a> {
     }
 }
 
+#[cfg(test)]
+impl Sample {
+    /// Checks if the sample is well formed.  Useful in testing.
+    pub fn is_well_formed(&self) -> bool {
+        let labels_are_unique = {
+            let mut uniq = std::collections::HashSet::new();
+            self.labels.iter().map(|l| &l.key).all(|x| uniq.insert(x))
+        };
+        labels_are_unique
+    }
+}
+
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
 pub struct ValueType {

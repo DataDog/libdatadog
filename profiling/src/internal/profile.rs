@@ -545,20 +545,30 @@ impl Profile {
 mod api_tests {
     use super::*;
 
+    /// Fuzzes adding a bunch of samples to the profile.
+    /// TODO: many of the samples will be of the wrong length, and will give a boring error right 
+    /// away.  Improve the generator to test the case where samples are the right length to get 
+    /// more coverage faster
+    /// TODO: Test the expected result of adding the samples
     #[test]
     fn fuzz() {
         use bolero::TypeGenerator;
 
         bolero::check!()
-            .with_generator((Vec::<owned_types::ValueType>::gen(), owned_types::Sample::gen()))
-            .for_each(|(val, sample)| {
+            .with_generator((
+                Vec::<owned_types::ValueType>::gen(),
+                Vec::<(Option<Timestamp>, owned_types::Sample)>::gen(),
+            ))
+            .for_each(|(val, samples)| {
                 let sample_types: Vec<_> = val.iter().map(api::ValueType::from).collect();
                 let mut profile = Profile::new(SystemTime::now(), &sample_types, None);
-                let r = profile.add_sample(sample.into(), None);
-                if val.len() == sample.values.len() {
-                    r.unwrap();
-                } else {
-                    r.unwrap_err();
+                for (timestamp, sample) in samples {
+                    let r = profile.add_sample(sample.into(), timestamp.clone());
+                    if val.len() == sample.values.len() && sample.is_well_formed() {
+                        r.unwrap();
+                    } else {
+                        r.unwrap_err();
+                    }
                 }
             })
     }
