@@ -5,8 +5,10 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use std::error;
 use std::fmt;
+use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -39,6 +41,10 @@ Following environments are supported:
 */
 
 const DEFAULT_CGROUP_PATH: &str = "/proc/self/cgroup";
+const DEFAULT_CGROUP_MOUNT_PATH: &str = "/sys/fs/cgroup";
+
+/// the base controller used to identify the cgroup v1 mount point in the cgroupMounts map.
+const CGROUP_V1_BASE_CONTROLLER: &str = "memory";
 
 /// stores overridable cgroup path - used in end-to-end testing to "stub" cgroup values
 static mut TESTING_CGROUP_PATH: Option<String> = None;
@@ -88,6 +94,44 @@ fn extract_container_id(filepath: &Path) -> Result<String, Box<dyn std::error::E
     Err(ContainerIdNotFoundError.into())
 }
 
+/// Returns the inode of file at `path`
+fn get_inode(path: &Path) -> Result<u64, Box<dyn std::error::Error>> {
+    let meta = fs::metadata(path)?;
+    Ok(meta.ino())
+}
+
+/// Returns the cgroup mount path associated with `base_controller` or the default one for cgroupV2
+fn get_cgroup_node_path(
+    base_controller: &str,
+    cgroup_mount_path: &Path,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let file = File::open(cgroup_mount_path)?;
+    let reader = BufReader::new(file);
+
+    let mut node_path: Option<PathBuf> = None;
+
+    for (index, line) in reader.lines().enumerate() {
+        let line_content = &line?;
+        let cgroup_entry: Vec<&str> = line_content.split(":").collect();
+        if cgroup_entry.len() != 3 {
+            return Err("Error while parsing cgroup file".to_owned().into());
+        }
+        let controllers: Vec<&str> = cgroup_entry[1].split(",").collect();
+        // Only keep empty controller if it is the first line as cgroupV2 uses only one line
+        if controllers.contains(&base_controller) || (controllers.contains(&"") && index == 0) {
+            let mut path = Path::new(DEFAULT_CGROUP_MOUNT_PATH).join(cgroup_entry[1]);
+            path.push(cgroup_entry[2].strip_prefix("/").unwrap_or(cgroup_entry[2])); // Remove first / as the path is relative
+            node_path = Some(path);
+
+            // if we are using cgroupV1 we can stop looking for the controller
+            if index != 0 {
+                break;
+            }
+        }
+    }
+    node_path.ok_or("No matching cgroup".to_owned().into())
+}
+
 /// # Safety
 /// Must not be called in multi-threaded contexts
 pub unsafe fn set_cgroup_file(file: String) {
@@ -103,6 +147,7 @@ fn get_cgroup_path() -> PathBuf {
     }
 }
 
+/// Returns the `container_id` if available in the cgroup file, otherwise returns `None`
 pub fn get_container_id() -> Option<&'static str> {
     // cache container id in a static to avoid recomputing it at each call
 
@@ -111,6 +156,33 @@ pub fn get_container_id() -> Option<&'static str> {
             extract_container_id(get_cgroup_path().as_path()).ok();
     }
     CONTAINER_ID.as_deref()
+}
+
+/// Returns the `cgroup_inode` if available, otherwise `None`
+pub fn get_cgroup_inode() -> Option<&'static str> {
+    lazy_static! {
+        static ref CGROUP_INODE: Option<String> = {
+            let cgroup_mount_path =
+                get_cgroup_node_path(CGROUP_V1_BASE_CONTROLLER, get_cgroup_path().as_path())
+                    .ok()?;
+            Some(get_inode(&cgroup_mount_path).ok()?.to_string())
+        };
+    }
+    CGROUP_INODE.as_deref()
+}
+
+/// Returns the `entity id` either `cid-<container_id>` if available or `in-<cgroup_inode>`
+pub fn get_entity_id() -> Option<&'static str> {
+    lazy_static! {
+        static ref ENTITY_ID: Option<String> = if let Some(container_id) = get_container_id() {
+            Some(format!("cid-{container_id}"))
+        } else if let Some(inode) = get_cgroup_inode() {
+            Some(format!("in-{inode}"))
+        } else {
+            None
+        };
+    }
+    ENTITY_ID.as_deref()
 }
 
 #[cfg(test)]
