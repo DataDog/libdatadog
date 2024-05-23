@@ -6,11 +6,11 @@
 mod chain;
 mod linear;
 mod utils;
-mod r#virtual;
+mod virtual_alloc;
 
 pub use chain::*;
 pub use linear::*;
-pub use r#virtual::*;
+pub use virtual_alloc::*;
 
 // Expose allocator_api2 for our users.
 pub use allocator_api2::alloc::*;

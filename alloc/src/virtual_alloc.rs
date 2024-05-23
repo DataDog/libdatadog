@@ -183,7 +183,36 @@ pub mod os {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::*;
     use allocator_api2::alloc::Allocator;
+
+    #[test]
+    fn fuzz() {
+        use bolero::TypeGenerator;
+
+        #[cfg(miri)]
+        const MAX_SIZE: usize = 1_000_000;
+
+        #[cfg(not(miri))]
+        const MAX_SIZE: usize = isize::MAX as usize;
+
+        let align_bits = 0..=32;
+        let size = usize::gen();
+        let idx = usize::gen();
+        let val = u8::gen();
+        let allocs = Vec::<(usize, u32, usize, u8)>::gen()
+            .with()
+            .values((size, align_bits, idx, val));
+        bolero::check!()
+            .with_generator(allocs)
+            .for_each(|size_align_vec| {
+                let allocator = VirtualAllocator {};
+
+                for (size, align_bits, idx, val) in size_align_vec {
+                    fuzzer_inner_loop(&allocator, *size, *align_bits, *idx, *val, MAX_SIZE)
+                }
+            })
+    }
 
     #[test]
     fn test_zero_sized() {
