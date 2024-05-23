@@ -20,7 +20,15 @@ impl<'a> From<&'a api::ValueType<'a>> for ValueType {
     }
 }
 
+impl<'a> From<&'a ValueType> for api::ValueType<'a> {
+    fn from(value: &'a ValueType) -> Self {
+        Self::new(&value.typ, &value.unit)
+    }
+}
+
+
 #[derive(Clone)]
+#[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
 pub struct Period {
     pub typ: ValueType,
     pub value: i64,
