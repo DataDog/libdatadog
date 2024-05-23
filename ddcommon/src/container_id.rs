@@ -7,6 +7,7 @@ use std::error;
 use std::fmt;
 use std::fs;
 use std::fs::File;
+use std::io;
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
@@ -63,15 +64,25 @@ lazy_static! {
 }
 
 #[derive(Debug, Clone)]
-struct ContainerIdNotFoundError;
+enum CgroupFileParsingError {
+    ContainerIdNotFound,
+    CgroupNotFound,
+    CannotOpenFile,
+    InvalidFormat,
+}
 
-impl fmt::Display for ContainerIdNotFoundError {
+impl fmt::Display for CgroupFileParsingError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "container id not found")
+        match self {
+            CgroupFileParsingError::ContainerIdNotFound => write!(f, "Container id not found"),
+            CgroupFileParsingError::CgroupNotFound => write!(f, "Cgroup not found"),
+            CgroupFileParsingError::CannotOpenFile => write!(f, "Error while opening cgroup file"),
+            CgroupFileParsingError::InvalidFormat => write!(f, "Invalid format in cgroup file"),
+        }
     }
 }
 
-impl error::Error for ContainerIdNotFoundError {}
+impl error::Error for CgroupFileParsingError {}
 
 fn parse_line(line: &str) -> Option<&str> {
     // unwrap is OK since if regex matches then the groups must exist
@@ -81,21 +92,23 @@ fn parse_line(line: &str) -> Option<&str> {
         .map(|captures| captures.get(1).unwrap().as_str())
 }
 
-fn extract_container_id(filepath: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    let file = File::open(filepath)?;
+fn extract_container_id(filepath: &Path) -> Result<String, CgroupFileParsingError> {
+    let file = File::open(filepath).map_err(|_| CgroupFileParsingError::CannotOpenFile)?;
     let reader = BufReader::new(file);
 
     for line in reader.lines() {
-        if let Some(container_id) = parse_line(&line?) {
+        if let Some(container_id) =
+            parse_line(&line.map_err(|_| CgroupFileParsingError::InvalidFormat)?)
+        {
             return Ok(String::from(container_id));
         }
     }
 
-    Err(ContainerIdNotFoundError.into())
+    Err(CgroupFileParsingError::ContainerIdNotFound)
 }
 
 /// Returns the inode of file at `path`
-fn get_inode(path: &Path) -> Result<u64, Box<dyn std::error::Error>> {
+fn get_inode(path: &Path) -> io::Result<u64> {
     let meta = fs::metadata(path)?;
     Ok(meta.ino())
 }
@@ -104,17 +117,17 @@ fn get_inode(path: &Path) -> Result<u64, Box<dyn std::error::Error>> {
 fn get_cgroup_node_path(
     base_controller: &str,
     cgroup_mount_path: &Path,
-) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let file = File::open(cgroup_mount_path)?;
+) -> Result<PathBuf, CgroupFileParsingError> {
+    let file = File::open(cgroup_mount_path).map_err(|_| CgroupFileParsingError::CannotOpenFile)?;
     let reader = BufReader::new(file);
 
     let mut node_path: Option<PathBuf> = None;
 
     for (index, line) in reader.lines().enumerate() {
-        let line_content = &line?;
+        let line_content = &line.map_err(|_| CgroupFileParsingError::InvalidFormat)?;
         let cgroup_entry: Vec<&str> = line_content.split(":").collect();
         if cgroup_entry.len() != 3 {
-            return Err("Error while parsing cgroup file".to_owned().into());
+            return Err(CgroupFileParsingError::InvalidFormat);
         }
         let controllers: Vec<&str> = cgroup_entry[1].split(",").collect();
         // Only keep empty controller if it is the first line as cgroupV2 uses only one line
@@ -129,7 +142,7 @@ fn get_cgroup_node_path(
             }
         }
     }
-    node_path.ok_or("No matching cgroup".to_owned().into())
+    node_path.ok_or(CgroupFileParsingError::CgroupNotFound)
 }
 
 /// # Safety
