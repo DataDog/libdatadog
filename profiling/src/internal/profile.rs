@@ -31,7 +31,7 @@ pub struct Profile {
     mappings: FxIndexSet<Mapping>,
     observations: Observations,
     period: Option<(i64, ValueType)>,
-    sample_types: Vec<ValueType>,
+    sample_types: Option<Box<[ValueType]>>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: StringTable,
@@ -76,9 +76,9 @@ impl Profile {
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
-            sample.values.len() == self.sample_types.len(),
+            sample.values.len() == self.get_sample_types_len()?,
             "expected {} sample types, but sample had {} sample types",
-            self.sample_types.len(),
+            self.get_sample_types_len()?,
             sample.values.len(),
         );
 
@@ -128,7 +128,7 @@ impl Profile {
             (label_name, label_name_id),
             (label_value, label_value_id),
             upscaling_info,
-            self.sample_types.len(),
+            self.get_sample_types_len()?,
         )?;
 
         Ok(())
@@ -243,7 +243,11 @@ impl Profile {
         //
         // In this case, we use `sample_types` during upscaling of `samples`,
         // so we must serialize `Sample` before `SampleType`.
-        for sample_type in self.sample_types.into_iter() {
+        for sample_type in self
+            .sample_types
+            .context("sample_types can't be None")?
+            .iter()
+        {
             let item: pprof::ValueType = sample_type.into();
             encoder.encode(ProfileSampleTypesEntry::from(item))?;
         }
@@ -434,7 +438,7 @@ impl Profile {
             mappings: Default::default(),
             observations: Default::default(),
             period: None,
-            sample_types: vec![],
+            sample_types: Some(Box::new([])),
             stack_traces: Default::default(),
             start_time,
             strings: Default::default(),
@@ -452,8 +456,8 @@ impl Profile {
         // Break "cannot borrow `*self` as mutable because it is also borrowed
         // as immutable" by moving it out, borrowing it, and putting it back.
         let owned_sample_types = profile.owned_sample_types.take();
-        profile.sample_types = match &owned_sample_types {
-            None => Vec::new(),
+        profile.sample_types = Some(match &owned_sample_types {
+            None => Box::new([]),
             Some(sample_types) => sample_types
                 .iter()
                 .map(|sample_type| ValueType {
@@ -461,7 +465,7 @@ impl Profile {
                     unit: profile.intern(&sample_type.unit),
                 })
                 .collect(),
-        };
+        });
         profile.owned_sample_types = owned_sample_types;
 
         // Break "cannot borrow `*self` as mutable because it is also borrowed
@@ -478,7 +482,11 @@ impl Profile {
         };
         profile.owned_period = owned_period;
 
-        profile.observations = Observations::new(profile.sample_types.len());
+        profile.observations = Observations::new(
+            profile
+                .get_sample_types_len()
+                .expect("sample_types can't be None"),
+        );
         profile
     }
 
@@ -519,6 +527,14 @@ impl Profile {
             );
         }
         Ok(())
+    }
+
+    fn get_sample_types_len(&self) -> anyhow::Result<usize> {
+        Ok(self
+            .sample_types
+            .as_ref()
+            .context("sample_types can't be None")?
+            .len())
     }
 }
 
@@ -811,7 +827,7 @@ mod api_tests {
         assert!(!profile.locations.is_empty());
         assert!(!profile.mappings.is_empty());
         assert!(!profile.observations.is_empty());
-        assert!(!profile.sample_types.is_empty());
+        assert!(!profile.sample_types.as_ref().unwrap().is_empty());
         assert!(profile.period.is_none());
         assert!(profile.endpoints.mappings.is_empty());
         assert!(profile.endpoints.stats.is_empty());
@@ -832,7 +848,7 @@ mod api_tests {
         assert!(profile.upscaling_rules.is_empty());
 
         assert_eq!(profile.period, prev.period);
-        assert_eq!(profile.sample_types, prev.sample_types);
+        assert_eq!(profile.sample_types.unwrap(), prev.sample_types.unwrap());
 
         // The string table should have at least the empty string.
         assert!(profile.strings.len() > 0);
