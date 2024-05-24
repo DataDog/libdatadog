@@ -12,6 +12,8 @@ pub const PROD_INTAKE_SUBDOMAIN: &str = "instrumentation-telemetry-intake";
 
 const DIRECT_TELEMETRY_URL_PATH: &str = "/api/v2/apmtelemetry";
 const AGENT_TELEMETRY_URL_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
+
+#[cfg(unix)]
 const TRACE_SOCKET_PATH: &str = "/var/run/datadog/apm.socket";
 
 const DEFAULT_AGENT_HOST: &str = "localhost";
@@ -194,7 +196,7 @@ impl Config {
                 .agent_uds_socket_found
                 .then(|| format!("unix://{TRACE_SOCKET_PATH}"));
             #[cfg(not(unix))]
-            None
+            return None;
         })
         .unwrap_or_else(|| format!("http://{DEFAULT_AGENT_HOST}:{DEFAULT_AGENT_PORT}"))
     }
