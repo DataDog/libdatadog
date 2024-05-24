@@ -18,7 +18,10 @@ fn main() {
         if cfg!(target_os = "linux") {
             builder.flag("-Wl,--no-as-needed");
         }
-        builder.link_dynamically("m"); // rust code generally requires libm. Just link against it.
+        // rust code generally requires libm. Just link against it.
+        builder.link_dynamically("m");
+        // some old libc versions are unhappy if it gets linked in dynamically later on
+        builder.link_dynamically("pthread");
     } else {
         builder.flag("-wd4996"); // disable deprecation warnings
     }
