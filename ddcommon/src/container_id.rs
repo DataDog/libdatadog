@@ -145,6 +145,19 @@ fn get_cgroup_node_path(
     node_path.ok_or(CgroupFileParsingError::CgroupNotFound)
 }
 
+/// Returns the `cgroup_inode` if available, otherwise `None`
+fn get_cgroup_inode() -> Option<&'static str> {
+    lazy_static! {
+        static ref CGROUP_INODE: Option<String> = {
+            let cgroup_mount_path =
+                get_cgroup_node_path(CGROUP_V1_BASE_CONTROLLER, get_cgroup_path().as_path())
+                    .ok()?;
+            Some(get_inode(&cgroup_mount_path).ok()?.to_string())
+        };
+    }
+    CGROUP_INODE.as_deref()
+}
+
 /// # Safety
 /// Must not be called in multi-threaded contexts
 pub unsafe fn set_cgroup_file(file: String) {
@@ -169,19 +182,6 @@ pub fn get_container_id() -> Option<&'static str> {
             extract_container_id(get_cgroup_path().as_path()).ok();
     }
     CONTAINER_ID.as_deref()
-}
-
-/// Returns the `cgroup_inode` if available, otherwise `None`
-pub fn get_cgroup_inode() -> Option<&'static str> {
-    lazy_static! {
-        static ref CGROUP_INODE: Option<String> = {
-            let cgroup_mount_path =
-                get_cgroup_node_path(CGROUP_V1_BASE_CONTROLLER, get_cgroup_path().as_path())
-                    .ok()?;
-            Some(get_inode(&cgroup_mount_path).ok()?.to_string())
-        };
-    }
-    CGROUP_INODE.as_deref()
 }
 
 /// Returns the `entity id` either `cid-<container_id>` if available or `in-<cgroup_inode>`
