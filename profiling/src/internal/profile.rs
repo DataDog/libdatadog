@@ -214,7 +214,7 @@ impl Profile {
         let mut encoder = CompressedProtobufSerializer::with_capacity(INITIAL_PPROF_BUFFER_SIZE);
 
         for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
-            let labels = self.translate_and_enrich_sample_labels(sample, timestamp)?;
+            let labels = self.enrich_sample_labels(sample, timestamp)?;
             let location_ids: Vec<_> = self
                 .get_stacktrace(sample.stacktrace)?
                 .locations
@@ -223,6 +223,7 @@ impl Profile {
                 .collect();
             self.upscaling_rules.upscale_values(&mut values, &labels)?;
 
+            let labels = labels.into_iter().map(pprof::Label::from).collect();
             let item = pprof::Sample {
                 location_ids,
                 values,
@@ -481,20 +482,20 @@ impl Profile {
         profile
     }
 
-    fn translate_and_enrich_sample_labels(
+    fn enrich_sample_labels(
         &self,
         sample: Sample,
         timestamp: Option<Timestamp>,
-    ) -> anyhow::Result<Vec<pprof::Label>> {
+    ) -> anyhow::Result<Vec<Label>> {
         self.get_label_set(sample.labels)?
             .iter()
-            .map(|l| self.get_label(*l).map(pprof::Label::from))
+            .map(|l| self.get_label(*l).map(|l| l.clone()))
             .chain(
                 self.get_endpoint_for_labels(sample.labels)
                     .transpose()
-                    .map(|res| res.map(pprof::Label::from)),
+                    .map(|res| res.map(|l| l.clone())),
             )
-            .chain(timestamp.map(|ts| Ok(Label::num(self.timestamp_key, ts.get(), None).into())))
+            .chain(timestamp.map(|ts| Ok(Label::num(self.timestamp_key, ts.get(), None))))
             .collect()
     }
 
