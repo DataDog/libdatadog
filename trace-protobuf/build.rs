@@ -119,8 +119,8 @@ fn generate_protobuf() {
         "#[serde(rename = \"DBType\")]",
     );
 
-    config.type_attribute("ClientGetConfigsResponse", "#[derive(Deserialize)]");
-    config.type_attribute("File", "#[derive(Deserialize)]");
+    config.type_attribute("ClientGetConfigsResponse", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("File", "#[derive(Deserialize, Serialize)]");
     config.type_attribute(
         "ClientGetConfigsRequest",
         "#[derive(Deserialize, Serialize)]",

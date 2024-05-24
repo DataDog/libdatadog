@@ -1,4 +1,4 @@
-use serde::Deserializer;
+use serde::{Deserializer, Serializer};
 use serde_bytes::ByteBuf;
 
 pub trait Deserialize<'de>: Sized {
@@ -31,4 +31,24 @@ pub fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
         D: Deserializer<'de>,
 {
     Deserialize::deserialize(deserializer)
+}
+
+pub trait Serialize: Sized {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer;
+}
+
+impl Serialize for &Vec<Vec<u8>> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+        serializer.collect_seq(self.iter())
+    }
+}
+
+pub fn serialize<T, S>(value: T, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        T: Serialize,
+        S: Serializer,
+{
+    value.serialize(serializer)
 }

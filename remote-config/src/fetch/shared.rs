@@ -132,7 +132,7 @@ impl<S: FileStorage + Clone> Clone for RefcountingStorage<S> where S::StoredFile
 
 impl<S: FileStorage + Clone> RefcountingStorage<S> where S::StoredFile: RefcountedFile {
     pub fn new(storage: S, mut state: ConfigFetcherState<S::StoredFile>) -> Self {
-        state.expire_unused_files = true;
+        state.expire_unused_files = false;
         RefcountingStorage {
             storage,
             state: Arc::new(state),
@@ -217,25 +217,27 @@ impl SharedFetcher {
 
             let last_run_id = fetcher.file_storage.run_id.dec_runners();
             fetcher.file_storage.inactive.lock().unwrap().retain(|_, v| {
-                (first_run_id..last_run_id).contains(&v.get_dropped_run_id()) && v.delref() == 0
+                (first_run_id..last_run_id).contains(&v.get_dropped_run_id()) && v.delref() == 1
             });
 
             match fetched {
                 Ok(None) => { /* unchanged */ },
                 Ok(Some(files)) => {
-                    for file in files.iter() {
-                        file.incref();
-                    }
-
-                    for file in last_files {
-                        if file.delref() == 0 {
-                            fetcher.file_storage.expire_file(file);
+                    if !files.is_empty() || !last_files.is_empty() {
+                        for file in files.iter() {
+                            file.incref();
                         }
+
+                        for file in last_files {
+                            if file.delref() == 1 {
+                                fetcher.file_storage.expire_file(file);
+                            }
+                        }
+
+                        last_files = files;
+
+                        last_error = on_fetch(&last_files);
                     }
-
-                    last_files = files;
-
-                    last_error = on_fetch(&last_files);
                 }
                 Err(e) => error!("{:?}", e),
             }
@@ -253,7 +255,7 @@ impl SharedFetcher {
         }
 
         for file in last_files {
-            if file.delref() == 0 {
+            if file.delref() == 1 {
                 fetcher.file_storage.expire_file(file);
             }
         }
@@ -261,7 +263,223 @@ impl SharedFetcher {
 
     /// Note that due to the async logic, a cancellation does not guarantee a strict ordering:
     /// A final on_fetch call from within the run() method may happen after the cancellation.
+    /// Cancelling from within on_fetch callback is always final.
     pub fn cancel(&self) {
         self.cancellation.cancel();
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use futures::future::join_all;
+    use std::sync::Arc;
+    use lazy_static::lazy_static;
+    use crate::fetch::fetcher::tests::*;
+    use crate::fetch::test_server::RemoteConfigServer;
+    use crate::Target;
+    use super::*;
+
+    lazy_static! {
+        pub static ref OTHER_TARGET: Arc<Target> = Arc::new(Target {
+            service: "other".to_string(),
+            env: "env".to_string(),
+            app_version: "7.8.9".to_string(),
+        });
+    }
+
+    pub struct RcPathStore {
+        pub store: Arc<PathStore>,
+        refcounted: FileRefcountData,
+    }
+
+    impl RefcountedFile for RcPathStore {
+        fn refcount(&self) -> &FileRefcountData {
+            &self.refcounted
+        }
+    }
+
+    #[derive(Default, Clone)]
+    pub struct RcFileStorage(Arc<Storage>);
+
+    impl FileStorage for RcFileStorage {
+        type StoredFile = RcPathStore;
+
+        fn store(&self, version: u64, path: RemoteConfigPath, contents: Vec<u8>) -> anyhow::Result<Arc<Self::StoredFile>> {
+            Ok(Arc::new(RcPathStore {
+                store: self.0.store(version, path.clone(), contents)?,
+                refcounted: FileRefcountData::new(version, path),
+            }))
+        }
+
+        fn update(&self, file: &Arc<Self::StoredFile>, version: u64, contents: Vec<u8>) -> anyhow::Result<()> {
+            self.0.update(&file.store, version, contents)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_single_fetcher() {
+        let server = RemoteConfigServer::spawn();
+        let storage = RcFileStorage::default();
+        let rc_storage = RefcountingStorage::new(storage.clone(), ConfigFetcherState::new(server.dummy_invariants()));
+
+        server.files.lock().unwrap().insert(PATH_FIRST.clone(), (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()));
+
+        let fetcher = SharedFetcher::new(DUMMY_TARGET.clone(), "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string());
+        let iteration = AtomicU32::new(0);
+        let inner_fetcher = unsafe { &*(&fetcher as *const SharedFetcher) };
+        let inner_storage = storage.clone();
+        fetcher.run(rc_storage, Box::new(move |fetched| {
+            match iteration.fetch_add(1, Ordering::SeqCst) {
+                0 => {
+                    assert_eq!(fetched.len(), 1);
+                    assert_eq!(fetched[0].store.data.lock().unwrap().contents, "v1");
+
+                    server.files.lock().unwrap().insert(PATH_SECOND.clone(), (vec![DUMMY_TARGET.clone()], 1, "X".to_string()));
+
+                    Some("error".to_string())
+                },
+                1 => {
+                    assert_eq!(fetched.len(), 2);
+                    let req = server.last_request.lock().unwrap();
+                    let req = req.as_ref().unwrap();
+                    let client = req.client.as_ref().unwrap();
+                    let state = client.state.as_ref().unwrap();
+                    assert_eq!(state.error, "error");
+
+                    server.files.lock().unwrap().remove(&PATH_SECOND);
+
+                    None
+                },
+                2 => {
+                    assert_eq!(fetched.len(), 1);
+                    assert_eq!(inner_storage.0.files.lock().unwrap().len(), 1);
+                    let req = server.last_request.lock().unwrap();
+                    let req = req.as_ref().unwrap();
+                    let client = req.client.as_ref().unwrap();
+                    let state = client.state.as_ref().unwrap();
+                    assert_eq!(state.has_error, false);
+
+                    inner_fetcher.cancel();
+
+                    None
+                }
+                _ => panic!("Unexpected"),
+            }
+        })).await;
+
+        assert!(storage.0.files.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_parallel_fetchers() {
+        let server = RemoteConfigServer::spawn();
+        let storage = RcFileStorage::default();
+        let rc_storage = RefcountingStorage::new(storage.clone(), ConfigFetcherState::new(server.dummy_invariants()));
+
+        server.files.lock().unwrap().insert(PATH_FIRST.clone(), (vec![DUMMY_TARGET.clone(), OTHER_TARGET.clone()], 1, "v1".to_string()));
+        server.files.lock().unwrap().insert(PATH_SECOND.clone(), (vec![DUMMY_TARGET.clone()], 1, "X".to_string()));
+
+        let server_1 = server.clone();
+        let server_1_storage = storage.clone();
+        let server_first_1 = move || {
+            assert_eq!(server_1_storage.0.files.lock().unwrap().len(), 2);
+            server_1.files.lock().unwrap().insert(PATH_FIRST.clone(), (vec![OTHER_TARGET.clone()], 1, "v1".to_string()));
+            server_1.files.lock().unwrap().insert(PATH_SECOND.clone(), (vec![DUMMY_TARGET.clone(), OTHER_TARGET.clone()], 1, "X".to_string()));
+        };
+        let server_first_2 = server_first_1.clone();
+
+        let server_2 = server.clone();
+        let server_2_storage = storage.clone();
+        let server_second_1 = move || {
+            assert_eq!(server_2_storage.0.files.lock().unwrap().len(), 2);
+            server_2.files.lock().unwrap().insert(PATH_FIRST.clone(), (vec![DUMMY_TARGET.clone()], 2, "v2".to_string()));
+            server_2.files.lock().unwrap().remove(&PATH_SECOND);
+        };
+        let server_second_2 = server_second_1.clone();
+
+        let server_3 = server.clone();
+        let server_3_storage = storage.clone();
+        let server_third_1 = move || {
+            // one file should be expired by now
+            assert_eq!(server_3_storage.0.files.lock().unwrap().len(), 1);
+            server_3.files.lock().unwrap().clear();
+        };
+        let server_third_2 = server_third_1.clone();
+
+        let fetcher_1 = SharedFetcher::new(DUMMY_TARGET.clone(), "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string());
+        let fetcher_2 = SharedFetcher::new(OTHER_TARGET.clone(), "ae588386-8464-43ba-bd3a-3e2d36b2c22c".to_string());
+        let iteration = Arc::new(AtomicU32::new(0));
+        let iteration_1 = iteration.clone();
+        let iteration_2 = iteration.clone();
+        let inner_fetcher_1 = unsafe { &*(&fetcher_1 as *const SharedFetcher) };
+        let inner_fetcher_2 = unsafe { &*(&fetcher_2 as *const SharedFetcher) };
+        join_all(vec![fetcher_1.run(rc_storage.clone(), Box::new(move |fetched| {
+            match iteration_1.fetch_add(1, Ordering::SeqCst) {
+                i @ 0|i @ 1 => {
+                    assert_eq!(fetched.len(), 2);
+
+                    if i == 1 {
+                        server_first_1();
+                    }
+                },
+                i @ 2|i @ 3 => {
+                    assert_eq!(fetched.len(), 1);
+                    assert_eq!(fetched[0].store.data.lock().unwrap().contents, "X");
+
+                    if i == 3 {
+                        server_second_1();
+                    }
+                },
+                i @ 4|i @ 5 => {
+                    assert_eq!(fetched.len(), 1);
+                    assert_eq!(fetched[0].store.data.lock().unwrap().contents, "v2");
+
+                    if i == 5 {
+                        server_third_1();
+                    }
+                },
+                6 | 7 => {
+                    assert_eq!(fetched.len(), 0);
+
+                    inner_fetcher_1.cancel();
+                },
+                _ => panic!("Unexpected"),
+            }
+            None
+        })), fetcher_2.run(rc_storage, Box::new(move |fetched| {
+            match iteration_2.fetch_add(1, Ordering::SeqCst) {
+                i @ 0|i @ 1 => {
+                    assert_eq!(fetched.len(), 1);
+                    assert_eq!(fetched[0].store.data.lock().unwrap().contents, "v1");
+
+                    if i == 1 {
+                        server_first_2();
+                    }
+                },
+                i @ 2|i @ 3 => {
+                    assert_eq!(fetched.len(), 2);
+
+                    if i == 3 {
+                        server_second_2();
+                    }
+                },
+                i @ 4|i @ 5 => {
+                    assert_eq!(fetched.len(), 0);
+
+                    if i == 5 {
+                        server_third_2();
+                    }
+                },
+                6 | 7 => {
+                    assert_eq!(fetched.len(), 0);
+
+                    inner_fetcher_2.cancel();
+                },
+                _ => panic!("Unexpected"),
+            }
+            None
+        }))]).await;
+
+        assert!(storage.0.files.lock().unwrap().is_empty());
     }
 }

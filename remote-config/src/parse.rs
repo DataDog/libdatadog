@@ -27,7 +27,7 @@ impl ToString for RemoteConfigProduct {
     }
 }
 
-#[derive(Clone, Eq, Hash, PartialEq)]
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
 pub struct RemoteConfigPath {
     pub source: RemoteConfigSource,
     pub product: RemoteConfigProduct,

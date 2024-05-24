@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use base64::Engine;
 use hyper::http::uri::{PathAndQuery, Scheme};
-use hyper::{Body, Client, StatusCode};
+use hyper::{Client, StatusCode};
 use sha2::{Digest, Sha256, Sha512};
 use tracing::{debug, trace, warn};
 use datadog_trace_protobuf::remoteconfig::{ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState, TargetFileHash, TargetFileMeta};
@@ -170,13 +170,15 @@ impl<S: FileStorage> ConfigFetcher<S> {
             }),
             cached_target_files,
         };
-        let json = serde_json::to_string(&config_req)?;
 
         let req = self.state.endpoint
-            .into_request_builder(concat!("Sidecar/", env!("CARGO_PKG_VERSION")))?;
+            .into_request_builder(concat!("Sidecar/", env!("CARGO_PKG_VERSION")))?
+            .method(http::Method::POST)
+            .header(http::header::CONTENT_TYPE, ddcommon::header::APPLICATION_JSON)
+            .body(serde_json::to_string(&config_req)?)?;
         let response = Client::builder()
             .build(connector::Connector::default())
-            .request(req.body(Body::from(json))?)
+            .request(req)
             .await
             .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?;
         let status = response.status();
@@ -219,9 +221,8 @@ impl<S: FileStorage> ConfigFetcher<S> {
         let mut target_files = self.state.target_files_by_path.lock().unwrap();
 
         if self.state.expire_unused_files {
-            target_files.retain(|k, _| {
-                targets_list.signed.targets.contains_key(k.as_str())
-            });
+            let retain: HashSet<_> = response.client_configs.iter().collect();
+            target_files.retain(|k, _| { retain.contains(k) });
         }
 
         for (path, target_file) in targets_list.signed.targets {
@@ -325,5 +326,220 @@ fn get_product_endpoint(subdomain: &str, endpoint: &Endpoint) -> Endpoint {
     Endpoint {
         url: hyper::Uri::from_parts(parts).unwrap(),
         api_key: endpoint.api_key.clone(),
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use http::Response;
+    use hyper::Body;
+    use lazy_static::lazy_static;
+    use crate::fetch::test_server::RemoteConfigServer;
+    use crate::RemoteConfigSource;
+    use super::*;
+
+    lazy_static! {
+        pub static ref PATH_FIRST: RemoteConfigPath = RemoteConfigPath {
+            source: RemoteConfigSource::Employee,
+            product: RemoteConfigProduct::ApmTracing,
+            config_id: "1234".to_string(),
+            name: "config".to_string(),
+        };
+
+        pub static ref PATH_SECOND: RemoteConfigPath = RemoteConfigPath {
+            source: RemoteConfigSource::Employee,
+            product: RemoteConfigProduct::ApmTracing,
+            config_id: "9876".to_string(),
+            name: "config".to_string(),
+        };
+
+        pub static ref DUMMY_TARGET: Arc<Target> = Arc::new(Target {
+            service: "service".to_string(),
+            env: "env".to_string(),
+            app_version: "1.3.5".to_string(),
+        });
+    }
+
+    static DUMMY_RUNTIME_ID: &'static str = "3b43524b-a70c-45dc-921d-34504e50c5eb";
+
+    #[derive(Default)]
+    pub struct Storage {
+        pub files: Mutex<HashMap<RemoteConfigPath, Arc<Mutex<DataStore>>>>,
+    }
+
+    pub struct PathStore {
+        path: RemoteConfigPath,
+        storage: Arc<Storage>,
+        pub data: Arc<Mutex<DataStore>>
+    }
+
+    #[derive(Debug, Eq, PartialEq)]
+    pub struct DataStore {
+        pub version: u64,
+        pub contents: String,
+    }
+
+    impl Drop for PathStore {
+        fn drop(&mut self) {
+            self.storage.files.lock().unwrap().remove(&self.path);
+        }
+    }
+
+    impl FileStorage for Arc<Storage> {
+        type StoredFile = PathStore;
+
+        fn store(&self, version: u64, path: RemoteConfigPath, contents: Vec<u8>) -> anyhow::Result<Arc<Self::StoredFile>> {
+            let data = Arc::new(Mutex::new(DataStore {
+                version,
+                contents: String::from_utf8(contents).unwrap(),
+            }));
+            assert!(self.files.lock().unwrap().insert(path.clone(), data.clone()).is_none());
+            Ok(Arc::new(PathStore {
+                path: path.clone(),
+                storage: self.clone(),
+                data,
+            }))
+        }
+
+        fn update(&self, file: &Arc<Self::StoredFile>, version: u64, contents: Vec<u8>) -> anyhow::Result<()> {
+            *file.data.lock().unwrap() = DataStore {
+                version,
+                contents: String::from_utf8(contents).unwrap(),
+            };
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_inactive() {
+        let server = RemoteConfigServer::spawn();
+        let storage = Arc::new(Storage::default());
+        let mut fetcher = ConfigFetcher::new(storage.clone(), Arc::new(ConfigFetcherState::new(server.dummy_invariants())));
+        let mut opaque_state = OpaqueState::default();
+
+        let mut response = Response::new(Body::from(""));
+        *response.status_mut() = StatusCode::NOT_FOUND;
+        *server.next_response.lock().unwrap() = Some(response);
+
+        let fetched = fetcher.fetch_once(DUMMY_RUNTIME_ID, DUMMY_TARGET.clone(), "foo", Some("test".to_string()), &mut opaque_state).await.unwrap().unwrap();
+
+        assert!(fetched.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_fetch_cache() {
+        let server = RemoteConfigServer::spawn();
+        server.files.lock().unwrap().insert(PATH_FIRST.clone(), (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()));
+
+        let storage = Arc::new(Storage::default());
+
+        let invariants = ConfigInvariants {
+            language: "php".to_string(),
+            tracer_version: "1.2.3".to_string(),
+            endpoint: server.endpoint.clone(),
+            products: vec![RemoteConfigProduct::ApmTracing, RemoteConfigProduct::LiveDebugger],
+            capabilities: vec![RemoteConfigCapabilities::ApmTracingCustomTags],
+        };
+
+
+        let mut fetcher = ConfigFetcher::new(storage.clone(), Arc::new(ConfigFetcherState::new(invariants)));
+        let mut opaque_state = OpaqueState::default();
+
+        {
+            let fetched = fetcher.fetch_once(DUMMY_RUNTIME_ID, DUMMY_TARGET.clone(), "foo", Some("test".to_string()), &mut opaque_state).await.unwrap().unwrap();
+
+            let req = server.last_request.lock().unwrap();
+            let req = req.as_ref().unwrap();
+            assert!(req.cached_target_files.is_empty());
+
+            let client = req.client.as_ref().unwrap();
+            assert_eq!(client.capabilities, &[RemoteConfigCapabilities::ApmTracingCustomTags as u8]);
+            assert_eq!(client.products, &["APM_TRACING", "LIVE_DEBUGGING"]);
+            assert_eq!(client.is_tracer, true);
+            assert_eq!(client.is_agent, false);
+            assert_eq!(client.id, "foo");
+
+            let state = client.state.as_ref().unwrap();
+            assert_eq!(state.error, "test");
+            assert_eq!(state.has_error, true);
+            assert!(state.config_states.is_empty());
+            assert!(state.backend_client_state.is_empty());
+
+            let tracer = client.client_tracer.as_ref().unwrap();
+            assert_eq!(tracer.service, DUMMY_TARGET.service);
+            assert_eq!(tracer.env, DUMMY_TARGET.env);
+            assert_eq!(tracer.app_version, DUMMY_TARGET.app_version);
+            assert_eq!(tracer.runtime_id, DUMMY_RUNTIME_ID);
+            assert_eq!(tracer.language, "php");
+            assert_eq!(tracer.tracer_version, "1.2.3");
+
+
+            assert_eq!(String::from_utf8_lossy(&opaque_state.client_state), "some state");
+            assert_eq!(fetched.len(), 1);
+            assert_eq!(storage.files.lock().unwrap().len(), 1);
+
+            assert!(Arc::ptr_eq(&fetched[0].data, storage.files.lock().unwrap().get(&PATH_FIRST).unwrap()));
+            assert_eq!(fetched[0].data.lock().unwrap().contents, "v1");
+            assert_eq!(fetched[0].data.lock().unwrap().version, 1);
+        }
+
+        {
+            let fetched = fetcher.fetch_once(DUMMY_RUNTIME_ID, DUMMY_TARGET.clone(), "foo", None, &mut opaque_state).await.unwrap();
+            assert!(fetched.is_none()); // no change
+
+            let req = server.last_request.lock().unwrap();
+            let req = req.as_ref().unwrap();
+            assert_eq!(req.cached_target_files.len(), 1);
+
+            let client = req.client.as_ref().unwrap();
+            assert_eq!(client.capabilities, &[RemoteConfigCapabilities::ApmTracingCustomTags as u8]);
+            assert_eq!(client.products, &["APM_TRACING", "LIVE_DEBUGGING"]);
+            assert_eq!(client.is_tracer, true);
+            assert_eq!(client.is_agent, false);
+            assert_eq!(client.id, "foo");
+
+            let state = client.state.as_ref().unwrap();
+            assert_eq!(state.error, "test");
+            assert_eq!(state.has_error, true);
+            assert!(state.config_states.is_empty());
+            assert!(state.backend_client_state.is_empty());
+
+            let cached = &req.cached_target_files[0];
+            assert_eq!(cached.path, PATH_FIRST.to_string());
+            assert_eq!(cached.length, 2);
+            assert_eq!(cached.hashes.len(), 1);
+        }
+
+        server.files.lock().unwrap().insert(PATH_FIRST.clone(), (vec![DUMMY_TARGET.clone()], 2, "v2".to_string()));
+        server.files.lock().unwrap().insert(PATH_SECOND.clone(), (vec![DUMMY_TARGET.clone()], 1, "X".to_string()));
+
+        {
+            let fetched = fetcher.fetch_once(DUMMY_RUNTIME_ID, DUMMY_TARGET.clone(), "foo", None, &mut opaque_state).await.unwrap().unwrap();
+            assert_eq!(fetched.len(), 2);
+            assert_eq!(storage.files.lock().unwrap().len(), 2);
+
+            let (first, second) = if fetched[0].data.lock().unwrap().version == 2 { (0, 1) } else { (1, 0) };
+
+            assert!(Arc::ptr_eq(&fetched[first].data, storage.files.lock().unwrap().get(&PATH_FIRST).unwrap()));
+            assert_eq!(fetched[first].data.lock().unwrap().contents, "v2");
+            assert_eq!(fetched[first].data.lock().unwrap().version, 2);
+
+            assert!(Arc::ptr_eq(&fetched[second].data, storage.files.lock().unwrap().get(&PATH_SECOND).unwrap()));
+            assert_eq!(fetched[second].data.lock().unwrap().contents, "X");
+            assert_eq!(fetched[second].data.lock().unwrap().version, 1);
+        }
+
+        {
+            let fetched = fetcher.fetch_once(DUMMY_RUNTIME_ID, DUMMY_TARGET.clone(), "foo", None, &mut opaque_state).await.unwrap();
+            assert!(fetched.is_none()); // no change
+        }
+
+        server.files.lock().unwrap().remove(&PATH_FIRST);
+
+        {
+            let fetched = fetcher.fetch_once(DUMMY_RUNTIME_ID, DUMMY_TARGET.clone(), "foo", None, &mut opaque_state).await.unwrap().unwrap();
+            assert_eq!(fetched.len(), 1);
+            assert_eq!(storage.files.lock().unwrap().len(), 1);
+        }
     }
 }

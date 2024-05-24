@@ -44,6 +44,7 @@ rmp-serde = "1.1.1"
 base64 = "0.21.0"
 spawn_worker = { path = "../spawn_worker" }
 zwohash = "0.1.2"
+sha2 = "0.10"
 sys-info = { version = "0.9.0" }
 tokio = { version = "1.35.1", features = ["fs", "sync", "io-util", "signal", "rt-multi-thread"] }
 tokio-util = { version = "0.7", features = ["codec"] }
@@ -94,5 +95,5 @@ microseh = "0.1.1"
 libc = { version = "0.2" }
 tempfile = { version = "3.3" }
 httpmock = "0.7.0"
+datadog-remote-config = { path = "../remote-config", features = ["test"] }
 datadog-trace-utils = { path = "../trace-utils", features = ["test-utils"] }
-

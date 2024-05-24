@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct File {
@@ -133,7 +133,7 @@ pub struct ClientGetConfigsRequest {
     #[prost(message, repeated, tag = "2")]
     pub cached_target_files: ::prost::alloc::vec::Vec<TargetFileMeta>,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClientGetConfigsResponse {

@@ -2,12 +2,14 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "test", derive(Serialize))]
 pub struct DynamicConfigTarget {
     pub service: String,
     pub env: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "test", derive(Serialize))]
 pub struct DynamicConfigFile {
     pub action: String,
     pub service_target: DynamicConfigTarget,
@@ -15,6 +17,7 @@ pub struct DynamicConfigFile {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "test", derive(Serialize))]
 struct TracingHeaderTag {
     header: String,
     tag_name: String,
@@ -28,12 +31,14 @@ pub enum TracingSamplingRuleProvenance {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "test", derive(Serialize))]
 pub struct TracingSamplingRuleTag {
     pub key: String,
     pub value_glob: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "test", derive(Serialize))]
 pub struct TracingSamplingRule {
     pub service: String,
     pub name: Option<String>,
@@ -45,6 +50,7 @@ pub struct TracingSamplingRule {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "test", derive(Default, Serialize))]
 pub struct DynamicConfig {
     tracing_header_tags: Option<Vec<TracingHeaderTag>>,
     tracing_sample_rate: Option<f64>,
@@ -86,4 +92,23 @@ pub enum Configs {
     TracingTags(Vec<String>), // "key:val" format
     TracingEnabled(bool),
     TracingSamplingRules(Vec<TracingSamplingRule>),
+}
+
+#[cfg(feature = "test")]
+pub mod tests {
+    use super::*;
+
+    pub fn dummy_dynamic_config(enabled: bool) -> DynamicConfigFile {
+        DynamicConfigFile {
+            action: "".to_string(),
+            service_target : DynamicConfigTarget {
+                service: "".to_string(),
+                env: "".to_string(),
+            },
+            lib_config: DynamicConfig {
+                tracing_enabled: Some(enabled),
+                ..DynamicConfig::default()
+            },
+        }
+    }
 }
