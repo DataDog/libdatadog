@@ -544,16 +544,16 @@ impl Profile {
 #[cfg(test)]
 mod api_tests {
     use super::*;
+    use bolero::TypeGenerator;
+    use itertools::Itertools;
 
     /// Fuzzes adding a bunch of samples to the profile.
-    /// TODO: many of the samples will be of the wrong length, and will give a boring error right 
-    /// away.  Improve the generator to test the case where samples are the right length to get 
+    /// TODO: many of the samples will be of the wrong length, and will give a boring error right
+    /// away.  Improve the generator to test the case where samples are the right length to get
     /// more coverage faster
     /// TODO: Test the expected result of adding the samples
     #[test]
     fn fuzz() {
-        use bolero::TypeGenerator;
-
         bolero::check!()
             .with_generator((
                 Vec::<owned_types::ValueType>::gen(),
@@ -565,15 +565,85 @@ mod api_tests {
                 for (timestamp, sample) in samples {
                     let r = profile.add_sample(sample.into(), timestamp.clone());
                     if val.len() == sample.values.len() && sample.is_well_formed() {
-                        r.unwrap();
+                        assert!(r.is_ok());
                     } else {
-                        r.unwrap_err();
+                        assert!(r.is_err());
                     }
                 }
                 // TODO, set actual values here
                 // TODO, evaluate the result
                 profile.serialize_into_compressed_pprof(None, None).unwrap();
             })
+    }
+
+    #[test]
+    fn fuzz_with_fixed_sample_length() {
+        let sample_length_gen = 1..=64usize;
+
+        bolero::check!()
+            .with_generator((sample_length_gen, i64::gen(), u64::gen()))
+            .and_then(|(sample_len, start_time_ns, duration_ns)| {
+                let sample_types = Vec::<owned_types::ValueType>::gen().with().len(sample_len);
+
+                let timestamps = Option::<Timestamp>::gen();
+                let locations = Vec::<owned_types::Location>::gen();
+                let values = Vec::<i64>::gen().with().len(sample_len);
+                let labels = Vec::<owned_types::Label>::gen();
+
+                let samples = Vec::<(
+                    Option<Timestamp>,
+                    Vec<owned_types::Location>,
+                    Vec<i64>,
+                    Vec<owned_types::Label>,
+                )>::gen()
+                .with()
+                .values((timestamps, locations, values, labels));
+                (sample_types, samples, start_time_ns, duration_ns)
+            })
+            .for_each(|(sample_types, samples, start_time_ns, duration_ns)| {
+                let start_time =
+                    SystemTime::from(chrono::DateTime::from_timestamp_nanos(*start_time_ns));
+                let duration = Duration::from_nanos(*duration_ns);
+                let end_time = start_time + duration;
+                let sample_types: Vec<_> = sample_types.iter().map(api::ValueType::from).collect();
+                let mut profile = Profile::new(start_time, &sample_types, None);
+                let mut num_timestamped = 0;
+
+                for (timestamp, locations, values, labels) in samples {
+                    // Deduplicate labels using their key, as expected by validate_sample_labels
+                    let deduped_labels: Vec<owned_types::Label> = labels
+                        .clone()
+                        .into_iter()
+                        .unique_by(|l| l.key.clone())
+                        .collect();
+
+                    let sample = owned_types::Sample {
+                        locations: locations.clone(),
+                        values: values.clone(),
+                        labels: deduped_labels,
+                    };
+                    let r = profile.add_sample((&sample).into(), timestamp.clone());
+                    if r.is_err() {
+                        panic!("Failed to add sample: {:?}", r);
+                    }
+                    assert!(r.is_ok());
+                    if timestamp.is_some() {
+                        num_timestamped += 1;
+                    }
+                }
+                assert_eq!(
+                    profile.only_for_testing_num_timestamped_samples(),
+                    num_timestamped
+                );
+
+                let encoded = profile
+                    .serialize_into_compressed_pprof(Some(end_time), Some(duration))
+                    .unwrap();
+                let serialized_profile =
+                    pprof::deserialize_compressed_pprof(&encoded.buffer).unwrap();
+
+                assert_eq!(sample_types.len(), serialized_profile.sample_types.len());
+            });
     }
 
     #[test]
