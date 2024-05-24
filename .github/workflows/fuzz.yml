@@ -20,12 +20,20 @@ jobs:
         tool: cargo-bolero
     - run: |
         set -e
-        (cd alloc && cargo bolero test chain::tests::fuzz -T 1min)
-        (cd alloc && cargo bolero test linear::tests::fuzz -T 1min)
-        (cd alloc && cargo bolero test virtual_alloc::tests::fuzz -T 1min)
-        (cd profiling && cargo bolero test collections::string_table::tests::fuzz_arena_allocator -T 1min)
-        (cd profiling && cargo bolero test collections::string_table::tests::fuzz_string_table -T 1min)
-        (cd profiling && cargo bolero test internal::observation::trimmed_observation::tests::fuzz_trimmed_observation -T 1min)
-        (cd profiling && cargo bolero test internal::observation::trimmed_observation::tests::fuzz_mutations -T 1min)
-        (cd profiling && cargo bolero test internal::observation::observations::tests::fuzz_with_same_obs_len -T 1min)
-        (cd profiling && cargo bolero test internal::observation::observations::tests::fuzz_with_random_obs_len -T 1min)
+        DIRS="alloc profiling"
+        for dir in $DIRS;
+        do
+          # cargo bolero list outputs {"package":"package-name","test":"test-name"}
+          pushd $dir
+          cargo bolero list | \
+          # And the following command will parse package-name's and test-name's one in each line
+          grep -oP '"(package|test)"\s*:\s*"\K[^"]+' | \
+          # awk will stitch package and test names back separated by a tab
+          awk 'NR%2{printf "%s\t", $0; next}1' | \
+          while read -r package test;
+          do
+            echo "****** Starting bolero test for $package $test ******" 1>&2
+            cargo bolero test -T 1min --package $package $test
+          done
+          popd
+        done
