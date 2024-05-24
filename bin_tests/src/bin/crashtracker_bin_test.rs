@@ -27,25 +27,32 @@ mod unix {
 
     pub fn main() -> anyhow::Result<()> {
         let mut args = env::args().skip(1);
-        let output_filename = args.next().context("Unexpected number of arguments")?;
+        let output_url = args.next().context("Unexpected number of arguments")?;
         let receiver_binary = args.next().context("Unexpected number of arguments")?;
         let stderr_filename = args.next().context("Unexpected number of arguments")?;
         let stdout_filename = args.next().context("Unexpected number of arguments")?;
         let timeout = Duration::from_secs(30);
+
+        let endpoint = if output_url.is_empty() {
+            None
+        } else {
+            Some(ddcommon::Endpoint {
+                url: ddcommon::parse_uri(&output_url)?,
+                api_key: None,
+            })
+        };
+
         crashtracker::init(
             CrashtrackerConfiguration {
                 additional_files: vec![],
                 create_alt_stack: true,
-                endpoint: Some(ddcommon::Endpoint {
-                    url: ddcommon::parse_uri(&format!("file://{}", output_filename))?,
-                    api_key: None,
-                }),
                 resolve_frames: crashtracker::StacktraceCollection::WithoutSymbols,
+                endpoint,
                 timeout,
             },
             Some(CrashtrackerReceiverConfig::new(
                 vec![],
-                vec![],
+                env::vars().collect(),
                 receiver_binary,
                 Some(stderr_filename),
                 Some(stdout_filename),
