@@ -243,13 +243,11 @@ impl Profile {
         //
         // In this case, we use `sample_types` during upscaling of `samples`,
         // so we must serialize `Sample` before `SampleType`.
-        for sample_type in self
-            .sample_types
-            .context("sample_types can't be None")?
-            .iter()
-        {
-            let item: pprof::ValueType = sample_type.into();
-            encoder.encode(ProfileSampleTypesEntry::from(item))?;
+        if let Some(sample_types) = self.sample_types {
+            for sample_type in sample_types.iter() {
+                let item: pprof::ValueType = sample_type.into();
+                encoder.encode(ProfileSampleTypesEntry::from(item))?;
+            }
         }
 
         for item in into_pprof_iter(self.mappings) {
