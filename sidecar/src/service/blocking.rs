@@ -335,16 +335,15 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
 }
 
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use crate::service::blocking::SidecarTransport;
     use datadog_ipc::platform::Channel;
     use std::net::Shutdown;
-    #[cfg(unix)]
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::time::Duration;
 
     #[test]
-    #[cfg(unix)]
     #[cfg_attr(miri, ignore)]
     fn test_reconnect() {
         let bind_addr = "/tmp/test_reconnect.sock";
@@ -370,7 +369,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
     #[cfg_attr(miri, ignore)]
     fn test_set_timeout() {
         let bind_addr = "/tmp/test_set_timeout.sock";
