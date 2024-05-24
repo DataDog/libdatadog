@@ -31,7 +31,7 @@ pub struct Profile {
     mappings: FxIndexSet<Mapping>,
     observations: Observations,
     period: Option<(i64, ValueType)>,
-    sample_types: Option<Box<[ValueType]>>,
+    sample_types: Box<[ValueType]>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: StringTable,
@@ -76,9 +76,9 @@ impl Profile {
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
-            sample.values.len() == self.sample_types_len(),
+            sample.values.len() == self.sample_types.len(),
             "expected {} sample types, but sample had {} sample types",
-            self.sample_types_len(),
+            self.sample_types.len(),
             sample.values.len(),
         );
 
@@ -128,7 +128,7 @@ impl Profile {
             (label_name, label_name_id),
             (label_value, label_value_id),
             upscaling_info,
-            self.sample_types_len(),
+            self.sample_types.len(),
         )?;
 
         Ok(())
@@ -243,11 +243,9 @@ impl Profile {
         //
         // In this case, we use `sample_types` during upscaling of `samples`,
         // so we must serialize `Sample` before `SampleType`.
-        if let Some(sample_types) = self.sample_types {
-            for sample_type in sample_types.iter() {
-                let item: pprof::ValueType = sample_type.into();
-                encoder.encode(ProfileSampleTypesEntry::from(item))?;
-            }
+        for sample_type in self.sample_types.iter() {
+            let item: pprof::ValueType = sample_type.into();
+            encoder.encode(ProfileSampleTypesEntry::from(item))?;
         }
 
         for item in into_pprof_iter(self.mappings) {
@@ -436,7 +434,7 @@ impl Profile {
             mappings: Default::default(),
             observations: Default::default(),
             period: None,
-            sample_types: None,
+            sample_types: Box::new([]),
             stack_traces: Default::default(),
             start_time,
             strings: Default::default(),
@@ -455,16 +453,14 @@ impl Profile {
         // as immutable" by moving it out, borrowing it, and putting it back.
         let owned_sample_types = profile.owned_sample_types.take();
         profile.sample_types = match &owned_sample_types {
-            None => None,
-            Some(sample_types) => Some(
-                sample_types
-                    .iter()
-                    .map(|sample_type| ValueType {
-                        r#type: profile.intern(&sample_type.typ),
-                        unit: profile.intern(&sample_type.unit),
-                    })
-                    .collect(),
-            ),
+            None => Box::new([]),
+            Some(sample_types) => sample_types
+                .iter()
+                .map(|sample_type| ValueType {
+                    r#type: profile.intern(&sample_type.typ),
+                    unit: profile.intern(&sample_type.unit),
+                })
+                .collect(),
         };
         profile.owned_sample_types = owned_sample_types;
 
@@ -482,7 +478,7 @@ impl Profile {
         };
         profile.owned_period = owned_period;
 
-        profile.observations = Observations::new(profile.sample_types_len());
+        profile.observations = Observations::new(profile.sample_types.len());
         profile
     }
 
@@ -523,12 +519,6 @@ impl Profile {
             );
         }
         Ok(())
-    }
-
-    fn sample_types_len(&self) -> usize {
-        self.sample_types
-            .as_ref()
-            .map_or(0, |sample_types| sample_types.len())
     }
 }
 
@@ -821,7 +811,7 @@ mod api_tests {
         assert!(!profile.locations.is_empty());
         assert!(!profile.mappings.is_empty());
         assert!(!profile.observations.is_empty());
-        assert!(!profile.sample_types.as_ref().unwrap().is_empty());
+        assert!(!profile.sample_types.as_ref().is_empty());
         assert!(profile.period.is_none());
         assert!(profile.endpoints.mappings.is_empty());
         assert!(profile.endpoints.stats.is_empty());
@@ -842,7 +832,7 @@ mod api_tests {
         assert!(profile.upscaling_rules.is_empty());
 
         assert_eq!(profile.period, prev.period);
-        assert_eq!(profile.sample_types.unwrap(), prev.sample_types.unwrap());
+        assert_eq!(profile.sample_types, prev.sample_types);
 
         // The string table should have at least the empty string.
         assert!(profile.strings.len() > 0);
