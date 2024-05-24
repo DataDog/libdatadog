@@ -332,6 +332,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_agent_host_detection_socket_found() {
         let settings = Settings {
             trace_agent_url: None,
