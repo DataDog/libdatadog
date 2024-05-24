@@ -179,15 +179,15 @@ mod unix {
 
         for (index, line) in reader.lines().enumerate() {
             let line_content = &line.map_err(|_| CgroupFileParsingError::InvalidFormat)?;
-            let cgroup_entry: Vec<&str> = line_content.split(":").collect();
+            let cgroup_entry: Vec<&str> = line_content.split(':').collect();
             if cgroup_entry.len() != 3 {
                 return Err(CgroupFileParsingError::InvalidFormat);
             }
-            let controllers: Vec<&str> = cgroup_entry[1].split(",").collect();
+            let controllers: Vec<&str> = cgroup_entry[1].split(',').collect();
             // Only keep empty controller if it is the first line as cgroupV2 uses only one line
             if controllers.contains(&base_controller) || (controllers.contains(&"") && index == 0) {
                 let mut path = Path::new(DEFAULT_CGROUP_MOUNT_PATH).join(cgroup_entry[1]);
-                path.push(cgroup_entry[2].strip_prefix("/").unwrap_or(cgroup_entry[2])); // Remove first / as the path is relative
+                path.push(cgroup_entry[2].strip_prefix('/').unwrap_or(cgroup_entry[2])); // Remove first / as the path is relative
                 node_path = Some(path);
 
                 // if we are using cgroupV1 we can stop looking for the controller
@@ -255,13 +255,9 @@ mod unix {
     /// Returns the `entity id` either `cid-<container_id>` if available or `in-<cgroup_inode>`
     pub fn get_entity_id() -> Option<&'static str> {
         lazy_static! {
-            static ref ENTITY_ID: Option<String> = if let Some(container_id) = get_container_id() {
-                Some(format!("cid-{container_id}"))
-            } else if let Some(inode) = get_cgroup_inode() {
-                Some(format!("in-{inode}"))
-            } else {
-                None
-            };
+            static ref ENTITY_ID: Option<String> = get_container_id()
+                .map(|container_id| format!("cid-{container_id}"))
+                .or(get_cgroup_inode().map(|inode| format!("in-{inode}")));
         }
         ENTITY_ID.as_deref()
     }
