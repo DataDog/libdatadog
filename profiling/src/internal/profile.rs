@@ -657,6 +657,23 @@ mod api_tests {
     }
 
     #[test]
+    fn fuzz_add_endpoint() {
+        bolero::check!()
+            .with_type::<Vec<(u64, String)>>()
+            .for_each(|endpoints| {
+                let mut profile = Profile::new(SystemTime::now(), &[], None);
+
+                for (local_root_span_id, endpoint) in endpoints {
+                    let r = profile.add_endpoint(*local_root_span_id, endpoint.into());
+                    assert!(r.is_ok());
+                }
+
+                let encoded = profile.serialize_into_compressed_pprof(None, None).unwrap();
+                pprof::deserialize_compressed_pprof(&encoded.buffer).unwrap();
+            });
+    }
+
+    #[test]
     fn interning() {
         let sample_types = [api::ValueType::new("samples", "count")];
         let mut profiles = Profile::new(SystemTime::now(), &sample_types, None);
