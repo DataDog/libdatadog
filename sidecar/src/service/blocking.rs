@@ -66,7 +66,9 @@ impl SidecarTransport {
     pub fn is_closed(&self) -> bool {
         match self.inner.lock() {
             Ok(t) => t.is_closed(),
-            Err(_) => true, // Well... what can we do?
+            // Should happen only during the "reconnection" phase. During this phase the transport
+            // is always closed.
+            Err(_) => true,
         }
     }
 

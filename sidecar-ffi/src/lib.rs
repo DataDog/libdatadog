@@ -258,6 +258,7 @@ pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_drop(meta: Box<RuntimeMetadata
     drop(meta)
 }
 
+/// Reports the runtime configuration to the telemetry.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
@@ -282,6 +283,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     MaybeError::None
 }
 
+/// Reports a dependency to the telemetry.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
@@ -309,6 +311,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
     MaybeError::None
 }
 
+/// Reports an integration to the telemetry.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
@@ -340,6 +343,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
     MaybeError::None
 }
 
+/// Registers a service and flushes any queued actions.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
@@ -362,6 +366,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
     MaybeError::None
 }
 
+/// Enqueues a list of actions to be performed.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_end(
@@ -381,11 +386,13 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_end(
     MaybeError::None
 }
 
+// Returns whether the sidecar transport is closed or not.
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_is_closed(transport: &mut Box<SidecarTransport>) -> bool {
     transport.is_closed()
 }
 
+/// Sets the configuration for a session.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_session_set_config(
@@ -456,6 +463,7 @@ impl<'a> TryInto<SerializedTracerHeaderTags> for &'a TracerHeaderTags<'a> {
     }
 }
 
+/// Sends a trace to the sidecar via shared memory.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_shm(
@@ -476,6 +484,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_shm(
     MaybeError::None
 }
 
+/// Sends a trace as bytes to the sidecar.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
@@ -496,6 +505,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
     MaybeError::None
 }
 
+/// Dumps the current state of the sidecar.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dump(
@@ -512,6 +522,7 @@ pub unsafe extern "C" fn ddog_sidecar_dump(
     ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
 }
 
+/// Retrieves the current statistics of the sidecar.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_stats(
@@ -528,6 +539,7 @@ pub unsafe extern "C" fn ddog_sidecar_stats(
     ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
 }
 
+/// Send a DogStatsD "count" metric.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dogstatsd_count(
@@ -551,6 +563,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_count(
     MaybeError::None
 }
 
+/// Send a DogStatsD "distribution" metric.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dogstatsd_distribution(
@@ -574,6 +587,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_distribution(
     MaybeError::None
 }
 
+/// Send a DogStatsD "gauge" metric.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dogstatsd_gauge(
@@ -597,6 +611,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_gauge(
     MaybeError::None
 }
 
+/// Send a DogStatsD "histogram" metric.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dogstatsd_histogram(
@@ -620,6 +635,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_histogram(
     MaybeError::None
 }
 
+/// Send a DogStatsD "set" metric.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
@@ -643,6 +659,13 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
     MaybeError::None
 }
 
+/// This function creates a new transport using the provided callback function when the current
+/// transport is closed.
+///
+/// # Arguments
+///
+/// * `transport` - The transport used for communication.
+/// * `factory` - A C function that must return a pointer to "ddog_SidecarTransport"
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub extern "C" fn ddog_sidecar_reconnect(
