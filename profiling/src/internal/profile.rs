@@ -637,6 +637,22 @@ mod api_tests {
                     pprof::deserialize_compressed_pprof(&encoded.buffer).unwrap();
 
                 assert_eq!(sample_types.len(), serialized_profile.sample_types.len());
+                // The next line passes but I thought that aggregated samples would
+                // decrease the samples count and thus the next line would fail.
+                assert_eq!(samples.len(), serialized_profile.samples.len());
+
+                // TODO: test data in serialized_profile?
+                // for (sample, serialized_sample) in samples.iter().zip(serialized_profile.samples.iter()) {
+                //     // assert_eq!(sample.1, serialized_sample.location_ids);
+                //     // assert_eq!(sample.2, serialized_sample.values);
+                //     // assert_eq!(sample.3.len(), serialized_sample.labels.len());
+                //     // for (label, serialized_label) in sample.3.iter().zip(serialized_sample.labels.iter()) {
+                //     //     assert_eq!(label.key, serialized_label.key);
+                //     //     assert_eq!(label.num, serialized_label.num);
+                //     //     assert_eq!(label.str, serialized_label.str);
+                //     //     assert_eq!(label.num_unit, serialized_label.num_unit);
+                //     // }
+                // }
             });
     }
 
