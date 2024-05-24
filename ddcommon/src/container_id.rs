@@ -43,9 +43,15 @@ Following environments are supported:
 
 const DEFAULT_CGROUP_PATH: &str = "/proc/self/cgroup";
 const DEFAULT_CGROUP_MOUNT_PATH: &str = "/sys/fs/cgroup";
+const DEFAULT_CGROUP_NS_PATH: &str = "/proc/self/ns/cgroup";
 
 /// the base controller used to identify the cgroup v1 mount point in the cgroupMounts map.
 const CGROUP_V1_BASE_CONTROLLER: &str = "memory";
+
+// From https://github.com/torvalds/linux/blob/5859a2b1991101d6b978f3feb5325dad39421f29/include/linux/proc_ns.h#L41-L49
+// Currently, host namespace inode number are hardcoded, which can be used to detect
+// if we're running in host namespace or not (does not work when running in DinD)
+const HOST_CGROUP_NAMESPACE_INODE: u64 = 0xEFFFFFFB;
 
 /// stores overridable cgroup path - used in end-to-end testing to "stub" cgroup values
 static mut TESTING_CGROUP_PATH: Option<String> = None;
@@ -145,10 +151,23 @@ fn get_cgroup_node_path(
     node_path.ok_or(CgroupFileParsingError::CgroupNotFound)
 }
 
+/// Checks if the agent is running in the host cgroup namespace.
+fn is_host_cgroup_namespace() -> Result<(), ()> {
+    let cgroup_namespace_inode = get_inode(Path::new(DEFAULT_CGROUP_NS_PATH)).map_err(|_| ())?;
+    if cgroup_namespace_inode == HOST_CGROUP_NAMESPACE_INODE {
+        return Err(());
+    }
+    Ok(())
+}
+
 /// Returns the `cgroup_inode` if available, otherwise `None`
 fn get_cgroup_inode() -> Option<&'static str> {
     lazy_static! {
         static ref CGROUP_INODE: Option<String> = {
+            // If we're running in the host cgroup namespace, do not get the inode.
+            // This would indicate that we're not in a container and the inode we'd
+            // return is not related to a container.
+            is_host_cgroup_namespace().ok()?;
             let cgroup_mount_path =
                 get_cgroup_node_path(CGROUP_V1_BASE_CONTROLLER, get_cgroup_path().as_path())
                     .ok()?;
