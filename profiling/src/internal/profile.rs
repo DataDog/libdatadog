@@ -76,9 +76,9 @@ impl Profile {
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
-            sample.values.len() == self.get_sample_types_len()?,
+            sample.values.len() == self.sample_types_len(),
             "expected {} sample types, but sample had {} sample types",
-            self.get_sample_types_len()?,
+            self.sample_types_len(),
             sample.values.len(),
         );
 
@@ -128,7 +128,7 @@ impl Profile {
             (label_name, label_name_id),
             (label_value, label_value_id),
             upscaling_info,
-            self.get_sample_types_len()?,
+            self.sample_types_len(),
         )?;
 
         Ok(())
@@ -438,7 +438,7 @@ impl Profile {
             mappings: Default::default(),
             observations: Default::default(),
             period: None,
-            sample_types: Some(Box::new([])),
+            sample_types: None,
             stack_traces: Default::default(),
             start_time,
             strings: Default::default(),
@@ -456,16 +456,18 @@ impl Profile {
         // Break "cannot borrow `*self` as mutable because it is also borrowed
         // as immutable" by moving it out, borrowing it, and putting it back.
         let owned_sample_types = profile.owned_sample_types.take();
-        profile.sample_types = Some(match &owned_sample_types {
-            None => Box::new([]),
-            Some(sample_types) => sample_types
-                .iter()
-                .map(|sample_type| ValueType {
-                    r#type: profile.intern(&sample_type.typ),
-                    unit: profile.intern(&sample_type.unit),
-                })
-                .collect(),
-        });
+        profile.sample_types = match &owned_sample_types {
+            None => None,
+            Some(sample_types) => Some(
+                sample_types
+                    .iter()
+                    .map(|sample_type| ValueType {
+                        r#type: profile.intern(&sample_type.typ),
+                        unit: profile.intern(&sample_type.unit),
+                    })
+                    .collect(),
+            ),
+        };
         profile.owned_sample_types = owned_sample_types;
 
         // Break "cannot borrow `*self` as mutable because it is also borrowed
@@ -482,11 +484,7 @@ impl Profile {
         };
         profile.owned_period = owned_period;
 
-        profile.observations = Observations::new(
-            profile
-                .get_sample_types_len()
-                .expect("sample_types can't be None"),
-        );
+        profile.observations = Observations::new(profile.sample_types_len());
         profile
     }
 
@@ -529,12 +527,10 @@ impl Profile {
         Ok(())
     }
 
-    fn get_sample_types_len(&self) -> anyhow::Result<usize> {
-        Ok(self
-            .sample_types
+    fn sample_types_len(&self) -> usize {
+        self.sample_types
             .as_ref()
-            .context("sample_types can't be None")?
-            .len())
+            .map_or(0, |sample_types| sample_types.len())
     }
 }
 
