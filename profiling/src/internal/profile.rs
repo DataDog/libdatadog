@@ -662,12 +662,25 @@ mod api_tests {
             .with_type::<Vec<(u64, String)>>()
             .for_each(|endpoints| {
                 let mut profile = Profile::new(SystemTime::now(), &[], None);
-
                 for (local_root_span_id, endpoint) in endpoints {
                     let r = profile.add_endpoint(*local_root_span_id, endpoint.into());
                     assert!(r.is_ok());
                 }
+                let encoded = profile.serialize_into_compressed_pprof(None, None).unwrap();
+                pprof::deserialize_compressed_pprof(&encoded.buffer).unwrap();
+            });
+    }
 
+    #[test]
+    fn fuzz_add_endpoint_count() {
+        bolero::check!()
+            .with_type::<Vec<(String, i64)>>()
+            .for_each(|endpoint_counts| {
+                let mut profile = Profile::new(SystemTime::now(), &[], None);
+                for (endpoint, count) in endpoint_counts {
+                    let r = profile.add_endpoint_count(endpoint.into(), *count);
+                    assert!(r.is_ok());
+                }
                 let encoded = profile.serialize_into_compressed_pprof(None, None).unwrap();
                 pprof::deserialize_compressed_pprof(&encoded.buffer).unwrap();
             });
