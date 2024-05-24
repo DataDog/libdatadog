@@ -17,6 +17,8 @@ const TOP_LEVEL_KEY: &str = "_top_level";
 /// Span metric the tracer sets to denote a top level span
 const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 
+const MAX_PAYLOAD_SIZE: usize = 52428800;
+
 /// First value of returned tuple is the payload size
 pub async fn get_traces_from_request_body(
     body: Body,
@@ -82,9 +84,15 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
     data.sort_unstable_by(|a, b| a.target.url.to_string().cmp(&b.target.url.to_string()));
     data.dedup_by(|a, b| {
         if a.target.url == b.target.url {
-            a.tracer_payloads.append(&mut b.tracer_payloads);
-            a.size += b.size;
-            return true;
+            // Size is only an approximation. In practice it won't vary much, but be safe here.
+            // We also don't care about the exact maximum size, like two 25 MB or one 50 MB request
+            // has similar results. The primary goal here is avoiding many small requests.
+            // TODO: maybe make the MAX_PAYLOAD_SIZE configurable?
+            if a.size + b.size < MAX_PAYLOAD_SIZE / 2 {
+                b.tracer_payloads.append(&mut a.tracer_payloads);
+                b.size += a.size;
+                return true;
+            }
         }
         false
     });
@@ -312,8 +320,49 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{get_root_span_index, set_serverless_root_span_tags};
-    use crate::{trace_test_utils::create_test_span, trace_utils};
+    use crate::trace_utils::{TracerHeaderTags, MAX_PAYLOAD_SIZE};
+    use crate::{
+        trace_test_utils::create_test_span,
+        trace_utils::{self, SendData},
+    };
     use datadog_trace_protobuf::pb;
+    use ddcommon::Endpoint;
+
+    #[test]
+    fn test_coalescing_does_not_excced_max_size() {
+        let dummy = SendData::new(
+            MAX_PAYLOAD_SIZE / 5 + 1,
+            pb::TracerPayload {
+                container_id: "".to_string(),
+                language_name: "".to_string(),
+                language_version: "".to_string(),
+                tracer_version: "".to_string(),
+                runtime_id: "".to_string(),
+                chunks: vec![],
+                tags: Default::default(),
+                env: "".to_string(),
+                hostname: "".to_string(),
+                app_version: "".to_string(),
+            },
+            TracerHeaderTags::default(),
+            &Endpoint::default(),
+        );
+        let coalesced = trace_utils::coalesce_send_data(vec![
+            dummy.clone(),
+            dummy.clone(),
+            dummy.clone(),
+            dummy.clone(),
+            dummy.clone(),
+        ]);
+        assert_eq!(
+            5,
+            coalesced
+                .iter()
+                .map(|s| s.tracer_payloads.len())
+                .sum::<usize>()
+        );
+        assert!(coalesced.len() > 1 && coalesced.len() < 5);
+    }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
