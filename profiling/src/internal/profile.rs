@@ -489,12 +489,8 @@ impl Profile {
     ) -> anyhow::Result<Vec<Label>> {
         self.get_label_set(sample.labels)?
             .iter()
-            .map(|l| self.get_label(*l).map(|l| l.clone()))
-            .chain(
-                self.get_endpoint_for_labels(sample.labels)
-                    .transpose()
-                    .map(|res| res.map(|l| l.clone())),
-            )
+            .map(|l| self.get_label(*l).copied())
+            .chain(self.get_endpoint_for_labels(sample.labels).transpose())
             .chain(timestamp.map(|ts| Ok(Label::num(self.timestamp_key, ts.get(), None))))
             .collect()
     }
