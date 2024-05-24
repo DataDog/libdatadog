@@ -553,7 +553,7 @@ mod api_tests {
     /// more coverage faster
     /// TODO: Test the expected result of adding the samples
     #[test]
-    fn fuzz() {
+    fn fuzz_add_sample() {
         bolero::check!()
             .with_generator((
                 Vec::<owned_types::ValueType>::gen(),
@@ -577,7 +577,7 @@ mod api_tests {
     }
 
     #[test]
-    fn fuzz_with_fixed_sample_length() {
+    fn fuzz_add_sample_with_fixed_sample_length() {
         let sample_length_gen = 1..=64usize;
 
         bolero::check!()
