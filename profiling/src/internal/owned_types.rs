@@ -31,7 +31,7 @@ impl<'a> From<&'a Function> for api::Function<'a> {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default)]
 #[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
 pub struct Label {
     pub key: Box<str>,
@@ -48,6 +48,20 @@ pub struct Label {
     /// units and units like "seconds" and "nanoseconds" as time units,
     /// and apply appropriate unit conversions to these.
     pub num_unit: Option<Box<str>>,
+}
+
+impl PartialEq for Label {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
+}
+
+impl Eq for Label {}
+
+impl std::hash::Hash for Label {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.key.hash(state)
+    }
 }
 
 impl<'a> From<&'a Label> for api::Label<'a> {

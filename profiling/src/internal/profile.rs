@@ -545,7 +545,7 @@ impl Profile {
 mod api_tests {
     use super::*;
     use bolero::TypeGenerator;
-    use itertools::Itertools;
+    use std::collections::HashSet;
 
     /// Fuzzes adding a bunch of samples to the profile.
     /// TODO: many of the samples will be of the wrong length, and will give a boring error right
@@ -588,13 +588,14 @@ mod api_tests {
                 let timestamps = Option::<Timestamp>::gen();
                 let locations = Vec::<owned_types::Location>::gen();
                 let values = Vec::<i64>::gen().with().len(sample_len);
-                let labels = Vec::<owned_types::Label>::gen();
+                // Generate labels with unique keys
+                let labels = HashSet::<owned_types::Label>::gen();
 
                 let samples = Vec::<(
                     Option<Timestamp>,
                     Vec<owned_types::Location>,
                     Vec<i64>,
-                    Vec<owned_types::Label>,
+                    HashSet<owned_types::Label>,
                 )>::gen()
                 .with()
                 .values((timestamps, locations, values, labels));
@@ -610,17 +611,10 @@ mod api_tests {
                 let mut num_timestamped = 0;
 
                 for (timestamp, locations, values, labels) in samples {
-                    // Deduplicate labels using their key, as expected by validate_sample_labels
-                    let deduped_labels: Vec<owned_types::Label> = labels
-                        .clone()
-                        .into_iter()
-                        .unique_by(|l| l.key.clone())
-                        .collect();
-
                     let sample = owned_types::Sample {
                         locations: locations.clone(),
                         values: values.clone(),
-                        labels: deduped_labels,
+                        labels: labels.clone().into_iter().collect(),
                     };
                     let r = profile.add_sample((&sample).into(), timestamp.clone());
                     if r.is_err() {
