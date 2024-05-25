@@ -10,6 +10,14 @@ use anyhow::Result;
 use datadog_ipc::platform::ShmHandle;
 use datadog_ipc::tarpc;
 
+// This is a bit weird, but depending on the OS we're interested in different things...
+// and the macro expansion is not going to be happy with #[cfg()] instructions inside them.
+// So we'll just define a type, a pid on unix, a function pointer on windows.
+#[cfg(unix)]
+type RemoteConfigNotifyTarget = libc::pid_t;
+#[cfg(windows)]
+type RemoteConfigNotifyTarget = crate::service::remote_configs::RemoteConfigNotifyFunction;
+
 /// The `SidecarInterface` trait defines the necessary methods for the sidecar service.
 ///
 /// These methods include operations such as enqueueing actions, registering services, setting
@@ -57,7 +65,7 @@ pub trait SidecarInterface {
     /// * `config` - The configuration to be set.
     async fn set_session_config(
         session_id: String,
-        pid: libc::pid_t,
+        remote_config_notify_target: RemoteConfigNotifyTarget,
         config: SessionConfig
     );
 

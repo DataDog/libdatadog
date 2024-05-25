@@ -14,6 +14,7 @@ use std::default::Default;
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::io;
+use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use priority_queue::PriorityQueue;
@@ -117,11 +118,15 @@ fn store_shm(version: u64, path: &RemoteConfigPath, file: Vec<u8>) -> anyhow::Re
     #[cfg(not(target_os = "macos"))]
     let sliced_path = &hashed_path;
     let name = format!("/{}-{}", name, sliced_path);
-    let mut handle =
-        NamedShmHandle::create(CString::new(name)?, file.len())?
-            .map()?;
+    let len = file.len();
+    #[cfg(windows)]
+    let len = len + 4;
+    let mut handle = NamedShmHandle::create(CString::new(name)?, len)?.map()?;
 
-    handle.as_slice_mut().copy_from_slice(file.as_slice());
+    let mut target_slice = handle.as_slice_mut();
+    #[cfg(windows)]
+    { target_slice.write(&(file.len() as u32).to_ne_bytes())?; }
+    target_slice.copy_from_slice(file.as_slice());
 
     Ok(handle.into())
 }
@@ -235,11 +240,13 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
 }
 
 fn read_config(path: &str) -> anyhow::Result<RemoteConfigValue> {
-
     if let [shm_path, rc_path] = &path.split(':').collect::<Vec<_>>()[..] {
         let mapped = NamedShmHandle::open(&CString::new(*shm_path)?)?.map()?;
         let rc_path = String::from_utf8(BASE64_URL_SAFE_NO_PAD.decode(rc_path)?)?;
-        RemoteConfigValue::try_parse(&rc_path, mapped.as_slice())
+        let data = mapped.as_slice();
+        #[cfg(windows)]
+        let data = &data[4..(4 + u32::from_ne_bytes((&data[0..4]).try_into()?) as usize)];
+        RemoteConfigValue::try_parse(&rc_path, data)
     } else {
         anyhow::bail!("could not read config; {} does not have exactly one colon", path);
     }
