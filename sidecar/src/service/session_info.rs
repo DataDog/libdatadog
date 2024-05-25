@@ -28,6 +28,8 @@ pub(crate) struct SessionInfo {
     tracer_config: Arc<Mutex<tracer::Config>>,
     dogstatsd: Arc<Mutex<dogstatsd::Flusher>>,
     remote_config_invariants: Arc<Mutex<Option<ConfigInvariants>>>,
+    #[cfg(windows)]
+    pub(crate) remote_config_notify_function: Arc<Mutex<crate::service::remote_configs::RemoteConfigNotifyFunction>>,
     pub(crate) log_guard:
         Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
     #[cfg(feature = "tracing")]
@@ -44,6 +46,8 @@ impl Clone for SessionInfo {
             tracer_config: self.tracer_config.clone(),
             dogstatsd: self.dogstatsd.clone(),
             remote_config_invariants: self.remote_config_invariants.clone(),
+            #[cfg(windows)]
+            remote_config_notify_function: self.remote_config_notify_function.clone(),
             log_guard: self.log_guard.clone(),
             session_id: self.session_id.clone(),
             pid: self.pid.clone(),

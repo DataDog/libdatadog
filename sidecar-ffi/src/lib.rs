@@ -483,14 +483,20 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     force_drop_size: usize,
     log_level: ffi::CharSlice,
     log_path: ffi::CharSlice,
+    #[allow(unused)] // On FFI layer we cannot conditionally compile, so we need the arg
+    remote_config_notify_function: *mut c_void,
     remote_config_products: *const RemoteConfigProduct,
     remote_config_products_count: usize,
     remote_config_capabilities: *const RemoteConfigCapabilities,
     remote_config_capabilities_count: usize,
 ) -> MaybeError {
+    #[cfg(unix)]
+    let remote_config_notify_target = libc::getpid();
+    #[cfg(windows)]
+    let remote_config_notify_target = remote_config_notify_function;
     try_c!(blocking::set_session_config(
         transport,
-        libc::getpid(),
+        remote_config_notify_target,
         session_id.to_utf8_lossy().into(),
         &SessionConfig {
             endpoint: agent_endpoint.clone(),
