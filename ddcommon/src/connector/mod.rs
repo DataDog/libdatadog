@@ -10,6 +10,7 @@ use rustls::ClientConfig;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use rustls::pki_types::CertificateDer;
 
 #[cfg(unix)]
 pub mod uds;
@@ -24,7 +25,7 @@ use conn_stream::{ConnStream, ConnStreamError};
 #[derive(Clone)]
 pub enum Connector {
     Http(hyper::client::HttpConnector),
-    Https(hyper_rustls::HttpsConnector<hyper::client::HttpConnector>),
+    Https(hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>),
 }
 
 lazy_static! {
@@ -69,10 +70,9 @@ impl Connector {
 }
 
 fn build_https_connector(
-) -> anyhow::Result<hyper_rustls::HttpsConnector<hyper::client::HttpConnector>> {
+) -> anyhow::Result<hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>> {
     let certs = load_root_certs()?;
     let client_config = ClientConfig::builder()
-        .with_safe_defaults()
         .with_root_certificates(certs)
         .with_no_client_auth();
     Ok(hyper_rustls::HttpsConnectorBuilder::new()
@@ -86,10 +86,10 @@ fn load_root_certs() -> anyhow::Result<rustls::RootCertStore> {
     let mut roots = rustls::RootCertStore::empty();
 
     for cert in rustls_native_certs::load_native_certs()? {
-        let cert = rustls::Certificate(cert.0);
+        let cert = CertificateDer::from(cert.0);
 
         //TODO: log when invalid cert is loaded
-        roots.add(&cert).ok();
+        roots.add(cert).ok();
     }
     if roots.is_empty() {
         return Err(errors::Error::NoValidCertifacteRootsFound.into());
