@@ -386,7 +386,30 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_end(
     MaybeError::None
 }
 
-// Returns whether the sidecar transport is closed or not.
+/// Flushes the telemetry data.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_telemetry_flush(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    queue_id: &QueueId,
+) -> MaybeError {
+    try_c!(blocking::enqueue_actions(
+        transport,
+        instance_id,
+        queue_id,
+        vec![
+            SidecarAction::Telemetry(TelemetryActions::Lifecycle(
+                LifecycleAction::FlushMetricAggr
+            )),
+            SidecarAction::Telemetry(TelemetryActions::Lifecycle(LifecycleAction::FlushData)),
+        ],
+    ));
+
+    MaybeError::None
+}
+
+/// Returns whether the sidecar transport is closed or not.
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_is_closed(transport: &mut Box<SidecarTransport>) -> bool {
     transport.is_closed()
