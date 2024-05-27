@@ -6,22 +6,94 @@ use super::{
     SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
 use crate::dogstatsd::DogStatsDAction;
-use datadog_ipc::platform::ShmHandle;
+use datadog_ipc::platform::{Channel, ShmHandle};
 use datadog_ipc::transport::blocking::BlockingTransport;
+use std::sync::Mutex;
 use std::{
     borrow::Cow,
     io,
     time::{Duration, Instant},
 };
+use tracing::info;
 
-/// `SidecarTransport` is a type alias for the `BlockingTransport` struct from the `datadog_ipc`
-/// crate. It is used for sending `SidecarInterfaceRequest` and receiving
-/// `SidecarInterfaceResponse`.
+/// `SidecarTransport` is a wrapper around a BlockingTransport struct from the `datadog_ipc` crate
+/// that handles transparent reconnection.
+/// It is used for sending `SidecarInterfaceRequest` and receiving `SidecarInterfaceResponse`.
 ///
 /// This transport is used for communication between different parts of the sidecar service.
 /// It is a blocking transport, meaning that it will block the current thread until the operation is
 /// complete.
-pub type SidecarTransport = BlockingTransport<SidecarInterfaceResponse, SidecarInterfaceRequest>;
+pub struct SidecarTransport {
+    pub inner: Mutex<BlockingTransport<SidecarInterfaceResponse, SidecarInterfaceRequest>>,
+}
+
+impl SidecarTransport {
+    pub fn reconnect<F>(&mut self, factory: F)
+    where
+        F: FnOnce() -> Option<Box<SidecarTransport>>,
+    {
+        let mut transport = match self.inner.lock() {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        if transport.is_closed() {
+            info!("The sidecar transport is closed. Reconnecting...");
+            let new = match factory() {
+                None => return,
+                Some(n) => n.inner.into_inner(),
+            };
+            if new.is_err() {
+                return;
+            }
+            *transport = new.unwrap();
+        }
+    }
+
+    pub fn set_read_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
+        match self.inner.lock() {
+            Ok(mut t) => t.set_read_timeout(timeout),
+            Err(e) => Err(io::Error::new(io::ErrorKind::Other, e.to_string())),
+        }
+    }
+
+    pub fn set_write_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
+        match self.inner.lock() {
+            Ok(mut t) => t.set_write_timeout(timeout),
+            Err(e) => Err(io::Error::new(io::ErrorKind::Other, e.to_string())),
+        }
+    }
+
+    pub fn is_closed(&self) -> bool {
+        match self.inner.lock() {
+            Ok(t) => t.is_closed(),
+            // Should happen only during the "reconnection" phase. During this phase the transport
+            // is always closed.
+            Err(_) => true,
+        }
+    }
+
+    pub fn send(&mut self, item: SidecarInterfaceRequest) -> io::Result<()> {
+        match self.inner.lock() {
+            Ok(mut t) => t.send(item),
+            Err(e) => Err(io::Error::new(io::ErrorKind::Other, e.to_string())),
+        }
+    }
+
+    pub fn call(&mut self, item: SidecarInterfaceRequest) -> io::Result<SidecarInterfaceResponse> {
+        match self.inner.lock() {
+            Ok(mut t) => t.call(item),
+            Err(e) => Err(io::Error::new(io::ErrorKind::Other, e.to_string())),
+        }
+    }
+}
+
+impl From<Channel> for SidecarTransport {
+    fn from(c: Channel) -> Self {
+        SidecarTransport {
+            inner: Mutex::new(c.into()),
+        }
+    }
+}
 
 /// Shuts down a runtime.
 ///
@@ -260,4 +332,77 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
     Ok(Instant::now()
         .checked_duration_since(start)
         .unwrap_or_default())
+}
+
+#[cfg(test)]
+#[cfg(unix)]
+mod tests {
+    use crate::service::blocking::SidecarTransport;
+    use datadog_ipc::platform::Channel;
+    use std::net::Shutdown;
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::time::Duration;
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_reconnect() {
+        let bind_addr = "/tmp/test_reconnect.sock";
+        let _ = std::fs::remove_file(bind_addr);
+
+        let listener = UnixListener::bind(bind_addr).expect("Cannot bind");
+        let sock = UnixStream::connect_addr(&listener.local_addr().unwrap()).unwrap();
+
+        let mut transport = SidecarTransport::from(Channel::from(sock.try_clone().unwrap()));
+        assert!(!transport.is_closed());
+
+        sock.shutdown(Shutdown::Both)
+            .expect("shutdown function failed");
+        assert!(transport.is_closed());
+
+        transport.reconnect(|| {
+            let new_sock = UnixStream::connect_addr(&listener.local_addr().unwrap()).unwrap();
+            Some(Box::new(SidecarTransport::from(Channel::from(new_sock))))
+        });
+        assert!(!transport.is_closed());
+
+        let _ = std::fs::remove_file(bind_addr);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_set_timeout() {
+        let bind_addr = "/tmp/test_set_timeout.sock";
+        let _ = std::fs::remove_file(bind_addr);
+
+        let listener = UnixListener::bind(bind_addr).expect("Cannot bind");
+        let sock = UnixStream::connect_addr(&listener.local_addr().unwrap()).unwrap();
+
+        let mut transport = SidecarTransport::from(Channel::from(sock.try_clone().unwrap()));
+        assert_eq!(
+            Duration::default(),
+            sock.read_timeout().unwrap().unwrap_or_default()
+        );
+        assert_eq!(
+            Duration::default(),
+            sock.write_timeout().unwrap().unwrap_or_default()
+        );
+
+        transport
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .expect("set_read_timeout function failed");
+        transport
+            .set_write_timeout(Some(Duration::from_millis(300)))
+            .expect("set_write_timeout function failed");
+
+        assert_eq!(
+            Duration::from_millis(200),
+            sock.read_timeout().unwrap().unwrap_or_default()
+        );
+        assert_eq!(
+            Duration::from_millis(300),
+            sock.write_timeout().unwrap().unwrap_or_default()
+        );
+
+        let _ = std::fs::remove_file(bind_addr);
+    }
 }
