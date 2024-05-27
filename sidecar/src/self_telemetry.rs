@@ -28,9 +28,10 @@ struct MetricData<'a> {
     trace_api_requests: ContextKey,
     trace_api_responses: ContextKey,
     trace_api_errors: ContextKey,
-    trace_api_bytes: ContextKey,
-    trace_chunk_sent: ContextKey,
-    trace_chunk_dropped: ContextKey,
+    // TODO: APMSP-1157 - Enable this metric when support is enabled.
+    // trace_api_bytes: ContextKey,
+    trace_chunks_sent: ContextKey,
+    trace_chunks_dropped: ContextKey,
 }
 impl<'a> MetricData<'a> {
     async fn send(&self, key: ContextKey, value: f64, tags: Vec<Tag>) {
@@ -112,23 +113,24 @@ impl<'a> MetricData<'a> {
                 ],
             ));
         }
-        if trace_metrics.bytes_sent > 0 {
-            futures.push(self.send(
-                self.trace_api_bytes,
-                trace_metrics.bytes_sent as f64,
-                vec![tag!("src_library", "libdatadog")],
-            ));
-        }
+        // TODO: APMSP-1157 - Enable this metric when support is enabled.
+        // if trace_metrics.bytes_sent > 0 {
+        //     futures.push(self.send(
+        //         self.trace_api_bytes,
+        //         trace_metrics.bytes_sent as f64,
+        //         vec![tag!("src_library", "libdatadog")],
+        //     ));
+        // }
         if trace_metrics.chunks_sent > 0 {
             futures.push(self.send(
-                self.trace_chunk_sent,
+                self.trace_chunks_sent,
                 trace_metrics.chunks_sent as f64,
                 vec![tag!("src_library", "libdatadog")],
             ));
         }
         if trace_metrics.chunks_dropped > 0 {
             futures.push(self.send(
-                self.trace_chunk_dropped,
+                self.trace_chunks_dropped,
                 trace_metrics.chunks_dropped as f64,
                 vec![tag!("src_library", "libdatadog")],
             ));
@@ -257,22 +259,23 @@ impl SelfTelemetry {
                 true,
                 MetricNamespace::Tracers,
             ),
-            trace_api_bytes: worker.register_metric_context(
-                "trace_api_bytes".to_string(),
+            // TODO: APMSP-1157 - Enable this metric when support is enabled.
+            // trace_api_bytes: worker.register_metric_context(
+            //     "trace_api_bytes".to_string(),
+            //     vec![],
+            //     MetricType::Distribution,
+            //     true,
+            //     MetricNamespace::Tracers,
+            // ),
+            trace_chunks_sent: worker.register_metric_context(
+                "trace_chunks_sent".to_string(),
                 vec![],
                 MetricType::Count,
                 true,
                 MetricNamespace::Tracers,
             ),
-            trace_chunk_sent: worker.register_metric_context(
-                "trace_chunk_sent".to_string(),
-                vec![],
-                MetricType::Count,
-                true,
-                MetricNamespace::Tracers,
-            ),
-            trace_chunk_dropped: worker.register_metric_context(
-                "trace_chunk_dropped".to_string(),
+            trace_chunks_dropped: worker.register_metric_context(
+                "trace_chunks_dropped".to_string(),
                 vec![],
                 MetricType::Count,
                 true,
