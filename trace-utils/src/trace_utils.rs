@@ -17,7 +17,7 @@ const TOP_LEVEL_KEY: &str = "_top_level";
 /// Span metric the tracer sets to denote a top level span
 const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 
-const MAX_PAYLOAD_SIZE: usize = 52428800;
+const MAX_PAYLOAD_SIZE: usize = 50 * 1024 * 1024;
 
 /// First value of returned tuple is the payload size
 pub async fn get_traces_from_request_body(
@@ -89,6 +89,7 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
             // has similar results. The primary goal here is avoiding many small requests.
             // TODO: maybe make the MAX_PAYLOAD_SIZE configurable?
             if a.size + b.size < MAX_PAYLOAD_SIZE / 2 {
+                // Note: dedup_by drops a, and retains b.
                 b.tracer_payloads.append(&mut a.tracer_payloads);
                 b.size += a.size;
                 return true;
