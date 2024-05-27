@@ -17,6 +17,10 @@ jobs:
             rust_version: "${RUST_VERSION}"
       fail-fast: false
     steps:
+      - name: "(Windows) Install nasm"
+        if: matrix.platform == 'windows-latest'
+        uses: ilammy/setup-nasm@v1
+
       - name: Checkout sources
         uses: actions/checkout@v4
 
@@ -79,6 +83,9 @@ jobs:
           - platform: "ubuntu-latest"
             rust_version: "${RUST_VERSION}"
     steps:
+      - name: "(Windows) Install nasm"
+        if: matrix.platform == 'windows-latest'
+        uses: ilammy/setup-nasm@v1
 
       - name: Checkout sources
         uses: actions/checkout@v4

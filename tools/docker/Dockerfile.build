@@ -32,6 +32,7 @@ RUN apk update \
     pkgconf \
     unzip \
     bash \
+    clang16-libclang \
   && mkdir /usr/local/src
 
 # Tell docker to use bash as the default
@@ -59,10 +60,11 @@ ENV PATH="/root/.cargo/bin:$PATH"
 ARG CARGO_BUILD_INCREMENTAL
 ARG CARGO_NET_RETRY
 ENV CARGO_NET_RETRY="${CARGO_NET_RETRY}"
-RUN cargo install cbindgen && rm -rf /root/.cargo/registry /root/.cargo/git
+RUN cargo install cbindgen && cargo install bindgen-cli --locked && rm -rf /root/.cargo/registry /root/.cargo/git
 
 FROM alpine_aws_cli as alpine_builder
 COPY --from=alpine_cbindgen /root/.cargo/bin/cbindgen /usr/local/bin/cbindgen
+COPY --from=alpine_cbindgen /root/.cargo/bin/bindgen /usr/local/bin/bindgen
 
 
 ### Cache cargo metadata between builds
