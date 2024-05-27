@@ -3,11 +3,11 @@
 
 use flate2::{write::GzEncoder, Compression};
 use hyper::{body::Buf, Body, Client, Method, Request, StatusCode};
-use hyper_rustls::HttpsConnectorBuilder;
 use log::debug;
 use std::io::Write;
 
 use datadog_trace_protobuf::pb;
+use ddcommon::connector::Connector;
 use ddcommon::Endpoint;
 
 pub async fn get_stats_from_request_body(body: Body) -> anyhow::Result<pb::ClientStatsPayload> {
@@ -61,12 +61,7 @@ pub async fn send_stats_payload(
         .header("DD-API-KEY", api_key)
         .body(Body::from(data.clone()))?;
 
-    let https = HttpsConnectorBuilder::new()
-        .with_native_roots()
-        .https_only()
-        .enable_http1()
-        .build();
-    let client: Client<_, hyper::Body> = Client::builder().build(https);
+    let client: Client<_, hyper::Body> = Client::builder().build(Connector::default());
     match client.request(req).await {
         Ok(response) => {
             if response.status() != StatusCode::ACCEPTED {
