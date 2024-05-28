@@ -88,7 +88,7 @@ impl Liaison for SharedDirLiaison {
 
 impl SharedDirLiaison {
     pub fn new<P: AsRef<Path>>(base_dir: P) -> Self {
-        let versioned_socket_basename = concat!("libdd.", env!("CARGO_PKG_VERSION"), ".sock");
+        let versioned_socket_basename = concat!("libdd.", crate::sidecar_version!(), ".sock");
         let base_dir = base_dir.as_ref();
         let socket_path = base_dir
             .join(versioned_socket_basename)
@@ -146,13 +146,13 @@ mod linux {
         }
 
         fn ipc_shared() -> AbstractUnixSocketLiaison {
-            let path = PathBuf::from(concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".sock"));
+            let path = PathBuf::from(concat!("libdatadog/", crate::sidecar_version!(), ".sock"));
             Self { path }
         }
 
         fn ipc_per_process() -> AbstractUnixSocketLiaison {
             let path = PathBuf::from(format!(
-                concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".{}.sock"),
+                concat!("libdatadog/", crate::sidecar_version!(), ".{}.sock"),
                 getpid()
             ));
             Self { path }
