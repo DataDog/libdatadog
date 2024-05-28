@@ -545,6 +545,7 @@ impl Profile {
 mod api_tests {
     use super::*;
     use bolero::TypeGenerator;
+    use itertools::Itertools;
     use std::collections::HashSet;
 
     /// Fuzzes adding a bunch of samples to the profile.
@@ -562,12 +563,12 @@ mod api_tests {
             .for_each(|(val, samples)| {
                 let sample_types: Vec<_> = val.iter().map(api::ValueType::from).collect();
                 let mut expected_profile = Profile::new(SystemTime::now(), &sample_types, None);
-                let mut added_samples: Vec<&owned_types::Sample> = Vec::new();
+                let mut expected_samples: Vec<&owned_types::Sample> = Vec::new();
                 for (timestamp, sample) in samples {
                     let r = expected_profile.add_sample(sample.into(), timestamp.clone());
                     if val.len() == sample.values.len() && sample.is_well_formed() {
                         assert!(r.is_ok());
-                        added_samples.push(sample);
+                        expected_samples.push(sample);
                     } else {
                         assert!(r.is_err());
                     }
@@ -575,15 +576,44 @@ mod api_tests {
 
                 let profile = pprof::roundtrip_to_pprof(expected_profile).unwrap();
 
-                for (typ, expecte_typ) in profile.sample_types.iter().zip(sample_types.iter()) {
+                for (typ, expected_typ) in profile.sample_types.iter().zip_eq(sample_types.iter()) {
                     assert_eq!(
                         profile.string_table[typ.r#type as usize],
-                        expecte_typ.r#type
+                        expected_typ.r#type
                     );
-                    assert_eq!(profile.string_table[typ.unit as usize], expecte_typ.unit);
+                    assert_eq!(profile.string_table[typ.unit as usize], expected_typ.unit);
                 }
 
-                assert_eq!(added_samples.len(), profile.samples.len());
+                assert_eq!(profile.samples.len(), expected_samples.len());
+                for (sample, expected_sample) in
+                    profile.samples.iter().zip_eq(expected_samples.iter())
+                {
+                    assert_eq!(sample.location_ids.len(), expected_sample.locations.len());
+                    for (loc_id, expected_location) in sample
+                        .location_ids
+                        .iter()
+                        .zip_eq(expected_sample.locations.iter())
+                    {
+                        let location = &profile
+                            .locations
+                            .iter()
+                            .find(|l| l.id == *loc_id)
+                            .expect("Location not found");
+
+                        let mapping = &profile
+                            .mappings
+                            .iter()
+                            .find(|m| m.id == location.mapping_id)
+                            .expect("Mapping not found");
+
+                        assert_eq!(
+                            *profile.string_table[mapping.filename as usize],
+                            *expected_location.mapping.filename
+                        );
+                    }
+
+                    assert_eq!(sample.values, expected_sample.values);
+                }
             })
     }
 
