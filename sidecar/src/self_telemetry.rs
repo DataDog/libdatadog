@@ -153,7 +153,7 @@ impl SelfTelemetry {
             "datadog-ipc-helper".to_string(),
             "php".to_string(),
             "SIDECAR".to_string(),
-            env!("CARGO_PKG_VERSION").to_string(),
+            crate::sidecar_version!().to_string(),
         )
         .spawn_with_config(self.config.clone())
         .await
