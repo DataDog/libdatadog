@@ -561,18 +561,29 @@ mod api_tests {
             ))
             .for_each(|(val, samples)| {
                 let sample_types: Vec<_> = val.iter().map(api::ValueType::from).collect();
-                let mut profile = Profile::new(SystemTime::now(), &sample_types, None);
+                let mut expected_profile = Profile::new(SystemTime::now(), &sample_types, None);
+                let mut added_samples: Vec<&owned_types::Sample> = Vec::new();
                 for (timestamp, sample) in samples {
-                    let r = profile.add_sample(sample.into(), timestamp.clone());
+                    let r = expected_profile.add_sample(sample.into(), timestamp.clone());
                     if val.len() == sample.values.len() && sample.is_well_formed() {
                         assert!(r.is_ok());
+                        added_samples.push(sample);
                     } else {
                         assert!(r.is_err());
                     }
                 }
-                // TODO, set actual values here
-                // TODO, evaluate the result
-                profile.serialize_into_compressed_pprof(None, None).unwrap();
+
+                let profile = pprof::roundtrip_to_pprof(expected_profile).unwrap();
+
+                for (typ, expecte_typ) in profile.sample_types.iter().zip(sample_types.iter()) {
+                    assert_eq!(
+                        profile.string_table[typ.r#type as usize],
+                        expecte_typ.r#type
+                    );
+                    assert_eq!(profile.string_table[typ.unit as usize], expecte_typ.unit);
+                }
+
+                assert_eq!(added_samples.len(), profile.samples.len());
             })
     }
 
@@ -640,19 +651,6 @@ mod api_tests {
                 // The next line passes but I thought that aggregated samples would
                 // decrease the samples count and thus the next line would fail.
                 assert_eq!(samples.len(), serialized_profile.samples.len());
-
-                // TODO: test data in serialized_profile?
-                // for (sample, serialized_sample) in samples.iter().zip(serialized_profile.samples.iter()) {
-                //     // assert_eq!(sample.1, serialized_sample.location_ids);
-                //     // assert_eq!(sample.2, serialized_sample.values);
-                //     // assert_eq!(sample.3.len(), serialized_sample.labels.len());
-                //     // for (label, serialized_label) in sample.3.iter().zip(serialized_sample.labels.iter()) {
-                //     //     assert_eq!(label.key, serialized_label.key);
-                //     //     assert_eq!(label.num, serialized_label.num);
-                //     //     assert_eq!(label.str, serialized_label.str);
-                //     //     assert_eq!(label.num_unit, serialized_label.num_unit);
-                //     // }
-                // }
             });
     }
 
