@@ -561,8 +561,9 @@ mod api_tests {
                 Vec::<(Option<Timestamp>, owned_types::Sample)>::gen(),
             ))
             .for_each(|(val, samples)| {
-                let sample_types: Vec<_> = val.iter().map(api::ValueType::from).collect();
-                let mut expected_profile = Profile::new(SystemTime::now(), &sample_types, None);
+                let expected_sample_types: Vec<_> = val.iter().map(api::ValueType::from).collect();
+                let mut expected_profile =
+                    Profile::new(SystemTime::now(), &expected_sample_types, None);
                 let mut expected_samples: Vec<&owned_types::Sample> = Vec::new();
                 for (timestamp, sample) in samples {
                     let r = expected_profile.add_sample(sample.into(), timestamp.clone());
@@ -576,7 +577,11 @@ mod api_tests {
 
                 let profile = pprof::roundtrip_to_pprof(expected_profile).unwrap();
 
-                for (typ, expected_typ) in profile.sample_types.iter().zip_eq(sample_types.iter()) {
+                for (typ, expected_typ) in profile
+                    .sample_types
+                    .iter()
+                    .zip_eq(expected_sample_types.iter())
+                {
                     assert_eq!(
                         profile.string_table[typ.r#type as usize],
                         expected_typ.r#type
@@ -605,11 +610,19 @@ mod api_tests {
                             .iter()
                             .find(|m| m.id == location.mapping_id)
                             .expect("Mapping not found");
-
                         assert_eq!(
                             *profile.string_table[mapping.filename as usize],
                             *expected_location.mapping.filename
                         );
+                        assert_eq!(
+                            *profile.string_table[mapping.build_id as usize],
+                            *expected_location.mapping.build_id
+                        );
+                        assert_eq!(mapping.memory_start, expected_location.mapping.memory_start);
+                        assert_eq!(mapping.memory_limit, expected_location.mapping.memory_limit);
+                        assert_eq!(mapping.file_offset, expected_location.mapping.file_offset);
+
+                        assert_eq!(location.address, expected_location.address);
                     }
 
                     assert_eq!(sample.values, expected_sample.values);
