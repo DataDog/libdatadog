@@ -31,7 +31,7 @@ pub struct Profile {
     mappings: FxIndexSet<Mapping>,
     observations: Observations,
     period: Option<(i64, ValueType)>,
-    sample_types: Vec<ValueType>,
+    sample_types: Box<[ValueType]>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: StringTable,
@@ -243,7 +243,7 @@ impl Profile {
         //
         // In this case, we use `sample_types` during upscaling of `samples`,
         // so we must serialize `Sample` before `SampleType`.
-        for sample_type in self.sample_types.into_iter() {
+        for sample_type in self.sample_types.iter() {
             let item: pprof::ValueType = sample_type.into();
             encoder.encode(ProfileSampleTypesEntry::from(item))?;
         }
@@ -434,7 +434,7 @@ impl Profile {
             mappings: Default::default(),
             observations: Default::default(),
             period: None,
-            sample_types: vec![],
+            sample_types: Box::new([]),
             stack_traces: Default::default(),
             start_time,
             strings: Default::default(),
@@ -453,7 +453,7 @@ impl Profile {
         // as immutable" by moving it out, borrowing it, and putting it back.
         let owned_sample_types = profile.owned_sample_types.take();
         profile.sample_types = match &owned_sample_types {
-            None => Vec::new(),
+            None => Box::new([]),
             Some(sample_types) => sample_types
                 .iter()
                 .map(|sample_type| ValueType {
@@ -811,7 +811,7 @@ mod api_tests {
         assert!(!profile.locations.is_empty());
         assert!(!profile.mappings.is_empty());
         assert!(!profile.observations.is_empty());
-        assert!(!profile.sample_types.is_empty());
+        assert!(!profile.sample_types.as_ref().is_empty());
         assert!(profile.period.is_none());
         assert!(profile.endpoints.mappings.is_empty());
         assert!(profile.endpoints.stats.is_empty());
