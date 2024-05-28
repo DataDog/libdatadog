@@ -58,7 +58,7 @@ pub use unix::*;
 /// Fallback module used for non-unix systems
 #[cfg(not(unix))]
 mod fallback {
-/// # Safety
+    /// # Safety
     /// Marked as unsafe to match the signature of the unix version
     pub unsafe fn set_cgroup_file(_file: String) {}
 
@@ -87,18 +87,26 @@ mod unix {
 
     const DEFAULT_CGROUP_PATH: &str = "/proc/self/cgroup";
     const DEFAULT_CGROUP_MOUNT_PATH: &str = "/sys/fs/cgroup";
-    const DEFAULT_CGROUP_NS_PATH: &str = "/proc/self/ns/cgroup";
 
     /// the base controller used to identify the cgroup v1 mount point in the cgroupMounts map.
     const CGROUP_V1_BASE_CONTROLLER: &str = "memory";
 
+    // Those two variables are unused in tests
+    #[cfg(not(test))]
     // From https://github.com/torvalds/linux/blob/5859a2b1991101d6b978f3feb5325dad39421f29/include/linux/proc_ns.h#L41-L49
     // Currently, host namespace inode number are hardcoded, which can be used to detect
     // if we're running in host namespace or not (does not work when running in DinD)
     const HOST_CGROUP_NAMESPACE_INODE: u64 = 0xEFFFFFFB;
 
+    #[cfg(not(test))]
+    const DEFAULT_CGROUP_NS_PATH: &str = "/proc/self/ns/cgroup";
+
     /// stores overridable cgroup path - used in end-to-end testing to "stub" cgroup values
     static mut TESTING_CGROUP_PATH: Option<String> = None;
+
+    /// stores overridable cgroup mount path - used in end-to-end to mock cgroup node and be able to
+    /// compute inode
+    static mut TESTING_CGROUP_MOUNT_PATH: Option<String> = None;
 
     const UUID_SOURCE: &str =
         r"[0-9a-f]{8}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{12}";
@@ -113,7 +121,7 @@ mod unix {
         .unwrap();
     }
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, PartialEq)]
     enum CgroupFileParsingError {
         ContainerIdNotFound,
         CgroupNotFound,
@@ -169,10 +177,9 @@ mod unix {
     /// cgroupV2
     fn get_cgroup_node_path(
         base_controller: &str,
-        cgroup_mount_path: &Path,
+        cgroup_path: &Path,
     ) -> Result<PathBuf, CgroupFileParsingError> {
-        let file =
-            File::open(cgroup_mount_path).map_err(|_| CgroupFileParsingError::CannotOpenFile)?;
+        let file = File::open(cgroup_path).map_err(|_| CgroupFileParsingError::CannotOpenFile)?;
         let reader = BufReader::new(file);
 
         let mut node_path: Option<PathBuf> = None;
@@ -186,7 +193,14 @@ mod unix {
             let controllers: Vec<&str> = cgroup_entry[1].split(',').collect();
             // Only keep empty controller if it is the first line as cgroupV2 uses only one line
             if controllers.contains(&base_controller) || (controllers.contains(&"") && index == 0) {
-                let mut path = Path::new(DEFAULT_CGROUP_MOUNT_PATH).join(cgroup_entry[1]);
+                let matched_operator = if controllers.contains(&base_controller) {
+                    base_controller
+                } else {
+                    ""
+                };
+
+                let mut path = get_cgroup_mount_path();
+                path.push(matched_operator);
                 path.push(cgroup_entry[2].strip_prefix('/').unwrap_or(cgroup_entry[2])); // Remove first / as the path is relative
                 node_path = Some(path);
 
@@ -199,13 +213,21 @@ mod unix {
         node_path.ok_or(CgroupFileParsingError::CgroupNotFound)
     }
 
+    #[cfg(not(test))]
     /// Checks if the agent is running in the host cgroup namespace.
+    /// This check is disabled when testing
     fn is_host_cgroup_namespace() -> Result<(), ()> {
         let cgroup_namespace_inode =
             get_inode(Path::new(DEFAULT_CGROUP_NS_PATH)).map_err(|_| ())?;
         if cgroup_namespace_inode == HOST_CGROUP_NAMESPACE_INODE {
             return Err(());
         }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    /// Mock version used in tests
+    fn is_host_cgroup_namespace() -> Result<(), ()> {
         Ok(())
     }
 
@@ -241,6 +263,21 @@ mod unix {
         }
     }
 
+    /// # Safety
+    /// Must not be called in multi-threaded contexts
+    pub unsafe fn set_cgroup_mount_path(file: String) {
+        TESTING_CGROUP_MOUNT_PATH = Some(file)
+    }
+
+    fn get_cgroup_mount_path() -> PathBuf {
+        // Safety: we assume set_cgroup_file is not called when it shouldn't
+        if let Some(path) = unsafe { TESTING_CGROUP_MOUNT_PATH.as_ref() } {
+            Path::new(path.as_str()).into()
+        } else {
+            Path::new(DEFAULT_CGROUP_MOUNT_PATH).into()
+        }
+    }
+
     /// Returns the `container_id` if available in the cgroup file, otherwise returns `None`
     pub fn get_container_id() -> Option<&'static str> {
         // cache container id in a static to avoid recomputing it at each call
@@ -268,7 +305,7 @@ mod unix {
         use maplit::hashmap;
 
         #[test]
-        fn line_parsing() {
+        fn test_container_id_line_parsing() {
             let test_lines = hashmap! {
                 "" => None,
                 "other_line" => None,
@@ -300,12 +337,16 @@ mod unix {
                     => None,
             };
             for (line, &expected_result) in test_lines.iter() {
-                assert_eq!(parse_line(line), expected_result);
+                assert_eq!(
+                    parse_line(line),
+                    expected_result,
+                    "testing line parsing for container id with line: {line}"
+                );
             }
         }
 
         #[test]
-        fn file_parsing() {
+        fn test_container_id_file_parsing() {
             let test_root_dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests"));
 
             let test_files = hashmap! {
@@ -357,9 +398,114 @@ mod unix {
                 assert_eq!(
                     extract_container_id(&test_root_dir.join(filename)).ok(),
                     expected_result.map(String::from),
-                    "testing file {filename}"
+                    "testing file parsing for container id with file: {filename}"
                 );
             }
+        }
+
+        #[test]
+        fn test_cgroup_node_path_parsing() {
+            let test_root_dir: &Path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests"));
+
+            let test_files = hashmap! {
+                // parsing standard cgroupV2 file
+                "cgroup.v2" => Ok("/sys/fs/cgroup"),
+                // parsing cgroupV2 file with custom path
+                "cgroup.v2_custom_path" => Ok("/sys/fs/cgroup/custom/path"),
+                // a cgroupv1 container cgroup file returns the memory controller path
+                "cgroup.docker" => Ok("/sys/fs/cgroup/memory/docker/9d5b23edb1ba181e8910389a99906598d69ac9a0ead109ee55730cc416d95f7f"),
+                // a non-container Linux cgroup file returns the memory controller path
+                "cgroup.linux" => Ok("/sys/fs/cgroup/memory/user.slice/user-0.slice/session-14.scope"),
+                // a cgroupV1 file with an entry using 0 as a hierarchy id should not be detected as V2
+                "cgroup.v1_with_id_0" => Ok("/sys/fs/cgroup/memory/user.slice/user-0.slice/session-14.scope"),
+                // a cgroupV1 file using multiple controllers in the same entry returns the correct path
+                "cgroup.multiple_controllers" => Ok("/sys/fs/cgroup/memory/user.slice/user-0.slice/session-14.scope"),
+                // a cgroupV1 file missing the memory controller should return an error
+                "cgroup.no_memory" => Err(CgroupFileParsingError::CgroupNotFound),
+                // missing cgroup file should return a CannotOpenFile Error
+                "path/to/cgroup.missing" => Err(CgroupFileParsingError::CannotOpenFile),
+                // valid container ID with invalid line pattern makes an empty string
+                "cgroup.invalid_line_container_id" => Err(CgroupFileParsingError::InvalidFormat),
+            };
+
+            for (&filename, expected_result) in test_files.iter() {
+                assert_eq!(
+                    get_cgroup_node_path(CGROUP_V1_BASE_CONTROLLER, &test_root_dir.join(filename)),
+                    expected_result.clone().map(PathBuf::from),
+                    "testing file parsing for cgroup node path with file: {filename}"
+                );
+            }
+        }
+
+        lazy_static! {
+            static ref IN_REGEX: Regex = Regex::new(r"in-\d+").unwrap();
+            static ref CID_REGEX: Regex =
+                Regex::new(&format!(r"cid-{}", CONTAINER_REGEX.as_str())).unwrap();
+        }
+
+        /// The following test can only be run in isolation because of caching behaviour introduced
+        /// by lazy_static
+        fn test_entity_id(filename: &str, expected_result: Option<&Regex>) {
+            let test_root_dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests"));
+            unsafe {
+                set_cgroup_mount_path(
+                    test_root_dir
+                        .join("cgroup")
+                        .as_path()
+                        .to_str()
+                        .expect("Invalid test directory")
+                        .to_owned(),
+                );
+            }
+            unsafe {
+                set_cgroup_file(
+                    test_root_dir
+                        .join(filename)
+                        .as_path()
+                        .to_str()
+                        .expect("Invalid test directory")
+                        .to_owned(),
+                );
+            }
+
+            if let Some(regex) = expected_result {
+                assert!(
+                    regex.is_match(get_entity_id().unwrap()),
+                    "testing get_entity_id with file {}: {} is not matching the expected regex",
+                    filename,
+                    get_entity_id().unwrap_or("None")
+                );
+            } else {
+                assert_eq!(
+                    None,
+                    get_entity_id(),
+                    "testing get_entity_id with file {filename}"
+                );
+            }
+        }
+
+        #[test]
+        #[ignore]
+        fn test_entity_id_for_v2() {
+            test_entity_id("cgroup.v2", Some(&IN_REGEX))
+        }
+
+        #[test]
+        #[ignore]
+        fn test_entity_id_for_v1() {
+            test_entity_id("cgroup.linux", Some(&IN_REGEX))
+        }
+
+        #[test]
+        #[ignore]
+        fn test_entity_id_for_container_id() {
+            test_entity_id("cgroup.docker", Some(&CID_REGEX))
+        }
+
+        #[test]
+        #[ignore]
+        fn test_entity_id_for_no_id() {
+            test_entity_id("cgroup.no_memory", None)
         }
     }
 }
