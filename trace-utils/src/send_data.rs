@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::{anyhow, Context};
+use bytes::Bytes;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hyper::{Body, Client, Method, Response, StatusCode};
@@ -252,7 +253,7 @@ impl SendData {
         payload: Vec<u8>,
     ) -> Result<Response<Body>, SendRequestError> {
         let mut request_attempt = 0;
-
+        let payload = Bytes::from(payload);
         loop {
             request_attempt += 1;
             let mut req = self.create_request_builder();
@@ -308,7 +309,7 @@ impl SendData {
     async fn send_request(
         &self,
         req: HttpRequestBuilder,
-        payload: Vec<u8>,
+        payload: Bytes,
     ) -> Result<Response<Body>, SendRequestError> {
         let req = req
             .body(Body::from(payload))
@@ -352,7 +353,7 @@ impl SendData {
         let (template, _) = req.body(()).unwrap().into_parts();
 
         let mut futures = FuturesUnordered::new();
-        for tracer_payload in self.tracer_payloads.clone().into_iter() {
+        for tracer_payload in self.tracer_payloads.iter() {
             let mut builder = HttpRequestBuilder::new()
                 .method(template.method.clone())
                 .uri(template.uri.clone())

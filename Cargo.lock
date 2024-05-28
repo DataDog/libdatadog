@@ -1414,6 +1414,7 @@ name = "datadog-trace-utils"
 version = "9.0.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "datadog-trace-normalization",
  "datadog-trace-protobuf",
  "ddcommon",
