@@ -4,6 +4,7 @@ use crate::config::Config;
 use crate::log;
 use crate::service::SidecarServer;
 use crate::watchdog::WatchdogHandle;
+use ddcommon::tag;
 use ddcommon::tag::Tag;
 use ddtelemetry::data::metrics::{MetricNamespace, MetricType};
 use ddtelemetry::metrics::ContextKey;
@@ -80,21 +81,21 @@ impl<'a> MetricData<'a> {
             futures.push(self.send(
                 self.trace_api_errors,
                 trace_metrics.api_errors_network as f64,
-                vec![Tag::new("type", "network").unwrap()],
+                vec![tag!("type", "network")],
             ));
         }
         if trace_metrics.api_errors_timeout > 0 {
             futures.push(self.send(
                 self.trace_api_errors,
                 trace_metrics.api_errors_timeout as f64,
-                vec![Tag::new("type", "timeout").unwrap()],
+                vec![tag!("type", "timeout")],
             ));
         }
         if trace_metrics.api_errors_status_code > 0 {
             futures.push(self.send(
                 self.trace_api_errors,
                 trace_metrics.api_errors_status_code as f64,
-                vec![Tag::new("type", "status_code").unwrap()],
+                vec![tag!("type", "status_code")],
             ));
         }
         for (status_code, count) in &trace_metrics.api_responses_count_per_code {

@@ -166,7 +166,7 @@ mod test {
     #[cfg(unix)]
     use ddcommon::connector::uds::socket_path_to_uri;
     use ddcommon::tag::Tag;
-    use ddcommon::Endpoint;
+    use ddcommon::{tag, Endpoint};
     use http::Uri;
     use std::net;
     use std::time::Duration;
@@ -189,11 +189,7 @@ mod test {
             api_key: None,
         });
         flusher.send(vec![
-            Count(
-                "test_count".to_string(),
-                3,
-                vec![Tag::new("foo", "bar").unwrap()],
-            ),
+            Count("test_count".to_string(), 3, vec![tag!("foo", "bar")]),
             Count("test_neg_count".to_string(), -2, vec![]),
             Distribution("test_distribution".to_string(), 4.2, vec![]),
             Gauge("test_gauge".to_string(), 7.6, vec![]),

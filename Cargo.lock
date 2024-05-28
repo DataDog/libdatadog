@@ -1450,6 +1450,7 @@ dependencies = [
  "rustls",
  "rustls-native-certs",
  "serde",
+ "static_assertions",
  "tokio",
  "tokio-rustls",
 ]
