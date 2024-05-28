@@ -26,3 +26,10 @@ mod windows;
 
 #[cfg(windows)]
 pub use self::windows::*;
+
+macro_rules! sidecar_version {
+    () => {
+        datadog_sidecar_macros::env_or_default!("SIDECAR_VERSION", env!("CARGO_PKG_VERSION"))
+    };
+}
+pub(crate) use sidecar_version;
