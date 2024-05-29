@@ -700,26 +700,22 @@ mod api_tests {
                     Vec<i64>,
                 > = HashMap::new();
                 for (timestamp, sample) in samples {
-                    let r = expected_profile.add_sample(sample.into(), timestamp.clone());
+                    let r = expected_profile.add_sample(sample.into(), *timestamp);
                     if expected_sample_types.len() == sample.values.len() && sample.is_well_formed()
                     {
                         assert!(r.is_ok());
                         if timestamp.is_some() {
                             samples_with_timestamps.push(sample);
+                        } else if let Some(existing_values) =
+                            samples_without_timestamps.get_mut(&(&sample.locations, &sample.labels))
+                        {
+                            existing_values
+                                .iter_mut()
+                                .zip(sample.values.iter())
+                                .for_each(|(a, b)| *a = a.saturating_add(*b));
                         } else {
-                            if let Some(existing_values) = samples_without_timestamps
-                                .get_mut(&(&sample.locations, &sample.labels))
-                            {
-                                existing_values
-                                    .iter_mut()
-                                    .zip(sample.values.iter())
-                                    .for_each(|(a, b)| *a = a.saturating_add(*b));
-                            } else {
-                                samples_without_timestamps.insert(
-                                    (&sample.locations, &sample.labels),
-                                    sample.values.clone(),
-                                );
-                            }
+                            samples_without_timestamps
+                                .insert((&sample.locations, &sample.labels), sample.values.clone());
                         }
                     } else {
                         assert!(r.is_err());
@@ -727,7 +723,7 @@ mod api_tests {
                 }
 
                 let profile = pprof::roundtrip_to_pprof(expected_profile).unwrap();
-                assert_sample_types_eq(&profile, &expected_sample_types);
+                assert_sample_types_eq(&profile, expected_sample_types);
                 assert_samples_eq(
                     &profile,
                     &samples_with_timestamps,
@@ -776,7 +772,7 @@ mod api_tests {
                 > = HashMap::new();
 
                 let samples: Vec<(&Option<Timestamp>, owned_types::Sample)> = samples
-                    .into_iter()
+                    .iter()
                     .map(|(timestamp, locations, values, labels)| {
                         (
                             timestamp,
@@ -800,18 +796,16 @@ mod api_tests {
                     assert!(r.is_ok());
                     if timestamp.is_some() {
                         samples_with_timestamps.push(sample);
+                    } else if let Some(existing_values) =
+                        samples_without_timestamps.get_mut(&(&sample.locations, &sample.labels))
+                    {
+                        existing_values
+                            .iter_mut()
+                            .zip(sample.values.iter())
+                            .for_each(|(a, b)| *a = a.saturating_add(*b));
                     } else {
-                        if let Some(existing_values) =
-                            samples_without_timestamps.get_mut(&(&sample.locations, &sample.labels))
-                        {
-                            existing_values
-                                .iter_mut()
-                                .zip(sample.values.iter())
-                                .for_each(|(a, b)| *a = a.saturating_add(*b));
-                        } else {
-                            samples_without_timestamps
-                                .insert((&sample.locations, &sample.labels), sample.values.clone());
-                        }
+                        samples_without_timestamps
+                            .insert((&sample.locations, &sample.labels), sample.values.clone());
                     }
                 }
                 let encoded = profile
@@ -820,7 +814,7 @@ mod api_tests {
                 let serialized_profile =
                     pprof::deserialize_compressed_pprof(&encoded.buffer).unwrap();
 
-                assert_sample_types_eq(&serialized_profile, &sample_types);
+                assert_sample_types_eq(&serialized_profile, sample_types);
                 assert_samples_eq(
                     &serialized_profile,
                     &samples_with_timestamps,
