@@ -1,6 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(test)]
+use bolero_generator::{TypeGeneratorWithParams, ValueGenerator};
+
 use crate::api;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
@@ -173,7 +176,6 @@ impl<'a> From<&'a api::Period<'a>> for Period {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
 pub struct Sample {
     /// The leaf is at locations[0].
     pub locations: Vec<Location>,
@@ -189,6 +191,35 @@ pub struct Sample {
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
     pub labels: Vec<Label>,
+}
+
+#[cfg(test)]
+impl bolero_generator::TypeGenerator for Sample {
+    fn generate<D: bolero_generator::Driver>(driver: &mut D) -> Option<Self> {
+        let locations = Vec::<Location>::gen_with().generate(driver)?;
+        let values = Vec::<i64>::gen_with().generate(driver)?;
+        let mut labels = std::collections::HashSet::<Label>::gen_with().generate(driver)?;
+
+        // Ensure that the label has "local root span id" key
+        // Generate non-zero i64 value for the label
+        let num = i64::gen().generate(driver)?;
+        if num == 0 {
+            return None;
+        }
+
+        labels.insert(Label {
+            key: "local root span id".into(),
+            str: None,
+            num,
+            num_unit: None,
+        });
+        let labels = labels.into_iter().collect();
+        Some(Self {
+            locations,
+            values,
+            labels,
+        })
+    }
 }
 
 impl std::hash::Hash for Sample {

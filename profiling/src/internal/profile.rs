@@ -576,6 +576,7 @@ mod api_tests {
             (&Vec<owned_types::Location>, &Vec<owned_types::Label>),
             Vec<i64>,
         >,
+        endpoint_mappings: &FxIndexMap<u64, &String>,
     ) {
         assert_eq!(
             profile.samples.len(),
@@ -635,6 +636,18 @@ mod api_tests {
                     .into_boxed_str();
 
                 if *key == *"end_timestamp_ns" {
+                    continue;
+                } else if *key == *"trace endpoint" {
+                    let actual_str = &profile.string_table[label.str as usize];
+
+                    let prev_label: &owned_types::Label =
+                        owned_labels.last().expect("No previous label");
+                    let num = prev_label.num as u64;
+                    let expected_str = endpoint_mappings
+                        .get(&num)
+                        .expect("No endpoint mapping found");
+
+                    assert_eq!(actual_str, *expected_str);
                     continue;
                 }
 
@@ -728,6 +741,7 @@ mod api_tests {
                     &profile,
                     &samples_with_timestamps,
                     &samples_without_timestamps,
+                    &FxIndexMap::default(),
                 );
             })
     }
@@ -817,6 +831,7 @@ mod api_tests {
                     &serialized_profile,
                     &samples_with_timestamps,
                     &samples_without_timestamps,
+                    &FxIndexMap::default(),
                 );
             });
     }
@@ -854,7 +869,7 @@ mod api_tests {
     #[derive(Debug, TypeGenerator)]
     enum Function {
         AddSample(Option<Timestamp>, owned_types::Sample),
-        AddEndpoint,
+        AddEndpoint(u64, String),
     }
 
     #[derive(Debug, TypeGenerator)]
@@ -884,6 +899,7 @@ mod api_tests {
                     (&Vec<owned_types::Location>, &Vec<owned_types::Label>),
                     Vec<i64>,
                 > = HashMap::new();
+                let mut endpoint_mappings: FxIndexMap<u64, &String> = FxIndexMap::default();
 
                 for operation in operations {
                     match operation {
@@ -911,7 +927,12 @@ mod api_tests {
                                 assert!(r.is_err());
                             }
                         }
-                        Function::AddEndpoint => {}
+                        Function::AddEndpoint(local_root_span_id, endpoint) => {
+                            profile
+                                .add_endpoint(*local_root_span_id, endpoint.into())
+                                .expect("Failed to add endpoint");
+                            endpoint_mappings.insert(*local_root_span_id, endpoint);
+                        }
                     }
                 }
 
@@ -921,6 +942,7 @@ mod api_tests {
                     &pprof_profile,
                     &samples_with_timestamps,
                     &samples_without_timestamps,
+                    &endpoint_mappings,
                 );
             })
     }
