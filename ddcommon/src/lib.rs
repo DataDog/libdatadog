@@ -12,7 +12,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod azure_app_services;
 pub mod connector;
-pub mod container_id;
+pub mod entity_id;
 #[macro_use]
 pub mod cstr;
 pub mod config;
@@ -137,12 +137,12 @@ impl Endpoint {
         }
 
         // Add the Container Id header if available
-        if let Some(container_id) = container_id::get_container_id() {
+        if let Some(container_id) = entity_id::get_container_id() {
             builder = builder.header(header::DATADOG_CONTAINER_ID, container_id);
         }
 
         // Add the Entity Id header if available
-        if let Some(entity_id) = container_id::get_entity_id() {
+        if let Some(entity_id) = entity_id::get_entity_id() {
             builder = builder.header(header::DATADOG_ENTITY_ID, entity_id);
         }
 
