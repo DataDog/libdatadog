@@ -148,38 +148,52 @@ pub fn ensure_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<()
     let new_receiver = Box::into_raw(Box::new(ReceiverType::ForkedProcess(make_receiver(
         config,
     )?)));
-    let res = RECEIVER.compare_exchange(ptr::null_mut(), new_receiver, SeqCst, SeqCst);
-    if res.is_err() {
-        // Race condition: Someone else setup the receiver between check and now.
-        // Cleanup after ourselves (extracting back into a box ensures it will
-        // be dropped when we return).
-        // Safety: we just took it from a box above, and own the only ref since
-        // the compare_exchange failed.
-        let receiver = unsafe { Box::from_raw(new_receiver) };
-        match *receiver {
-            ReceiverType::ForkedProcess(mut child) => {
-                child.kill()?;
-                child.wait()?;
-            }
-            ReceiverType::UnixSocket(_) => (),
-        }
+
+    if RECEIVER
+        .compare_exchange(ptr::null_mut(), new_receiver, SeqCst, SeqCst)
+        .is_err()
+    {
+        // Safety: The receiver was created above from Box::into_raw, and this is the only reference
+        // to it
+        unsafe { cleanup_receiver(new_receiver)? };
     }
 
     Ok(())
 }
 
 pub fn socket_is_writable(_socket_path: &str) -> bool {
-    todo!()
+    // TODO, implement this
+    true
 }
 
-pub fn ensure_socket(_socket_path: &str) -> anyhow::Result<()> {
-    //TODO, this only really checks that we had something here, could be a unix socket.  Do we
-    // care?
-    if !RECEIVER.load(SeqCst).is_null() {
-        // Receiver already running
+/// Safety: Can only be called once, on a receiver type that came from Box::into_raw
+unsafe fn cleanup_receiver(receiver: *mut ReceiverType) -> anyhow::Result<()> {
+    if receiver.is_null() {
         return Ok(());
     }
-    todo!()
+    // Cleanup after ourselves (extracting back into a box ensures it will
+    // be dropped when we return).
+    // Safety: we just took it from a box above, and own the only ref since
+    // the compare_exchange failed.
+    let receiver = unsafe { Box::from_raw(receiver) };
+    match *receiver {
+        ReceiverType::ForkedProcess(mut child) => {
+            child.kill()?;
+            child.wait()?;
+        }
+        ReceiverType::UnixSocket(_) => (),
+    };
+    Ok(())
+}
+
+pub fn ensure_socket(socket_path: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(socket_is_writable(socket_path));
+    let socket_path_ptr =
+        Box::into_raw(Box::new(ReceiverType::UnixSocket(socket_path.to_string())));
+    let old = RECEIVER.swap(socket_path_ptr, SeqCst);
+    // Safety: the only thing that writes into the RECEIVER gets from a Box::into_raw, and puts
+    // its only reference into it.
+    unsafe { cleanup_receiver(old) }
 }
 
 /// Each fork needs its own receiver.  This function should run in the child
@@ -238,19 +252,8 @@ pub fn shutdown_receiver() -> anyhow::Result<()> {
         "Crashtracker signal handlers should removed before shutting down the receiver"
     );
     let old_receiver = RECEIVER.swap(ptr::null_mut(), SeqCst);
-    if !old_receiver.is_null() {
-        // Safety: This only comes from a `Box::into_raw`, and was checked for
-        // null above
-        let old_receiver = unsafe { Box::from_raw(old_receiver) };
-        match *old_receiver {
-            ReceiverType::ForkedProcess(mut child) => {
-                child.kill()?;
-                child.wait()?;
-            }
-            ReceiverType::UnixSocket(_) => (),
-        }
-    }
-    Ok(())
+    // Safety: This only comes from a `Box::into_raw`, and is the only example
+    unsafe { cleanup_receiver(old_receiver) }
 }
 
 extern "C" fn handle_posix_sigaction(signum: i32, sig_info: *mut siginfo_t, ucontext: *mut c_void) {

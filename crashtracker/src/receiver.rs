@@ -36,8 +36,6 @@ pub fn get_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<UnixListe
     Ok(unix_listener)
 }
 
-pub const SOCKET_PATH: &str = "/tmp/crash-report-socket";
-
 pub fn reciever_entry_point_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<()> {
     let listener = get_unix_socket(socket_path)?;
     let (unix_stream, _) = listener.accept()?;
