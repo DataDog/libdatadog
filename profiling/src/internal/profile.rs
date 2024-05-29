@@ -770,40 +770,66 @@ mod api_tests {
                     SystemTime::from(chrono::DateTime::from_timestamp_nanos(*start_time_ns));
                 let duration = Duration::from_nanos(*duration_ns);
                 let end_time = start_time + duration;
-                let sample_types: Vec<_> = sample_types.iter().map(api::ValueType::from).collect();
-                let mut profile = Profile::new(start_time, &sample_types, None);
-                let mut num_timestamped = 0;
+                let api_sample_types: Vec<_> =
+                    sample_types.iter().map(api::ValueType::from).collect();
+                let mut profile = Profile::new(start_time, &api_sample_types, None);
+                let mut samples_with_timestamps = Vec::new();
+                let mut samples_without_timestamps: HashMap<
+                    (&Vec<owned_types::Location>, &Vec<owned_types::Label>),
+                    Vec<i64>,
+                > = HashMap::new();
 
-                for (timestamp, locations, values, labels) in samples {
-                    let sample = owned_types::Sample {
-                        locations: locations.clone(),
-                        values: values.clone(),
-                        labels: labels.clone().into_iter().collect(),
-                    };
-                    let r = profile.add_sample((&sample).into(), timestamp.clone());
+                let samples: Vec<(&Option<Timestamp>, owned_types::Sample)> = samples
+                    .into_iter()
+                    .map(|(timestamp, locations, values, labels)| {
+                        (
+                            timestamp,
+                            owned_types::Sample {
+                                locations: locations.clone(),
+                                values: values.clone(),
+                                labels: labels
+                                    .clone()
+                                    .into_iter()
+                                    .collect::<Vec<owned_types::Label>>(),
+                            },
+                        )
+                    })
+                    .collect();
+
+                for (timestamp, sample) in samples.iter() {
+                    let r = profile.add_sample(sample.into(), **timestamp);
                     if r.is_err() {
                         panic!("Failed to add sample: {:?}", r);
                     }
                     assert!(r.is_ok());
                     if timestamp.is_some() {
-                        num_timestamped += 1;
+                        samples_with_timestamps.push(sample);
+                    } else {
+                        if let Some(existing_values) =
+                            samples_without_timestamps.get_mut(&(&sample.locations, &sample.labels))
+                        {
+                            existing_values
+                                .iter_mut()
+                                .zip(sample.values.iter())
+                                .for_each(|(a, b)| *a = a.saturating_add(*b));
+                        } else {
+                            samples_without_timestamps
+                                .insert((&sample.locations, &sample.labels), sample.values.clone());
+                        }
                     }
                 }
-                assert_eq!(
-                    profile.only_for_testing_num_timestamped_samples(),
-                    num_timestamped
-                );
-
                 let encoded = profile
                     .serialize_into_compressed_pprof(Some(end_time), Some(duration))
                     .unwrap();
                 let serialized_profile =
                     pprof::deserialize_compressed_pprof(&encoded.buffer).unwrap();
 
-                assert_eq!(sample_types.len(), serialized_profile.sample_types.len());
-                // The next line passes but I thought that aggregated samples would
-                // decrease the samples count and thus the next line would fail.
-                assert_eq!(samples.len(), serialized_profile.samples.len());
+                assert_sample_types_eq(&serialized_profile, &sample_types);
+                assert_samples_eq(
+                    &serialized_profile,
+                    &samples_with_timestamps,
+                    &samples_without_timestamps,
+                );
             });
     }
 
