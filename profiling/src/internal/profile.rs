@@ -937,7 +937,7 @@ mod api_tests {
                 }
 
                 let pprof_profile = pprof::roundtrip_to_pprof(profile).unwrap();
-                assert_sample_types_eq(&pprof_profile, &sample_types);
+                assert_sample_types_eq(&pprof_profile, sample_types);
                 assert_samples_eq(
                     &pprof_profile,
                     &samples_with_timestamps,
