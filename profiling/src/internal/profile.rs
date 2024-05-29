@@ -714,7 +714,7 @@ mod api_tests {
                 > = HashMap::new();
                 for (timestamp, sample) in samples {
                     let r = expected_profile.add_sample(sample.into(), *timestamp);
-                    if expected_sample_types.len() == sample.values.len() && sample.is_well_formed()
+                    if expected_sample_types.len() == sample.values.len()
                     {
                         assert!(r.is_ok());
                         if timestamp.is_some() {
@@ -905,7 +905,7 @@ mod api_tests {
                     match operation {
                         Function::AddSample(timestamp, sample) => {
                             let r = profile.add_sample(sample.into(), *timestamp);
-                            if sample_types.len() == sample.values.len() && sample.is_well_formed()
+                            if sample_types.len() == sample.values.len()
                             {
                                 assert!(r.is_ok());
                                 if timestamp.is_some() {
