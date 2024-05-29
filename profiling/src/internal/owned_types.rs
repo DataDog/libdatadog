@@ -223,13 +223,6 @@ impl bolero_generator::TypeGenerator for Sample {
     }
 }
 
-impl std::hash::Hash for Sample {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.locations.hash(state);
-        self.labels.hash(state);
-    }
-}
-
 impl<'a> From<&'a Sample> for api::Sample<'a> {
     fn from(value: &'a Sample) -> Self {
         Self {
