@@ -640,12 +640,13 @@ mod api_tests {
                 } else if *key == *"trace endpoint" {
                     let actual_str = &profile.string_table[label.str as usize];
 
-                    let prev_label: &owned_types::Label =
-                        owned_labels.last().expect("No previous label");
+                    let prev_label: &owned_types::Label = owned_labels
+                        .last()
+                        .expect("Previous label to exist for endpoint label");
                     let num = prev_label.num as u64;
                     let expected_str = endpoint_mappings
                         .get(&num)
-                        .expect("No endpoint mapping found");
+                        .expect("Endpoint mapping to exist");
 
                     assert_eq!(actual_str, *expected_str);
                     continue;
@@ -714,8 +715,7 @@ mod api_tests {
                 > = HashMap::new();
                 for (timestamp, sample) in samples {
                     let r = expected_profile.add_sample(sample.into(), *timestamp);
-                    if expected_sample_types.len() == sample.values.len()
-                    {
+                    if expected_sample_types.len() == sample.values.len() {
                         assert!(r.is_ok());
                         if timestamp.is_some() {
                             samples_with_timestamps.push(sample);
@@ -905,8 +905,7 @@ mod api_tests {
                     match operation {
                         Function::AddSample(timestamp, sample) => {
                             let r = profile.add_sample(sample.into(), *timestamp);
-                            if sample_types.len() == sample.values.len()
-                            {
+                            if sample_types.len() == sample.values.len() {
                                 assert!(r.is_ok());
                                 if timestamp.is_some() {
                                     samples_with_timestamps.push(sample);
