@@ -3,7 +3,7 @@
 #![cfg(unix)]
 use crate::crashtracker::datatypes::*;
 use anyhow::Context;
-use std::io::Read;
+use ddcommon_ffi::{slice::AsBytes, CharSlice};
 
 #[no_mangle]
 #[must_use]
@@ -76,9 +76,9 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_update_on_fork(
 /// description.
 /// # Safety
 /// No safety concerns
-pub unsafe extern "C" fn ddog_prof_Crashtracker_receiver_entry_point() -> CrashtrackerResult {
-    datadog_crashtracker::receiver_entry_point()
-        .context("ddog_prof_Crashtracker_receiver_entry_point failed")
+pub unsafe extern "C" fn ddog_prof_Crashtracker_receiver_entry_point_stdin() -> CrashtrackerResult {
+    datadog_crashtracker::receiver_entry_point_stdin()
+        .context("ddog_prof_Crashtracker_receiver_entry_point_stdin failed")
         .into()
 }
 
@@ -95,10 +95,14 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_receiver_entry_point() -> Crasht
 /// description.
 /// # Safety
 /// No safety concerns
-pub unsafe extern "C" fn ddog_prof_Crashtracker_receiver_entry_point_unix_socket(socket_path: CharSlice<'a>) -> CrashtrackerResult {
-    datadog_crashtracker::receiver_entry_point()
-        .context("ddog_prof_Crashtracker_receiver_entry_point failed")
-        .into()
+pub unsafe extern "C" fn ddog_prof_Crashtracker_receiver_entry_point_unix_socket(
+    socket_path: CharSlice,
+) -> CrashtrackerResult {
+    (|| {
+        let socket_path = socket_path.try_to_utf8()?;
+        datadog_crashtracker::reciever_entry_point_unix_socket(socket_path)
+    })().context("ddog_prof_Crashtracker_receiver_entry_point_unix_socket failed")
+    .into()
 }
 
 #[no_mangle]
@@ -120,11 +124,10 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_init_with_receiver(
 ) -> CrashtrackerResult {
     (|| {
         let config = config.try_into()?;
-        let receiver_config = Some(receiver_config.try_into()?);
+        let receiver_config = receiver_config.try_into()?;
         let metadata = metadata.try_into()?;
         datadog_crashtracker::init_with_receiver(config, receiver_config, metadata)
     })()
     .context("ddog_prof_Crashtracker_init failed")
     .into()
 }
-

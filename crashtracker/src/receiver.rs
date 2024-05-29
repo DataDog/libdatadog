@@ -6,7 +6,7 @@ use self::stacktrace::StackFrame;
 use super::*;
 use anyhow::Context;
 use nix::unistd::getppid;
-use std::{io::{Read, BufReader}, os::unix::net::UnixListener};
+use std::{io::BufReader, os::unix::net::UnixListener};
 
 pub fn resolve_frames(
     config: &CrashtrackerConfiguration,
@@ -22,7 +22,8 @@ pub fn resolve_frames(
     Ok(())
 }
 
-pub fn get_unix_socket(socket_path: &str) -> anyhow::Result<UnixListener> {
+pub fn get_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<UnixListener> {
+    let socket_path = socket_path.as_ref();
     if std::fs::metadata(socket_path).is_ok() {
         println!("A socket is already present. Deleting...");
         std::fs::remove_file(socket_path)
@@ -39,7 +40,7 @@ pub const SOCKET_PATH: &str = "/tmp/crash-report-socket";
 
 pub fn reciever_entry_point_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<()> {
     let listener = get_unix_socket(socket_path)?;
-    let (unix_stream, _) = listener.accept().expect("to accept a connection");
+    let (unix_stream, _) = listener.accept()?;
     let stream = BufReader::new(unix_stream);
     receiver_entry_point(stream)
 }

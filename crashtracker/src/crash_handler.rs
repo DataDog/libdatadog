@@ -138,7 +138,8 @@ pub fn update_config(config: CrashtrackerConfiguration) -> anyhow::Result<()> {
 ///     If two simultaneous calls to this function occur, the first will win,
 ///     and the second will cleanup the redundant receiver.
 pub fn ensure_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<()> {
-    //TODO, this only really checks that we had something here, could be a unix socket.  Do we care?
+    //TODO, this only really checks that we had something here, could be a unix socket.  Do we
+    // care?
     if !RECEIVER.load(SeqCst).is_null() {
         // Receiver already running
         return Ok(());
@@ -167,16 +168,17 @@ pub fn ensure_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<()
     Ok(())
 }
 
-pub fn socket_is_writable(socket_path: &str) -> bool {
+pub fn socket_is_writable(_socket_path: &str) -> bool {
     todo!()
 }
 
-pub fn ensure_socket(socket_path: &str) -> anyhow::Result<()> {
-        //TODO, this only really checks that we had something here, could be a unix socket.  Do we care?
-        if !RECEIVER.load(SeqCst).is_null() {
-            // Receiver already running
-            return Ok(());
-        }
+pub fn ensure_socket(_socket_path: &str) -> anyhow::Result<()> {
+    //TODO, this only really checks that we had something here, could be a unix socket.  Do we
+    // care?
+    if !RECEIVER.load(SeqCst).is_null() {
+        // Receiver already running
+        return Ok(());
+    }
     todo!()
 }
 

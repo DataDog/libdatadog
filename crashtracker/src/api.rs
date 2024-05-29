@@ -6,7 +6,8 @@ use crate::{
     configuration::CrashtrackerReceiverConfig,
     counters::reset_counters,
     crash_handler::{
-        ensure_receiver, ensure_socket, register_crash_handlers, restore_old_handlers, shutdown_receiver, update_receiver_after_fork
+        ensure_receiver, ensure_socket, register_crash_handlers, restore_old_handlers,
+        shutdown_receiver, update_receiver_after_fork,
     },
     crash_info::CrashtrackerMetadata,
     update_config, update_metadata, CrashtrackerConfiguration,
@@ -132,7 +133,7 @@ pub fn init_with_unix_socket(
 // look in /tmp/crashreports for the crash reports and output files
 // Commented out since `ignore` doesn't work in CI.
 //#[test]
-fn test_crash() {
+fn test_crash() -> anyhow::Result<()> {
     use crate::{begin_profiling_op, StacktraceCollection};
     use chrono::Utc;
     use ddcommon::{parse_uri, tag::Tag, Endpoint};
@@ -154,27 +155,28 @@ fn test_crash() {
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
     let timeout = Duration::from_secs(30);
-    let receiver_config = Some(
-        CrashtrackerReceiverConfig::new(
-            vec![],
-            vec![],
-            path_to_receiver_binary,
-            stderr_filename,
-            stdout_filename,
-        )
-        .expect("Not to fail"),
-    );
-    let config =
-        CrashtrackerConfiguration::new(vec![], create_alt_stack, endpoint, resolve_frames, timeout)
-            .expect("not to fail");
+    let receiver_config = CrashtrackerReceiverConfig::new(
+        vec![],
+        vec![],
+        path_to_receiver_binary,
+        stderr_filename,
+        stdout_filename,
+    )?;
+    let config = CrashtrackerConfiguration::new(
+        vec![],
+        create_alt_stack,
+        endpoint,
+        resolve_frames,
+        timeout,
+    )?;
     let metadata = CrashtrackerMetadata::new(
         "libname".to_string(),
         "version".to_string(),
         "family".to_string(),
         vec![],
     );
-    init_with_receiver(config, receiver_config, metadata).expect("not to fail");
-    begin_profiling_op(crate::ProfilingOpTypes::CollectingSample).expect("Not to fail");
+    init_with_receiver(config, receiver_config, metadata)?;
+    begin_profiling_op(crate::ProfilingOpTypes::CollectingSample)?;
 
     let tag = Tag::new("apple", "banana").expect("tag");
     let metadata2 = CrashtrackerMetadata::new(
@@ -190,4 +192,5 @@ fn test_crash() {
     let p: *const u32 = std::ptr::null();
     let q = unsafe { *p };
     assert_eq!(q, 3);
+    Ok(())
 }
