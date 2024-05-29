@@ -772,8 +772,8 @@ mod api_tests {
         let sample_length_gen = 1..=64usize;
 
         bolero::check!()
-            .with_generator((sample_length_gen, i64::gen(), u64::gen()))
-            .and_then(|(sample_len, start_time_ns, duration_ns)| {
+            .with_generator(sample_length_gen)
+            .and_then(|sample_len| {
                 let sample_types = Vec::<owned_types::ValueType>::gen().with().len(sample_len);
 
                 let timestamps = Option::<Timestamp>::gen();
@@ -790,16 +790,12 @@ mod api_tests {
                 )>::gen()
                 .with()
                 .values((timestamps, locations, values, labels));
-                (sample_types, samples, start_time_ns, duration_ns)
+                (sample_types, samples)
             })
-            .for_each(|(sample_types, samples, start_time_ns, duration_ns)| {
-                let start_time =
-                    SystemTime::from(chrono::DateTime::from_timestamp_nanos(*start_time_ns));
-                let duration = Duration::from_nanos(*duration_ns);
-                let end_time = start_time + duration;
+            .for_each(|(sample_types, samples)| {
                 let api_sample_types: Vec<_> =
                     sample_types.iter().map(api::ValueType::from).collect();
-                let mut profile = Profile::new(start_time, &api_sample_types, None);
+                let mut profile = Profile::new(SystemTime::now(), &api_sample_types, None);
                 let mut samples_with_timestamps = Vec::new();
                 let mut samples_without_timestamps: HashMap<
                     (&Vec<owned_types::Location>, &Vec<owned_types::Label>),
@@ -841,11 +837,8 @@ mod api_tests {
                             .insert((&sample.locations, &sample.labels), sample.values.clone());
                     }
                 }
-                let encoded = profile
-                    .serialize_into_compressed_pprof(Some(end_time), Some(duration))
-                    .unwrap();
                 let serialized_profile =
-                    pprof::deserialize_compressed_pprof(&encoded.buffer).unwrap();
+                    pprof::roundtrip_to_pprof(profile).expect("Failed to roundtrip to pprof");
 
                 assert_sample_types_eq(&serialized_profile, sample_types);
                 assert_samples_eq(
