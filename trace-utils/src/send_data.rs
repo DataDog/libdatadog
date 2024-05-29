@@ -172,7 +172,8 @@ impl RetryStrategy {
     /// This function calculates the delay duration based on the retry strategy's backoff type:
     /// - `Double`: The delay is doubled for each attempt.
     /// - `Constant`: The delay is constant for each attempt.
-    /// - `Exponential`: The delay is multiplied by the attempt number.
+    /// - `Exponential`: The delay is the base delay multiplied by 2 to the power of (attempt number
+    ///   - 1).
     ///
     /// If a jitter duration is specified in the retry strategy, a random duration up to the jitter
     /// value is added to the delay.
@@ -182,9 +183,9 @@ impl RetryStrategy {
     /// * `attempt`: The number of the current attempt (1-indexed).
     pub(crate) async fn delay(&self, attempt: u32) {
         let delay = match self.backoff_type {
-            RetryBackoffType::Double => self.delay_ms * 2u32.pow(attempt - 1),
+            RetryBackoffType::Exponential => self.delay_ms * 2u32.pow(attempt - 1),
             RetryBackoffType::Constant => self.delay_ms,
-            RetryBackoffType::Exponential => self.delay_ms * attempt,
+            RetryBackoffType::Double => self.delay_ms * attempt,
         };
 
         if let Some(jitter) = self.jitter {
@@ -458,14 +459,14 @@ mod tests {
         );
 
         let start = Instant::now();
-        retry_strategy.delay(2).await;
+        retry_strategy.delay(3).await;
         let elapsed = start.elapsed();
 
-        // For the Double strategy, the delay for the second attempt should be double the delay_ms.
+        // For the Double strategy, the delay for the third attempt should be delay_ms * 3.
         assert!(
-            elapsed >= retry_strategy.delay_ms * 2
+            elapsed >= retry_strategy.delay_ms * 3
                 && elapsed
-                    <= retry_strategy.delay_ms * 2
+                    <= retry_strategy.delay_ms * 3
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
             "Elapsed time was not within expected range"
         );
@@ -496,13 +497,12 @@ mod tests {
         let start = Instant::now();
         retry_strategy.delay(3).await;
         let elapsed = start.elapsed();
-
-        // For the Exponential strategy, the delay for the second attempt should be double the
-        // delay_ms.
+        // For the Exponential strategy, the delay for the 3rd attempt should be delay_ms * 2^(3-1)
+        // = delay_ms * 4.
         assert!(
-            elapsed >= retry_strategy.delay_ms * 3
+            elapsed >= retry_strategy.delay_ms * 4
                 && elapsed
-                    <= retry_strategy.delay_ms * 3
+                    <= retry_strategy.delay_ms * 4
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
             "Elapsed time was not within expected range"
         );
