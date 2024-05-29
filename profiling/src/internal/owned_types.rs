@@ -201,8 +201,9 @@ impl bolero_generator::TypeGenerator for Sample {
         let mut labels = std::collections::HashSet::<Label>::gen_with().generate(driver)?;
 
         // Ensure that the label has "local root span id" key
-        // Generate non-zero i64 value for the label
+        // Generate non-zero num value for the label
         let num = i64::gen().generate(driver)?;
+        // zero num is considered as invalid, see Profile::validate_sample_labels
         if num == 0 {
             return None;
         }
