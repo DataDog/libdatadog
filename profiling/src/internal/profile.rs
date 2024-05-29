@@ -769,7 +769,7 @@ mod api_tests {
 
     #[test]
     fn fuzz_add_sample_with_fixed_sample_length() {
-        let sample_length_gen = 1..=64usize;
+        let sample_length_gen = if cfg!(miri) { 1..=8usize } else { 1..=64usize };
 
         bolero::check!()
             .with_generator(sample_length_gen)
@@ -894,7 +894,7 @@ mod api_tests {
 
     #[test]
     fn fuzz_api_function_calls() {
-        let sample_length_gen = 1..=64usize;
+        let sample_length_gen = if cfg!(miri) { 1..=8usize } else { 1..=64usize };
 
         bolero::check!()
             .with_generator(sample_length_gen)
