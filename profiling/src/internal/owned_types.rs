@@ -3,7 +3,7 @@
 
 use crate::api;
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 #[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
 pub struct Function {
     /// Name of the function, in human-readable form if available.
@@ -94,7 +94,7 @@ impl<'a> From<&'a Line> for api::Line<'a> {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 #[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
 pub struct Location {
     pub mapping: Mapping,
@@ -120,7 +120,7 @@ impl<'a> From<&'a Location> for api::Location<'a> {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 #[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
 pub struct Mapping {
     /// Address at which the binary (or DLL) is loaded into memory.
@@ -189,6 +189,13 @@ pub struct Sample {
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
     pub labels: Vec<Label>,
+}
+
+impl std::hash::Hash for Sample {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.locations.hash(state);
+        self.labels.hash(state);
+    }
 }
 
 impl<'a> From<&'a Sample> for api::Sample<'a> {

@@ -545,7 +545,6 @@ impl Profile {
 mod api_tests {
     use super::*;
     use bolero::TypeGenerator;
-    use itertools::Itertools;
     use std::collections::HashSet;
 
     /// Fuzzes adding a bunch of samples to the profile.
@@ -564,12 +563,28 @@ mod api_tests {
                 let expected_sample_types: Vec<_> = val.iter().map(api::ValueType::from).collect();
                 let mut expected_profile =
                     Profile::new(SystemTime::now(), &expected_sample_types, None);
-                let mut expected_samples: Vec<&owned_types::Sample> = Vec::new();
+                let mut samples_with_timestamps = Vec::new();
+                let mut samples_without_timestamps: HashSet<owned_types::Sample> = HashSet::new();
                 for (timestamp, sample) in samples {
                     let r = expected_profile.add_sample(sample.into(), timestamp.clone());
                     if val.len() == sample.values.len() && sample.is_well_formed() {
                         assert!(r.is_ok());
-                        expected_samples.push(sample);
+                        if timestamp.is_some() {
+                            samples_with_timestamps.push(sample);
+                        } else {
+                            if let Some(mut existing_sample) =
+                                samples_without_timestamps.take(&sample)
+                            {
+                                existing_sample
+                                    .values
+                                    .iter_mut()
+                                    .zip(sample.values.iter())
+                                    .for_each(|(a, b)| *a = a.saturating_add(*b));
+                                samples_without_timestamps.insert(existing_sample);
+                            } else {
+                                samples_without_timestamps.insert(sample.clone());
+                            }
+                        }
                     } else {
                         assert!(r.is_err());
                     }
@@ -577,10 +592,15 @@ mod api_tests {
 
                 let profile = pprof::roundtrip_to_pprof(expected_profile).unwrap();
 
+                assert_eq!(
+                    profile.sample_types.len(),
+                    expected_sample_types.len(),
+                    "Sample types length mismatch"
+                );
                 for (typ, expected_typ) in profile
                     .sample_types
                     .iter()
-                    .zip_eq(expected_sample_types.iter())
+                    .zip(expected_sample_types.iter())
                 {
                     assert_eq!(
                         profile.string_table[typ.r#type as usize],
@@ -589,27 +609,29 @@ mod api_tests {
                     assert_eq!(profile.string_table[typ.unit as usize], expected_typ.unit);
                 }
 
-                assert_eq!(profile.samples.len(), expected_samples.len());
-                for (sample, expected_sample) in
-                    profile.samples.iter().zip_eq(expected_samples.iter())
-                {
-                    assert_eq!(sample.location_ids.len(), expected_sample.locations.len());
+                assert_eq!(
+                    profile.samples.len(),
+                    samples_with_timestamps.len() + samples_without_timestamps.len(),
+                    "Samples length mismatch"
+                );
+
+                let mut iter = profile.samples.iter();
+
+                for expected_sample in samples_with_timestamps.iter() {
+                    let sample = iter.next().unwrap();
+                    assert_eq!(
+                        sample.location_ids.len(),
+                        expected_sample.locations.len(),
+                        "Locations length mismatch"
+                    );
                     for (loc_id, expected_location) in sample
                         .location_ids
                         .iter()
-                        .zip_eq(expected_sample.locations.iter())
+                        .zip(expected_sample.locations.iter())
                     {
-                        let location = &profile
-                            .locations
-                            .iter()
-                            .find(|l| l.id == *loc_id)
-                            .expect("Location not found");
+                        let location = &profile.locations[*loc_id as usize - 1];
 
-                        let mapping = &profile
-                            .mappings
-                            .iter()
-                            .find(|m| m.id == location.mapping_id)
-                            .expect("Mapping not found");
+                        let mapping = &profile.mappings[location.mapping_id as usize - 1];
                         assert_eq!(
                             *profile.string_table[mapping.filename as usize],
                             *expected_location.mapping.filename
@@ -623,7 +645,137 @@ mod api_tests {
                         assert_eq!(mapping.file_offset, expected_location.mapping.file_offset);
 
                         assert_eq!(location.address, expected_location.address);
+
+                        assert!(location.lines.len() == 1);
+
+                        let line = location.lines[0];
+                        assert_eq!(line.line, expected_location.line);
+                        let function = profile.functions[line.function_id as usize - 1];
+                        let expected_function = &expected_location.function;
+                        assert_eq!(
+                            *profile.string_table[function.name as usize],
+                            *expected_function.name
+                        );
+                        assert_eq!(
+                            *profile.string_table[function.system_name as usize],
+                            *expected_function.system_name
+                        );
+                        assert_eq!(
+                            *profile.string_table[function.filename as usize],
+                            *expected_function.filename
+                        );
+                        assert_eq!(function.start_line, expected_function.start_line);
+
+                        assert!(!location.is_folded);
                     }
+
+                    assert_eq!(sample.values, expected_sample.values);
+
+                    for (label, expected_label) in
+                        sample.labels.iter().zip(expected_sample.labels.iter())
+                    {
+                        assert_eq!(
+                            *profile.string_table[label.key as usize],
+                            *expected_label.key
+                        );
+                        if let Some(str) = &expected_label.str {
+                            assert_eq!(*profile.string_table[label.str as usize], *str);
+                        } else {
+                            assert_eq!(label.num, expected_label.num);
+                            if let Some(num_unit) = &expected_label.num_unit {
+                                assert_eq!(
+                                    *profile.string_table[label.num_unit as usize],
+                                    **num_unit
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Compare aggregated (non-timestamped) samples
+                for sample in iter {
+                    // Recreate owned_locations from the pprof::Location
+                    let mut owned_locations = Vec::new();
+
+                    for loc_id in sample.location_ids.iter() {
+                        let location = &profile.locations[*loc_id as usize - 1];
+                        let mapping = &profile.mappings[location.mapping_id as usize - 1];
+                        let line = location.lines[0];
+                        let function = profile.functions[line.function_id as usize - 1];
+
+                        let owned_location = owned_types::Location {
+                            mapping: owned_types::Mapping {
+                                memory_start: mapping.memory_start,
+                                memory_limit: mapping.memory_limit,
+                                file_offset: mapping.file_offset,
+                                filename: profile.string_table[mapping.filename as usize]
+                                    .clone()
+                                    .into_boxed_str(),
+                                build_id: profile.string_table[mapping.build_id as usize]
+                                    .clone()
+                                    .into_boxed_str(),
+                            },
+                            function: owned_types::Function {
+                                name: profile.string_table[function.name as usize]
+                                    .clone()
+                                    .into_boxed_str(),
+                                system_name: profile.string_table[function.system_name as usize]
+                                    .clone()
+                                    .into_boxed_str(),
+                                filename: profile.string_table[function.filename as usize]
+                                    .clone()
+                                    .into_boxed_str(),
+                                start_line: function.start_line,
+                            },
+                            address: location.address,
+                            line: line.line,
+                        };
+
+                        owned_locations.push(owned_location);
+                    }
+
+                    let mut owned_labels = Vec::new();
+                    for label in sample.labels.iter() {
+                        let key = profile.string_table[label.key as usize]
+                            .clone()
+                            .into_boxed_str();
+                        if label.str != 0 {
+                            let str = profile.string_table[label.str as usize].clone();
+                            owned_labels.push(owned_types::Label {
+                                key,
+                                str: Some(str),
+                                num: 0,
+                                num_unit: None,
+                            });
+                        } else {
+                            let num = label.num;
+                            let num_unit = if label.num_unit != 0 {
+                                Some(
+                                    profile.string_table[label.num_unit as usize]
+                                        .clone()
+                                        .into_boxed_str(),
+                                )
+                            } else {
+                                None
+                            };
+                            owned_labels.push(owned_types::Label {
+                                key,
+                                str: None,
+                                num: num,
+                                num_unit,
+                            });
+                        }
+                    }
+
+                    let key = owned_types::Sample {
+                        locations: owned_locations,
+                        values: Vec::new(),
+                        labels: owned_labels,
+                    };
+
+                    let expected_sample = samples_without_timestamps
+                        .get(&key)
+                        .expect("Sample not found");
 
                     assert_eq!(sample.values, expected_sample.values);
                 }
