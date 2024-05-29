@@ -789,11 +789,9 @@ mod api_tests {
                     .collect();
 
                 for (timestamp, sample) in samples.iter() {
-                    let r = profile.add_sample(sample.into(), **timestamp);
-                    if r.is_err() {
-                        panic!("Failed to add sample: {:?}", r);
-                    }
-                    assert!(r.is_ok());
+                    profile
+                        .add_sample(sample.into(), **timestamp)
+                        .expect("Failed to add sample");
                     if timestamp.is_some() {
                         samples_with_timestamps.push(sample);
                     } else if let Some(existing_values) =
@@ -851,6 +849,80 @@ mod api_tests {
                 let encoded = profile.serialize_into_compressed_pprof(None, None).unwrap();
                 pprof::deserialize_compressed_pprof(&encoded.buffer).unwrap();
             });
+    }
+
+    #[derive(Debug, TypeGenerator)]
+    enum Function {
+        AddSample(Option<Timestamp>, owned_types::Sample),
+        AddEndpoint,
+    }
+
+    #[derive(Debug, TypeGenerator)]
+    struct ApiFunctionCalls {
+        sample_types: Vec<owned_types::ValueType>,
+        operations: Vec<Function>,
+    }
+
+    #[test]
+    fn fuzz_api_function_calls() {
+        let sample_length_gen = 1..=64usize;
+
+        bolero::check!()
+            .with_generator(sample_length_gen)
+            .and_then(|sample_len| {
+                let sample_types = Vec::<owned_types::ValueType>::gen().with().len(sample_len);
+                let operations = Vec::<Function>::gen();
+
+                (sample_types, operations)
+            })
+            .for_each(|(sample_types, operations)| {
+                let api_sample_types: Vec<_> =
+                    sample_types.iter().map(api::ValueType::from).collect();
+                let mut profile = Profile::new(SystemTime::now(), &api_sample_types, None);
+                let mut samples_with_timestamps: Vec<&owned_types::Sample> = Vec::new();
+                let mut samples_without_timestamps: HashMap<
+                    (&Vec<owned_types::Location>, &Vec<owned_types::Label>),
+                    Vec<i64>,
+                > = HashMap::new();
+
+                for operation in operations {
+                    match operation {
+                        Function::AddSample(timestamp, sample) => {
+                            let r = profile.add_sample(sample.into(), *timestamp);
+                            if sample_types.len() == sample.values.len() && sample.is_well_formed()
+                            {
+                                assert!(r.is_ok());
+                                if timestamp.is_some() {
+                                    samples_with_timestamps.push(sample);
+                                } else if let Some(existing_values) = samples_without_timestamps
+                                    .get_mut(&(&sample.locations, &sample.labels))
+                                {
+                                    existing_values
+                                        .iter_mut()
+                                        .zip(sample.values.iter())
+                                        .for_each(|(a, b)| *a = a.saturating_add(*b));
+                                } else {
+                                    samples_without_timestamps.insert(
+                                        (&sample.locations, &sample.labels),
+                                        sample.values.clone(),
+                                    );
+                                }
+                            } else {
+                                assert!(r.is_err());
+                            }
+                        }
+                        Function::AddEndpoint => {}
+                    }
+                }
+
+                let pprof_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+                assert_sample_types_eq(&pprof_profile, &sample_types);
+                assert_samples_eq(
+                    &pprof_profile,
+                    &samples_with_timestamps,
+                    &samples_without_timestamps,
+                );
+            })
     }
 
     #[test]
