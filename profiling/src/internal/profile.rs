@@ -843,11 +843,11 @@ mod api_tests {
             .for_each(|endpoints| {
                 let mut profile = Profile::new(SystemTime::now(), &[], None);
                 for (local_root_span_id, endpoint) in endpoints {
-                    let r = profile.add_endpoint(*local_root_span_id, endpoint.into());
-                    assert!(r.is_ok());
+                    profile
+                        .add_endpoint(*local_root_span_id, endpoint.into())
+                        .expect("add_endpoint to succeed");
                 }
-                let encoded = profile.serialize_into_compressed_pprof(None, None).unwrap();
-                pprof::deserialize_compressed_pprof(&encoded.buffer).unwrap();
+                pprof::roundtrip_to_pprof(profile).expect("roundtrip_to_pprof to succeed");
             });
     }
 
@@ -858,11 +858,11 @@ mod api_tests {
             .for_each(|endpoint_counts| {
                 let mut profile = Profile::new(SystemTime::now(), &[], None);
                 for (endpoint, count) in endpoint_counts {
-                    let r = profile.add_endpoint_count(endpoint.into(), *count);
-                    assert!(r.is_ok());
+                    profile
+                        .add_endpoint_count(endpoint.into(), *count)
+                        .expect("add_endpoint_count to succeed");
                 }
-                let encoded = profile.serialize_into_compressed_pprof(None, None).unwrap();
-                pprof::deserialize_compressed_pprof(&encoded.buffer).unwrap();
+                pprof::roundtrip_to_pprof(profile).expect("roundtrip_to_pprof to succeed");
             });
     }
 
@@ -930,7 +930,7 @@ mod api_tests {
                         Function::AddEndpoint(local_root_span_id, endpoint) => {
                             profile
                                 .add_endpoint(*local_root_span_id, endpoint.into())
-                                .expect("Failed to add endpoint");
+                                .expect("add_endpoint to succeed");
                             endpoint_mappings.insert(*local_root_span_id, endpoint);
                         }
                     }
