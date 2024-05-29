@@ -681,10 +681,6 @@ mod api_tests {
     }
 
     /// Fuzzes adding a bunch of samples to the profile.
-    /// TODO: many of the samples will be of the wrong length, and will give a boring error right
-    /// away.  Improve the generator to test the case where samples are the right length to get
-    /// more coverage faster
-    /// TODO: Test the expected result of adding the samples
     #[test]
     fn fuzz_add_sample() {
         bolero::check!()
