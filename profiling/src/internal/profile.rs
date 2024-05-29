@@ -636,6 +636,7 @@ mod api_tests {
                     .into_boxed_str();
 
                 if *key == *"end_timestamp_ns" {
+                    // TODO: Check end timestamp label
                     continue;
                 } else if *key == *"trace endpoint" {
                     let actual_str = &profile.string_table[label.str as usize];
@@ -694,6 +695,38 @@ mod api_tests {
         }
     }
 
+    fn add_sample<'a>(
+        timestamp: &Option<Timestamp>,
+        sample: &'a owned_types::Sample,
+        expected_sample_types: &[owned_types::ValueType],
+        profile: &mut Profile,
+        samples_with_timestamps: &mut Vec<&'a owned_types::Sample>,
+        samples_without_timestamps: &mut HashMap<
+            (&'a Vec<owned_types::Location>, &'a Vec<owned_types::Label>),
+            Vec<i64>,
+        >,
+    ) {
+        let r = profile.add_sample(sample.into(), *timestamp);
+        if expected_sample_types.len() == sample.values.len() {
+            assert!(r.is_ok());
+            if timestamp.is_some() {
+                samples_with_timestamps.push(sample);
+            } else if let Some(existing_values) =
+                samples_without_timestamps.get_mut(&(&sample.locations, &sample.labels))
+            {
+                existing_values
+                    .iter_mut()
+                    .zip(sample.values.iter())
+                    .for_each(|(a, b)| *a = a.saturating_add(*b));
+            } else {
+                samples_without_timestamps
+                    .insert((&sample.locations, &sample.labels), sample.values.clone());
+            }
+        } else {
+            assert!(r.is_err());
+        }
+    }
+
     /// Fuzzes adding a bunch of samples to the profile.
     #[test]
     fn fuzz_add_sample() {
@@ -714,27 +747,15 @@ mod api_tests {
                     Vec<i64>,
                 > = HashMap::new();
                 for (timestamp, sample) in samples {
-                    let r = expected_profile.add_sample(sample.into(), *timestamp);
-                    if expected_sample_types.len() == sample.values.len() {
-                        assert!(r.is_ok());
-                        if timestamp.is_some() {
-                            samples_with_timestamps.push(sample);
-                        } else if let Some(existing_values) =
-                            samples_without_timestamps.get_mut(&(&sample.locations, &sample.labels))
-                        {
-                            existing_values
-                                .iter_mut()
-                                .zip(sample.values.iter())
-                                .for_each(|(a, b)| *a = a.saturating_add(*b));
-                        } else {
-                            samples_without_timestamps
-                                .insert((&sample.locations, &sample.labels), sample.values.clone());
-                        }
-                    } else {
-                        assert!(r.is_err());
-                    }
+                    add_sample(
+                        &timestamp,
+                        &sample,
+                        &expected_sample_types,
+                        &mut expected_profile,
+                        &mut samples_with_timestamps,
+                        &mut samples_without_timestamps,
+                    );
                 }
-
                 let profile = pprof::roundtrip_to_pprof(expected_profile).unwrap();
                 assert_sample_types_eq(&profile, expected_sample_types);
                 assert_samples_eq(
@@ -904,27 +925,14 @@ mod api_tests {
                 for operation in operations {
                     match operation {
                         Function::AddSample(timestamp, sample) => {
-                            let r = profile.add_sample(sample.into(), *timestamp);
-                            if sample_types.len() == sample.values.len() {
-                                assert!(r.is_ok());
-                                if timestamp.is_some() {
-                                    samples_with_timestamps.push(sample);
-                                } else if let Some(existing_values) = samples_without_timestamps
-                                    .get_mut(&(&sample.locations, &sample.labels))
-                                {
-                                    existing_values
-                                        .iter_mut()
-                                        .zip(sample.values.iter())
-                                        .for_each(|(a, b)| *a = a.saturating_add(*b));
-                                } else {
-                                    samples_without_timestamps.insert(
-                                        (&sample.locations, &sample.labels),
-                                        sample.values.clone(),
-                                    );
-                                }
-                            } else {
-                                assert!(r.is_err());
-                            }
+                            add_sample(
+                                &timestamp,
+                                &sample,
+                                &sample_types,
+                                &mut profile,
+                                &mut samples_with_timestamps,
+                                &mut samples_without_timestamps,
+                            );
                         }
                         Function::AddEndpoint(local_root_span_id, endpoint) => {
                             profile
