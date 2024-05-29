@@ -111,16 +111,7 @@ impl AzureMetadata {
         }
     }
 
-    pub fn new<T: QueryEnv>(query: T) -> Option<Self> {
-        let is_relevant = query
-            .get_var(SERVICE_CONTEXT)
-            .map(|s| s.to_bool())
-            .unwrap_or(false);
-
-        if !is_relevant {
-            return None;
-        }
-
+    fn build_metadata<T: QueryEnv>(query: T) -> Option<Self> {
         let subscription_id =
             AzureMetadata::extract_subscription_id(query.get_var(WEBSITE_ONWER_NAME));
         let site_name = query.get_var(WEBSITE_SITE_NAME);
@@ -141,7 +132,7 @@ impl AzureMetadata {
         let instance_name = query.get_var(INSTANCE_NAME);
         let instance_id = query.get_var(INSTANCE_ID);
 
-        Some(AzureMetadata {
+        return Some(AzureMetadata {
             resource_id,
             subscription_id,
             site_name,
@@ -153,6 +144,24 @@ impl AzureMetadata {
             site_kind,
             site_type,
         })
+    }
+
+
+    pub fn new<T: QueryEnv>(query: T) -> Option<Self> {
+        let is_relevant = query
+            .get_var(SERVICE_CONTEXT)
+            .map(|s| s.to_bool())
+            .unwrap_or(false);
+
+        if !is_relevant {
+            return None;
+        }
+
+       return AzureMetadata::build_metadata(query);
+    }
+
+    pub fn new_function<T: QueryEnv>(query: T) -> Option<Self> {
+        return AzureMetadata::build_metadata(query);
     }
 
     pub fn get_resource_id(&self) -> &str {
@@ -199,6 +208,13 @@ impl AzureMetadata {
 pub fn get_metadata() -> &'static Option<AzureMetadata> {
     lazy_static! {
         static ref AAS_METATDATA: Option<AzureMetadata> = AzureMetadata::new(RealEnv {});
+    }
+    &AAS_METATDATA
+}
+
+pub fn get_function_metadata() -> &'static Option<AzureMetadata> {
+    lazy_static! {
+        static ref AAS_METATDATA: Option<AzureMetadata> = AzureMetadata::new_function(RealEnv {});
     }
     &AAS_METATDATA
 }
