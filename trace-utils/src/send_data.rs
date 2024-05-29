@@ -115,11 +115,11 @@ where
 /// ```
 #[derive(Debug, Clone)]
 pub enum RetryBackoffType {
-    /// The delay is doubled for each attempt.
-    Double,
+    /// Increases the delay by a fixed increment each attempt.
+    Linear,
     /// The delay is constant for each attempt.
     Constant,
-    /// The delay is multiplied by the attempt number.
+    /// The delay is doubled for each attempt.
     Exponential,
 }
 
@@ -139,7 +139,7 @@ pub enum RetryBackoffType {
 /// let retry_strategy = RetryStrategy {
 ///     max_retries: 5,
 ///     delay_ms: Duration::from_millis(100),
-///     backoff_type: RetryBackoffType::Double,
+///     backoff_type: RetryBackoffType::Exponential,
 ///     jitter: Some(Duration::from_millis(50)),
 /// };
 /// ```
@@ -160,7 +160,7 @@ impl Default for RetryStrategy {
         RetryStrategy {
             max_retries: 5,
             delay_ms: Duration::from_millis(100),
-            backoff_type: RetryBackoffType::Double,
+            backoff_type: RetryBackoffType::Exponential,
             jitter: None,
         }
     }
@@ -168,12 +168,6 @@ impl Default for RetryStrategy {
 
 impl RetryStrategy {
     /// Delays the next request attempt based on the retry strategy.
-    ///
-    /// This function calculates the delay duration based on the retry strategy's backoff type:
-    /// - `Double`: The delay is doubled for each attempt.
-    /// - `Constant`: The delay is constant for each attempt.
-    /// - `Exponential`: The delay is the base delay multiplied by 2 to the power of (attempt number
-    ///   - 1).
     ///
     /// If a jitter duration is specified in the retry strategy, a random duration up to the jitter
     /// value is added to the delay.
@@ -185,7 +179,7 @@ impl RetryStrategy {
         let delay = match self.backoff_type {
             RetryBackoffType::Exponential => self.delay_ms * 2u32.pow(attempt - 1),
             RetryBackoffType::Constant => self.delay_ms,
-            RetryBackoffType::Double => self.delay_ms * attempt,
+            RetryBackoffType::Linear => self.delay_ms + (self.delay_ms * (attempt - 1)),
         };
 
         if let Some(jitter) = self.jitter {
@@ -438,11 +432,11 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    async fn test_retry_strategy_double() {
+    async fn test_retry_strategy_linear() {
         let retry_strategy = RetryStrategy {
             max_retries: 5,
             delay_ms: Duration::from_millis(100),
-            backoff_type: RetryBackoffType::Double,
+            backoff_type: RetryBackoffType::Linear,
             jitter: None,
         };
 
@@ -462,11 +456,13 @@ mod tests {
         retry_strategy.delay(3).await;
         let elapsed = start.elapsed();
 
-        // For the Double strategy, the delay for the third attempt should be delay_ms * 3.
+        // For the Linear strategy, the delay for the 3rd attempt should be delay_ms + (delay_ms *
+        // 2).
         assert!(
-            elapsed >= retry_strategy.delay_ms * 3
+            elapsed >= retry_strategy.delay_ms + (retry_strategy.delay_ms * 2)
                 && elapsed
-                    <= retry_strategy.delay_ms * 3
+                    <= retry_strategy.delay_ms
+                        + (retry_strategy.delay_ms * 2)
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
             "Elapsed time was not within expected range"
         );
