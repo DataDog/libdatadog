@@ -29,4 +29,25 @@ bash build-profiling-ffi.sh /opt/libdatadog
 
 #### Build Dependencies
 
-Rust 1.69 or newer with cargo. Some platforms may need protoc; others have it shipped in prost-build.
+- Rust 1.71 or newer with cargo
+- `cmake` and `protoc`
+
+### Running tests
+
+This project uses [cargo-nextest][nt] to run tests.
+
+```bash
+cargo nextest run
+```
+
+#### Installing cargo-nextest
+
+The simplest way to install [cargo-nextest][nt] is to use `cargo install` like this.
+
+```bash
+cargo install --locked 'cargo-nextest@0.9.67'
+```
+
+Please note that the locked version is to make sure that it can be built using rust `1.71.1`, and if you are using a newer rust version, then it's enough to limit the version to `0.9.*`.
+
+[nt]: https://nexte.st/

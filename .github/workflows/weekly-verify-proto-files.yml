@@ -1,21 +1,21 @@
-name: 'Nightly verify trace-protobuf'
+name: 'Weekly verify trace-protobuf'
 
 on:
   schedule:
-    - cron: '0 2 * * 1-5'
+    - cron: '0 2 * * 1'
 
 env:
   DATADOG_AGENT_TAG: "main"
 
 jobs:
-  nightly-verify-proto-files:
+  weekly-verify-proto-files:
     name: "Verify trace-protobuf .proto files are in sync with datadog-agent"        
     runs-on: ubuntu-latest
     environment: nightlies
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: diff agent_payload.proto
         working-directory: trace-protobuf/src/pb

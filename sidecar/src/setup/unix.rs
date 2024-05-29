@@ -65,7 +65,10 @@ impl Liaison for SharedDirLiaison {
         if self.socket_path.exists() {
             // if socket is already listening, then creating listener is not available
             if platform::sockets::is_listening(&self.socket_path)? {
-                debug!("already_listening");
+                debug!(
+                    "The sidecar's socket is already listening ({})",
+                    self.socket_path.as_path().display()
+                );
                 return Ok(None);
             }
             fs::remove_file(&self.socket_path)?;
@@ -85,7 +88,7 @@ impl Liaison for SharedDirLiaison {
 
 impl SharedDirLiaison {
     pub fn new<P: AsRef<Path>>(base_dir: P) -> Self {
-        let versioned_socket_basename = concat!("libdd.", env!("CARGO_PKG_VERSION"), ".sock");
+        let versioned_socket_basename = concat!("libdd.", crate::sidecar_version!(), ".sock");
         let base_dir = base_dir.as_ref();
         let socket_path = base_dir
             .join(versioned_socket_basename)
@@ -143,13 +146,13 @@ mod linux {
         }
 
         fn ipc_shared() -> AbstractUnixSocketLiaison {
-            let path = PathBuf::from(concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".sock"));
+            let path = PathBuf::from(concat!("libdatadog/", crate::sidecar_version!(), ".sock"));
             Self { path }
         }
 
         fn ipc_per_process() -> AbstractUnixSocketLiaison {
             let path = PathBuf::from(format!(
-                concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".{}.sock"),
+                concat!("libdatadog/", crate::sidecar_version!(), ".{}.sock"),
                 getpid()
             ));
             Self { path }

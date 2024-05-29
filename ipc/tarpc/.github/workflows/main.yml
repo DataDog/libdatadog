@@ -17,7 +17,7 @@ jobs:
         uses: styfle/cancel-workflow-action@0.10.0
         with:
           access_token: ${{ github.token }}
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: mipsel-unknown-linux-gnu
@@ -32,7 +32,7 @@ jobs:
         uses: styfle/cancel-workflow-action@0.10.0
         with:
           access_token: ${{ github.token }}
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test
       - run: cargo test --manifest-path tarpc/Cargo.toml --features serde1
@@ -49,7 +49,7 @@ jobs:
         uses: styfle/cancel-workflow-action@0.10.0
         with:
           access_token: ${{ github.token }}
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -63,7 +63,7 @@ jobs:
         uses: styfle/cancel-workflow-action@0.10.0
         with:
           access_token: ${{ github.token }}
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy

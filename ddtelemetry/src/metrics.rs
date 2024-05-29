@@ -219,7 +219,7 @@ impl MetricContexts {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use std::fmt::Debug;
 
     use super::*;

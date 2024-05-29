@@ -121,22 +121,20 @@ pub fn init_with_unix_socket(
     Ok(())
 }
 
-#[ignore]
-#[allow(dead_code)]
-// Ignored tests are still run in CI.
-// To test, uncomment the line below than run manually
 // We can't run this in the main test runner because it (deliberately) crashes,
 // and would make all following tests unrunable.
 // To run this test,
 // ./build-profiling-ffi /tmp/libdatadog
 // mkdir /tmp/crashreports
 // look in /tmp/crashreports for the crash reports and output files
-// Commented out since `ignore` doesn't work in CI.
-//#[test]
+#[ignore]
+#[test]
 fn test_crash() -> anyhow::Result<()> {
     use crate::{begin_profiling_op, StacktraceCollection};
     use chrono::Utc;
-    use ddcommon::{parse_uri, tag::Tag, Endpoint};
+    use ddcommon::parse_uri;
+    use ddcommon::tag::Tag;
+    use ddcommon::Endpoint;
     use std::time::Duration;
 
     let time = Utc::now().to_rfc3339();
@@ -151,7 +149,7 @@ fn test_crash() -> anyhow::Result<()> {
     let path_to_receiver_binary =
         "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
     let create_alt_stack = true;
-    let resolve_frames = StacktraceCollection::Enabled;
+    let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
     let timeout = Duration::from_secs(30);

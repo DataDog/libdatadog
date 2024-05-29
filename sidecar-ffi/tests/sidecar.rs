@@ -28,6 +28,7 @@ fn set_sidecar_per_process() {
 #[test]
 #[cfg(unix)]
 #[cfg_attr(miri, ignore)]
+#[cfg_attr(coverage_nightly, ignore)] // this fails on nightly coverage
 fn test_ddog_ph_file_handling() {
     let fname = CString::new(std::env::temp_dir().join("test_file").to_str().unwrap()).unwrap();
     let mode = CString::new("a+").unwrap();
@@ -87,6 +88,7 @@ fn test_ddog_sidecar_register_app() {
                 api_key: None,
                 url: hyper::Uri::from_static("http://localhost:8082/"),
             },
+            &Endpoint::default(),
             1000,
             1000000,
             10000000,
@@ -130,6 +132,7 @@ fn test_ddog_sidecar_register_app() {
                 api_key: None,
                 url: hyper::Uri::from_static("http://localhost:8083/"),
             },
+            &Endpoint::default(),
             1000,
             1000000,
             10000000,

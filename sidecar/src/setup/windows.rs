@@ -167,7 +167,7 @@ impl NamedPipeLiaison {
                 PIPE_PATH,
                 prefix.as_ref(),
                 session_id,
-                env!("CARGO_PKG_VERSION")
+                crate::sidecar_version!()
             ))
             .unwrap(),
         }

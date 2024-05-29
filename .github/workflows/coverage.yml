@@ -14,15 +14,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
-        run: rustup update stable
+        run: rustup install nightly && rustup default nightly
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-llvm-cov@0.6.9
-      - name: Generate code coverage
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+          tool: cargo-llvm-cov@0.6.9,nextest@0.9.68
+      - name: Generate code coverage (including doc tests)
+        run: |
+          cargo llvm-cov --all-features --workspace --no-report nextest
+          cargo llvm-cov --all-features --workspace --no-report --doc
+          cargo llvm-cov report --doctests --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info

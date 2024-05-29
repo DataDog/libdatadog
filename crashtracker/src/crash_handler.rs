@@ -364,7 +364,7 @@ fn emit_crashreport(pipe: &mut impl Write, signum: i32) -> anyhow::Result<()> {
     // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
     // Do this last, so even if it crashes, we still get the other info.
     if config.resolve_frames != StacktraceCollection::Disabled {
-        unsafe { emit_backtrace_by_frames(pipe)? };
+        unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames)? };
     }
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;

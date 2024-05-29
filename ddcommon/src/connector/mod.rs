@@ -14,7 +14,6 @@ use std::task::{Context, Poll};
 #[cfg(unix)]
 pub mod uds;
 
-#[cfg(windows)]
 pub mod named_pipe;
 
 pub mod errors;

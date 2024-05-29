@@ -245,10 +245,10 @@ impl<'a> TryFrom<&'a Mapping<'a>> for api::Mapping<'a> {
 
 impl<'a> From<&'a ValueType<'a>> for api::ValueType<'a> {
     fn from(vt: &'a ValueType<'a>) -> Self {
-        Self {
-            r#type: vt.type_.try_to_utf8().unwrap_or(""),
-            unit: vt.unit.try_to_utf8().unwrap_or(""),
-        }
+        Self::new(
+            vt.type_.try_to_utf8().unwrap_or(""),
+            vt.unit.try_to_utf8().unwrap_or(""),
+        )
     }
 }
 
@@ -693,7 +693,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
 ) -> SerializeResult {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
-        let old_profile = profile.reset_and_return_previous(start_time.map(SystemTime::from))?;
+
+        let start_time = start_time.map(SystemTime::from);
+        let old_profile = profile.reset_and_return_previous(start_time)?;
         let end_time = end_time.map(SystemTime::from);
         let duration = match duration_nanos {
             None => None,
@@ -740,7 +742,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_reset(
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     #[test]

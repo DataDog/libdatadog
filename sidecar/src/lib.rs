@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 pub mod agent_remote_config;
 pub mod config;
+pub mod dogstatsd;
 mod dump;
 pub mod entry;
-pub mod interface;
 #[cfg(feature = "tracing")]
 pub mod log;
 pub mod one_way_shared_memory;
@@ -20,7 +20,16 @@ mod unix;
 #[cfg(unix)]
 pub use unix::*;
 
+pub mod service;
 #[cfg(windows)]
 mod windows;
+
 #[cfg(windows)]
 pub use self::windows::*;
+
+macro_rules! sidecar_version {
+    () => {
+        datadog_sidecar_macros::env_or_default!("SIDECAR_VERSION", env!("CARGO_PKG_VERSION"))
+    };
+}
+pub(crate) use sidecar_version;

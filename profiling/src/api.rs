@@ -11,6 +11,13 @@ pub struct ValueType<'a> {
     pub unit: &'a str,
 }
 
+impl<'a> ValueType<'a> {
+    #[inline(always)]
+    pub fn new(r#type: &'a str, unit: &'a str) -> Self {
+        Self { r#type, unit }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Period<'a> {
     pub r#type: ValueType<'a>,
@@ -280,10 +287,10 @@ impl<'a> TryFrom<&'a pprof::Profile> for Profile<'a> {
 
         let period = match pprof.period_type {
             Some(t) => {
-                let r#type = ValueType {
-                    r#type: string_table_fetch(pprof, t.r#type)?,
-                    unit: string_table_fetch(pprof, t.unit)?,
-                };
+                let r#type = ValueType::new(
+                    string_table_fetch(pprof, t.r#type)?,
+                    string_table_fetch(pprof, t.unit)?,
+                );
                 Some((pprof.period, r#type))
             }
             None => None,
@@ -291,10 +298,10 @@ impl<'a> TryFrom<&'a pprof::Profile> for Profile<'a> {
 
         let mut sample_types = Vec::with_capacity(pprof.samples.len());
         for t in pprof.sample_types.iter() {
-            sample_types.push(ValueType {
-                r#type: string_table_fetch(pprof, t.r#type)?,
-                unit: string_table_fetch(pprof, t.unit)?,
-            });
+            sample_types.push(ValueType::new(
+                string_table_fetch(pprof, t.r#type)?,
+                string_table_fetch(pprof, t.unit)?,
+            ));
         }
 
         let mut samples = Vec::with_capacity(pprof.samples.len());
@@ -337,7 +344,7 @@ impl<'a> TryFrom<&'a pprof::Profile> for Profile<'a> {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     #[test]
