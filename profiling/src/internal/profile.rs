@@ -545,7 +545,7 @@ impl Profile {
 mod api_tests {
     use super::*;
     use bolero::TypeGenerator;
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     /// Fuzzes adding a bunch of samples to the profile.
     /// TODO: many of the samples will be of the wrong length, and will give a boring error right
@@ -564,7 +564,10 @@ mod api_tests {
                 let mut expected_profile =
                     Profile::new(SystemTime::now(), &expected_sample_types, None);
                 let mut samples_with_timestamps = Vec::new();
-                let mut samples_without_timestamps: HashSet<owned_types::Sample> = HashSet::new();
+                let mut samples_without_timestamps: HashMap<
+                    (&Vec<owned_types::Location>, &Vec<owned_types::Label>),
+                    Vec<i64>,
+                > = HashMap::new();
                 for (timestamp, sample) in samples {
                     let r = expected_profile.add_sample(sample.into(), timestamp.clone());
                     if val.len() == sample.values.len() && sample.is_well_formed() {
@@ -572,17 +575,18 @@ mod api_tests {
                         if timestamp.is_some() {
                             samples_with_timestamps.push(sample);
                         } else {
-                            if let Some(mut existing_sample) =
-                                samples_without_timestamps.take(&sample)
+                            if let Some(existing_values) = samples_without_timestamps
+                                .get_mut(&(&sample.locations, &sample.labels))
                             {
-                                existing_sample
-                                    .values
+                                existing_values
                                     .iter_mut()
                                     .zip(sample.values.iter())
                                     .for_each(|(a, b)| *a = a.saturating_add(*b));
-                                samples_without_timestamps.insert(existing_sample);
                             } else {
-                                samples_without_timestamps.insert(sample.clone());
+                                samples_without_timestamps.insert(
+                                    (&sample.locations, &sample.labels),
+                                    sample.values.clone(),
+                                );
                             }
                         }
                     } else {
@@ -615,93 +619,18 @@ mod api_tests {
                     "Samples length mismatch"
                 );
 
-                let mut iter = profile.samples.iter();
+                let mut expected_timestamped_samples = samples_with_timestamps.iter();
 
-                for expected_sample in samples_with_timestamps.iter() {
-                    let sample = iter.next().unwrap();
-                    assert_eq!(
-                        sample.location_ids.len(),
-                        expected_sample.locations.len(),
-                        "Locations length mismatch"
-                    );
-                    for (loc_id, expected_location) in sample
-                        .location_ids
-                        .iter()
-                        .zip(expected_sample.locations.iter())
-                    {
-                        let location = &profile.locations[*loc_id as usize - 1];
-
-                        let mapping = &profile.mappings[location.mapping_id as usize - 1];
-                        assert_eq!(
-                            *profile.string_table[mapping.filename as usize],
-                            *expected_location.mapping.filename
-                        );
-                        assert_eq!(
-                            *profile.string_table[mapping.build_id as usize],
-                            *expected_location.mapping.build_id
-                        );
-                        assert_eq!(mapping.memory_start, expected_location.mapping.memory_start);
-                        assert_eq!(mapping.memory_limit, expected_location.mapping.memory_limit);
-                        assert_eq!(mapping.file_offset, expected_location.mapping.file_offset);
-
-                        assert_eq!(location.address, expected_location.address);
-
-                        assert!(location.lines.len() == 1);
-
-                        let line = location.lines[0];
-                        assert_eq!(line.line, expected_location.line);
-                        let function = profile.functions[line.function_id as usize - 1];
-                        let expected_function = &expected_location.function;
-                        assert_eq!(
-                            *profile.string_table[function.name as usize],
-                            *expected_function.name
-                        );
-                        assert_eq!(
-                            *profile.string_table[function.system_name as usize],
-                            *expected_function.system_name
-                        );
-                        assert_eq!(
-                            *profile.string_table[function.filename as usize],
-                            *expected_function.filename
-                        );
-                        assert_eq!(function.start_line, expected_function.start_line);
-
-                        assert!(!location.is_folded);
-                    }
-
-                    assert_eq!(sample.values, expected_sample.values);
-
-                    for (label, expected_label) in
-                        sample.labels.iter().zip(expected_sample.labels.iter())
-                    {
-                        assert_eq!(
-                            *profile.string_table[label.key as usize],
-                            *expected_label.key
-                        );
-                        if let Some(str) = &expected_label.str {
-                            assert_eq!(*profile.string_table[label.str as usize], *str);
-                        } else {
-                            assert_eq!(label.num, expected_label.num);
-                            if let Some(num_unit) = &expected_label.num_unit {
-                                assert_eq!(
-                                    *profile.string_table[label.num_unit as usize],
-                                    **num_unit
-                                );
-                            }
-                        }
-                    }
-                }
-
-                // Compare aggregated (non-timestamped) samples
-                for sample in iter {
-                    // Recreate owned_locations from the pprof::Location
+                for sample in profile.samples.iter() {
+                    // Recreate owned_locations from vector of pprof::Location
                     let mut owned_locations = Vec::new();
-
                     for loc_id in sample.location_ids.iter() {
                         let location = &profile.locations[*loc_id as usize - 1];
                         let mapping = &profile.mappings[location.mapping_id as usize - 1];
+                        assert!(location.lines.len() == 1);
                         let line = location.lines[0];
                         let function = profile.functions[line.function_id as usize - 1];
+                        assert!(!location.is_folded);
 
                         let owned_location = owned_types::Location {
                             mapping: owned_types::Mapping {
@@ -734,11 +663,17 @@ mod api_tests {
                         owned_locations.push(owned_location);
                     }
 
+                    // Recreate owned_labels from vector of pprof::Label
                     let mut owned_labels = Vec::new();
                     for label in sample.labels.iter() {
                         let key = profile.string_table[label.key as usize]
                             .clone()
                             .into_boxed_str();
+
+                        if *key == *"end_timestamp_ns" {
+                            continue;
+                        }
+
                         if label.str != 0 {
                             let str = profile.string_table[label.str as usize].clone();
                             owned_labels.push(owned_types::Label {
@@ -761,23 +696,23 @@ mod api_tests {
                             owned_labels.push(owned_types::Label {
                                 key,
                                 str: None,
-                                num: num,
+                                num,
                                 num_unit,
                             });
                         }
                     }
 
-                    let key = owned_types::Sample {
-                        locations: owned_locations,
-                        values: Vec::new(),
-                        labels: owned_labels,
-                    };
-
-                    let expected_sample = samples_without_timestamps
-                        .get(&key)
-                        .expect("Sample not found");
-
-                    assert_eq!(sample.values, expected_sample.values);
+                    if let Some(expected_sample) = expected_timestamped_samples.next() {
+                        assert_eq!(owned_locations, expected_sample.locations);
+                        assert_eq!(sample.values, expected_sample.values);
+                        assert_eq!(owned_labels, expected_sample.labels);
+                    } else {
+                        let key = (&owned_locations, &owned_labels);
+                        let expected_values = samples_without_timestamps
+                            .get(&key)
+                            .expect("Value not found for an aggregated sample");
+                        assert_eq!(&sample.values, expected_values);
+                    }
                 }
             })
     }
