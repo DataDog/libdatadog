@@ -748,9 +748,9 @@ mod api_tests {
                 > = HashMap::new();
                 for (timestamp, sample) in samples {
                     add_sample(
-                        &timestamp,
-                        &sample,
-                        &expected_sample_types,
+                        timestamp,
+                        sample,
+                        expected_sample_types,
                         &mut expected_profile,
                         &mut samples_with_timestamps,
                         &mut samples_without_timestamps,
@@ -926,9 +926,9 @@ mod api_tests {
                     match operation {
                         Function::AddSample(timestamp, sample) => {
                             add_sample(
-                                &timestamp,
-                                &sample,
-                                &sample_types,
+                                timestamp,
+                                sample,
+                                sample_types,
                                 &mut profile,
                                 &mut samples_with_timestamps,
                                 &mut samples_without_timestamps,
