@@ -5,6 +5,9 @@ on:
 jobs:
   run-fuzz:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        directory: [alloc, profiling]
     env:
       CARGO_TERM_COLOR: always
     steps:
@@ -20,20 +23,16 @@ jobs:
         tool: cargo-bolero
     - run: |
         set -e
-        DIRS="alloc profiling"
-        for dir in $DIRS;
+        # cargo bolero list outputs {"package":"package-name","test":"test-name"}
+        pushd ${{ matrix.directory }}
+        cargo bolero list | \
+        # And the following command will parse package-name's and test-name's one in each line
+        grep -oP '"(package|test)"\s*:\s*"\K[^"]+' | \
+        # awk will stitch package and test names back separated by a tab
+        awk 'NR%2{printf "%s\t", $0; next}1' | \
+        while read -r package test;
         do
-          # cargo bolero list outputs {"package":"package-name","test":"test-name"}
-          pushd $dir
-          cargo bolero list | \
-          # And the following command will parse package-name's and test-name's one in each line
-          grep -oP '"(package|test)"\s*:\s*"\K[^"]+' | \
-          # awk will stitch package and test names back separated by a tab
-          awk 'NR%2{printf "%s\t", $0; next}1' | \
-          while read -r package test;
-          do
-            echo "****** Starting bolero test for $package $test ******" 1>&2
-            cargo bolero test -T 1min --package $package $test
-          done
-          popd
+          echo "****** Starting bolero test for $package $test ******" 1>&2
+          cargo bolero test -T 1min --package $package $test
         done
+        popd

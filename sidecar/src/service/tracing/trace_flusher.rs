@@ -306,11 +306,11 @@ mod tests {
     use std::sync::Arc;
 
     // This function will poll the mock server for "hits" until the expected number of hits is
-    // observed. In its current form it may not correctly report if more than the asserted number of
-    // hits occurred. More attempts at lower sleep intervals is preferred to reduce flakiness and
-    // test runtime.
+    // observed. Then it will delete the mock. In its current form it may not correctly report if
+    // more than the asserted number of hits occurred. More attempts at lower sleep intervals is
+    // preferred to reduce flakiness and test runtime.
     async fn poll_for_mock_hit(
-        mock: &Mock<'_>,
+        mock: &mut Mock<'_>,
         poll_attempts: i32,
         sleep_interval_ms: u64,
         expected_hits: usize,
@@ -360,7 +360,7 @@ mod tests {
 
         let server = MockServer::start();
 
-        let mock = server
+        let mut mock = server
             .mock_async(|_when, then| {
                 then.status(202)
                     .header("content-type", "application/json")
@@ -386,12 +386,12 @@ mod tests {
         trace_flusher.enqueue(send_data_1);
         trace_flusher.enqueue(send_data_2);
 
-        assert!(poll_for_mock_hit(&mock, 10, 150, 0).await);
+        assert!(poll_for_mock_hit(&mut mock, 10, 150, 0).await);
 
         // enqueue a trace that exceeds the min force flush size
         trace_flusher.enqueue(send_data_3);
 
-        assert!(poll_for_mock_hit(&mock, 5, 250, 1).await);
+        assert!(poll_for_mock_hit(&mut mock, 25, 100, 1).await);
     }
 
     #[cfg_attr(miri, ignore)]
@@ -403,7 +403,7 @@ mod tests {
             ..TraceFlusher::default()
         });
         let server = MockServer::start();
-        let mock = server
+        let mut mock = server
             .mock_async(|_when, then| {
                 then.status(202)
                     .header("content-type", "application/json")
@@ -427,7 +427,7 @@ mod tests {
             trace_flusher.interval_ms.load(Ordering::Relaxed) + 1,
         ))
         .await;
-        assert!(poll_for_mock_hit(&mock, 25, 100, 1).await);
+        assert!(poll_for_mock_hit(&mut mock, 25, 100, 1).await);
     }
 
     #[cfg_attr(miri, ignore)]
@@ -439,7 +439,7 @@ mod tests {
             ..TraceFlusher::default()
         });
         let server = MockServer::start();
-        let mock = server
+        let mut mock = server
             .mock_async(|_when, then| {
                 then.status(202)
                     .header("content-type", "application/json")
@@ -459,6 +459,6 @@ mod tests {
 
         trace_flusher.enqueue(send_data_1);
 
-        assert!(poll_for_mock_hit(&mock, 5, 250, 0).await);
+        assert!(poll_for_mock_hit(&mut mock, 5, 250, 0).await);
     }
 }
