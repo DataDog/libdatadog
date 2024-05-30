@@ -11,6 +11,7 @@ pub use crate::tracer_header_tags::TracerHeaderTags;
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
 use datadog_trace_protobuf::pb::TraceChunk;
+use ddcommon::azure_app_services;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
@@ -235,6 +236,35 @@ pub fn enrich_span_with_mini_agent_metadata(
     if let Some(gcp_region) = &mini_agent_metadata.gcp_region {
         span.meta
             .insert("location".to_string(), gcp_region.to_string());
+    }
+}
+
+pub fn enrich_span_with_azure_metadata(span: &mut pb::Span, mini_agent_version: &str) {
+    match azure_app_services::get_function_metadata() {
+        Some(aas_metadata) => {
+            let aas_tags = [
+                ("aas.resource.id", aas_metadata.get_resource_id()),
+                (
+                    "aas.environment.instance_id",
+                    aas_metadata.get_instance_id(),
+                ),
+                (
+                    "aas.environment.instance_name",
+                    aas_metadata.get_instance_name(),
+                ),
+                ("aas.subscription.id", aas_metadata.get_subscription_id()),
+                ("aas.environment.mini_agent_version", mini_agent_version),
+                ("aas.environment.os", aas_metadata.get_operating_system()),
+                ("aas.resource.group", aas_metadata.get_resource_group()),
+                ("aas.site.name", aas_metadata.get_site_name()),
+                ("aas.site.kind", aas_metadata.get_site_kind()),
+                ("aas.site.type", aas_metadata.get_site_type()),
+            ];
+            aas_tags.into_iter().for_each(|(name, value)| {
+                span.meta.insert(name.to_string(), value.to_string());
+            });
+        }
+        None => (),
     }
 }
 

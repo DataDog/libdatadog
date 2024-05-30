@@ -66,7 +66,7 @@ pub struct AzureMetadata {
     site_name: Option<String>,
     resource_group: Option<String>,
     extension_version: Option<String>,
-    operating_system: Option<String>,
+    operating_system: String,
     instance_name: Option<String>,
     instance_id: Option<String>,
     site_kind: String,
@@ -128,11 +128,11 @@ impl AzureMetadata {
             resource_group.as_ref(),
         );
         let extension_version = query.get_var(SITE_EXTENSION_VERSION);
-        let operating_system = query.get_var(WEBSITE_OS);
+        let operating_system = query.get_var(WEBSITE_OS).unwrap_or(std::env::consts::OS.to_string());
         let instance_name = query.get_var(INSTANCE_NAME);
         let instance_id = query.get_var(INSTANCE_ID);
 
-        return Some(AzureMetadata {
+        Some(AzureMetadata {
             resource_id,
             subscription_id,
             site_name,
@@ -146,7 +146,6 @@ impl AzureMetadata {
         })
     }
 
-
     pub fn new<T: QueryEnv>(query: T) -> Option<Self> {
         let is_relevant = query
             .get_var(SERVICE_CONTEXT)
@@ -157,11 +156,17 @@ impl AzureMetadata {
             return None;
         }
 
-       return AzureMetadata::build_metadata(query);
+        AzureMetadata::build_metadata(query)
     }
 
     pub fn new_function<T: QueryEnv>(query: T) -> Option<Self> {
-        return AzureMetadata::build_metadata(query);
+        let is_relevant = matches!(AzureMetadata::get_azure_context(&query), AzureContext::AzureFunctions);
+
+        if !is_relevant {
+            return None;
+        }
+
+        AzureMetadata::build_metadata(query)
     }
 
     pub fn get_resource_id(&self) -> &str {
@@ -185,7 +190,7 @@ impl AzureMetadata {
     }
 
     pub fn get_operating_system(&self) -> &str {
-        get_value_or_unknown!(self.operating_system)
+        self.operating_system.as_str()
     }
 
     pub fn get_instance_name(&self) -> &str {
