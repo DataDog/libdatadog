@@ -128,7 +128,9 @@ impl AzureMetadata {
             resource_group.as_ref(),
         );
         let extension_version = query.get_var(SITE_EXTENSION_VERSION);
-        let operating_system = query.get_var(WEBSITE_OS).unwrap_or(std::env::consts::OS.to_string());
+        let operating_system = query
+            .get_var(WEBSITE_OS)
+            .unwrap_or(std::env::consts::OS.to_string());
         let instance_name = query.get_var(INSTANCE_NAME);
         let instance_id = query.get_var(INSTANCE_ID);
 
@@ -160,7 +162,10 @@ impl AzureMetadata {
     }
 
     pub fn new_function<T: QueryEnv>(query: T) -> Option<Self> {
-        let is_relevant = matches!(AzureMetadata::get_azure_context(&query), AzureContext::AzureFunctions);
+        let is_relevant = matches!(
+            AzureMetadata::get_azure_context(&query),
+            AzureContext::AzureFunctions
+        );
 
         if !is_relevant {
             return None;

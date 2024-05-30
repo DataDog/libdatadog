@@ -9,8 +9,8 @@ use log::info;
 use tokio::sync::mpsc::Sender;
 
 use datadog_trace_obfuscation::obfuscate::obfuscate_span;
-use datadog_trace_utils::trace_utils::{self};
 use datadog_trace_utils::trace_utils::SendData;
+use datadog_trace_utils::trace_utils::{self};
 
 use crate::{
     config::Config,
