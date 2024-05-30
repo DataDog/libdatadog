@@ -165,7 +165,6 @@ mod test {
     use crate::dogstatsd::{create_client, Flusher};
     #[cfg(unix)]
     use ddcommon::connector::uds::socket_path_to_uri;
-    use ddcommon::tag::Tag;
     use ddcommon::{tag, Endpoint};
     use http::Uri;
     use std::net;
@@ -194,11 +193,7 @@ mod test {
             Distribution("test_distribution".to_string(), 4.2, vec![]),
             Gauge("test_gauge".to_string(), 7.6, vec![]),
             Histogram("test_histogram".to_string(), 8.0, vec![]),
-            Set(
-                "test_set".to_string(),
-                9,
-                vec![Tag::new("the", "end").unwrap()],
-            ),
+            Set("test_set".to_string(), 9, vec![tag!("the", "end")]),
             Set("test_neg_set".to_string(), -1, vec![]),
         ]);
 

@@ -90,7 +90,7 @@ impl Display for Tag {
 
 impl Tag {
     /// Validates a tag.
-    fn from_value<'a, IntoCow>(chunk: IntoCow) -> Result<Self, Cow<'static, str>>
+    fn from_value<'a, IntoCow>(chunk: IntoCow) -> anyhow::Result<Self>
     where
         IntoCow: Into<Cow<'a, str>>,
     {
@@ -105,17 +105,14 @@ impl Tag {
          * are likely to be errors (such as passed in empty string).
          */
 
-        if chunk.is_empty() {
-            return Err("tag is empty".into());
-        }
+        anyhow::ensure!(!chunk.is_empty(), "tag is empty");
 
         let mut chars = chunk.chars();
-        if chars.next() == Some(':') {
-            return Err(format!("tag '{chunk}' begins with a colon").into());
-        }
-        if chars.last() == Some(':') {
-            return Err(format!("tag '{chunk}' ends with a colon").into());
-        }
+        anyhow::ensure!(
+            chars.next() != Some(':'),
+            "tag '{chunk}' begins with a colon"
+        );
+        anyhow::ensure!(chars.last() != Some(':'), "tag '{chunk}' ends with a colon");
 
         let value = Cow::Owned(chunk.into_owned());
         Ok(Tag { value })
@@ -123,7 +120,7 @@ impl Tag {
 
     /// Creates a tag from a key and value. It's preferred to use the `tag!`
     /// macro when the key and value are both known at compile-time.
-    pub fn new<K, V>(key: K, value: V) -> Result<Self, Cow<'static, str>>
+    pub fn new<K, V>(key: K, value: V) -> anyhow::Result<Self>
     where
         K: AsRef<str>,
         V: AsRef<str>,
@@ -160,7 +157,7 @@ pub fn parse_tags(str: &str) -> (Vec<Tag>, Option<String>) {
                 } else {
                     error_message += ", ";
                 }
-                error_message += err.as_ref();
+                error_message += &err.to_string();
             }
         }
     }
