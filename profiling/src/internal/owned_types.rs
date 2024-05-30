@@ -6,6 +6,29 @@ use bolero_generator::{TypeGeneratorWithParams, ValueGenerator};
 
 use crate::api;
 
+#[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
+#[derive(Clone, Debug)]
+pub struct ValueType {
+    pub typ: Box<str>,
+    pub unit: Box<str>,
+}
+
+impl<'a> From<&'a api::ValueType<'a>> for ValueType {
+    #[inline]
+    fn from(value_type: &'a api::ValueType<'a>) -> Self {
+        Self {
+            typ: Box::from(value_type.r#type),
+            unit: Box::from(value_type.unit),
+        }
+    }
+}
+
+impl<'a> From<&'a ValueType> for api::ValueType<'a> {
+    fn from(value: &'a ValueType) -> Self {
+        Self::new(&value.typ, &value.unit)
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 #[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
 pub struct Function {
@@ -40,7 +63,7 @@ pub struct Label {
     pub key: Box<str>,
 
     /// At most one of the following must be present
-    pub str: Option<String>,
+    pub str: Option<Box<str>>,
     pub num: i64,
 
     /// Should only be present when num is present.
@@ -158,8 +181,8 @@ impl<'a> From<&'a Mapping> for api::Mapping<'a> {
     }
 }
 
-#[derive(Clone, Debug)]
 #[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
+#[derive(Clone, Debug)]
 pub struct Period {
     pub typ: ValueType,
     pub value: i64,
@@ -230,28 +253,5 @@ impl<'a> From<&'a Sample> for api::Sample<'a> {
             values: value.values.clone(),
             labels: value.labels.iter().map(api::Label::from).collect(),
         }
-    }
-}
-
-#[derive(Clone, Debug)]
-#[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
-pub struct ValueType {
-    pub typ: Box<str>,
-    pub unit: Box<str>,
-}
-
-impl<'a> From<&'a api::ValueType<'a>> for ValueType {
-    #[inline]
-    fn from(value_type: &'a api::ValueType<'a>) -> Self {
-        Self {
-            typ: String::from(value_type.r#type).into(),
-            unit: String::from(value_type.unit).into(),
-        }
-    }
-}
-
-impl<'a> From<&'a ValueType> for api::ValueType<'a> {
-    fn from(value: &'a ValueType) -> Self {
-        Self::new(&value.typ, &value.unit)
     }
 }

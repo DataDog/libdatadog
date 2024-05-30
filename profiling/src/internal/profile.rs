@@ -654,7 +654,7 @@ mod api_tests {
                 }
 
                 if label.str != 0 {
-                    let str = profile.string_table[label.str as usize].clone();
+                    let str = Box::from(profile.string_table[label.str as usize].as_str());
                     owned_labels.push(owned_types::Label {
                         key,
                         str: Some(str),
