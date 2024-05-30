@@ -49,7 +49,7 @@ pub struct RootSpanTags<'a> {
     pub runtime_id: &'a str,
 }
 
-pub fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
+pub(crate) fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
     pb::TraceChunk {
         priority: normalizer::SamplerPriority::None as i32,
         origin: "".to_string(),
@@ -59,7 +59,7 @@ pub fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
     }
 }
 
-pub fn construct_tracer_payload(
+pub(crate) fn construct_tracer_payload(
     chunks: Vec<pb::TraceChunk>,
     tracer_tags: &TracerHeaderTags,
     root_span_tags: RootSpanTags,
@@ -211,7 +211,7 @@ pub fn set_serverless_root_span_tags(
     }
 }
 
-pub fn update_tracer_top_level(span: &mut pb::Span) {
+fn update_tracer_top_level(span: &mut pb::Span) {
     if span.metrics.contains_key(TRACER_TOP_LEVEL_KEY) {
         span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
     }
