@@ -50,14 +50,18 @@
 //! ```
 
 #[cfg(not(unix))]
-pub use fallback::{get_container_id, get_entity_id};
+pub use fallback::{get_container_id, get_entity_id, set_cgroup_file, set_cgroup_mount_path};
 
 #[cfg(unix)]
-pub use unix::{get_container_id, get_entity_id};
+pub use unix::{get_container_id, get_entity_id, set_cgroup_file, set_cgroup_mount_path};
 
 /// Fallback module used for non-unix systems
 #[cfg(not(unix))]
 mod fallback {
+    pub fn set_cgroup_file() {}
+
+    pub fn set_cgroup_mount_path() {}
+
     pub fn get_container_id() -> Option<&'static str> {
         None
     }
@@ -83,6 +87,11 @@ mod unix {
 
     /// the base controller used to identify the cgroup v1 mount point in the cgroupMounts map.
     const CGROUP_V1_BASE_CONTROLLER: &str = "memory";
+
+    /// stores overridable cgroup path - used in end-to-end testing to "stub" cgroup values
+    static mut TESTING_CGROUP_PATH: Option<String> = None;
+    /// stores overridable cgroup mount path     
+    static mut TESTING_CGROUP_MOUNT_PATH: Option<String> = None;
 
     #[derive(Debug, Clone, PartialEq)]
     pub enum CgroupFileParsingError {
@@ -121,24 +130,56 @@ mod unix {
             )
     }
 
+    fn get_cgroup_path() -> &'static str {
+        // Safety: we assume set_cgroup_file is not called when it shouldn't
+        unsafe {
+            TESTING_CGROUP_PATH
+                .as_deref()
+                .unwrap_or(DEFAULT_CGROUP_PATH)
+        }
+    }
+
+    fn get_cgroup_mount_path() -> &'static str {
+        // Safety: we assume set_cgroup_file is not called when it shouldn't
+        unsafe {
+            TESTING_CGROUP_MOUNT_PATH
+                .as_deref()
+                .unwrap_or(DEFAULT_CGROUP_MOUNT_PATH)
+        }
+    }
+
+    /// Set the path to cgroup file to mock it during tests
+    /// # Safety
+    /// Must not be called in multi-threaded contexts
+    pub unsafe fn set_cgroup_file(file: String) {
+        TESTING_CGROUP_PATH = Some(file)
+    }
+
+    /// Set cgroup mount path to mock during tests
+    /// # Safety
+    /// Must not be called in multi-threaded contexts
+    pub unsafe fn set_cgroup_mount_path(path: String) {
+        TESTING_CGROUP_MOUNT_PATH = Some(path)
+    }
+
     /// Returns the `container_id` if available in the cgroup file, otherwise returns `None`
     pub fn get_container_id() -> Option<&'static str> {
         // cache container id in a static to avoid recomputing it at each call
-
         lazy_static! {
             static ref CONTAINER_ID: Option<String> =
-                container_id::extract_container_id(Path::new(DEFAULT_CGROUP_PATH)).ok();
+                container_id::extract_container_id(Path::new(get_cgroup_path())).ok();
         }
         CONTAINER_ID.as_deref()
     }
 
     /// Returns the `entity_id` if available, either `cid-<container_id>` or `in-<cgroup_inode>`
     pub fn get_entity_id() -> Option<&'static str> {
+        // cache entity id in a static to avoid recomputing it at each call
         lazy_static! {
             static ref ENTITY_ID: Option<String> = compute_entity_id(
                 CGROUP_V1_BASE_CONTROLLER,
-                Path::new(DEFAULT_CGROUP_PATH),
-                Path::new(DEFAULT_CGROUP_MOUNT_PATH),
+                Path::new(get_cgroup_path()),
+                Path::new(get_cgroup_mount_path()),
             );
         }
         ENTITY_ID.as_deref()
