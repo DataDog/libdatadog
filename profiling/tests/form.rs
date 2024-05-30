@@ -60,13 +60,11 @@ fn multipart(
 mod tests {
     use crate::multipart;
     use datadog_profiling::exporter::*;
+    use ddcommon::tag;
     use serde_json::json;
 
     fn default_tags() -> Vec<Tag> {
-        vec![
-            Tag::new("service", "php").expect("static tags to be valid"),
-            Tag::new("host", "bits").expect("static tags to be valid"),
-        ]
+        vec![tag!("service", "php"), tag!("host", "bits")]
     }
 
     fn parsed_event_json(request: Request) -> serde_json::Value {

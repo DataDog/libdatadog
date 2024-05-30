@@ -461,6 +461,7 @@ pub unsafe extern "C" fn ddog_CancellationToken_drop(token: Option<&mut Cancella
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ddcommon::tag;
     use ddcommon_ffi::Slice;
     use serde_json::json;
 
@@ -510,9 +511,7 @@ mod tests {
     // which Miri cannot evaluate.
     #[cfg_attr(miri, ignore)]
     fn profile_exporter_new_and_delete() {
-        let mut tags = ddcommon_ffi::Vec::default();
-        let host = Tag::new("host", "localhost").expect("static tags to be valid");
-        tags.push(host);
+        let tags = vec![tag!("host", "localhost")].into();
 
         let result = unsafe {
             ddog_prof_Exporter_new(
