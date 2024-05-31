@@ -76,10 +76,12 @@ pub trait SidecarInterface {
     ///
     /// * `instance_id` - The ID of the instance.
     /// * `handle` - The handle to the shared memory.
+    /// * `len` - The size of the shared memory data.
     /// * `headers` - The serialized headers from the tracer.
     async fn send_trace_v04_shm(
         instance_id: InstanceId,
         #[SerializedHandle] handle: ShmHandle,
+        len: usize,
         headers: SerializedTracerHeaderTags,
     );
 
