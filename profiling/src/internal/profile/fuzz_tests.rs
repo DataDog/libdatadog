@@ -304,33 +304,31 @@ fn assert_samples_eq(
             let function = profile.functions[line.function_id as usize - 1];
             assert!(!location.is_folded);
 
-            let owned_location = Location {
-                mapping: Mapping {
-                    memory_start: mapping.memory_start,
-                    memory_limit: mapping.memory_limit,
-                    file_offset: mapping.file_offset,
-                    filename: profile.string_table[mapping.filename as usize]
-                        .clone()
-                        .into_boxed_str(),
-                    build_id: profile.string_table[mapping.build_id as usize]
-                        .clone()
-                        .into_boxed_str(),
-                },
-                function: Function {
-                    name: profile.string_table[function.name as usize]
-                        .clone()
-                        .into_boxed_str(),
-                    system_name: profile.string_table[function.system_name as usize]
-                        .clone()
-                        .into_boxed_str(),
-                    filename: profile.string_table[function.filename as usize]
-                        .clone()
-                        .into_boxed_str(),
-                    start_line: function.start_line,
-                },
-                address: location.address,
-                line: line.line,
-            };
+            let owned_mapping = Mapping::new(
+                mapping.memory_start,
+                mapping.memory_limit,
+                mapping.file_offset,
+                profile.string_table[mapping.filename as usize]
+                    .clone()
+                    .into_boxed_str(),
+                profile.string_table[mapping.build_id as usize]
+                    .clone()
+                    .into_boxed_str(),
+            );
+            let owned_function = Function::new(
+                profile.string_table[function.name as usize]
+                    .clone()
+                    .into_boxed_str(),
+                profile.string_table[function.system_name as usize]
+                    .clone()
+                    .into_boxed_str(),
+                profile.string_table[function.filename as usize]
+                    .clone()
+                    .into_boxed_str(),
+                function.start_line,
+            );
+            let owned_location =
+                Location::new(owned_mapping, owned_function, location.address, line.line);
 
             owned_locations.push(owned_location);
         }
