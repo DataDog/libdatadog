@@ -400,7 +400,14 @@ mod tests {
 
     #[test]
     fn test_extract_resource_group_pattern_match() {
-        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "00000000-0000-0000-0000-000000000000+test-rg-EastUSwebspace-Linux"), ("FUNCTIONS_WORKER_RUNTIME", "node"), ("FUNCTIONS_EXTENSION_VERSION", "~4")]);
+        let mocked_env = MockEnv::new(&[
+            (
+                WEBSITE_ONWER_NAME,
+                "00000000-0000-0000-0000-000000000000+test-rg-EastUSwebspace-Linux",
+            ),
+            ("FUNCTIONS_WORKER_RUNTIME", "node"),
+            ("FUNCTIONS_EXTENSION_VERSION", "~4"),
+        ]);
 
         let metadata = AzureMetadata::new_function(mocked_env).unwrap();
 
@@ -411,7 +418,11 @@ mod tests {
 
     #[test]
     fn test_extract_resource_group_no_pattern_match() {
-        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "foo"), (FUNCTIONS_WORKER_RUNTIME, "node"), (FUNCTIONS_EXTENSION_VERSION, "~4")]);
+        let mocked_env = MockEnv::new(&[
+            (WEBSITE_ONWER_NAME, "foo"),
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            (FUNCTIONS_EXTENSION_VERSION, "~4"),
+        ]);
 
         let metadata = AzureMetadata::new_function(mocked_env).unwrap();
 
@@ -420,7 +431,14 @@ mod tests {
 
     #[test]
     fn test_use_resource_group_from_env_var_if_available() {
-        let mocked_env = MockEnv::new(&[(WEBSITE_RESOURCE_GROUP, "test-rg-env-var"), (WEBSITE_ONWER_NAME, "00000000-0000-0000-0000-000000000000+test-rg-EastUSwebspace-Linux"), (SERVICE_CONTEXT, "1")]);
+        let mocked_env = MockEnv::new(&[
+            (WEBSITE_RESOURCE_GROUP, "test-rg-env-var"),
+            (
+                WEBSITE_ONWER_NAME,
+                "00000000-0000-0000-0000-000000000000+test-rg-EastUSwebspace-Linux",
+            ),
+            (SERVICE_CONTEXT, "1"),
+        ]);
 
         let metadata = AzureMetadata::new(mocked_env).unwrap();
 
