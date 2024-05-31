@@ -17,8 +17,6 @@ use crate::{
     http_utils::{self, log_and_create_http_response},
 };
 
-const MINI_AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-
 #[async_trait]
 pub trait TraceProcessor {
     /// Deserializes traces from a hyper request body and sends them through the provided tokio mpsc
@@ -80,7 +78,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 );
                 for span in chunk.spans.iter_mut() {
                     trace_utils::enrich_span_with_mini_agent_metadata(span, &mini_agent_metadata);
-                    trace_utils::enrich_span_with_azure_metadata(span, MINI_AGENT_VERSION);
+                    trace_utils::enrich_span_with_azure_metadata(span, config.mini_agent_version.as_str());
                     obfuscate_span(span, &config.obfuscation_config);
                 }
             },
