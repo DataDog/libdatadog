@@ -152,6 +152,7 @@ mod tests {
             env_type: trace_utils::EnvironmentType::CloudFunction,
             os: "linux".to_string(),
             obfuscation_config: ObfuscationConfig::new().unwrap(),
+            mini_agent_version: "0.1.0".to_string(),
         }
     }
 
