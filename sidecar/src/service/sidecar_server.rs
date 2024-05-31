@@ -647,6 +647,7 @@ impl SidecarInterface for SidecarServer {
         _: Context,
         instance_id: InstanceId,
         handle: ShmHandle,
+        len: usize,
         headers: SerializedTracerHeaderTags,
     ) -> Self::SendTraceV04ShmFut {
         if let Some(endpoint) = self
@@ -658,7 +659,7 @@ impl SidecarInterface for SidecarServer {
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
-                        self.send_trace_v04(&headers, mapped.as_slice(), &endpoint);
+                        self.send_trace_v04(&headers, &mapped.as_slice()[..len], &endpoint);
                     }
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                 }

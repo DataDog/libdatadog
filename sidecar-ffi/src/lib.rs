@@ -493,6 +493,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_shm(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
     shm_handle: Box<ShmHandle>,
+    len: usize,
     tracer_header_tags: &TracerHeaderTags,
 ) -> MaybeError {
     let tracer_header_tags = try_c!(tracer_header_tags.try_into());
@@ -501,6 +502,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_shm(
         transport,
         instance_id,
         *shm_handle,
+        len,
         tracer_header_tags,
     ));
 
