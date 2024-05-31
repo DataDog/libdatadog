@@ -2,13 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use crate::collections::identifiable::FxIndexMap;
-use crate::internal::{owned_types, Profile, Timestamp};
-use crate::pprof;
 use bolero::TypeGenerator;
 use bolero_generator::{TypeGeneratorWithParams, ValueGenerator};
-use std::collections::{HashMap, HashSet};
-use std::time::SystemTime;
+use std::collections::HashSet;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, TypeGenerator)]
 pub struct Function {
@@ -48,7 +44,7 @@ impl<'a> From<&'a Function> for api::Function<'a> {
     }
 }
 
-#[derive(Clone, Debug, Default, TypeGenerator)]
+#[derive(Clone, Debug, Default, Ord, PartialOrd, TypeGenerator)]
 pub struct Label {
     pub key: Box<str>,
 
@@ -390,10 +386,15 @@ fn assert_samples_eq(
             }
         }
 
+        owned_labels.sort();
+
         if let Some(expected_sample) = expected_timestamped_samples.next() {
             assert_eq!(owned_locations, expected_sample.locations);
             assert_eq!(sample.values, expected_sample.values);
-            assert_eq!(owned_labels, expected_sample.labels);
+            // Sort these first?
+            let mut expected_labels = expected_sample.labels.clone();
+            expected_labels.sort();
+            assert_eq!(owned_labels, expected_labels);
         } else {
             let key = (&owned_locations, &owned_labels);
             let expected_values = samples_without_timestamps
@@ -431,6 +432,53 @@ fn fuzz_add_sample<'a>(
     } else {
         assert!(r.is_err());
     }
+}
+
+#[test]
+fn fuzz_failure_001() {
+    let sample_types = [];
+    let expected_sample_types = &[];
+    let sample = Sample {
+        locations: vec![],
+        values: vec![],
+        labels: vec![
+            Label {
+                key: Box::from("local root span id"),
+                str: None,
+                num: 281474976710656,
+                num_unit: None,
+            },
+            Label {
+                key: Box::from(""),
+                str: Some(Box::from("")),
+                num: 0,
+                num_unit: Some(Box::from("")),
+            },
+        ],
+    };
+    let mut expected_profile = Profile::new(SystemTime::now(), &sample_types, None);
+    let mut samples_with_timestamps = Vec::new();
+    let mut samples_without_timestamps: HashMap<(&Vec<Location>, &Vec<Label>), Vec<i64>> =
+        HashMap::new();
+
+    let timestamp = None;
+    fuzz_add_sample(
+        &timestamp,
+        &sample,
+        expected_sample_types,
+        &mut expected_profile,
+        &mut samples_with_timestamps,
+        &mut samples_without_timestamps,
+    );
+
+    let profile = pprof::roundtrip_to_pprof(expected_profile).unwrap();
+    assert_sample_types_eq(&profile, expected_sample_types);
+    assert_samples_eq(
+        &profile,
+        &samples_with_timestamps,
+        &samples_without_timestamps,
+        &FxIndexMap::default(),
+    );
 }
 
 /// Fuzzes adding a bunch of samples to the profile.
