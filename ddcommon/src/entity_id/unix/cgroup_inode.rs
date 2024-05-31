@@ -13,7 +13,7 @@ use std::{fs, io};
 #[cfg(not(test))]
 // From https://github.com/torvalds/linux/blob/5859a2b1991101d6b978f3feb5325dad39421f29/include/linux/proc_ns.h#L41-L49
 // Currently, host namespace inode number are hardcoded, which can be used to detect
-// if we're running in host namespace or not (does not work when running in DinD)
+// if we're running in host namespace or not (does not work when running in Docker in Docker)
 const HOST_CGROUP_NAMESPACE_INODE: u64 = 0xEFFFFFFB;
 
 #[cfg(not(test))]
@@ -25,10 +25,10 @@ fn get_inode(path: &Path) -> io::Result<u64> {
     Ok(meta.ino())
 }
 
-/// Returns the cgroup mount path associated with `base_controller` or the default one for
+/// Returns the cgroup mount path associated with `cgroup_v1_base_controller` or the default one for
 /// cgroupV2
 fn get_cgroup_node_path(
-    base_controller: &str,
+    cgroup_v1_base_controller: &str,
     cgroup_path: &Path,
     cgroup_mount_path: &Path,
 ) -> Result<PathBuf, CgroupFileParsingError> {
@@ -41,13 +41,15 @@ fn get_cgroup_node_path(
         let line_content = &line.map_err(|_| CgroupFileParsingError::InvalidFormat)?;
         let cgroup_entry: Vec<&str> = line_content.split(':').collect();
         if cgroup_entry.len() != 3 {
-            return Err(CgroupFileParsingError::InvalidFormat);
+            continue;
         }
         let controllers: Vec<&str> = cgroup_entry[1].split(',').collect();
         // Only keep empty controller if it is the first line as cgroupV2 uses only one line
-        if controllers.contains(&base_controller) || (controllers.contains(&"") && index == 0) {
-            let matched_operator = if controllers.contains(&base_controller) {
-                base_controller
+        if controllers.contains(&cgroup_v1_base_controller)
+            || (controllers.contains(&"") && index == 0)
+        {
+            let matched_operator = if controllers.contains(&cgroup_v1_base_controller) {
+                cgroup_v1_base_controller
             } else {
                 ""
             };
@@ -84,7 +86,7 @@ fn is_host_cgroup_namespace() -> Result<(), ()> {
 
 /// Returns the `cgroup_inode` if available, otherwise `None`
 pub fn get_cgroup_inode(
-    base_controller: &str,
+    cgroup_v1_base_controller: &str,
     cgroup_path: &Path,
     cgroup_mount_path: &Path,
 ) -> Option<String> {
@@ -93,7 +95,7 @@ pub fn get_cgroup_inode(
     // return is not related to a container.
     is_host_cgroup_namespace().ok()?;
     let cgroup_mount_path =
-        get_cgroup_node_path(base_controller, cgroup_path, cgroup_mount_path).ok()?;
+        get_cgroup_node_path(cgroup_v1_base_controller, cgroup_path, cgroup_mount_path).ok()?;
     Some(get_inode(&cgroup_mount_path).ok()?.to_string())
 }
 
@@ -125,7 +127,7 @@ mod tests {
             // missing cgroup file should return a CannotOpenFile Error
             "path/to/cgroup.missing" => Err(CgroupFileParsingError::CannotOpenFile),
             // valid container ID with invalid line pattern makes an empty string
-            "cgroup.invalid_line_container_id" => Err(CgroupFileParsingError::InvalidFormat),
+            "cgroup.invalid_line_container_id" => Err(CgroupFileParsingError::CgroupNotFound),
         };
 
         for (&filename, expected_result) in test_files.iter() {
