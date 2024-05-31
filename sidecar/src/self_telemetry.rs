@@ -87,20 +87,14 @@ impl<'a> MetricData<'a> {
             futures.push(self.send(
                 self.trace_api_errors,
                 trace_metrics.api_errors_network as f64,
-                vec![
-                    tag!("type", "network"),
-                    tag!("src_library", "libdatadog"),
-                ],
+                vec![tag!("type", "network"), tag!("src_library", "libdatadog")],
             ));
         }
         if trace_metrics.api_errors_timeout > 0 {
             futures.push(self.send(
                 self.trace_api_errors,
                 trace_metrics.api_errors_timeout as f64,
-                vec![
-                    tag!("type", "timeout"),
-                    tag!("src_library", "libdatadog"),
-                ],
+                vec![tag!("type", "timeout"), tag!("src_library", "libdatadog")],
             ));
         }
         if trace_metrics.api_errors_status_code > 0 {

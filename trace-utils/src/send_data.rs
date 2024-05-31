@@ -7,7 +7,6 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hyper::{Body, Client, Method, Response};
 use std::collections::HashMap;
-// use std::fmt::Result;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -46,15 +45,15 @@ impl std::fmt::Display for RequestError {
 impl std::error::Error for RequestError {}
 
 pub enum RequestResult {
-    // Holds information from a succesful request.
+    /// Holds information from a succesful request.
     Success((Response<Body>, Attempts, BytesSent, ChunksSent)),
-    // Treats HTTP errors.
+    /// Treats HTTP errors.
     Error((Response<Body>, Attempts, ChunksDropped)),
-    // Treats timeout errors originated in the transport layer.
+    /// Treats timeout errors originated in the transport layer.
     TimeoutError((Attempts, ChunksDropped)),
-    // Treats errors coming from networking.
+    /// Treats errors coming from networking.
     NetworkError((Attempts, ChunksDropped)),
-    // Treats errors coming from building the request
+    /// Treats errors coming from building the request
     BuildError((Attempts, ChunksDropped)),
 }
 
@@ -110,9 +109,12 @@ impl SendDataResult {
     /// use datadog_trace_utils::send_data::RequestResult;
     /// use datadog_trace_utils::trace_utils::SendDataResult;
     ///
-    /// let result = RequestResult::NetworkError((1, 0));
-    /// let mut data_result = SendDataResult::default();
-    /// data_result.update(result);
+    /// #[cfg_attr(miri, ignore)]
+    /// async fn update_send_results_example() {
+    ///     let result = RequestResult::NetworkError((1, 0));
+    ///     let mut data_result = SendDataResult::default();
+    ///     data_result.update(result).await;
+    /// }
     /// ```
 
     pub async fn update(&mut self, res: RequestResult) {
@@ -517,6 +519,7 @@ impl SendData {
 }
 
 #[cfg(test)]
+// For RetryStrategy tests the observed delay should be approximate.
 mod tests {
     use super::*;
     use crate::trace_utils::construct_trace_chunk;
@@ -576,6 +579,7 @@ mod tests {
         let serialized_trace_payload = serialize_proto_payload(&agent_payload).unwrap();
         serialized_trace_payload.len()
     }
+
     fn rmp_compute_payload_len(payload: &Vec<pb::TracerPayload>) -> usize {
         let mut total: usize = 0;
         for payload in payload {
@@ -586,16 +590,7 @@ mod tests {
 
     #[test]
     fn send_data_new_api_key() {
-        let header_tags = TracerHeaderTags {
-            lang: "test-lang",
-            lang_version: "2.0",
-            lang_interpreter: "interpreter",
-            lang_vendor: "vendor",
-            tracer_version: "1.0",
-            container_id: "id",
-            client_computed_top_level: false,
-            client_computed_stats: false,
-        };
+        let header_tags = TracerHeaderTags::default();
 
         let payload = setup_payload(&header_tags);
         let data = SendData::new(
@@ -618,16 +613,7 @@ mod tests {
 
     #[test]
     fn send_data_new_no_api_key() {
-        let header_tags = TracerHeaderTags {
-            lang: "test-lang",
-            lang_version: "2.0",
-            lang_interpreter: "interpreter",
-            lang_vendor: "vendor",
-            tracer_version: "1.0",
-            container_id: "id",
-            client_computed_top_level: false,
-            client_computed_stats: false,
-        };
+        let header_tags = TracerHeaderTags::default();
 
         let payload = setup_payload(&header_tags);
         let data = SendData::new(
@@ -663,16 +649,7 @@ mod tests {
             })
             .await;
 
-        let header_tags = TracerHeaderTags {
-            lang: "test-lang",
-            lang_version: "2.0",
-            lang_interpreter: "interpreter",
-            lang_vendor: "vendor",
-            tracer_version: "1.0",
-            container_id: "id",
-            client_computed_top_level: false,
-            client_computed_stats: false,
-        };
+        let header_tags = TracerHeaderTags::default();
 
         let payload = setup_payload(&header_tags);
         let data = SendData::new(
@@ -714,16 +691,7 @@ mod tests {
             })
             .await;
 
-        let header_tags = TracerHeaderTags {
-            lang: "test-lang",
-            lang_version: "2.0",
-            lang_interpreter: "interpreter",
-            lang_vendor: "vendor",
-            tracer_version: "1.0",
-            container_id: "id",
-            client_computed_top_level: false,
-            client_computed_stats: false,
-        };
+        let header_tags = TracerHeaderTags::default();
 
         let payload = setup_payload(&header_tags);
         let mut data = SendData::new(
@@ -766,16 +734,7 @@ mod tests {
             })
             .await;
 
-        let header_tags = TracerHeaderTags {
-            lang: "test-lang",
-            lang_version: "2.0",
-            lang_interpreter: "interpreter",
-            lang_vendor: "vendor",
-            tracer_version: "1.0",
-            container_id: "id",
-            client_computed_top_level: false,
-            client_computed_stats: false,
-        };
+        let header_tags = TracerHeaderTags::default();
 
         let payload = setup_payload(&header_tags);
         let data = SendData::new(
@@ -817,16 +776,7 @@ mod tests {
             })
             .await;
 
-        let header_tags = TracerHeaderTags {
-            lang: "test-lang",
-            lang_version: "2.0",
-            lang_interpreter: "interpreter",
-            lang_vendor: "vendor",
-            tracer_version: "1.0",
-            container_id: "id",
-            client_computed_top_level: false,
-            client_computed_stats: false,
-        };
+        let header_tags = TracerHeaderTags::default();
 
         let payload = setup_payload(&header_tags);
         let mut data = SendData::new(
