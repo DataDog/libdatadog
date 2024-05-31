@@ -514,22 +514,14 @@ fn fuzz_add_sample_with_fixed_sample_length() {
                 .collect();
 
             for (timestamp, sample) in samples.iter() {
-                profile
-                    .add_sample(sample.into(), **timestamp)
-                    .expect("Failed to add sample");
-                if timestamp.is_some() {
-                    samples_with_timestamps.push(sample);
-                } else if let Some(existing_values) =
-                    samples_without_timestamps.get_mut(&(&sample.locations, &sample.labels))
-                {
-                    existing_values
-                        .iter_mut()
-                        .zip(sample.values.iter())
-                        .for_each(|(a, b)| *a = a.saturating_add(*b));
-                } else {
-                    samples_without_timestamps
-                        .insert((&sample.locations, &sample.labels), sample.values.clone());
-                }
+                fuzz_add_sample(
+                    timestamp,
+                    sample,
+                    sample_types,
+                    &mut profile,
+                    &mut samples_with_timestamps,
+                    &mut samples_without_timestamps,
+                );
             }
             let serialized_profile =
                 pprof::roundtrip_to_pprof(profile).expect("Failed to roundtrip to pprof");
