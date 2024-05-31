@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use lazy_static::lazy_static;
+use regex::Regex;
 use std::env;
 
 const WEBSITE_ONWER_NAME: &str = "WEBSITE_OWNER_NAME";
@@ -93,6 +94,15 @@ impl AzureMetadata {
             .map(|v| v.to_string())
     }
 
+    fn extract_resource_group(s: Option<String>) -> Option<String> {
+        let re: Regex = Regex::new(r"(.+)\+(.+)-(.+)-(.+)").unwrap();
+
+        s.as_ref().and_then(|text| {
+            re.captures(text)
+                .and_then(|caps| caps.get(2).map(|m| m.as_str().to_string()))
+        })
+    }
+
     /*
      * Computation of the resource id follow the same way the .NET tracer is doing:
      * https://github.com/DataDog/dd-trace-dotnet/blob/834a4b05b4ed91a819eb78761bf1ddb805969f65/tracer/src/Datadog.Trace/PlatformHelpers/AzureAppServices.cs#L215
@@ -121,7 +131,9 @@ impl AzureMetadata {
             _ => ("app".to_owned(), "app".to_owned()),
         };
 
-        let resource_group = query.get_var(WEBSITE_RESOURCE_GROUP);
+        let resource_group = query
+            .get_var(WEBSITE_RESOURCE_GROUP)
+            .or_else(|| AzureMetadata::extract_resource_group(query.get_var(WEBSITE_ONWER_NAME)));
         let resource_id = AzureMetadata::build_resource_id(
             subscription_id.as_ref(),
             site_name.as_ref(),
