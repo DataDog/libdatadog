@@ -271,11 +271,8 @@ fn assert_sample_types_eq(
         .iter()
         .zip(expected_sample_types.iter())
     {
-        assert_eq!(
-            *profile.string_table[typ.r#type as usize],
-            *expected_typ.r#typ
-        );
-        assert_eq!(*profile.string_table[typ.unit as usize], *expected_typ.unit);
+        assert_eq!(*profile.string_table_fetch(typ.r#type), *expected_typ.r#typ);
+        assert_eq!(*profile.string_table_fetch(typ.unit), *expected_typ.unit);
     }
 }
 
@@ -308,21 +305,26 @@ fn assert_samples_eq(
                 mapping.memory_start,
                 mapping.memory_limit,
                 mapping.file_offset,
-                profile.string_table[mapping.filename as usize]
+                profile
+                    .string_table_fetch(mapping.filename)
                     .clone()
                     .into_boxed_str(),
-                profile.string_table[mapping.build_id as usize]
+                profile
+                    .string_table_fetch(mapping.build_id)
                     .clone()
                     .into_boxed_str(),
             );
             let owned_function = Function::new(
-                profile.string_table[function.name as usize]
+                profile
+                    .string_table_fetch(function.name)
                     .clone()
                     .into_boxed_str(),
-                profile.string_table[function.system_name as usize]
+                profile
+                    .string_table_fetch(function.system_name)
                     .clone()
                     .into_boxed_str(),
-                profile.string_table[function.filename as usize]
+                profile
+                    .string_table_fetch(function.filename)
                     .clone()
                     .into_boxed_str(),
                 function.start_line,
@@ -336,7 +338,8 @@ fn assert_samples_eq(
         // Recreate owned_labels from vector of pprof::Label
         let mut owned_labels = Vec::new();
         for label in sample.labels.iter() {
-            let key = profile.string_table[label.key as usize]
+            let key = profile
+                .string_table_fetch(label.key)
                 .clone()
                 .into_boxed_str();
 
@@ -344,7 +347,7 @@ fn assert_samples_eq(
                 // TODO: Check end timestamp label
                 continue;
             } else if *key == *"trace endpoint" {
-                let actual_str = &profile.string_table[label.str as usize];
+                let actual_str = profile.string_table_fetch(label.str);
 
                 let prev_label: &Label = owned_labels
                     .last()
@@ -359,7 +362,7 @@ fn assert_samples_eq(
             }
 
             if label.str != 0 {
-                let str = Box::from(profile.string_table[label.str as usize].as_str());
+                let str = Box::from(profile.string_table_fetch(label.str).as_str());
                 owned_labels.push(Label {
                     key,
                     str: Some(str),
@@ -370,7 +373,8 @@ fn assert_samples_eq(
                 let num = label.num;
                 let num_unit = if label.num_unit != 0 {
                     Some(
-                        profile.string_table[label.num_unit as usize]
+                        profile
+                            .string_table_fetch(label.num_unit)
                             .clone()
                             .into_boxed_str(),
                     )

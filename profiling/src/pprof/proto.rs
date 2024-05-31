@@ -175,6 +175,12 @@ impl Profile {
         samples.sort_unstable();
         samples
     }
+
+    pub fn string_table_fetch(&self, id: i64) -> &String {
+        self.string_table
+            .get(id as usize)
+            .expect("String {id} not found")
+    }
 }
 
 #[cfg(test)]
