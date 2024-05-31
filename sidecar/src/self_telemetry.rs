@@ -69,63 +69,78 @@ impl<'a> MetricData<'a> {
             futures.push(self.send(
                 self.logs_created,
                 count as f64,
-                vec![Tag::new("level", level.as_str().to_lowercase()).unwrap()],
+                vec![
+                    Tag::new("level", level.as_str().to_lowercase()).unwrap(),
+                    tag!("src_library", "libdatadog"),
+                ],
             ));
         }
         if trace_metrics.api_requests > 0 {
             futures.push(self.send(
                 self.trace_api_requests,
                 trace_metrics.api_requests as f64,
-                vec![],
+                vec![Tag::new("src_library", "libdatadog").unwrap()],
             ));
         }
         if trace_metrics.api_errors_network > 0 {
             futures.push(self.send(
                 self.trace_api_errors,
                 trace_metrics.api_errors_network as f64,
-                vec![tag!("type", "network")],
+                vec![
+                    tag!("type", "network"),
+                    tag!("src_library", "libdatadog"),
+                ],
             ));
         }
         if trace_metrics.api_errors_timeout > 0 {
             futures.push(self.send(
                 self.trace_api_errors,
                 trace_metrics.api_errors_timeout as f64,
-                vec![tag!("type", "timeout")],
+                vec![
+                    tag!("type", "timeout"),
+                    tag!("src_library", "libdatadog"),
+                ],
             ));
         }
         if trace_metrics.api_errors_status_code > 0 {
             futures.push(self.send(
                 self.trace_api_errors,
                 trace_metrics.api_errors_status_code as f64,
-                vec![tag!("type", "status_code")],
+                vec![
+                    tag!("type", "status_code"),
+                    tag!("src_library", "libdatadog"),
+                ],
             ));
         }
         if trace_metrics.bytes_sent > 0 {
             futures.push(self.send(
                 self.trace_api_bytes,
                 trace_metrics.bytes_sent as f64,
-                vec![],
+                vec![tag!("src_library", "libdatadog")],
             ));
         }
         if trace_metrics.chunks_sent > 0 {
             futures.push(self.send(
                 self.trace_chunk_sent,
                 trace_metrics.chunks_sent as f64,
-                vec![],
+                vec![tag!("src_library", "libdatadog")],
             ));
         }
         if trace_metrics.chunks_dropped > 0 {
             futures.push(self.send(
                 self.trace_chunk_dropped,
                 trace_metrics.chunks_dropped as f64,
-                vec![],
+                vec![tag!("src_library", "libdatadog")],
             ));
         }
         for (status_code, count) in &trace_metrics.api_responses_count_per_code {
             futures.push(self.send(
                 self.trace_api_responses,
                 *count as f64,
-                vec![Tag::new("status_code", status_code.to_string().as_str()).unwrap()],
+                vec![
+                    Tag::new("status_code", status_code.to_string().as_str()).unwrap(),
+                    tag!("src_library", "libdatadog"),
+                ],
             ));
         }
 

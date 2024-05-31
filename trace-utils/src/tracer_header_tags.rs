@@ -105,7 +105,10 @@ mod tests {
         assert_eq!(map.len(), 6);
         assert_eq!(map.get("datadog-meta-lang").unwrap(), "test-lang");
         assert_eq!(map.get("datadog-meta-lang-version").unwrap(), "2.0");
-        assert_eq!(map.get("datadog-meta-lang-interpreter").unwrap(), "interpreter");
+        assert_eq!(
+            map.get("datadog-meta-lang-interpreter").unwrap(),
+            "interpreter"
+        );
         assert_eq!(map.get("datadog-meta-lang-vendor").unwrap(), "vendor");
         assert_eq!(map.get("datadog-meta-tracer-version").unwrap(), "1.0");
         assert_eq!(map.get("datadog-container-id").unwrap(), "id");
@@ -128,7 +131,10 @@ mod tests {
         assert_eq!(map.len(), 5);
         assert_eq!(map.get("datadog-meta-lang").unwrap(), "test-lang");
         assert_eq!(map.get("datadog-meta-lang-version").unwrap(), "2.0");
-        assert_eq!(map.get("datadog-meta-lang-interpreter").unwrap(), "interpreter");
+        assert_eq!(
+            map.get("datadog-meta-lang-interpreter").unwrap(),
+            "interpreter"
+        );
         assert_eq!(map.get("datadog-meta-lang-vendor").unwrap(), "vendor");
         assert_eq!(map.get("datadog-meta-tracer-version").unwrap(), "1.0");
         assert_eq!(map.get("datadog-container-id"), None);
@@ -140,7 +146,10 @@ mod tests {
 
         header_map.insert("datadog-meta-lang", "test-lang".parse().unwrap());
         header_map.insert("datadog-meta-lang-version", "2.0".parse().unwrap());
-        header_map.insert("datadog-meta-lang-interpreter", "interpreter".parse().unwrap());
+        header_map.insert(
+            "datadog-meta-lang-interpreter",
+            "interpreter".parse().unwrap(),
+        );
         header_map.insert("datadog-meta-lang-vendor", "vendor".parse().unwrap());
         header_map.insert("datadog-meta-tracer-version", "1.0".parse().unwrap());
         header_map.insert("datadog-container-id", "id".parse().unwrap());

@@ -81,7 +81,12 @@ pub fn construct_tracer_payload(
 pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
     // TODO trace payloads with identical data except for chunk could be merged?
 
-    data.sort_unstable_by(|a, b| a.get_target().url.to_string().cmp(&b.get_target().url.to_string()));
+    data.sort_unstable_by(|a, b| {
+        a.get_target()
+            .url
+            .to_string()
+            .cmp(&b.get_target().url.to_string())
+    });
     data.dedup_by(|a, b| {
         if a.get_target().url == b.get_target().url {
             // Size is only an approximation. In practice it won't vary much, but be safe here.
