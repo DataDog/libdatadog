@@ -5,7 +5,10 @@ use anyhow::{anyhow, Context};
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use hyper::{Body, Client, Method, Response};
+use hyper::{
+    header::{HeaderMap, HeaderValue},
+    Body, Client, Method, Response,
+};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -383,14 +386,25 @@ impl SendData {
         content_type: &'static str,
         payload: Vec<u8>,
         payload_chunks: u64,
+        // For payload specific headers that need to be added to the request like trace count.
+        additional_payload_headers: Option<HashMap<&'static str, String>>,
     ) -> RequestResult {
         let mut request_attempt = 0;
         let payload = Bytes::from(payload);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(HEADER_HTTP_CTYPE, HeaderValue::from_static(content_type));
+
+        if let Some(additional_payload_headers) = &additional_payload_headers {
+            for (key, value) in additional_payload_headers {
+                headers.insert(*key, HeaderValue::from_str(value).unwrap());
+            }
+        }
+
         loop {
             request_attempt += 1;
             let mut req = self.create_request_builder();
-            req = req.header(HEADER_HTTP_CTYPE, content_type);
-
+            req.headers_mut().unwrap().extend(headers.clone());
             let result = self.send_request(req, payload.clone()).await;
 
             // If the request was successful, or if we have exhausted retries then return the
@@ -469,8 +483,13 @@ impl SendData {
 
         result
             .update(
-                self.send_payload(HEADER_CTYPE_PROTOBUF, serialized_trace_payload, chunks)
-                    .await,
+                self.send_payload(
+                    HEADER_CTYPE_PROTOBUF,
+                    serialized_trace_payload,
+                    chunks,
+                    None,
+                )
+                .await,
             )
             .await;
 
@@ -480,29 +499,22 @@ impl SendData {
     async fn send_with_msgpack(&self) -> SendDataResult {
         let mut result = SendDataResult::default();
 
-        let mut req = self.create_request_builder();
-        req = req.header(HEADER_HTTP_CTYPE, HEADER_CTYPE_MSGPACK);
-
-        let (template, _) = req.body(()).unwrap().into_parts();
-
         let mut futures = FuturesUnordered::new();
         for tracer_payload in self.tracer_payloads.iter() {
             let chunks = u64::try_from(tracer_payload.chunks.len()).unwrap();
-            let mut builder = HttpRequestBuilder::new()
-                .method(template.method.clone())
-                .uri(template.uri.clone())
-                .version(template.version)
-                .header(HEADER_DD_TRACE_COUNT, chunks.to_string());
-            builder
-                .headers_mut()
-                .unwrap()
-                .extend(template.headers.clone());
+            let additional_payload_headers =
+                Some(HashMap::from([(HEADER_DD_TRACE_COUNT, chunks.to_string())]));
 
             let payload = match rmp_serde::to_vec_named(&tracer_payload) {
                 Ok(p) => p,
                 Err(e) => return result.error(anyhow!(e)),
             };
-            futures.push(self.send_payload("application/msgpack", payload, chunks));
+            futures.push(self.send_payload(
+                HEADER_CTYPE_MSGPACK,
+                payload,
+                chunks,
+                additional_payload_headers,
+            ));
         }
         loop {
             match futures.next().await {
@@ -725,16 +737,27 @@ mod tests {
     async fn request_msgpack() {
         let server = MockServer::start_async().await;
 
+        let header_tags = HEADER_TAGS;
         let mock = server
             .mock_async(|when, then| {
                 when.method(POST)
+                    .header(HEADER_DD_TRACE_COUNT, "1")
                     .header("Content-type", "application/msgpack")
+                    .header("datadog-meta-lang", header_tags.lang)
+                    .header(
+                        "datadog-meta-lang-interpreter",
+                        header_tags.lang_interpreter,
+                    )
+                    .header("datadog-meta-lang-version", header_tags.lang_version)
+                    .header("datadog-meta-lang-vendor", header_tags.lang_vendor)
+                    .header("datadog-meta-tracer-version", header_tags.tracer_version)
+                    .header("datadog-container-id", header_tags.container_id)
                     .path("/");
                 then.status(200).body("");
             })
             .await;
 
-        let header_tags = TracerHeaderTags::default();
+        let header_tags = HEADER_TAGS;
 
         let payload = setup_payload(&header_tags);
         let data = SendData::new(
