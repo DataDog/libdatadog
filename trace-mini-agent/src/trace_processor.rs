@@ -78,7 +78,10 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 );
                 for span in chunk.spans.iter_mut() {
                     trace_utils::enrich_span_with_mini_agent_metadata(span, &mini_agent_metadata);
-                    trace_utils::enrich_span_with_azure_metadata(span, config.mini_agent_version.as_str());
+                    trace_utils::enrich_span_with_azure_metadata(
+                        span,
+                        config.mini_agent_version.as_str(),
+                    );
                     obfuscate_span(span, &config.obfuscation_config);
                 }
             },
