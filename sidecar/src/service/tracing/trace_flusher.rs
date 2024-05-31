@@ -13,7 +13,6 @@ use manual_future::{ManualFuture, ManualFutureCompleter};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
-use std::iter::zip;
 use std::ops::DerefMut;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -235,19 +234,9 @@ impl TraceFlusher {
             .collect()
     }
 
-    async fn send_traces(&self, send_data: Vec<SendData>) {
-        let mut futures: Vec<_> = Vec::new();
-        let mut intake_target: Vec<_> = Vec::new();
-        for send_data in send_data {
-            intake_target.push(send_data.get_target().clone());
-            futures.push(send_data.send());
-        }
-        for (endpoint, response) in zip(intake_target, join_all(futures).await) {
-            self.handle_trace_response(endpoint, response).await;
-        }
-    }
-
-    async fn handle_trace_response(&self, endpoint: Endpoint, response: SendDataResult) {
+    async fn send_and_handle_trace(&self, send_data: SendData) {
+        let endpoint = send_data.get_target().clone();
+        let response = send_data.send().await;
         self.metrics.lock().unwrap().update(&response);
         match response.last_result {
             Ok(response) => {
@@ -290,7 +279,7 @@ impl TraceFlusher {
                 force_flush = new_force_flush;
 
                 let send_data = self.replace_trace_send_data(completer);
-                self.send_traces(send_data).await;
+                join_all(send_data.into_iter().map(|d| self.send_and_handle_trace(d))).await;
 
                 let mut data = self.inner.lock().unwrap();
                 let data = data.deref_mut();
