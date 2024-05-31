@@ -10,7 +10,7 @@ use bolero_generator::{TypeGeneratorWithParams, ValueGenerator};
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, bolero_generator::TypeGenerator)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, TypeGenerator)]
 pub struct Function {
     /// Name of the function, in human-readable form if available.
     pub name: Box<str>,
@@ -37,7 +37,7 @@ impl<'a> From<&'a Function> for api::Function<'a> {
     }
 }
 
-#[derive(Clone, Debug, Default, bolero_generator::TypeGenerator)]
+#[derive(Clone, Debug, Default, TypeGenerator)]
 pub struct Label {
     pub key: Box<str>,
 
@@ -66,7 +66,7 @@ impl<'a> From<&'a Label> for api::Label<'a> {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, bolero_generator::TypeGenerator)]
+#[derive(Clone, Debug, Eq, PartialEq, TypeGenerator)]
 pub struct Line {
     /// The corresponding profile.Function for this line.
     pub function: Function,
@@ -84,7 +84,7 @@ impl<'a> From<&'a Line> for api::Line<'a> {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, bolero_generator::TypeGenerator)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, TypeGenerator)]
 pub struct Location {
     pub mapping: Mapping,
     pub function: Function,
@@ -109,7 +109,7 @@ impl<'a> From<&'a Location> for api::Location<'a> {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, bolero_generator::TypeGenerator)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, TypeGenerator)]
 pub struct Mapping {
     /// Address at which the binary (or DLL) is loaded into memory.
     pub memory_start: u64,
@@ -188,7 +188,7 @@ impl std::hash::Hash for Label {
         self.key.hash(state)
     }
 }
-impl bolero_generator::TypeGenerator for Sample {
+impl TypeGenerator for Sample {
     fn generate<D: bolero_generator::Driver>(driver: &mut D) -> Option<Self> {
         let locations = Vec::<Location>::gen_with().generate(driver)?;
         let values = Vec::<i64>::gen_with().generate(driver)?;
@@ -362,7 +362,7 @@ fn assert_samples_eq(
     }
 }
 
-fn add_sample<'a>(
+fn fuzz_add_sample<'a>(
     timestamp: &Option<Timestamp>,
     sample: &'a Sample,
     expected_sample_types: &[owned_types::ValueType],
@@ -393,7 +393,7 @@ fn add_sample<'a>(
 
 /// Fuzzes adding a bunch of samples to the profile.
 #[test]
-fn fuzz_add_sample() {
+fn test_fuzz_add_sample() {
     bolero::check!()
         .with_generator((
             Vec::<owned_types::ValueType>::gen(),
@@ -409,7 +409,7 @@ fn fuzz_add_sample() {
             let mut samples_without_timestamps: HashMap<(&Vec<Location>, &Vec<Label>), Vec<i64>> =
                 HashMap::new();
             for (timestamp, sample) in samples {
-                add_sample(
+                fuzz_add_sample(
                     timestamp,
                     sample,
                     expected_sample_types,
@@ -567,7 +567,7 @@ fn fuzz_api_function_calls() {
             for operation in operations {
                 match operation {
                     Operation::AddSample(timestamp, sample) => {
-                        add_sample(
+                        fuzz_add_sample(
                             timestamp,
                             sample,
                             sample_types,

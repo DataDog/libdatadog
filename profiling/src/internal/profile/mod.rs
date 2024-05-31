@@ -547,7 +547,6 @@ impl Profile {
 #[cfg(test)]
 mod api_tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[test]
     fn interning() {
