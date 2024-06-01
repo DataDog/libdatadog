@@ -275,7 +275,7 @@ fn assert_sample_types_eq(
 fn assert_samples_eq(
     profile: &pprof::Profile,
     samples_with_timestamps: &[&Sample],
-    samples_without_timestamps: &HashMap<(&Vec<Location>, &Vec<Label>), Vec<i64>>,
+    samples_without_timestamps: &HashMap<(&[Location], &[Label]), Vec<i64>>,
     endpoint_mappings: &FxIndexMap<u64, &String>,
 ) {
     assert_eq!(
@@ -301,28 +301,16 @@ fn assert_samples_eq(
                 mapping.memory_start,
                 mapping.memory_limit,
                 mapping.file_offset,
-                profile
-                    .string_table_fetch(mapping.filename)
-                    .clone()
-                    .into_boxed_str(),
-                profile
-                    .string_table_fetch(mapping.build_id)
-                    .clone()
-                    .into_boxed_str(),
+                profile.string_table_fetch_owned(mapping.filename),
+                profile.string_table_fetch_owned(mapping.build_id),
             );
             let owned_function = Function::new(
                 profile
                     .string_table_fetch(function.name)
                     .clone()
                     .into_boxed_str(),
-                profile
-                    .string_table_fetch(function.system_name)
-                    .clone()
-                    .into_boxed_str(),
-                profile
-                    .string_table_fetch(function.filename)
-                    .clone()
-                    .into_boxed_str(),
+                profile.string_table_fetch_owned(function.system_name),
+                profile.string_table_fetch_owned(function.filename),
                 function.start_line,
             );
             let owned_location =
@@ -334,10 +322,7 @@ fn assert_samples_eq(
         // Recreate owned_labels from vector of pprof::Label
         let mut owned_labels = Vec::new();
         for label in sample.labels.iter() {
-            let key = profile
-                .string_table_fetch(label.key)
-                .clone()
-                .into_boxed_str();
+            let key = profile.string_table_fetch_owned(label.key);
 
             if *key == *"end_timestamp_ns" {
                 // TODO: Check end timestamp label
@@ -368,12 +353,7 @@ fn assert_samples_eq(
             } else {
                 let num = label.num;
                 let num_unit = if label.num_unit != 0 {
-                    Some(
-                        profile
-                            .string_table_fetch(label.num_unit)
-                            .clone()
-                            .into_boxed_str(),
-                    )
+                    Some(profile.string_table_fetch_owned(label.num_unit))
                 } else {
                     None
                 };
@@ -396,7 +376,7 @@ fn assert_samples_eq(
             expected_labels.sort();
             assert_eq!(owned_labels, expected_labels);
         } else {
-            let key = (&owned_locations, &owned_labels);
+            let key: (&[Location], &[Label]) = (&owned_locations, &owned_labels);
             let expected_values = samples_without_timestamps
                 .get(&key)
                 .expect("Value not found for an aggregated sample");
@@ -411,7 +391,7 @@ fn fuzz_add_sample<'a>(
     expected_sample_types: &[owned_types::ValueType],
     profile: &mut Profile,
     samples_with_timestamps: &mut Vec<&'a Sample>,
-    samples_without_timestamps: &mut HashMap<(&'a Vec<Location>, &'a Vec<Label>), Vec<i64>>,
+    samples_without_timestamps: &mut HashMap<(&'a [Location], &'a [Label]), Vec<i64>>,
 ) {
     let r = profile.add_sample(sample.into(), *timestamp);
     if expected_sample_types.len() == sample.values.len() {
@@ -458,8 +438,7 @@ fn fuzz_failure_001() {
     };
     let mut expected_profile = Profile::new(SystemTime::now(), &sample_types, None);
     let mut samples_with_timestamps = Vec::new();
-    let mut samples_without_timestamps: HashMap<(&Vec<Location>, &Vec<Label>), Vec<i64>> =
-        HashMap::new();
+    let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> = HashMap::new();
 
     let timestamp = None;
     fuzz_add_sample(
@@ -496,7 +475,7 @@ fn test_fuzz_add_sample() {
                 .collect();
             let mut expected_profile = Profile::new(SystemTime::now(), &sample_types, None);
             let mut samples_with_timestamps = Vec::new();
-            let mut samples_without_timestamps: HashMap<(&Vec<Location>, &Vec<Label>), Vec<i64>> =
+            let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
                 HashMap::new();
             for (timestamp, sample) in samples {
                 fuzz_add_sample(
@@ -544,7 +523,7 @@ fn fuzz_add_sample_with_fixed_sample_length() {
             let api_sample_types: Vec<_> = sample_types.iter().map(api::ValueType::from).collect();
             let mut profile = Profile::new(SystemTime::now(), &api_sample_types, None);
             let mut samples_with_timestamps = Vec::new();
-            let mut samples_without_timestamps: HashMap<(&Vec<Location>, &Vec<Label>), Vec<i64>> =
+            let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
                 HashMap::new();
 
             let samples: Vec<(&Option<Timestamp>, Sample)> = samples
@@ -642,7 +621,7 @@ fn fuzz_api_function_calls() {
             let api_sample_types: Vec<_> = sample_types.iter().map(api::ValueType::from).collect();
             let mut profile = Profile::new(SystemTime::now(), &api_sample_types, None);
             let mut samples_with_timestamps: Vec<&Sample> = Vec::new();
-            let mut samples_without_timestamps: HashMap<(&Vec<Location>, &Vec<Label>), Vec<i64>> =
+            let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
                 HashMap::new();
             let mut endpoint_mappings: FxIndexMap<u64, &String> = FxIndexMap::default();
 

@@ -181,6 +181,10 @@ impl Profile {
             .get(id as usize)
             .expect("String {id} not found")
     }
+
+    pub fn string_table_fetch_owned(&self, id: i64) -> Box<str> {
+        self.string_table_fetch(id).clone().into_boxed_str()
+    }
 }
 
 #[cfg(test)]
