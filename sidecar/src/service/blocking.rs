@@ -319,6 +319,20 @@ pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
     }
 }
 
+/// Flushes the outstanding traces.
+///
+/// # Arguments
+///
+/// * `transport` - The transport used for communication.
+///
+/// # Returns
+///
+/// An `io::Result<()>` indicating the result of the operation.
+pub fn flush_traces(transport: &mut SidecarTransport) -> io::Result<()> {
+    transport.call(SidecarInterfaceRequest::FlushTraces {})?;
+    Ok(())
+}
+
 /// Sends a ping to the service.
 ///
 /// # Arguments

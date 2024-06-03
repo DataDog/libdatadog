@@ -213,6 +213,13 @@ pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<SidecarTransport>) -> Ma
 }
 
 #[no_mangle]
+pub extern "C" fn ddog_sidecar_flush_traces(transport: &mut Box<SidecarTransport>) -> MaybeError {
+    try_c!(blocking::flush_traces(transport));
+
+    MaybeError::None
+}
+
+#[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_instanceId_build(
     session_id: ffi::CharSlice,

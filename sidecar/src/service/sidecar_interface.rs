@@ -106,6 +106,9 @@ pub trait SidecarInterface {
     /// * `actions` - The DogStatsD actions to send.
     async fn send_dogstatsd_actions(instance_id: InstanceId, actions: Vec<DogStatsDAction>);
 
+    /// Flushes any outstanding traces queued for sending.
+    async fn flush_traces();
+
     /// Sends a ping to the service.
     async fn ping();
 
