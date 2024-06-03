@@ -534,14 +534,12 @@ impl SendData {
 // For RetryStrategy tests the observed delay should be approximate.
 mod tests {
     use super::*;
-    use crate::trace_utils::construct_trace_chunk;
-    use crate::trace_utils::construct_tracer_payload;
-    use crate::trace_utils::RootSpanTags;
+    use crate::test_utils::{create_send_data, poll_for_mock_hit};
+    use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, RootSpanTags};
     use crate::tracer_header_tags::TracerHeaderTags;
     use datadog_trace_protobuf::pb;
     use ddcommon::Endpoint;
     use httpmock::prelude::*;
-    use httpmock::Mock;
     use httpmock::MockServer;
     use std::collections::HashMap;
     use tokio::time::Instant;
@@ -1027,57 +1025,6 @@ mod tests {
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
             "Elapsed time was not within expected range"
         );
-    }
-
-    // TODO: APMSP-1153 - This function also exists in
-    // sidecar::service::tracing::trace_flusher::tests. It should be moved to a common
-    // trace_test_utils module when it is properly gated to just test dependency.
-    async fn poll_for_mock_hit(
-        mock: &mut Mock<'_>,
-        poll_attempts: i32,
-        sleep_interval_ms: u64,
-        expected_hits: usize,
-        delete_after_hit: bool,
-    ) -> bool {
-        let mut mock_hit = mock.hits_async().await == expected_hits;
-
-        let mut mock_observations_remaining = poll_attempts;
-
-        while !mock_hit {
-            sleep(Duration::from_millis(sleep_interval_ms)).await;
-            mock_hit = mock.hits_async().await == expected_hits;
-            mock_observations_remaining -= 1;
-            if mock_observations_remaining == 0 || mock_hit {
-                if delete_after_hit {
-                    mock.delete();
-                }
-                break;
-            }
-        }
-
-        mock_hit
-    }
-
-    // TODO: APMSP-1153 - This function also exists in
-    // sidecar::service::tracing::trace_flusher::tests. It should be moved to a common
-    // trace_test_utils module when it is properly gated to just test dependency.
-    fn create_send_data(size: usize, target_endpoint: &Endpoint) -> SendData {
-        let tracer_header_tags = TracerHeaderTags::default();
-
-        let tracer_payload = pb::TracerPayload {
-            container_id: "container_id_1".to_owned(),
-            language_name: "php".to_owned(),
-            language_version: "4.0".to_owned(),
-            tracer_version: "1.1".to_owned(),
-            runtime_id: "runtime_1".to_owned(),
-            chunks: vec![],
-            tags: Default::default(),
-            env: "test".to_owned(),
-            hostname: "test_host".to_owned(),
-            app_version: "2.0".to_owned(),
-        };
-
-        SendData::new(size, tracer_payload, tracer_header_tags, target_endpoint)
     }
 
     #[cfg_attr(miri, ignore)]

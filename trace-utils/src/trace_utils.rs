@@ -355,7 +355,7 @@ mod tests {
     use super::{get_root_span_index, set_serverless_root_span_tags};
     use crate::trace_utils::{TracerHeaderTags, MAX_PAYLOAD_SIZE};
     use crate::{
-        trace_test_utils::create_test_span,
+        test_utils::create_test_span,
         trace_utils::{self, SendData},
     };
     use datadog_trace_protobuf::pb;

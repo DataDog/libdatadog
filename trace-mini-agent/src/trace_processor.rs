@@ -124,7 +124,7 @@ mod tests {
     };
     use datadog_trace_protobuf::pb;
     use datadog_trace_utils::{
-        trace_test_utils::{create_test_json_span, create_test_span},
+        test_utils::{create_test_json_span, create_test_span},
         trace_utils,
     };
     use ddcommon::Endpoint;
