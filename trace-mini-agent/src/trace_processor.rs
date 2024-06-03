@@ -9,8 +9,8 @@ use log::info;
 use tokio::sync::mpsc::Sender;
 
 use datadog_trace_obfuscation::obfuscate::obfuscate_span;
-use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::SendData;
+use datadog_trace_utils::trace_utils::{self};
 
 use crate::{
     config::Config,
@@ -78,6 +78,10 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 );
                 for span in chunk.spans.iter_mut() {
                     trace_utils::enrich_span_with_mini_agent_metadata(span, &mini_agent_metadata);
+                    trace_utils::enrich_span_with_azure_metadata(
+                        span,
+                        config.mini_agent_version.as_str(),
+                    );
                     obfuscate_span(span, &config.obfuscation_config);
                 }
             },
@@ -151,6 +155,7 @@ mod tests {
             env_type: trace_utils::EnvironmentType::CloudFunction,
             os: "linux".to_string(),
             obfuscation_config: ObfuscationConfig::new().unwrap(),
+            mini_agent_version: "0.1.0".to_string(),
         }
     }
 
