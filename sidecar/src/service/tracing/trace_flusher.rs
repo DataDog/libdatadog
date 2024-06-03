@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::select;
+use tokio::sync::mpsc;
 use tokio::task::{JoinError, JoinHandle};
 use tracing::{debug, error, info};
 
@@ -219,7 +220,10 @@ impl TraceFlusher {
         }
     }
 
-    fn replace_trace_send_data(&self, completer: ManualFutureCompleter<()>) -> Vec<SendData> {
+    fn replace_trace_send_data(
+        &self,
+        completer: ManualFutureCompleter<Option<mpsc::Sender<()>>>,
+    ) -> Vec<SendData> {
         let trace_buffer = std::mem::replace(
             &mut self.inner.lock().unwrap().traces,
             TraceSendData {
@@ -260,14 +264,18 @@ impl TraceFlusher {
         }
     }
 
-    fn start_trace_flusher(self: Arc<Self>, mut force_flush: ManualFuture<()>) -> JoinHandle<()> {
+    fn start_trace_flusher(
+        self: Arc<Self>,
+        mut force_flush: ManualFuture<Option<mpsc::Sender<()>>>,
+    ) -> JoinHandle<()> {
         tokio::spawn(async move {
             loop {
+                let mut flush_done_sender = None;
                 select! {
                     _ = tokio::time::sleep(Duration::from_millis(
                         self.interval_ms.load(Ordering::Relaxed),
                     )) => {},
-                    _ = force_flush => {},
+                    sender = force_flush => { flush_done_sender = sender; },
                 }
 
                 debug!(
@@ -281,6 +289,8 @@ impl TraceFlusher {
                 let send_data = self.replace_trace_send_data(completer);
                 join_all(send_data.into_iter().map(|d| self.send_and_handle_trace(d))).await;
 
+                drop(flush_done_sender);
+
                 let mut data = self.inner.lock().unwrap();
                 let data = data.deref_mut();
                 if data.traces.send_data.is_empty() {
@@ -289,6 +299,12 @@ impl TraceFlusher {
                 }
             }
         })
+    }
+
+    /// Flushes immediately without delay.
+    pub async fn flush(&self) {
+        let flush_done = self.inner.lock().unwrap().traces.await_flush();
+        flush_done.await
     }
 }
 

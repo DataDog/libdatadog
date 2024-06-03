@@ -36,6 +36,7 @@ use tracing::{debug, enabled, error, info, warn, Level};
 
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
+use tokio::task::{JoinError, JoinHandle};
 
 use crate::dogstatsd::DogStatsDAction;
 use crate::service::telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats;
@@ -707,6 +708,18 @@ impl SidecarInterface for SidecarServer {
         });
 
         no_response()
+    }
+
+    type FlushTracesFut = future::Map<JoinHandle<()>, fn(Result<(), JoinError>)>;
+
+    fn flush_traces(self, _: Context) -> Self::FlushTracesFut {
+        let flusher = self.trace_flusher.clone();
+        fn report_result(result: Result<(), JoinError>) {
+            if let Err(e) = result {
+                error!("Failed flushing traces: {e:?}");
+            }
+        }
+        tokio::spawn(async move { flusher.flush().await }).map(report_result)
     }
 
     type PingFut = Ready<()>;
