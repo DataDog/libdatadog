@@ -37,7 +37,7 @@ fn get_cgroup_node_path(
 
     let mut node_path: Option<PathBuf> = None;
 
-    for (index, line) in reader.lines().enumerate() {
+    for line in reader.lines() {
         let line_content = &line.map_err(|_| CgroupFileParsingError::InvalidFormat)?;
         let cgroup_entry: Vec<&str> = line_content.split(':').collect();
         if cgroup_entry.len() != 3 {
@@ -45,9 +45,7 @@ fn get_cgroup_node_path(
         }
         let controllers: Vec<&str> = cgroup_entry[1].split(',').collect();
         // Only keep empty controller if it is the first line as cgroupV2 uses only one line
-        if controllers.contains(&cgroup_v1_base_controller)
-            || (controllers.contains(&"") && index == 0)
-        {
+        if controllers.contains(&cgroup_v1_base_controller) || controllers.contains(&"") {
             let matched_operator = if controllers.contains(&cgroup_v1_base_controller) {
                 cgroup_v1_base_controller
             } else {
@@ -58,8 +56,9 @@ fn get_cgroup_node_path(
             path.push(cgroup_entry[2].strip_prefix('/').unwrap_or(cgroup_entry[2])); // Remove first / as the path is relative
             node_path = Some(path);
 
-            // if we are using cgroupV1 we can stop looking for the controller
-            if index != 0 {
+            // if we matched the V1 base controller we can return otherwise we continue until we
+            // find it or default to the empty controller name
+            if matched_operator == cgroup_v1_base_controller {
                 break;
             }
         }
