@@ -42,7 +42,7 @@ pub unsafe extern "C" fn ddog_Vec_Tag_push(
             vec.push(tag);
             PushTagResult::Ok
         }
-        Err(err) => PushTagResult::Err(Error::from(err.as_ref())),
+        Err(err) => PushTagResult::Err(Error::from(err.to_string())),
     }
 }
 

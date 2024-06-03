@@ -3,7 +3,7 @@
 
 use std::{error::Error, time::Duration, time::Instant};
 
-use ddcommon::tag::Tag;
+use ddcommon::tag;
 use ddtelemetry::{data, worker};
 
 macro_rules! timeit {
@@ -64,7 +64,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     handle.add_point(1.0, &dist_metric, Vec::new()).unwrap();
     handle.add_point(2.0, &dist_metric, Vec::new()).unwrap();
 
-    let tags = vec![Tag::from_value("foo:bar").unwrap()];
+    let tags = vec![tag!("foo", "bar")];
     handle.add_point(2.0, &ping_metric, tags.clone()).unwrap();
     handle.add_point(1.8, &dist_metric, tags).unwrap();
 

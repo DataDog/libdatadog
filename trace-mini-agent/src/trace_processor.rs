@@ -218,7 +218,7 @@ mod tests {
 
         assert_eq!(
             expected_tracer_payload,
-            tracer_payload.unwrap().tracer_payloads[0]
+            tracer_payload.unwrap().get_payloads()[0]
         );
     }
 
@@ -288,7 +288,7 @@ mod tests {
         };
         assert_eq!(
             expected_tracer_payload,
-            tracer_payload.unwrap().tracer_payloads[0]
+            tracer_payload.unwrap().get_payloads()[0]
         );
     }
 }
