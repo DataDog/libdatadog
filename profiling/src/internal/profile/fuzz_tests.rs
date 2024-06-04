@@ -290,6 +290,9 @@ fn assert_samples_eq(
         // Recreate owned_locations from vector of pprof::Location
         let mut owned_locations = Vec::new();
         for loc_id in sample.location_ids.iter() {
+            // Subtract 1 because when creating pprof location ids, we use
+            // `small_non_zero_pprof_id()` function which guarantees that the id stored in pprof
+            // is +1 of the index in the vector of Locations in internal::Profile.
             let location = &profile.locations[*loc_id as usize - 1];
             let mapping = &profile.mappings[location.mapping_id as usize - 1];
             assert!(location.lines.len() == 1);
