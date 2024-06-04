@@ -311,55 +311,9 @@ impl TraceFlusher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_trace_protobuf::pb;
-    use datadog_trace_utils::trace_utils::TracerHeaderTags;
-    use httpmock::{Mock, MockServer};
+    use datadog_trace_utils::test_utils::{create_send_data, poll_for_mock_hit};
+    use httpmock::MockServer;
     use std::sync::Arc;
-
-    // This function will poll the mock server for "hits" until the expected number of hits is
-    // observed. Then it will delete the mock. In its current form it may not correctly report if
-    // more than the asserted number of hits occurred. More attempts at lower sleep intervals is
-    // preferred to reduce flakiness and test runtime.
-    async fn poll_for_mock_hit(
-        mock: &mut Mock<'_>,
-        poll_attempts: i32,
-        sleep_interval_ms: u64,
-        expected_hits: usize,
-    ) -> bool {
-        let mut mock_hit = mock.hits_async().await == expected_hits;
-
-        let mut mock_observations_remaining = poll_attempts;
-
-        while !mock_hit {
-            tokio::time::sleep(Duration::from_millis(sleep_interval_ms)).await;
-            mock_hit = mock.hits_async().await == expected_hits;
-            mock_observations_remaining -= 1;
-            if mock_observations_remaining == 0 || mock_hit {
-                break;
-            }
-        }
-
-        mock_hit
-    }
-
-    fn create_send_data(size: usize, target_endpoint: &Endpoint) -> SendData {
-        let tracer_header_tags = TracerHeaderTags::default();
-
-        let tracer_payload = pb::TracerPayload {
-            container_id: "container_id_1".to_owned(),
-            language_name: "php".to_owned(),
-            language_version: "4.0".to_owned(),
-            tracer_version: "1.1".to_owned(),
-            runtime_id: "runtime_1".to_owned(),
-            chunks: vec![],
-            tags: Default::default(),
-            env: "test".to_owned(),
-            hostname: "test_host".to_owned(),
-            app_version: "2.0".to_owned(),
-        };
-
-        SendData::new(size, tracer_payload, tracer_header_tags, target_endpoint)
-    }
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
@@ -397,12 +351,12 @@ mod tests {
         trace_flusher.enqueue(send_data_1);
         trace_flusher.enqueue(send_data_2);
 
-        assert!(poll_for_mock_hit(&mut mock, 10, 150, 0).await);
+        assert!(poll_for_mock_hit(&mut mock, 10, 150, 0, false).await);
 
         // enqueue a trace that exceeds the min force flush size
         trace_flusher.enqueue(send_data_3);
 
-        assert!(poll_for_mock_hit(&mut mock, 25, 100, 1).await);
+        assert!(poll_for_mock_hit(&mut mock, 25, 100, 1, true).await);
     }
 
     #[cfg_attr(miri, ignore)]
@@ -438,7 +392,7 @@ mod tests {
             trace_flusher.interval_ms.load(Ordering::Relaxed) + 1,
         ))
         .await;
-        assert!(poll_for_mock_hit(&mut mock, 25, 100, 1).await);
+        assert!(poll_for_mock_hit(&mut mock, 25, 100, 1, true).await);
     }
 
     #[cfg_attr(miri, ignore)]
@@ -470,6 +424,6 @@ mod tests {
 
         trace_flusher.enqueue(send_data_1);
 
-        assert!(poll_for_mock_hit(&mut mock, 5, 250, 0).await);
+        assert!(poll_for_mock_hit(&mut mock, 5, 250, 0, true).await);
     }
 }
