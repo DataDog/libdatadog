@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use crate::pprof;
 use std::ops::{Add, Sub};
@@ -9,6 +9,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub struct ValueType<'a> {
     pub r#type: &'a str,
     pub unit: &'a str,
+}
+
+impl<'a> ValueType<'a> {
+    #[inline(always)]
+    pub fn new(r#type: &'a str, unit: &'a str) -> Self {
+        Self { r#type, unit }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -280,10 +287,10 @@ impl<'a> TryFrom<&'a pprof::Profile> for Profile<'a> {
 
         let period = match pprof.period_type {
             Some(t) => {
-                let r#type = ValueType {
-                    r#type: string_table_fetch(pprof, t.r#type)?,
-                    unit: string_table_fetch(pprof, t.unit)?,
-                };
+                let r#type = ValueType::new(
+                    string_table_fetch(pprof, t.r#type)?,
+                    string_table_fetch(pprof, t.unit)?,
+                );
                 Some((pprof.period, r#type))
             }
             None => None,
@@ -291,10 +298,10 @@ impl<'a> TryFrom<&'a pprof::Profile> for Profile<'a> {
 
         let mut sample_types = Vec::with_capacity(pprof.samples.len());
         for t in pprof.sample_types.iter() {
-            sample_types.push(ValueType {
-                r#type: string_table_fetch(pprof, t.r#type)?,
-                unit: string_table_fetch(pprof, t.unit)?,
-            });
+            sample_types.push(ValueType::new(
+                string_table_fetch(pprof, t.r#type)?,
+                string_table_fetch(pprof, t.unit)?,
+            ));
         }
 
         let mut samples = Vec::with_capacity(pprof.samples.len());
@@ -337,7 +344,7 @@ impl<'a> TryFrom<&'a pprof::Profile> for Profile<'a> {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     #[test]

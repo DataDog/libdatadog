@@ -1,8 +1,9 @@
-# Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-# This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
 
 [workspace]
 members = [
+  "alloc",
   "crashtracker",
   "profiling",
   "profiling-ffi",
@@ -25,6 +26,9 @@ members = [
   "spawn_worker",
   "tests/spawn_from_lib",
   "serverless",
+  "bin_tests",
+  "data-pipeline",
+  "data-pipeline-ffi",
   "ddsketch",
 ]
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
@@ -34,9 +38,9 @@ resolver = "2"
 # serverless packages wanted to maintain their own version numbers. Some of
 # their depenencies also remain under their own versioning.
 [workspace.package]
-rust-version = "1.69"
+rust-version = "1.71.1"
 edition = "2021"
-version = "6.0.0"
+version = "9.0.0"
 license = "Apache-2.0"
 
 [profile.dev]
@@ -50,3 +54,10 @@ opt-level = "s" # optimize for size
 
 [profile.release.package.datadog-serverless-trace-mini-agent]
 strip = true
+
+# https://camshaft.github.io/bolero/library-installation.html
+[profile.fuzz]
+inherits = "dev"
+opt-level = 3
+incremental = false
+codegen-units = 1

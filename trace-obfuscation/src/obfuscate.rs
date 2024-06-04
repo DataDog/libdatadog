@@ -1,7 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed
-// under the Apache License Version 2.0. This product includes software
-// developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
-// Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use datadog_trace_protobuf::pb;
 
@@ -46,7 +44,7 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
         _ => {}
     }
     if let Some(tag_replace_rules) = &config.tag_replace_rules {
-        replace_span_tags(span, tag_replace_rules)
+        replace_span_tags(span, tag_replace_rules, &mut String::new());
     }
 }
 

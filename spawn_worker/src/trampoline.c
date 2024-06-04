@@ -1,6 +1,6 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache
-// License Version 2.0. This product includes software developed at Datadog
-// (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -108,7 +108,7 @@ int main(int argc, char *argv[]) {
         return 10;
     } 
 
-    void (*fn)() = GetProcAddress(handle, symbol_name);
+    void (*fn)() = (void(*)())GetProcAddress(handle, symbol_name);
 
     if (!fn) {
         DWORD res = GetLastError();

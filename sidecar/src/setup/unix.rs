@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use std::{
     env, fs, io,
@@ -65,7 +65,10 @@ impl Liaison for SharedDirLiaison {
         if self.socket_path.exists() {
             // if socket is already listening, then creating listener is not available
             if platform::sockets::is_listening(&self.socket_path)? {
-                debug!("already_listening");
+                debug!(
+                    "The sidecar's socket is already listening ({})",
+                    self.socket_path.as_path().display()
+                );
                 return Ok(None);
             }
             fs::remove_file(&self.socket_path)?;
@@ -85,7 +88,7 @@ impl Liaison for SharedDirLiaison {
 
 impl SharedDirLiaison {
     pub fn new<P: AsRef<Path>>(base_dir: P) -> Self {
-        let versioned_socket_basename = concat!("libdd.", env!("CARGO_PKG_VERSION"), ".sock");
+        let versioned_socket_basename = concat!("libdd.", crate::sidecar_version!(), ".sock");
         let base_dir = base_dir.as_ref();
         let socket_path = base_dir
             .join(versioned_socket_basename)
@@ -143,13 +146,13 @@ mod linux {
         }
 
         fn ipc_shared() -> AbstractUnixSocketLiaison {
-            let path = PathBuf::from(concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".sock"));
+            let path = PathBuf::from(concat!("libdatadog/", crate::sidecar_version!(), ".sock"));
             Self { path }
         }
 
         fn ipc_per_process() -> AbstractUnixSocketLiaison {
             let path = PathBuf::from(format!(
-                concat!("libdatadog/", env!("CARGO_PKG_VERSION"), ".{}.sock"),
+                concat!("libdatadog/", crate::sidecar_version!(), ".{}.sock"),
                 getpid()
             ));
             Self { path }
@@ -207,8 +210,9 @@ mod tests {
             let listener = liaison.attempt_listen().unwrap().unwrap();
             // can't listen twice when some listener is active
             assert!(liaison.attempt_listen().unwrap().is_none());
-            // a liaison can try connecting to existing socket to ensure its valid, adding connection to accept queue
-            // but we can drain any preexisting connections in the queue
+            // a liaison can try connecting to existing socket to ensure its valid, adding
+            // connection to accept queue but we can drain any preexisting connections
+            // in the queue
             listener.set_nonblocking(true).unwrap();
             loop {
                 match listener.accept() {

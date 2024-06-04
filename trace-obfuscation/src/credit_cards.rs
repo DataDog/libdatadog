@@ -1,10 +1,8 @@
-// Unless explicitly stated otherwise all files in this repository are licensed
-// under the Apache License Version 2.0. This product includes software
-// developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
-// Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
-/// is_card_number checks if b could be a credit card number by checking the digit count and IIN prefix.
-/// If validateLuhn is true, the Luhn checksum is also applied to potential candidates.
+/// is_card_number checks if b could be a credit card number by checking the digit count and IIN
+/// prefix. If validateLuhn is true, the Luhn checksum is also applied to potential candidates.
 /// Note: This code is based on the code from datadog-agent/pkg/obfuscate/credit_cards.go
 pub fn is_card_number<T: AsRef<str>>(s: T, validate_luhn: bool) -> bool {
     let s = s.as_ref();
@@ -40,8 +38,8 @@ pub fn is_card_number<T: AsRef<str>>(s: T, validate_luhn: bool) -> bool {
     is_valid_iin == FuzzyBool::True
 }
 
-/// luhnValid checks that the number represented in the given vector validates the Luhn Checksum algorithm.
-/// nums must be non-empty
+/// luhnValid checks that the number represented in the given vector validates the Luhn Checksum
+/// algorithm. nums must be non-empty
 ///
 /// See:
 /// https://en.wikipedia.org/wiki/Luhn_algorithm

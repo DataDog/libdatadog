@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 mod profile_index;
 mod replayer;
@@ -192,7 +192,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     for (local_root_span_id, endpoint_value) in std::mem::take(&mut replayer.endpoints) {
-        outprof.add_endpoint(local_root_span_id, Cow::Borrowed(endpoint_value));
+        outprof.add_endpoint(local_root_span_id, Cow::Borrowed(endpoint_value))?;
     }
 
     println!("Replaying sample took {} ms", duration.as_millis());

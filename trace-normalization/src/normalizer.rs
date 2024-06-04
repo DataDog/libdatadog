@@ -1,7 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed
-// under the Apache License Version 2.0. This product includes software
-// developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
-// Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use crate::normalize_utils;
 use datadog_trace_protobuf::pb;
@@ -13,7 +11,8 @@ const MAX_TYPE_LEN: usize = 100;
 // nanoseconds since epoch on Jan 1, 2000
 const YEAR_2000_NANOSEC_TS: i64 = 946684800000000000;
 
-// DEFAULT_SPAN_NAME is the default name we assign a span if it's missing and we have no reasonable fallback
+// DEFAULT_SPAN_NAME is the default name we assign a span if it's missing and we have no reasonable
+// fallback
 const DEFAULT_SPAN_NAME: &str = "unnamed_operation";
 
 const TAG_SAMPLING_PRIORITY: &str = "_sampling_priority_v1";
@@ -39,8 +38,8 @@ fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
 
     s.service = normalized_service;
 
-    // TODO: component2name: check for a feature flag to determine the component tag to become the span name
-    // https://github.com/DataDog/datadog-agent/blob/dc88d14851354cada1d15265220a39dce8840dcc/pkg/trace/agent/normalizer.go#L64
+    // TODO: component2name: check for a feature flag to determine the component tag to become the
+    // span name https://github.com/DataDog/datadog-agent/blob/dc88d14851354cada1d15265220a39dce8840dcc/pkg/trace/agent/normalizer.go#L64
 
     let normalized_name = match normalize_utils::normalize_name(&s.name) {
         Ok(name) => name,
@@ -50,7 +49,7 @@ fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
     s.name = normalized_name;
 
     if s.resource.is_empty() {
-        s.resource = s.name.clone();
+        s.resource.clone_from(&s.name)
     }
 
     // ParentID, TraceID and SpanID set in the client could be the same
@@ -138,7 +137,8 @@ pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
 /// normalize_chunk takes a trace chunk and
 /// * populates origin field if it wasn't populated
 /// * populates priority field if it wasn't populated
-/// the root span is used to populate these fields, and it's index in TraceChunk spans vec must be passed.
+/// the root span is used to populate these fields, and it's index in TraceChunk spans vec must be
+/// passed.
 pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root_span_index: usize) -> anyhow::Result<()> {
     // check if priority is not populated
     let root_span = match chunk.spans.get(root_span_index) {
@@ -363,7 +363,8 @@ mod tests {
 
         assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert!(test_span.start >= min_start); // start should have been reset to current time
-        assert!(test_span.start <= get_current_time()); //start should have been reset to current time
+        assert!(test_span.start <= get_current_time()); //start should have been reset to current
+                                                        // time
     }
 
     #[test]

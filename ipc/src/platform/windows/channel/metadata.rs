@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter, Pointer};
@@ -46,14 +46,14 @@ impl ProcessHandle {
             }
             ProcessHandle::Pid(pid) => {
                 let handle = unsafe { OpenProcess(PROCESS_DUP_HANDLE, 0, *pid) };
-                if handle == null_mut() {
+                if handle.is_null() {
                     return Err(io::Error::last_os_error());
                 }
                 *self = ProcessHandle::Handle(WrappedHANDLE(handle));
             }
             ProcessHandle::Getter(getter) => *self = getter()?,
         };
-        return self.get();
+        self.get()
     }
 
     pub fn send_file_handle(&mut self, handle: RawHandle) -> io::Result<RawHandle> {

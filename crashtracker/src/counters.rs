@@ -1,11 +1,10 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
-use super::constants::*;
-use std::{
-    io::Write,
-    sync::atomic::{AtomicI64, Ordering::SeqCst},
-};
+use std::sync::atomic::{AtomicI64, Ordering::SeqCst};
+
+#[cfg(unix)]
+use std::io::Write;
 
 /// This enum represents operations a profiler might be engaged in.
 /// The idea is that if a crash consistently occurs while a particular operation
@@ -94,7 +93,10 @@ pub fn end_profiling_op(op: ProfilingOpTypes) -> anyhow::Result<()> {
 /// SIGNAL SAFETY:
 ///     This function is careful to only write to the handle, without doing any
 ///     unnecessary mutexes or memory allocation.
+#[cfg(unix)]
 pub fn emit_counters(w: &mut impl Write) -> anyhow::Result<()> {
+    use super::constants::*;
+
     writeln!(w, "{DD_CRASHTRACK_BEGIN_COUNTERS}")?;
     for (i, c) in PROFILING_OP_COUNTERS.iter().enumerate() {
         writeln!(

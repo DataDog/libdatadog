@@ -1,7 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed
-// under the Apache License Version 2.0. This product includes software
-// developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present
-// Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -136,6 +134,7 @@ pub struct Span {
     #[prost(map = "string, bytes", tag = "13")]
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
+    #[serde(skip_serializing_if = "::std::collections::HashMap::is_empty")]
     pub meta_struct: ::std::collections::HashMap<
         ::prost::alloc::string::String,
         ::prost::alloc::vec::Vec<u8>,
@@ -145,6 +144,7 @@ pub struct Span {
     #[prost(message, repeated, tag = "14")]
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
+    #[serde(skip_serializing_if = "::prost::alloc::vec::Vec::is_empty")]
     pub span_links: ::prost::alloc::vec::Vec<SpanLink>,
 }
 /// TraceChunk represents a list of spans with the same trace ID. In other words, a chunk of a trace.
@@ -341,6 +341,14 @@ pub struct ClientStatsPayload {
     #[prost(string, repeated, tag = "12")]
     #[serde(default)]
     pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// The git commit SHA is obtained from a trace, where it may be set through a tracer <-> source code integration.
+    #[prost(string, tag = "13")]
+    #[serde(default)]
+    pub git_commit_sha: ::prost::alloc::string::String,
+    /// The image tag is obtained from a container's set of tags.
+    #[prost(string, tag = "14")]
+    #[serde(default)]
+    pub image_tag: ::prost::alloc::string::String,
 }
 /// ClientStatsBucket is a time bucket containing aggregated stats.
 #[derive(Deserialize, Serialize)]
@@ -417,4 +425,36 @@ pub struct ClientGroupedStats {
     /// E.g., `grpc.target` to describe the name of a gRPC peer, or `db.hostname` to describe the name of peer DB
     #[prost(string, repeated, tag = "16")]
     pub peer_tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// this field's value is equal to span's ParentID == 0.
+    #[prost(enumeration = "TraceRootFlag", tag = "17")]
+    pub is_trace_root: i32,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum TraceRootFlag {
+    NotSet = 0,
+    True = 1,
+    False = 2,
+}
+impl TraceRootFlag {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            TraceRootFlag::NotSet => "NOT_SET",
+            TraceRootFlag::True => "TRUE",
+            TraceRootFlag::False => "FALSE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "NOT_SET" => Some(Self::NotSet),
+            "TRUE" => Some(Self::True),
+            "FALSE" => Some(Self::False),
+            _ => None,
+        }
+    }
 }

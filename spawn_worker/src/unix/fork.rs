@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use nix::libc;
 pub enum Fork {
@@ -15,11 +15,11 @@ pub enum Fork {
 ///
 /// # Safety
 ///
-/// Existing state of the process must allow safe forking, e.g. no background threads should be running
-/// as any locks held by these threads will be locked forever
+/// Existing state of the process must allow safe forking, e.g. no background threads should be
+/// running as any locks held by these threads will be locked forever
 ///
-/// When forking a multithreaded application, no code should allocate or access other potentially locked resources
-/// until call to exec is executed
+/// When forking a multithreaded application, no code should allocate or access other potentially
+/// locked resources until call to exec is executed
 pub(crate) unsafe fn fork() -> Result<Fork, std::io::Error> {
     let res = libc::fork();
     match res {
@@ -33,11 +33,11 @@ pub(crate) unsafe fn fork() -> Result<Fork, std::io::Error> {
 ///
 /// # Safety
 ///
-/// Existing state of the process must allow safe forking, e.g. no background threads should be running
-/// as any locks held by these threads will be locked forever
+/// Existing state of the process must allow safe forking, e.g. no background threads should be
+/// running as any locks held by these threads will be locked forever
 ///
-/// When forking a multithreaded application, no code should allocate or access other potentially locked resources
-/// until call to exec is executed
+/// When forking a multithreaded application, no code should allocate or access other potentially
+/// locked resources until call to exec is executed
 #[cfg(test)]
 unsafe fn fork_fn<Args>(args: Args, f: fn(Args) -> ()) -> Result<libc::pid_t, std::io::Error> {
     match fork()? {
@@ -60,7 +60,7 @@ pub fn set_default_child_panic_handler() {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod single_threaded_tests {
     use io_lifetimes::OwnedFd;
     use std::{
         io::{Read, Write},
@@ -73,7 +73,8 @@ pub mod tests {
     use crate::{assert_child_exit, fork::set_default_child_panic_handler, getpid};
 
     #[test]
-    #[ignore]
+    #[cfg_attr(miri, ignore)]
+    #[cfg_attr(coverage_nightly, ignore)] // this fails on nightly coverage
     fn test_fork_subprocess() {
         let (mut sock_a, sock_b) = UnixStream::pair().unwrap();
         let pid = unsafe {
@@ -107,21 +108,26 @@ pub mod tests {
         assert_eq!(format!("child-{pid}"), out);
     }
 
-    #[test]
-    #[ignore]
     #[cfg(unix)]
-    fn test_fork_trigger_error() {
-        let pid = unsafe {
-            super::fork_fn((), |_| {
-                set_default_child_panic_handler();
+    mod skip_root_tests {
+        use crate::{assert_child_exit, fork::set_default_child_panic_handler};
 
-                // Limit the number of processes the child process tree is able to contain
-                rlimit::setrlimit(rlimit::Resource::NPROC, 1, 1).unwrap();
-                let err = crate::fork::fork_fn((), |_| {}).unwrap_err();
-                assert_eq!(std::io::ErrorKind::WouldBlock, err.kind());
-            })
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn test_fork_trigger_error() {
+            let pid = unsafe {
+                super::super::fork_fn((), |_| {
+                    set_default_child_panic_handler();
+
+                    // Limit the number of processes the child process tree is able to contain.
+                    // This does not work when the test is run as root.
+                    rlimit::setrlimit(rlimit::Resource::NPROC, 1, 1).unwrap();
+                    let err = crate::fork::fork_fn((), |_| {}).unwrap_err();
+                    assert_eq!(std::io::ErrorKind::WouldBlock, err.kind());
+                })
+            }
+            .unwrap();
+            assert_child_exit!(pid);
         }
-        .unwrap();
-        assert_child_exit!(pid);
     }
 }

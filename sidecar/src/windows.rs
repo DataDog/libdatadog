@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 use crate::enter_listener_loop;
 use crate::setup::pid_shm_path;
 use datadog_ipc::platform::{
@@ -52,8 +52,8 @@ pub extern "C" fn ddog_daemon_entry_point() {
                 }
             };
 
-            // We pass the shm to ensure we drop the shm handle with the pid immediately after cancellation
-            // To avoid actual race conditions
+            // We pass the shm to ensure we drop the shm handle with the pid immediately after
+            // cancellation To avoid actual race conditions
             Ok((
                 |handler| accept_socket_loop(pipe, closed_future, handler, shm),
                 cancel,
@@ -96,7 +96,8 @@ async fn accept_socket_loop(
 }
 
 pub fn setup_daemon_process(listener: OwnedHandle, spawn_cfg: &mut SpawnWorker) -> io::Result<()> {
-    // Ensure unique process names - we spawn one sidecar per console session id (see setup/windows.rs for the reasoning)
+    // Ensure unique process names - we spawn one sidecar per console session id (see
+    // setup/windows.rs for the reasoning)
     spawn_cfg
         .process_name(format!("datadog-ipc-helper-{}", unsafe {
             WTSGetActiveConsoleSessionId()

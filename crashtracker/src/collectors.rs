@@ -1,7 +1,10 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+#![cfg(unix)]
 
 use anyhow::Context;
+
+use crate::StacktraceCollection;
 
 use super::constants::*;
 use std::{
@@ -23,7 +26,7 @@ use std::{
 ///     sometimes crashes.
 pub unsafe fn emit_backtrace_by_frames(
     w: &mut impl Write,
-    resolve_frames: bool,
+    resolve_frames: StacktraceCollection,
 ) -> anyhow::Result<()> {
     // https://docs.rs/backtrace/latest/backtrace/index.html
     writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
@@ -37,8 +40,7 @@ pub unsafe fn emit_backtrace_by_frames(
         }
         write!(w, "\"sp\": \"{:?}\", ", frame.sp()).unwrap();
         write!(w, "\"symbol_address\": \"{:?}\"", frame.symbol_address()).unwrap();
-
-        if resolve_frames {
+        if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
             write!(w, ", \"names\": [").unwrap();
 
             let mut first = true;
@@ -133,6 +135,7 @@ pub fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
         }
     }
     writeln!(w, "\n{DD_CRASHTRACK_END_FILE} \"{path}\"")?;
+    w.flush()?;
     Ok(())
 }
 

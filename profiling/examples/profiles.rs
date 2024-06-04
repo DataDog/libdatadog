@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use datadog_profiling::api;
 use datadog_profiling::internal::Profile;
@@ -9,17 +9,8 @@ use std::time::SystemTime;
 
 // Keep this in-sync with profiles.c
 fn main() {
-    let walltime = api::ValueType {
-        r#type: "wall-time",
-        unit: "nanoseconds",
-    };
-    let sample_types = vec![
-        api::ValueType {
-            r#type: "samples",
-            unit: "count",
-        },
-        walltime,
-    ];
+    let walltime = api::ValueType::new("wall-time", "nanoseconds");
+    let sample_types = [api::ValueType::new("samples", "count"), walltime];
 
     let period = api::Period {
         r#type: walltime,

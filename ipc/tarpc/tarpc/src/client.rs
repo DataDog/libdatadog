@@ -858,6 +858,7 @@ mod tests {
 
     trait PollTest {
         type T;
+        #[allow(dead_code)]
         fn unwrap(self) -> Poll<Self::T>;
         fn ready(self) -> Self::T;
     }

@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use std::{
     collections::HashMap,
@@ -48,15 +48,8 @@ impl MetricBucket {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
+#[repr(C)]
 pub struct ContextKey(u32, metrics::MetricType);
-
-#[repr(u8)]
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
-enum MetricType {
-    Count,
-    Gauge,
-    Sketches,
-}
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 struct BucketKey {
@@ -69,6 +62,16 @@ pub struct MetricBuckets {
     buckets: HashMap<BucketKey, MetricBucket>,
     series: HashMap<BucketKey, Vec<(u64, f64)>>,
     sketches: HashMap<BucketKey, DDSketch>,
+    distributions: HashMap<BucketKey, Vec<f64>>,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct MetricBucketStats {
+    pub buckets: u32,
+    pub series: u32,
+    pub series_points: u32,
+    pub distributions: u32,
+    pub distributions_points: u32,
 }
 
 impl MetricBuckets {
@@ -111,6 +114,19 @@ impl MetricBuckets {
             )| (context_key, extra_tags, points),
         )
     }
+    pub fn flush_distributions(
+        &mut self,
+    ) -> impl Iterator<Item = (ContextKey, Vec<Tag>, Vec<f64>)> + '_ {
+        self.distributions.drain().map(
+            |(
+                BucketKey {
+                    context_key,
+                    extra_tags,
+                },
+                points,
+            )| (context_key, extra_tags, points),
+        )
+    }
 
     pub fn add_point(&mut self, context_key: ContextKey, point: f64, extra_tags: Vec<Tag>) {
         let bucket_key = BucketKey {
@@ -132,14 +148,30 @@ impl MetricBuckets {
                     aggreg: MetricAggreg::Gauge { value: 0.0 },
                 })
                 .add_point(point),
-            metrics::MetricType::Distribution => {
+            metrics::MetricType::Sketch => {
                 self.sketches.entry(bucket_key).or_default().add(point);
             }
+            metrics::MetricType::Distribution => {
+                self.distributions
+                    .entry(bucket_key)
+                    .or_default()
+                    .push(point);
+            }
+        }
+    }
+
+    pub fn stats(&self) -> MetricBucketStats {
+        MetricBucketStats {
+            buckets: self.buckets.len() as u32,
+            series: self.series.len() as u32,
+            series_points: self.series.values().map(|v| v.len() as u32).sum(),
+            distributions: self.distributions.len() as u32,
+            distributions_points: self.distributions.values().map(|v| v.len() as u32).sum(),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MetricContext {
     pub namespace: data::metrics::MetricNamespace,
     pub name: String,
@@ -155,6 +187,14 @@ pub struct MetricContextGuard<'a> {
 impl<'a> MetricContextGuard<'a> {
     pub fn read(&self, key: ContextKey) -> Option<&MetricContext> {
         self.guard.store.get(key.0 as usize)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.guard.store.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.guard.store.len()
     }
 }
 
@@ -197,7 +237,7 @@ impl MetricContexts {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use std::fmt::Debug;
 
     use super::*;

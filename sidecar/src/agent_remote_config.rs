@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use crate::one_way_shared_memory::{
     open_named_shm, OneWayShmReader, OneWayShmWriter, ReaderOpener,
@@ -74,5 +74,9 @@ where
 impl<T: FileBackedHandle + From<MappedMem<T>>> AgentRemoteConfigWriter<T> {
     pub fn write(&self, contents: &[u8]) {
         self.0.write(contents)
+    }
+
+    pub fn size(&self) -> usize {
+        self.0.size()
     }
 }

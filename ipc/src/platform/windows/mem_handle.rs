@@ -1,5 +1,6 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::platform::{
     FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle, PlatformHandle, ShmHandle, ShmPath,
 };
@@ -43,11 +44,14 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
             // We don't know the size of a freshly opened object yet. Query it.
             shm.size = unsafe {
                 let mut info = MaybeUninit::<MEMORY_BASIC_INFORMATION>::uninit();
-                VirtualQuery(
+                if VirtualQuery(
                     ptr,
                     info.as_mut_ptr(),
                     mem::size_of::<MEMORY_BASIC_INFORMATION>(),
-                );
+                ) == 0
+                {
+                    return Err(Error::last_os_error());
+                }
                 info.assume_init().RegionSize
             };
         } else {
@@ -69,7 +73,8 @@ fn alloc_shm(name: LPCSTR) -> io::Result<RawHandle> {
             INVALID_HANDLE_VALUE,
             null_mut(),
             // Windows does not allow for resizing file mappings (unlinke linux with ftruncate)
-            // Hence we resort to reserving space in the virtual mapping, which can be committed on demand
+            // Hence we resort to reserving space in the virtual mapping, which can be committed on
+            // demand
             PAGE_READWRITE | SEC_RESERVE,
             0,
             MAPPING_MAX_SIZE as DWORD,
@@ -127,7 +132,7 @@ impl NamedShmHandle {
     pub fn open(path: &CString) -> io::Result<NamedShmHandle> {
         let name = Self::format_name(path);
         let handle = unsafe { OpenFileMappingA(FILE_MAP_WRITE, 0, name.as_ptr() as LPCSTR) };
-        if handle == null_mut() {
+        if handle.is_null() {
             return Err(Error::last_os_error());
         }
         // We need to map the handle to query its size, hence starting out with NOT_COMMITTED

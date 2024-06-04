@@ -69,9 +69,6 @@ async fn dropped_channel_aborts_in_flight_requests() -> anyhow::Result<()> {
     #[derive(Clone)]
     struct LoopServer;
 
-    #[derive(Debug)]
-    struct AllHandlersComplete;
-
     #[tarpc::server]
     impl Loop for LoopServer {
         async fn r#loop(self, _: context::Context) {

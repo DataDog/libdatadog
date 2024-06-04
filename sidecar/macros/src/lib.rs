@@ -1,11 +1,12 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::FnArg::Typed;
 use syn::__private::Span;
-use syn::{parse_quote, Arm, Ident, ItemTrait, Pat, TraitItem};
+use syn::parse::{Parse, ParseStream};
+use syn::{parse_macro_input, parse_quote, Arm, Ident, ItemTrait, Pat, TraitItem};
 
 fn snake_to_camel(ident_str: &str) -> String {
     let mut camel_ty = String::with_capacity(ident_str.len());
@@ -68,4 +69,29 @@ pub fn extract_request_id(_attr: TokenStream, mut input: TokenStream) -> TokenSt
         }
     }));
     input
+}
+
+struct EnvOrDefault {
+    name: syn::LitStr,
+    default: syn::Expr,
+}
+
+impl Parse for EnvOrDefault {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let name: syn::LitStr = input.parse()?;
+        input.parse::<syn::Token![,]>()?;
+        let default = input.parse()?;
+        Ok(Self { name, default })
+    }
+}
+
+#[proc_macro]
+pub fn env_or_default(input: TokenStream) -> TokenStream {
+    let env = parse_macro_input!(input as EnvOrDefault);
+    let default = env.default;
+
+    TokenStream::from(match std::env::var(env.name.value()) {
+        Ok(var) => quote! { #var },
+        Err(_) => quote! { #default },
+    })
 }

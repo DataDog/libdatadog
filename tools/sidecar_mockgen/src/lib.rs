@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use object::{File, Object, ObjectSymbol, SymbolKind};
 use std::collections::HashSet;
@@ -47,18 +47,33 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
         if sym.is_definition() {
             if let Ok(name) = sym.name() {
                 if missing_symbols.remove(name) {
+                    // strip leading underscore
+                    #[cfg(target_os = "macos")]
+                    let name = &name[1..];
                     _ = match sym.kind() {
                         SymbolKind::Text => writeln!(generated, "void {}() {{}}", name),
                         // Ignore symbols of size 0, like _GLOBAL_OFFSET_TABLE_ on alpine
-                        SymbolKind::Data => {
+                        SymbolKind::Data | SymbolKind::Unknown => {
                             if sym.size() > 0 {
                                 writeln!(generated, "char {}[{}];", name, sym.size())
                             } else {
-                                Ok(())
+                                #[cfg(not(target_os = "macos"))]
+                                let ret = Ok(());
+                                #[cfg(target_os = "macos")]
+                                let ret = writeln!(generated, "char {}[1];", name);
+                                ret
                             }
                         }
                         SymbolKind::Tls => {
-                            writeln!(generated, "__thread char {}[{}];", name, sym.size())
+                            if sym.size() > 0 {
+                                writeln!(generated, "__thread char {}[{}];", name, sym.size())
+                            } else {
+                                #[cfg(not(target_os = "macos"))]
+                                let ret = Ok(());
+                                #[cfg(target_os = "macos")]
+                                let ret = writeln!(generated, "__thread char {}[1];", name);
+                                ret
+                            }
                         }
                         _ => Ok(()),
                     };

@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use super::*;
 
@@ -13,15 +13,6 @@ impl StringId {
     #[inline]
     pub const fn zero() -> Self {
         Self(0)
-    }
-
-    // todo: remove when upscaling uses internal::* instead of pprof::*
-    pub fn new<T>(v: T) -> Self
-    where
-        T: TryInto<u32>,
-        T::Error: core::fmt::Debug,
-    {
-        Self(v.try_into().expect("StringId to fit into a u32"))
     }
 
     #[inline]
@@ -39,7 +30,7 @@ impl Id for StringId {
     type RawId = i64;
 
     fn from_offset(inner: usize) -> Self {
-        Self::new(inner)
+        Self(inner.try_into().expect("StringId to fit into a u32"))
     }
 
     fn to_raw_id(&self) -> Self::RawId {

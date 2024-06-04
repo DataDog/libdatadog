@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
 use log::{error, info};
@@ -56,7 +56,7 @@ impl TraceFlusher for ServerlessTraceFlusher {
         info!("Flushing {} traces", traces.len());
 
         for traces in trace_utils::coalesce_send_data(traces) {
-            match traces.send().await {
+            match traces.send().await.last_result {
                 Ok(_) => info!("Successfully flushed traces"),
                 Err(e) => {
                     error!("Error sending trace: {e:?}")

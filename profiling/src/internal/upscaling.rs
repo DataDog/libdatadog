@@ -1,10 +1,9 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use super::*;
 use crate::api::UpscalingInfo;
-use crate::collections::identifiable::FxIndexMap;
-use crate::pprof;
+use anyhow::Context;
 
 #[derive(Debug)]
 pub struct UpscalingRule {
@@ -84,10 +83,9 @@ impl UpscalingRules {
                 self.rules.insert((label_name_id, label_value_id), rules);
             }
             Some(index) => {
-                let (_, rules) = self
-                    .rules
-                    .get_index_mut(index)
-                    .expect("Already existing rules");
+                let (_, rules) = self.rules.get_index_mut(index).with_context(|| {
+                    format!("Expected upscaling rules to exist for index {index}")
+                })?;
                 rules.push(rule);
             }
         };
@@ -153,17 +151,20 @@ impl UpscalingRules {
         self.rules.is_empty()
     }
 
-    // TODO: Consider whether to use the internal Label here instead
-    pub fn upscale_values(
-        &self,
-        values: &mut [i64],
-        labels: &[pprof::Label],
-    ) -> anyhow::Result<()> {
+    pub fn upscale_values(&self, values: &mut [i64], labels: &[Label]) -> anyhow::Result<()> {
         if !self.is_empty() {
             // get bylabel rules first (if any)
             let mut group_of_rules = labels
                 .iter()
-                .filter_map(|label| self.get(&(StringId::new(label.key), StringId::new(label.str))))
+                .filter_map(|label| {
+                    self.get(&(
+                        label.get_key(),
+                        match label.get_value() {
+                            LabelValue::Str(str) => *str,
+                            LabelValue::Num { .. } => StringId::ZERO,
+                        },
+                    ))
+                })
                 .collect::<Vec<&Vec<UpscalingRule>>>();
 
             // get byvalue rules if any

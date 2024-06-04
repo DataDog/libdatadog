@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use http::uri::{PathAndQuery, Scheme};
 use serde::{Deserialize, Serialize};
@@ -36,13 +36,12 @@ impl Default for IpcMode {
     }
 }
 
-impl ToString for IpcMode {
-    fn to_string(&self) -> String {
+impl std::fmt::Display for IpcMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            IpcMode::Shared => SIDECAR_IPC_MODE_SHARED,
-            IpcMode::InstancePerProcess => SIDECAR_IPC_MODE_PER_PROCESS,
+            IpcMode::Shared => write!(f, "{SIDECAR_IPC_MODE_SHARED}"),
+            IpcMode::InstancePerProcess => write!(f, "{SIDECAR_IPC_MODE_PER_PROCESS}"),
         }
-        .into()
     }
 }
 
@@ -60,13 +59,13 @@ impl Default for LogMethod {
     }
 }
 
-impl ToString for LogMethod {
-    fn to_string(&self) -> String {
+impl std::fmt::Display for LogMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LogMethod::Disabled => SIDECAR_LOG_METHOD_DISABLED.into(),
-            LogMethod::Stdout => SIDECAR_LOG_METHOD_STDOUT.into(),
-            LogMethod::Stderr => SIDECAR_LOG_METHOD_STDERR.into(),
-            LogMethod::File(path) => format!("file://{}", path.to_string_lossy()),
+            LogMethod::Disabled => write!(f, "{SIDECAR_LOG_METHOD_DISABLED}"),
+            LogMethod::Stdout => write!(f, "{SIDECAR_LOG_METHOD_STDOUT}"),
+            LogMethod::Stderr => write!(f, "{SIDECAR_LOG_METHOD_STDERR}"),
+            LogMethod::File(path) => write!(f, "file://{}", path.to_string_lossy()),
         }
     }
 }

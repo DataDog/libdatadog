@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use std::{collections::VecDeque, hash::Hash};
 
@@ -7,7 +7,7 @@ mod queuehasmpap {
     use hashbrown::{hash_map::DefaultHashBuilder, raw::RawTable};
     use std::{
         collections::VecDeque,
-        hash::{BuildHasher, Hash, Hasher},
+        hash::{BuildHasher, Hash},
     };
 
     pub struct QueueHashMap<K, V> {
@@ -37,6 +37,7 @@ mod queuehasmpap {
             self.items.is_empty()
         }
 
+        // Remove the oldest item in the queue and return it
         pub fn pop_front(&mut self) -> Option<(K, V)> {
             let (k, v) = self.items.pop_front()?;
             let hash = make_hash(&self.hash_buidler, &k);
@@ -59,18 +60,21 @@ mod queuehasmpap {
             self.items.get(idx - self.popped)
         }
 
-        pub fn get_mut_or_insert(&mut self, key: K, default: V) -> &mut V {
+        pub fn get_mut_or_insert(&mut self, key: K, default: V) -> (&mut V, bool) {
             let hash = make_hash(&self.hash_buidler, &key);
             if let Some(&idx) = self
                 .table
                 .get(hash, |other| self.items[other - self.popped].0 == key)
             {
-                return &mut self.items[idx - self.popped].1;
+                return (&mut self.items[idx - self.popped].1, false);
             }
             self.insert_nocheck(hash, key, default);
-            &mut self.items.back_mut().unwrap().1
+            (&mut self.items.back_mut().unwrap().1, true)
         }
 
+        // Insert a new item at the back if the queue if it doesn't yet exist.
+        //
+        // If the key already exists, replace the previous value
         pub fn insert(&mut self, key: K, value: V) -> (usize, bool) {
             let hash = make_hash(&self.hash_buidler, &key);
             if let Some(&idx) = self
@@ -87,7 +91,8 @@ mod queuehasmpap {
         /// # Safety
         ///
         /// This function inserts a new item in the store unconditionnaly
-        /// If the item already exists, it's drop implementation will not be called, and memory might leak
+        /// If the item already exists, it's drop implementation will not be called, and memory
+        /// might leak
         ///
         /// The hash needs to be precomputed too
         fn insert_nocheck(&mut self, hash: u64, key: K, value: V) -> usize {
@@ -121,9 +126,7 @@ mod queuehasmpap {
     }
 
     fn make_hash<T: Hash>(h: &DefaultHashBuilder, i: &T) -> u64 {
-        let mut hasher = h.build_hasher();
-        i.hash(&mut hasher);
-        hasher.finish()
+        h.hash_one(i)
     }
 }
 
@@ -169,12 +172,15 @@ where
         self.unflushed.push_back(idx);
     }
 
+    // Reinsert all already flushed items in the flush queue
     pub fn unflush_stored(&mut self) {
+        self.unflushed.clear();
         for i in self.items.iter_idx() {
-            self.unflushed.push_front(i);
+            self.unflushed.push_back(i);
         }
     }
 
+    // Remove the first `count` items in the queue
     pub fn removed_flushed(&mut self, count: usize) {
         for _ in 0..count {
             self.unflushed.pop_front();
@@ -189,6 +195,14 @@ where
         self.unflushed
             .iter()
             .flat_map(|i| Some(&self.items.get_idx(*i)?.0))
+    }
+
+    pub fn len_unflushed(&self) -> usize {
+        self.unflushed.len()
+    }
+
+    pub fn len_stored(&self) -> usize {
+        self.items.len()
     }
 }
 
@@ -262,5 +276,18 @@ mod tests {
 
         assert_eq!(store.unflushed.len(), 4);
         assert_eq!(store.unflushed().collect::<Vec<_>>(), &[&6, &7, &8, &9]);
+    }
+
+    #[test]
+    fn test_unflush_stored() {
+        let mut store = Store::new(5);
+        for i in 2..7 {
+            store.insert(i);
+        }
+        assert_eq!(store.unflushed.len(), 5);
+
+        assert_eq!(store.unflushed().collect::<Vec<_>>(), &[&2, &3, &4, &5, &6]);
+        store.unflush_stored();
+        assert_eq!(store.unflushed().collect::<Vec<_>>(), &[&2, &3, &4, &5, &6]);
     }
 }

@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
 use spawn_worker::{entrypoint, Stdio};
@@ -15,14 +15,15 @@ use std::{
 };
 use tokio::sync::mpsc;
 
-use crate::interface::blocking::SidecarTransport;
-use crate::interface::SidecarServer;
+use crate::service::blocking::SidecarTransport;
+use crate::service::SidecarServer;
 use datadog_ipc::platform::AsyncChannel;
 
 use crate::setup::{self, IpcClient, IpcServer, Liaison};
 
 use crate::config::{self, Config};
 use crate::self_telemetry::self_telemetry;
+use crate::watchdog::Watchdog;
 use crate::{ddog_daemon_entry_point, setup_daemon_process};
 
 async fn main_loop<L, C, Fut>(listener: L, cancel: Arc<C>) -> io::Result<()>
@@ -66,7 +67,9 @@ where
 
     let server = SidecarServer::default();
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
-    let telemetry_handle = self_telemetry(server.clone(), shutdown_complete_rx);
+
+    let watchdog_handle = Watchdog::from_receiver(shutdown_complete_rx).spawn_watchdog();
+    let telemetry_handle = self_telemetry(server.clone(), watchdog_handle);
 
     listener(Box::new({
         let shutdown_complete_tx = shutdown_complete_tx.clone();
@@ -136,14 +139,23 @@ pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
 
     match cfg.log_method {
         config::LogMethod::File(ref path) => {
-            let file = File::options()
+            match File::options()
                 .append(true)
                 .truncate(false)
                 .create(true)
-                .open(path)?;
-            let (out, err) = (Stdio::from(&file), Stdio::from(&file));
-            spawn_cfg.stdout(out);
-            spawn_cfg.stderr(err);
+                .open(path)
+            {
+                Ok(file) => {
+                    let (out, err) = (Stdio::from(&file), Stdio::from(&file));
+                    spawn_cfg.stdout(out);
+                    spawn_cfg.stderr(err);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to open logfile for sidecar: {:?}", e);
+                    spawn_cfg.stdout(Stdio::Null);
+                    spawn_cfg.stderr(Stdio::Null);
+                }
+            }
         }
         config::LogMethod::Disabled => {
             spawn_cfg.stdout(Stdio::Null);

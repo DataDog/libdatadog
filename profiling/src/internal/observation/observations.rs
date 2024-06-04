@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 //! See the mod.rs file comment for why this module and file exists.
 
@@ -11,8 +11,9 @@ use std::collections::HashMap;
 
 struct NonEmptyObservations {
     // Samples with no timestamps are aggregated in-place as each observation is added
-    aggregated_data: HashMap<Sample, TrimmedObservation>,
-    // Samples with timestamps are all separately kept (so we can know the exact values at the given timestamp)
+    aggregated_data: AggregatedObservations,
+    // Samples with timestamps are all separately kept (so we can know the exact values at the
+    // given timestamp)
     timestamped_data: TimestampedObservations,
     obs_len: ObservationLength,
     timestamped_samples_count: usize,
@@ -28,7 +29,7 @@ impl Observations {
     pub fn new(observations_len: usize) -> Self {
         Observations {
             inner: Some(NonEmptyObservations {
-                aggregated_data: Default::default(),
+                aggregated_data: AggregatedObservations::new(observations_len),
                 timestamped_data: TimestampedObservations::new(observations_len),
                 obs_len: ObservationLength::new(observations_len),
                 timestamped_samples_count: 0,
@@ -60,16 +61,8 @@ impl Observations {
         if let Some(ts) = timestamp {
             observations.timestamped_data.add(sample, ts, values)?;
             observations.timestamped_samples_count += 1;
-        } else if let Some(v) = observations.aggregated_data.get_mut(&sample) {
-            // SAFETY: This method is only way to build one of these, and at
-            // the top we already checked the length matches.
-            unsafe { v.as_mut_slice(obs_len) }
-                .iter_mut()
-                .zip(values)
-                .for_each(|(a, b)| *a += b);
         } else {
-            let trimmed = TrimmedObservation::new(values, obs_len);
-            observations.aggregated_data.insert(sample, trimmed);
+            observations.aggregated_data.add(sample, values)?;
         }
 
         Ok(())
@@ -92,6 +85,74 @@ impl Observations {
             .as_ref()
             .map(|o| o.timestamped_samples_count)
             .unwrap_or(0)
+    }
+}
+
+#[derive(Default)]
+struct AggregatedObservations {
+    obs_len: ObservationLength,
+    data: HashMap<Sample, TrimmedObservation>,
+}
+
+impl AggregatedObservations {
+    pub fn new(obs_len: usize) -> Self {
+        AggregatedObservations {
+            obs_len: ObservationLength::new(obs_len),
+            data: Default::default(),
+        }
+    }
+
+    fn add(&mut self, sample: Sample, values: Vec<i64>) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.obs_len.eq(values.len()),
+            "Observation length mismatch, expected {:?} values, got {} instead",
+            self.obs_len,
+            values.len()
+        );
+
+        if let Some(v) = self.data.get_mut(&sample) {
+            // SAFETY: This method is only way to build one of these, and we already checked the
+            // length matches.
+            unsafe { v.as_mut_slice(self.obs_len) }
+                .iter_mut()
+                .zip(values)
+                .for_each(|(a, b)| *a = a.saturating_add(b));
+        } else {
+            let trimmed = TrimmedObservation::new(values, self.obs_len);
+            self.data.insert(sample, trimmed);
+        }
+
+        Ok(())
+    }
+
+    fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    #[allow(dead_code)]
+    fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    #[allow(dead_code)]
+    fn contains_key(&self, sample: &Sample) -> bool {
+        self.data.contains_key(sample)
+    }
+
+    #[allow(dead_code)]
+    fn remove(&mut self, sample: &Sample) -> Option<TrimmedObservation> {
+        self.data.remove(sample)
+    }
+}
+
+impl Drop for AggregatedObservations {
+    fn drop(&mut self) {
+        let o = self.obs_len;
+        self.data.drain().for_each(|(_, v)| {
+            // SAFETY: The only way to build one of these is through
+            // [Self::add], which already checked that the length was correct.
+            unsafe { v.consume(o) };
+        });
     }
 }
 
@@ -118,7 +179,7 @@ impl IntoIterator for Observations {
             )
             .into_iter()
             .map(|(s, t, o)| (s, Some(t), o));
-            let aggregated_data_it = std::mem::take(&mut observations.aggregated_data)
+            let aggregated_data_it = std::mem::take(&mut observations.aggregated_data.data)
                 .into_iter()
                 .map(|(s, o)| (s, None, o))
                 .map(move |(s, t, o)| (s, t, unsafe { o.into_vec(observations.obs_len) }));
@@ -128,22 +189,12 @@ impl IntoIterator for Observations {
     }
 }
 
-impl Drop for NonEmptyObservations {
-    fn drop(&mut self) {
-        let o = self.obs_len;
-        self.aggregated_data.drain().for_each(|(_, v)| {
-            // SAFETY: The only way to build one of these is through
-            // [Self::add], which already checked that the length was correct.
-            unsafe { v.consume(o) };
-        });
-    }
-}
-
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
     use crate::collections::identifiable::*;
     use crate::internal::{LabelSetId, StackTraceId};
+    use bolero::generator::*;
     use std::num::NonZeroI64;
 
     #[test]
@@ -338,5 +389,150 @@ mod test {
         });
         // Two of the samples were aggregated, so three total samples at the end
         assert_eq!(count, 3);
+    }
+
+    fn fuzz_inner(
+        observations_len: &usize,
+        ts_samples: &[(Sample, Timestamp, Vec<i64>)],
+        no_ts_samples: &[(Sample, Vec<i64>)],
+    ) {
+        let obs_len = ObservationLength::new(*observations_len);
+
+        let mut o = Observations::new(*observations_len);
+        assert!(o.is_empty());
+
+        let mut ts_samples_added = 0;
+
+        for (s, ts, v) in ts_samples {
+            if v.len() == *observations_len {
+                o.add(*s, Some(*ts), v.clone()).unwrap();
+                ts_samples_added += 1;
+            } else {
+                assert!(o.add(*s, Some(*ts), v.clone()).is_err());
+            }
+        }
+        assert_eq!(o.timestamped_samples_count(), ts_samples_added);
+
+        let mut aggregated_observations = AggregatedObservations::new(*observations_len);
+
+        for (s, v) in no_ts_samples {
+            if v.len() == *observations_len {
+                o.add(*s, None, v.clone()).unwrap();
+                aggregated_observations.add(*s, v.clone()).unwrap();
+            } else {
+                assert!(o.add(*s, None, v.clone()).is_err());
+            }
+        }
+
+        assert_eq!(o.aggregated_samples_count(), aggregated_observations.len());
+
+        let mut iter = o.into_iter();
+        for (expected_sample, expected_ts, expected_values) in ts_samples.iter() {
+            if expected_values.len() != *observations_len {
+                continue;
+            }
+            let (sample, ts, values) = iter.next().unwrap();
+            assert_eq!(*expected_sample, sample);
+            assert_eq!(*expected_ts, ts.unwrap());
+            assert_eq!(*expected_values, values);
+        }
+
+        for (sample, ts, values) in iter {
+            assert!(ts.is_none());
+            assert!(aggregated_observations.contains_key(&sample));
+            let expected_values = aggregated_observations.remove(&sample).unwrap();
+            unsafe {
+                let b = expected_values.into_vec(obs_len);
+                assert_eq!(*b, values);
+            }
+        }
+        assert!(aggregated_observations.is_empty());
+    }
+
+    #[test]
+    fn fuzz_with_same_obs_len() {
+        // TODO: Figure out sane limits for these numbers. We don't simply want to go up to
+        // usize::MAX as that would result in crashes with too large Vec allocations.
+        let obs_len_gen = if cfg!(miri) {
+            1..=16usize
+        } else {
+            1..=1024usize
+        };
+        let num_ts_samples_gen = if cfg!(miri) {
+            1..=16usize
+        } else {
+            1..=1024usize
+        };
+        let num_samples_gen = if cfg!(miri) {
+            1..=16usize
+        } else {
+            1..=1024usize
+        };
+
+        // Generates 1. length of observations, 2. number of samples with timestamps, 3. number of
+        // samples without timestamps. Then, 2 and 3 are used to generate the samples vectors
+        // The body of this test simply adds these samples to the Observations and then uses the
+        // iterator to check that the samples are the same as added.
+        bolero::check!()
+            .with_generator((obs_len_gen, num_ts_samples_gen, num_samples_gen))
+            .and_then(|(observations_len, num_ts_samples, num_samples)| {
+                let ts_samples = Vec::<(Sample, Timestamp, Vec<i64>)>::gen()
+                    .with()
+                    .values((
+                        Sample::gen(),
+                        Timestamp::gen(),
+                        Vec::<i64>::gen().with().len(observations_len),
+                    ))
+                    .len(num_ts_samples);
+
+                let no_ts_samples = Vec::<(Sample, Vec<i64>)>::gen()
+                    .with()
+                    .values((
+                        Sample::gen(),
+                        Vec::<i64>::gen().with().len(observations_len),
+                    ))
+                    .len(num_samples);
+
+                (observations_len, ts_samples, no_ts_samples)
+            })
+            .for_each(|(observations_len, ts_samples, no_ts_samples)| {
+                fuzz_inner(observations_len, ts_samples, no_ts_samples);
+            });
+    }
+
+    #[test]
+    fn fuzz_with_random_obs_len() {
+        let num_ts_samples_gen = if cfg!(miri) {
+            1..=16usize
+        } else {
+            1..=1024usize
+        };
+        let num_samples_gen = if cfg!(miri) {
+            1..=16usize
+        } else {
+            1..=1024usize
+        };
+
+        bolero::check!()
+            .with_generator((num_ts_samples_gen, num_samples_gen))
+            .and_then(|(num_ts_samples, num_samples)| {
+                let ts_samples = Vec::<(Sample, Timestamp, Vec<i64>)>::gen()
+                    .with()
+                    .values((Sample::gen(), Timestamp::gen(), Vec::<i64>::gen()))
+                    .len(num_ts_samples);
+
+                let no_ts_samples = Vec::<(Sample, Vec<i64>)>::gen()
+                    .with()
+                    .values((Sample::gen(), Vec::<i64>::gen()))
+                    .len(num_samples);
+                (ts_samples, no_ts_samples)
+            })
+            .for_each(|(ts_samples, no_ts_samples)| {
+                fuzz_inner(&ts_samples[0].2.len(), ts_samples, no_ts_samples);
+                // Here we also call the fuzz_inner with observation_length from samples without
+                // timestamps to ensure that we cover the case where no timestamped samples are
+                // added.
+                fuzz_inner(&no_ts_samples[0].1.len(), ts_samples, no_ts_samples);
+            });
     }
 }

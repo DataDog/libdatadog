@@ -1,5 +1,6 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 #![cfg(unix)]
 
 #[cfg(target_os = "linux")]
@@ -7,7 +8,9 @@ mod linux {
     use std::io::{Seek, Write};
 
     pub(crate) fn write_memfd(name: &str, contents: &[u8]) -> anyhow::Result<memfd::Memfd> {
-        let opts = memfd::MemfdOptions::default();
+        // This leaks a fd, but a fd to the TXT segment, which is fine.
+        // And it will ensure that fexecve works with custom binfmts (rosetta or qemu).
+        let opts = memfd::MemfdOptions::default().close_on_exec(false);
         let mfd = opts.create(name)?;
 
         mfd.as_file().set_len(contents.len() as u64)?;
@@ -23,50 +26,40 @@ mod linux {
     }
 }
 
-use std::fs::File;
+mod helper {
+    use nix::libc;
+    use std::{ffi::CString, ptr};
 
-use std::io;
-use std::ops::RangeInclusive;
-use std::{
-    env,
-    ffi::{self, CString, OsString},
-    fs::Permissions,
-    io::{Seek, Write},
-    os::unix::prelude::{AsRawFd, OsStringExt, PermissionsExt},
-    ptr,
-};
-
-use io_lifetimes::OwnedFd;
-
-use nix::{sys::wait::WaitStatus, unistd::Pid};
-
-use crate::fork::{fork, Fork};
-use nix::libc;
-
-struct ExecVec {
-    items: Vec<CString>,
-    // Always NULL ptr terminated
-    ptrs: Vec<*const libc::c_char>,
-}
-
-impl ExecVec {
-    fn as_ptr(&self) -> *const *const libc::c_char {
-        self.ptrs.as_ptr()
+    pub struct ExecVec {
+        items: Vec<CString>,
+        // Always NULL ptr terminated
+        ptrs: Vec<*const libc::c_char>,
     }
 
-    fn empty() -> Self {
-        Self {
-            items: vec![],
-            ptrs: vec![std::ptr::null()],
+    impl ExecVec {
+        pub fn as_ptr(&self) -> *const *const libc::c_char {
+            self.ptrs.as_ptr()
         }
-    }
 
-    pub fn push(&mut self, item: CString) {
-        let l = self.ptrs.len();
-        // replace previous trailing null with ptr to the item
-        self.ptrs[l - 1] = item.as_ptr();
-        self.ptrs.push(ptr::null());
-        self.items.push(item);
+        pub fn empty() -> Self {
+            Self {
+                items: vec![],
+                ptrs: vec![ptr::null()],
+            }
+        }
+
+        pub fn push(&mut self, item: CString) {
+            let l = self.ptrs.len();
+            // replace previous trailing null with ptr to the item
+            self.ptrs[l - 1] = item.as_ptr();
+            self.ptrs.push(ptr::null());
+            self.items.push(item);
+        }
+
+        pub fn set(&mut self, index: usize, item: CString) {
+            self.ptrs[index] = item.as_ptr();
+            self.items[index] = item;
+        }
     }
 }
 
@@ -82,6 +75,25 @@ fn write_to_tmp_file(data: &[u8]) -> anyhow::Result<tempfile::NamedTempFile> {
     Ok(tmp_file)
 }
 
+use std::fs::File;
+
+use std::io;
+use std::ops::RangeInclusive;
+use std::{
+    env,
+    ffi::{self, CString, OsString},
+    fs::Permissions,
+    io::{Seek, Write},
+    os::unix::prelude::{AsRawFd, OsStringExt, PermissionsExt},
+};
+
+use io_lifetimes::OwnedFd;
+
+use nix::{sys::wait::WaitStatus, unistd::Pid};
+
+use crate::fork::{fork, Fork};
+use nix::libc;
+
 #[derive(Clone)]
 pub enum SpawnMethod {
     #[cfg(target_os = "linux")]
@@ -91,6 +103,7 @@ pub enum SpawnMethod {
     Exec,
 }
 
+use crate::unix::spawn::helper::ExecVec;
 use crate::{LibDependency, Target};
 
 impl Target {
@@ -432,8 +445,9 @@ impl SpawnWorker {
                 let fd = linux::write_trampoline()?;
                 skip_close_fd = fd.as_raw_fd();
                 Box::new(move || {
-                    // not using nix crate here, as it would allocate args after fork, which will lead to crashes on systems
-                    // where allocator is not fork+thread safe
+                    // not using nix crate here, as it would allocate args after fork, which will
+                    // lead to crashes on systems where allocator is not
+                    // fork+thread safe
                     unsafe { libc::fexecve(fd.as_raw_fd(), argv.as_ptr(), envp.as_ptr()) };
                     // if we're here then exec has failed
                     panic!("{}", std::io::Error::last_os_error());
@@ -459,7 +473,7 @@ impl SpawnWorker {
                     anyhow::format_err!("can't convert current executable file to correct path")
                 })?)?;
 
-                argv.items[1] = path.clone();
+                argv.set(1, path.clone());
 
                 let ref_temp_files = &temp_files;
                 Box::new(move || unsafe {
@@ -482,7 +496,7 @@ impl SpawnWorker {
                 )?;
 
                 temp_files.push(path.clone());
-                argv.items[1] = path.clone();
+                argv.set(1, path.clone());
 
                 let ref_temp_files = &temp_files;
                 Box::new(move || unsafe {
@@ -555,8 +569,9 @@ impl SpawnWorker {
 
         if self.daemonize {
             if let Fork::Parent(_) = do_fork()? {
-                // musl will try to "correct" offsets in an atexit handler (lseek a FILE* to the "true" position)
-                // Ensure all fds are closed so that musl cannot have side-effects
+                // musl will try to "correct" offsets in an atexit handler (lseek a FILE* to the
+                // "true" position) Ensure all fds are closed so that musl cannot
+                // have side-effects
                 for i in 0..4 {
                     unsafe {
                         libc::close(i);

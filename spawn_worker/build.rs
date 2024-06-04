@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 pub use cc_utils::cc;
 
@@ -18,7 +18,10 @@ fn main() {
         if cfg!(target_os = "linux") {
             builder.flag("-Wl,--no-as-needed");
         }
-        builder.link_dynamically("m"); // rust code generally requires libm. Just link against it.
+        // rust code generally requires libm. Just link against it.
+        builder.link_dynamically("m");
+        // some old libc versions are unhappy if it gets linked in dynamically later on
+        builder.link_dynamically("pthread");
     } else {
         builder.flag("-wd4996"); // disable deprecation warnings
     }

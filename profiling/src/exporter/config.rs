@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 #[cfg(unix)]
 use ddcommon::connector::uds;
@@ -66,5 +66,13 @@ pub fn agentless<AsStrRef: AsRef<str>, IntoCow: Into<Cow<'static, str>>>(
     Ok(Endpoint {
         url: Uri::from_str(intake_url.as_str())?,
         api_key: Some(api_key.into()),
+    })
+}
+
+pub fn file(path: impl AsRef<str>) -> anyhow::Result<Endpoint> {
+    let url: String = format!("file://{}", path.as_ref());
+    Ok(Endpoint {
+        url: Uri::from_str(url.as_str())?,
+        api_key: None,
     })
 }

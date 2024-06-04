@@ -1,0 +1,59 @@
+name: 'Weekly verify trace-protobuf'
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'
+
+env:
+  DATADOG_AGENT_TAG: "main"
+
+jobs:
+  weekly-verify-proto-files:
+    name: "Verify trace-protobuf .proto files are in sync with datadog-agent"        
+    runs-on: ubuntu-latest
+    environment: nightlies
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: diff agent_payload.proto
+        working-directory: trace-protobuf/src/pb
+        id: agent_payload_proto
+        if: always()
+        run: |
+          ../../../.github/workflows/diff-proto-files.sh --file agent_payload.proto --tag ${{ env.DATADOG_AGENT_TAG }}
+
+      - name: diff tracer_payload.proto
+        working-directory: trace-protobuf/src/pb
+        id: tracer_payload_proto
+        if: always()
+        run: |
+          ../../../.github/workflows/diff-proto-files.sh --file tracer_payload.proto --tag ${{ env.DATADOG_AGENT_TAG }}
+
+      - name: diff stats.proto
+        working-directory: trace-protobuf/src/pb
+        id: stats_proto
+        if: always()
+        run: |
+          ../../../.github/workflows/diff-proto-files.sh --file stats.proto --tag ${{ env.DATADOG_AGENT_TAG }}
+
+      - name: diff span.proto
+        working-directory: trace-protobuf/src/pb
+        id: span_proto
+        if: always()
+        run: |
+          ../../../.github/workflows/diff-proto-files.sh --file span.proto --tag ${{ env.DATADOG_AGENT_TAG }}
+
+      - name: report failure
+        id: slack
+        if: failure()
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "workflow_name": "${{ github.workflow }}",
+              "workflow_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.COMMON_COMPONENTS_FAILURE_NOTIFICATION_URL }}

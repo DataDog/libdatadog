@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use crate::one_way_shared_memory::open_named_shm;
 use arrayref::array_ref;
@@ -7,6 +7,7 @@ use datadog_ipc::platform::metadata::ProcessHandle;
 use datadog_ipc::platform::{Channel, PIPE_PATH};
 use kernel32::{CreateFileA, CreateNamedPipeA, WTSGetActiveConsoleSessionId};
 use libc::getpid;
+use std::error::Error;
 use std::ffi::CString;
 use std::os::windows::io::{FromRawHandle, OwnedHandle};
 use std::ptr::null_mut;
@@ -65,25 +66,38 @@ impl Liaison for NamedPipeLiaison {
         };
 
         let socket_path = self.socket_path.clone();
-        // Have a ProcessHandle::Getter() so that we don't immediately block in case the sidecar is still starting up,
-        // but only the first time we want to submit shared memory
+        // Have a ProcessHandle::Getter() so that we don't immediately block in case the sidecar is
+        // still starting up, but only the first time we want to submit shared memory
         Ok(Channel::from_client_handle_and_pid(
             unsafe { OwnedHandle::from_raw_handle(pipe) },
             ProcessHandle::Getter(Box::new(move || {
                 // Await the shared memory handle which will contain the pid of the sidecar
                 // As it may not be immediately available during startup
                 let timeout_end = Instant::now() + Duration::from_secs(2);
-                let mut last_error = None;
+                let mut last_error: Option<Box<dyn Error>> = None;
                 let pid_path = pid_shm_path(&String::from_utf8_lossy(socket_path.as_bytes()));
                 loop {
                     match open_named_shm(&pid_path) {
                         Ok(shm) => {
+                            #[cfg(windows_seh_wrapper)]
+                            let pid = {
+                                let mut pid = 0;
+                                if let Err(e) = microseh::try_seh(|| {
+                                    pid = u32::from_ne_bytes(*array_ref![shm.as_slice(), 0, 4])
+                                }) {
+                                    last_error = Some(Box::new(e));
+                                }
+                                pid
+                            };
+
+                            #[cfg(not(windows_seh_wrapper))]
                             let pid = u32::from_ne_bytes(*array_ref![shm.as_slice(), 0, 4]);
+
                             if pid != 0 {
                                 return Ok(ProcessHandle::Pid(pid));
                             }
                         }
-                        Err(e) => last_error = Some(e),
+                        Err(e) => last_error = Some(Box::new(e)),
                     }
                     if Instant::now() > timeout_end {
                         warn!("Reading the sidecar pid from {} timed out after {:?}. (last error: {:?})",
@@ -143,8 +157,9 @@ impl Liaison for NamedPipeLiaison {
 
 impl NamedPipeLiaison {
     pub fn new<P: AsRef<str>>(prefix: P) -> Self {
-        // Due to the restriction on Global\ namespace for shared memory we have to distinguish individual sidecar sessions.
-        // Fetch the session_id to effectively namespace the Named Pipe names too.
+        // Due to the restriction on Global\ namespace for shared memory we have to distinguish
+        // individual sidecar sessions. Fetch the session_id to effectively namespace the
+        // Named Pipe names too.
         let session_id = unsafe { WTSGetActiveConsoleSessionId() };
         Self {
             socket_path: CString::new(format!(
@@ -152,7 +167,7 @@ impl NamedPipeLiaison {
                 PIPE_PATH,
                 prefix.as_ref(),
                 session_id,
-                env!("CARGO_PKG_VERSION")
+                crate::sidecar_version!()
             ))
             .unwrap(),
         }
@@ -202,8 +217,9 @@ mod tests {
 
             // can't listen twice when some listener is active
             //assert!(liaison.attempt_listen().unwrap().is_none());
-            // a liaison can try connecting to existing socket to ensure its valid, adding connection to accept queue
-            // but we can drain any preexisting connections in the queue
+            // a liaison can try connecting to existing socket to ensure its valid, adding
+            // connection to accept queue but we can drain any preexisting connections
+            // in the queue
             let (_, result) = future::join(
                 srv.connect(),
                 tokio::spawn(async move { (liaison.connect_to_server().unwrap(), liaison) }),
@@ -214,7 +230,8 @@ mod tests {
             let mut buf = [0; 1];
             assert_eq!(1, srv.read(&mut buf).await.unwrap());
 
-            // for this test: Somehow, NamedPipeServer remains tangled with the event-loop and won't free itself in time
+            // for this test: Somehow, NamedPipeServer remains tangled with the event-loop and won't
+            // free itself in time
             unsafe { CloseHandle(raw_handle) };
             std::mem::forget(srv);
 

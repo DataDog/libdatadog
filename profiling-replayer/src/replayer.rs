@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use crate::profile_index::ProfileIndex;
 use datadog_profiling::api;
@@ -60,10 +60,10 @@ impl<'pprof> Replayer<'pprof> {
     ) -> anyhow::Result<Vec<api::ValueType<'pprof>>> {
         let mut sample_types = Vec::with_capacity(profile_index.pprof.sample_types.len());
         for sample_type in profile_index.pprof.sample_types.iter() {
-            sample_types.push(api::ValueType {
-                r#type: profile_index.get_string(sample_type.r#type)?,
-                unit: profile_index.get_string(sample_type.unit)?,
-            })
+            sample_types.push(api::ValueType::new(
+                profile_index.get_string(sample_type.r#type)?,
+                profile_index.get_string(sample_type.unit)?,
+            ))
         }
         Ok(sample_types)
     }
@@ -75,10 +75,10 @@ impl<'pprof> Replayer<'pprof> {
 
         match profile_index.pprof.period_type {
             Some(period_type) => {
-                let r#type = api::ValueType {
-                    r#type: profile_index.get_string(period_type.r#type)?,
-                    unit: profile_index.get_string(period_type.unit)?,
-                };
+                let r#type = api::ValueType::new(
+                    profile_index.get_string(period_type.r#type)?,
+                    profile_index.get_string(period_type.unit)?,
+                );
                 Ok(Some(api::Period { r#type, value }))
             }
             None => Ok(None),

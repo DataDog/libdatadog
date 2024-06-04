@@ -1,0 +1,54 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+include(FindPackageHandleStandardArgs)
+
+if(DEFINED ENV{DataPipeline_ROOT})
+  set(DataPipeline_ROOT "$ENV{DataPipeline_ROOT}")
+else()
+  # If the environment variable is not set, maybe we are part of a build
+  set(DataPipeline_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
+endif()
+
+find_path(DataPipeline_INCLUDE_DIR datadog/data-pipeline.h HINTS ${DataPipeline_ROOT}/include)
+
+find_library(
+  DataPipeline_LIBRARY
+  NAMES data_pipeline
+  HINTS ${DataPipeline_ROOT}/lib)
+
+find_package_handle_standard_args(DataPipeline DEFAULT_MSG DataPipeline_LIBRARY
+                                  DataPipeline_INCLUDE_DIR)
+
+if(DataPipeline_FOUND)
+  set(DataPipeline_INCLUDE_DIRS ${DataPipeline_INCLUDE_DIR})
+  set(DataPipeline_LIBRARIES ${DataPipeline_LIBRARY} "@Datadog_LIBRARIES@")
+  mark_as_advanced(DataPipeline_ROOT DataPipeline_LIBRARY DataPipeline_INCLUDE_DIR)
+
+  add_library(data_pipeline INTERFACE)
+  target_include_directories(data_pipeline
+                             INTERFACE ${DataPipeline_INCLUDE_DIRS})
+  target_link_libraries(data_pipeline INTERFACE ${DataPipeline_LIBRARIES})
+  target_compile_features(data_pipeline INTERFACE c_std_11)
+
+  if(CMAKE_C_COMPILER_ID MATCHES "MSVC")
+    target_link_libraries(
+      data_pipeline
+      INTERFACE NtDll
+                UserEnv
+                Bcrypt
+                crypt32
+                wsock32
+                ws2_32
+                shlwapi
+                Secur32
+                Ncrypt
+                PowrProf)
+  endif()
+
+  add_library(Datadog::DataPipeline ALIAS data_pipeline)
+
+else()
+  set(DataPipeline_ROOT
+      ""
+      CACHE STRING "Directory containing libdatadog")
+endif()

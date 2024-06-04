@@ -1,7 +1,8 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use crate::Timespec;
+use anyhow::Context;
 use datadog_profiling::api;
 use datadog_profiling::internal;
 use datadog_profiling::internal::ProfiledEndpointsStats;
@@ -59,6 +60,15 @@ pub enum ProfileResult {
     Err(Error),
 }
 
+impl From<anyhow::Result<()>> for ProfileResult {
+    fn from(value: anyhow::Result<()>) -> Self {
+        match value {
+            Ok(_) => Self::Ok(true),
+            Err(err) => Self::Err(err.into()),
+        }
+    }
+}
+
 /// Returned by [ddog_prof_Profile_new].
 #[repr(C)]
 pub enum ProfileNewResult {
@@ -71,6 +81,24 @@ pub enum ProfileNewResult {
 pub enum SerializeResult {
     Ok(EncodedProfile),
     Err(Error),
+}
+
+impl From<anyhow::Result<EncodedProfile>> for SerializeResult {
+    fn from(value: anyhow::Result<EncodedProfile>) -> Self {
+        match value {
+            Ok(e) => Self::Ok(e),
+            Err(err) => Self::Err(err.into()),
+        }
+    }
+}
+
+impl From<anyhow::Result<internal::EncodedProfile>> for SerializeResult {
+    fn from(value: anyhow::Result<internal::EncodedProfile>) -> Self {
+        match value {
+            Ok(e) => Self::Ok(e.into()),
+            Err(err) => Self::Err(err.into()),
+        }
+    }
 }
 
 #[repr(C)]
@@ -217,10 +245,10 @@ impl<'a> TryFrom<&'a Mapping<'a>> for api::Mapping<'a> {
 
 impl<'a> From<&'a ValueType<'a>> for api::ValueType<'a> {
     fn from(vt: &'a ValueType<'a>) -> Self {
-        Self {
-            r#type: vt.type_.try_to_utf8().unwrap_or(""),
-            unit: vt.unit.try_to_utf8().unwrap_or(""),
-        }
+        Self::new(
+            vt.type_.try_to_utf8().unwrap_or(""),
+            vt.unit.try_to_utf8().unwrap_or(""),
+        )
     }
 }
 
@@ -330,7 +358,7 @@ impl<'a> TryFrom<Sample<'a>> for api::Sample<'a> {
 /// * `sample_types`
 /// * `period` - Optional period of the profile. Passing None/null translates to zero values.
 /// * `start_time` - Optional time the profile started at. Passing None/null will use the current
-///                  time.
+///   time.
 ///
 /// # Safety
 /// All slices must be have pointers that are suitably aligned for their type
@@ -402,26 +430,13 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
     sample: Sample,
     timestamp: Option<NonZeroI64>,
 ) -> ProfileResult {
-    match ddog_prof_profile_add_impl(profile, sample, timestamp) {
-        Ok(_) => ProfileResult::Ok(true),
-        Err(err) => ProfileResult::Err(Error::from(err.context("ddog_prof_Profile_add failed"))),
-    }
-}
-
-unsafe fn ddog_prof_profile_add_impl(
-    profile_ptr: *mut Profile,
-    sample: Sample,
-    timestamp: Option<NonZeroI64>,
-) -> anyhow::Result<()> {
-    let profile = profile_ptr_to_inner(profile_ptr)?;
-
-    match sample.try_into().map(|s| profile.add_sample(s, timestamp)) {
-        Ok(r) => match r {
-            Ok(_) => Ok(()),
-            Err(err) => Err(err),
-        },
-        Err(err) => Err(anyhow::Error::from(err)),
-    }
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
+        let sample = sample.try_into()?;
+        profile.add_sample(sample, timestamp)
+    })()
+    .context("ddog_prof_Profile_add failed")
+    .into()
 }
 
 unsafe fn profile_ptr_to_inner<'a>(
@@ -459,17 +474,13 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_endpoint(
     local_root_span_id: u64,
     endpoint: CharSlice,
 ) -> ProfileResult {
-    let profile = match profile_ptr_to_inner(profile) {
-        Ok(p) => p,
-        Err(err) => {
-            return ProfileResult::Err(Error::from(
-                err.context("ddog_prof_Profile_set_endpoint failed"),
-            ))
-        }
-    };
-    let endpoint = endpoint.to_utf8_lossy();
-    profile.add_endpoint(local_root_span_id, endpoint);
-    ProfileResult::Ok(true)
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
+        let endpoint = endpoint.to_utf8_lossy();
+        profile.add_endpoint(local_root_span_id, endpoint)
+    })()
+    .context("ddog_prof_Profile_set_endpoint failed")
+    .into()
 }
 
 /// Count the number of times an endpoint has been seen.
@@ -489,17 +500,13 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
     endpoint: CharSlice,
     value: i64,
 ) -> ProfileResult {
-    let profile = match profile_ptr_to_inner(profile) {
-        Ok(p) => p,
-        Err(err) => {
-            return ProfileResult::Err(Error::from(
-                err.context("ddog_prof_Profile_add_endpoint_count failed"),
-            ))
-        }
-    };
-    let endpoint = endpoint.to_utf8_lossy();
-    profile.add_endpoint_count(endpoint, value);
-    ProfileResult::Ok(true)
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
+        let endpoint = endpoint.to_utf8_lossy();
+        profile.add_endpoint_count(endpoint, value)
+    })()
+    .context("ddog_prof_Profile_set_endpoint failed")
+    .into()
 }
 
 /// Add a poisson-based upscaling rule which will be use to adjust values and make them
@@ -510,9 +517,12 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
 /// * `offset_values` - offset of the values
 /// * `label_name` - name of the label used to identify sample(s)
 /// * `label_value` - value of the label used to identify sample(s)
-/// * `sum_value_offset` - offset of the value used as a sum (compute the average with `count_value_offset`)
-/// * `count_value_offset` - offset of the value used as a count (compute the average with `sum_value_offset`)
-/// * `sampling_distance` - this is the threshold for this sampling window. This value must not be equal to 0
+/// * `sum_value_offset` - offset of the value used as a sum (compute the average with
+///   `count_value_offset`)
+/// * `count_value_offset` - offset of the value used as a count (compute the average with
+///   `sum_value_offset`)
+/// * `sampling_distance` - this is the threshold for this sampling window. This value must not be
+///   equal to 0
 ///
 /// # Safety
 /// This function must be called before serialize and must not be called after.
@@ -530,32 +540,24 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_poisson(
     count_value_offset: usize,
     sampling_distance: u64,
 ) -> ProfileResult {
-    let profile = match profile_ptr_to_inner(profile) {
-        Ok(ok) => ok,
-        Err(err) => {
-            return ProfileResult::Err(Error::from(
-                err.context("ddog_prof_Profile_add_upscaling_rule_poisson failed"),
-            ))
-        }
-    };
-    if sampling_distance == 0 {
-        return ProfileResult::Err(ddcommon_ffi::Error::from(
-            "ddog_prof_Profile_add_upscaling_rule_poisson sampling_distance parameter must be greater than 0",
-        ));
-    }
-    let upscaling_info = api::UpscalingInfo::Poisson {
-        sum_value_offset,
-        count_value_offset,
-        sampling_distance,
-    };
-
-    add_upscaling_rule(
-        profile,
-        offset_values,
-        label_name,
-        label_value,
-        upscaling_info,
-    )
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
+        anyhow::ensure!(sampling_distance != 0, "sampling_distance must not be 0");
+        let upscaling_info = api::UpscalingInfo::Poisson {
+            sum_value_offset,
+            count_value_offset,
+            sampling_distance,
+        };
+        add_upscaling_rule(
+            profile,
+            offset_values,
+            label_name,
+            label_value,
+            upscaling_info,
+        )
+    })()
+    .context("ddog_prof_Profile_add_upscaling_rule_proportional failed")
+    .into()
 }
 
 /// Add a proportional-based upscaling rule which will be use to adjust values and make them
@@ -566,8 +568,10 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_poisson(
 /// * `offset_values` - offset of the values
 /// * `label_name` - name of the label used to identify sample(s)
 /// * `label_value` - value of the label used to identify sample(s)
-/// * `total_sampled` - number of sampled event (found in the pprof). This value must not be equal to 0
-/// * `total_real` - number of events the profiler actually witnessed. This value must not be equal to 0
+/// * `total_sampled` - number of sampled event (found in the pprof). This value must not be equal
+///   to 0
+/// * `total_real` - number of events the profiler actually witnessed. This value must not be equal
+///   to 0
 ///
 /// # Safety
 /// This function must be called before serialize and must not be called after.
@@ -584,30 +588,23 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_proportional(
     total_sampled: u64,
     total_real: u64,
 ) -> ProfileResult {
-    let profile = match profile_ptr_to_inner(profile) {
-        Ok(ok) => ok,
-        Err(err) => {
-            return ProfileResult::Err(Error::from(
-                err.context("ddog_prof_Profile_add_upscaling_rule_poisson failed"),
-            ))
-        }
-    };
-    if total_sampled == 0 || total_real == 0 {
-        return ProfileResult::Err(ddcommon_ffi::Error::from(
-            "total_sampled and total_real parameters must not be equal to 0",
-        ));
-    }
-
-    let upscaling_info = api::UpscalingInfo::Proportional {
-        scale: total_real as f64 / total_sampled as f64,
-    };
-    add_upscaling_rule(
-        profile,
-        offset_values,
-        label_name,
-        label_value,
-        upscaling_info,
-    )
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
+        anyhow::ensure!(total_sampled != 0, "total_sampled must not be 0");
+        anyhow::ensure!(total_real != 0, "total_real must not be 0");
+        let upscaling_info = api::UpscalingInfo::Proportional {
+            scale: total_real as f64 / total_sampled as f64,
+        };
+        add_upscaling_rule(
+            profile,
+            offset_values,
+            label_name,
+            label_value,
+            upscaling_info,
+        )
+    })()
+    .context("ddog_prof_Profile_add_upscaling_rule_proportional failed")
+    .into()
 }
 
 unsafe fn add_upscaling_rule(
@@ -616,18 +613,15 @@ unsafe fn add_upscaling_rule(
     label_name: CharSlice,
     label_value: CharSlice,
     upscaling_info: api::UpscalingInfo,
-) -> ProfileResult {
+) -> anyhow::Result<()> {
     let label_name_n = label_name.to_utf8_lossy();
     let label_value_n = label_value.to_utf8_lossy();
-    match profile.add_upscaling_rule(
+    profile.add_upscaling_rule(
         offset_values.as_slice(),
         label_name_n.as_ref(),
         label_value_n.as_ref(),
         upscaling_info,
-    ) {
-        Ok(_) => ProfileResult::Ok(true),
-        Err(err) => ProfileResult::Err(err.into()),
-    }
+    )
 }
 
 #[repr(C)]
@@ -677,12 +671,12 @@ impl From<internal::EncodedProfile> for EncodedProfile {
 /// # Arguments
 /// * `profile` - a reference to the profile being serialized.
 /// * `end_time` - optional end time of the profile. If None/null is passed, the current time will
-///                be used.
+///   be used.
 /// * `duration_nanos` - Optional duration of the profile. Passing None or a negative duration will
-///                      mean the duration will based on the end time minus the start time, but
-///                      under anomalous conditions this may fail as system clocks can be adjusted,
-///                      or the programmer accidentally passed an earlier time. The duration of
-///                      the serialized profile will be set to zero for these cases.
+///   mean the duration will based on the end time minus the start time, but under anomalous
+///   conditions this may fail as system clocks can be adjusted, or the programmer accidentally
+///   passed an earlier time. The duration of the serialized profile will be set to zero for these
+///   cases.
 /// * `start_time` - Optional start time for the next profile.
 ///
 /// # Safety
@@ -697,35 +691,21 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     duration_nanos: Option<&i64>,
     start_time: Option<&Timespec>,
 ) -> SerializeResult {
-    let profile = match profile_ptr_to_inner(profile) {
-        Ok(ok) => ok,
-        Err(err) => {
-            return SerializeResult::Err(Error::from(
-                err.context("ddog_prof_Profile_serialize failed"),
-            ))
-        }
-    };
-    let old_profile = match profile.reset_and_return_previous(start_time.map(SystemTime::from)) {
-        Ok(ok) => ok,
-        Err(err) => {
-            return SerializeResult::Err(Error::from(
-                err.context("ddog_prof_Profile_serialize failed"),
-            ))
-        }
-    };
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
 
-    let end_time = end_time.map(SystemTime::from);
-    let duration = match duration_nanos {
-        None => None,
-        Some(x) if *x < 0 => None,
-        Some(x) => Some(Duration::from_nanos((*x) as u64)),
-    };
-    match old_profile.serialize_into_compressed_pprof(end_time, duration) {
-        Ok(ok) => SerializeResult::Ok(ok.into()),
-        Err(err) => SerializeResult::Err(Error::from(
-            err.context("ddog_prof_Profile_serialize failed"),
-        )),
-    }
+        let start_time = start_time.map(SystemTime::from);
+        let old_profile = profile.reset_and_return_previous(start_time)?;
+        let end_time = end_time.map(SystemTime::from);
+        let duration = match duration_nanos {
+            None => None,
+            Some(x) if *x < 0 => None,
+            Some(x) => Some(Duration::from_nanos((*x) as u64)),
+        };
+        old_profile.serialize_into_compressed_pprof(end_time, duration)
+    })()
+    .context("ddog_prof_Profile_serialize failed")
+    .into()
 }
 
 #[must_use]
@@ -752,19 +732,17 @@ pub unsafe extern "C" fn ddog_prof_Profile_reset(
     profile: *mut Profile,
     start_time: Option<&Timespec>,
 ) -> ProfileResult {
-    match profile_ptr_to_inner(profile) {
-        Ok(profile) => match profile.reset_and_return_previous(start_time.map(SystemTime::from)) {
-            Ok(_) => ProfileResult::Ok(true),
-            Err(err) => {
-                ProfileResult::Err(Error::from(err.context("ddog_prof_Profile_reset failed")))
-            }
-        },
-        Err(err) => ProfileResult::Err(Error::from(err.context("ddog_prof_Profile_reset failed"))),
-    }
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
+        profile.reset_and_return_previous(start_time.map(SystemTime::from))?;
+        anyhow::Ok(())
+    })()
+    .context("ddog_prof_Profile_reset failed")
+    .into()
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     #[test]

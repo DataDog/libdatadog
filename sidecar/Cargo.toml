@@ -35,12 +35,13 @@ datadog-ipc-macros = { path = "../ipc/macros" }
 rand = "0.8.3"
 regex = { version = "1" }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0" }
+serde_with = "3.6.0"
+bincode = { version = "1.3.3" }
 rmp-serde = "1.1.1"
 spawn_worker = { path = "../spawn_worker" }
 zwohash = "0.1.2"
 sys-info = { version = "0.9.0" }
-tokio = { version = "1.35.1", features = ["sync", "io-util", "signal", "rt-multi-thread"] }
+tokio = { version = "1.35.1", features = ["fs", "sync", "io-util", "signal", "rt-multi-thread"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 
 prctl = "1.0.0"
@@ -58,6 +59,10 @@ uuid = { version = "1.3", features = ["v4"] }
 hashbrown = { version = "0.12", features = ["raw"] }
 libc = { version = "0.2" }
 
+# watchdog and self telemetry
+memory-stats = { version = "1.0.0" }
+cadence = "1.3.0"
+
 [dependencies.windows]
 features = [
     "Win32_Foundation",
@@ -70,6 +75,10 @@ version = "0.51.0"
 [dev-dependencies]
 libc = { version = "0.2" }
 tempfile = { version = "3.3" }
+httpmock = "0.7.0"
+
+[target.'cfg(not(target_arch = "x86"))'.dependencies]
+simd-json = "0.13.8"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.26.2", features = ["socket", "mman"] }
@@ -78,3 +87,6 @@ sendfd = { version = "0.4", features = ["tokio"] }
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "=0.2.8" }
 kernel32-sys = "0.2.2"
+
+[target.'cfg(windows_seh_wrapper)'.dependencies]
+microseh = "0.1.1"

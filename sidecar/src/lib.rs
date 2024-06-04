@@ -1,16 +1,17 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 pub mod agent_remote_config;
 pub mod config;
+pub mod dogstatsd;
 mod dump;
 pub mod entry;
-pub mod interface;
 #[cfg(feature = "tracing")]
 pub mod log;
 pub mod one_way_shared_memory;
 mod self_telemetry;
 pub mod setup;
 mod tracer;
+mod watchdog;
 
 pub use entry::*;
 
@@ -19,7 +20,16 @@ mod unix;
 #[cfg(unix)]
 pub use unix::*;
 
+pub mod service;
 #[cfg(windows)]
 mod windows;
+
 #[cfg(windows)]
 pub use self::windows::*;
+
+macro_rules! sidecar_version {
+    () => {
+        datadog_sidecar_macros::env_or_default!("SIDECAR_VERSION", env!("CARGO_PKG_VERSION"))
+    };
+}
+pub(crate) use sidecar_version;

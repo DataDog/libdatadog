@@ -1,10 +1,11 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use super::*;
 use std::hash::Hash;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
 pub struct Sample {
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc

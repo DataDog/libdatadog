@@ -1,7 +1,7 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
-use std::{borrow::Cow, str::FromStr};
+use std::{borrow::Cow, ops::Deref, str::FromStr};
 
 use hyper::{
     header::HeaderValue,
@@ -37,61 +37,87 @@ pub struct Endpoint {
     pub api_key: Option<Cow<'static, str>>,
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
+struct SerializedUri<'a> {
+    scheme: Option<Cow<'a, str>>,
+    authority: Option<Cow<'a, str>>,
+    path_and_query: Option<Cow<'a, str>>,
+}
+
 fn serialize_uri<S>(uri: &hyper::Uri, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    serializer.serialize_str(&uri.to_string())
+    let parts = uri.clone().into_parts();
+    let uri = SerializedUri {
+        scheme: parts.scheme.as_ref().map(|s| Cow::Borrowed(s.as_str())),
+        authority: parts.authority.as_ref().map(|s| Cow::Borrowed(s.as_str())),
+        path_and_query: parts
+            .path_and_query
+            .as_ref()
+            .map(|s| Cow::Borrowed(s.as_str())),
+    };
+    uri.serialize(serializer)
 }
 
 fn deserialize_uri<'de, D>(deserializer: D) -> Result<hyper::Uri, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let url: String = Deserialize::deserialize(deserializer)?;
-    hyper::Uri::from_str(&url).map_err(Error::custom)
+    let uri = SerializedUri::deserialize(deserializer)?;
+    let mut builder = hyper::Uri::builder();
+    if let Some(v) = uri.authority {
+        builder = builder.authority(v.deref());
+    }
+    if let Some(v) = uri.scheme {
+        builder = builder.scheme(v.deref());
+    }
+    if let Some(v) = uri.path_and_query {
+        builder = builder.path_and_query(v.deref());
+    }
+
+    builder.build().map_err(Error::custom)
 }
 
-// TODO: we should properly handle malformed urls
-// for windows and unix schemes:
-//    for compatibility reasons with existing implementation this parser stores the encoded path in authority section
-//    as there is no existing standard https://github.com/whatwg/url/issues/577 that covers this. We need to pick one hack or another
-// for file scheme implementation will simply backfill missing authority section
+/// TODO: we should properly handle malformed urls
+/// * For windows and unix schemes:
+///     * For compatibility reasons with existing implementation this parser stores the encoded path
+///       in authority section as there is no existing standard [see](https://github.com/whatwg/url/issues/577)
+///       that covers this. We need to pick one hack or another
+///     * For windows, interprets everything after windows: as path
+///     * For unix, interprets everything after unix:// as path
+/// * For file scheme implementation will simply backfill missing authority section
 pub fn parse_uri(uri: &str) -> anyhow::Result<hyper::Uri> {
-    let scheme_pos = if let Some(scheme_pos) = uri.find("://") {
-        scheme_pos
+    if let Some(path) = uri.strip_prefix("unix://") {
+        encode_uri_path_in_authority("unix", path)
+    } else if let Some(path) = uri.strip_prefix("windows:") {
+        encode_uri_path_in_authority("windows", path)
+    } else if let Some(path) = uri.strip_prefix("file://") {
+        let mut parts = uri::Parts::default();
+        parts.scheme = uri::Scheme::from_str("file").ok();
+        parts.authority = Some(uri::Authority::from_static("localhost"));
+
+        // TODO: handle edge cases like improperly escaped url strings
+        //
+        // this is eventually user configurable field
+        // anything we can do to ensure invalid input becomes valid - will improve usability
+        parts.path_and_query = uri::PathAndQuery::from_str(path).ok();
+
+        Ok(hyper::Uri::from_parts(parts)?)
     } else {
-        return Ok(hyper::Uri::from_str(uri)?);
-    };
-
-    let scheme = &uri[0..scheme_pos];
-    let rest = &uri[scheme_pos + 3..];
-    match scheme {
-        "windows" | "unix" => {
-            let mut parts = uri::Parts::default();
-            parts.scheme = uri::Scheme::from_str(scheme).ok();
-
-            let path = hex::encode(rest);
-
-            parts.authority = uri::Authority::from_str(path.as_str()).ok();
-            parts.path_and_query = Some(uri::PathAndQuery::from_static(""));
-            Ok(hyper::Uri::from_parts(parts)?)
-        }
-        "file" => {
-            let mut parts = uri::Parts::default();
-            parts.scheme = uri::Scheme::from_str(scheme).ok();
-            parts.authority = Some(uri::Authority::from_static("localhost"));
-
-            // TODO: handle edge cases like improperly escaped url strings
-            //
-            // this is eventually user configurable field
-            // anything we can do to ensure invalid input becomes valid - will improve usability
-            parts.path_and_query = uri::PathAndQuery::from_str(rest).ok();
-
-            Ok(hyper::Uri::from_parts(parts)?)
-        }
-        _ => Ok(hyper::Uri::from_str(uri)?),
+        Ok(hyper::Uri::from_str(uri)?)
     }
+}
+
+fn encode_uri_path_in_authority(scheme: &str, path: &str) -> anyhow::Result<hyper::Uri> {
+    let mut parts = uri::Parts::default();
+    parts.scheme = uri::Scheme::from_str(scheme).ok();
+
+    let path = hex::encode(path);
+
+    parts.authority = uri::Authority::from_str(path.as_str()).ok();
+    parts.path_and_query = Some(uri::PathAndQuery::from_static(""));
+    Ok(hyper::Uri::from_parts(parts)?)
 }
 
 impl Endpoint {

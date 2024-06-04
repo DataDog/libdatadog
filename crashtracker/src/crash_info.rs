@@ -1,52 +1,82 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
-use crate::CrashtrackerMetadata;
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+use crate::stacktrace::StackFrame;
+use crate::telemetry::TelemetryCrashUploader;
+use crate::CrashtrackerConfiguration;
 use anyhow::Context;
+#[cfg(unix)]
+use blazesym::symbolize::{Process, Source, Symbolizer};
 use chrono::{DateTime, Utc};
-use datadog_profiling::exporter::{self, Endpoint, Tag};
+use ddcommon::tag::Tag;
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
-use std::time::Duration;
 use std::{collections::HashMap, fs::File, io::BufReader};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-pub struct StackFrameNames {
-    colno: Option<u32>,
-    filename: Option<String>,
-    lineno: Option<u32>,
-    name: Option<String>,
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CrashtrackerMetadata {
+    pub profiling_library_name: String,
+    pub profiling_library_version: String,
+    pub family: String,
+    // Should include "service", "environment", etc
+    pub tags: Vec<Tag>,
 }
 
-/// All fields are hex encoded integers.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StackFrame {
-    ip: Option<String>,
-    module_base_address: Option<String>,
-    names: Option<Vec<StackFrameNames>>,
-    sp: Option<String>,
-    symbol_address: Option<String>,
+impl CrashtrackerMetadata {
+    pub fn new(
+        profiling_library_name: String,
+        profiling_library_version: String,
+        family: String,
+        tags: Vec<Tag>,
+    ) -> Self {
+        Self {
+            profiling_library_name,
+            profiling_library_version,
+            family,
+            tags,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SigInfo {
-    signum: u64,
-    signame: Option<String>,
+    pub signum: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub signame: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashInfo {
-    additional_stacktraces: HashMap<String, Vec<StackFrame>>,
-    counters: HashMap<String, i64>,
-    files: HashMap<String, Vec<String>>,
-    metadata: CrashtrackerMetadata,
-    os_info: os_info::Info,
-    siginfo: Option<SigInfo>,
-    stacktrace: Vec<StackFrame>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    #[serde(default)]
+    pub additional_stacktraces: HashMap<String, Vec<StackFrame>>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    #[serde(default)]
+    pub counters: HashMap<String, i64>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    #[serde(default)]
+    pub files: HashMap<String, Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub metadata: Option<CrashtrackerMetadata>,
+    pub os_info: os_info::Info,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub siginfo: Option<SigInfo>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
+    pub stacktrace: Vec<StackFrame>,
+    pub incomplete: bool,
     /// Any additional data goes here
-    tags: HashMap<String, String>,
-    timestamp: Option<DateTime<Utc>>,
-    uuid: Uuid,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    #[serde(default)]
+    pub tags: HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub timestamp: Option<DateTime<Utc>>,
+    pub uuid: Uuid,
 }
 
 /// Getters and predicates
@@ -54,22 +84,47 @@ impl CrashInfo {
     pub fn crash_seen(&self) -> bool {
         self.siginfo.is_some()
     }
+}
 
-    pub fn get_metadata(&self) -> &CrashtrackerMetadata {
-        &self.metadata
+impl Default for CrashInfo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(unix)]
+impl CrashInfo {
+    pub fn resolve_names(&mut self, src: &Source) -> anyhow::Result<()> {
+        let symbolizer = Symbolizer::new();
+        for frame in &mut self.stacktrace {
+            // Resolving names is best effort, just print the error and continue
+            frame
+                .resolve_names(src, &symbolizer)
+                .unwrap_or_else(|err| eprintln!("Error resolving name {err}"));
+        }
+        Ok(())
+    }
+
+    pub fn resolve_names_from_process(&mut self, pid: u32) -> anyhow::Result<()> {
+        let mut process = Process::new(pid.into());
+        // https://github.com/libbpf/blazesym/issues/518
+        process.map_files = false;
+        let src = Source::Process(process);
+        self.resolve_names(&src)
     }
 }
 
 /// Constructor and setters
 impl CrashInfo {
-    pub fn new(metadata: CrashtrackerMetadata) -> Self {
+    pub fn new() -> Self {
         let os_info = os_info::get();
         let uuid = Uuid::new_v4();
         Self {
             additional_stacktraces: HashMap::new(),
             counters: HashMap::new(),
             files: HashMap::new(),
-            metadata,
+            incomplete: false,
+            metadata: None,
             os_info,
             siginfo: None,
             stacktrace: vec![],
@@ -105,22 +160,56 @@ impl CrashInfo {
         Ok(())
     }
 
+    pub fn add_tag(&mut self, key: String, value: String) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.tags.contains_key(&key),
+            "Already had tag with key: {key}"
+        );
+        self.tags.insert(key, value);
+        Ok(())
+    }
+
+    pub fn set_incomplete(&mut self, incomplete: bool) -> anyhow::Result<()> {
+        self.incomplete = incomplete;
+        Ok(())
+    }
+
+    pub fn set_metadata(&mut self, metadata: CrashtrackerMetadata) -> anyhow::Result<()> {
+        anyhow::ensure!(self.metadata.is_none());
+        self.metadata = Some(metadata);
+        Ok(())
+    }
+
     pub fn set_siginfo(&mut self, siginfo: SigInfo) -> anyhow::Result<()> {
         anyhow::ensure!(self.siginfo.is_none());
         self.siginfo = Some(siginfo);
         Ok(())
     }
 
-    pub fn set_stacktrace(&mut self, stacktrace: Vec<StackFrame>) -> anyhow::Result<()> {
-        anyhow::ensure!(self.stacktrace.is_empty());
-        self.stacktrace = stacktrace;
+    pub fn set_stacktrace(
+        &mut self,
+        thread_id: Option<String>,
+        stacktrace: Vec<StackFrame>,
+    ) -> anyhow::Result<()> {
+        if let Some(thread_id) = thread_id {
+            anyhow::ensure!(!self.additional_stacktraces.contains_key(&thread_id));
+            self.additional_stacktraces.insert(thread_id, stacktrace);
+        } else {
+            anyhow::ensure!(self.stacktrace.is_empty());
+            self.stacktrace = stacktrace;
+        }
+
+        Ok(())
+    }
+
+    pub fn set_timestamp(&mut self, ts: DateTime<Utc>) -> anyhow::Result<()> {
+        anyhow::ensure!(self.timestamp.is_none());
+        self.timestamp = Some(ts);
         Ok(())
     }
 
     pub fn set_timestamp_to_now(&mut self) -> anyhow::Result<()> {
-        anyhow::ensure!(self.timestamp.is_none());
-        self.timestamp = Some(Utc::now());
-        Ok(())
+        self.set_timestamp(Utc::now())
     }
 }
 
@@ -129,85 +218,34 @@ impl CrashInfo {
     /// SIGNAL SAFETY:
     ///     I believe but have not verified this is signal safe.
     pub fn to_file(&self, path: &str) -> anyhow::Result<()> {
-        let file = File::create(path)?;
-        serde_json::to_writer_pretty(file, self)?;
+        let file = File::create(path).with_context(|| format!("Failed to create {path}"))?;
+        serde_json::to_writer_pretty(file, self)
+            .with_context(|| format!("Failed to write json to {path}"))?;
         Ok(())
     }
 
-    /// Package the CrashInfo as a json file `crash_info.json` associated with
-    /// an empty profile, and upload it to the profiling endpoint given in
-    /// `endpoint`.
-    /// SIGNAL SAFETY:
-    ///     Uploading the data involve both allocation and synchronization and
-    ///     should not be done inside a signal handler.
-    pub fn upload_to_dd(
-        &self,
-        endpoint: Endpoint,
-        timeout: Duration,
-    ) -> anyhow::Result<hyper::Response<hyper::Body>> {
-        fn make_tag(key: &str, value: &str) -> anyhow::Result<Tag> {
-            match Tag::new(key, value) {
-                Ok(tag) => Ok(tag),
-                Err(e) => anyhow::bail!("{}", e),
+    pub fn upload_to_endpoint(&self, config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
+        // If we're debugging to a file, dump the actual crashinfo into a json
+        if let Some(endpoint) = &config.endpoint {
+            if Some("file") == endpoint.url.scheme_str() {
+                self.to_file(
+                    endpoint
+                        .url
+                        .path_and_query()
+                        .ok_or_else(|| anyhow::format_err!("empty path for upload to file"))?
+                        .as_str(),
+                )?;
             }
         }
-
-        //let site = "intake.profile.datad0g.com/api/v2/profile";
-        //let site = "datad0g.com";
-        //let api_key = std::env::var("DD_API_KEY")?;
-        let data = serde_json::to_vec(self)?;
-        let metadata = self.get_metadata();
-
-        let is_crash_tag = make_tag("is_crash", "yes")?;
-        let tags = Some(
-            metadata
-                .tags
-                .iter()
-                .cloned()
-                .chain([is_crash_tag])
-                .collect(),
-        );
-        let time = Utc::now();
-        let crash_file = exporter::File {
-            name: "crash-info.json",
-            bytes: &data,
-        };
-        let exporter = exporter::ProfileExporter::new(
-            metadata.profiling_library_name.clone(),
-            metadata.profiling_library_version.clone(),
-            metadata.family.clone(),
-            tags,
-            endpoint,
-        )?;
-        let request = exporter.build(
-            time,
-            time,
-            &[crash_file],
-            &[],
-            None,
-            None,
-            None,
-            None,
-            timeout,
-        )?;
-        let response = exporter.send(request, None)?;
-        //TODO, do we need to wait a bit for the agent to finish upload?
-        Ok(response)
+        self.upload_to_telemetry(config)
     }
 
-    pub fn upload_to_endpoint(
-        &self,
-        endpoint: Endpoint,
-        timeout: Duration,
-    ) -> anyhow::Result<Option<hyper::Response<hyper::Body>>> {
-        // Using scheme "file" currently fails:
-        // error trying to connect: Unsupported scheme file
-        // Instead, manually support it.
-        if Some("file") == endpoint.url.scheme_str() {
-            self.to_file(endpoint.url.path())?;
-            Ok(None)
-        } else {
-            Ok(Some(self.upload_to_dd(endpoint, timeout)?))
+    fn upload_to_telemetry(&self, config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
+        if let Some(metadata) = &self.metadata {
+            if let Ok(uploader) = TelemetryCrashUploader::new(metadata, config) {
+                uploader.upload_to_telemetry(self, config.timeout)?;
+            }
         }
+        Ok(())
     }
 }

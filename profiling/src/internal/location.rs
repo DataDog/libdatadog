@@ -1,14 +1,13 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use super::*;
 
 /// Represents a [pprof::Location] with some space-saving changes:
-///  - The id is not stored on the struct. It's stored in the container that
-///    holds the struct.
+///  - The id is not stored on the struct. It's stored in the container that holds the struct.
 ///  - ids for linked objects use 32-bit numbers instead of 64 bit ones.
-///  - in libdatadog, we always use 1 Line per Location, so this is directly
-///    inlined into the struct.
+///  - in libdatadog, we always use 1 Line per Location, so this is directly inlined into the
+///    struct.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct Location {
     pub mapping_id: MappingId,

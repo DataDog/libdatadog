@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 mod endpoint_stats;
 mod endpoints;
@@ -8,6 +8,7 @@ mod label;
 mod location;
 mod mapping;
 mod observation;
+mod owned_types;
 mod profile;
 mod sample;
 mod stack_trace;
@@ -22,6 +23,7 @@ pub use label::*;
 pub use location::*;
 pub use mapping::*;
 pub use observation::*;
+pub use owned_types::*;
 pub use profile::*;
 pub use sample::*;
 pub use stack_trace::*;

@@ -7,11 +7,12 @@
 .idea
 .vs
 .vscode
-build*/
+build/
 cmake-build-debug
 deliverables
 target
 tmp
+__fuzz__
 
 #==============================================================================#
 # Files to ignore

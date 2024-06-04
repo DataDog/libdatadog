@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2023-Present Datadog, Inc.
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use env_logger::{Builder, Env, Target};
 use log::{error, info};
@@ -16,7 +16,7 @@ pub fn main() {
 
     info!("Starting serverless trace mini agent");
 
-    let env_verifier = Arc::new(env_verifier::ServerlessEnvVerifier {});
+    let env_verifier = Arc::new(env_verifier::ServerlessEnvVerifier::default());
 
     let trace_flusher = Arc::new(trace_flusher::ServerlessTraceFlusher {});
     let trace_processor = Arc::new(trace_processor::ServerlessTraceProcessor {});

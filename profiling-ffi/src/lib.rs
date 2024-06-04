@@ -1,5 +1,8 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+#[cfg(feature = "symbolizer")]
+pub use symbolizer_ffi::*;
 
 use std::fmt::Debug;
 use std::time::SystemTime;
@@ -9,6 +12,15 @@ use chrono::{DateTime, TimeZone, Utc};
 mod crashtracker;
 mod exporter;
 mod profiles;
+
+pub use crashtracker::*;
+// re-export telemetry ffi
+#[cfg(feature = "ddtelemetry-ffi")]
+pub use ddtelemetry_ffi::*;
+
+#[cfg(feature = "data-pipeline-ffi")]
+#[allow(unused_imports)]
+pub use data_pipeline_ffi::*;
 
 /// Represents time since the Unix Epoch in seconds plus nanoseconds.
 #[repr(C)]
