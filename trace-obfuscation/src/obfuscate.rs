@@ -50,7 +50,7 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
 
 #[cfg(test)]
 mod tests {
-    use datadog_trace_utils::trace_test_utils;
+    use datadog_trace_utils::test_utils;
 
     use crate::{obfuscation_config, replacer};
 
@@ -58,7 +58,7 @@ mod tests {
 
     #[test]
     fn test_obfuscates_span_url_strings() {
-        let mut span = trace_test_utils::create_test_span(111, 222, 0, 1, true);
+        let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
         span.r#type = "http".to_string();
         span.meta.insert(
             "http.url".to_string(),
@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn test_replace_span_tags() {
-        let mut span = trace_test_utils::create_test_span(111, 222, 0, 1, true);
+        let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
         span.meta
             .insert("custom.tag".to_string(), "/foo/bar/foo".to_string());
 
@@ -105,7 +105,7 @@ mod tests {
 
     #[test]
     fn obfuscate_all_redis_args() {
-        let mut span = trace_test_utils::create_test_span(111, 222, 0, 1, true);
+        let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
         span.r#type = "redis".to_string();
         span.meta.insert(
             "redis.raw_command".to_string(),
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn obfuscate_redis_raw_query() {
-        let mut span = trace_test_utils::create_test_span(111, 222, 0, 1, true);
+        let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
         span.r#type = "redis".to_string();
         span.meta.insert(
             "redis.raw_command".to_string(),

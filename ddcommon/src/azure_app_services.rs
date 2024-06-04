@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use lazy_static::lazy_static;
+use regex::Regex;
 use std::env;
 
 const WEBSITE_ONWER_NAME: &str = "WEBSITE_OWNER_NAME";
@@ -66,7 +67,7 @@ pub struct AzureMetadata {
     site_name: Option<String>,
     resource_group: Option<String>,
     extension_version: Option<String>,
-    operating_system: Option<String>,
+    operating_system: String,
     instance_name: Option<String>,
     instance_id: Option<String>,
     site_kind: String,
@@ -93,6 +94,15 @@ impl AzureMetadata {
             .map(|v| v.to_string())
     }
 
+    fn extract_resource_group(s: Option<String>) -> Option<String> {
+        let re: Regex = Regex::new(r"(.+)\+(.+)-(.+)-(.+)").unwrap();
+
+        s.as_ref().and_then(|text| {
+            re.captures(text)
+                .and_then(|caps| caps.get(2).map(|m| m.as_str().to_string()))
+        })
+    }
+
     /*
      * Computation of the resource id follow the same way the .NET tracer is doing:
      * https://github.com/DataDog/dd-trace-dotnet/blob/834a4b05b4ed91a819eb78761bf1ddb805969f65/tracer/src/Datadog.Trace/PlatformHelpers/AzureAppServices.cs#L215
@@ -111,16 +121,7 @@ impl AzureMetadata {
         }
     }
 
-    pub fn new<T: QueryEnv>(query: T) -> Option<Self> {
-        let is_relevant = query
-            .get_var(SERVICE_CONTEXT)
-            .map(|s| s.to_bool())
-            .unwrap_or(false);
-
-        if !is_relevant {
-            return None;
-        }
-
+    fn build_metadata<T: QueryEnv>(query: T) -> Option<Self> {
         let subscription_id =
             AzureMetadata::extract_subscription_id(query.get_var(WEBSITE_ONWER_NAME));
         let site_name = query.get_var(WEBSITE_SITE_NAME);
@@ -130,14 +131,18 @@ impl AzureMetadata {
             _ => ("app".to_owned(), "app".to_owned()),
         };
 
-        let resource_group = query.get_var(WEBSITE_RESOURCE_GROUP);
+        let resource_group = query
+            .get_var(WEBSITE_RESOURCE_GROUP)
+            .or_else(|| AzureMetadata::extract_resource_group(query.get_var(WEBSITE_ONWER_NAME)));
         let resource_id = AzureMetadata::build_resource_id(
             subscription_id.as_ref(),
             site_name.as_ref(),
             resource_group.as_ref(),
         );
         let extension_version = query.get_var(SITE_EXTENSION_VERSION);
-        let operating_system = query.get_var(WEBSITE_OS);
+        let operating_system = query
+            .get_var(WEBSITE_OS)
+            .unwrap_or(std::env::consts::OS.to_string());
         let instance_name = query.get_var(INSTANCE_NAME);
         let instance_id = query.get_var(INSTANCE_ID);
 
@@ -153,6 +158,29 @@ impl AzureMetadata {
             site_kind,
             site_type,
         })
+    }
+
+    pub fn new<T: QueryEnv>(query: T) -> Option<Self> {
+        let is_relevant = query
+            .get_var(SERVICE_CONTEXT)
+            .map(|s| s.to_bool())
+            .unwrap_or(false);
+
+        if !is_relevant {
+            return None;
+        }
+
+        AzureMetadata::build_metadata(query)
+    }
+
+    pub fn new_function<T: QueryEnv>(query: T) -> Option<Self> {
+        match matches!(
+            AzureMetadata::get_azure_context(&query),
+            AzureContext::AzureFunctions
+        ) {
+            true => AzureMetadata::build_metadata(query),
+            false => None,
+        }
     }
 
     pub fn get_resource_id(&self) -> &str {
@@ -176,7 +204,7 @@ impl AzureMetadata {
     }
 
     pub fn get_operating_system(&self) -> &str {
-        get_value_or_unknown!(self.operating_system)
+        self.operating_system.as_str()
     }
 
     pub fn get_instance_name(&self) -> &str {
@@ -199,6 +227,13 @@ impl AzureMetadata {
 pub fn get_metadata() -> &'static Option<AzureMetadata> {
     lazy_static! {
         static ref AAS_METATDATA: Option<AzureMetadata> = AzureMetadata::new(RealEnv {});
+    }
+    &AAS_METATDATA
+}
+
+pub fn get_function_metadata() -> &'static Option<AzureMetadata> {
+    lazy_static! {
+        static ref AAS_METATDATA: Option<AzureMetadata> = AzureMetadata::new_function(RealEnv {});
     }
     &AAS_METATDATA
 }
@@ -361,6 +396,55 @@ mod tests {
         let metadata = AzureMetadata::new(mocked_env).unwrap();
 
         assert_eq!(metadata.get_subscription_id(), UNKNOWN_VALUE);
+    }
+
+    #[test]
+    fn test_extract_resource_group_pattern_match() {
+        let mocked_env = MockEnv::new(&[
+            (
+                WEBSITE_ONWER_NAME,
+                "00000000-0000-0000-0000-000000000000+test-rg-EastUSwebspace-Linux",
+            ),
+            ("FUNCTIONS_WORKER_RUNTIME", "node"),
+            ("FUNCTIONS_EXTENSION_VERSION", "~4"),
+        ]);
+
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+
+        let expected_resource_group = "test-rg";
+
+        assert_eq!(metadata.get_resource_group(), expected_resource_group);
+    }
+
+    #[test]
+    fn test_extract_resource_group_no_pattern_match() {
+        let mocked_env = MockEnv::new(&[
+            (WEBSITE_ONWER_NAME, "foo"),
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            (FUNCTIONS_EXTENSION_VERSION, "~4"),
+        ]);
+
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+
+        assert_eq!(metadata.get_resource_group(), UNKNOWN_VALUE);
+    }
+
+    #[test]
+    fn test_use_resource_group_from_env_var_if_available() {
+        let mocked_env = MockEnv::new(&[
+            (WEBSITE_RESOURCE_GROUP, "test-rg-env-var"),
+            (
+                WEBSITE_ONWER_NAME,
+                "00000000-0000-0000-0000-000000000000+test-rg-EastUSwebspace-Linux",
+            ),
+            (SERVICE_CONTEXT, "1"),
+        ]);
+
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
+
+        let expected_resource_group = "test-rg-env-var";
+
+        assert_eq!(metadata.get_resource_group(), expected_resource_group);
     }
 
     #[test]

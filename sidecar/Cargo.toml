@@ -72,11 +72,6 @@ features = [
 ]
 version = "0.51.0"
 
-[dev-dependencies]
-libc = { version = "0.2" }
-tempfile = { version = "3.3" }
-httpmock = "0.7.0"
-
 [target.'cfg(not(target_arch = "x86"))'.dependencies]
 simd-json = "0.13.8"
 
@@ -90,3 +85,10 @@ kernel32-sys = "0.2.2"
 
 [target.'cfg(windows_seh_wrapper)'.dependencies]
 microseh = "0.1.1"
+
+[dev-dependencies]
+libc = { version = "0.2" }
+tempfile = { version = "3.3" }
+httpmock = "0.7.0"
+datadog-trace-utils = { path = "../trace-utils", features = ["test-utils"] }
+

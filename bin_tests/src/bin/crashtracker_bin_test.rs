@@ -18,7 +18,7 @@ mod unix {
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerMetadata,
         CrashtrackerReceiverConfig,
     };
-    use datadog_profiling::exporter::Tag;
+    use ddcommon::tag;
 
     #[inline(never)]
     unsafe fn deref_ptr(p: *mut u8) {
@@ -62,10 +62,10 @@ mod unix {
                 profiling_library_version: "1.0.0".to_owned(),
                 family: "native".to_owned(),
                 tags: vec![
-                    Tag::new("service", "foo").unwrap(),
-                    Tag::new("service_version", "bar").unwrap(),
-                    Tag::new("runtime-id", "xyz").unwrap(),
-                    Tag::new("language", "native").unwrap(),
+                    tag!("service", "foo"),
+                    tag!("service_version", "bar"),
+                    tag!("runtime-id", "xyz"),
+                    tag!("language", "native"),
                 ],
             },
         )?;
