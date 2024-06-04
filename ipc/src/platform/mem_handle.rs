@@ -32,8 +32,6 @@ where
 
 pub(crate) struct ShmPath {
     pub(crate) name: CString,
-    #[cfg(windows)]
-    pub(crate) display_name: CString,
 }
 
 pub struct NamedShmHandle {
@@ -44,11 +42,7 @@ pub struct NamedShmHandle {
 impl NamedShmHandle {
     pub fn get_path(&self) -> &[u8] {
         if let Some(ref shm_path) = &self.path {
-            #[cfg(unix)]
-            let path = shm_path.name.as_bytes();
-            #[cfg(windows)]
-            let path = shm_path.display_name.as_bytes();
-            path
+            shm_path.name.as_bytes()
         } else {
             b""
         }
