@@ -220,6 +220,7 @@ impl MetricContexts {
 
 #[cfg(test)]
 mod tests {
+    use ddcommon::tag;
     use std::fmt::Debug;
 
     use super::*;
@@ -279,7 +280,7 @@ mod tests {
             false,
             MetricNamespace::Tracers,
         );
-        let extra_tags = vec![Tag::from_value("service:foobar").unwrap()];
+        let extra_tags = vec![tag!("service", "foobar")];
 
         buckets.add_point(context_key_1, 0.1, Vec::new());
         buckets.add_point(context_key_1, 0.2, Vec::new());

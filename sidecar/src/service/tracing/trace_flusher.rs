@@ -13,12 +13,12 @@ use manual_future::{ManualFuture, ManualFutureCompleter};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
-use std::iter::zip;
 use std::ops::DerefMut;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::select;
+use tokio::sync::mpsc;
 use tokio::task::{JoinError, JoinHandle};
 use tracing::{debug, error, info};
 
@@ -61,6 +61,9 @@ pub struct TraceFlusherMetrics {
     pub api_errors_timeout: u64,
     pub api_errors_network: u64,
     pub api_errors_status_code: u64,
+    pub bytes_sent: u64,
+    pub chunks_sent: u64,
+    pub chunks_dropped: u64,
 }
 
 impl TraceFlusherMetrics {
@@ -69,6 +72,9 @@ impl TraceFlusherMetrics {
         self.api_errors_timeout += result.errors_timeout;
         self.api_errors_network += result.errors_network;
         self.api_errors_status_code += result.errors_status_code;
+        self.bytes_sent += result.bytes_sent;
+        self.chunks_sent += result.chunks_sent;
+        self.chunks_dropped += result.chunks_dropped;
 
         for (status_code, count) in &result.responses_count_per_code {
             *self
@@ -113,7 +119,7 @@ impl TraceFlusher {
         let mut flush_data = self.inner.lock().unwrap();
         let flush_data = flush_data.deref_mut();
 
-        flush_data.traces.send_data_size += data.size;
+        flush_data.traces.send_data_size += data.len();
 
         if flush_data.traces.send_data_size
             > self.min_force_drop_size_bytes.load(Ordering::Relaxed) as usize
@@ -214,7 +220,10 @@ impl TraceFlusher {
         }
     }
 
-    fn replace_trace_send_data(&self, completer: ManualFutureCompleter<()>) -> Vec<SendData> {
+    fn replace_trace_send_data(
+        &self,
+        completer: ManualFutureCompleter<Option<mpsc::Sender<()>>>,
+    ) -> Vec<SendData> {
         let trace_buffer = std::mem::replace(
             &mut self.inner.lock().unwrap().traces,
             TraceSendData {
@@ -229,19 +238,9 @@ impl TraceFlusher {
             .collect()
     }
 
-    async fn send_traces(&self, send_data: Vec<SendData>) {
-        let mut futures: Vec<_> = Vec::new();
-        let mut intake_target: Vec<_> = Vec::new();
-        for send_data in send_data {
-            intake_target.push(send_data.target.clone());
-            futures.push(send_data.send());
-        }
-        for (endpoint, response) in zip(intake_target, join_all(futures).await) {
-            self.handle_trace_response(endpoint, response).await;
-        }
-    }
-
-    async fn handle_trace_response(&self, endpoint: Endpoint, response: SendDataResult) {
+    async fn send_and_handle_trace(&self, send_data: SendData) {
+        let endpoint = send_data.get_target().clone();
+        let response = send_data.send().await;
         self.metrics.lock().unwrap().update(&response);
         match response.last_result {
             Ok(response) => {
@@ -265,14 +264,18 @@ impl TraceFlusher {
         }
     }
 
-    fn start_trace_flusher(self: Arc<Self>, mut force_flush: ManualFuture<()>) -> JoinHandle<()> {
+    fn start_trace_flusher(
+        self: Arc<Self>,
+        mut force_flush: ManualFuture<Option<mpsc::Sender<()>>>,
+    ) -> JoinHandle<()> {
         tokio::spawn(async move {
             loop {
+                let mut flush_done_sender = None;
                 select! {
                     _ = tokio::time::sleep(Duration::from_millis(
                         self.interval_ms.load(Ordering::Relaxed),
                     )) => {},
-                    _ = force_flush => {},
+                    sender = force_flush => { flush_done_sender = sender; },
                 }
 
                 debug!(
@@ -284,7 +287,9 @@ impl TraceFlusher {
                 force_flush = new_force_flush;
 
                 let send_data = self.replace_trace_send_data(completer);
-                self.send_traces(send_data).await;
+                join_all(send_data.into_iter().map(|d| self.send_and_handle_trace(d))).await;
+
+                drop(flush_done_sender);
 
                 let mut data = self.inner.lock().unwrap();
                 let data = data.deref_mut();
@@ -295,60 +300,20 @@ impl TraceFlusher {
             }
         })
     }
+
+    /// Flushes immediately without delay.
+    pub async fn flush(&self) {
+        let flush_done = self.inner.lock().unwrap().traces.await_flush();
+        flush_done.await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_trace_protobuf::pb;
-    use datadog_trace_utils::trace_utils::TracerHeaderTags;
-    use httpmock::{Mock, MockServer};
+    use datadog_trace_utils::test_utils::{create_send_data, poll_for_mock_hit};
+    use httpmock::MockServer;
     use std::sync::Arc;
-
-    // This function will poll the mock server for "hits" until the expected number of hits is
-    // observed. Then it will delete the mock. In its current form it may not correctly report if
-    // more than the asserted number of hits occurred. More attempts at lower sleep intervals is
-    // preferred to reduce flakiness and test runtime.
-    async fn poll_for_mock_hit(
-        mock: &mut Mock<'_>,
-        poll_attempts: i32,
-        sleep_interval_ms: u64,
-        expected_hits: usize,
-    ) -> bool {
-        let mut mock_hit = mock.hits_async().await == expected_hits;
-
-        let mut mock_observations_remaining = poll_attempts;
-
-        while !mock_hit {
-            tokio::time::sleep(Duration::from_millis(sleep_interval_ms)).await;
-            mock_hit = mock.hits_async().await == expected_hits;
-            mock_observations_remaining -= 1;
-            if mock_observations_remaining == 0 || mock_hit {
-                break;
-            }
-        }
-
-        mock_hit
-    }
-
-    fn create_send_data(size: usize, target_endpoint: &Endpoint) -> SendData {
-        let tracer_header_tags = TracerHeaderTags::default();
-
-        let tracer_payload = pb::TracerPayload {
-            container_id: "container_id_1".to_owned(),
-            language_name: "php".to_owned(),
-            language_version: "4.0".to_owned(),
-            tracer_version: "1.1".to_owned(),
-            runtime_id: "runtime_1".to_owned(),
-            chunks: vec![],
-            tags: Default::default(),
-            env: "test".to_owned(),
-            hostname: "test_host".to_owned(),
-            app_version: "2.0".to_owned(),
-        };
-
-        SendData::new(size, tracer_payload, tracer_header_tags, target_endpoint)
-    }
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
@@ -386,12 +351,12 @@ mod tests {
         trace_flusher.enqueue(send_data_1);
         trace_flusher.enqueue(send_data_2);
 
-        assert!(poll_for_mock_hit(&mut mock, 10, 150, 0).await);
+        assert!(poll_for_mock_hit(&mut mock, 10, 150, 0, false).await);
 
         // enqueue a trace that exceeds the min force flush size
         trace_flusher.enqueue(send_data_3);
 
-        assert!(poll_for_mock_hit(&mut mock, 25, 100, 1).await);
+        assert!(poll_for_mock_hit(&mut mock, 25, 100, 1, true).await);
     }
 
     #[cfg_attr(miri, ignore)]
@@ -427,7 +392,7 @@ mod tests {
             trace_flusher.interval_ms.load(Ordering::Relaxed) + 1,
         ))
         .await;
-        assert!(poll_for_mock_hit(&mut mock, 25, 100, 1).await);
+        assert!(poll_for_mock_hit(&mut mock, 25, 100, 1, true).await);
     }
 
     #[cfg_attr(miri, ignore)]
@@ -459,6 +424,6 @@ mod tests {
 
         trace_flusher.enqueue(send_data_1);
 
-        assert!(poll_for_mock_hit(&mut mock, 5, 250, 0).await);
+        assert!(poll_for_mock_hit(&mut mock, 5, 250, 0, true).await);
     }
 }

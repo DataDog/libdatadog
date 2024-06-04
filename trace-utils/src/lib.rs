@@ -4,6 +4,7 @@
 pub mod config_utils;
 pub mod send_data;
 pub mod stats_utils;
-pub mod trace_test_utils;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
 pub mod trace_utils;
 pub mod tracer_header_tags;

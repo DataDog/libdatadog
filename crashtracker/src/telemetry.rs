@@ -196,7 +196,7 @@ mod tests {
 
     use crate::SigInfo;
     use chrono::DateTime;
-    use ddcommon::{tag::Tag, Endpoint};
+    use ddcommon::{tag, Endpoint};
 
     use super::TelemetryCrashUploader;
 
@@ -223,10 +223,10 @@ mod tests {
             profiling_library_version: "1.0.0".to_owned(),
             family: "native".to_owned(),
             tags: vec![
-                Tag::new("service", "foo").unwrap(),
-                Tag::new("service_version", "bar").unwrap(),
-                Tag::new("runtime-id", "xyz").unwrap(),
-                Tag::new("language", "native").unwrap(),
+                tag!("service", "foo"),
+                tag!("service_version", "bar"),
+                tag!("runtime-id", "xyz"),
+                tag!("language", "native"),
             ],
         }
     }

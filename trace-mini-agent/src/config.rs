@@ -15,20 +15,21 @@ use datadog_trace_utils::trace_utils;
 
 #[derive(Debug)]
 pub struct Config {
-    pub function_name: Option<String>,
+    pub dd_site: String,
     pub env_type: trace_utils::EnvironmentType,
-    pub os: String,
+    pub function_name: Option<String>,
     pub max_request_content_length: usize,
-    /// how often to flush traces, in seconds
-    pub trace_flush_interval: u64,
+    pub mini_agent_version: String,
+    pub obfuscation_config: obfuscation_config::ObfuscationConfig,
+    pub os: String,
     /// how often to flush stats, in seconds
     pub stats_flush_interval: u64,
-    /// timeout for environment verification, in milliseconds
-    pub verify_env_timeout: u64,
+    /// how often to flush traces, in seconds
+    pub trace_flush_interval: u64,
     pub trace_intake: Endpoint,
     pub trace_stats_intake: Endpoint,
-    pub dd_site: String,
-    pub obfuscation_config: obfuscation_config::ObfuscationConfig,
+    /// timeout for environment verification, in milliseconds
+    pub verify_env_timeout: u64,
 }
 
 impl Config {
@@ -61,6 +62,8 @@ impl Config {
             )
         })?;
 
+        let mini_agent_version: String = env!("CARGO_PKG_VERSION").to_string();
+
         Ok(Config {
             function_name: Some(function_name),
             env_type,
@@ -79,6 +82,7 @@ impl Config {
                 api_key: Some(api_key),
             },
             obfuscation_config,
+            mini_agent_version,
         })
     }
 }

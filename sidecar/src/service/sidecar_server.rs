@@ -36,6 +36,7 @@ use tracing::{debug, enabled, error, info, warn, Level};
 
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
+use tokio::task::{JoinError, JoinHandle};
 
 use crate::dogstatsd::DogStatsDAction;
 use crate::service::telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats;
@@ -647,6 +648,7 @@ impl SidecarInterface for SidecarServer {
         _: Context,
         instance_id: InstanceId,
         handle: ShmHandle,
+        len: usize,
         headers: SerializedTracerHeaderTags,
     ) -> Self::SendTraceV04ShmFut {
         if let Some(endpoint) = self
@@ -658,7 +660,7 @@ impl SidecarInterface for SidecarServer {
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
-                        self.send_trace_v04(&headers, mapped.as_slice(), &endpoint);
+                        self.send_trace_v04(&headers, &mapped.as_slice()[..len], &endpoint);
                     }
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                 }
@@ -706,6 +708,18 @@ impl SidecarInterface for SidecarServer {
         });
 
         no_response()
+    }
+
+    type FlushTracesFut = future::Map<JoinHandle<()>, fn(Result<(), JoinError>)>;
+
+    fn flush_traces(self, _: Context) -> Self::FlushTracesFut {
+        let flusher = self.trace_flusher.clone();
+        fn report_result(result: Result<(), JoinError>) {
+            if let Err(e) = result {
+                error!("Failed flushing traces: {e:?}");
+            }
+        }
+        tokio::spawn(async move { flusher.flush().await }).map(report_result)
     }
 
     type PingFut = Ready<()>;

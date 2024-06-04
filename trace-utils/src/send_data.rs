@@ -5,32 +5,85 @@ use anyhow::{anyhow, Context};
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use hyper::{Body, Client, Method, Response, StatusCode};
+use hyper::{
+    header::{HeaderMap, HeaderValue},
+    Body, Client, Method, Response,
+};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::tracer_header_tags::TracerHeaderTags;
-use datadog_trace_protobuf::pb;
+use datadog_trace_protobuf::pb::{self, TracerPayload};
 use ddcommon::{connector, Endpoint, HttpRequestBuilder};
 
+const DD_API_KEY: &str = "DD-API-KEY";
+const HEADER_DD_TRACE_COUNT: &str = "X-Datadog-Trace-Count";
+const HEADER_HTTP_CTYPE: &str = "Content-Type";
+const HEADER_CTYPE_MSGPACK: &str = "application/msgpack";
+const HEADER_CTYPE_PROTOBUF: &str = "application/x-protobuf";
+
+type BytesSent = u64;
+type ChunksSent = u64;
+type ChunksDropped = u64;
+type Attempts = u32;
+
 #[derive(Debug)]
-pub enum SendRequestError {
-    Hyper(hyper::Error),
-    Any(anyhow::Error),
+enum RequestError {
+    Build,
+    Network,
+    Timeout,
 }
 
+impl std::fmt::Display for RequestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RequestError::Timeout => write!(f, "Connection timed out"),
+            RequestError::Network => write!(f, "Network error"),
+            RequestError::Build => write!(f, "Request failed due to invalid property"),
+        }
+    }
+}
+
+impl std::error::Error for RequestError {}
+
+pub enum RequestResult {
+    /// Holds information from a succesful request.
+    Success((Response<Body>, Attempts, BytesSent, ChunksSent)),
+    /// Treats HTTP errors.
+    Error((Response<Body>, Attempts, ChunksDropped)),
+    /// Treats timeout errors originated in the transport layer.
+    TimeoutError((Attempts, ChunksDropped)),
+    /// Treats errors coming from networking.
+    NetworkError((Attempts, ChunksDropped)),
+    /// Treats errors coming from building the request
+    BuildError((Attempts, ChunksDropped)),
+}
+
+#[derive(Debug)]
 pub struct SendDataResult {
+    // Keeps track of the last request result.
     pub last_result: anyhow::Result<Response<Body>>,
+    // Count metric for 'trace_api.requests'.
     pub requests_count: u64,
+    // Count metric for 'trace_api.responses'. Each key maps  a different HTTP status code.
     pub responses_count_per_code: HashMap<u16, u64>,
+    // Count metric for 'trace_api.errors' (type: timeout).
     pub errors_timeout: u64,
+    // Count metric for 'trace_api.errors' (type: network).
     pub errors_network: u64,
+    // Count metric for 'trace_api.errors' (type: status_code).
     pub errors_status_code: u64,
+    // Count metric for 'trace_api.bytes'
+    pub bytes_sent: u64,
+    // Count metric for 'trace_chunk_sent'
+    pub chunks_sent: u64,
+    // Count metric for 'trace_chunks_dropped'
+    pub chunks_dropped: u64,
 }
 
-impl SendDataResult {
-    fn new() -> SendDataResult {
+impl Default for SendDataResult {
+    fn default() -> Self {
         SendDataResult {
             last_result: Err(anyhow!("No requests sent")),
             requests_count: 0,
@@ -38,50 +91,90 @@ impl SendDataResult {
             errors_timeout: 0,
             errors_network: 0,
             errors_status_code: 0,
+            bytes_sent: 0,
+            chunks_sent: 0,
+            chunks_dropped: 0,
         }
     }
+}
 
-    async fn update(
-        &mut self,
-        res: Result<Response<Body>, SendRequestError>,
-        expected_status: StatusCode,
-    ) {
-        self.requests_count += 1;
+impl SendDataResult {
+    ///
+    /// Updates `SendDataResult` internal information with the request's result information.
+    ///
+    /// # Arguments
+    ///
+    /// * `res` - Request result.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use datadog_trace_utils::send_data::RequestResult;
+    /// use datadog_trace_utils::trace_utils::SendDataResult;
+    ///
+    /// #[cfg_attr(miri, ignore)]
+    /// async fn update_send_results_example() {
+    ///     let result = RequestResult::NetworkError((1, 0));
+    ///     let mut data_result = SendDataResult::default();
+    ///     data_result.update(result).await;
+    /// }
+    /// ```
+
+    pub async fn update(&mut self, res: RequestResult) {
         match res {
-            Ok(response) => {
+            RequestResult::Success((response, attempts, bytes, chunks)) => {
                 *self
                     .responses_count_per_code
                     .entry(response.status().as_u16())
                     .or_default() += 1;
-                self.last_result = if response.status() == expected_status {
-                    Ok(response)
-                } else {
-                    self.errors_status_code += 1;
-
-                    let body_bytes = hyper::body::to_bytes(response.into_body()).await;
-                    let response_body = String::from_utf8(body_bytes.unwrap_or_default().to_vec())
-                        .unwrap_or_default();
-                    Err(anyhow::format_err!(
-                        "Server did not accept traces: {response_body}"
-                    ))
-                }
+                self.bytes_sent += bytes;
+                self.chunks_sent += chunks;
+                self.last_result = Ok(response);
+                self.requests_count += u64::from(attempts);
             }
-            Err(e) => match e {
-                SendRequestError::Hyper(e) => {
-                    if e.is_timeout() {
-                        self.errors_timeout += 1;
-                    } else {
-                        self.errors_network += 1;
-                    }
-                    self.last_result = Err(anyhow!(e));
-                }
-                SendRequestError::Any(e) => {
-                    self.last_result = Err(e);
-                }
-            },
+            RequestResult::Error((response, attempts, chunks)) => {
+                let status_code = response.status().as_u16();
+                self.errors_status_code += 1;
+                *self
+                    .responses_count_per_code
+                    .entry(status_code)
+                    .or_default() += 1;
+                self.chunks_dropped += chunks;
+                self.requests_count += u64::from(attempts);
+
+                let body_bytes = hyper::body::to_bytes(response.into_body()).await;
+                let response_body =
+                    String::from_utf8(body_bytes.unwrap_or_default().to_vec()).unwrap_or_default();
+                self.last_result = Err(anyhow::format_err!(
+                    "{} - Server did not accept traces: {}",
+                    status_code,
+                    response_body,
+                ));
+            }
+            RequestResult::TimeoutError((attempts, chunks)) => {
+                self.errors_timeout += 1;
+                self.chunks_dropped += chunks;
+                self.requests_count += u64::from(attempts);
+            }
+            RequestResult::NetworkError((attempts, chunks)) => {
+                self.errors_network += 1;
+                self.chunks_dropped += chunks;
+                self.requests_count += u64::from(attempts);
+            }
+            RequestResult::BuildError((attempts, chunks)) => {
+                self.chunks_dropped += chunks;
+                self.requests_count += u64::from(attempts);
+            }
         }
     }
 
+    ///
+    /// Sets `SendDataResult` last result information.
+    /// expected result.
+    ///
+    /// # Arguments
+    ///
+    /// * `err` - Error to be set.
     fn error(mut self, err: anyhow::Error) -> SendDataResult {
         self.last_result = Err(err);
         self
@@ -193,9 +286,9 @@ impl RetryStrategy {
 
 #[derive(Debug, Clone)]
 pub struct SendData {
-    pub tracer_payloads: Vec<pb::TracerPayload>,
-    pub size: usize, // have a rough size estimate to force flushing if it's large
-    pub target: Endpoint,
+    pub(crate) tracer_payloads: Vec<pb::TracerPayload>,
+    pub(crate) size: usize, // have a rough size estimate to force flushing if it's large
+    target: Endpoint,
     headers: HashMap<&'static str, String>,
     retry_strategy: RetryStrategy,
 }
@@ -208,7 +301,7 @@ impl SendData {
         target: &Endpoint,
     ) -> SendData {
         let headers = if let Some(api_key) = &target.api_key {
-            HashMap::from([("DD-API-KEY", api_key.as_ref().to_string())])
+            HashMap::from([(DD_API_KEY, api_key.as_ref().to_string())])
         } else {
             tracer_header_tags.into()
         };
@@ -222,6 +315,22 @@ impl SendData {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.size
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.size == 0
+    }
+
+    pub fn get_target(&self) -> &Endpoint {
+        &self.target
+    }
+
+    pub fn get_payloads(&self) -> &Vec<TracerPayload> {
+        &self.tracer_payloads
+    }
+
     /// Overrides the default RetryStrategy with user-defined values.
     ///
     /// # Arguments
@@ -229,6 +338,36 @@ impl SendData {
     /// * `retry_strategy`: The new retry strategy to be used.
     pub fn set_retry_strategy(&mut self, retry_strategy: RetryStrategy) {
         self.retry_strategy = retry_strategy;
+    }
+
+    async fn send_request(
+        &self,
+        req: HttpRequestBuilder,
+        payload: Bytes,
+    ) -> Result<Response<Body>, RequestError> {
+        let req = match req.body(Body::from(payload)) {
+            Ok(req) => req,
+            Err(_) => return Err(RequestError::Build),
+        };
+
+        match Client::builder()
+            .build(connector::Connector::default())
+            .request(req)
+            .await
+        {
+            Ok(resp) => Ok(resp),
+            Err(e) => {
+                if e.is_timeout() {
+                    Err(RequestError::Timeout)
+                } else {
+                    Err(RequestError::Network)
+                }
+            }
+        }
+    }
+
+    fn use_protobuf(&self) -> bool {
+        self.target.api_key.is_some()
     }
 
     pub async fn send(self) -> SendDataResult {
@@ -246,43 +385,70 @@ impl SendData {
         &self,
         content_type: &'static str,
         payload: Vec<u8>,
-    ) -> Result<Response<Body>, SendRequestError> {
+        payload_chunks: u64,
+        // For payload specific headers that need to be added to the request like trace count.
+        additional_payload_headers: Option<HashMap<&'static str, String>>,
+    ) -> RequestResult {
         let mut request_attempt = 0;
         let payload = Bytes::from(payload);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(HEADER_HTTP_CTYPE, HeaderValue::from_static(content_type));
+
+        if let Some(additional_payload_headers) = &additional_payload_headers {
+            for (key, value) in additional_payload_headers {
+                headers.insert(*key, HeaderValue::from_str(value).unwrap());
+            }
+        }
+
         loop {
             request_attempt += 1;
             let mut req = self.create_request_builder();
-            req = req.header("Content-type", content_type);
-
+            req.headers_mut().unwrap().extend(headers.clone());
             let result = self.send_request(req, payload.clone()).await;
 
             // If the request was successful, or if we have exhausted retries then return the
             // result. Otherwise, delay and try again.
-            match &result {
+            match result {
                 Ok(response) => {
                     if response.status().is_client_error() || response.status().is_server_error() {
                         if request_attempt >= self.retry_strategy.max_retries {
-                            return result;
+                            return RequestResult::Error((
+                                response,
+                                request_attempt,
+                                payload_chunks,
+                            ));
                         } else {
                             self.retry_strategy.delay(request_attempt).await;
                         }
                     } else {
-                        return result;
+                        return RequestResult::Success((
+                            response,
+                            request_attempt,
+                            u64::try_from(payload.len()).unwrap(),
+                            payload_chunks,
+                        ));
                     }
                 }
-                Err(_) => {
+                Err(e) => {
                     if request_attempt >= self.retry_strategy.max_retries {
-                        return result;
+                        return match e {
+                            RequestError::Build => {
+                                RequestResult::BuildError((request_attempt, payload_chunks))
+                            }
+                            RequestError::Network => {
+                                RequestResult::NetworkError((request_attempt, payload_chunks))
+                            }
+                            RequestError::Timeout => {
+                                RequestResult::TimeoutError((request_attempt, payload_chunks))
+                            }
+                        };
                     } else {
                         self.retry_strategy.delay(request_attempt).await;
                     }
                 }
             }
         }
-    }
-
-    fn use_protobuf(&self) -> bool {
-        self.target.api_key.is_some()
     }
 
     fn create_request_builder(&self) -> HttpRequestBuilder {
@@ -301,25 +467,12 @@ impl SendData {
         req
     }
 
-    async fn send_request(
-        &self,
-        req: HttpRequestBuilder,
-        payload: Bytes,
-    ) -> Result<Response<Body>, SendRequestError> {
-        let req = req
-            .body(Body::from(payload))
-            .map_err(|e| SendRequestError::Any(anyhow!(e)))?;
-
-        Client::builder()
-            .build(connector::Connector::default())
-            .request(req)
-            .await
-            .map_err(SendRequestError::Hyper)
-    }
-
     async fn send_with_protobuf(&self) -> SendDataResult {
-        let mut result = SendDataResult::new();
-
+        let mut result = SendDataResult::default();
+        let mut chunks: u64 = 0;
+        for tracer_payload in &self.tracer_payloads {
+            chunks += u64::try_from(tracer_payload.chunks.len()).unwrap();
+        }
         let agent_payload = construct_agent_payload(self.tracer_payloads.clone());
         let serialized_trace_payload = match serialize_proto_payload(&agent_payload)
             .context("Failed to serialize trace agent payload, dropping traces")
@@ -330,9 +483,13 @@ impl SendData {
 
         result
             .update(
-                self.send_payload("application/x-protobuf", serialized_trace_payload)
-                    .await,
-                StatusCode::ACCEPTED,
+                self.send_payload(
+                    HEADER_CTYPE_PROTOBUF,
+                    serialized_trace_payload,
+                    chunks,
+                    None,
+                )
+                .await,
             )
             .await;
 
@@ -340,38 +497,29 @@ impl SendData {
     }
 
     async fn send_with_msgpack(&self) -> SendDataResult {
-        let mut result = SendDataResult::new();
-
-        let mut req = self.create_request_builder();
-        req = req.header("Content-type", "application/msgpack");
-
-        let (template, _) = req.body(()).unwrap().into_parts();
+        let mut result = SendDataResult::default();
 
         let mut futures = FuturesUnordered::new();
         for tracer_payload in self.tracer_payloads.iter() {
-            let mut builder = HttpRequestBuilder::new()
-                .method(template.method.clone())
-                .uri(template.uri.clone())
-                .version(template.version)
-                .header(
-                    "X-Datadog-Trace-Count",
-                    tracer_payload.chunks.len().to_string(),
-                );
-            builder
-                .headers_mut()
-                .unwrap()
-                .extend(template.headers.clone());
+            let chunks = u64::try_from(tracer_payload.chunks.len()).unwrap();
+            let additional_payload_headers =
+                Some(HashMap::from([(HEADER_DD_TRACE_COUNT, chunks.to_string())]));
 
             let payload = match rmp_serde::to_vec_named(&tracer_payload) {
                 Ok(p) => p,
                 Err(e) => return result.error(anyhow!(e)),
             };
-            futures.push(self.send_payload("application/msgpack", payload));
+            futures.push(self.send_payload(
+                HEADER_CTYPE_MSGPACK,
+                payload,
+                chunks,
+                additional_payload_headers,
+            ));
         }
         loop {
             match futures.next().await {
                 Some(response) => {
-                    result.update(response, StatusCode::OK).await;
+                    result.update(response).await;
                     if result.last_result.is_err() {
                         return result;
                     }
@@ -384,16 +532,366 @@ impl SendData {
 
 #[cfg(test)]
 // For RetryStrategy tests the observed delay should be approximate.
-// There may be a small amount of overhead, so we check that the elapsed time is within
-// a tolerance of the expected delay.
-// TODO: APMSP-1079 - We should have more comprehensive tests for SendData logic beyond retry logic.
 mod tests {
     use super::*;
-    use httpmock::{Mock, MockServer};
-    use std::time::Duration;
+    use crate::test_utils::{create_send_data, poll_for_mock_hit};
+    use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, RootSpanTags};
+    use crate::tracer_header_tags::TracerHeaderTags;
+    use datadog_trace_protobuf::pb;
+    use ddcommon::Endpoint;
+    use httpmock::prelude::*;
+    use httpmock::MockServer;
+    use std::collections::HashMap;
     use tokio::time::Instant;
 
     const RETRY_STRATEGY_TIME_TOLERANCE_MS: u64 = 25;
+    const HEADER_TAGS: TracerHeaderTags = TracerHeaderTags {
+        lang: "test-lang",
+        lang_version: "2.0",
+        lang_interpreter: "interpreter",
+        lang_vendor: "vendor",
+        tracer_version: "1.0",
+        container_id: "id",
+        client_computed_top_level: false,
+        client_computed_stats: false,
+    };
+
+    fn setup_payload(header_tags: &TracerHeaderTags) -> pb::TracerPayload {
+        let root_tags = RootSpanTags {
+            env: "TEST",
+            app_version: "1.0",
+            hostname: "test_bench",
+            runtime_id: "id",
+        };
+
+        let chunk = construct_trace_chunk(vec![pb::Span {
+            service: "test-service".to_string(),
+            name: "test-service-name".to_string(),
+            resource: "test-service-resource".to_string(),
+            trace_id: 111,
+            span_id: 222,
+            parent_id: 333,
+            start: 1,
+            duration: 5,
+            error: 0,
+            meta: HashMap::new(),
+            metrics: HashMap::new(),
+            meta_struct: HashMap::new(),
+            r#type: "".to_string(),
+            span_links: vec![],
+        }]);
+
+        construct_tracer_payload(vec![chunk], header_tags, root_tags)
+    }
+
+    fn compute_payload_len(payload: &[pb::TracerPayload]) -> usize {
+        let agent_payload = construct_agent_payload(payload.to_vec());
+        let serialized_trace_payload = serialize_proto_payload(&agent_payload).unwrap();
+        serialized_trace_payload.len()
+    }
+
+    fn rmp_compute_payload_len(payload: &Vec<pb::TracerPayload>) -> usize {
+        let mut total: usize = 0;
+        for payload in payload {
+            total += rmp_serde::to_vec_named(payload).unwrap().len();
+        }
+        total
+    }
+
+    #[test]
+    fn send_data_new_api_key() {
+        let header_tags = TracerHeaderTags::default();
+
+        let payload = setup_payload(&header_tags);
+        let data = SendData::new(
+            100,
+            payload,
+            HEADER_TAGS,
+            &Endpoint {
+                api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
+                url: "/foo/bar?baz".parse::<hyper::Uri>().unwrap(),
+            },
+        );
+
+        assert_eq!(data.size, 100);
+
+        assert_eq!(data.target.api_key.unwrap(), "TEST-KEY");
+        assert_eq!(data.target.url.path(), "/foo/bar");
+
+        assert_eq!(data.headers.get("DD-API-KEY").unwrap(), "TEST-KEY");
+    }
+
+    #[test]
+    fn send_data_new_no_api_key() {
+        let header_tags = TracerHeaderTags::default();
+
+        let payload = setup_payload(&header_tags);
+        let data = SendData::new(
+            100,
+            payload,
+            header_tags.clone(),
+            &Endpoint {
+                api_key: None,
+                url: "/foo/bar?baz".parse::<hyper::Uri>().unwrap(),
+            },
+        );
+
+        assert_eq!(data.size, 100);
+
+        assert_eq!(data.target.api_key, None);
+        assert_eq!(data.target.url.path(), "/foo/bar");
+
+        assert_eq!(data.headers.get("DD-API-KEY"), None);
+        assert_eq!(data.headers, HashMap::from(header_tags));
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn request_protobuf() {
+        let server = MockServer::start_async().await;
+
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .header("Content-type", "application/x-protobuf")
+                    .path("/");
+                then.status(202).body("");
+            })
+            .await;
+
+        let header_tags = TracerHeaderTags::default();
+
+        let payload = setup_payload(&header_tags);
+        let data = SendData::new(
+            100,
+            payload.clone(),
+            header_tags,
+            &Endpoint {
+                api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
+                url: server.url("/").parse::<hyper::Uri>().unwrap(),
+            },
+        );
+
+        let data_payload_len = compute_payload_len(&data.tracer_payloads);
+        let res = data.send().await;
+
+        mock.assert_async().await;
+
+        assert_eq!(res.last_result.unwrap().status(), 202);
+        assert_eq!(res.errors_timeout, 0);
+        assert_eq!(res.errors_network, 0);
+        assert_eq!(res.errors_status_code, 0);
+        assert_eq!(res.requests_count, 1);
+        assert_eq!(res.chunks_sent, 1);
+        assert_eq!(res.bytes_sent, data_payload_len as u64);
+        assert_eq!(*res.responses_count_per_code.get(&202).unwrap(), 1_u64);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn request_protobuf_several_payloads() {
+        let server = MockServer::start_async().await;
+
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .header("Content-type", "application/x-protobuf")
+                    .path("/");
+                then.status(202).body("");
+            })
+            .await;
+
+        let header_tags = TracerHeaderTags::default();
+
+        let payload = setup_payload(&header_tags);
+        let mut data = SendData::new(
+            100,
+            payload.clone(),
+            header_tags,
+            &Endpoint {
+                api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
+                url: server.url("/").parse::<hyper::Uri>().unwrap(),
+            },
+        );
+
+        data.tracer_payloads.push(payload.clone());
+        let data_payload_len = compute_payload_len(&data.tracer_payloads);
+        let res = data.send().await;
+
+        mock.assert_async().await;
+
+        assert_eq!(res.last_result.unwrap().status(), 202);
+        assert_eq!(res.errors_timeout, 0);
+        assert_eq!(res.errors_network, 0);
+        assert_eq!(res.errors_status_code, 0);
+        assert_eq!(res.requests_count, 1);
+        assert_eq!(res.chunks_sent, 2);
+        assert_eq!(res.bytes_sent, data_payload_len as u64);
+        assert_eq!(*res.responses_count_per_code.get(&202).unwrap(), 1_u64);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn request_msgpack() {
+        let server = MockServer::start_async().await;
+
+        let header_tags = HEADER_TAGS;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .header(HEADER_DD_TRACE_COUNT, "1")
+                    .header("Content-type", "application/msgpack")
+                    .header("datadog-meta-lang", header_tags.lang)
+                    .header(
+                        "datadog-meta-lang-interpreter",
+                        header_tags.lang_interpreter,
+                    )
+                    .header("datadog-meta-lang-version", header_tags.lang_version)
+                    .header("datadog-meta-lang-vendor", header_tags.lang_vendor)
+                    .header("datadog-meta-tracer-version", header_tags.tracer_version)
+                    .header("datadog-container-id", header_tags.container_id)
+                    .path("/");
+                then.status(200).body("");
+            })
+            .await;
+
+        let header_tags = HEADER_TAGS;
+
+        let payload = setup_payload(&header_tags);
+        let data = SendData::new(
+            100,
+            payload.clone(),
+            header_tags,
+            &Endpoint {
+                api_key: None,
+                url: server.url("/").parse::<hyper::Uri>().unwrap(),
+            },
+        );
+
+        let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
+        let res = data.send().await;
+
+        mock.assert_async().await;
+
+        assert_eq!(res.last_result.unwrap().status(), 200);
+        assert_eq!(res.errors_timeout, 0);
+        assert_eq!(res.errors_network, 0);
+        assert_eq!(res.errors_status_code, 0);
+        assert_eq!(res.requests_count, 1);
+        assert_eq!(res.chunks_sent, 1);
+        assert_eq!(res.bytes_sent, data_payload_len as u64);
+        assert_eq!(*res.responses_count_per_code.get(&200).unwrap(), 1_u64);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn request_msgpack_several_payloads() {
+        let server = MockServer::start_async().await;
+
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .header("Content-type", "application/msgpack")
+                    .path("/");
+                then.status(200).body("");
+            })
+            .await;
+
+        let header_tags = TracerHeaderTags::default();
+
+        let payload = setup_payload(&header_tags);
+        let mut data = SendData::new(
+            100,
+            payload.clone(),
+            header_tags,
+            &Endpoint {
+                api_key: None,
+                url: server.url("/").parse::<hyper::Uri>().unwrap(),
+            },
+        );
+
+        data.tracer_payloads.push(payload.clone());
+        let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
+        let res = data.send().await;
+
+        mock.assert_hits_async(2).await;
+
+        assert_eq!(res.last_result.unwrap().status(), 200);
+        assert_eq!(res.errors_timeout, 0);
+        assert_eq!(res.errors_network, 0);
+        assert_eq!(res.errors_status_code, 0);
+        assert_eq!(res.requests_count, 2);
+        assert_eq!(res.chunks_sent, 2);
+        assert_eq!(res.bytes_sent, data_payload_len as u64);
+        assert_eq!(*res.responses_count_per_code.get(&200).unwrap(), 2_u64);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn request_error_status_code() {
+        let server = MockServer::start_async().await;
+
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .header("Content-type", "application/msgpack")
+                    .path("/");
+                then.status(500).body("");
+            })
+            .await;
+
+        let payload = setup_payload(&HEADER_TAGS);
+        let data = SendData::new(
+            100,
+            payload,
+            HEADER_TAGS,
+            &Endpoint {
+                api_key: None,
+                url: server.url("/").parse::<hyper::Uri>().unwrap(),
+            },
+        );
+
+        let res = data.send().await;
+
+        mock.assert_hits_async(5).await;
+
+        assert!(res.last_result.is_err());
+        assert_eq!(res.errors_timeout, 0);
+        assert_eq!(res.errors_network, 0);
+        assert_eq!(res.errors_status_code, 1);
+        assert_eq!(res.requests_count, 5);
+        assert_eq!(res.chunks_sent, 0);
+        assert_eq!(res.bytes_sent, 0);
+        assert_eq!(*res.responses_count_per_code.get(&500).unwrap(), 1_u64);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn request_error_network() {
+        // Server not created in order to return a 'connection refused' error.
+        let payload = setup_payload(&HEADER_TAGS);
+        let data = SendData::new(
+            100,
+            payload,
+            HEADER_TAGS,
+            &Endpoint {
+                api_key: None,
+                url: "http://127.0.0.1:4321/".parse::<hyper::Uri>().unwrap(),
+            },
+        );
+
+        let res = data.send().await;
+
+        assert!(res.last_result.is_err());
+        assert_eq!(res.errors_timeout, 0);
+        assert_eq!(res.errors_network, 1);
+        assert_eq!(res.errors_status_code, 0);
+        assert_eq!(res.requests_count, 5);
+        assert_eq!(res.errors_status_code, 0);
+        assert_eq!(res.chunks_sent, 0);
+        assert_eq!(res.bytes_sent, 0);
+        assert_eq!(res.responses_count_per_code.len(), 0);
+    }
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
@@ -527,57 +1025,6 @@ mod tests {
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
             "Elapsed time was not within expected range"
         );
-    }
-
-    // TODO: APMSP-1153 - This function also exists in
-    // sidecar::service::tracing::trace_flusher::tests. It should be moved to a common
-    // trace_test_utils module when it is properly gated to just test dependency.
-    async fn poll_for_mock_hit(
-        mock: &mut Mock<'_>,
-        poll_attempts: i32,
-        sleep_interval_ms: u64,
-        expected_hits: usize,
-        delete_after_hit: bool,
-    ) -> bool {
-        let mut mock_hit = mock.hits_async().await == expected_hits;
-
-        let mut mock_observations_remaining = poll_attempts;
-
-        while !mock_hit {
-            sleep(Duration::from_millis(sleep_interval_ms)).await;
-            mock_hit = mock.hits_async().await == expected_hits;
-            mock_observations_remaining -= 1;
-            if mock_observations_remaining == 0 || mock_hit {
-                if delete_after_hit {
-                    mock.delete();
-                }
-                break;
-            }
-        }
-
-        mock_hit
-    }
-
-    // TODO: APMSP-1153 - This function also exists in
-    // sidecar::service::tracing::trace_flusher::tests. It should be moved to a common
-    // trace_test_utils module when it is properly gated to just test dependency.
-    fn create_send_data(size: usize, target_endpoint: &Endpoint) -> SendData {
-        let tracer_header_tags = TracerHeaderTags::default();
-
-        let tracer_payload = pb::TracerPayload {
-            container_id: "container_id_1".to_owned(),
-            language_name: "php".to_owned(),
-            language_version: "4.0".to_owned(),
-            tracer_version: "1.1".to_owned(),
-            runtime_id: "runtime_1".to_owned(),
-            chunks: vec![],
-            tags: Default::default(),
-            env: "test".to_owned(),
-            hostname: "test_host".to_owned(),
-            app_version: "2.0".to_owned(),
-        };
-
-        SendData::new(size, tracer_payload, tracer_header_tags, target_endpoint)
     }
 
     #[cfg_attr(miri, ignore)]
