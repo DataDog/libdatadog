@@ -99,11 +99,16 @@ pub fn setup_daemon_process(listener: OwnedHandle, spawn_cfg: &mut SpawnWorker) 
     // Ensure unique process names - we spawn one sidecar per console session id (see
     // setup/windows.rs for the reasoning)
     spawn_cfg
-        .process_name(format!("datadog-ipc-helper-{}", unsafe {
-            WTSGetActiveConsoleSessionId()
-        }))
+        .process_name(format!(
+            "datadog-ipc-helper-{}",
+            primary_sidecar_identifier()
+        ))
         .pass_handle(listener)
         .stdin(Stdio::Null);
 
     Ok(())
+}
+
+pub fn primary_sidecar_identifier() -> u32 {
+    unsafe { WTSGetActiveConsoleSessionId() }
 }

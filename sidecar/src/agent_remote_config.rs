@@ -4,6 +4,7 @@
 use crate::one_way_shared_memory::{
     open_named_shm, OneWayShmReader, OneWayShmWriter, ReaderOpener,
 };
+use crate::primary_sidecar_identifier;
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
 use ddcommon::Endpoint;
 use std::ffi::CString;
@@ -22,7 +23,12 @@ fn path_for_endpoint(endpoint: &Endpoint) -> CString {
     // We need a stable hash so that the outcome is independent of the process
     let mut hasher = ZwoHasher::default();
     endpoint.url.authority().unwrap().hash(&mut hasher);
-    CString::new(format!("/libdatadog-agent-config-{}", hasher.finish())).unwrap()
+    CString::new(format!(
+        "/ddcfg-{}-{}",
+        primary_sidecar_identifier(),
+        hasher.finish()
+    ))
+    .unwrap()
 }
 
 pub fn create_anon_pair() -> anyhow::Result<(AgentRemoteConfigWriter<ShmHandle>, ShmHandle)> {

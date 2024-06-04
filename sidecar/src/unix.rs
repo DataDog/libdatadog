@@ -85,3 +85,7 @@ pub fn setup_daemon_process(
 
     Ok(())
 }
+
+pub fn primary_sidecar_identifier() -> u32 {
+    unsafe { libc::geteuid() }
+}

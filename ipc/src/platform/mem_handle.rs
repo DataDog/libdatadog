@@ -4,7 +4,7 @@
 use crate::handles::{HandlesTransport, TransferHandles};
 use crate::platform::{mmap_handle, munmap_handle, OwnedFileHandle, PlatformHandle};
 use serde::{Deserialize, Serialize};
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 use std::os::unix::prelude::AsRawFd;
 use std::{ffi::CString, io};
 
@@ -32,6 +32,8 @@ where
 
 pub(crate) struct ShmPath {
     pub(crate) name: CString,
+    #[cfg(windows)]
+    pub(crate) display_name: CString,
 }
 
 pub struct NamedShmHandle {
@@ -42,7 +44,11 @@ pub struct NamedShmHandle {
 impl NamedShmHandle {
     pub fn get_path(&self) -> &[u8] {
         if let Some(ref shm_path) = &self.path {
-            shm_path.name.as_bytes()
+            #[cfg(unix)]
+            let path = shm_path.name.as_bytes();
+            #[cfg(windows)]
+            let path = shm_path.display_name.as_bytes();
+            path
         } else {
             b""
         }
@@ -81,7 +87,7 @@ where
     fn map(self) -> io::Result<MappedMem<Self>>;
     fn get_shm(&self) -> &ShmHandle;
     fn get_shm_mut(&mut self) -> &mut ShmHandle;
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn resize(&mut self, size: usize) -> anyhow::Result<()> {
         unsafe {
             self.set_mapping_size(size)?;
@@ -201,3 +207,39 @@ impl From<ShmHandle> for PlatformHandle<OwnedFileHandle> {
 
 unsafe impl<T> Sync for MappedMem<T> where T: FileBackedHandle {}
 unsafe impl<T> Send for MappedMem<T> where T: FileBackedHandle {}
+
+#[cfg(test)]
+mod tests {
+    use crate::platform::{FileBackedHandle, NamedShmHandle, ShmHandle};
+    use std::ffi::CString;
+    use std::io::Write;
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_anon_shm() {
+        let shm = ShmHandle::new(5).unwrap();
+        let mut mapped = shm.map().unwrap();
+        _ = mapped.as_slice_mut().write(&[1, 2, 3, 4, 5]).unwrap();
+        let mapped = mapped.ensure_space(100000);
+        assert!(mapped.as_slice().len() >= 100000);
+        let mut exp = vec![0u8; mapped.as_slice().len()];
+        _ = (&mut exp[..5]).write(&[1, 2, 3, 4, 5]).unwrap();
+        assert_eq!(mapped.as_slice(), exp.as_slice());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_named_shm() {
+        let path = CString::new("/foo").unwrap();
+        let shm = NamedShmHandle::create(path.clone(), 5).unwrap();
+        let mut mapped = shm.map().unwrap();
+        _ = mapped.as_slice_mut().write(&[1, 2, 3, 4, 5]).unwrap();
+        let mapped = mapped.ensure_space(100000);
+        assert!(mapped.as_slice().len() >= 100000);
+
+        let other = NamedShmHandle::open(&path).unwrap().map().unwrap();
+        let mut exp = vec![0u8; other.as_slice().len()];
+        _ = (&mut exp[..5]).write(&[1, 2, 3, 4, 5]).unwrap();
+        assert_eq!(other.as_slice(), exp.as_slice());
+    }
+}

@@ -125,6 +125,7 @@ impl NamedShmHandle {
         Self::new(
             alloc_shm(name.as_ptr() as LPCSTR)?,
             name,
+            path,
             size | NOT_COMMITTED,
         )
     }
@@ -136,16 +137,24 @@ impl NamedShmHandle {
             return Err(Error::last_os_error());
         }
         // We need to map the handle to query its size, hence starting out with NOT_COMMITTED
-        Self::new(handle as RawHandle, name, NOT_COMMITTED)
+        Self::new(handle as RawHandle, name, path.clone(), NOT_COMMITTED)
     }
 
-    fn new(handle: RawHandle, path: CString, size: usize) -> io::Result<NamedShmHandle> {
+    fn new(
+        handle: RawHandle,
+        path: CString,
+        display_name: CString,
+        size: usize,
+    ) -> io::Result<NamedShmHandle> {
         Ok(NamedShmHandle {
             inner: ShmHandle {
                 handle: unsafe { PlatformHandle::from_raw_handle(handle) },
                 size,
             },
-            path: Some(ShmPath { name: path }),
+            path: Some(ShmPath {
+                name: path,
+                display_name,
+            }),
         })
     }
 }
