@@ -5,12 +5,12 @@
 
 //! This crate defines a minimal implementation of DDSketch.
 //!
-//! DDSketch is a data sketch used to generate percentiles over streaming data using constant memory.
-//! A DDSketch is essentially a histogram that partitions the range of positive values into an infinite number of
-//! indexed bins whose size grows exponentially. It keeps track of the number of values (or possibly floating-point
-//! weights) added to each bin. Negative values are partitioned like positive values, symmetrically to zero.
-//! The value zero as well as its close neighborhood that would be mapped to extreme bin indexes is mapped to a specific
-//! counter.
+//! DDSketch is a data sketch used to generate percentiles over streaming data using constant
+//! memory. A DDSketch is essentially a histogram that partitions the range of positive values into
+//! an infinite number of indexed bins whose size grows exponentially. It keeps track of the number
+//! of values (or possibly floating-point weights) added to each bin. Negative values are
+//! partitioned like positive values, symmetrically to zero. The value zero as well as its close
+//! neighborhood that would be mapped to extreme bin indexes is mapped to a specific counter.
 use std::collections::{HashMap, VecDeque};
 
 use prost::Message;
@@ -20,7 +20,8 @@ pub mod pb;
 
 /// This is a minimal DDSketch implementation
 ///
-/// This implementation only supports a part of the standard (which is also only the parts dd backend supports :shrug:)
+/// This implementation only supports a part of the standard (which is also only the parts dd
+/// backend supports :shrug:)
 /// - max length contiguous bin store, with lower bin
 /// collapse behavior.
 /// - Positive or zero values
@@ -100,8 +101,8 @@ impl DDSketch {
 /// Stores the weights as contiguousBinCounts, only the bins within `offset` and the highest
 /// non empty bin are stored.
 ///
-/// Stores the weights of a contiguous range of bins containing all non-empty bins. The range start at index `offset`
-/// and end at index `offset + bins.len()`
+/// Stores the weights of a contiguous range of bins containing all non-empty bins. The range start
+/// at index `offset` and end at index `offset + bins.len()`
 ///
 /// The range of stored bins is updated when accessing the index of a bin out of the range
 /// with [`Self::bin_idx_to_bin_idx()`]. If the `max_size` is reached the lower bins are
