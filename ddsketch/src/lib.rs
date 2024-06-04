@@ -161,7 +161,7 @@ impl LowCollapsingDenseStore {
                 self.max_size as usize - self.bins.len(),
             );
 
-            self.bins.reserve(self.bins.len() + additional_low_bins);
+            self.bins.reserve(additional_low_bins);
             for _ in 0..additional_low_bins {
                 self.bins.push_front(0.0);
             }
