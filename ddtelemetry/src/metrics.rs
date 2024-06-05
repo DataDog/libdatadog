@@ -62,6 +62,7 @@ pub struct MetricBuckets {
     buckets: HashMap<BucketKey, MetricBucket>,
     series: HashMap<BucketKey, Vec<(u64, f64)>>,
     sketches: HashMap<BucketKey, DDSketch>,
+    #[deprecated = "use sketches instead"]
     distributions: HashMap<BucketKey, Vec<f64>>,
 }
 
@@ -114,6 +115,8 @@ impl MetricBuckets {
             )| (context_key, extra_tags, points),
         )
     }
+
+    #[deprecated]
     pub fn flush_distributions(
         &mut self,
     ) -> impl Iterator<Item = (ContextKey, Vec<Tag>, Vec<f64>)> + '_ {
@@ -151,12 +154,6 @@ impl MetricBuckets {
             metrics::MetricType::Sketch => {
                 self.sketches.entry(bucket_key).or_default().add(point);
             }
-            metrics::MetricType::Distribution => {
-                self.distributions
-                    .entry(bucket_key)
-                    .or_default()
-                    .push(point);
-            }
         }
     }
 
@@ -165,8 +162,17 @@ impl MetricBuckets {
             buckets: self.buckets.len() as u32,
             series: self.series.len() as u32,
             series_points: self.series.values().map(|v| v.len() as u32).sum(),
-            distributions: self.distributions.len() as u32,
-            distributions_points: self.distributions.values().map(|v| v.len() as u32).sum(),
+            distributions: self.sketches.len() as u32,
+            distributions_points: self
+                .sketches
+                .values()
+                .flat_map(|sketch| {
+                    sketch
+                        .ordered_bins()
+                        .into_iter()
+                        .map(|(_, weight)| weight as u32)
+                })
+                .sum(),
         }
     }
 }

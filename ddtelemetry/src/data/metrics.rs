@@ -36,6 +36,7 @@ pub enum SerializedSketch {
     B64 { sketch_b64: String },
 }
 
+#[deprecated]
 #[derive(Serialize, Debug)]
 pub struct Distribution {
     pub namespace: MetricNamespace,
@@ -69,6 +70,5 @@ pub enum MetricNamespace {
 pub enum MetricType {
     Gauge,
     Count,
-    Distribution,
     Sketch,
 }

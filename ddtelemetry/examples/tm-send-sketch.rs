@@ -103,7 +103,7 @@ async fn async_main() {
                     sketch.encode_to_vec(),
                 ),
             },
-            _type: data::metrics::MetricType::Distribution,
+            _type: data::metrics::MetricType::Sketch,
             interval: 10,
         }],
     });

@@ -548,6 +548,7 @@ impl TelemetryWorker {
         data::Sketches { series }
     }
 
+    #[deprecated]
     fn build_metrics_distributions(&mut self) -> data::Distributions {
         let mut series = Vec::new();
         let context_guard = self.data.metric_contexts.lock();

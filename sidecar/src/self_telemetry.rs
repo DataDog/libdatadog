@@ -221,7 +221,7 @@ impl SelfTelemetry {
             memory_usage: worker.register_metric_context(
                 "server.memory_usage".to_string(),
                 vec![],
-                MetricType::Distribution,
+                MetricType::Sketch,
                 true,
                 MetricNamespace::Sidecar,
             ),

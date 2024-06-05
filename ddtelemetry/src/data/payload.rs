@@ -16,6 +16,7 @@ pub enum Payload {
     AppClosing(#[serde(skip_serializing)] ()),
     GenerateMetrics(GenerateMetrics),
     Sketches(Sketches),
+    #[deprecated]
     Distributions(Distributions),
     Logs(Vec<Log>),
     MessageBatch(Vec<Payload>),

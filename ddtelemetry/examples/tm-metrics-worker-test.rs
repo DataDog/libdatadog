@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let dist_metric = handle.register_metric_context(
         "test_telemetry.dist".into(),
         Vec::new(),
-        data::metrics::MetricType::Distribution,
+        data::metrics::MetricType::Sketch,
         true,
         data::metrics::MetricNamespace::Telemetry,
     );
