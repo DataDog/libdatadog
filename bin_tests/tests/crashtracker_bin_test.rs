@@ -52,10 +52,14 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile) {
     let stdout = fs::read(fixtures.stdout_path)
         .context("reading crashtracker stdout")
         .unwrap();
-    assert!(matches!(
-        String::from_utf8(stderr).as_deref(),
-        Ok("") | Ok("Failed to fully receive crash.  Exit state was: StackTrace([])\n")
-    ));
+    let s = String::from_utf8(stderr);
+    assert!(
+        matches!(
+            s.as_deref(),
+            Ok("") | Ok("Failed to fully receive crash.  Exit state was: StackTrace([])\n"),
+        ),
+        "got {s:?}"
+    );
     assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
 
     // Check the crash data
