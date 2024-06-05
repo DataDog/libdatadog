@@ -4,7 +4,7 @@
 #![allow(clippy::mutex_atomic)]
 #![allow(clippy::nonminimal_bool)]
 
-use ddcommon::container_id;
+use ddcommon::entity_id;
 
 pub mod config;
 pub mod data;
@@ -15,7 +15,7 @@ pub mod worker;
 pub fn build_host() -> data::Host {
     data::Host {
         hostname: info::os::real_hostname().unwrap_or_else(|_| String::from("unknown_hostname")),
-        container_id: container_id::get_container_id().map(|f| f.to_string()),
+        container_id: entity_id::get_container_id().map(|f| f.to_string()),
         os: Some(String::from(info::os::os_name())),
         os_version: info::os::os_version().ok(),
         kernel_name: None,

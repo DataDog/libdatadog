@@ -1,47 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+//! This module provides functions to parse the container id from the cgroup file
+use super::CgroupFileParsingError;
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::error;
-use std::fmt;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::path::PathBuf;
-
-/* Extract container id from /proc/self/group
-
-Sources:
-    - https://github.com/DataDog/dd-trace-go/blob/v1/internal/container.go
-    - https://github.com/Qard/container-info/blob/master/index.js
-
-Following environments are supported:
-    - Docker
-      /proc/self/cgroup should contain lines like:
-      `13:name=systemd:/docker/3726184226f5d3147c25fdeab5b60097e378e8a720503a5e19ecfdf29f869860`)
-    - Kubernetes
-      /proc/self/cgroup should contain lines like:
-      `11:perf_event:/kubepods/besteffort/pod3d274242-8ee0-11e9-a8a6-1e68d864ef1a/3e74d3fd9db4c9dd921ae05c2502fb984d0cde1b36e581b13f79c639da4518a1`
-      Possibly with extra characters before id:
-      `1:name=systemd:/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod2d3da189_6407_48e3_9ab6_78188d75e609.slice/docker-7b8952daecf4c0e44bbcefe1b5c5ebc7b4839d4eefeccefe694709d3809b6199.scope`
-      Or a UUID:
-      `1:name=systemd:/kubepods/besteffort/pode9b90526-f47d-11e8-b2a5-080027b9f4fb/15aa6e53-b09a-40c7-8558-c6c31e36c88a`
-    - ECS
-      /proc/self/cgroup should contain lines like:
-      `9:perf_event:/ecs/haissam-ecs-classic/5a0d5ceddf6c44c1928d367a815d890f/38fac3e99302b3622be089dd41e7ccf38aff368a86cc339972075136ee2710ce`
-    - Fargate 1.3-:
-      /proc/self/cgroup should contain lines like:
-     `11:hugetlb:/ecs/55091c13-b8cf-4801-b527-f4601742204d/432624d2150b349fe35ba397284dea788c2bf66b885d14dfc1569b01890ca7da`
-    - Fargate 1.4+:
-      Here we match a task id with a suffix
-      `1:name=systemd:/ecs/8cd79a803caf4d2aa945152e934a5c00/8cd79a803caf4d2aa945152e934a5c00-1053176469`
-*/
-
-const DEFAULT_CGROUP_PATH: &str = "/proc/self/cgroup";
-
-/// stores overridable cgroup path - used in end-to-end testing to "stub" cgroup values
-static mut TESTING_CGROUP_PATH: Option<String> = None;
 
 const UUID_SOURCE: &str =
     r"[0-9a-f]{8}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{12}";
@@ -50,22 +16,11 @@ const TASK_SOURCE: &str = r"[0-9a-f]{32}-\d+";
 
 lazy_static! {
     static ref LINE_REGEX: Regex = Regex::new(r"^\d+:[^:]*:(.+)$").unwrap();
-    static ref CONTAINER_REGEX: Regex = Regex::new(&format!(
+    pub static ref CONTAINER_REGEX: Regex = Regex::new(&format!(
         r"({UUID_SOURCE}|{CONTAINER_SOURCE}|{TASK_SOURCE})(?:.scope)? *$"
     ))
     .unwrap();
 }
-
-#[derive(Debug, Clone)]
-struct ContainerIdNotFoundError;
-
-impl fmt::Display for ContainerIdNotFoundError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "container id not found")
-    }
-}
-
-impl error::Error for ContainerIdNotFoundError {}
 
 fn parse_line(line: &str) -> Option<&str> {
     // unwrap is OK since if regex matches then the groups must exist
@@ -75,42 +30,20 @@ fn parse_line(line: &str) -> Option<&str> {
         .map(|captures| captures.get(1).unwrap().as_str())
 }
 
-fn extract_container_id(filepath: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    let file = File::open(filepath)?;
+/// Extract container id contained in the cgroup file located at `cgroup_path`
+pub fn extract_container_id(cgroup_path: &Path) -> Result<String, CgroupFileParsingError> {
+    let file = File::open(cgroup_path).map_err(|_| CgroupFileParsingError::CannotOpenFile)?;
     let reader = BufReader::new(file);
 
     for line in reader.lines() {
-        if let Some(container_id) = parse_line(&line?) {
+        if let Some(container_id) =
+            parse_line(&line.map_err(|_| CgroupFileParsingError::InvalidFormat)?)
+        {
             return Ok(String::from(container_id));
         }
     }
 
-    Err(ContainerIdNotFoundError.into())
-}
-
-/// # Safety
-/// Must not be called in multi-threaded contexts
-pub unsafe fn set_cgroup_file(file: String) {
-    TESTING_CGROUP_PATH = Some(file)
-}
-
-fn get_cgroup_path() -> PathBuf {
-    // Safety: we assume set_cgroup_file is not called when it shouldn't
-    if let Some(path) = unsafe { TESTING_CGROUP_PATH.as_ref() } {
-        Path::new(path.as_str()).into()
-    } else {
-        Path::new(DEFAULT_CGROUP_PATH).into()
-    }
-}
-
-pub fn get_container_id() -> Option<&'static str> {
-    // cache container id in a static to avoid recomputing it at each call
-
-    lazy_static! {
-        static ref CONTAINER_ID: Option<String> =
-            extract_container_id(get_cgroup_path().as_path()).ok();
-    }
-    CONTAINER_ID.as_deref()
+    Err(CgroupFileParsingError::ContainerIdNotFound)
 }
 
 #[cfg(test)]
@@ -119,7 +52,7 @@ mod tests {
     use maplit::hashmap;
 
     #[test]
-    fn line_parsing() {
+    fn test_container_id_line_parsing() {
         let test_lines = hashmap! {
             "" => None,
             "other_line" => None,
@@ -151,12 +84,16 @@ mod tests {
                 => None,
         };
         for (line, &expected_result) in test_lines.iter() {
-            assert_eq!(parse_line(line), expected_result);
+            assert_eq!(
+                parse_line(line),
+                expected_result,
+                "testing line parsing for container id with line: {line}"
+            );
         }
     }
 
     #[test]
-    fn file_parsing() {
+    fn test_container_id_file_parsing() {
         let test_root_dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests"));
 
         let test_files = hashmap! {
@@ -208,7 +145,7 @@ mod tests {
             assert_eq!(
                 extract_container_id(&test_root_dir.join(filename)).ok(),
                 expected_result.map(String::from),
-                "testing file {filename}"
+                "testing file parsing for container id with file: {filename}"
             );
         }
     }
