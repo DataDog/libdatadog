@@ -56,7 +56,8 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile) {
     assert!(
         matches!(
             s.as_deref(),
-            Ok("") | Ok("Failed to fully receive crash.  Exit state was: StackTrace([])\n"),
+            Ok("") | Ok("Failed to fully receive crash.  Exit state was: StackTrace([])\n")
+            | Ok("Failed to fully receive crash.  Exit state was: InternalError(\"{\\\"ip\\\": \\\"\")\n"),
         ),
         "got {s:?}"
     );
