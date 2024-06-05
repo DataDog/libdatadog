@@ -1,0 +1,225 @@
+use std::time::Duration;
+use tokio::time::sleep;
+
+/// Enum representing the type of backoff to use for the delay between retries.
+/// ```
+#[derive(Debug, Clone)]
+pub enum RetryBackoffType {
+    /// Increases the delay by a fixed increment each attempt.
+    Linear,
+    /// The delay is constant for each attempt.
+    Constant,
+    /// The delay is doubled for each attempt.
+    Exponential,
+}
+
+// TODO: APMSP-1076 - RetryStrategy should be moved to a separate file when send_data is refactored.
+/// Struct representing the retry strategy for sending data.
+///
+/// This struct contains the parameters that define how retries should be handled when sending data.
+/// It includes the maximum number of retries, the delay between retries, the type of backoff to
+/// use, and an optional jitter to add randomness to the delay.
+///
+/// # Examples
+///
+/// ```rust
+/// use datadog_trace_utils::send_data::{RetryBackoffType, RetryStrategy};
+/// use std::time::Duration;
+///
+/// let retry_strategy = RetryStrategy {
+///     max_retries: 5,
+///     delay_ms: Duration::from_millis(100),
+///     backoff_type: RetryBackoffType::Exponential,
+///     jitter: Some(Duration::from_millis(50)),
+/// };
+/// ```
+#[derive(Debug, Clone)]
+pub struct RetryStrategy {
+    /// The maximum number of retries to attempt.
+    pub max_retries: u32,
+    /// The minimum delay between retries.
+    pub delay_ms: Duration,
+    /// The type of backoff to use for the delay between retries.
+    pub backoff_type: RetryBackoffType,
+    /// An optional jitter to add randomness to the delay.
+    pub jitter: Option<Duration>,
+}
+
+impl Default for RetryStrategy {
+    fn default() -> Self {
+        RetryStrategy {
+            max_retries: 5,
+            delay_ms: Duration::from_millis(100),
+            backoff_type: RetryBackoffType::Exponential,
+            jitter: None,
+        }
+    }
+}
+
+impl RetryStrategy {
+    /// Delays the next request attempt based on the retry strategy.
+    ///
+    /// If a jitter duration is specified in the retry strategy, a random duration up to the jitter
+    /// value is added to the delay.
+    ///
+    /// # Arguments
+    ///
+    /// * `attempt`: The number of the current attempt (1-indexed).
+    pub(crate) async fn delay(&self, attempt: u32) {
+        let delay = match self.backoff_type {
+            RetryBackoffType::Exponential => self.delay_ms * 2u32.pow(attempt - 1),
+            RetryBackoffType::Constant => self.delay_ms,
+            RetryBackoffType::Linear => self.delay_ms + (self.delay_ms * (attempt - 1)),
+        };
+
+        if let Some(jitter) = self.jitter {
+            let jitter = rand::random::<u64>() % jitter.as_millis() as u64;
+            sleep(delay + Duration::from_millis(jitter)).await;
+        } else {
+            sleep(delay).await;
+        }
+    }
+}
+
+#[cfg(test)]
+// For tests RetryStrategy tests the observed delay should be approximate.
+mod tests {
+    use super::*;
+    use tokio::time::Instant;
+
+    const RETRY_STRATEGY_TIME_TOLERANCE_MS: u64 = 25;
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_retry_strategy_constant() {
+        let retry_strategy = RetryStrategy {
+            max_retries: 5,
+            delay_ms: Duration::from_millis(100),
+            backoff_type: RetryBackoffType::Constant,
+            jitter: None,
+        };
+
+        let start = Instant::now();
+        retry_strategy.delay(1).await;
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed >= retry_strategy.delay_ms
+                && elapsed
+                    <= retry_strategy.delay_ms
+                        + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
+            "Elapsed time was not within expected range"
+        );
+
+        let start = Instant::now();
+        retry_strategy.delay(2).await;
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed >= retry_strategy.delay_ms
+                && elapsed
+                    <= retry_strategy.delay_ms
+                        + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
+            "Elapsed time was not within expected range"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_retry_strategy_linear() {
+        let retry_strategy = RetryStrategy {
+            max_retries: 5,
+            delay_ms: Duration::from_millis(100),
+            backoff_type: RetryBackoffType::Linear,
+            jitter: None,
+        };
+
+        let start = Instant::now();
+        retry_strategy.delay(1).await;
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed >= retry_strategy.delay_ms
+                && elapsed
+                    <= retry_strategy.delay_ms
+                        + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
+            "Elapsed time was not within expected range"
+        );
+
+        let start = Instant::now();
+        retry_strategy.delay(3).await;
+        let elapsed = start.elapsed();
+
+        // For the Linear strategy, the delay for the 3rd attempt should be delay_ms + (delay_ms *
+        // 2).
+        assert!(
+            elapsed >= retry_strategy.delay_ms + (retry_strategy.delay_ms * 2)
+                && elapsed
+                    <= retry_strategy.delay_ms
+                        + (retry_strategy.delay_ms * 2)
+                        + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
+            "Elapsed time was not within expected range"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_retry_strategy_exponential() {
+        let retry_strategy = RetryStrategy {
+            max_retries: 5,
+            delay_ms: Duration::from_millis(100),
+            backoff_type: RetryBackoffType::Exponential,
+            jitter: None,
+        };
+
+        let start = Instant::now();
+        retry_strategy.delay(1).await;
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed >= retry_strategy.delay_ms
+                && elapsed
+                    <= retry_strategy.delay_ms
+                        + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
+            "Elapsed time was not within expected range"
+        );
+
+        let start = Instant::now();
+        retry_strategy.delay(3).await;
+        let elapsed = start.elapsed();
+        // For the Exponential strategy, the delay for the 3rd attempt should be delay_ms * 2^(3-1)
+        // = delay_ms * 4.
+        assert!(
+            elapsed >= retry_strategy.delay_ms * 4
+                && elapsed
+                    <= retry_strategy.delay_ms * 4
+                        + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
+            "Elapsed time was not within expected range"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_retry_strategy_jitter() {
+        let retry_strategy = RetryStrategy {
+            max_retries: 5,
+            delay_ms: Duration::from_millis(100),
+            backoff_type: RetryBackoffType::Constant,
+            jitter: Some(Duration::from_millis(50)),
+        };
+
+        let start = Instant::now();
+        retry_strategy.delay(1).await;
+        let elapsed = start.elapsed();
+
+        // The delay should be between delay_ms and delay_ms + jitter
+        assert!(
+            elapsed >= retry_strategy.delay_ms
+                && elapsed
+                    <= retry_strategy.delay_ms
+                        + retry_strategy.jitter.unwrap()
+                        + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
+            "Elapsed time was not within expected range"
+        );
+    }
+}
