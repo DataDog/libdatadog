@@ -36,17 +36,6 @@ pub enum SerializedSketch {
     B64 { sketch_b64: String },
 }
 
-#[deprecated]
-#[derive(Serialize, Debug)]
-pub struct Distribution {
-    pub namespace: MetricNamespace,
-    pub metric: String,
-    pub tags: Vec<Tag>,
-    pub points: Vec<f64>,
-    pub common: bool,
-    pub interval: u64,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 #[repr(C)]

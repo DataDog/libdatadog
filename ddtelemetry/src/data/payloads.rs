@@ -68,12 +68,6 @@ pub struct Sketches {
     pub series: Vec<metrics::Sketch>,
 }
 
-#[deprecated]
-#[derive(Serialize, Debug)]
-pub struct Distributions {
-    pub series: Vec<metrics::Distribution>,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Log {
     pub message: String,

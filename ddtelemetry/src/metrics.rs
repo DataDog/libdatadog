@@ -62,8 +62,6 @@ pub struct MetricBuckets {
     buckets: HashMap<BucketKey, MetricBucket>,
     series: HashMap<BucketKey, Vec<(u64, f64)>>,
     sketches: HashMap<BucketKey, DDSketch>,
-    #[deprecated = "use sketches instead"]
-    distributions: HashMap<BucketKey, Vec<f64>>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -106,21 +104,6 @@ impl MetricBuckets {
         &mut self,
     ) -> impl Iterator<Item = (ContextKey, Vec<Tag>, DDSketch)> + '_ {
         self.sketches.drain().map(
-            |(
-                BucketKey {
-                    context_key,
-                    extra_tags,
-                },
-                points,
-            )| (context_key, extra_tags, points),
-        )
-    }
-
-    #[deprecated]
-    pub fn flush_distributions(
-        &mut self,
-    ) -> impl Iterator<Item = (ContextKey, Vec<Tag>, Vec<f64>)> + '_ {
-        self.distributions.drain().map(
             |(
                 BucketKey {
                     context_key,

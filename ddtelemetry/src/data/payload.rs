@@ -16,8 +16,6 @@ pub enum Payload {
     AppClosing(#[serde(skip_serializing)] ()),
     GenerateMetrics(GenerateMetrics),
     Sketches(Sketches),
-    #[deprecated]
-    Distributions(Distributions),
     Logs(Vec<Log>),
     MessageBatch(Vec<Payload>),
     AppExtendedHeartbeat(AppStarted),
@@ -35,7 +33,6 @@ impl Payload {
             AppClosing(_) => "app-closing",
             GenerateMetrics(_) => "generate-metrics",
             Sketches(_) => "sketches",
-            Distributions(_) => "distributions",
             Logs(_) => "logs",
             MessageBatch(_) => "message-batch",
             AppExtendedHeartbeat(_) => "app-extended-heartbeat",

@@ -513,10 +513,6 @@ impl TelemetryWorker {
         if !sketches.series.is_empty() {
             payloads.push(data::Payload::Sketches(sketches))
         }
-        let distributions = self.build_metrics_distributions();
-        if !distributions.series.is_empty() {
-            payloads.push(data::Payload::Distributions(distributions))
-        }
         payloads
     }
 
@@ -546,29 +542,6 @@ impl TelemetryWorker {
             });
         }
         data::Sketches { series }
-    }
-
-    #[deprecated]
-    fn build_metrics_distributions(&mut self) -> data::Distributions {
-        let mut series = Vec::new();
-        let context_guard = self.data.metric_contexts.lock();
-        for (context_key, extra_tags, points) in self.data.metric_buckets.flush_distributions() {
-            let Some(context) = context_guard.read(context_key) else {
-                telemetry_worker_log!(self, ERROR, "Context not found for key {:?}", context_key);
-                continue;
-            };
-            let mut tags = extra_tags;
-            tags.extend(context.tags.iter().cloned());
-            series.push(data::metrics::Distribution {
-                namespace: context.namespace,
-                metric: context.name.clone(),
-                tags,
-                points,
-                common: context.common,
-                interval: MetricBuckets::METRICS_FLUSH_INTERVAL.as_secs(),
-            });
-        }
-        data::Distributions { series }
     }
 
     fn build_metrics_series(&mut self) -> data::GenerateMetrics {
@@ -635,7 +608,7 @@ impl TelemetryWorker {
             }
             AppHeartbeat(()) | AppClosing(()) => {}
             // TODO: Paul lgdc keep metrics until we know if the flush was a success
-            GenerateMetrics(_) | Sketches(_) | Distributions(_) => {}
+            GenerateMetrics(_) | Sketches(_) => {}
         }
     }
 
