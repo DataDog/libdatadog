@@ -660,7 +660,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -1087,7 +1087,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1104,7 +1104,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline-ffi"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "build_common",
  "bytes",
@@ -1115,7 +1115,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-alloc"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "allocator-api2",
  "bolero",
@@ -1125,7 +1125,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "backtrace",
@@ -1187,7 +1187,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -1224,7 +1224,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-ffi"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1247,7 +1247,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "clap 4.4.18",
@@ -1372,7 +1372,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "datadog-trace-protobuf",
@@ -1382,7 +1382,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1400,7 +1400,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "prost 0.11.9",
  "prost-build",
@@ -1411,7 +1411,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-utils"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1434,7 +1434,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -1460,7 +1460,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-ffi"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1470,7 +1470,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "ddcommon",
@@ -1494,7 +1494,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry-ffi"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "build_common",
  "ddcommon",
@@ -3980,7 +3980,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -4441,7 +4441,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "lazy_static",
  "regex",

@@ -12,7 +12,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod azure_app_services;
 pub mod connector;
-pub mod container_id;
+pub mod entity_id;
 #[macro_use]
 pub mod cstr;
 pub mod config;
@@ -22,6 +22,7 @@ pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
     use hyper::{header::HeaderName, http::HeaderValue};
     pub const DATADOG_CONTAINER_ID: HeaderName = HeaderName::from_static("datadog-container-id");
+    pub const DATADOG_ENTITY_ID: HeaderName = HeaderName::from_static("datadog-entity-id");
     pub const DATADOG_API_KEY: HeaderName = HeaderName::from_static("dd-api-key");
     pub const APPLICATION_JSON: HeaderValue = HeaderValue::from_static("application/json");
 }
@@ -121,17 +122,28 @@ fn encode_uri_path_in_authority(scheme: &str, path: &str) -> anyhow::Result<hype
 }
 
 impl Endpoint {
+    /// Return a request builder with the following headers:
+    /// - User agent
+    /// - Api key
+    /// - Container Id/Entity Id
     pub fn into_request_builder(&self, user_agent: &str) -> anyhow::Result<HttpRequestBuilder> {
         let mut builder = hyper::Request::builder()
             .uri(self.url.clone())
             .header(hyper::header::USER_AGENT, user_agent);
 
+        // Add the Api key header if available
         if let Some(api_key) = &self.api_key {
             builder = builder.header(header::DATADOG_API_KEY, HeaderValue::from_str(api_key)?);
         }
 
-        if let Some(container_id) = container_id::get_container_id() {
+        // Add the Container Id header if available
+        if let Some(container_id) = entity_id::get_container_id() {
             builder = builder.header(header::DATADOG_CONTAINER_ID, container_id);
+        }
+
+        // Add the Entity Id header if available
+        if let Some(entity_id) = entity_id::get_entity_id() {
+            builder = builder.header(header::DATADOG_ENTITY_ID, entity_id);
         }
 
         Ok(builder)
