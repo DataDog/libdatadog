@@ -1,3 +1,6 @@
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::send_data::RequestResult;
 use anyhow::anyhow;
 use hyper::{Body, Response};
@@ -48,22 +51,7 @@ impl SendDataResult {
     /// # Arguments
     ///
     /// * `res` - Request result.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use datadog_trace_utils::send_data::RequestResult;
-    /// use datadog_trace_utils::trace_utils::SendDataResult;
-    ///
-    /// #[cfg_attr(miri, ignore)]
-    /// async fn update_send_results_example() {
-    ///     let result = RequestResult::NetworkError((1, 0));
-    ///     let mut data_result = SendDataResult::default();
-    ///     data_result.update(result).await;
-    /// }
-    /// ```
-
-    pub async fn update(&mut self, res: RequestResult) {
+    pub(crate) async fn update(&mut self, res: RequestResult) {
         match res {
             RequestResult::Success((response, attempts, bytes, chunks)) => {
                 *self

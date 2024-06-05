@@ -47,7 +47,7 @@ impl std::fmt::Display for RequestError {
 
 impl std::error::Error for RequestError {}
 
-pub enum RequestResult {
+pub(crate) enum RequestResult {
     /// Holds information from a successful request.
     Success((Response<Body>, Attempts, BytesSent, ChunksSent)),
     /// Treats HTTP errors.
@@ -231,7 +231,8 @@ impl SendData {
 
     // This function wraps send_data with a retry strategy and the building of the request.
     // Hyper doesn't allow you to send a ref to a request, and you can't clone it. So we have to
-    // build a new one for every send attempt.
+    // build a new one for every send attempt. Being of type Bytes, the payload.clone() is not doing
+    // a deep clone.
     async fn send_payload(
         &self,
         content_type: &'static str,
@@ -255,50 +256,70 @@ impl SendData {
         loop {
             request_attempt += 1;
             let mut req = self.create_request_builder();
-            req.headers_mut().unwrap().extend(headers.clone());
-            let result = self.send_request(req, payload.clone()).await;
+            req.headers_mut()
+                .expect("HttpRequestBuilder unable to get headers for request")
+                .extend(headers.clone());
 
-            // If the request was successful, or if we have exhausted retries then return the
-            // result. Otherwise, delay and try again.
-            match result {
+            match self.send_request(req, payload.clone()).await {
+                // An Ok response doesn't necessarily mean the request was successful, we need to
+                // check the status code and if it's not a 2xx or 3xx we treat it as an error
                 Ok(response) => {
-                    if response.status().is_client_error() || response.status().is_server_error() {
-                        if request_attempt >= self.retry_strategy.max_retries {
-                            return RequestResult::Error((
-                                response,
-                                request_attempt,
-                                payload_chunks,
-                            ));
-                        } else {
+                    let request_result = self.build_request_result_from_ok_response(
+                        response,
+                        request_attempt,
+                        payload_chunks,
+                        payload.len(),
+                    );
+                    match request_result {
+                        RequestResult::Error(_)
+                            if request_attempt < self.retry_strategy.max_retries =>
+                        {
                             self.retry_strategy.delay(request_attempt).await;
+                            continue;
                         }
-                    } else {
-                        return RequestResult::Success((
-                            response,
-                            request_attempt,
-                            u64::try_from(payload.len()).unwrap(),
-                            payload_chunks,
-                        ));
+                        _ => return request_result,
                     }
                 }
                 Err(e) => {
                     if request_attempt >= self.retry_strategy.max_retries {
-                        return match e {
-                            RequestError::Build => {
-                                RequestResult::BuildError((request_attempt, payload_chunks))
-                            }
-                            RequestError::Network => {
-                                RequestResult::NetworkError((request_attempt, payload_chunks))
-                            }
-                            RequestError::Timeout => {
-                                RequestResult::TimeoutError((request_attempt, payload_chunks))
-                            }
-                        };
+                        return self.handle_request_error(e, request_attempt, payload_chunks);
                     } else {
                         self.retry_strategy.delay(request_attempt).await;
                     }
                 }
             }
+        }
+    }
+
+    fn build_request_result_from_ok_response(
+        &self,
+        response: Response<Body>,
+        request_attempt: Attempts,
+        payload_chunks: ChunksSent,
+        payload_len: usize,
+    ) -> RequestResult {
+        if response.status().is_client_error() || response.status().is_server_error() {
+            RequestResult::Error((response, request_attempt, payload_chunks))
+        } else {
+            RequestResult::Success((
+                response,
+                request_attempt,
+                u64::try_from(payload_len).unwrap(),
+                payload_chunks,
+            ))
+        }
+    }
+
+    fn handle_request_error(
+        &self,
+        e: RequestError,
+        request_attempt: Attempts,
+        payload_chunks: ChunksDropped,
+    ) -> RequestResult {
+        match e {
+            RequestError::Build => RequestResult::BuildError((request_attempt, payload_chunks)),
+            RequestError::Network => RequestResult::NetworkError((request_attempt, payload_chunks)),
+            RequestError::Timeout => RequestResult::TimeoutError((request_attempt, payload_chunks)),
         }
     }
 
