@@ -82,6 +82,7 @@ enum StdinState {
     Counters,
     Done,
     File(String, Vec<String>),
+    InternalError(String),
     Metadata,
     SigInfo,
     StackTrace(Vec<StackFrame>),
@@ -136,6 +137,8 @@ fn process_line(
             contents.push(line);
             StdinState::File(name, contents)
         }
+
+        StdinState::InternalError(e) => anyhow::bail!("Can't continue after internal error {e}"),
 
         StdinState::Metadata if line.starts_with(DD_CRASHTRACK_END_METADATA) => StdinState::Waiting,
         StdinState::Metadata => {
@@ -207,7 +210,14 @@ fn receive_report(stream: impl std::io::BufRead) -> anyhow::Result<CrashReportSt
     //TODO: This assumes that the input is valid UTF-8.
     for line in stream.lines() {
         let line = line?;
-        stdin_state = process_line(&mut crashinfo, &mut config, line, stdin_state)?;
+        match process_line(&mut crashinfo, &mut config, line, stdin_state) {
+            Ok(next_state) => stdin_state = next_state,
+            Err(e) => {
+                // If the input is corrupted, stop and salvage what we can
+                stdin_state = StdinState::InternalError(e.to_string());
+                break;
+            }
+        }
     }
 
     if !crashinfo.crash_seen() {
