@@ -110,7 +110,7 @@ fn test_crash() {
     use crate::{begin_profiling_op, StacktraceCollection};
     use chrono::Utc;
     use ddcommon::parse_uri;
-    use ddcommon::tag::Tag;
+    use ddcommon::tag;
     use ddcommon::Endpoint;
     use std::time::Duration;
 
@@ -152,7 +152,7 @@ fn test_crash() {
     init(config, receiver_config, metadata).expect("not to fail");
     begin_profiling_op(crate::ProfilingOpTypes::CollectingSample).expect("Not to fail");
 
-    let tag = Tag::new("apple", "banana").expect("tag");
+    let tag = tag!("apple", "banana");
     let metadata2 = CrashtrackerMetadata::new(
         "libname".to_string(),
         "version".to_string(),

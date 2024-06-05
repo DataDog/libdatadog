@@ -11,6 +11,7 @@ pub use crate::tracer_header_tags::TracerHeaderTags;
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
 use datadog_trace_protobuf::pb::TraceChunk;
+use ddcommon::azure_app_services;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
@@ -42,14 +43,14 @@ pub async fn get_traces_from_request_body(
 
 // Tags gathered from a trace's root span
 #[derive(Default)]
-struct RootSpanTags<'a> {
+pub struct RootSpanTags<'a> {
     pub env: &'a str,
     pub app_version: &'a str,
     pub hostname: &'a str,
     pub runtime_id: &'a str,
 }
 
-fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
+pub(crate) fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
     pb::TraceChunk {
         priority: normalizer::SamplerPriority::None as i32,
         origin: "".to_string(),
@@ -59,7 +60,7 @@ fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
     }
 }
 
-fn construct_tracer_payload(
+pub(crate) fn construct_tracer_payload(
     chunks: Vec<pb::TraceChunk>,
     tracer_tags: &TracerHeaderTags,
     root_span_tags: RootSpanTags,
@@ -81,9 +82,14 @@ fn construct_tracer_payload(
 pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
     // TODO trace payloads with identical data except for chunk could be merged?
 
-    data.sort_unstable_by(|a, b| a.target.url.to_string().cmp(&b.target.url.to_string()));
+    data.sort_unstable_by(|a, b| {
+        a.get_target()
+            .url
+            .to_string()
+            .cmp(&b.get_target().url.to_string())
+    });
     data.dedup_by(|a, b| {
-        if a.target.url == b.target.url {
+        if a.get_target().url == b.get_target().url {
             // Size is only an approximation. In practice it won't vary much, but be safe here.
             // We also don't care about the exact maximum size, like two 25 MB or one 50 MB request
             // has similar results. The primary goal here is avoiding many small requests.
@@ -206,7 +212,7 @@ pub fn set_serverless_root_span_tags(
     }
 }
 
-pub fn update_tracer_top_level(span: &mut pb::Span) {
+fn update_tracer_top_level(span: &mut pb::Span) {
     if span.metrics.contains_key(TRACER_TOP_LEVEL_KEY) {
         span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
     }
@@ -235,6 +241,32 @@ pub fn enrich_span_with_mini_agent_metadata(
     if let Some(gcp_region) = &mini_agent_metadata.gcp_region {
         span.meta
             .insert("location".to_string(), gcp_region.to_string());
+    }
+}
+
+pub fn enrich_span_with_azure_metadata(span: &mut pb::Span, mini_agent_version: &str) {
+    if let Some(aas_metadata) = azure_app_services::get_function_metadata() {
+        let aas_tags = [
+            ("aas.resource.id", aas_metadata.get_resource_id()),
+            (
+                "aas.environment.instance_id",
+                aas_metadata.get_instance_id(),
+            ),
+            (
+                "aas.environment.instance_name",
+                aas_metadata.get_instance_name(),
+            ),
+            ("aas.subscription.id", aas_metadata.get_subscription_id()),
+            ("aas.environment.mini_agent_version", mini_agent_version),
+            ("aas.environment.os", aas_metadata.get_operating_system()),
+            ("aas.resource.group", aas_metadata.get_resource_group()),
+            ("aas.site.name", aas_metadata.get_site_name()),
+            ("aas.site.kind", aas_metadata.get_site_kind()),
+            ("aas.site.type", aas_metadata.get_site_type()),
+        ];
+        aas_tags.into_iter().for_each(|(name, value)| {
+            span.meta.insert(name.to_string(), value.to_string());
+        });
     }
 }
 
@@ -323,7 +355,7 @@ mod tests {
     use super::{get_root_span_index, set_serverless_root_span_tags};
     use crate::trace_utils::{TracerHeaderTags, MAX_PAYLOAD_SIZE};
     use crate::{
-        trace_test_utils::create_test_span,
+        test_utils::create_test_span,
         trace_utils::{self, SendData},
     };
     use datadog_trace_protobuf::pb;

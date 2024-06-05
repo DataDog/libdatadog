@@ -240,6 +240,7 @@ pub fn send_trace_v04_bytes(
 /// * `transport` - The transport used for communication.
 /// * `instance_id` - The ID of the instance.
 /// * `handle` - The handle to the shared memory.
+/// * `len` - The size of the shared memory data.
 /// * `headers` - The serialized headers from the tracer.
 ///
 /// # Returns
@@ -249,11 +250,13 @@ pub fn send_trace_v04_shm(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
     handle: ShmHandle,
+    len: usize,
     headers: SerializedTracerHeaderTags,
 ) -> io::Result<()> {
     transport.send(SidecarInterfaceRequest::SendTraceV04Shm {
         instance_id: instance_id.clone(),
         handle,
+        len,
         headers,
     })
 }
@@ -314,6 +317,20 @@ pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
     } else {
         Ok(String::default())
     }
+}
+
+/// Flushes the outstanding traces.
+///
+/// # Arguments
+///
+/// * `transport` - The transport used for communication.
+///
+/// # Returns
+///
+/// An `io::Result<()>` indicating the result of the operation.
+pub fn flush_traces(transport: &mut SidecarTransport) -> io::Result<()> {
+    transport.call(SidecarInterfaceRequest::FlushTraces {})?;
+    Ok(())
 }
 
 /// Sends a ping to the service.

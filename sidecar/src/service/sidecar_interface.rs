@@ -76,10 +76,12 @@ pub trait SidecarInterface {
     ///
     /// * `instance_id` - The ID of the instance.
     /// * `handle` - The handle to the shared memory.
+    /// * `len` - The size of the shared memory data.
     /// * `headers` - The serialized headers from the tracer.
     async fn send_trace_v04_shm(
         instance_id: InstanceId,
         #[SerializedHandle] handle: ShmHandle,
+        len: usize,
         headers: SerializedTracerHeaderTags,
     );
 
@@ -103,6 +105,9 @@ pub trait SidecarInterface {
     /// * `instance_id` - The ID of the instance.
     /// * `actions` - The DogStatsD actions to send.
     async fn send_dogstatsd_actions(instance_id: InstanceId, actions: Vec<DogStatsDAction>);
+
+    /// Flushes any outstanding traces queued for sending.
+    async fn flush_traces();
 
     /// Sends a ping to the service.
     async fn ping();

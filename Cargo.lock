@@ -1350,7 +1350,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-mini-agent"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1414,15 +1414,18 @@ name = "datadog-trace-utils"
 version = "9.0.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "datadog-trace-normalization",
  "datadog-trace-protobuf",
  "ddcommon",
  "flate2",
  "futures",
+ "httpmock",
  "hyper",
  "hyper-rustls",
  "log",
  "prost 0.11.9",
+ "rand",
  "rmp-serde",
  "serde",
  "serde_json",
@@ -1450,6 +1453,7 @@ dependencies = [
  "rustls",
  "rustls-native-certs",
  "serde",
+ "static_assertions",
  "tokio",
  "tokio-rustls",
 ]
