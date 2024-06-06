@@ -24,6 +24,9 @@ pub struct StackFrameNames {
 pub struct StackFrame {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
+    pub build_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub ip: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
@@ -31,6 +34,9 @@ pub struct StackFrame {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub names: Option<Vec<StackFrameNames>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub relative_address: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub sp: Option<String>,
