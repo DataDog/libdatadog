@@ -149,4 +149,8 @@ impl ChannelMetadata {
 
         fd.map(|handle| unsafe { PlatformHandle::from_raw_handle(*handle as RawHandle) })
     }
+
+    pub fn process_handle(&mut self) -> Option<HANDLE> {
+        self.process_handle.get().ok()
+    }
 }

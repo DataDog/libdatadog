@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::one_way_shared_memory::open_named_shm;
+use crate::primary_sidecar_identifier;
 use arrayref::array_ref;
 use datadog_ipc::platform::metadata::ProcessHandle;
 use datadog_ipc::platform::{Channel, PIPE_PATH};
-use kernel32::{CreateFileA, CreateNamedPipeA, WTSGetActiveConsoleSessionId};
+use kernel32::{CreateFileA, CreateNamedPipeA};
 use libc::getpid;
 use std::error::Error;
 use std::ffi::CString;
@@ -160,13 +161,12 @@ impl NamedPipeLiaison {
         // Due to the restriction on Global\ namespace for shared memory we have to distinguish
         // individual sidecar sessions. Fetch the session_id to effectively namespace the
         // Named Pipe names too.
-        let session_id = unsafe { WTSGetActiveConsoleSessionId() };
         Self {
             socket_path: CString::new(format!(
                 "{}{}{}-libdd.{}",
                 PIPE_PATH,
                 prefix.as_ref(),
-                session_id,
+                primary_sidecar_identifier(),
                 crate::sidecar_version!()
             ))
             .unwrap(),
