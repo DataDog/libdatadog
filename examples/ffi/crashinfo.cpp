@@ -10,6 +10,7 @@ extern "C" {
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 
