@@ -87,12 +87,8 @@ pub(crate) enum RequestResult {
 ///     let mut send_data = SendData::new(size, tracer_payload, tracer_header_tags, &target);
 ///
 ///     // Set a custom retry strategy
-///     let retry_strategy = RetryStrategy {
-///         max_retries: 3,
-///         delay_ms: Duration::from_millis(10),
-///         backoff_type: RetryBackoffType::Exponential,
-///         jitter: Some(Duration::from_millis(5)),
-///     };
+///     let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
+///
 ///     send_data.set_retry_strategy(retry_strategy);
 ///
 ///     // Send the data
@@ -272,7 +268,7 @@ impl SendData {
                     );
                     match request_result {
                         RequestResult::Error(_)
-                            if request_attempt < self.retry_strategy.max_retries =>
+                            if request_attempt < self.retry_strategy.max_retries() =>
                         {
                             self.retry_strategy.delay(request_attempt).await;
                             continue;
@@ -281,7 +277,7 @@ impl SendData {
                     }
                 }
                 Err(e) => {
-                    if request_attempt >= self.retry_strategy.max_retries {
+                    if request_attempt >= self.retry_strategy.max_retries() {
                         return self.handle_request_error(e, request_attempt, payload_chunks);
                     } else {
                         self.retry_strategy.delay(request_attempt).await;
@@ -437,7 +433,6 @@ mod tests {
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use std::collections::HashMap;
-    use std::time::Duration;
 
     const HEADER_TAGS: TracerHeaderTags = TracerHeaderTags {
         lang: "test-lang",
@@ -818,12 +813,7 @@ mod tests {
         let size = 512;
 
         let mut send_data = create_send_data(size, &target_endpoint);
-        send_data.set_retry_strategy(RetryStrategy {
-            max_retries: 0,
-            delay_ms: Duration::from_millis(2),
-            backoff_type: RetryBackoffType::Constant,
-            jitter: None,
-        });
+        send_data.set_retry_strategy(RetryStrategy::new(0, 2, RetryBackoffType::Constant, None));
 
         tokio::spawn(async move {
             let result = send_data.send().await;
@@ -862,12 +852,7 @@ mod tests {
         let size = 512;
 
         let mut send_data = create_send_data(size, &target_endpoint);
-        send_data.set_retry_strategy(RetryStrategy {
-            max_retries: 2,
-            delay_ms: Duration::from_millis(250),
-            backoff_type: RetryBackoffType::Constant,
-            jitter: None,
-        });
+        send_data.set_retry_strategy(RetryStrategy::new(2, 250, RetryBackoffType::Constant, None));
 
         tokio::spawn(async move {
             let result = send_data.send().await;
@@ -911,12 +896,7 @@ mod tests {
         let size = 512;
 
         let mut send_data = create_send_data(size, &target_endpoint);
-        send_data.set_retry_strategy(RetryStrategy {
-            max_retries: 2,
-            delay_ms: Duration::from_millis(250),
-            backoff_type: RetryBackoffType::Constant,
-            jitter: None,
-        });
+        send_data.set_retry_strategy(RetryStrategy::new(2, 250, RetryBackoffType::Constant, None));
 
         tokio::spawn(async move {
             let result = send_data.send().await;
@@ -950,12 +930,12 @@ mod tests {
         let size = 512;
 
         let mut send_data = create_send_data(size, &target_endpoint);
-        send_data.set_retry_strategy(RetryStrategy {
-            max_retries: expected_retry_attempts,
-            delay_ms: Duration::from_millis(10),
-            backoff_type: RetryBackoffType::Constant,
-            jitter: None,
-        });
+        send_data.set_retry_strategy(RetryStrategy::new(
+            expected_retry_attempts,
+            10,
+            RetryBackoffType::Constant,
+            None,
+        ));
 
         tokio::spawn(async move {
             send_data.send().await;
@@ -994,12 +974,7 @@ mod tests {
         let size = 512;
 
         let mut send_data = create_send_data(size, &target_endpoint);
-        send_data.set_retry_strategy(RetryStrategy {
-            max_retries: 2,
-            delay_ms: Duration::from_millis(10),
-            backoff_type: RetryBackoffType::Constant,
-            jitter: None,
-        });
+        send_data.set_retry_strategy(RetryStrategy::new(2, 10, RetryBackoffType::Constant, None));
 
         tokio::spawn(async move {
             send_data.send().await;

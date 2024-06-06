@@ -16,36 +16,21 @@ pub enum RetryBackoffType {
     Exponential,
 }
 
-// TODO: APMSP-1076 - RetryStrategy should be moved to a separate file when send_data is refactored.
 /// Struct representing the retry strategy for sending data.
 ///
 /// This struct contains the parameters that define how retries should be handled when sending data.
 /// It includes the maximum number of retries, the delay between retries, the type of backoff to
 /// use, and an optional jitter to add randomness to the delay.
-///
-/// # Examples
-///
-/// ```rust
-/// use datadog_trace_utils::send_data::{RetryBackoffType, RetryStrategy};
-/// use std::time::Duration;
-///
-/// let retry_strategy = RetryStrategy {
-///     max_retries: 5,
-///     delay_ms: Duration::from_millis(100),
-///     backoff_type: RetryBackoffType::Exponential,
-///     jitter: Some(Duration::from_millis(50)),
-/// };
-/// ```
 #[derive(Debug, Clone)]
 pub struct RetryStrategy {
     /// The maximum number of retries to attempt.
-    pub max_retries: u32,
-    /// The minimum delay between retries.
-    pub delay_ms: Duration,
+    max_retries: u32,
+    // The minimum delay between retries.
+    delay_ms: Duration,
     /// The type of backoff to use for the delay between retries.
-    pub backoff_type: RetryBackoffType,
+    backoff_type: RetryBackoffType,
     /// An optional jitter to add randomness to the delay.
-    pub jitter: Option<Duration>,
+    jitter: Option<Duration>,
 }
 
 impl Default for RetryStrategy {
@@ -60,6 +45,40 @@ impl Default for RetryStrategy {
 }
 
 impl RetryStrategy {
+    /// Creates a new `RetryStrategy` with the specified parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_retries`: The maximum number of retries to attempt.
+    /// * `delay_ms`: The minimum delay between retries, in milliseconds.
+    /// * `backoff_type`: The type of backoff to use for the delay between retries.
+    /// * `jitter`: An optional jitter to add randomness to the delay, in milliseconds.
+    ///
+    /// # Returns
+    ///
+    /// A `RetryStrategy` instance with the specified parameters.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use datadog_trace_utils::send_data::{RetryBackoffType, RetryStrategy};
+    /// use std::time::Duration;
+    ///
+    /// let retry_strategy = RetryStrategy::new(5, 100, RetryBackoffType::Exponential, Some(50));
+    /// ```
+    pub fn new(
+        max_retries: u32,
+        delay_ms: u64,
+        backoff_type: RetryBackoffType,
+        jitter: Option<u64>,
+    ) -> RetryStrategy {
+        RetryStrategy {
+            max_retries,
+            delay_ms: Duration::from_millis(delay_ms),
+            backoff_type,
+            jitter: jitter.map(Duration::from_millis),
+        }
+    }
     /// Delays the next request attempt based on the retry strategy.
     ///
     /// If a jitter duration is specified in the retry strategy, a random duration up to the jitter
@@ -81,6 +100,11 @@ impl RetryStrategy {
         } else {
             sleep(delay).await;
         }
+    }
+
+    /// Returns the maximum number of retries.
+    pub(crate) fn max_retries(&self) -> u32 {
+        self.max_retries
     }
 }
 
@@ -223,6 +247,23 @@ mod tests {
                         + retry_strategy.jitter.unwrap()
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
             "Elapsed time was not within expected range"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_retry_strategy_max_retries() {
+        let retry_strategy = RetryStrategy {
+            max_retries: 17,
+            delay_ms: Duration::from_millis(100),
+            backoff_type: RetryBackoffType::Constant,
+            jitter: Some(Duration::from_millis(50)),
+        };
+
+        assert_eq!(
+            retry_strategy.max_retries(),
+            17,
+            "Max retries did not match expected value"
         );
     }
 }
