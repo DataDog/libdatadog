@@ -40,7 +40,7 @@ int main(int argc, char **argv) {
   };
 
   ddog_prof_CrashtrackerResult result =
-      ddog_prof_Crashtracker_init(config, receiver_config, metadata);
+      ddog_prof_Crashtracker_init_with_receiver(config, receiver_config, metadata);
   if (result.tag == DDOG_PROF_PROFILE_RESULT_ERR) {
     ddog_CharSlice message = ddog_Error_message(&result.err);
     fprintf(stderr, "%.*s\n", (int)message.len, message.ptr);
