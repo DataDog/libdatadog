@@ -20,6 +20,7 @@ use libc::{
 use nix::sys::signal;
 use nix::sys::signal::{SaFlags, SigAction, SigHandler};
 use std::fs::File;
+use std::io::Read;
 use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
@@ -337,16 +338,13 @@ fn emit_siginfo(w: &mut impl Write, signum: i32) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn emit_crashreport(pipe: &mut impl Write, signum: i32) -> anyhow::Result<()> {
-    // Leak config, and metadata to avoid calling 'drop' during a crash
-    let config = CONFIG.swap(ptr::null_mut(), SeqCst);
-    anyhow::ensure!(!config.is_null(), "No crashtracking config");
-    let (config, config_str) = unsafe { config.as_ref().context("No crashtracking receiver")? };
-
-    let metadata_ptr = METADATA.swap(ptr::null_mut(), SeqCst);
-    anyhow::ensure!(!metadata_ptr.is_null(), "No crashtracking metadata");
-    let (_metadata, metadata_string) = unsafe { metadata_ptr.as_ref().context("metadata ptr")? };
-
+fn emit_crashreport(
+    pipe: &mut impl Write,
+    config: &CrashtrackerConfiguration,
+    config_str: &str,
+    metadata_string: &str,
+    signum: i32,
+) -> anyhow::Result<()> {
     emit_metadata(pipe, metadata_string)?;
     emit_config(pipe, config_str)?;
     emit_siginfo(pipe, signum)?;
@@ -385,28 +383,50 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     let receiver = RECEIVER.swap(ptr::null_mut(), SeqCst);
     anyhow::ensure!(!receiver.is_null(), "No crashtracking receiver");
 
+    // Leak config, and metadata to avoid calling 'drop' during a crash
+    let config = CONFIG.swap(ptr::null_mut(), SeqCst);
+    anyhow::ensure!(!config.is_null(), "No crashtracking config");
+    let (config, config_str) = unsafe { config.as_ref().context("No crashtracking receiver")? };
+
+    let metadata_ptr = METADATA.swap(ptr::null_mut(), SeqCst);
+    anyhow::ensure!(!metadata_ptr.is_null(), "No crashtracking metadata");
+    let (_metadata, metadata_string) = unsafe { metadata_ptr.as_ref().context("metadata ptr")? };
+
     match unsafe { receiver.as_mut().context("No crashtracking receiver")? } {
         ReceiverType::ForkedProcess(child) => {
             let pipe = child
                 .stdin
                 .as_mut()
                 .context("Crashtracker: Can't get pipe")?;
-            let res = emit_crashreport(pipe, signum);
-            // https://doc.rust-lang.org/std/process/struct.Child.html#method.wait
-            // The stdin handle to the child process, if any, will be closed before waiting.
-            // This helps avoid deadlock: it ensures that the child does not block waiting
-            // for input from the parent, while the parent waits for the child to exit.
-            // TODO, use a polling mechanism that could recover from a crashing child
-            child.wait()?;
+            let res = emit_crashreport(pipe, config, config_str, metadata_string, signum);
+            let _ = pipe.flush();
+            if config.wait_for_receiver {
+                // https://doc.rust-lang.org/std/process/struct.Child.html#method.wait
+                // The stdin handle to the child process, if any, will be closed before waiting.
+                // This helps avoid deadlock: it ensures that the child does not block waiting
+                // for input from the parent, while the parent waits for the child to exit.
+                // TODO, use a polling mechanism that could recover from a crashing child
+                child.wait()?;
+            } else {
+                // Dropping the handle closes it.
+                drop(child.stdin.take())
+            }
             res
         }
         ReceiverType::UnixSocket(path) => {
             let mut unix_stream = UnixStream::connect(path)?;
             let pipe = &mut unix_stream;
-            let res = emit_crashreport(pipe, signum);
+            let res = emit_crashreport(pipe, config, config_str, metadata_string, signum);
+            let _ = pipe.flush();
             unix_stream
                 .shutdown(std::net::Shutdown::Write)
                 .context("Could not shutdown writing on the stream")?;
+            if config.wait_for_receiver {
+                let mut buf = [0; 1];
+                // The receiver can signal completion by either writing at least one byte,
+                // or by closing the stream.
+                let _ = unix_stream.read_exact(&mut buf[..]);
+            }
             res
         }
     }

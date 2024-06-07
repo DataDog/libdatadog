@@ -32,6 +32,7 @@ mod unix {
         let stderr_filename = args.next().context("Unexpected number of arguments")?;
         let stdout_filename = args.next().context("Unexpected number of arguments")?;
         let timeout = Duration::from_secs(30);
+        let wait_for_receiver = true;
 
         let endpoint = if output_url.is_empty() {
             None
@@ -49,6 +50,7 @@ mod unix {
                 resolve_frames: crashtracker::StacktraceCollection::WithoutSymbols,
                 endpoint,
                 timeout,
+                wait_for_receiver,
             },
             CrashtrackerReceiverConfig::new(
                 vec![],
