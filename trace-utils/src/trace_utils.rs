@@ -320,7 +320,7 @@ pub fn collect_trace_chunks(
 ) -> pb::TracerPayload {
     let mut trace_chunks: Vec<pb::TraceChunk> = Vec::new();
 
-    // We'll skip setting the global metadata and reply on the agent to unpack these
+    // We'll skip setting the global metadata and rely on the agent to unpack these
     let mut gathered_root_span_tags = !is_agentless;
     let mut root_span_tags = RootSpanTags::default();
 
