@@ -12,9 +12,7 @@ use fnv::FnvHashMap;
 use futures::{prelude::*, ready, stream::Fuse, task::*};
 use pin_project::pin_project;
 use std::sync::{Arc, Weak};
-use std::{
-    collections::hash_map::Entry, convert::TryFrom, fmt, hash::Hash, marker::Unpin, pin::Pin,
-};
+use std::{collections::hash_map::Entry, fmt, hash::Hash, pin::Pin};
 use tokio::sync::mpsc;
 use tracing::{debug, info, trace};
 
