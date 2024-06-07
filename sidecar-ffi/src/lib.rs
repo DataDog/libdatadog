@@ -26,7 +26,6 @@ use ddtelemetry::{
 use ddtelemetry_ffi::try_c;
 use ffi::slice::AsBytes;
 use libc::c_char;
-use std::convert::TryInto;
 use std::ffi::c_void;
 use std::fs::File;
 #[cfg(unix)]
