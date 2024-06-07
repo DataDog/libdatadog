@@ -85,6 +85,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
                     obfuscate_span(span, &config.obfuscation_config);
                 }
             },
+            true,
         );
 
         let send_data = SendData::new(body_size, payload, tracer_header_tags, &config.trace_intake);

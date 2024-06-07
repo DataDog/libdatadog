@@ -3,6 +3,7 @@
 
 use hyper::{body::Buf, Body};
 use log::{error, info};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 pub use crate::send_data::SendData;
@@ -79,6 +80,18 @@ pub(crate) fn construct_tracer_payload(
     }
 }
 
+fn cmp_send_data_payloads(a: &pb::TracerPayload, b: &pb::TracerPayload) -> Ordering {
+    a.tracer_version
+        .cmp(&b.tracer_version)
+        .then(a.language_version.cmp(&b.language_version))
+        .then(a.language_name.cmp(&b.language_name))
+        .then(a.hostname.cmp(&b.hostname))
+        .then(a.container_id.cmp(&b.container_id))
+        .then(a.runtime_id.cmp(&b.runtime_id))
+        .then(a.env.cmp(&b.env))
+        .then(a.app_version.cmp(&b.app_version))
+}
+
 pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
     // TODO trace payloads with identical data except for chunk could be merged?
 
@@ -103,6 +116,20 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
         }
         false
     });
+    // Merge chunks with common properties. Reduces requests for agentful mode.
+    // And reduces a little bit of data for agentless.
+    for send_data in data.iter_mut() {
+        send_data
+            .tracer_payloads
+            .sort_unstable_by(cmp_send_data_payloads);
+        send_data.tracer_payloads.dedup_by(|a, b| {
+            if cmp_send_data_payloads(a, b) == Ordering::Equal {
+                b.chunks.append(&mut a.chunks);
+                return true;
+            }
+            false
+        })
+    }
     data
 }
 
@@ -288,10 +315,12 @@ pub fn collect_trace_chunks(
     mut traces: Vec<Vec<pb::Span>>,
     tracer_header_tags: &TracerHeaderTags,
     process_chunk: impl Fn(&mut TraceChunk, usize),
+    is_agentless: bool,
 ) -> pb::TracerPayload {
     let mut trace_chunks: Vec<pb::TraceChunk> = Vec::new();
 
-    let mut gathered_root_span_tags = false;
+    // We'll skip setting the global metadata and reply on the agent to unpack these
+    let mut gathered_root_span_tags = !is_agentless;
     let mut root_span_tags = RootSpanTags::default();
 
     for trace in traces.iter_mut() {
@@ -309,8 +338,10 @@ pub fn collect_trace_chunks(
             }
         };
 
-        if let Err(e) = normalizer::normalize_chunk(&mut chunk, root_span_index) {
-            error!("Error normalizing trace chunk: {e}");
+        if is_agentless {
+            if let Err(e) = normalizer::normalize_chunk(&mut chunk, root_span_index) {
+                error!("Error normalizing trace chunk: {e}");
+            }
         }
 
         for span in chunk.spans.iter_mut() {
@@ -362,7 +393,7 @@ mod tests {
     use ddcommon::Endpoint;
 
     #[test]
-    fn test_coalescing_does_not_excced_max_size() {
+    fn test_coalescing_does_not_exceed_max_size() {
         let dummy = SendData::new(
             MAX_PAYLOAD_SIZE / 5 + 1,
             pb::TracerPayload {
@@ -371,7 +402,13 @@ mod tests {
                 language_version: "".to_string(),
                 tracer_version: "".to_string(),
                 runtime_id: "".to_string(),
-                chunks: vec![],
+                chunks: vec![pb::TraceChunk {
+                    priority: 0,
+                    origin: "".to_string(),
+                    spans: vec![],
+                    tags: Default::default(),
+                    dropped_trace: false,
+                }],
                 tags: Default::default(),
                 env: "".to_string(),
                 hostname: "".to_string(),
@@ -391,8 +428,26 @@ mod tests {
             5,
             coalesced
                 .iter()
-                .map(|s| s.tracer_payloads.len())
+                .map(|s| s
+                    .tracer_payloads
+                    .iter()
+                    .map(|p| p.chunks.len())
+                    .sum::<usize>())
                 .sum::<usize>()
+        );
+        // assert some chunks are actually coalesced
+        assert!(
+            coalesced
+                .iter()
+                .map(|s| s
+                    .tracer_payloads
+                    .iter()
+                    .map(|p| p.chunks.len())
+                    .max()
+                    .unwrap())
+                .max()
+                .unwrap()
+                > 1
         );
         assert!(coalesced.len() > 1 && coalesced.len() < 5);
     }
