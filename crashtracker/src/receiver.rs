@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
-use self::stacktrace::StackFrame;
 use super::*;
 use anyhow::Context;
 use nix::unistd::getppid;

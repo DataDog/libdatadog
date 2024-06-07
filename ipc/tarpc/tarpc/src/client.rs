@@ -16,7 +16,6 @@ use futures::{prelude::*, ready, stream::Fuse, task::*};
 use in_flight_requests::{DeadlineExceededError, InFlightRequests};
 use pin_project::pin_project;
 use std::{
-    convert::TryFrom,
     error::Error,
     fmt,
     pin::Pin,

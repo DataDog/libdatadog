@@ -3,7 +3,6 @@
 
 use datadog_trace_utils::trace_utils::TracerHeaderTags;
 use serde::{Deserialize, Serialize};
-use std::convert::TryFrom;
 use std::io;
 
 #[derive(Debug, Serialize, Deserialize)]

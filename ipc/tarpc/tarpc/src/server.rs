@@ -23,7 +23,7 @@ use futures::{
 };
 use in_flight_requests::{AlreadyExistsError, InFlightRequests};
 use pin_project::pin_project;
-use std::{convert::TryFrom, error::Error, fmt, marker::PhantomData, pin::Pin};
+use std::{error::Error, fmt, marker::PhantomData, pin::Pin};
 use tracing::{info_span, instrument::Instrument, Span};
 
 mod in_flight_requests;
