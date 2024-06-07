@@ -415,9 +415,14 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
         }
         ReceiverType::UnixSocket(path) => {
             let mut unix_stream = UnixStream::connect(path)?;
-            let pipe = &mut unix_stream;
-            let res = emit_crashreport(pipe, config, config_str, metadata_string, signum);
-            let _ = pipe.flush();
+            let res = emit_crashreport(
+                &mut unix_stream,
+                config,
+                config_str,
+                metadata_string,
+                signum,
+            );
+            let _ = unix_stream.flush();
             unix_stream
                 .shutdown(std::net::Shutdown::Write)
                 .context("Could not shutdown writing on the stream")?;
