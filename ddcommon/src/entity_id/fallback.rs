@@ -1,9 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-pub fn set_cgroup_file() {}
+pub fn set_cgroup_file(_file: String) {}
 
-pub fn set_cgroup_mount_path() {}
+pub fn set_cgroup_mount_path(_path: String) {}
 
 pub fn get_container_id() -> Option<&'static str> {
     None
