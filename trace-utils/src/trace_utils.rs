@@ -124,6 +124,7 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
             .sort_unstable_by(cmp_send_data_payloads);
         send_data.tracer_payloads.dedup_by(|a, b| {
             if cmp_send_data_payloads(a, b) == Ordering::Equal {
+                // Note: dedup_by drops a, and retains b.
                 b.chunks.append(&mut a.chunks);
                 return true;
             }
