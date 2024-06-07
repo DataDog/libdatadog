@@ -325,8 +325,10 @@ pub fn collect_trace_chunks(
     let mut root_span_tags = RootSpanTags::default();
 
     for trace in traces.iter_mut() {
-        if let Err(e) = normalizer::normalize_trace(trace) {
-            error!("Error normalizing trace: {e}");
+        if is_agentless {
+            if let Err(e) = normalizer::normalize_trace(trace) {
+                error!("Error normalizing trace: {e}");
+            }
         }
 
         let mut chunk = construct_trace_chunk(trace.to_vec());
@@ -339,10 +341,8 @@ pub fn collect_trace_chunks(
             }
         };
 
-        if is_agentless {
-            if let Err(e) = normalizer::normalize_chunk(&mut chunk, root_span_index) {
-                error!("Error normalizing trace chunk: {e}");
-            }
+        if let Err(e) = normalizer::normalize_chunk(&mut chunk, root_span_index) {
+            error!("Error normalizing trace chunk: {e}");
         }
 
         for span in chunk.spans.iter_mut() {
