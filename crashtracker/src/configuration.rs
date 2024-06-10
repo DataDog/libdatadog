@@ -27,6 +27,7 @@ pub struct CrashtrackerConfiguration {
     pub endpoint: Option<Endpoint>,
     pub resolve_frames: StacktraceCollection,
     pub timeout: Duration,
+    pub wait_for_receiver: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -74,6 +75,7 @@ impl CrashtrackerConfiguration {
         endpoint: Option<Endpoint>,
         resolve_frames: StacktraceCollection,
         timeout: Duration,
+        wait_for_receiver: bool,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             additional_files,
@@ -81,6 +83,7 @@ impl CrashtrackerConfiguration {
             endpoint,
             resolve_frames,
             timeout,
+            wait_for_receiver,
         })
     }
 }

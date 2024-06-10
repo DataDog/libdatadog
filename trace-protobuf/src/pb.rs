@@ -426,26 +426,27 @@ pub struct ClientGroupedStats {
     #[prost(string, repeated, tag = "16")]
     pub peer_tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// this field's value is equal to span's ParentID == 0.
-    #[prost(enumeration = "TraceRootFlag", tag = "17")]
+    #[prost(enumeration = "Trilean", tag = "17")]
     pub is_trace_root: i32,
 }
+/// Trilean is an expanded boolean type that is meant to differentiate between being unset and false.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
-pub enum TraceRootFlag {
+pub enum Trilean {
     NotSet = 0,
     True = 1,
     False = 2,
 }
-impl TraceRootFlag {
+impl Trilean {
     /// String value of the enum field names used in the ProtoBuf definition.
     ///
     /// The values are not transformed in any way and thus are considered stable
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            TraceRootFlag::NotSet => "NOT_SET",
-            TraceRootFlag::True => "TRUE",
-            TraceRootFlag::False => "FALSE",
+            Trilean::NotSet => "NOT_SET",
+            Trilean::True => "TRUE",
+            Trilean::False => "FALSE",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -454,6 +455,35 @@ impl TraceRootFlag {
             "NOT_SET" => Some(Self::NotSet),
             "TRUE" => Some(Self::True),
             "FALSE" => Some(Self::False),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum TraceRootFlag {
+    DeprecatedNotSet = 0,
+    DeprecatedTrue = 1,
+    DeprecatedFalse = 2,
+}
+impl TraceRootFlag {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            TraceRootFlag::DeprecatedNotSet => "DEPRECATED_NOT_SET",
+            TraceRootFlag::DeprecatedTrue => "DEPRECATED_TRUE",
+            TraceRootFlag::DeprecatedFalse => "DEPRECATED_FALSE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DEPRECATED_NOT_SET" => Some(Self::DeprecatedNotSet),
+            "DEPRECATED_TRUE" => Some(Self::DeprecatedTrue),
+            "DEPRECATED_FALSE" => Some(Self::DeprecatedFalse),
             _ => None,
         }
     }

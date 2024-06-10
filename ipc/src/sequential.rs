@@ -7,10 +7,7 @@ use std::{
 };
 
 use futures::{ready, Future, Stream};
-use tarpc::{
-    self,
-    server::{Channel, InFlightRequest, Requests, Serve},
-};
+use tarpc::server::{Channel, InFlightRequest, Requests, Serve};
 
 #[allow(type_alias_bounds)]
 type Request<S, C: Channel> = (S, InFlightRequest<C::Req, C::Resp>);

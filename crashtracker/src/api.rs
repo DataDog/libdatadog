@@ -153,6 +153,7 @@ fn test_crash() -> anyhow::Result<()> {
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
     let timeout = Duration::from_secs(30);
+    let wait_for_receiver = true;
     let receiver_config = CrashtrackerReceiverConfig::new(
         vec![],
         vec![],
@@ -166,6 +167,7 @@ fn test_crash() -> anyhow::Result<()> {
         endpoint,
         resolve_frames,
         timeout,
+        wait_for_receiver,
     )?;
     let metadata = CrashtrackerMetadata::new(
         "libname".to_string(),
