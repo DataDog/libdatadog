@@ -61,14 +61,7 @@ impl AsyncWrite for AsyncChannel {
         if !handles.is_empty() {
             let fds: Vec<RawFd> = handles.iter().map(AsRawFd::as_raw_fd).collect();
             match project.inner.send_with_fd(buf, &fds) {
-                Ok(sent) => {
-                    project
-                        .metadata
-                        .lock()
-                        .unwrap()
-                        .defer_close_handles(handles);
-                    Poll::Ready(Ok(sent))
-                }
+                Ok(sent) => Poll::Ready(Ok(sent)),
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                     project
                         .metadata
