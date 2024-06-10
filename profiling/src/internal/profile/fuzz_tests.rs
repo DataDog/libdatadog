@@ -196,6 +196,18 @@ pub struct Sample {
     pub labels: Vec<Label>,
 }
 
+#[cfg(test)]
+impl Sample {
+    /// Checks if the sample is well formed.  Useful in testing.
+    pub fn is_well_formed(&self) -> bool {
+        let labels_are_unique = {
+            let mut uniq = std::collections::HashSet::new();
+            self.labels.iter().map(|l| &l.key).all(|x| uniq.insert(x))
+        };
+        labels_are_unique
+    }
+}
+
 impl<'a> From<&'a Sample> for api::Sample<'a> {
     fn from(value: &'a Sample) -> Self {
         Self {
@@ -306,7 +318,6 @@ fn assert_samples_eq(
                 continue;
             } else if *key == *"trace endpoint" {
                 let actual_str = profile.string_table_fetch(label.str);
-
                 let prev_label: &Label = owned_labels
                     .last()
                     .expect("Previous label to exist for endpoint label");
@@ -314,7 +325,6 @@ fn assert_samples_eq(
                 let expected_str = endpoint_mappings
                     .get(&num)
                     .expect("Endpoint mapping to exist");
-
                 assert_eq!(actual_str, *expected_str);
                 continue;
             }
@@ -371,7 +381,7 @@ fn fuzz_add_sample<'a>(
     samples_without_timestamps: &mut HashMap<(&'a [Location], &'a [Label]), Vec<i64>>,
 ) {
     let r = profile.add_sample(sample.into(), *timestamp);
-    if expected_sample_types.len() == sample.values.len() {
+    if expected_sample_types.len() == sample.values.len() && sample.is_well_formed() {
         assert!(r.is_ok());
         if timestamp.is_some() {
             samples_with_timestamps.push(sample);
