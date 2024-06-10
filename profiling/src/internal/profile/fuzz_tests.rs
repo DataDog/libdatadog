@@ -272,6 +272,8 @@ fn assert_samples_eq(
             let function = profile.functions[line.function_id as usize - 1];
             assert!(!location.is_folded);
 
+            // TODO: Consider using &str from the string table and make an `api::` mapping
+            // to save allocations.
             let owned_mapping = Mapping::new(
                 mapping.memory_start,
                 mapping.memory_limit,
