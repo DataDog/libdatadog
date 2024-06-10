@@ -295,6 +295,7 @@ fn assert_samples_eq(
             // is +1 of the index in the vector of Locations in internal::Profile.
             let location = &profile.locations[*loc_id as usize - 1];
             let mapping = &profile.mappings[location.mapping_id as usize - 1];
+            // internal::Location::to_pprof() always creates a single line.
             assert!(location.lines.len() == 1);
             let line = location.lines[0];
             let function = profile.functions[line.function_id as usize - 1];
