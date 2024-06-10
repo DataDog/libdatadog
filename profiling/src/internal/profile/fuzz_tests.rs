@@ -3,7 +3,6 @@
 
 use super::*;
 use bolero::TypeGenerator;
-use bolero_generator::{TypeGeneratorWithParams, ValueGenerator};
 use std::collections::HashSet;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, TypeGenerator)]
@@ -179,7 +178,7 @@ impl<'a> From<&'a Mapping> for api::Mapping<'a> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, TypeGenerator)]
 pub struct Sample {
     /// The leaf is at locations[0].
     pub locations: Vec<Location>,
@@ -222,34 +221,6 @@ impl Eq for Label {}
 impl std::hash::Hash for Label {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.key.hash(state)
-    }
-}
-impl TypeGenerator for Sample {
-    fn generate<D: bolero_generator::Driver>(driver: &mut D) -> Option<Self> {
-        let locations = Vec::<Location>::gen_with().generate(driver)?;
-        let values = Vec::<i64>::gen_with().generate(driver)?;
-        let mut labels = std::collections::HashSet::<Label>::gen_with().generate(driver)?;
-
-        // Ensure that the label has "local root span id" key
-        // Generate non-zero num value for the label
-        let num = i64::gen().generate(driver)?;
-        // zero num is considered as invalid, see Profile::validate_sample_labels
-        if num == 0 {
-            return None;
-        }
-
-        labels.insert(Label {
-            key: "local root span id".into(),
-            str: None,
-            num,
-            num_unit: None,
-        });
-        let labels = labels.into_iter().collect();
-        Some(Self {
-            locations,
-            values,
-            labels,
-        })
     }
 }
 
@@ -427,16 +398,16 @@ fn fuzz_failure_001() {
         values: vec![],
         labels: vec![
             Label {
-                key: Box::from("local root span id"),
-                str: None,
-                num: 281474976710656,
-                num_unit: None,
-            },
-            Label {
                 key: Box::from(""),
                 str: Some(Box::from("")),
                 num: 0,
                 num_unit: Some(Box::from("")),
+            },
+            Label {
+                key: Box::from("local root span id"),
+                str: None,
+                num: 281474976710656,
+                num_unit: None,
             },
         ],
     };
