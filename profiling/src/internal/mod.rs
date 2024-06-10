@@ -23,7 +23,6 @@ pub use label::*;
 pub use location::*;
 pub use mapping::*;
 pub use observation::*;
-pub use owned_types::*;
 pub use profile::*;
 pub use sample::*;
 pub use stack_trace::*;
