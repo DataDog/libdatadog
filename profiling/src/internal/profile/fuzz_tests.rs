@@ -353,15 +353,10 @@ fn assert_samples_eq(
             }
         }
 
-        owned_labels.sort();
-
         if let Some(expected_sample) = expected_timestamped_samples.next() {
             assert_eq!(owned_locations, expected_sample.locations);
             assert_eq!(sample.values, expected_sample.values);
-            // Sort these first?
-            let mut expected_labels = expected_sample.labels.clone();
-            expected_labels.sort();
-            assert_eq!(owned_labels, expected_labels);
+            assert_eq!(owned_labels, expected_sample.labels);
         } else {
             let key: (&[Location], &[Label]) = (&owned_locations, &owned_labels);
             let expected_values = samples_without_timestamps
