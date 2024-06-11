@@ -61,7 +61,7 @@ struct BucketKey {
 pub struct MetricBuckets {
     buckets: HashMap<BucketKey, MetricBucket>,
     series: HashMap<BucketKey, Vec<(u64, f64)>>,
-    sketches: HashMap<BucketKey, DDSketch>,
+    distributions: HashMap<BucketKey, DDSketch>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -100,10 +100,10 @@ impl MetricBuckets {
         )
     }
 
-    pub fn flush_sketches(
+    pub fn flush_distributions(
         &mut self,
     ) -> impl Iterator<Item = (ContextKey, Vec<Tag>, DDSketch)> + '_ {
-        self.sketches.drain().map(
+        self.distributions.drain().map(
             |(
                 BucketKey {
                     context_key,
@@ -134,8 +134,8 @@ impl MetricBuckets {
                     aggreg: MetricAggreg::Gauge { value: 0.0 },
                 })
                 .add_point(point),
-            metrics::MetricType::Sketch => {
-                self.sketches.entry(bucket_key).or_default().add(point);
+            metrics::MetricType::Distribution => {
+                self.distributions.entry(bucket_key).or_default().add(point);
             }
         }
     }
@@ -145,9 +145,9 @@ impl MetricBuckets {
             buckets: self.buckets.len() as u32,
             series: self.series.len() as u32,
             series_points: self.series.values().map(|v| v.len() as u32).sum(),
-            distributions: self.sketches.len() as u32,
+            distributions: self.distributions.len() as u32,
             distributions_points: self
-                .sketches
+                .distributions
                 .values()
                 .flat_map(|sketch| {
                     sketch

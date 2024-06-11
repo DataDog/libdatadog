@@ -17,7 +17,7 @@ pub struct Serie {
 }
 
 #[derive(Serialize, Debug)]
-pub struct Sketch {
+pub struct Distribution {
     pub namespace: MetricNamespace,
     pub metric: String,
     pub tags: Vec<Tag>,
@@ -59,5 +59,5 @@ pub enum MetricNamespace {
 pub enum MetricType {
     Gauge,
     Count,
-    Sketch,
+    Distribution,
 }

@@ -13,7 +13,7 @@ use ddcommon::Endpoint;
 use ddtelemetry::{
     build_host,
     config::Config,
-    data::{self, metrics::Sketch, Application, Telemetry},
+    data::{self, metrics::Distribution, Application, Telemetry},
     worker::http_client::request_builder,
 };
 use http::{header::CONTENT_TYPE, Uri};
@@ -91,8 +91,8 @@ async fn async_main() {
         }
     }
 
-    let payload = data::Payload::Sketches(data::Sketches {
-        series: vec![Sketch {
+    let payload = data::Payload::Distributions(data::Distributions {
+        series: vec![Distribution {
             namespace: data::metrics::MetricNamespace::Telemetry,
             tags: Vec::new(),
             common: true,
@@ -103,7 +103,7 @@ async fn async_main() {
                     sketch.encode_to_vec(),
                 ),
             },
-            _type: data::metrics::MetricType::Sketch,
+            _type: data::metrics::MetricType::Distribution,
             interval: 10,
         }],
     });

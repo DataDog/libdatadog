@@ -64,8 +64,8 @@ pub struct GenerateMetrics {
 }
 
 #[derive(Serialize, Debug)]
-pub struct Sketches {
-    pub series: Vec<metrics::Sketch>,
+pub struct Distributions {
+    pub series: Vec<metrics::Distribution>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
