@@ -49,16 +49,50 @@
 //! 1:name=systemd:/ecs/8cd79a803caf4d2aa945152e934a5c00/8cd79a803caf4d2aa945152e934a5c00-1053176469
 //! ```
 
-#[cfg(not(unix))]
-pub use fallback::{get_container_id, get_entity_id, set_cgroup_file, set_cgroup_mount_path};
-
-#[cfg(unix)]
-pub use unix::{get_container_id, get_entity_id, set_cgroup_file, set_cgroup_mount_path};
-
-/// Fallback module used for non-unix systems
-#[cfg(not(unix))]
-mod fallback;
-
 /// Unix specific module allowing the use of unix specific functions
 #[cfg(unix)]
 mod unix;
+
+/// Returns the `container_id` if available in the cgroup file, otherwise returns `None`
+pub fn get_container_id() -> Option<&'static str> {
+    #[cfg(unix)]
+    {
+        unix::get_container_id()
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
+/// Returns the `entity_id` if available, either `cid-<container_id>` or `in-<cgroup_inode>`
+pub fn get_entity_id() -> Option<&'static str> {
+    #[cfg(unix)]
+    {
+        unix::get_entity_id()
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
+/// Set the path to cgroup file to mock it during tests
+/// # Safety
+/// Must not be called in multi-threaded contexts
+pub unsafe fn set_cgroup_file(_file: String) {
+    #[cfg(unix)]
+    {
+        unix::set_cgroup_file(_file)
+    }
+}
+
+/// Set cgroup mount path to mock during tests
+/// # Safety
+/// Must not be called in multi-threaded contexts
+pub unsafe fn set(_path: String) {
+    #[cfg(unix)]
+    {
+        unix::set_cgroup_mount_path(_path)
+    }
+}
