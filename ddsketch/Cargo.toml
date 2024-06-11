@@ -1,6 +1,6 @@
 [package]
 name = "datadog-ddsketch"
-authors = ["Paul Le Grand des Cloizeaux <paul.legranddescloizeaux@datadoghq.com>"]
+description = "Minimal implementation of Datadog's DDSketch"
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true
