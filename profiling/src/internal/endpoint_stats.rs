@@ -19,7 +19,8 @@ impl From<HashMap<String, i64>> for ProfiledEndpointsStats {
 
 impl ProfiledEndpointsStats {
     pub fn add_endpoint_count(&mut self, endpoint_name: String, value: i64) {
-        *self.count.entry(endpoint_name).or_insert(0) += value;
+        let entry = self.count.entry(endpoint_name).or_insert(0);
+        *entry = entry.saturating_add(value);
     }
 
     pub fn is_empty(&self) -> bool {

@@ -37,6 +37,7 @@ pub struct CrashtrackerConfiguration<'a> {
     pub endpoint: ProfilingEndpoint<'a>,
     pub resolve_frames: StacktraceCollection,
     pub timeout_secs: u64,
+    pub wait_for_receiver: bool,
 }
 
 pub fn option_from_char_slice(s: CharSlice) -> anyhow::Result<Option<String>> {
@@ -95,12 +96,14 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
         let endpoint = unsafe { exporter::try_to_endpoint(value.endpoint).ok() };
         let resolve_frames = value.resolve_frames;
         let timeout = Duration::from_secs(value.timeout_secs);
+        let wait_for_receiver = value.wait_for_receiver;
         Self::new(
             additional_files,
             create_alt_stack,
             endpoint,
             resolve_frames,
             timeout,
+            wait_for_receiver,
         )
     }
 }

@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::VecDeque,
     io,
-    os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, RawFd},
+    os::unix::prelude::{AsRawFd, FromRawFd, RawFd},
 };
 
 use io_lifetimes::OwnedFd;
@@ -18,8 +18,6 @@ use crate::{
 pub struct ChannelMetadata {
     fds_to_send: Vec<PlatformHandle<OwnedFd>>,
     fds_received: VecDeque<RawFd>,
-    fds_acked: Vec<RawFd>,
-    fds_to_close: BTreeMap<RawFd, PlatformHandle<OwnedFd>>,
     pid: libc::pid_t, // must always be set to current Process ID
 }
 
@@ -28,8 +26,6 @@ impl Default for ChannelMetadata {
         Self {
             fds_to_send: Default::default(),
             fds_received: Default::default(),
-            fds_acked: Default::default(),
-            fds_to_close: Default::default(),
             pid: nix::unistd::getpid().as_raw(),
         }
     }
@@ -40,27 +36,6 @@ impl ChannelMetadata {
     where
         T: TransferHandles,
     {
-        {
-            let fds_to_close = message
-                .acked_handles
-                .into_iter()
-                .flat_map(|fd| self.fds_to_close.remove(&fd));
-
-            // if ACK came from the same PID, it means there is a duplicate PlatformHandle instance
-            // in the same process. Thus we should leak the handles allowing other
-            // PlatformHandle's to safely close
-            if message.pid == self.pid {
-                for h in fds_to_close {
-                    h.into_owned_handle()
-                        .map(|h| h.into_raw_fd())
-                        .unwrap_or_default();
-                }
-            } else {
-                // drain iterator closing all open file desriptors that were ACKed by the other
-                // party
-                fds_to_close.last();
-            }
-        }
         let mut item = message.item;
 
         item.receive_handles(self)?;
@@ -75,16 +50,10 @@ impl ChannelMetadata {
 
         let message = Message {
             item,
-            acked_handles: self.fds_acked.drain(..).collect(),
             pid: self.pid,
         };
 
         Ok(message)
-    }
-
-    pub(crate) fn defer_close_handles<T>(&mut self, handles: Vec<PlatformHandle<T>>) {
-        let handles = handles.into_iter().map(|h| (h.as_raw_fd(), h.to_untyped()));
-        self.fds_to_close.extend(handles);
     }
 
     pub(crate) fn enqueue_for_sending<T>(&mut self, handle: PlatformHandle<T>) {

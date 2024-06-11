@@ -8,7 +8,6 @@ use datadog_profiling::internal;
 use datadog_profiling::internal::ProfiledEndpointsStats;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
 use ddcommon_ffi::Error;
-use std::convert::{TryFrom, TryInto};
 use std::num::NonZeroI64;
 use std::str::Utf8Error;
 use std::time::{Duration, SystemTime};

@@ -1,6 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(test)]
+mod fuzz_tests;
+
 use self::api::UpscalingInfo;
 use super::*;
 use crate::api;
@@ -19,10 +22,10 @@ pub struct Profile {
     /// maintains them in a way that does not depend on the string table. The
     /// Option part is this is taken from the old profile and moved to the new
     /// one.
-    owned_sample_types: Option<Box<[OwnedValueType]>>,
+    owned_sample_types: Option<Box<[owned_types::ValueType]>>,
     /// When profiles are reset, the period needs to be preserved. This
     /// stores it in a way that does not depend on the string table.
-    owned_period: Option<OwnedPeriod>,
+    owned_period: Option<owned_types::Period>,
     endpoints: Endpoints,
     functions: FxIndexSet<Function>,
     labels: FxIndexSet<Label>,
@@ -331,13 +334,13 @@ impl Profile {
     }
 
     #[inline]
-    fn backup_period(src: Option<api::Period>) -> Option<OwnedPeriod> {
-        src.as_ref().map(OwnedPeriod::from)
+    fn backup_period(src: Option<api::Period>) -> Option<owned_types::Period> {
+        src.as_ref().map(owned_types::Period::from)
     }
 
     #[inline]
-    fn backup_sample_types(src: &[api::ValueType]) -> Option<Box<[OwnedValueType]>> {
-        Some(src.iter().map(OwnedValueType::from).collect())
+    fn backup_sample_types(src: &[api::ValueType]) -> Option<Box<[owned_types::ValueType]>> {
+        Some(src.iter().map(owned_types::ValueType::from).collect())
     }
 
     /// Fetches the endpoint information for the label. There may be errors,
@@ -419,8 +422,8 @@ impl Profile {
     /// the owned values.
     #[inline(never)]
     fn new_internal(
-        owned_period: Option<OwnedPeriod>,
-        owned_sample_types: Option<Box<[OwnedValueType]>>,
+        owned_period: Option<owned_types::Period>,
+        owned_sample_types: Option<Box<[owned_types::ValueType]>>,
         start_time: SystemTime,
     ) -> Self {
         let mut profile = Self {
@@ -467,7 +470,7 @@ impl Profile {
         // Break "cannot borrow `*self` as mutable because it is also borrowed
         // as immutable" by moving it out, borrowing it, and putting it back.
         let owned_period = profile.owned_period.take();
-        if let Some(OwnedPeriod { value, typ }) = &owned_period {
+        if let Some(owned_types::Period { value, typ }) = &owned_period {
             profile.period = Some((
                 *value,
                 ValueType {

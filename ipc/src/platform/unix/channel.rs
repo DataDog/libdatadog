@@ -101,10 +101,7 @@ impl Write for Channel {
                         "failed to write whole buffer",
                     ));
                 }
-                Ok(n) => {
-                    self.metadata.defer_close_handles(handles);
-                    buf = &buf[n..]
-                }
+                Ok(n) => buf = &buf[n..],
                 Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
                 Err(e) => {
                     self.metadata.reenqueue_for_sending(handles);

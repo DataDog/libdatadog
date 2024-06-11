@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
-use self::stacktrace::StackFrame;
 use super::*;
 use anyhow::Context;
 use nix::unistd::getppid;
@@ -41,6 +40,7 @@ pub fn reciever_entry_point_unix_socket(socket_path: impl AsRef<str>) -> anyhow:
     let (unix_stream, _) = listener.accept()?;
     let stream = BufReader::new(unix_stream);
     receiver_entry_point(stream)
+    // Dropping the stream closes it, allowing the collector to exit if it was waiting.
 }
 
 pub fn receiver_entry_point_stdin() -> anyhow::Result<()> {

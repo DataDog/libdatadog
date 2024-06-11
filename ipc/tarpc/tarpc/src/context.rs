@@ -11,10 +11,7 @@ use crate::trace::{self, TraceId};
 #[cfg(feature = "opentelemetry")]
 use opentelemetry::trace::TraceContextExt;
 use static_assertions::assert_impl_all;
-use std::{
-    convert::TryFrom,
-    time::{Duration, SystemTime},
-};
+use std::time::{Duration, SystemTime};
 #[cfg(feature = "opentelemetry")]
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 

@@ -226,6 +226,7 @@ impl TraceExporter {
                     traces,
                     &header_tags,
                     |_chunk, _root_span_index| {},
+                    self.endpoint.api_key.is_some(),
                 );
 
                 let endpoint = Endpoint {

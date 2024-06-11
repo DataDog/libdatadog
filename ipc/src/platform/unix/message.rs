@@ -1,8 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::os::unix::prelude::RawFd;
-
 use serde::{Deserialize, Serialize};
 
 /// sendfd crate's API is not able to resize the received FD container.
@@ -13,6 +11,5 @@ pub const MAX_FDS: usize = 20;
 #[derive(Deserialize, Serialize)]
 pub struct Message<Item> {
     pub item: Item,
-    pub acked_handles: Vec<RawFd>,
     pub pid: libc::pid_t,
 }
