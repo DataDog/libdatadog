@@ -19,6 +19,7 @@ fn test_crash_tracking_bin_debug() {
 }
 
 #[test]
+#[ignore] // This test is slow, only run it if explicitly opted in
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_release() {
     test_crash_tracking_bin(BuildProfile::Release);
