@@ -166,8 +166,7 @@ impl LowCollapsingDenseStore {
             }
 
             self.offset -= additional_low_bins as i32;
-            #[allow(clippy::needless_return)]
-            return 0;
+            0
         }
         // Bucket higher than the stored range
         else if self.offset + self.bins.len() as i32 <= bin_index {
@@ -182,11 +181,11 @@ impl LowCollapsingDenseStore {
             for _ in 0..(store_index - self.bins.len() as i32 + 1) {
                 self.bins.push_back(0.0);
             }
-            return store_index as usize;
+            store_index as usize
         }
         // Bucket within the stored range
         else {
-            return (bin_index - self.offset) as usize;
+            (bin_index - self.offset) as usize
         }
     }
 
@@ -231,7 +230,7 @@ impl LogMapping {
             multiplier,
             min_indexable_value: max(
                 // So that the value representing the lowest bucket is >= std::f64::MIN_POSITIVE
-                std::f64::MIN_POSITIVE * gamma,
+                f64::MIN_POSITIVE * gamma,
                 // Minimum value so that index >= i32::MIN
                 ((i32::MIN as f64 - offset) / multiplier + 1.0).exp(),
             )?,
