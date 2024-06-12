@@ -14,7 +14,7 @@ tracing = ["tracing/std"]
 anyhow = { version = "1.0" }
 ddcommon = { path = "../ddcommon" }
 datadog-ddsketch = { path = "../ddsketch" }
-base64 = "0.21"
+base64 = "0.22"
 futures = { version = "0.3", default-features = false }
 http = "0.2"
 hyper = { version = "0.14", features = ["client"], default-features = false }
