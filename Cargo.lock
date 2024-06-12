@@ -1445,6 +1445,7 @@ version = "0.0.1"
 dependencies = [
  "datadog-live-debugger",
  "ddcommon-ffi",
+ "uuid",
 ]
 
 [[package]]

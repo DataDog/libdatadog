@@ -1,15 +1,17 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use serde::Deserialize;
 use crate::{DslString, ProbeCondition, ProbeValue};
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[repr(C)]
 pub struct Capture {
     pub max_reference_depth: u32,
     pub max_collection_size: u32,
     pub max_length: u32,
-    pub max_field_depth: u32,
+    pub max_field_count: u32,
 }
 
 impl Default for Capture {
@@ -18,13 +20,14 @@ impl Default for Capture {
             max_reference_depth: 3,
             max_collection_size: 100,
             max_length: 255,
-            max_field_depth: 20,
+            max_field_count: 20,
         }
     }
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Deserialize, Copy, Clone, Debug)]
+#[serde(rename_all = "UPPERCASE")]
 pub enum MetricKind {
     Count,
     Gauge,
@@ -40,7 +43,8 @@ pub struct MetricProbe {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Deserialize, Copy, Clone, Debug)]
+#[serde(rename_all = "UPPERCASE")]
 pub enum SpanProbeTarget {
     Active,
     Root,
@@ -57,6 +61,7 @@ pub struct LogProbe {
     pub segments: DslString,
     pub when: ProbeCondition,
     pub capture: Capture,
+    pub capture_snapshot: bool,
     pub sampling_snapshots_per_second: u32,
 }
 
@@ -78,7 +83,8 @@ pub enum ProbeType {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Deserialize, Copy, Clone, Debug)]
+#[serde(rename_all = "UPPERCASE")]
 pub enum InBodyLocation {
     None,
     Start,
@@ -96,8 +102,10 @@ pub struct ProbeTarget {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Deserialize, Copy, Clone, Debug)]
+#[serde(rename_all = "UPPERCASE")]
 pub enum EvaluateAt {
+    Default,
     Entry,
     Exit,
 }
@@ -113,7 +121,7 @@ pub struct Probe {
     pub probe: ProbeType,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default, Deserialize)]
 pub struct FilterList {
     pub package_prefixes: Vec<String>,
     pub classes: Vec<String>,

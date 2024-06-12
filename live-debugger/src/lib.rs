@@ -4,8 +4,6 @@
 mod expr_defs;
 mod expr_eval;
 mod parse_json;
-mod parse_json_expr;
-mod parse_util;
 mod probe_defs;
 
 pub mod debugger_defs;

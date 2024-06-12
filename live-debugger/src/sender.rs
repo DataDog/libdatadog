@@ -37,7 +37,7 @@ impl Config {
     }
 }
 
-pub fn encode<S: Eq + Hash + Serialize>(data: Vec<DebuggerPayload<S>>) -> Vec<u8> {
+pub fn encode<S: Eq + Hash + Serialize>(data: Vec<DebuggerPayload>) -> Vec<u8> {
     serde_json::to_vec(&data).unwrap()
 }
 
