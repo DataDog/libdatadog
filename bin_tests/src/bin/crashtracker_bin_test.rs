@@ -83,16 +83,13 @@ mod unix {
                 metadata,
             )?;
         } else if mode == format!("{:?}", ReceiverType::UnixSocket) {
-            let stdout = File::create(stdout_filename)?;
-            let stderr = File::create(stderr_filename)?;
-
             // Fork a unix socket receiver
             // For now, this exits when a single message is received.
             // When the listener is updated, we'll need to keep the handle and kill the receiver
             // to avoid leaking a process.
             std::process::Command::new(unix_socket_reciever_binary)
-                .stderr(stderr)
-                .stdout(stdout)
+                .stderr(File::create(stderr_filename)?)
+                .stdout(File::create(stdout_filename)?)
                 .arg(&socket_path)
                 .spawn()
                 .context("failed to spawn unix receiver")?;
