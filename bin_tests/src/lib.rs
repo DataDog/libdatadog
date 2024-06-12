@@ -28,6 +28,12 @@ pub enum ArtifactType {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum ReceiverType {
+    ChildProcessStdin,
+    UnixSocket,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum BuildProfile {
     Debug,
     Release,

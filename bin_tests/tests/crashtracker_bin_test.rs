@@ -10,13 +10,7 @@ use std::process;
 use std::{fs, path::PathBuf};
 
 use anyhow::Context;
-use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReceiverType {
-    ChildProcessStdin,
-    UnixSocket,
-}
+use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile, ReceiverType};
 
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -31,7 +25,10 @@ fn test_crash_tracking_bin_release() {
     test_crash_tracking_bin(BuildProfile::Release, ReceiverType::ChildProcessStdin);
 }
 
-fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, receiver_type : ReceiverType) {
+fn test_crash_tracking_bin(
+    crash_tracking_receiver_profile: BuildProfile,
+    receiver_type: ReceiverType,
+) {
     let (crashtracker_bin, crashtracker_receiver, _crashtracker_unix_socket_receiver) =
         setup_crashtracking_crates(crash_tracking_receiver_profile);
     let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
@@ -147,10 +144,11 @@ fn crash_tracking_empty_endpoint() {
 }
 
 #[cfg(unix)]
-fn crash_tracking_empty_endpoint_inner(receiver_type : ReceiverType) {
+fn crash_tracking_empty_endpoint_inner(receiver_type: ReceiverType) {
     use std::os::unix::net::UnixListener;
 
-    let (crashtracker_bin, crashtracker_receiver, _crashtracker_unix_socket_receiver) = setup_crashtracking_crates(BuildProfile::Debug);
+    let (crashtracker_bin, crashtracker_receiver, _crashtracker_unix_socket_receiver) =
+        setup_crashtracking_crates(BuildProfile::Debug);
     let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
 
     let socket_path = extend_path(fixtures.tmpdir.path(), "trace_agent.socket");
@@ -231,7 +229,11 @@ fn setup_crashtracking_crates(
         artifact_type: ArtifactType::Bin,
         triple_target: None,
     };
-    (crashtracker_bin, crashtracker_receiver, crashtracker_unix_socket_receiver)
+    (
+        crashtracker_bin,
+        crashtracker_receiver,
+        crashtracker_unix_socket_receiver,
+    )
 }
 
 fn extend_path<T: AsRef<Path>>(parent: &Path, path: T) -> PathBuf {
