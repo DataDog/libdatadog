@@ -1,6 +1,7 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use std::borrow::Cow;
 use crate::expr_defs::{
     BinaryComparison, CollectionMatch, CollectionSource, Condition, DslPart, NumberSource,
     Reference, StringComparison, StringSource, Value,
@@ -17,25 +18,25 @@ pub struct ProbeValue(pub(crate) Value);
 #[derive(Debug)]
 pub struct ProbeCondition(pub(crate) Condition);
 
-pub enum IntermediateValue<I> {
-    String(String),
+pub enum IntermediateValue<'a, I> {
+    String(Cow<'a, str>),
     Number(f64),
     Bool(bool),
     Null,
-    Referenced(I),
+    Referenced(&'a I),
 }
 
 pub struct Evaluator<C, I> {
-    pub equals: for<'a> fn(&'a C, IntermediateValue<&'a I>, IntermediateValue<&'a I>) -> bool,
-    pub greater_than: for<'a> fn(&'a C, IntermediateValue<&'a I>, IntermediateValue<&'a I>) -> bool,
+    pub equals: for<'a> fn(&'a C, IntermediateValue<'a, I>, IntermediateValue<'a, I>) -> bool,
+    pub greater_than: for<'a> fn(&'a C, IntermediateValue<'a, I>, IntermediateValue<'a, I>) -> bool,
     pub greater_or_equals:
-        for<'a> fn(&'a C, IntermediateValue<&'a I>, IntermediateValue<&'a I>) -> bool,
+        for<'a> fn(&'a C, IntermediateValue<'a, I>, IntermediateValue<'a, I>) -> bool,
     pub fetch_identifier: for<'a> fn(&'a C, &str) -> Option<&'a I>, // special values: @duration, @return, @exception
-    pub fetch_index: for<'a> fn(&'a C, &'a I, IntermediateValue<&'a I>) -> Option<&'a I>,
-    pub fetch_nested: for<'a> fn(&'a C, &'a I, IntermediateValue<&'a I>) -> Option<&'a I>,
+    pub fetch_index: for<'a> fn(&'a C, &'a I, IntermediateValue<'a, I>) -> Option<&'a I>,
+    pub fetch_nested: for<'a> fn(&'a C, &'a I, IntermediateValue<'a, I>) -> Option<&'a I>,
     pub length: for<'a> fn(&'a C, &'a I) -> u64,
     pub try_enumerate: for<'a> fn(&'a C, &'a I) -> Option<Vec<&'a I>>,
-    pub stringify: for<'a> fn(&'a C, &'a I) -> String,
+    pub stringify: for<'a> fn(&'a C, &'a I) -> Cow<'a, str>,
     pub convert_index: for<'a> fn(&'a C, &'a I) -> Option<usize>,
 }
 
@@ -48,7 +49,7 @@ struct Eval<'a, I, C> {
 }
 
 impl<'a, I, C> Eval<'a, I, C> {
-    fn value(&mut self, value: &'a Value) -> EvalResult<IntermediateValue<&'a I>> {
+    fn value(&mut self, value: &'a Value) -> EvalResult<IntermediateValue<'a, I>> {
         Ok(match value {
             Value::Bool(condition) => IntermediateValue::Bool(self.condition(condition)?),
             Value::String(s) => self.string_source(s)?,
@@ -56,7 +57,7 @@ impl<'a, I, C> Eval<'a, I, C> {
         })
     }
 
-    fn number_source(&mut self, value: &'a NumberSource) -> EvalResult<IntermediateValue<&'a I>> {
+    fn number_source(&mut self, value: &'a NumberSource) -> EvalResult<IntermediateValue<'a, I>> {
         Ok(match value {
             NumberSource::Number(n) => IntermediateValue::Number(*n),
             NumberSource::CollectionSize(collection) => {
@@ -81,9 +82,9 @@ impl<'a, I, C> Eval<'a, I, C> {
         })
     }
 
-    fn convert_index(&mut self, value: IntermediateValue<&'a I>) -> EvalResult<usize> {
+    fn convert_index(&mut self, value: IntermediateValue<'a, I>) -> EvalResult<usize> {
         Ok(match value {
-            IntermediateValue::String(s) => return usize::from_str(s.as_str()).map_err(|_| ()),
+            IntermediateValue::String(s) => return usize::from_str(&s).map_err(|_| ()),
             IntermediateValue::Number(n) => n as usize,
             IntermediateValue::Bool(_) => return Err(()),
             IntermediateValue::Null => 0,
@@ -98,9 +99,9 @@ impl<'a, I, C> Eval<'a, I, C> {
         self.convert_index(value)
     }
 
-    fn string_source(&mut self, value: &'a StringSource) -> EvalResult<IntermediateValue<&'a I>> {
+    fn string_source(&mut self, value: &'a StringSource) -> EvalResult<IntermediateValue<'a, I>> {
         Ok(match value {
-            StringSource::String(s) => IntermediateValue::String(s.to_string()),
+            StringSource::String(s) => IntermediateValue::String(Cow::Borrowed(s.as_str())),
             StringSource::Substring(boxed) => {
                 let (string, start, end) = &**boxed;
                 let str = self.stringify(string)?;
@@ -110,7 +111,10 @@ impl<'a, I, C> Eval<'a, I, C> {
                     return Err(());
                 }
                 end = min(end, str.len());
-                IntermediateValue::String(str[start..end].to_string())
+                IntermediateValue::String(match str {
+                    Cow::Owned(s) => Cow::Owned(s[start..end].to_string()),
+                    Cow::Borrowed(s) => Cow::Borrowed(&s[start..end])
+                })
             }
             StringSource::Null => IntermediateValue::Null,
             StringSource::Reference(reference) => {
@@ -188,19 +192,19 @@ impl<'a, I, C> Eval<'a, I, C> {
         })
     }
 
-    fn stringify_intermediate(&mut self, value: IntermediateValue<&'a I>) -> String {
+    fn stringify_intermediate(&mut self, value: IntermediateValue<'a, I>) -> Cow<'a, str> {
         match value {
-            IntermediateValue::String(s) => s.to_string(),
-            IntermediateValue::Number(n) => n.to_string(),
-            IntermediateValue::Bool(b) => b.to_string(),
-            IntermediateValue::Null => "".to_string(),
+            IntermediateValue::String(s) => s,
+            IntermediateValue::Number(n) => Cow::Owned(n.to_string()),
+            IntermediateValue::Bool(b) => Cow::Owned(b.to_string()),
+            IntermediateValue::Null => Cow::Borrowed(""),
             IntermediateValue::Referenced(referenced) => {
                 (self.eval.stringify)(self.context, referenced)
             }
         }
     }
 
-    fn stringify(&mut self, value: &'a StringSource) -> EvalResult<String> {
+    fn stringify(&mut self, value: &'a StringSource) -> EvalResult<Cow<'a, str>> {
         let value = self.string_source(value)?;
         Ok(self.stringify_intermediate(value))
     }
@@ -218,7 +222,7 @@ impl<'a, I, C> Eval<'a, I, C> {
                     StringComparison::Matches => {
                         return Regex::new(needle.as_str())
                             .map_err(|_| ())
-                            .map(|r| r.is_match(haystack.as_str()))
+                            .map(|r| r.is_match(&haystack))
                     }
                 }
             }
@@ -317,7 +321,7 @@ where
     dsl.0
         .iter()
         .map(|p| match p {
-            DslPart::String(ref str) => str.to_string(),
+            DslPart::String(ref str) => Cow::Borrowed(str.as_str()),
             DslPart::Ref(ref reference) => {
                 let mut eval = Eval {
                     eval,
@@ -336,20 +340,20 @@ where
                         .ok()
                         .unwrap_or_default()
                         .map(|vec| {
-                            format!(
+                            Cow::Owned(format!(
                                 "[{}]",
                                 vec.iter()
                                     .map(|referenced| eval.stringify_intermediate(
                                         IntermediateValue::Referenced(referenced)
                                     ))
-                                    .collect::<Vec<String>>()
+                                    .collect::<Vec<Cow<'a, str>>>()
                                     .join(", ")
-                            )
+                            ))
                         }),
                 }
-                .unwrap_or("UNDEFINED".to_string())
+                .unwrap_or(Cow::Borrowed("UNDEFINED"))
             }
         })
-        .collect::<Vec<String>>()
+        .collect::<Vec<Cow<'a, str>>>()
         .join("")
 }
