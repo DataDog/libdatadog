@@ -35,7 +35,8 @@ mod unix {
         let stderr_filename = args.next().context("Unexpected number of arguments")?;
         let stdout_filename = args.next().context("Unexpected number of arguments")?;
         let socket_path = args.next().context("Unexpected number of arguments")?;
-
+        anyhow::ensure!(args.next().is_none(), "unexpected extra arguments");
+        
         let timeout = Duration::from_secs(30);
         let wait_for_receiver = true;
 
