@@ -5,7 +5,9 @@ use datadog_live_debugger::{
     Capture, DslString, EvaluateAt, InBodyLocation, MetricKind, ProbeCondition, ProbeValue,
     SpanProbeTarget,
 };
+use datadog_live_debugger::debugger_defs::{ProbeMetadata, ProbeMetadataLocation};
 use ddcommon_ffi::{CharSlice, Option};
+use ddcommon_ffi::slice::AsBytes;
 
 #[repr(C)]
 pub struct CharSliceVec<'a> {
@@ -59,6 +61,7 @@ pub struct LogProbe<'a> {
     pub segments: &'a DslString,
     pub when: &'a ProbeCondition,
     pub capture: &'a Capture,
+    pub capture_snapshot: bool,
     pub sampling_snapshots_per_second: u32,
 }
 
@@ -68,6 +71,7 @@ impl<'a> From<&'a datadog_live_debugger::LogProbe> for LogProbe<'a> {
             segments: &from.segments,
             when: &from.when,
             capture: &from.capture,
+            capture_snapshot: from.capture_snapshot,
             sampling_snapshots_per_second: from.sampling_snapshots_per_second,
         }
     }
@@ -80,73 +84,65 @@ pub struct Tag<'a> {
 }
 
 #[repr(C)]
-pub struct SpanProbeDecoration<'a> {
-    pub condition: &'a ProbeCondition,
-    pub tags: *const Tag<'a>,
-    pub tags_count: usize,
-}
-
-impl<'a> From<&'a datadog_live_debugger::SpanProbeDecoration> for SpanProbeDecoration<'a> {
-    fn from(from: &'a datadog_live_debugger::SpanProbeDecoration) -> Self {
-        let tags: Vec<_> = from
-            .tags
-            .iter()
-            .map(|(name, value)| Tag {
-                name: name.as_str().into(),
-                value,
-            })
-            .collect();
-
-        let new = SpanProbeDecoration {
-            condition: &from.condition,
-            tags: tags.as_ptr(),
-            tags_count: tags.len(),
-        };
-        std::mem::forget(tags);
-        new
-    }
-}
-
-impl<'a> Drop for SpanProbeDecoration<'a> {
-    fn drop(&mut self) {
-        unsafe {
-            Vec::from_raw_parts(
-                self.tags as *mut CharSlice,
-                self.tags_count,
-                self.tags_count,
-            )
-        };
-    }
+pub struct SpanProbeTag<'a> {
+    pub tag: Tag<'a>,
+    pub next_condition: bool,
 }
 
 #[repr(C)]
 pub struct SpanDecorationProbe<'a> {
     pub target: SpanProbeTarget,
-    pub decorations: *const SpanProbeDecoration<'a>,
-    pub decorations_count: usize,
+    pub conditions: *const &'a ProbeCondition,
+    pub span_tags: *const SpanProbeTag<'a>,
+    pub span_tags_num: usize,
 }
 
 impl<'a> From<&'a datadog_live_debugger::SpanDecorationProbe> for SpanDecorationProbe<'a> {
     fn from(from: &'a datadog_live_debugger::SpanDecorationProbe) -> Self {
-        let tags: Vec<_> = from.decorations.iter().map(Into::into).collect();
+        let mut tags = vec![];
+        let mut conditions = vec![];
+        for decoration in from.decorations.iter() {
+            let mut next_condition = true;
+            for (name, value) in decoration.tags.iter() {
+                tags.push(SpanProbeTag {
+                    tag: Tag {
+                        name: CharSlice::from(name.as_str()),
+                        value,
+                    },
+                    next_condition,
+                });
+                next_condition = false;
+            }
+            conditions.push(&decoration.condition);
+        }
         let new = SpanDecorationProbe {
             target: from.target,
-            decorations: tags.as_ptr(),
-            decorations_count: tags.len(),
+            conditions: conditions.as_ptr(),
+            span_tags: tags.as_ptr(),
+            span_tags_num: tags.len(),
         };
         std::mem::forget(tags);
         new
     }
 }
 
+#[no_mangle]
+extern "C" fn drop_span_decoration_probe(_: SpanDecorationProbe) {}
+
 impl<'a> Drop for SpanDecorationProbe<'a> {
     fn drop(&mut self) {
         unsafe {
-            Vec::from_raw_parts(
-                self.decorations as *mut SpanProbeDecoration,
-                self.decorations_count,
-                self.decorations_count,
-            )
+            let tags = Vec::from_raw_parts(
+                self.span_tags as *mut SpanProbeTag,
+                self.span_tags_num,
+                self.span_tags_num,
+            );
+            let num_conditions = tags.iter().filter(|p| p.next_condition).count();
+            _ = Vec::from_raw_parts(
+                self.conditions as *mut ProbeCondition,
+                num_conditions,
+                num_conditions,
+            );
         };
     }
 }
@@ -220,6 +216,19 @@ impl<'a> From<&'a datadog_live_debugger::Probe> for Probe<'a> {
     }
 }
 
+impl<'a> Into<ProbeMetadata<'a>> for &Probe<'a> {
+    fn into(self) -> ProbeMetadata<'a> {
+        // SAFETY: These values are unmodified original rust strings. Just convert it back.
+        ProbeMetadata {
+            id: unsafe { self.id.assume_utf8() }.into(),
+            location: ProbeMetadataLocation {
+                method: self.target.method_name.to_std_ref().map(|s| unsafe { s.assume_utf8() }.into()),
+                r#type: self.target.type_name.to_std_ref().map(|s| unsafe { s.assume_utf8() }.into()),
+            },
+        }
+    }
+}
+
 #[repr(C)]
 pub struct FilterList<'a> {
     pub package_prefixes: CharSliceVec<'a>,
@@ -274,7 +283,9 @@ impl<'a> From<&'a datadog_live_debugger::LiveDebuggingData> for LiveDebuggingDat
     }
 }
 
+static DEFAULT_CAPTURE: Capture = Capture::default();
+
 #[no_mangle]
-pub extern "C" fn ddog_capture_defaults() -> Capture {
-    Capture::default()
+pub extern "C" fn ddog_capture_defaults() -> &'static Capture {
+    &DEFAULT_CAPTURE
 }

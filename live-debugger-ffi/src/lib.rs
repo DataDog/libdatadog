@@ -3,5 +3,5 @@
 
 pub mod data;
 pub mod evaluator;
-pub mod query;
+pub mod parse;
 pub mod sender;

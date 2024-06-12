@@ -68,6 +68,11 @@ pub trait AsBytes<'a> {
     fn to_utf8_lossy(&self) -> Cow<'a, str> {
         String::from_utf8_lossy(self.as_bytes())
     }
+
+    #[inline]
+    unsafe fn assume_utf8(&self) -> &'a str {
+        std::str::from_utf8_unchecked(self.as_bytes())
+    }
 }
 
 impl<'a> AsBytes<'a> for Slice<'a, u8> {

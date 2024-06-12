@@ -9,7 +9,7 @@ pub struct LiveDebuggingParseResult {
 }
 
 #[no_mangle]
-pub extern "C" fn parse_json(json: CharSlice) -> LiveDebuggingParseResult {
+pub extern "C" fn ddog_parse_live_debugger_json(json: CharSlice) -> LiveDebuggingParseResult {
     if let Ok(parsed) =
         datadog_live_debugger::parse_json(unsafe { std::str::from_utf8_unchecked(json.as_bytes()) })
     {
@@ -33,7 +33,4 @@ pub extern "C" fn parse_json(json: CharSlice) -> LiveDebuggingParseResult {
 }
 
 #[no_mangle]
-pub extern "C" fn drop_probe(_: LiveDebuggingData) {}
-
-#[no_mangle]
-pub extern "C" fn drop_parse_result(_: LiveDebuggingParseResult) {}
+pub extern "C" fn ddog_drop_live_debugger_parse_result(_: LiveDebuggingParseResult) {}

@@ -296,7 +296,7 @@ pub fn send_debugger_data_shm(
     })
 }
 
-/// Sends a collection of debugger palyloads to the debugger endpoint.
+/// Sends a collection of debugger payloads to the debugger endpoint.
 ///
 /// # Arguments
 ///
