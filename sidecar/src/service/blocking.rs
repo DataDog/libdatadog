@@ -295,7 +295,7 @@ pub fn send_debugger_data_shm(
     })
 }
 
-/// Sends a collection of debugger palyloads to the debugger endpoint.
+/// Sends a collection of debugger payloads to the debugger endpoint.
 ///
 /// # Arguments
 ///
@@ -306,10 +306,10 @@ pub fn send_debugger_data_shm(
 /// # Returns
 ///
 /// An `anyhow::Result<()>` indicating the result of the operation.
-pub fn send_debugger_data_shm_vec<S: Eq + Hash + Serialize>(
+pub fn send_debugger_data_shm_vec(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
-    payloads: Vec<datadog_live_debugger::debugger_defs::DebuggerPayload<S>>,
+    payloads: Vec<datadog_live_debugger::debugger_defs::DebuggerPayload>,
 ) -> anyhow::Result<()> {
     struct SizeCount(usize);
 

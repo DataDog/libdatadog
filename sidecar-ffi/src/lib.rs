@@ -626,7 +626,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
 pub unsafe extern "C" fn ddog_sidecar_send_debugger_data(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
-    payloads: Vec<DebuggerPayload<ffi::CharSlice>>
+    payloads: Vec<DebuggerPayload>
 ) -> MaybeError {
     if payloads.is_empty() {
         return MaybeError::None;
@@ -639,6 +639,17 @@ pub unsafe extern "C" fn ddog_sidecar_send_debugger_data(
     ));
 
     MaybeError::None
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+#[allow(improper_ctypes_definitions)] // DebuggerPayload is just a pointer, we hide its internals
+pub unsafe extern "C" fn ddog_sidecar_send_debugger_datum(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    payload: Box<DebuggerPayload>
+) -> MaybeError {
+    ddog_sidecar_send_debugger_data(transport, instance_id, vec![*payload])
 }
 
 #[no_mangle]
