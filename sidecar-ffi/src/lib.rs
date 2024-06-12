@@ -4,6 +4,9 @@
 use datadog_ipc::platform::{
     FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle,
 };
+use datadog_live_debugger::debugger_defs::DebuggerPayload;
+use datadog_remote_config::fetch::ConfigInvariants;
+use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use datadog_sidecar::agent_remote_config::{
     new_reader, reader_from_shm, AgentRemoteConfigEndpoint, AgentRemoteConfigWriter,
 };
@@ -15,6 +18,7 @@ use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
     InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
+use datadog_sidecar::shm_remote_config::RemoteConfigReader;
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddcommon_ffi as ffi;
@@ -35,10 +39,6 @@ use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::slice;
 use std::sync::Arc;
 use std::time::Duration;
-use datadog_live_debugger::debugger_defs::DebuggerPayload;
-use datadog_remote_config::fetch::ConfigInvariants;
-use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
-use datadog_sidecar::shm_remote_config::RemoteConfigReader;
 
 #[repr(C)]
 pub struct NativeFile {
@@ -208,17 +208,25 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
     remote_config_capabilities: *const RemoteConfigCapabilities,
     remote_config_capabilities_count: usize,
 ) -> Box<RemoteConfigReader> {
-    Box::new(RemoteConfigReader::new(&ConfigInvariants {
-        language: language.to_utf8_lossy().into(),
-        tracer_version: tracer_version.to_utf8_lossy().into(),
-        endpoint: endpoint.clone(),
-        products: slice::from_raw_parts(remote_config_products, remote_config_products_count).to_vec(),
-        capabilities: slice::from_raw_parts(remote_config_capabilities, remote_config_capabilities_count).to_vec(),
-    }, &Arc::new(Target {
-        service: service_name.to_utf8_lossy().into(),
-        env: env_name.to_utf8_lossy().into(),
-        app_version: app_version.to_utf8_lossy().into(),
-    })))
+    Box::new(RemoteConfigReader::new(
+        &ConfigInvariants {
+            language: language.to_utf8_lossy().into(),
+            tracer_version: tracer_version.to_utf8_lossy().into(),
+            endpoint: endpoint.clone(),
+            products: slice::from_raw_parts(remote_config_products, remote_config_products_count)
+                .to_vec(),
+            capabilities: slice::from_raw_parts(
+                remote_config_capabilities,
+                remote_config_capabilities_count,
+            )
+            .to_vec(),
+        },
+        &Arc::new(Target {
+            service: service_name.to_utf8_lossy().into(),
+            env: env_name.to_utf8_lossy().into(),
+            app_version: app_version.to_utf8_lossy().into(),
+        }),
+    ))
 }
 
 #[no_mangle]
@@ -512,8 +520,16 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             } else {
                 LogMethod::File(String::from(log_path.to_utf8_lossy()).into())
             },
-            remote_config_products: slice::from_raw_parts(remote_config_products, remote_config_products_count).to_vec(),
-            remote_config_capabilities: slice::from_raw_parts(remote_config_capabilities, remote_config_capabilities_count).to_vec(),
+            remote_config_products: slice::from_raw_parts(
+                remote_config_products,
+                remote_config_products_count
+            )
+            .to_vec(),
+            remote_config_capabilities: slice::from_raw_parts(
+                remote_config_capabilities,
+                remote_config_capabilities_count
+            )
+            .to_vec(),
         },
     ));
 

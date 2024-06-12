@@ -1,6 +1,14 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Unless explicitly stated otherwise all files in this repository are licensed under the Apache
+// License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use crate::fetch::{
+    ConfigFetcherState, ConfigInvariants, FileStorage, RefcountedFile, RefcountingStorage,
+    SharedFetcher,
+};
+use crate::Target;
+use futures_util::future::Shared;
+use futures_util::FutureExt;
+use manual_future::ManualFuture;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::default::Default;
@@ -9,15 +17,10 @@ use std::hash::Hash;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use futures_util::future::Shared;
-use futures_util::FutureExt;
-use manual_future::ManualFuture;
 use tokio::select;
 use tokio::sync::Semaphore;
 use tokio::time::Instant;
 use tracing::{debug, error, trace};
-use crate::fetch::{ConfigFetcherState, ConfigInvariants, FileStorage, RefcountedFile, RefcountingStorage, SharedFetcher};
-use crate::Target;
 
 /// MultiTargetFetcher built on a set of SharedFetchers, managing multiple environments and services
 /// at once.
@@ -27,7 +30,11 @@ use crate::Target;
 /// This fetcher is designed for use cases with more than one Target tuple associated to a
 /// specific runtime id and/or handling hundreds to thousands of different runtime ids with a low
 /// amount of actual remote config clients.
-pub struct MultiTargetFetcher<N: NotifyTarget, S: FileStorage + Clone + Sync + Send> where S::StoredFile: RefcountedFile + Sync + Send, S: MultiTargetHandlers<S::StoredFile> {
+pub struct MultiTargetFetcher<N: NotifyTarget, S: FileStorage + Clone + Sync + Send>
+where
+    S::StoredFile: RefcountedFile + Sync + Send,
+    S: MultiTargetHandlers<S::StoredFile>,
+{
     /// All runtime ids belonging to a specific target
     target_runtimes: Mutex<HashMap<Arc<Target>, HashSet<String>>>,
     /// Keyed by runtime_id
@@ -82,9 +89,14 @@ struct RuntimeInfo<N: NotifyTarget> {
     targets: HashMap<Arc<Target>, u32>,
 }
 
-impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static> MultiTargetFetcher<N, S> where S::StoredFile: RefcountedFile + Sync + Send, S: MultiTargetHandlers<S::StoredFile> {
+impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static>
+    MultiTargetFetcher<N, S>
+where
+    S::StoredFile: RefcountedFile + Sync + Send,
+    S: MultiTargetHandlers<S::StoredFile>,
+{
     pub const DEFAULT_CLIENTS_LIMIT: u32 = 100;
-    
+
     pub fn new(storage: S, invariants: ConfigInvariants) -> Arc<Self> {
         Arc::new(MultiTargetFetcher {
             storage: RefcountingStorage::new(storage, ConfigFetcherState::new(invariants)),
@@ -98,7 +110,8 @@ impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static> 
     }
 
     pub fn is_dead(&self) -> bool {
-        self.services.lock().unwrap().is_empty() && self.pending_async_insertions.load(Ordering::Relaxed) == 0
+        self.services.lock().unwrap().is_empty()
+            && self.pending_async_insertions.load(Ordering::Relaxed) == 0
     }
 
     /// Allow for more than DEFAULT_CLIENTS_LIMIT fetchers running simultaneously
@@ -123,21 +136,27 @@ impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static> 
                         KnownTargetStatus::Pending => break 'drop_service,
                         KnownTargetStatus::Alive => {
                             KnownTargetStatus::RemoveAt(Instant::now() + Duration::from_secs(3666))
-                        },
-                        KnownTargetStatus::RemoveAt(_) | KnownTargetStatus::Removing(_) => unreachable!(),
+                        }
+                        KnownTargetStatus::RemoveAt(_) | KnownTargetStatus::Removing(_) => {
+                            unreachable!()
+                        }
                     };
                     0
                 } else {
                     if *known_service.fetcher.runtime_id.lock().unwrap() == runtime_id {
                         'changed_rt_id: {
                             for (id, runtime) in self.runtimes.lock().unwrap().iter() {
-                                if runtime.targets.len() == 1 && runtime.targets.contains_key(target) {
-                                    *known_service.fetcher.runtime_id.lock().unwrap() = id.to_string();
+                                if runtime.targets.len() == 1
+                                    && runtime.targets.contains_key(target)
+                                {
+                                    *known_service.fetcher.runtime_id.lock().unwrap() =
+                                        id.to_string();
                                     break 'changed_rt_id;
                                 }
                             }
                             known_service.synthetic_id = true;
-                            *known_service.fetcher.runtime_id.lock().unwrap() = Self::generate_synthetic_id();
+                            *known_service.fetcher.runtime_id.lock().unwrap() =
+                                Self::generate_synthetic_id();
                         }
                     }
                     known_service.refcount - 1
@@ -163,7 +182,8 @@ impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static> 
         match target_runtimes.entry(target.clone()) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => e.insert(HashSet::new()),
-        }.insert(runtime_id.to_string());
+        }
+        .insert(runtime_id.to_string());
         drop(target_runtimes); // unlock
 
         let mut services = self.services.lock().unwrap();
@@ -178,10 +198,11 @@ impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static> 
                             known_target.refcount = 1;
                             if synthetic_id && !known_target.synthetic_id {
                                 known_target.synthetic_id = true;
-                                *known_target.fetcher.runtime_id.lock().unwrap() = Self::generate_synthetic_id();
+                                *known_target.fetcher.runtime_id.lock().unwrap() =
+                                    Self::generate_synthetic_id();
                             }
                             known_target.runtimes.insert(runtime_id.to_string());
-                        },
+                        }
                         KnownTargetStatus::Removing(ref future) => {
                             let future = future.clone();
                             // Avoid deadlocking between known_target.status and self.services
@@ -194,7 +215,7 @@ impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static> 
                                 this.pending_async_insertions.fetch_sub(1, Ordering::AcqRel);
                             });
                             return;
-                        },
+                        }
                         KnownTargetStatus::Alive | KnownTargetStatus::Pending => unreachable!(),
                     }
                 } else {
@@ -204,9 +225,13 @@ impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static> 
                     known_target.synthetic_id = false;
                     *known_target.fetcher.runtime_id.lock().unwrap() = runtime_id.into();
                 }
-            },
+            }
             Entry::Vacant(e) => {
-                let runtime_id = if synthetic_id { Self::generate_synthetic_id() } else { runtime_id.into() };
+                let runtime_id = if synthetic_id {
+                    Self::generate_synthetic_id()
+                } else {
+                    runtime_id.into()
+                };
                 self.start_fetcher(e.insert(KnownTarget {
                     refcount: 1,
                     status: Arc::new(Mutex::new(KnownTargetStatus::Pending)),
@@ -246,16 +271,25 @@ impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static> 
                             let known_target = services.get_mut(&primary_target).unwrap();
                             if !known_target.synthetic_id {
                                 known_target.synthetic_id = true;
-                                *known_target.fetcher.runtime_id.lock().unwrap() = Self::generate_synthetic_id();
+                                *known_target.fetcher.runtime_id.lock().unwrap() =
+                                    Self::generate_synthetic_id();
                             }
                         }
                         e.insert(1);
                         self.add_target(true, runtime_entry.key(), target.clone());
-                    },
+                    }
                 }
             }
             Entry::Vacant(e) => {
-                if self.storage.invariants().endpoint.url.scheme().map(|s| s.as_str() != "file") == Some(true) {
+                if self
+                    .storage
+                    .invariants()
+                    .endpoint
+                    .url
+                    .scheme()
+                    .map(|s| s.as_str() != "file")
+                    == Some(true)
+                {
                     let info = RuntimeInfo {
                         notify_target,
                         targets: HashMap::from([(target.clone(), 1)]),
@@ -267,11 +301,7 @@ impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static> 
         }
     }
 
-    pub fn delete_runtime(
-        self: &Arc<Self>,
-        runtime_id: &str,
-        target: &Arc<Target>,
-    ) {
+    pub fn delete_runtime(self: &Arc<Self>, runtime_id: &str, target: &Arc<Target>) {
         trace!("Removing remote config runtime: {target:?} with runtime id {runtime_id}");
         {
             let mut runtimes = self.runtimes.lock().unwrap();
@@ -304,7 +334,10 @@ impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static> 
         let this = self.clone();
         let fetcher = known_target.fetcher.clone();
         let status = known_target.status.clone();
-        fetcher.default_interval.store(self.remote_config_interval.load(Ordering::Relaxed), Ordering::Relaxed);
+        fetcher.default_interval.store(
+            self.remote_config_interval.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
         tokio::spawn(async move {
             // Relatively primitive, no prioritization or anything. It is not expected that this
             // semaphore is ever awaiting under standard usage. Can be improved if needed, e.g.
@@ -323,28 +356,44 @@ impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static> 
 
             let inner_fetcher = fetcher.clone();
             let inner_this = this.clone();
-            let fetcher_fut = fetcher.run(this.storage.clone(), Box::new(move |files| {
-                let (error, notify) = inner_this.storage.storage.fetched(&inner_fetcher.target, files);
+            let fetcher_fut = fetcher
+                .run(
+                    this.storage.clone(),
+                    Box::new(move |files| {
+                        let (error, notify) = inner_this
+                            .storage
+                            .storage
+                            .fetched(&inner_fetcher.target, files);
 
-                if notify {
-                    // notify_targets is Hash + Eq + Clone, allowing us to deduplicate. Also avoid the lock during notifying
-                    let mut notify_targets = HashSet::new();
-                    if let Some(runtimes) = inner_this.target_runtimes.lock().unwrap().get(&inner_fetcher.target) {
-                        for runtime_id in runtimes {
-                            if let Some(runtime) = inner_this.runtimes.lock().unwrap().get(runtime_id) {
-                                notify_targets.insert(runtime.notify_target.clone());
+                        if notify {
+                            // notify_targets is Hash + Eq + Clone, allowing us to deduplicate. Also
+                            // avoid the lock during notifying
+                            let mut notify_targets = HashSet::new();
+                            if let Some(runtimes) = inner_this
+                                .target_runtimes
+                                .lock()
+                                .unwrap()
+                                .get(&inner_fetcher.target)
+                            {
+                                for runtime_id in runtimes {
+                                    if let Some(runtime) =
+                                        inner_this.runtimes.lock().unwrap().get(runtime_id)
+                                    {
+                                        notify_targets.insert(runtime.notify_target.clone());
+                                    }
+                                }
+                            }
+
+                            debug!("Notify {:?} about remote config changes", notify_targets);
+                            for notify_target in notify_targets {
+                                notify_target.notify();
                             }
                         }
-                    }
 
-                    debug!("Notify {:?} about remote config changes", notify_targets);
-                    for notify_target in notify_targets {
-                        notify_target.notify();
-                    }
-                }
-
-                error
-            })).shared();
+                        error
+                    }),
+                )
+                .shared();
 
             loop {
                 {
@@ -352,10 +401,14 @@ impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static> 
                     if let KnownTargetStatus::RemoveAt(instant) = *status {
                         // Voluntarily give up the semaphore for services in RemoveAt status if
                         // there are only few available permits
-                        if this.fetcher_semaphore.available_permits() < 10 || instant < Instant::now() {
-                            // We need to signal that we're in progress of removing to avoid race conditions
+                        if this.fetcher_semaphore.available_permits() < 10
+                            || instant < Instant::now()
+                        {
+                            // We need to signal that we're in progress of removing to avoid race
+                            // conditions
                             *status = KnownTargetStatus::Removing(shared_future.clone());
-                            // break here to drop mutex guard and avoid having status and services locked simultaneously
+                            // break here to drop mutex guard and avoid having status and services
+                            // locked simultaneously
                             fetcher.cancel();
                             break;
                         }
@@ -372,10 +425,12 @@ impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static> 
 
             this.storage.storage.expired(&fetcher.target);
 
-            { // scope lock before await
+            {
+                // scope lock before await
                 let mut services = this.services.lock().unwrap();
                 services.remove(&fetcher.target);
-                if services.is_empty() && this.pending_async_insertions.load(Ordering::Relaxed) == 0 {
+                if services.is_empty() && this.pending_async_insertions.load(Ordering::Relaxed) == 0
+                {
                     this.storage.storage.dead();
                 }
             }
@@ -390,12 +445,12 @@ impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static> 
             match *status {
                 KnownTargetStatus::Pending | KnownTargetStatus::Alive => {
                     error!("Trying to shutdown {:?} while still alive", target);
-                },
+                }
                 KnownTargetStatus::RemoveAt(_) => {
                     *status = KnownTargetStatus::RemoveAt(Instant::now());
                     service.fetcher.cancel();
-                },
-                KnownTargetStatus::Removing(_) => {},
+                }
+                KnownTargetStatus::Removing(_) => {}
             }
         }
     }
@@ -403,14 +458,14 @@ impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static> 
 
 #[cfg(test)]
 mod tests {
-    use std::hash::Hasher;
-    use std::sync::atomic::AtomicU8;
-    use manual_future::ManualFutureCompleter;
+    use super::*;
     use crate::fetch::fetcher::tests::*;
     use crate::fetch::shared::tests::*;
     use crate::fetch::test_server::RemoteConfigServer;
     use crate::{RemoteConfigPath, Target};
-    use super::*;
+    use manual_future::ManualFutureCompleter;
+    use std::hash::Hasher;
+    use std::sync::atomic::AtomicU8;
 
     #[derive(Clone)]
     struct MultiFileStorage {
@@ -435,21 +490,39 @@ mod tests {
 
         pub fn expect_expiration(&self, target: &Arc<Target>) -> ManualFuture<()> {
             let (future, completer) = ManualFuture::new();
-            self.expected_expirations.lock().unwrap().insert(target.clone(), completer);
+            self.expected_expirations
+                .lock()
+                .unwrap()
+                .insert(target.clone(), completer);
             future
         }
     }
 
     impl MultiTargetHandlers<RcPathStore> for MultiFileStorage {
-        fn fetched(&self, target: &Arc<Target>, files: &[Arc<RcPathStore>]) -> (Option<String>, bool) {
+        fn fetched(
+            &self,
+            target: &Arc<Target>,
+            files: &[Arc<RcPathStore>],
+        ) -> (Option<String>, bool) {
             match self.recent_fetches.lock().unwrap().entry(target.clone()) {
                 Entry::Occupied(_) => panic!("Double fetch without recent_fetches clear"),
-                Entry::Vacant(e) => { e.insert(files.to_vec()); },
+                Entry::Vacant(e) => {
+                    e.insert(files.to_vec());
+                }
             }
 
             match self.awaiting_fetches.fetch_sub(1, Ordering::SeqCst) {
-                2.. => {},
-                1 => { tokio::spawn(self.awaited_fetched_done.lock().unwrap().take().unwrap().complete(())); },
+                2.. => {}
+                1 => {
+                    tokio::spawn(
+                        self.awaited_fetched_done
+                            .lock()
+                            .unwrap()
+                            .take()
+                            .unwrap()
+                            .complete(()),
+                    );
+                }
                 ..=0 => panic!("Got unexpected fetch"),
             }
 
@@ -457,22 +530,46 @@ mod tests {
         }
 
         fn expired(&self, target: &Arc<Target>) {
-            tokio::spawn(self.expected_expirations.lock().unwrap().remove(target).unwrap().complete(()));
+            tokio::spawn(
+                self.expected_expirations
+                    .lock()
+                    .unwrap()
+                    .remove(target)
+                    .unwrap()
+                    .complete(()),
+            );
         }
 
         fn dead(&self) {
-            tokio::spawn(self.on_dead_completer.lock().unwrap().take().unwrap().complete(()));
+            tokio::spawn(
+                self.on_dead_completer
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .unwrap()
+                    .complete(()),
+            );
         }
     }
 
     impl FileStorage for MultiFileStorage {
         type StoredFile = <RcFileStorage as FileStorage>::StoredFile;
 
-        fn store(&self, version: u64, path: RemoteConfigPath, contents: Vec<u8>) -> anyhow::Result<Arc<Self::StoredFile>> {
+        fn store(
+            &self,
+            version: u64,
+            path: RemoteConfigPath,
+            contents: Vec<u8>,
+        ) -> anyhow::Result<Arc<Self::StoredFile>> {
             self.rc.store(version, path, contents)
         }
 
-        fn update(&self, file: &Arc<Self::StoredFile>, version: u64, contents: Vec<u8>) -> anyhow::Result<()> {
+        fn update(
+            &self,
+            file: &Arc<Self::StoredFile>,
+            version: u64,
+            contents: Vec<u8>,
+        ) -> anyhow::Result<()> {
             self.rc.update(file, version, contents)
         }
     }
@@ -484,7 +581,9 @@ mod tests {
 
     impl NotifyState {
         fn assert_notified(&self, ids: &[u8]) {
-            let mut notified = std::mem::take(&mut *self.notifications.lock().unwrap()).into_iter().collect::<Vec<u8>>();
+            let mut notified = std::mem::take(&mut *self.notifications.lock().unwrap())
+                .into_iter()
+                .collect::<Vec<u8>>();
             notified.sort();
             assert_eq!(notified, ids);
         }
@@ -520,7 +619,6 @@ mod tests {
     static RT_ID_2: &'static str = "ae588386-8464-43ba-bd3a-3e2d36b2c22c";
     static RT_ID_3: &'static str = "0125dff8-d9a7-4fd3-a0c2-0ca3b12816a1";
 
-
     #[tokio::test]
     async fn test_multi_fetcher() {
         let server = RemoteConfigServer::spawn();
@@ -535,43 +633,144 @@ mod tests {
         };
         let state = Arc::new(NotifyState::default());
 
-        server.files.lock().unwrap().insert(PATH_FIRST.clone(), (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()));
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
 
         let fut = storage.await_fetches(1);
 
-        let fetcher = MultiTargetFetcher::<Notifier, MultiFileStorage>::new(storage.clone(), server.dummy_invariants());
+        let fetcher = MultiTargetFetcher::<Notifier, MultiFileStorage>::new(
+            storage.clone(),
+            server.dummy_invariants(),
+        );
         fetcher.remote_config_interval.store(1000, Ordering::SeqCst);
 
-        fetcher.add_runtime(RT_ID_1.to_string(), Notifier { id: 1, state: state.clone() }, &OTHER_TARGET);
-        assert_eq!(*fetcher.services.lock().unwrap().get(&*OTHER_TARGET).unwrap().fetcher.runtime_id.lock().unwrap(), RT_ID_1);
+        fetcher.add_runtime(
+            RT_ID_1.to_string(),
+            Notifier {
+                id: 1,
+                state: state.clone(),
+            },
+            &OTHER_TARGET,
+        );
+        assert_eq!(
+            *fetcher
+                .services
+                .lock()
+                .unwrap()
+                .get(&*OTHER_TARGET)
+                .unwrap()
+                .fetcher
+                .runtime_id
+                .lock()
+                .unwrap(),
+            RT_ID_1
+        );
 
-        fetcher.add_runtime(RT_ID_1.to_string(), Notifier { id: 1, state: state.clone() }, &DUMMY_TARGET);
-        fetcher.add_runtime(RT_ID_2.to_string(), Notifier { id: 2, state: state.clone() }, &DUMMY_TARGET);
+        fetcher.add_runtime(
+            RT_ID_1.to_string(),
+            Notifier {
+                id: 1,
+                state: state.clone(),
+            },
+            &DUMMY_TARGET,
+        );
+        fetcher.add_runtime(
+            RT_ID_2.to_string(),
+            Notifier {
+                id: 2,
+                state: state.clone(),
+            },
+            &DUMMY_TARGET,
+        );
 
-        assert_eq!(*fetcher.services.lock().unwrap().get(&*DUMMY_TARGET).unwrap().fetcher.runtime_id.lock().unwrap(), RT_ID_2);
-        assert_ne!(*fetcher.services.lock().unwrap().get(&*OTHER_TARGET).unwrap().fetcher.runtime_id.lock().unwrap(), RT_ID_1);
+        assert_eq!(
+            *fetcher
+                .services
+                .lock()
+                .unwrap()
+                .get(&*DUMMY_TARGET)
+                .unwrap()
+                .fetcher
+                .runtime_id
+                .lock()
+                .unwrap(),
+            RT_ID_2
+        );
+        assert_ne!(
+            *fetcher
+                .services
+                .lock()
+                .unwrap()
+                .get(&*OTHER_TARGET)
+                .unwrap()
+                .fetcher
+                .runtime_id
+                .lock()
+                .unwrap(),
+            RT_ID_1
+        );
 
         assert_eq!(fetcher.runtimes.lock().unwrap().len(), 2); // two runtimes
         assert_eq!(fetcher.target_runtimes.lock().unwrap().len(), 2); // two fetchers
 
-        fetcher.add_runtime(RT_ID_3.to_string(), Notifier { id: 3, state: state.clone() }, &OTHER_TARGET);
+        fetcher.add_runtime(
+            RT_ID_3.to_string(),
+            Notifier {
+                id: 3,
+                state: state.clone(),
+            },
+            &OTHER_TARGET,
+        );
 
         fut.await;
         state.assert_notified(&[1, 2]);
 
-        let last_fetched: Vec<_> = storage.recent_fetches.lock().unwrap().get(&*DUMMY_TARGET).unwrap().iter().map(|p| p.store.data.clone()).collect();
+        let last_fetched: Vec<_> = storage
+            .recent_fetches
+            .lock()
+            .unwrap()
+            .get(&*DUMMY_TARGET)
+            .unwrap()
+            .iter()
+            .map(|p| p.store.data.clone())
+            .collect();
         assert_eq!(last_fetched.len(), 1);
 
         let fut = storage.await_fetches(2);
-        server.files.lock().unwrap().insert(PATH_FIRST.clone(), (vec![OTHER_TARGET.clone()], 1, "v1".to_string()));
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![OTHER_TARGET.clone()], 1, "v1".to_string()),
+        );
 
         fut.await;
         state.assert_notified(&[1, 2, 3]);
 
-        let new_fetched: Vec<_> = storage.recent_fetches.lock().unwrap().get(&*OTHER_TARGET).unwrap().iter().map(|p| p.store.data.clone()).collect();
-        assert_eq!(storage.recent_fetches.lock().unwrap().get(&*OTHER_TARGET).unwrap().len(), 1);
+        let new_fetched: Vec<_> = storage
+            .recent_fetches
+            .lock()
+            .unwrap()
+            .get(&*OTHER_TARGET)
+            .unwrap()
+            .iter()
+            .map(|p| p.store.data.clone())
+            .collect();
+        assert_eq!(
+            storage
+                .recent_fetches
+                .lock()
+                .unwrap()
+                .get(&*OTHER_TARGET)
+                .unwrap()
+                .len(),
+            1
+        );
         if !Arc::ptr_eq(&new_fetched[0], &last_fetched[0]) {
-            assert_eq!(*new_fetched[0].lock().unwrap(), *last_fetched[0].lock().unwrap());
+            assert_eq!(
+                *new_fetched[0].lock().unwrap(),
+                *last_fetched[0].lock().unwrap()
+            );
         }
 
         fetcher.delete_runtime(RT_ID_1, &OTHER_TARGET);

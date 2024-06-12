@@ -1,12 +1,20 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Unless explicitly stated otherwise all files in this repository are licensed under the Apache
+// License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use crate::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter, ReaderOpener};
+use crate::one_way_shared_memory::{
+    open_named_shm, OneWayShmReader, OneWayShmWriter, ReaderOpener,
+};
+use crate::primary_sidecar_identifier;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
+use datadog_remote_config::fetch::{
+    ConfigInvariants, FileRefcountData, FileStorage, MultiTargetFetcher, MultiTargetHandlers,
+    NotifyTarget, RefcountedFile,
+};
 use datadog_remote_config::{RemoteConfigPath, RemoteConfigValue, Target};
-use datadog_remote_config::fetch::{ConfigInvariants, FileRefcountData, FileStorage, MultiTargetFetcher, MultiTargetHandlers, NotifyTarget, RefcountedFile};
+use priority_queue::PriorityQueue;
+use sha2::{Digest, Sha224};
 use std::cmp::Reverse;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -18,12 +26,9 @@ use std::io;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use priority_queue::PriorityQueue;
-use sha2::{Digest, Sha224};
 use tokio::time::Instant;
 use tracing::{debug, error, trace, warn};
 use zwohash::ZwoHasher;
-use crate::primary_sidecar_identifier;
 
 pub struct RemoteConfigWriter(OneWayShmWriter<NamedShmHandle>);
 pub struct RemoteConfigReader(OneWayShmReader<NamedShmHandle, CString>);
@@ -34,16 +39,18 @@ fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CStrin
     id.hash(&mut hasher);
     target.hash(&mut hasher);
     // datadog remote config, on macos we're restricted to 31 chars
-    CString::new(format!("/ddrc{}-{}", primary_sidecar_identifier(), hasher.finish())).unwrap()
+    CString::new(format!(
+        "/ddrc{}-{}",
+        primary_sidecar_identifier(),
+        hasher.finish()
+    ))
+    .unwrap()
 }
 
 impl RemoteConfigReader {
     pub fn new(id: &ConfigInvariants, target: &Arc<Target>) -> RemoteConfigReader {
         let path = path_for_remote_config(id, target);
-        RemoteConfigReader(OneWayShmReader::new(
-            open_named_shm(&path).ok(),
-            path,
-        ))
+        RemoteConfigReader(OneWayShmReader::new(open_named_shm(&path).ok(), path))
     }
 
     pub fn read(&mut self) -> (bool, &[u8]) {
@@ -63,9 +70,7 @@ impl RemoteConfigWriter {
     }
 }
 
-impl ReaderOpener<NamedShmHandle>
-    for OneWayShmReader<NamedShmHandle, CString>
-{
+impl ReaderOpener<NamedShmHandle> for OneWayShmReader<NamedShmHandle, CString> {
     fn open(&self) -> Option<MappedMem<NamedShmHandle>> {
         open_named_shm(&self.extra).ok()
     }
@@ -93,25 +98,35 @@ impl RefcountedFile for StoredShmFile {
 impl FileStorage for ConfigFileStorage {
     type StoredFile = StoredShmFile;
 
-    fn store(&self, version: u64, path: RemoteConfigPath, file: Vec<u8>) -> anyhow::Result<Arc<StoredShmFile>> {
+    fn store(
+        &self,
+        version: u64,
+        path: RemoteConfigPath,
+        file: Vec<u8>,
+    ) -> anyhow::Result<Arc<StoredShmFile>> {
         Ok(Arc::new(StoredShmFile {
             handle: Mutex::new(store_shm(version, &path, file)?),
             refcount: FileRefcountData::new(version, path),
         }))
     }
 
-    fn update(&self, file: &Arc<Self::StoredFile>, version: u64, contents: Vec<u8>) -> anyhow::Result<()> {
+    fn update(
+        &self,
+        file: &Arc<Self::StoredFile>,
+        version: u64,
+        contents: Vec<u8>,
+    ) -> anyhow::Result<()> {
         *file.handle.lock().unwrap() = store_shm(version, &file.refcount.path, contents)?;
         Ok(())
     }
 }
 
-fn store_shm(version: u64, path: &RemoteConfigPath, file: Vec<u8>) -> anyhow::Result<NamedShmHandle> {
-    let name = format!(
-        "ddrc{}-{}",
-        primary_sidecar_identifier(),
-        version,
-    );
+fn store_shm(
+    version: u64,
+    path: &RemoteConfigPath,
+    file: Vec<u8>,
+) -> anyhow::Result<NamedShmHandle> {
+    let name = format!("ddrc{}-{}", primary_sidecar_identifier(), version,);
     // as much signal as possible to be collision free
     let hashed_path = BASE64_URL_SAFE_NO_PAD.encode(Sha224::digest(&path.to_string()));
     #[cfg(target_os = "macos")]
@@ -127,14 +142,20 @@ fn store_shm(version: u64, path: &RemoteConfigPath, file: Vec<u8>) -> anyhow::Re
     #[cfg_attr(not(windows), allow(unused_mut))]
     let mut target_slice = handle.as_slice_mut();
     #[cfg(windows)]
-    { target_slice.write(&(file.len() as u32).to_ne_bytes())?; }
+    {
+        target_slice.write(&(file.len() as u32).to_ne_bytes())?;
+    }
     target_slice.copy_from_slice(file.as_slice());
 
     Ok(handle.into())
 }
 
 impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
-    fn fetched(&self, target: &Arc<Target>, files: &[Arc<StoredShmFile>]) -> (Option<String>, bool) {
+    fn fetched(
+        &self,
+        target: &Arc<Target>,
+        files: &[Arc<StoredShmFile>],
+    ) -> (Option<String>, bool) {
         let mut writers = self.writers.lock().unwrap();
         let writer = match writers.entry(target.clone()) {
             Entry::Occupied(e) => e.into_mut(),
@@ -144,23 +165,33 @@ impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
                     let msg = format!("Failed acquiring a remote config shm writer: {:?}", e);
                     error!(msg);
                     return (Some(msg), false);
-                },
+                }
             }),
         };
 
-        let len = files.iter().map(|f| f.handle.lock().unwrap().get_path().len() + 2).sum();
+        let len = files
+            .iter()
+            .map(|f| f.handle.lock().unwrap().get_path().len() + 2)
+            .sum();
         let mut serialized = Vec::with_capacity(len);
         for file in files.iter() {
             serialized.extend_from_slice(file.handle.lock().unwrap().get_path());
             serialized.push(b':');
-            serialized.extend_from_slice(BASE64_URL_SAFE_NO_PAD.encode(file.refcount.path.to_string()).as_bytes());
+            serialized.extend_from_slice(
+                BASE64_URL_SAFE_NO_PAD
+                    .encode(file.refcount.path.to_string())
+                    .as_bytes(),
+            );
             serialized.push(b'\n');
         }
 
         if writer.0.as_slice() != serialized {
             writer.write(&serialized);
 
-            debug!("Active configuration files are: {}", String::from_utf8_lossy(&serialized));
+            debug!(
+                "Active configuration files are: {}",
+                String::from_utf8_lossy(&serialized)
+            );
 
             (None, true)
         } else {
@@ -176,7 +207,13 @@ impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
     }
 
     fn dead(&self) {
-        (self.on_dead.lock().unwrap().take().expect("The MultiTargetHandler must not be used anymore once on_dead is called"))();
+        (self
+            .on_dead
+            .lock()
+            .unwrap()
+            .take()
+            .expect("The MultiTargetHandler must not be used anymore once on_dead is called"))(
+        );
     }
 }
 
@@ -188,18 +225,22 @@ pub struct ShmRemoteConfigsGuard<N: NotifyTarget + 'static> {
 
 impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
     fn drop(&mut self) {
-        self.remote_configs.0.delete_runtime(&self.runtime_id, &self.target);
+        self.remote_configs
+            .0
+            .delete_runtime(&self.runtime_id, &self.target);
     }
 }
 
 #[derive(Clone)]
-pub struct ShmRemoteConfigs<N: NotifyTarget + 'static>(Arc<MultiTargetFetcher<N, ConfigFileStorage>>);
+pub struct ShmRemoteConfigs<N: NotifyTarget + 'static>(
+    Arc<MultiTargetFetcher<N, ConfigFileStorage>>,
+);
 
 // we collect services per env, so that we always query, for each runtime + env, all the services
 // adding runtimes increases amount of services, removing services after a while
 
-// one request per (runtime_id, RemoteConfigIdentifier) tuple: extra_services are all services pertaining to that env
-// refcounting RemoteConfigIdentifier tuples by their unique runtime_id
+// one request per (runtime_id, RemoteConfigIdentifier) tuple: extra_services are all services
+// pertaining to that env refcounting RemoteConfigIdentifier tuples by their unique runtime_id
 
 impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
     pub fn new(invariants: ConfigInvariants, on_dead: Box<dyn FnOnce() + Sync + Send>) -> Self {
@@ -228,7 +269,8 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
             env,
             app_version,
         });
-        self.0.add_runtime(runtime_id.clone(), notify_target, &target);
+        self.0
+            .add_runtime(runtime_id.clone(), notify_target, &target);
         ShmRemoteConfigsGuard {
             target,
             runtime_id,
@@ -250,7 +292,10 @@ fn read_config(path: &str) -> anyhow::Result<RemoteConfigValue> {
         let data = &data[4..(4 + u32::from_ne_bytes((&data[0..4]).try_into()?) as usize)];
         RemoteConfigValue::try_parse(&rc_path, data)
     } else {
-        anyhow::bail!("could not read config; {} does not have exactly one colon", path);
+        anyhow::bail!(
+            "could not read config; {} does not have exactly one colon",
+            path
+        );
     }
 }
 
@@ -296,7 +341,9 @@ impl RemoteConfigManager {
     /// Has to be polled repeatedly until None is returned.
     pub fn fetch_update(&mut self) -> RemoteConfigUpdate {
         if let Some(ref target) = self.active_target {
-            let reader = self.active_reader.get_or_insert_with(|| RemoteConfigReader::new(&self.invariants, target));
+            let reader = self
+                .active_reader
+                .get_or_insert_with(|| RemoteConfigReader::new(&self.invariants, target));
 
             let (changed, data) = reader.read();
             if changed {
@@ -346,12 +393,15 @@ impl RemoteConfigManager {
                 match read_config(&config) {
                     Ok(parsed) => {
                         trace!("Adding remote config file {config}: {parsed:?}");
-                        self.active_configs.insert(config, RemoteConfigPath {
-                            source: parsed.source.clone(),
-                            product: (&parsed.data).into(),
-                            config_id: parsed.config_id.clone(),
-                            name: parsed.name.clone(),
-                        });
+                        self.active_configs.insert(
+                            config,
+                            RemoteConfigPath {
+                                source: parsed.source.clone(),
+                                product: (&parsed.data).into(),
+                                config_id: parsed.config_id.clone(),
+                                name: parsed.name.clone(),
+                            },
+                        );
                         return RemoteConfigUpdate::Add(parsed);
                     }
                     Err(e) => warn!("Failed reading remote config file {config}; skipping: {e:?}"),
@@ -370,8 +420,10 @@ impl RemoteConfigManager {
                 if self.check_configs.is_empty() {
                     current_configs.extend(self.active_configs.keys().cloned());
                 }
-                self.encountered_targets.insert(old_target.clone(), (reader, current_configs));
-                self.unexpired_targets.push(old_target, Reverse(Instant::now()));
+                self.encountered_targets
+                    .insert(old_target.clone(), (reader, current_configs));
+                self.unexpired_targets
+                    .push(old_target, Reverse(Instant::now()));
             }
         }
         if let Some(ref target) = self.active_target {
@@ -410,12 +462,14 @@ impl RemoteConfigManager {
 
 #[cfg(test)]
 mod tests {
-    use lazy_static::lazy_static;
-    use manual_future::ManualFuture;
-    use datadog_remote_config::dynamic_configuration::data::{Configs, tests::dummy_dynamic_config};
     use super::*;
+    use datadog_remote_config::dynamic_configuration::data::{
+        tests::dummy_dynamic_config, Configs,
+    };
     use datadog_remote_config::fetch::test_server::RemoteConfigServer;
     use datadog_remote_config::{RemoteConfigData, RemoteConfigProduct, RemoteConfigSource};
+    use lazy_static::lazy_static;
+    use manual_future::ManualFuture;
 
     lazy_static! {
         static ref PATH_FIRST: RemoteConfigPath = RemoteConfigPath {
@@ -424,14 +478,12 @@ mod tests {
             config_id: "1234".to_string(),
             name: "config".to_string(),
         };
-
         static ref PATH_SECOND: RemoteConfigPath = RemoteConfigPath {
             source: RemoteConfigSource::Employee,
             product: RemoteConfigProduct::ApmTracing,
             config_id: "9876".to_string(),
             name: "config".to_string(),
         };
-
         static ref DUMMY_TARGET: Arc<Target> = Arc::new(Target {
             service: "service".to_string(),
             env: "env".to_string(),
@@ -449,13 +501,17 @@ mod tests {
     impl Eq for NotifyDummy {}
 
     impl PartialEq<Self> for NotifyDummy {
-        fn eq(&self, _other: &Self) -> bool { true }
+        fn eq(&self, _other: &Self) -> bool {
+            true
+        }
     }
 
     impl NotifyTarget for NotifyDummy {
         fn notify(&self) {
             let channel = self.0.clone();
-            tokio::spawn(async move { channel.send(()).await.unwrap(); });
+            tokio::spawn(async move {
+                channel.send(()).await.unwrap();
+            });
         }
     }
 
@@ -464,11 +520,23 @@ mod tests {
         let server = RemoteConfigServer::spawn();
 
         let (on_dead, on_dead_completer) = ManualFuture::new();
-        let shm = ShmRemoteConfigs::new(server.dummy_invariants(), Box::new(|| { tokio::spawn(on_dead_completer.complete(())); }));
+        let shm = ShmRemoteConfigs::new(
+            server.dummy_invariants(),
+            Box::new(|| {
+                tokio::spawn(on_dead_completer.complete(()));
+            }),
+        );
 
         let mut manager = RemoteConfigManager::new(server.dummy_invariants());
 
-        server.files.lock().unwrap().insert(PATH_FIRST.clone(), (vec![DUMMY_TARGET.clone()], 1, serde_json::to_string(&dummy_dynamic_config(true)).unwrap()));
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (
+                vec![DUMMY_TARGET.clone()],
+                1,
+                serde_json::to_string(&dummy_dynamic_config(true)).unwrap(),
+            ),
+        );
 
         // Nothing yet. (No target)
         assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
@@ -479,7 +547,13 @@ mod tests {
 
         let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
 
-        let shm_guard = shm.add_runtime("3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(), NotifyDummy(Arc::new(sender)), DUMMY_TARGET.env.to_string(), DUMMY_TARGET.service.to_string(), DUMMY_TARGET.app_version.to_string());
+        let shm_guard = shm.add_runtime(
+            "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
+            NotifyDummy(Arc::new(sender)),
+            DUMMY_TARGET.env.to_string(),
+            DUMMY_TARGET.service.to_string(),
+            DUMMY_TARGET.app_version.to_string(),
+        );
 
         receiver.recv().await;
 
@@ -488,7 +562,10 @@ mod tests {
             assert_eq!(update.source, PATH_FIRST.source);
             assert_eq!(update.name, PATH_FIRST.name);
             if let RemoteConfigData::DynamicConfig(data) = update.data {
-                assert!(matches!(<Vec<Configs>>::from(data.lib_config)[0], Configs::TracingEnabled(true)));
+                assert!(matches!(
+                    <Vec<Configs>>::from(data.lib_config)[0],
+                    Configs::TracingEnabled(true)
+                ));
             } else {
                 unreachable!();
             }
@@ -501,8 +578,22 @@ mod tests {
 
         {
             let mut files = server.files.lock().unwrap();
-            files.insert(PATH_FIRST.clone(), (vec![DUMMY_TARGET.clone()], 2, serde_json::to_string(&dummy_dynamic_config(false)).unwrap()));
-            files.insert(PATH_SECOND.clone(), (vec![DUMMY_TARGET.clone()], 1, serde_json::to_string(&dummy_dynamic_config(true)).unwrap()));
+            files.insert(
+                PATH_FIRST.clone(),
+                (
+                    vec![DUMMY_TARGET.clone()],
+                    2,
+                    serde_json::to_string(&dummy_dynamic_config(false)).unwrap(),
+                ),
+            );
+            files.insert(
+                PATH_SECOND.clone(),
+                (
+                    vec![DUMMY_TARGET.clone()],
+                    1,
+                    serde_json::to_string(&dummy_dynamic_config(true)).unwrap(),
+                ),
+            );
         }
 
         receiver.recv().await;
@@ -522,7 +613,14 @@ mod tests {
             unreachable!();
         };
         if let RemoteConfigUpdate::Add(update) = manager.fetch_update() {
-            assert_eq!(&update.config_id, if was_second { &PATH_FIRST.config_id } else { &PATH_SECOND.config_id });
+            assert_eq!(
+                &update.config_id,
+                if was_second {
+                    &PATH_FIRST.config_id
+                } else {
+                    &PATH_SECOND.config_id
+                }
+            );
         } else {
             unreachable!();
         };
@@ -543,7 +641,14 @@ mod tests {
         manager.track_target(&DUMMY_TARGET);
         // If we re-track it's added again immediately
         if let RemoteConfigUpdate::Add(update) = manager.fetch_update() {
-            assert_eq!(&update.config_id, if was_second { &PATH_SECOND.config_id } else { &PATH_FIRST.config_id });
+            assert_eq!(
+                &update.config_id,
+                if was_second {
+                    &PATH_SECOND.config_id
+                } else {
+                    &PATH_FIRST.config_id
+                }
+            );
         } else {
             unreachable!();
         };
@@ -562,7 +667,14 @@ mod tests {
             unreachable!();
         };
         if let RemoteConfigUpdate::Remove(update) = manager.fetch_update() {
-            assert_eq!(&update, if was_second { &*PATH_FIRST } else { &*PATH_SECOND });
+            assert_eq!(
+                &update,
+                if was_second {
+                    &*PATH_FIRST
+                } else {
+                    &*PATH_SECOND
+                }
+            );
         } else {
             unreachable!();
         };

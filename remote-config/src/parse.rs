@@ -1,9 +1,9 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Unless explicitly stated otherwise all files in this repository are licensed under the Apache
+// License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use std::fmt::Display;
-use serde::{Deserialize, Serialize};
 use crate::dynamic_configuration::data::DynamicConfigFile;
+use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
 pub enum RemoteConfigSource {
@@ -69,8 +69,19 @@ impl RemoteConfigPath {
 impl ToString for RemoteConfigPath {
     fn to_string(&self) -> String {
         match self.source {
-            RemoteConfigSource::Datadog(id) => format!("datadog/{}/{}/{}/{}", id, self.product.to_string(), self.config_id, self.name),
-            RemoteConfigSource::Employee => format!("employee/{}/{}/{}", self.product.to_string(), self.config_id, self.name),
+            RemoteConfigSource::Datadog(id) => format!(
+                "datadog/{}/{}/{}/{}",
+                id,
+                self.product.to_string(),
+                self.config_id,
+                self.name
+            ),
+            RemoteConfigSource::Employee => format!(
+                "employee/{}/{}/{}",
+                self.product.to_string(),
+                self.config_id,
+                self.name
+            ),
         }
     }
 }
@@ -78,15 +89,18 @@ impl ToString for RemoteConfigPath {
 #[derive(Debug)]
 pub enum RemoteConfigData {
     DynamicConfig(DynamicConfigFile),
-    LiveDebugger(( /* placeholder */)),
+    LiveDebugger(()),
 }
 
 impl RemoteConfigData {
-    pub fn try_parse(product: RemoteConfigProduct, data: &[u8]) -> anyhow::Result<RemoteConfigData> {
+    pub fn try_parse(
+        product: RemoteConfigProduct,
+        data: &[u8],
+    ) -> anyhow::Result<RemoteConfigData> {
         Ok(match product {
             RemoteConfigProduct::ApmTracing => {
                 RemoteConfigData::DynamicConfig(serde_json::from_slice(data)?)
-            },
+            }
             RemoteConfigProduct::LiveDebugger => {
                 RemoteConfigData::LiveDebugger(/* placeholder */ ())
             }

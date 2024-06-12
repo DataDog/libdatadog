@@ -1,16 +1,16 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::atomic::AtomicI32;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, MutexGuard},
 };
-use std::sync::atomic::AtomicI32;
 
 use futures::future;
 
-use tracing::{enabled, info, Level};
 use datadog_remote_config::fetch::ConfigInvariants;
+use tracing::{enabled, info, Level};
 
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{dogstatsd, tracer};
@@ -28,7 +28,8 @@ pub(crate) struct SessionInfo {
     dogstatsd: Arc<Mutex<dogstatsd::Flusher>>,
     remote_config_invariants: Arc<Mutex<Option<ConfigInvariants>>>,
     #[cfg(windows)]
-    pub(crate) remote_config_notify_function: Arc<Mutex<crate::service::remote_configs::RemoteConfigNotifyFunction>>,
+    pub(crate) remote_config_notify_function:
+        Arc<Mutex<crate::service::remote_configs::RemoteConfigNotifyFunction>>,
     pub(crate) log_guard:
         Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
     #[cfg(feature = "tracing")]

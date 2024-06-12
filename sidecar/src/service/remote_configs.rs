@@ -1,9 +1,9 @@
+use crate::shm_remote_config::{ShmRemoteConfigs, ShmRemoteConfigsGuard};
+use datadog_remote_config::fetch::{ConfigInvariants, NotifyTarget};
 use std::collections::hash_map::Entry;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 use zwohash::HashMap;
-use datadog_remote_config::fetch::{ConfigInvariants, NotifyTarget};
-use crate::shm_remote_config::{ShmRemoteConfigs, ShmRemoteConfigsGuard};
 
 #[cfg(windows)]
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -15,21 +15,28 @@ unsafe impl Sync for RemoteConfigNotifyFunction {}
 #[cfg(windows)]
 impl Default for RemoteConfigNotifyFunction {
     fn default() -> Self {
-        return RemoteConfigNotifyFunction(std::ptr::null_mut())
+        return RemoteConfigNotifyFunction(std::ptr::null_mut());
     }
 }
 
 #[cfg(windows)]
 impl serde::Serialize for RemoteConfigNotifyFunction {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
         serializer.serialize_u64(self.0 as u64)
     }
 }
 
 #[cfg(windows)]
 impl<'de> serde::Deserialize<'de> for RemoteConfigNotifyFunction {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: serde::Deserializer<'de> {
-        <u64 as serde::Deserialize<'de>>::deserialize(deserializer).map(|p| RemoteConfigNotifyFunction(p as *mut libc::c_void))
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        <u64 as serde::Deserialize<'de>>::deserialize(deserializer)
+            .map(|p| RemoteConfigNotifyFunction(p as *mut libc::c_void))
     }
 }
 
@@ -63,13 +70,23 @@ impl NotifyTarget for RemoteConfigNotifyTarget {
         // TODO: CreateRemoteThread -> ddtrace_set_all_thread_vm_interrupt
         unsafe {
             let dummy = 0;
-            kernel32::CreateRemoteThread(self.process_handle.0, std::ptr::null_mut(), 0, Some(std::mem::transmute(self.notify_function.0)), &dummy as *const i32 as winapi::LPVOID, 0, std::ptr::null_mut());
+            kernel32::CreateRemoteThread(
+                self.process_handle.0,
+                std::ptr::null_mut(),
+                0,
+                Some(std::mem::transmute(self.notify_function.0)),
+                &dummy as *const i32 as winapi::LPVOID,
+                0,
+                std::ptr::null_mut(),
+            );
         }
     }
 }
 
 #[derive(Default, Clone)]
-pub struct RemoteConfigs(Arc<Mutex<HashMap<ConfigInvariants, ShmRemoteConfigs<RemoteConfigNotifyTarget>>>>);
+pub struct RemoteConfigs(
+    Arc<Mutex<HashMap<ConfigInvariants, ShmRemoteConfigs<RemoteConfigNotifyTarget>>>>,
+);
 pub type RemoteConfigsGuard = ShmRemoteConfigsGuard<RemoteConfigNotifyTarget>;
 
 impl RemoteConfigs {
@@ -87,11 +104,15 @@ impl RemoteConfigs {
             Entry::Vacant(e) => {
                 let this = self.0.clone();
                 let invariants = e.key().clone();
-                e.insert(ShmRemoteConfigs::new(invariants.clone(), Box::new(move || {
-                    this.lock().unwrap().remove(&invariants);
-                })))
+                e.insert(ShmRemoteConfigs::new(
+                    invariants.clone(),
+                    Box::new(move || {
+                        this.lock().unwrap().remove(&invariants);
+                    }),
+                ))
             }
-        }.add_runtime(runtime_id, notify_target, env, service, app_version)
+        }
+        .add_runtime(runtime_id, notify_target, env, service, app_version)
     }
 
     pub fn shutdown(&self) {

@@ -9,8 +9,8 @@ pub mod entry;
 pub mod log;
 pub mod one_way_shared_memory;
 mod self_telemetry;
-pub mod shm_remote_config;
 pub mod setup;
+pub mod shm_remote_config;
 mod tracer;
 mod watchdog;
 

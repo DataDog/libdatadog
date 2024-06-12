@@ -1,6 +1,6 @@
-use std::sync::Arc;
 use crate::fetch::{ConfigFetcher, ConfigFetcherState, ConfigInvariants, FileStorage, OpaqueState};
 use crate::Target;
+use std::sync::Arc;
 
 pub struct SingleFetcher<S: FileStorage> {
     fetcher: ConfigFetcher<S>,
@@ -24,6 +24,14 @@ impl<S: FileStorage> SingleFetcher<S> {
     }
 
     pub async fn fetch_once(&mut self) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
-        self.fetcher.fetch_once(self.runtime_id.as_str(), self.target.clone(), self.config_id.as_str(), self.last_error.take(), &mut self.opaque_state).await
+        self.fetcher
+            .fetch_once(
+                self.runtime_id.as_str(),
+                self.target.clone(),
+                self.config_id.as_str(),
+                self.last_error.take(),
+                &mut self.opaque_state,
+            )
+            .await
     }
 }

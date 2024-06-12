@@ -66,7 +66,7 @@ pub trait SidecarInterface {
     async fn set_session_config(
         session_id: String,
         remote_config_notify_target: RemoteConfigNotifyTarget,
-        config: SessionConfig
+        config: SessionConfig,
     );
 
     /// Shuts down a runtime.

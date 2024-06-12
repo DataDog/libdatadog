@@ -4,6 +4,7 @@
 // imports for structs defined in this file
 use crate::config;
 use crate::service::telemetry::enqueued_telemetry_data::EnqueuedTelemetryData;
+use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddtelemetry::metrics::MetricContext;
@@ -11,7 +12,6 @@ use ddtelemetry::worker::TelemetryActions;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
-use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 
 // public types we want to bring up to top level of service:: scope
 pub use instance_id::InstanceId;

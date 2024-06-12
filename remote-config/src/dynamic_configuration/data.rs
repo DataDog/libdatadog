@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "test", derive(Serialize))]
@@ -64,7 +64,9 @@ impl From<DynamicConfig> for Vec<Configs> {
     fn from(value: DynamicConfig) -> Self {
         let mut vec = vec![];
         if let Some(tags) = value.tracing_header_tags {
-            vec.push(Configs::TracingHeaderTags(tags.into_iter().map(|t| (t.header, t.tag_name)).collect()))
+            vec.push(Configs::TracingHeaderTags(
+                tags.into_iter().map(|t| (t.header, t.tag_name)).collect(),
+            ))
         }
         if let Some(sample_rate) = value.tracing_sample_rate {
             vec.push(Configs::TracingSampleRate(sample_rate));
@@ -101,7 +103,7 @@ pub mod tests {
     pub fn dummy_dynamic_config(enabled: bool) -> DynamicConfigFile {
         DynamicConfigFile {
             action: "".to_string(),
-            service_target : DynamicConfigTarget {
+            service_target: DynamicConfigTarget {
                 service: "".to_string(),
                 env: "".to_string(),
             },

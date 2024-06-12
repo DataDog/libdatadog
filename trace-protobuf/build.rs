@@ -119,7 +119,10 @@ fn generate_protobuf() {
         "#[serde(rename = \"DBType\")]",
     );
 
-    config.type_attribute("ClientGetConfigsResponse", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute(
+        "ClientGetConfigsResponse",
+        "#[derive(Deserialize, Serialize)]",
+    );
     config.type_attribute("File", "#[derive(Deserialize, Serialize)]");
     config.type_attribute(
         "ClientGetConfigsRequest",
@@ -168,9 +171,12 @@ fn generate_protobuf() {
     let license = "// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-".as_bytes();
+"
+    .as_bytes();
 
-    let null_deser = &[license, "use serde::{Deserialize, Deserializer, Serialize};
+    let null_deser = &[
+        license,
+        "use serde::{Deserialize, Deserializer, Serialize};
 
 fn deserialize_null_into_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
@@ -186,12 +192,18 @@ pub fn is_default<T: Default + PartialEq>(t: &T) -> bool {
 }
 
 "
-    .as_bytes()].concat();
+        .as_bytes(),
+    ]
+    .concat();
 
-    let serde_uses = &[license, "use serde::{Deserialize, Serialize};
+    let serde_uses = &[
+        license,
+        "use serde::{Deserialize, Serialize};
 
 "
-    .as_bytes()].concat();
+        .as_bytes(),
+    ]
+    .concat();
 
     prepend_to_file(null_deser, &output_path.join("pb.rs"));
     prepend_to_file(serde_uses, &output_path.join("remoteconfig.rs"));

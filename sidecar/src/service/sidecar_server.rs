@@ -40,12 +40,12 @@ use serde::{Deserialize, Serialize};
 use tokio::task::{JoinError, JoinHandle};
 
 use crate::dogstatsd::DogStatsDAction;
+use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats;
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
 use datadog_remote_config::fetch::ConfigInvariants;
-use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 
 type NoResponse = Ready<()>;
 
@@ -117,7 +117,14 @@ impl SidecarServer {
     #[cfg_attr(not(windows), allow(unused_mut))]
     pub async fn accept_connection(mut self, async_channel: AsyncChannel) {
         #[cfg(windows)]
-        { self.process_handle = async_channel.metadata.lock().unwrap().process_handle().map(|p| ProcessHandle(p as winapi::HANDLE)); }
+        {
+            self.process_handle = async_channel
+                .metadata
+                .lock()
+                .unwrap()
+                .process_handle()
+                .map(|p| ProcessHandle(p as winapi::HANDLE));
+        }
         let server = tarpc::server::BaseChannel::new(
             tarpc::server::Config {
                 pending_response_buffer: 10000,
@@ -512,12 +519,14 @@ impl SidecarInterface for SidecarServer {
                 }
             },
             Entry::Vacant(entry) => {
-                if actions.len() == 1 && matches!(
-                    actions[0],
-                    SidecarAction::Telemetry(TelemetryActions::Lifecycle(
-                        LifecycleAction::Stop
-                    ))
-                ) {
+                if actions.len() == 1
+                    && matches!(
+                        actions[0],
+                        SidecarAction::Telemetry(TelemetryActions::Lifecycle(
+                            LifecycleAction::Stop
+                        ))
+                    )
+                {
                     rt_info.lock_remote_config_guards().remove(&queue_id);
                 } else {
                     entry.insert(AppOrQueue::Queue(EnqueuedTelemetryData::processed(actions)));
@@ -606,17 +615,20 @@ impl SidecarInterface for SidecarServer {
         self,
         _: Context,
         session_id: String,
-        #[cfg(unix)]
-        pid: libc::pid_t,
+        #[cfg(unix)] pid: libc::pid_t,
         #[cfg(windows)]
         remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
         config: SessionConfig,
     ) -> Self::SetSessionConfigFut {
         let session = self.get_session(&session_id);
         #[cfg(unix)]
-        { session.pid.store(pid, Ordering::Relaxed); }
+        {
+            session.pid.store(pid, Ordering::Relaxed);
+        }
         #[cfg(windows)]
-        { *session.remote_config_notify_function.lock().unwrap() = remote_config_notify_function; }
+        {
+            *session.remote_config_notify_function.lock().unwrap() = remote_config_notify_function;
+        }
         session.modify_telemetry_config(|cfg| {
             let endpoint =
                 get_product_endpoint(ddtelemetry::config::PROD_INTAKE_SUBDOMAIN, &config.endpoint);
@@ -772,9 +784,27 @@ impl SidecarInterface for SidecarServer {
             return no_response();
         };
         #[cfg(unix)]
-        let notify_target = RemoteConfigNotifyTarget { pid: session.pid.load(Ordering::Relaxed) };
-        session.get_runtime(&instance_id.runtime_id).lock_remote_config_guards().insert(queue_id, self.remote_configs
-            .add_runtime(session.get_remote_config_invariants().as_ref().expect("Expecting remote config invariants to be set early").clone(), instance_id.runtime_id, notify_target, env_name, service_name, app_version));
+        let notify_target = RemoteConfigNotifyTarget {
+            pid: session.pid.load(Ordering::Relaxed),
+        };
+        session
+            .get_runtime(&instance_id.runtime_id)
+            .lock_remote_config_guards()
+            .insert(
+                queue_id,
+                self.remote_configs.add_runtime(
+                    session
+                        .get_remote_config_invariants()
+                        .as_ref()
+                        .expect("Expecting remote config invariants to be set early")
+                        .clone(),
+                    instance_id.runtime_id,
+                    notify_target,
+                    env_name,
+                    service_name,
+                    app_version,
+                ),
+            );
 
         no_response()
     }

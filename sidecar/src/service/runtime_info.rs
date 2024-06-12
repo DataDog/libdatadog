@@ -131,7 +131,9 @@ impl RuntimeInfo {
     ///
     /// * `MutexGuard<HashMap<QueueId, RemoteConfigsGuard>>` - A mutable reference to the remote
     ///   config guards map.
-    pub(crate) fn lock_remote_config_guards(&self) -> MutexGuard<HashMap<QueueId, RemoteConfigsGuard>> {
+    pub(crate) fn lock_remote_config_guards(
+        &self,
+    ) -> MutexGuard<HashMap<QueueId, RemoteConfigsGuard>> {
         self.remote_config_guards.lock().unwrap()
     }
 }

@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use core::slice;
+use serde::ser::Error;
+use serde::Serializer;
 use std::borrow::Cow;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::os::raw::c_char;
 use std::str::Utf8Error;
-use serde::ser::Error;
-use serde::Serializer;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -126,19 +126,31 @@ impl<'a, T> Default for Slice<'a, T> {
     }
 }
 
-impl<'a, T> Hash for Slice<'a, T> where Slice<'a, T>: AsBytes<'a> {
+impl<'a, T> Hash for Slice<'a, T>
+where
+    Slice<'a, T>: AsBytes<'a>,
+{
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write(self.as_bytes())
     }
 }
 
-impl<'a, T> serde::Serialize for Slice<'a, T> where Slice<'a, T>: AsBytes<'a> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+impl<'a, T> serde::Serialize for Slice<'a, T>
+where
+    Slice<'a, T>: AsBytes<'a>,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
         serializer.serialize_str(self.try_to_utf8().map_err(Error::custom)?)
     }
 }
 
-impl<'a, T> Display for Slice<'a, T> where Slice<'a, T>: AsBytes<'a> {
+impl<'a, T> Display for Slice<'a, T>
+where
+    Slice<'a, T>: AsBytes<'a>,
+{
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.try_to_utf8().map_err(|_| std::fmt::Error)?)
     }

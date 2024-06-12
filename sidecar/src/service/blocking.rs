@@ -201,17 +201,16 @@ pub fn register_service_and_flush_queued_actions(
 /// An `io::Result<()>` indicating the result of the operation.
 pub fn set_session_config(
     transport: &mut SidecarTransport,
-    #[cfg(unix)]
-    pid: libc::pid_t,
-    #[cfg(windows)]
-    remote_config_notify_function: *mut libc::c_void,
+    #[cfg(unix)] pid: libc::pid_t,
+    #[cfg(windows)] remote_config_notify_function: *mut libc::c_void,
     session_id: String,
     config: &SessionConfig,
 ) -> io::Result<()> {
     #[cfg(unix)]
     let remote_config_notify_target = pid;
     #[cfg(windows)]
-    let remote_config_notify_target = crate::service::remote_configs::RemoteConfigNotifyFunction(remote_config_notify_function);
+    let remote_config_notify_target =
+        crate::service::remote_configs::RemoteConfigNotifyFunction(remote_config_notify_function);
     transport.send(SidecarInterfaceRequest::SetSessionConfig {
         session_id,
         remote_config_notify_target,
