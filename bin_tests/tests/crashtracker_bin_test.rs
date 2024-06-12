@@ -12,25 +12,32 @@ use std::{fs, path::PathBuf};
 use anyhow::Context;
 use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReceiverType {
+    ChildProcessStdin,
+    UnixSocket,
+}
+
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_debug() {
-    test_crash_tracking_bin(BuildProfile::Debug);
+    test_crash_tracking_bin(BuildProfile::Debug, ReceiverType::ChildProcessStdin);
 }
 
 #[test]
 #[ignore] // This test is slow, only run it if explicitly opted in
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_release() {
-    test_crash_tracking_bin(BuildProfile::Release);
+    test_crash_tracking_bin(BuildProfile::Release, ReceiverType::ChildProcessStdin);
 }
 
-fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile) {
-    let (crashtracker_bin, crashtracker_receiver) =
+fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, receiver_type : ReceiverType) {
+    let (crashtracker_bin, crashtracker_receiver, _crashtracker_unix_socket_receiver) =
         setup_crashtracking_crates(crash_tracking_receiver_profile);
     let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
 
     let mut p = process::Command::new(&fixtures.artifacts[&crashtracker_bin])
+        .arg(format!("{receiver_type:?}"))
         .arg(format!("file://{}", fixtures.crash_profile_path.display()))
         .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
         .arg(&fixtures.stderr_path)
@@ -136,9 +143,14 @@ fn assert_telemetry_message(crash_telemetry: &[u8]) {
 #[cfg_attr(miri, ignore)]
 #[cfg(unix)]
 fn crash_tracking_empty_endpoint() {
+    crash_tracking_empty_endpoint_inner(ReceiverType::ChildProcessStdin)
+}
+
+#[cfg(unix)]
+fn crash_tracking_empty_endpoint_inner(receiver_type : ReceiverType) {
     use std::os::unix::net::UnixListener;
 
-    let (crashtracker_bin, crashtracker_receiver) = setup_crashtracking_crates(BuildProfile::Debug);
+    let (crashtracker_bin, crashtracker_receiver, _crashtracker_unix_socket_receiver) = setup_crashtracking_crates(BuildProfile::Debug);
     let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
 
     let socket_path = extend_path(fixtures.tmpdir.path(), "trace_agent.socket");
@@ -146,6 +158,7 @@ fn crash_tracking_empty_endpoint() {
 
     process::Command::new(&fixtures.artifacts[&crashtracker_bin])
         // empty url, endpoint will be set to none
+        .arg(format!("{receiver_type:?}"))
         .arg("")
         .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
         .arg(&fixtures.stderr_path)
@@ -176,6 +189,7 @@ struct TestFixtures<'a> {
     crash_telemetry_path: PathBuf,
     stdout_path: PathBuf,
     stderr_path: PathBuf,
+    unix_socket_path: PathBuf,
 
     artifacts: HashMap<&'a ArtifactsBuild, PathBuf>,
 }
@@ -189,6 +203,7 @@ fn setup_test_fixtures<'a>(crates: &[&'a ArtifactsBuild]) -> TestFixtures<'a> {
         crash_telemetry_path: extend_path(tmpdir.path(), "crash.telemetry"),
         stdout_path: extend_path(tmpdir.path(), "out.stdout"),
         stderr_path: extend_path(tmpdir.path(), "out.stderr"),
+        unix_socket_path: extend_path(tmpdir.path(), "crashtracker.socket"),
 
         artifacts,
         tmpdir,
@@ -197,7 +212,7 @@ fn setup_test_fixtures<'a>(crates: &[&'a ArtifactsBuild]) -> TestFixtures<'a> {
 
 fn setup_crashtracking_crates(
     crash_tracking_receiver_profile: BuildProfile,
-) -> (ArtifactsBuild, ArtifactsBuild) {
+) -> (ArtifactsBuild, ArtifactsBuild, ArtifactsBuild) {
     let crashtracker_bin = ArtifactsBuild {
         name: "crashtracker_bin_test".to_owned(),
         build_profile: crash_tracking_receiver_profile,
@@ -210,7 +225,13 @@ fn setup_crashtracking_crates(
         artifact_type: ArtifactType::Bin,
         triple_target: None,
     };
-    (crashtracker_bin, crashtracker_receiver)
+    let crashtracker_unix_socket_receiver = ArtifactsBuild {
+        name: "crashtracker_unix_socket_receiver".to_owned(),
+        build_profile: crash_tracking_receiver_profile,
+        artifact_type: ArtifactType::Bin,
+        triple_target: None,
+    };
+    (crashtracker_bin, crashtracker_receiver, crashtracker_unix_socket_receiver)
 }
 
 fn extend_path<T: AsRef<Path>>(parent: &Path, path: T) -> PathBuf {

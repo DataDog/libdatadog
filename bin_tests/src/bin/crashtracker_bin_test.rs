@@ -27,6 +27,7 @@ mod unix {
 
     pub fn main() -> anyhow::Result<()> {
         let mut args = env::args().skip(1);
+        let mode = args.next().context("Unexpected number of arguments")?;
         let output_url = args.next().context("Unexpected number of arguments")?;
         let receiver_binary = args.next().context("Unexpected number of arguments")?;
         let stderr_filename = args.next().context("Unexpected number of arguments")?;
