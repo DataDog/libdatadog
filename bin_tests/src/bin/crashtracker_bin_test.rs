@@ -12,6 +12,7 @@ fn main() -> anyhow::Result<()> {
 #[cfg(unix)]
 mod unix {
     use anyhow::Context;
+    use bin_tests::ReceiverType;
     use std::{env, time::Duration};
 
     use datadog_crashtracker::{
@@ -44,34 +45,44 @@ mod unix {
             })
         };
 
-        crashtracker::init_with_receiver(
-            CrashtrackerConfiguration {
-                additional_files: vec![],
-                create_alt_stack: true,
-                resolve_frames: crashtracker::StacktraceCollection::WithoutSymbols,
-                endpoint,
-                timeout,
-                wait_for_receiver,
-            },
-            CrashtrackerReceiverConfig::new(
-                vec![],
-                env::vars().collect(),
-                receiver_binary,
-                Some(stderr_filename),
-                Some(stdout_filename),
-            )?,
-            CrashtrackerMetadata {
-                profiling_library_name: "libdatadog".to_owned(),
-                profiling_library_version: "1.0.0".to_owned(),
-                family: "native".to_owned(),
-                tags: vec![
-                    tag!("service", "foo"),
-                    tag!("service_version", "bar"),
-                    tag!("runtime-id", "xyz"),
-                    tag!("language", "native"),
-                ],
-            },
-        )?;
+        let config = CrashtrackerConfiguration {
+            additional_files: vec![],
+            create_alt_stack: true,
+            resolve_frames: crashtracker::StacktraceCollection::WithoutSymbols,
+            endpoint,
+            timeout,
+            wait_for_receiver,
+        };
+
+        let metadata = CrashtrackerMetadata {
+            profiling_library_name: "libdatadog".to_owned(),
+            profiling_library_version: "1.0.0".to_owned(),
+            family: "native".to_owned(),
+            tags: vec![
+                tag!("service", "foo"),
+                tag!("service_version", "bar"),
+                tag!("runtime-id", "xyz"),
+                tag!("language", "native"),
+            ],
+        };
+
+        if mode == format!("{:?}", ReceiverType::ChildProcessStdin) {
+            crashtracker::init_with_receiver(
+                config,
+                CrashtrackerReceiverConfig::new(
+                    vec![],
+                    env::vars().collect(),
+                    receiver_binary,
+                    Some(stderr_filename),
+                    Some(stdout_filename),
+                )?,
+                metadata,
+            )?;
+        } else if mode == format!("{:?}", ReceiverType::UnixSocket) {
+        } else {
+            anyhow::bail!("unexpected mode: {mode}")
+        }
+
         crashtracker::begin_profiling_op(crashtracker::ProfilingOpTypes::CollectingSample)?;
         unsafe {
             deref_ptr(std::ptr::null_mut::<u8>());
