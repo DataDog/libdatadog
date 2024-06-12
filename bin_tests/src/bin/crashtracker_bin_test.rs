@@ -36,7 +36,7 @@ mod unix {
         let stdout_filename = args.next().context("Unexpected number of arguments")?;
         let socket_path = args.next().context("Unexpected number of arguments")?;
         anyhow::ensure!(args.next().is_none(), "unexpected extra arguments");
-        
+
         let timeout = Duration::from_secs(30);
         let wait_for_receiver = true;
 
@@ -86,7 +86,10 @@ mod unix {
             let stdout = File::create(stdout_filename)?;
             let stderr = File::create(stderr_filename)?;
 
-            // Fork a unix socket reciever
+            // Fork a unix socket receiver
+            // For now, this exits when a single message is received.
+            // When the listener is updated, we'll need to keep the handle and kill the receiver
+            // to avoid leaking a process.
             std::process::Command::new(unix_socket_reciever_binary)
                 .stderr(stderr)
                 .stdout(stdout)
