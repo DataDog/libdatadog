@@ -13,7 +13,7 @@ fn main() -> anyhow::Result<()> {
 mod unix {
     use anyhow::Context;
     use bin_tests::ReceiverType;
-    use std::{env, time::Duration};
+    use std::{env, fs::File, time::Duration};
 
     use datadog_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerMetadata,
@@ -31,8 +31,11 @@ mod unix {
         let mode = args.next().context("Unexpected number of arguments")?;
         let output_url = args.next().context("Unexpected number of arguments")?;
         let receiver_binary = args.next().context("Unexpected number of arguments")?;
+        let unix_socket_reciever_binary = args.next().context("Unexpected number of arguments")?;
         let stderr_filename = args.next().context("Unexpected number of arguments")?;
         let stdout_filename = args.next().context("Unexpected number of arguments")?;
+        let socket_path = args.next().context("Unexpected number of arguments")?;
+
         let timeout = Duration::from_secs(30);
         let wait_for_receiver = true;
 
@@ -79,6 +82,21 @@ mod unix {
                 metadata,
             )?;
         } else if mode == format!("{:?}", ReceiverType::UnixSocket) {
+            let stdout = File::create(stdout_filename)?;
+            let stderr = File::create(stderr_filename)?;
+
+            // Fork a unix socket reciever
+            std::process::Command::new(unix_socket_reciever_binary)
+                .stderr(stderr)
+                .stdout(stdout)
+                .arg(&socket_path)
+                .spawn()
+                .context("failed to spawn unix receiver")?;
+
+            // Wait long enough for the receiver to establish the socket
+            std::thread::sleep(std::time::Duration::from_secs(1));
+
+            crashtracker::init_with_unix_socket(config, &socket_path, metadata)?;
         } else {
             anyhow::bail!("unexpected mode: {mode}")
         }

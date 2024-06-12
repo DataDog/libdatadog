@@ -24,14 +24,12 @@ pub fn resolve_frames(
 pub fn get_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<UnixListener> {
     let socket_path = socket_path.as_ref();
     if std::fs::metadata(socket_path).is_ok() {
-        println!("A socket is already present. Deleting...");
         std::fs::remove_file(socket_path)
             .with_context(|| format!("could not delete previous socket at {:?}", socket_path))?;
     }
 
     let unix_listener =
         UnixListener::bind(socket_path).context("Could not create the unix socket")?;
-    println!("bound to socket");
     Ok(unix_listener)
 }
 
