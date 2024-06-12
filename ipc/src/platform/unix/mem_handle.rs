@@ -79,16 +79,11 @@ impl ShmHandle {
 
 impl NamedShmHandle {
     pub fn create(path: CString, size: usize) -> io::Result<NamedShmHandle> {
-        let fd = shm_open(
-            path.as_bytes(),
-            OFlag::O_CREAT | OFlag::O_RDWR,
-            Mode::S_IWUSR
-                | Mode::S_IRUSR
-                | Mode::S_IRGRP
-                | Mode::S_IWGRP
-                | Mode::S_IROTH
-                | Mode::S_IWOTH,
-        )?;
+        Self::create_mode(path, size, Mode::S_IWUSR | Mode::S_IRUSR)
+    }
+
+    pub fn create_mode(path: CString, size: usize, mode: Mode) -> io::Result<NamedShmHandle> {
+        let fd = shm_open(path.as_bytes(), OFlag::O_CREAT | OFlag::O_RDWR, mode)?;
         ftruncate(fd, size as off_t)?;
         Self::new(fd, Some(path), size)
     }

@@ -32,6 +32,7 @@ mod unix {
         let stderr_filename = args.next().context("Unexpected number of arguments")?;
         let stdout_filename = args.next().context("Unexpected number of arguments")?;
         let timeout = Duration::from_secs(30);
+        let wait_for_receiver = true;
 
         let endpoint = if output_url.is_empty() {
             None
@@ -42,21 +43,22 @@ mod unix {
             })
         };
 
-        crashtracker::init(
+        crashtracker::init_with_receiver(
             CrashtrackerConfiguration {
                 additional_files: vec![],
                 create_alt_stack: true,
                 resolve_frames: crashtracker::StacktraceCollection::WithoutSymbols,
                 endpoint,
                 timeout,
+                wait_for_receiver,
             },
-            Some(CrashtrackerReceiverConfig::new(
+            CrashtrackerReceiverConfig::new(
                 vec![],
                 env::vars().collect(),
                 receiver_binary,
                 Some(stderr_filename),
                 Some(stdout_filename),
-            )?),
+            )?,
             CrashtrackerMetadata {
                 profiling_library_name: "libdatadog".to_owned(),
                 profiling_library_version: "1.0.0".to_owned(),

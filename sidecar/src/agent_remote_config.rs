@@ -4,11 +4,13 @@
 use crate::one_way_shared_memory::{
     open_named_shm, OneWayShmReader, OneWayShmWriter, ReaderOpener,
 };
+use crate::primary_sidecar_identifier;
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
 use ddcommon::Endpoint;
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::io;
+use tracing::{trace, warn};
 use zwohash::ZwoHasher;
 
 pub struct AgentRemoteConfigEndpoint(Endpoint);
@@ -22,7 +24,12 @@ fn path_for_endpoint(endpoint: &Endpoint) -> CString {
     // We need a stable hash so that the outcome is independent of the process
     let mut hasher = ZwoHasher::default();
     endpoint.url.authority().unwrap().hash(&mut hasher);
-    CString::new(format!("/libdatadog-agent-config-{}", hasher.finish())).unwrap()
+    CString::new(format!(
+        "/ddcfg-{}-{}", // short enough because 31 character macos limitation
+        primary_sidecar_identifier(),
+        hasher.finish()
+    ))
+    .unwrap()
 }
 
 pub fn create_anon_pair() -> anyhow::Result<(AgentRemoteConfigWriter<ShmHandle>, ShmHandle)> {
@@ -30,9 +37,27 @@ pub fn create_anon_pair() -> anyhow::Result<(AgentRemoteConfigWriter<ShmHandle>,
     Ok((AgentRemoteConfigWriter(writer), handle))
 }
 
+fn try_open_shm(endpoint: &Endpoint) -> Option<MappedMem<NamedShmHandle>> {
+    let path = &path_for_endpoint(endpoint);
+    match open_named_shm(path) {
+        Ok(mapped) => {
+            trace!("Opened and loaded {path:?} for agent remote config.");
+            Some(mapped)
+        }
+        Err(e) => {
+            if e.raw_os_error().unwrap_or(0) != libc::ENOENT {
+                warn!("Tried to open path {path:?} for agent remote config, but failed: {e:?}");
+            } else {
+                trace!("Found {path:?} is not available yet for agent remote config");
+            }
+            None
+        }
+    }
+}
+
 pub fn new_reader(endpoint: &Endpoint) -> AgentRemoteConfigReader<NamedShmHandle> {
     AgentRemoteConfigReader(OneWayShmReader::new(
-        open_named_shm(&path_for_endpoint(endpoint)).ok(),
+        try_open_shm(endpoint),
         Some(AgentRemoteConfigEndpoint(endpoint.clone())),
     ))
 }
@@ -58,7 +83,7 @@ impl ReaderOpener<NamedShmHandle>
     fn open(&self) -> Option<MappedMem<NamedShmHandle>> {
         self.extra
             .as_ref()
-            .and_then(|endpoint| open_named_shm(&path_for_endpoint(&endpoint.0)).ok())
+            .and_then(|endpoint| try_open_shm(&endpoint.0))
     }
 }
 

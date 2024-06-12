@@ -15,6 +15,7 @@ use log::{debug, warn};
 #[cfg(not(feature = "logging"))]
 use tracing::{debug, warn};
 
+use crate::primary_sidecar_identifier;
 use crate::setup::Liaison;
 use datadog_ipc::platform::{self, locks::FLock, Channel};
 
@@ -88,13 +89,16 @@ impl Liaison for SharedDirLiaison {
 
 impl SharedDirLiaison {
     pub fn new<P: AsRef<Path>>(base_dir: P) -> Self {
-        let versioned_socket_basename = concat!("libdd.", crate::sidecar_version!(), ".sock");
+        let versioned_socket_basename = format!(
+            concat!("libdd.", crate::sidecar_version!(), "@{}.sock"),
+            primary_sidecar_identifier()
+        );
         let base_dir = base_dir.as_ref();
         let socket_path = base_dir
-            .join(versioned_socket_basename)
+            .join(&versioned_socket_basename)
             .with_extension(".sock");
         let lock_path = base_dir
-            .join(versioned_socket_basename)
+            .join(&versioned_socket_basename)
             .with_extension(".sock.lock");
 
         Self {
@@ -146,7 +150,10 @@ mod linux {
         }
 
         fn ipc_shared() -> AbstractUnixSocketLiaison {
-            let path = PathBuf::from(concat!("libdatadog/", crate::sidecar_version!(), ".sock"));
+            let path = PathBuf::from(format!(
+                concat!("libdatadog/", crate::sidecar_version!(), "@{}.sock"),
+                crate::primary_sidecar_identifier()
+            ));
             Self { path }
         }
 

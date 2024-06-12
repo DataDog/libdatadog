@@ -3,14 +3,15 @@
 
 use hyper::{body::Buf, Body};
 use log::{error, info};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 pub use crate::send_data::SendData;
-pub use crate::send_data::SendDataResult;
+// TODO: EK - FIX THIS
+pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::tracer_header_tags::TracerHeaderTags;
 use datadog_trace_normalization::normalizer;
-use datadog_trace_protobuf::pb;
-use datadog_trace_protobuf::pb::TraceChunk;
+use datadog_trace_protobuf::pb::{self, Span, TraceChunk, TracerPayload};
 use ddcommon::azure_app_services;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
@@ -21,13 +22,11 @@ const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 const MAX_PAYLOAD_SIZE: usize = 50 * 1024 * 1024;
 
 /// First value of returned tuple is the payload size
-pub async fn get_traces_from_request_body(
-    body: Body,
-) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
+pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<(usize, Vec<Vec<Span>>)> {
     let buffer = hyper::body::aggregate(body).await?;
     let size = buffer.remaining();
 
-    let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_read(buffer.reader()) {
+    let traces: Vec<Vec<Span>> = match rmp_serde::from_read(buffer.reader()) {
         Ok(res) => res,
         Err(err) => {
             anyhow::bail!("Error deserializing trace from request body: {err}")
@@ -50,8 +49,8 @@ pub struct RootSpanTags<'a> {
     pub runtime_id: &'a str,
 }
 
-pub(crate) fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
-    pb::TraceChunk {
+pub(crate) fn construct_trace_chunk(trace: Vec<Span>) -> TraceChunk {
+    TraceChunk {
         priority: normalizer::SamplerPriority::None as i32,
         origin: "".to_string(),
         spans: trace,
@@ -61,11 +60,11 @@ pub(crate) fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
 }
 
 pub(crate) fn construct_tracer_payload(
-    chunks: Vec<pb::TraceChunk>,
+    chunks: Vec<TraceChunk>,
     tracer_tags: &TracerHeaderTags,
     root_span_tags: RootSpanTags,
-) -> pb::TracerPayload {
-    pb::TracerPayload {
+) -> TracerPayload {
+    TracerPayload {
         app_version: root_span_tags.app_version.to_string(),
         language_name: tracer_tags.lang.to_string(),
         container_id: tracer_tags.container_id.to_string(),
@@ -77,6 +76,18 @@ pub(crate) fn construct_tracer_payload(
         tags: HashMap::new(),
         tracer_version: tracer_tags.tracer_version.to_string(),
     }
+}
+
+fn cmp_send_data_payloads(a: &pb::TracerPayload, b: &pb::TracerPayload) -> Ordering {
+    a.tracer_version
+        .cmp(&b.tracer_version)
+        .then(a.language_version.cmp(&b.language_version))
+        .then(a.language_name.cmp(&b.language_name))
+        .then(a.hostname.cmp(&b.hostname))
+        .then(a.container_id.cmp(&b.container_id))
+        .then(a.runtime_id.cmp(&b.runtime_id))
+        .then(a.env.cmp(&b.env))
+        .then(a.app_version.cmp(&b.app_version))
 }
 
 pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
@@ -103,16 +114,31 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
         }
         false
     });
+    // Merge chunks with common properties. Reduces requests for agentful mode.
+    // And reduces a little bit of data for agentless.
+    for send_data in data.iter_mut() {
+        send_data
+            .tracer_payloads
+            .sort_unstable_by(cmp_send_data_payloads);
+        send_data.tracer_payloads.dedup_by(|a, b| {
+            if cmp_send_data_payloads(a, b) == Ordering::Equal {
+                // Note: dedup_by drops a, and retains b.
+                b.chunks.append(&mut a.chunks);
+                return true;
+            }
+            false
+        })
+    }
     data
 }
 
-fn get_root_span_index(trace: &Vec<pb::Span>) -> anyhow::Result<usize> {
+fn get_root_span_index(trace: &Vec<Span>) -> anyhow::Result<usize> {
     if trace.is_empty() {
         anyhow::bail!("Cannot find root span index in an empty trace.");
     }
 
     // parent_id -> (child_span, index_of_child_span_in_trace)
-    let mut parent_id_to_child_map: HashMap<u64, (&pb::Span, usize)> = HashMap::new();
+    let mut parent_id_to_child_map: HashMap<u64, (&Span, usize)> = HashMap::new();
 
     // look for the span with parent_id == 0 (starting from the end) since some clients put the root
     // span last.
@@ -157,7 +183,7 @@ fn get_root_span_index(trace: &Vec<pb::Span>) -> anyhow::Result<usize> {
 ///   - OR its parent is unknown (other part of the code, distributed trace)
 ///   - OR its parent belongs to another service (in that case it's a "local root" being the highest
 ///     ancestor of other spans belonging to this service and attached to it).
-pub fn compute_top_level_span(trace: &mut [pb::Span]) {
+pub fn compute_top_level_span(trace: &mut [Span]) {
     let mut span_id_to_service: HashMap<u64, String> = HashMap::new();
     for span in trace.iter() {
         span_id_to_service.insert(span.span_id, span.service.clone());
@@ -182,7 +208,7 @@ pub fn compute_top_level_span(trace: &mut [pb::Span]) {
     }
 }
 
-fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
+fn set_top_level_span(span: &mut Span, is_top_level: bool) {
     if !is_top_level {
         if span.metrics.contains_key(TOP_LEVEL_KEY) {
             span.metrics.remove(TOP_LEVEL_KEY);
@@ -193,7 +219,7 @@ fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
 }
 
 pub fn set_serverless_root_span_tags(
-    span: &mut pb::Span,
+    span: &mut Span,
     function_name: Option<String>,
     env_type: &EnvironmentType,
 ) {
@@ -212,7 +238,7 @@ pub fn set_serverless_root_span_tags(
     }
 }
 
-fn update_tracer_top_level(span: &mut pb::Span) {
+fn update_tracer_top_level(span: &mut Span) {
     if span.metrics.contains_key(TRACER_TOP_LEVEL_KEY) {
         span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
     }
@@ -231,7 +257,7 @@ pub struct MiniAgentMetadata {
 }
 
 pub fn enrich_span_with_mini_agent_metadata(
-    span: &mut pb::Span,
+    span: &mut Span,
     mini_agent_metadata: &MiniAgentMetadata,
 ) {
     if let Some(gcp_project_id) = &mini_agent_metadata.gcp_project_id {
@@ -244,7 +270,7 @@ pub fn enrich_span_with_mini_agent_metadata(
     }
 }
 
-pub fn enrich_span_with_azure_metadata(span: &mut pb::Span, mini_agent_version: &str) {
+pub fn enrich_span_with_azure_metadata(span: &mut Span, mini_agent_version: &str) {
     if let Some(aas_metadata) = azure_app_services::get_function_metadata() {
         let aas_tags = [
             ("aas.resource.id", aas_metadata.get_resource_id()),
@@ -285,18 +311,22 @@ macro_rules! parse_root_span_tags {
 }
 
 pub fn collect_trace_chunks(
-    mut traces: Vec<Vec<pb::Span>>,
+    mut traces: Vec<Vec<Span>>,
     tracer_header_tags: &TracerHeaderTags,
     process_chunk: impl Fn(&mut TraceChunk, usize),
-) -> pb::TracerPayload {
-    let mut trace_chunks: Vec<pb::TraceChunk> = Vec::new();
+    is_agentless: bool,
+) -> TracerPayload {
+    let mut trace_chunks: Vec<TraceChunk> = Vec::new();
 
-    let mut gathered_root_span_tags = false;
+    // We'll skip setting the global metadata and rely on the agent to unpack these
+    let mut gathered_root_span_tags = !is_agentless;
     let mut root_span_tags = RootSpanTags::default();
 
     for trace in traces.iter_mut() {
-        if let Err(e) = normalizer::normalize_trace(trace) {
-            error!("Error normalizing trace: {e}");
+        if is_agentless {
+            if let Err(e) = normalizer::normalize_trace(trace) {
+                error!("Error normalizing trace: {e}");
+            }
         }
 
         let mut chunk = construct_trace_chunk(trace.to_vec());
@@ -358,20 +388,27 @@ mod tests {
         test_utils::create_test_span,
         trace_utils::{self, SendData},
     };
-    use datadog_trace_protobuf::pb;
+    use datadog_trace_protobuf::pb::TraceChunk;
+    use datadog_trace_protobuf::pb::{Span, TracerPayload};
     use ddcommon::Endpoint;
 
     #[test]
-    fn test_coalescing_does_not_excced_max_size() {
+    fn test_coalescing_does_not_exceed_max_size() {
         let dummy = SendData::new(
             MAX_PAYLOAD_SIZE / 5 + 1,
-            pb::TracerPayload {
+            TracerPayload {
                 container_id: "".to_string(),
                 language_name: "".to_string(),
                 language_version: "".to_string(),
                 tracer_version: "".to_string(),
                 runtime_id: "".to_string(),
-                chunks: vec![],
+                chunks: vec![TraceChunk {
+                    priority: 0,
+                    origin: "".to_string(),
+                    spans: vec![],
+                    tags: Default::default(),
+                    dropped_trace: false,
+                }],
                 tags: Default::default(),
                 env: "".to_string(),
                 hostname: "".to_string(),
@@ -391,8 +428,26 @@ mod tests {
             5,
             coalesced
                 .iter()
-                .map(|s| s.tracer_payloads.len())
+                .map(|s| s
+                    .tracer_payloads
+                    .iter()
+                    .map(|p| p.chunks.len())
+                    .sum::<usize>())
                 .sum::<usize>()
+        );
+        // assert some chunks are actually coalesced
+        assert!(
+            coalesced
+                .iter()
+                .map(|s| s
+                    .tracer_payloads
+                    .iter()
+                    .map(|p| p.chunks.len())
+                    .max()
+                    .unwrap())
+                .max()
+                .unwrap()
+                > 1
         );
         assert!(coalesced.len() > 1 && coalesced.len() < 5);
     }
@@ -415,7 +470,7 @@ mod tests {
                     "meta": {},
                     "metrics": {},
                 }]),
-                vec![vec![pb::Span {
+                vec![vec![Span {
                     service: "test-service".to_string(),
                     name: "test-service-name".to_string(),
                     resource: "test-service-resource".to_string(),
@@ -442,7 +497,7 @@ mod tests {
                     "duration": 5,
                     "meta": {},
                 }]),
-                vec![vec![pb::Span {
+                vec![vec![Span {
                     service: "".to_string(),
                     name: "test-service-name".to_string(),
                     resource: "test-service-resource".to_string(),

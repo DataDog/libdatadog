@@ -212,6 +212,7 @@ mod tests {
                 }),
                 resolve_frames: crate::StacktraceCollection::WithoutSymbols,
                 timeout: time::Duration::from_secs(30),
+                wait_for_receiver: true,
             },
         )
         .unwrap()

@@ -12,7 +12,13 @@ pub mod sockets;
 mod message;
 pub use message::*;
 
+#[cfg(target_os = "macos")]
+mod mem_handle_macos;
+#[cfg(target_os = "macos")]
+pub(crate) use mem_handle_macos::*;
+#[cfg(not(target_os = "macos"))]
 mod mem_handle;
+#[cfg(not(target_os = "macos"))]
 pub(crate) use mem_handle::*;
 
 #[no_mangle]

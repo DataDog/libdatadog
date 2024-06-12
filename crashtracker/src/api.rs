@@ -6,8 +6,8 @@ use crate::{
     configuration::CrashtrackerReceiverConfig,
     counters::reset_counters,
     crash_handler::{
-        ensure_receiver, register_crash_handlers, restore_old_handlers, shutdown_receiver,
-        update_receiver_after_fork,
+        ensure_receiver, ensure_socket, register_crash_handlers, restore_old_handlers,
+        shutdown_receiver, update_receiver_after_fork,
     },
     crash_info::CrashtrackerMetadata,
     update_config, update_metadata, CrashtrackerConfiguration,
@@ -81,9 +81,9 @@ pub fn on_fork(
 /// ATOMICITY:
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
-pub fn init(
+pub fn init_with_receiver(
     config: CrashtrackerConfiguration,
-    receiver_config: Option<CrashtrackerReceiverConfig>,
+    receiver_config: CrashtrackerReceiverConfig,
     metadata: CrashtrackerMetadata,
 ) -> anyhow::Result<()> {
     // Setup the receiver first, so that if there is a crash detected it has
@@ -91,9 +91,32 @@ pub fn init(
     let create_alt_stack = config.create_alt_stack;
     update_metadata(metadata)?;
     update_config(config)?;
-    if let Some(receiver_config) = &receiver_config {
-        ensure_receiver(receiver_config)?;
-    }
+    ensure_receiver(&receiver_config)?;
+    register_crash_handlers(create_alt_stack)?;
+    Ok(())
+}
+
+/// Initialize the crash-tracking infrastructure.
+///
+/// PRECONDITIONS:
+///     None.
+/// SAFETY:
+///     Crash-tracking functions are not reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function is not atomic. A crash during its execution may lead to
+///     unexpected crash-handling behaviour.
+pub fn init_with_unix_socket(
+    config: CrashtrackerConfiguration,
+    socket_path: &str,
+    metadata: CrashtrackerMetadata,
+) -> anyhow::Result<()> {
+    // Setup the receiver first, so that if there is a crash detected it has
+    // somewhere to go.
+    let create_alt_stack = config.create_alt_stack;
+    update_metadata(metadata)?;
+    update_config(config)?;
+    ensure_socket(socket_path)?;
     register_crash_handlers(create_alt_stack)?;
     Ok(())
 }
@@ -106,7 +129,7 @@ pub fn init(
 // look in /tmp/crashreports for the crash reports and output files
 #[ignore]
 #[test]
-fn test_crash() {
+fn test_crash() -> anyhow::Result<()> {
     use crate::{begin_profiling_op, StacktraceCollection};
     use chrono::Utc;
     use ddcommon::parse_uri;
@@ -130,27 +153,30 @@ fn test_crash() {
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
     let timeout = Duration::from_secs(30);
-    let receiver_config = Some(
-        CrashtrackerReceiverConfig::new(
-            vec![],
-            vec![],
-            path_to_receiver_binary,
-            stderr_filename,
-            stdout_filename,
-        )
-        .expect("Not to fail"),
-    );
-    let config =
-        CrashtrackerConfiguration::new(vec![], create_alt_stack, endpoint, resolve_frames, timeout)
-            .expect("not to fail");
+    let wait_for_receiver = true;
+    let receiver_config = CrashtrackerReceiverConfig::new(
+        vec![],
+        vec![],
+        path_to_receiver_binary,
+        stderr_filename,
+        stdout_filename,
+    )?;
+    let config = CrashtrackerConfiguration::new(
+        vec![],
+        create_alt_stack,
+        endpoint,
+        resolve_frames,
+        timeout,
+        wait_for_receiver,
+    )?;
     let metadata = CrashtrackerMetadata::new(
         "libname".to_string(),
         "version".to_string(),
         "family".to_string(),
         vec![],
     );
-    init(config, receiver_config, metadata).expect("not to fail");
-    begin_profiling_op(crate::ProfilingOpTypes::CollectingSample).expect("Not to fail");
+    init_with_receiver(config, receiver_config, metadata)?;
+    begin_profiling_op(crate::ProfilingOpTypes::CollectingSample)?;
 
     let tag = tag!("apple", "banana");
     let metadata2 = CrashtrackerMetadata::new(
@@ -161,7 +187,10 @@ fn test_crash() {
     );
     update_metadata(metadata2).expect("metadata");
 
+    std::thread::sleep(Duration::from_secs(2));
+
     let p: *const u32 = std::ptr::null();
     let q = unsafe { *p };
     assert_eq!(q, 3);
+    Ok(())
 }

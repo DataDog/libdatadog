@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
-use self::stacktrace::StackFrame;
 use super::*;
 use anyhow::Context;
 use nix::unistd::getppid;
+use std::{io::BufReader, os::unix::net::UnixListener};
 
 pub fn resolve_frames(
     config: &CrashtrackerConfiguration,
@@ -21,6 +21,33 @@ pub fn resolve_frames(
     Ok(())
 }
 
+pub fn get_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<UnixListener> {
+    let socket_path = socket_path.as_ref();
+    if std::fs::metadata(socket_path).is_ok() {
+        println!("A socket is already present. Deleting...");
+        std::fs::remove_file(socket_path)
+            .with_context(|| format!("could not delete previous socket at {:?}", socket_path))?;
+    }
+
+    let unix_listener =
+        UnixListener::bind(socket_path).context("Could not create the unix socket")?;
+    println!("bound to socket");
+    Ok(unix_listener)
+}
+
+pub fn reciever_entry_point_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<()> {
+    let listener = get_unix_socket(socket_path)?;
+    let (unix_stream, _) = listener.accept()?;
+    let stream = BufReader::new(unix_stream);
+    receiver_entry_point(stream)
+    // Dropping the stream closes it, allowing the collector to exit if it was waiting.
+}
+
+pub fn receiver_entry_point_stdin() -> anyhow::Result<()> {
+    let stream = std::io::stdin().lock();
+    receiver_entry_point(stream)
+}
+
 /// Receives data from a crash collector via a pipe on `stdin`, formats it into
 /// `CrashInfo` json, and emits it to the endpoint/file defined in `config`.
 ///
@@ -30,8 +57,8 @@ pub fn resolve_frames(
 ///
 /// See comments in [profiling/crashtracker/mod.rs] for a full architecture
 /// description.
-pub fn receiver_entry_point() -> anyhow::Result<()> {
-    match receive_report(std::io::stdin().lock())? {
+fn receiver_entry_point(stream: impl std::io::BufRead) -> anyhow::Result<()> {
+    match receive_report(stream)? {
         CrashReportStatus::NoCrash => Ok(()),
         CrashReportStatus::CrashReport(config, mut crash_info) => {
             resolve_frames(&config, &mut crash_info)?;
@@ -55,6 +82,7 @@ enum StdinState {
     Counters,
     Done,
     File(String, Vec<String>),
+    InternalError(String),
     Metadata,
     SigInfo,
     StackTrace(Vec<StackFrame>),
@@ -109,6 +137,8 @@ fn process_line(
             contents.push(line);
             StdinState::File(name, contents)
         }
+
+        StdinState::InternalError(e) => anyhow::bail!("Can't continue after internal error {e}"),
 
         StdinState::Metadata if line.starts_with(DD_CRASHTRACK_END_METADATA) => StdinState::Waiting,
         StdinState::Metadata => {
@@ -180,7 +210,14 @@ fn receive_report(stream: impl std::io::BufRead) -> anyhow::Result<CrashReportSt
     //TODO: This assumes that the input is valid UTF-8.
     for line in stream.lines() {
         let line = line?;
-        stdin_state = process_line(&mut crashinfo, &mut config, line, stdin_state)?;
+        match process_line(&mut crashinfo, &mut config, line, stdin_state) {
+            Ok(next_state) => stdin_state = next_state,
+            Err(e) => {
+                // If the input is corrupted, stop and salvage what we can
+                stdin_state = StdinState::InternalError(e.to_string());
+                break;
+            }
+        }
     }
 
     if !crashinfo.crash_seen() {

@@ -40,7 +40,7 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.71.1"
 edition = "2021"
-version = "9.0.0"
+version = "10.0.0"
 license = "Apache-2.0"
 
 [profile.dev]
@@ -48,7 +48,7 @@ debug = 2 # full debug info
 
 [profile.release]
 codegen-units = 1
-debug = 1 # line tables only
+debug = "line-tables-only"
 lto = true
 opt-level = "s" # optimize for size
 
