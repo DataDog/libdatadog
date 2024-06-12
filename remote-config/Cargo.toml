@@ -11,7 +11,6 @@ test = []
 anyhow = { version = "1.0" }
 ddcommon = { path = "../ddcommon" }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
-datadog-live-debugger = { path = "../live-debugger" }
 hyper = { version = "0.14", features = ["client"], default-features = false }
 http = "0.2"
 base64 = "0.21.0"

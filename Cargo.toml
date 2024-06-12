@@ -15,8 +15,6 @@ members = [
   "tools",
   "ipc",
   "ipc/macros",
-  "live-debugger",
-  "live-debugger-ffi",
   "remote-config",
   "sidecar",
   "sidecar/macros",

@@ -24,7 +24,6 @@ use crate::service::{InstanceId, RuntimeInfo};
 pub(crate) struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
     pub(crate) session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
-    debugger_config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
     dogstatsd: Arc<Mutex<dogstatsd::Flusher>>,
     remote_config_invariants: Arc<Mutex<Option<ConfigInvariants>>>,
@@ -42,7 +41,6 @@ impl Clone for SessionInfo {
         SessionInfo {
             runtimes: self.runtimes.clone(),
             session_config: self.session_config.clone(),
-            debugger_config: self.debugger_config.clone(),
             tracer_config: self.tracer_config.clone(),
             dogstatsd: self.dogstatsd.clone(),
             remote_config_invariants: self.remote_config_invariants.clone(),
@@ -179,17 +177,6 @@ impl SessionInfo {
         F: FnMut(&mut dogstatsd::Flusher),
     {
         f(&mut self.get_dogstatsd());
-    }
-
-    pub fn get_debugger_config(&self) -> MutexGuard<datadog_live_debugger::sender::Config> {
-        self.debugger_config.lock().unwrap()
-    }
-
-    pub fn modify_debugger_config<F>(&self, mut f: F)
-        where
-            F: FnMut(&mut datadog_live_debugger::sender::Config),
-    {
-        f(&mut self.get_debugger_config());
     }
 
     pub fn set_remote_config_invariants(&self, invariants: ConfigInvariants) {

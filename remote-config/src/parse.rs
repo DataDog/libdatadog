@@ -1,8 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use std::fmt::Display;
 use serde::{Deserialize, Serialize};
-use datadog_live_debugger::LiveDebuggingData;
 use crate::dynamic_configuration::data::DynamicConfigFile;
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
@@ -18,12 +18,13 @@ pub enum RemoteConfigProduct {
     LiveDebugger,
 }
 
-impl ToString for RemoteConfigProduct {
-    fn to_string(&self) -> String {
-        match self {
+impl Display for RemoteConfigProduct {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match self {
             RemoteConfigProduct::ApmTracing => "APM_TRACING",
             RemoteConfigProduct::LiveDebugger => "LIVE_DEBUGGING",
-        }.to_string()
+        };
+        write!(f, "{}", str)
     }
 }
 
@@ -77,7 +78,7 @@ impl ToString for RemoteConfigPath {
 #[derive(Debug)]
 pub enum RemoteConfigData {
     DynamicConfig(DynamicConfigFile),
-    LiveDebugger(LiveDebuggingData),
+    LiveDebugger(( /* placeholder */)),
 }
 
 impl RemoteConfigData {
@@ -87,8 +88,7 @@ impl RemoteConfigData {
                 RemoteConfigData::DynamicConfig(serde_json::from_slice(data)?)
             },
             RemoteConfigProduct::LiveDebugger => {
-                let parsed = datadog_live_debugger::parse_json(&String::from_utf8_lossy(data))?;
-                RemoteConfigData::LiveDebugger(parsed)
+                RemoteConfigData::LiveDebugger(/* placeholder */ ())
             }
         })
     }
