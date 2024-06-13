@@ -58,7 +58,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
     })
 }
 
-pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {
+pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &MappedMem<T>) {
     unsafe {
         _ = munmap(mapped.ptr, mapped.mem.get_size());
     }

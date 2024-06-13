@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache
-// License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use crate::dynamic_configuration::data::DynamicConfigFile;
 use serde::{Deserialize, Serialize};
@@ -66,22 +66,21 @@ impl RemoteConfigPath {
     }
 }
 
-impl ToString for RemoteConfigPath {
-    fn to_string(&self) -> String {
+impl Display for RemoteConfigPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.source {
-            RemoteConfigSource::Datadog(id) => format!(
+            RemoteConfigSource::Datadog(id) => write!(
+                f,
                 "datadog/{}/{}/{}/{}",
-                id,
-                self.product.to_string(),
-                self.config_id,
-                self.name
+                id, self.product, self.config_id, self.name
             ),
-            RemoteConfigSource::Employee => format!(
-                "employee/{}/{}/{}",
-                self.product.to_string(),
-                self.config_id,
-                self.name
-            ),
+            RemoteConfigSource::Employee => {
+                write!(
+                    f,
+                    "employee/{}/{}/{}",
+                    self.product, self.config_id, self.name
+                )
+            }
         }
     }
 }

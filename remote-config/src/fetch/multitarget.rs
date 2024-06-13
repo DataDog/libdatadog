@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache
-// License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use crate::fetch::{
     ConfigFetcherState, ConfigInvariants, FileStorage, RefcountedFile, RefcountingStorage,
@@ -475,6 +475,7 @@ mod tests {
     struct MultiFileStorage {
         rc: RcFileStorage,
         on_dead_completer: Arc<Mutex<Option<ManualFutureCompleter<()>>>>,
+        #[allow(clippy::type_complexity)]
         recent_fetches: Arc<Mutex<HashMap<Arc<Target>, Vec<Arc<RcPathStore>>>>>,
         awaiting_fetches: Arc<AtomicU8>,
         awaited_fetched_done: Arc<Mutex<Option<ManualFutureCompleter<()>>>>,
@@ -619,11 +620,12 @@ mod tests {
         }
     }
 
-    static RT_ID_1: &'static str = "3b43524b-a70c-45dc-921d-34504e50c5eb";
-    static RT_ID_2: &'static str = "ae588386-8464-43ba-bd3a-3e2d36b2c22c";
-    static RT_ID_3: &'static str = "0125dff8-d9a7-4fd3-a0c2-0ca3b12816a1";
+    static RT_ID_1: &str = "3b43524b-a70c-45dc-921d-34504e50c5eb";
+    static RT_ID_2: &str = "ae588386-8464-43ba-bd3a-3e2d36b2c22c";
+    static RT_ID_3: &str = "0125dff8-d9a7-4fd3-a0c2-0ca3b12816a1";
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_multi_fetcher() {
         let server = RemoteConfigServer::spawn();
         let (on_dead, on_dead_completer) = ManualFuture::new();

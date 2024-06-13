@@ -1,3 +1,6 @@
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::fetch::{ConfigFetcher, ConfigFetcherState, ConfigInvariants, FileStorage, OpaqueState};
 use crate::{RemoteConfigPath, Target};
 use std::collections::HashMap;
@@ -242,7 +245,9 @@ impl SharedFetcher {
     {
         let state = storage.state.clone();
         let mut fetcher = ConfigFetcher::new(storage, state);
-        fetcher.timeout.store(self.timeout.load(Ordering::Relaxed), Ordering::Relaxed);
+        fetcher
+            .timeout
+            .store(self.timeout.load(Ordering::Relaxed), Ordering::Relaxed);
 
         let mut opaque_state = OpaqueState::default();
 
@@ -380,6 +385,7 @@ pub mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_single_fetcher() {
         let server = RemoteConfigServer::spawn();
         let storage = RcFileStorage::default();
@@ -435,7 +441,7 @@ pub mod tests {
                             let req = req.as_ref().unwrap();
                             let client = req.client.as_ref().unwrap();
                             let state = client.state.as_ref().unwrap();
-                            assert_eq!(state.has_error, false);
+                            assert!(!state.has_error);
 
                             inner_fetcher.cancel();
 
@@ -451,6 +457,7 @@ pub mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_parallel_fetchers() {
         let server = RemoteConfigServer::spawn();
         let storage = RcFileStorage::default();
@@ -505,9 +512,24 @@ pub mod tests {
 
         let server_3 = server.clone();
         let server_3_storage = storage.clone();
+        let server_3_rc_storage = rc_storage.clone();
         let server_third_1 = move || {
+            // It may happen that the other fetcher is _right now_ doing a fetch.
+            // This leads to a race condition:
+            // - If the other fetcher is currently fetching, then the file will be inactive and
+            //   dropped once its fetching ended.
+            // - If there's no other fetching active, it'll immediately drop the file.
+            let (runners, _) = server_3_rc_storage.run_id.runners_and_run_id();
+            let (expected_files, expected_inactive) = if runners == 0 { (1, 0) } else { (2, 1) };
+            assert_eq!(
+                server_3_rc_storage.inactive.lock().unwrap().len(),
+                expected_inactive
+            );
             // one file should be expired by now
-            assert_eq!(server_3_storage.0.files.lock().unwrap().len(), 1);
+            assert_eq!(
+                server_3_storage.0.files.lock().unwrap().len(),
+                expected_files
+            );
             server_3.files.lock().unwrap().clear();
         };
         let server_third_2 = server_third_1.clone();
@@ -553,7 +575,7 @@ pub mod tests {
                                 server_third_1();
                             }
                         }
-                        6 | 7 => {
+                        6 => {
                             assert_eq!(fetched.len(), 0);
 
                             inner_fetcher_1.cancel();
@@ -588,9 +610,6 @@ pub mod tests {
                             if i == 5 {
                                 server_third_2();
                             }
-                        }
-                        6 | 7 => {
-                            assert_eq!(fetched.len(), 0);
 
                             inner_fetcher_2.cancel();
                         }

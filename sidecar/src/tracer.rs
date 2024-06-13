@@ -8,10 +8,7 @@ use std::str::FromStr;
 
 #[derive(Default)]
 pub struct Config {
-    pub raw_endpoint: Option<Endpoint>,
     pub endpoint: Option<Endpoint>,
-    pub language: String,
-    pub tracer_version: String,
 }
 
 impl Config {

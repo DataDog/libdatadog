@@ -1,3 +1,6 @@
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::fetch::ConfigInvariants;
 use crate::targets::{TargetData, TargetsCustom, TargetsData, TargetsList};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
@@ -21,6 +24,7 @@ use tokio::sync::mpsc::Sender;
 
 pub struct RemoteConfigServer {
     pub last_request: Mutex<Option<ClientGetConfigsRequest>>,
+    #[allow(clippy::type_complexity)]
     pub files: Mutex<HashMap<RemoteConfigPath, (Vec<Arc<Target>>, u64, String)>>,
     pub next_response: Mutex<Option<Response<Body>>>,
     pub endpoint: Endpoint,

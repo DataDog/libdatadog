@@ -1,3 +1,6 @@
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::targets::TargetsList;
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use base64::Engine;
@@ -444,7 +447,7 @@ pub mod tests {
         });
     }
 
-    static DUMMY_RUNTIME_ID: &'static str = "3b43524b-a70c-45dc-921d-34504e50c5eb";
+    static DUMMY_RUNTIME_ID: &str = "3b43524b-a70c-45dc-921d-34504e50c5eb";
 
     #[derive(Default)]
     pub struct Storage {
@@ -510,6 +513,7 @@ pub mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_inactive() {
         let server = RemoteConfigServer::spawn();
         let storage = Arc::new(Storage::default());
@@ -539,6 +543,7 @@ pub mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_fetch_cache() {
         let server = RemoteConfigServer::spawn();
         server.files.lock().unwrap().insert(
@@ -588,13 +593,13 @@ pub mod tests {
                 &[RemoteConfigCapabilities::ApmTracingCustomTags as u8]
             );
             assert_eq!(client.products, &["APM_TRACING", "LIVE_DEBUGGING"]);
-            assert_eq!(client.is_tracer, true);
-            assert_eq!(client.is_agent, false);
+            assert!(client.is_tracer);
+            assert!(!client.is_agent);
             assert_eq!(client.id, "foo");
 
             let state = client.state.as_ref().unwrap();
             assert_eq!(state.error, "test");
-            assert_eq!(state.has_error, true);
+            assert!(state.has_error);
             assert!(state.config_states.is_empty());
             assert!(state.backend_client_state.is_empty());
 
@@ -644,15 +649,14 @@ pub mod tests {
                 &[RemoteConfigCapabilities::ApmTracingCustomTags as u8]
             );
             assert_eq!(client.products, &["APM_TRACING", "LIVE_DEBUGGING"]);
-            assert_eq!(client.is_tracer, true);
-            assert_eq!(client.is_agent, false);
+            assert!(client.is_tracer);
+            assert!(!client.is_agent);
             assert_eq!(client.id, "foo");
 
             let state = client.state.as_ref().unwrap();
-            assert_eq!(state.error, "test");
-            assert_eq!(state.has_error, true);
-            assert!(state.config_states.is_empty());
-            assert!(state.backend_client_state.is_empty());
+            assert!(!state.has_error);
+            assert!(!state.config_states.is_empty());
+            assert!(!state.backend_client_state.is_empty());
 
             let cached = &req.cached_target_files[0];
             assert_eq!(cached.path, PATH_FIRST.to_string());

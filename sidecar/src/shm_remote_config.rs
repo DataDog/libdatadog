@@ -81,6 +81,7 @@ struct ConfigFileStorage {
     invariants: ConfigInvariants,
     /// All writers
     writers: Arc<Mutex<HashMap<Arc<Target>, RemoteConfigWriter>>>,
+    #[allow(clippy::type_complexity)]
     on_dead: Arc<Mutex<Option<Box<dyn FnOnce() + Sync + Send>>>>,
 }
 
@@ -128,7 +129,7 @@ fn store_shm(
 ) -> anyhow::Result<NamedShmHandle> {
     let name = format!("ddrc{}-{}", primary_sidecar_identifier(), version,);
     // as much signal as possible to be collision free
-    let hashed_path = BASE64_URL_SAFE_NO_PAD.encode(Sha224::digest(&path.to_string()));
+    let hashed_path = BASE64_URL_SAFE_NO_PAD.encode(Sha224::digest(path.to_string()));
     #[cfg(target_os = "macos")]
     let sliced_path = &hashed_path[..30 - name.len()];
     #[cfg(not(target_os = "macos"))]
@@ -389,22 +390,23 @@ impl RemoteConfigManager {
         }
 
         while let Some(config) = self.last_read_configs.pop() {
-            if !self.active_configs.contains_key(&config) {
-                match read_config(&config) {
+            if let Entry::Vacant(entry) = self.active_configs.entry(config) {
+                match read_config(entry.key()) {
                     Ok(parsed) => {
-                        trace!("Adding remote config file {config}: {parsed:?}");
-                        self.active_configs.insert(
-                            config,
-                            RemoteConfigPath {
-                                source: parsed.source.clone(),
-                                product: (&parsed.data).into(),
-                                config_id: parsed.config_id.clone(),
-                                name: parsed.name.clone(),
-                            },
-                        );
+                        trace!("Adding remote config file {}: {:?}", entry.key(), parsed);
+                        entry.insert(RemoteConfigPath {
+                            source: parsed.source.clone(),
+                            product: (&parsed.data).into(),
+                            config_id: parsed.config_id.clone(),
+                            name: parsed.name.clone(),
+                        });
                         return RemoteConfigUpdate::Add(parsed);
                     }
-                    Err(e) => warn!("Failed reading remote config file {config}; skipping: {e:?}"),
+                    Err(e) => warn!(
+                        "Failed reading remote config file {}; skipping: {:?}",
+                        entry.key(),
+                        e
+                    ),
                 }
             }
         }
@@ -516,6 +518,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_shm_updates() {
         let server = RemoteConfigServer::spawn();
 
@@ -633,7 +636,7 @@ mod tests {
 
         // and start to remove
         let was_second = if let RemoteConfigUpdate::Remove(update) = manager.fetch_update() {
-            &update == &*PATH_SECOND
+            update == *PATH_SECOND
         } else {
             unreachable!();
         };
@@ -662,7 +665,7 @@ mod tests {
 
         // After proper shutdown it must be like all configs were removed
         let was_second = if let RemoteConfigUpdate::Remove(update) = manager.fetch_update() {
-            &update == &*PATH_SECOND
+            update == *PATH_SECOND
         } else {
             unreachable!();
         };
