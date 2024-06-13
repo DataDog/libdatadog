@@ -329,7 +329,7 @@ impl<'a> TryFrom<&StackFrame<'a>> for datadog_crashtracker::StackFrame {
             }
             Some(vec)
         };
-        let normalized_address= None;//TODO
+        let normalized_address = None; //TODO
         let sp = to_hex(value.sp);
         let symbol_address = to_hex(value.symbol_address);
         Ok(Self {

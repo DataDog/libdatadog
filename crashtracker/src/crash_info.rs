@@ -5,6 +5,7 @@ use crate::stacktrace::StackFrame;
 use crate::telemetry::TelemetryCrashUploader;
 use crate::CrashtrackerConfiguration;
 use anyhow::Context;
+use blazesym::normalize::Normalizer;
 #[cfg(unix)]
 use blazesym::symbolize::{Process, Source, Symbolizer};
 use chrono::{DateTime, Utc};
@@ -94,6 +95,16 @@ impl Default for CrashInfo {
 
 #[cfg(unix)]
 impl CrashInfo {
+    pub fn normalize_ips(&mut self, pid: u32) {
+        let normalizer = Normalizer::new();
+        let pid = pid.into();
+        self.stacktrace.iter_mut().for_each(|frame| {
+            frame
+                .normalize_ip(&normalizer, pid)
+                .unwrap_or_else(|err| eprintln!("Error resolving name {err}"))
+        });
+    }
+
     pub fn resolve_names(&mut self, src: &Source) -> anyhow::Result<()> {
         let symbolizer = Symbolizer::new();
         for frame in &mut self.stacktrace {

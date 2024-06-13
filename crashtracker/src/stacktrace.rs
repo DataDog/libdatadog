@@ -97,11 +97,7 @@ mod unix {
     }
 
     impl StackFrame {
-        pub fn normalize_ip(
-            &mut self,
-            normalizer: &Normalizer,
-            pid: Pid,
-        ) -> anyhow::Result<()> {
+        pub fn normalize_ip(&mut self, normalizer: &Normalizer, pid: Pid) -> anyhow::Result<()> {
             if let Some(ip) = &self.ip {
                 let ip = ip.trim_start_matches("0x");
                 let ip = u64::from_str_radix(ip, 16)?;
