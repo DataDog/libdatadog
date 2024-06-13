@@ -358,13 +358,10 @@ impl Profile {
             label
         );
 
-        let local_root_span_id: u64 = if let LabelValue::Num { num, .. } = label.get_value() {
-            // Manually specify the type here to be sure we're transmuting an
-            // i64 and not a &i64.
-            let id: i64 = *num;
+        let local_root_span_id = if let LabelValue::Num { num, .. } = label.get_value() {
             // Safety: the value is a u64, but pprof only has signed values, so we
             // transmute it; the backend does the same.
-            unsafe { std::intrinsics::transmute(id) }
+            unsafe { std::intrinsics::transmute::<i64, u64>(*num) }
         } else {
             return Err(anyhow::format_err!("the local root span id label value must be sent as a number, not a string, given {:?}",
             label));
