@@ -318,7 +318,6 @@ impl<'a> TryFrom<&StackFrame<'a>> for datadog_crashtracker::StackFrame {
                 Some(format!("{v:#X}"))
             }
         }
-        let build_id = option_from_char_slice(value.build_id)?;
         let ip = to_hex(value.ip);
         let module_base_address = to_hex(value.module_base_address);
         let names = if value.names.is_empty() {
@@ -330,15 +329,14 @@ impl<'a> TryFrom<&StackFrame<'a>> for datadog_crashtracker::StackFrame {
             }
             Some(vec)
         };
-        let relative_address = to_hex(value.relative_address);
+        let normalized_address= None;//TODO
         let sp = to_hex(value.sp);
         let symbol_address = to_hex(value.symbol_address);
         Ok(Self {
-            build_id,
             ip,
             module_base_address,
             names,
-            relative_address,
+            normalized_address,
             sp,
             symbol_address,
         })

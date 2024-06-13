@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct StackFrameNames {
@@ -24,9 +25,6 @@ pub struct StackFrameNames {
 pub struct StackFrame {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
-    pub build_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
     pub ip: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
@@ -36,7 +34,7 @@ pub struct StackFrame {
     pub names: Option<Vec<StackFrameNames>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
-    pub relative_address: Option<String>,
+    pub normalized_address: Option<NormalizedAddress>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub sp: Option<String>,
@@ -45,10 +43,45 @@ pub struct StackFrame {
     pub symbol_address: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum NormalizedAddressMeta {
+    Apk(PathBuf),
+    Elf {
+        path: PathBuf,
+        build_id: Option<Vec<u8>>,
+    },
+    Unknown,
+    Unexpected(String),
+}
+
+impl From<&blazesym::normalize::UserMeta> for NormalizedAddressMeta {
+    fn from(value: &blazesym::normalize::UserMeta) -> Self {
+        match value {
+            blazesym::normalize::UserMeta::Apk(a) => Self::Apk(a.path.clone()),
+            blazesym::normalize::UserMeta::Elf(e) => Self::Elf {
+                path: e.path.clone(),
+                build_id: e.build_id.clone(),
+            },
+            blazesym::normalize::UserMeta::Unknown(_) => Self::Unknown,
+            _ => Self::Unexpected(format!("{value:?}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NormalizedAddress {
+    file_offset: u64,
+    meta: NormalizedAddressMeta,
+}
+
 #[cfg(unix)]
 mod unix {
     use super::*;
-    use blazesym::symbolize::{Input, Source, Sym, Symbolized, Symbolizer};
+    use blazesym::{
+        normalize::Normalizer,
+        symbolize::{Input, Source, Sym, Symbolized, Symbolizer},
+        Pid,
+    };
 
     impl From<Sym<'_>> for StackFrameNames {
         fn from(value: Sym) -> Self {
@@ -64,6 +97,23 @@ mod unix {
     }
 
     impl StackFrame {
+        pub fn normalize_ip(
+            &mut self,
+            normalizer: &Normalizer,
+            pid: Pid,
+        ) -> anyhow::Result<()> {
+            if let Some(ip) = &self.ip {
+                let ip = ip.trim_start_matches("0x");
+                let ip = u64::from_str_radix(ip, 16)?;
+                let normed = normalizer.normalize_user_addrs(pid, &[ip])?;
+                anyhow::ensure!(normed.outputs.len() == 1);
+                let (file_offset, meta_idx) = normed.outputs[0];
+                let meta = (&normed.meta[meta_idx]).into();
+                let normed = NormalizedAddress { file_offset, meta };
+            }
+            Ok(())
+        }
+
         pub fn resolve_names(
             &mut self,
             src: &Source,
