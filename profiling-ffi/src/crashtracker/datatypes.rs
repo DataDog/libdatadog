@@ -4,7 +4,7 @@
 use crate::exporter::{self, ProfilingEndpoint};
 pub use datadog_crashtracker::{ProfilingOpTypes, StacktraceCollection};
 use ddcommon::tag::Tag;
-use ddcommon_ffi::slice::{AsBytes, CharSlice};
+use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice};
 use ddcommon_ffi::{Error, Slice, StringWrapper};
 use std::ops::Not;
 use std::time::Duration;
@@ -264,6 +264,53 @@ impl From<anyhow::Result<()>> for CrashtrackerResult {
 }
 
 #[repr(C)]
+#[derive(Debug)]
+pub enum NormalizedAddressTypes {
+    // TODO, support other formats
+    Elf,
+    None,
+}
+
+#[repr(C)]
+pub struct NormalizedAddress<'a> {
+    file_offset: u64,
+    build_id: ByteSlice<'a>,
+    path: CharSlice<'a>,
+    typ: NormalizedAddressTypes,
+}
+
+impl<'a> TryFrom<NormalizedAddress<'a>> for datadog_crashtracker::NormalizedAddress {
+    type Error = anyhow::Error;
+
+    fn try_from(value: NormalizedAddress<'a>) -> Result<Self, Self::Error> {
+        Self::try_from(&value)
+    }
+}
+
+impl<'a> TryFrom<&NormalizedAddress<'a>> for datadog_crashtracker::NormalizedAddress {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &NormalizedAddress<'a>) -> Result<Self, Self::Error> {
+        match &value.typ {
+            NormalizedAddressTypes::Elf => {
+                let build_id = if value.build_id.is_empty() {
+                    None
+                } else {
+                    Some(Vec::from(value.build_id.as_bytes()))
+                };
+                let path = value.path.try_to_utf8()?.into();
+                let meta = datadog_crashtracker::NormalizedAddressMeta::Elf { build_id, path };
+                Ok(Self {
+                    file_offset: value.file_offset,
+                    meta,
+                })
+            }
+            _ => anyhow::bail!("Unsupported normalized address type {:?}", value.typ),
+        }
+    }
+}
+
+#[repr(C)]
 pub struct StackFrameNames<'a> {
     colno: ddcommon_ffi::Option<u32>,
     filename: CharSlice<'a>,
@@ -302,7 +349,7 @@ pub struct StackFrame<'a> {
     ip: usize,
     module_base_address: usize,
     names: Slice<'a, StackFrameNames<'a>>,
-    relative_address: usize,
+    normalized_address: NormalizedAddress<'a>,
     sp: usize,
     symbol_address: usize,
 }

@@ -70,8 +70,8 @@ impl From<&blazesym::normalize::UserMeta> for NormalizedAddressMeta {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NormalizedAddress {
-    file_offset: u64,
-    meta: NormalizedAddressMeta,
+    pub file_offset: u64,
+    pub meta: NormalizedAddressMeta,
 }
 
 #[cfg(unix)]
