@@ -100,8 +100,10 @@ impl<S> ConfigFetcherState<S> {
 pub struct ConfigFetcher<S: FileStorage> {
     pub file_storage: S,
     state: Arc<ConfigFetcherState<S::StoredFile>>,
-    timeout: AtomicU32,
+    /// Timeout after which to report failure, in milliseconds.
+    pub timeout: AtomicU32,
     /// Collected interval. May be zero if not provided by the remote config server or fetched yet.
+    /// Given in nanoseconds.
     pub interval: AtomicU64,
 }
 
