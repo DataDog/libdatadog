@@ -264,11 +264,11 @@ impl From<anyhow::Result<()>> for CrashtrackerResult {
 }
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum NormalizedAddressTypes {
-    // TODO, support other formats
+    // Make None 0 so that default construction gives none
+    None = 0,
     Elf,
-    None,
 }
 
 #[repr(C)]
@@ -277,6 +277,26 @@ pub struct NormalizedAddress<'a> {
     build_id: ByteSlice<'a>,
     path: CharSlice<'a>,
     typ: NormalizedAddressTypes,
+}
+
+impl<'a> TryFrom<NormalizedAddress<'a>> for Option<datadog_crashtracker::NormalizedAddress> {
+    type Error = anyhow::Error;
+
+    fn try_from(value: NormalizedAddress<'a>) -> Result<Self, Self::Error> {
+        Self::try_from(&value)
+    }
+}
+
+impl<'a> TryFrom<&NormalizedAddress<'a>> for Option<datadog_crashtracker::NormalizedAddress> {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &NormalizedAddress<'a>) -> Result<Self, Self::Error> {
+        if value.typ == NormalizedAddressTypes::None {
+            Ok(None)
+        } else {
+            Ok(Some(value.try_into()?))
+        }
+    }
 }
 
 impl<'a> TryFrom<NormalizedAddress<'a>> for datadog_crashtracker::NormalizedAddress {
@@ -376,7 +396,7 @@ impl<'a> TryFrom<&StackFrame<'a>> for datadog_crashtracker::StackFrame {
             }
             Some(vec)
         };
-        let normalized_address = None; //TODO
+        let normalized_address = (&value.normalized_address).try_into()?;
         let sp = to_hex(value.sp);
         let symbol_address = to_hex(value.symbol_address);
         Ok(Self {
