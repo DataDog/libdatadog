@@ -31,6 +31,25 @@ pub unsafe extern "C" fn ddog_crashinfo_drop(crashinfo: *mut CrashInfo) {
     }
 }
 
+/// Best effort attempt to normalize all `ip` on the stacktrace.
+/// `pid` must be the pid of the currently active process where the ips came from.
+///
+/// # Safety
+/// `crashinfo` must be a valid pointer to a `CrashInfo` object.
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_crashinfo_normalize_ips(
+    crashinfo: *mut CrashInfo,
+    pid: u32,
+) -> CrashtrackerResult {
+    (|| {
+        let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
+        crashinfo.normalize_ips(pid)
+    })()
+    .context("ddog_crashinfo_normalize_ips failed")
+    .into()
+}
+
 /// Adds a "counter" variable, with the given value.  Useful for determining if
 /// "interesting" operations were occurring when the crash did.
 ///

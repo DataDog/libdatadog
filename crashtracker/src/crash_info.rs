@@ -95,7 +95,7 @@ impl Default for CrashInfo {
 
 #[cfg(unix)]
 impl CrashInfo {
-    pub fn normalize_ips(&mut self, pid: u32) {
+    pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
         let normalizer = Normalizer::new();
         let pid = pid.into();
         self.stacktrace.iter_mut().for_each(|frame| {
@@ -103,6 +103,7 @@ impl CrashInfo {
                 .normalize_ip(&normalizer, pid)
                 .unwrap_or_else(|err| eprintln!("Error resolving name {err}"))
         });
+        Ok(())
     }
 
     pub fn resolve_names(&mut self, src: &Source) -> anyhow::Result<()> {
