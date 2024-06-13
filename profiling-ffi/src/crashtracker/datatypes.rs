@@ -369,7 +369,7 @@ pub struct StackFrame<'a> {
     ip: usize,
     module_base_address: usize,
     names: Slice<'a, StackFrameNames<'a>>,
-    normalized_address: NormalizedAddress<'a>,
+    normalized_ip: NormalizedAddress<'a>,
     sp: usize,
     symbol_address: usize,
 }
@@ -396,14 +396,14 @@ impl<'a> TryFrom<&StackFrame<'a>> for datadog_crashtracker::StackFrame {
             }
             Some(vec)
         };
-        let normalized_address = (&value.normalized_address).try_into()?;
+        let normalized_ip = (&value.normalized_ip).try_into()?;
         let sp = to_hex(value.sp);
         let symbol_address = to_hex(value.symbol_address);
         Ok(Self {
             ip,
             module_base_address,
             names,
-            normalized_address,
+            normalized_ip,
             sp,
             symbol_address,
         })

@@ -34,7 +34,7 @@ pub struct StackFrame {
     pub names: Option<Vec<StackFrameNames>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
-    pub normalized_address: Option<NormalizedAddress>,
+    pub normalized_ip: Option<NormalizedAddress>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub sp: Option<String>,
@@ -105,7 +105,7 @@ mod unix {
                 anyhow::ensure!(normed.outputs.len() == 1);
                 let (file_offset, meta_idx) = normed.outputs[0];
                 let meta = (&normed.meta[meta_idx]).into();
-                self.normalized_address = Some(NormalizedAddress { file_offset, meta });
+                self.normalized_ip = Some(NormalizedAddress { file_offset, meta });
             }
             Ok(())
         }
