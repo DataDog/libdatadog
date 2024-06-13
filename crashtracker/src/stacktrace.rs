@@ -109,7 +109,7 @@ mod unix {
                 anyhow::ensure!(normed.outputs.len() == 1);
                 let (file_offset, meta_idx) = normed.outputs[0];
                 let meta = (&normed.meta[meta_idx]).into();
-                let normed = NormalizedAddress { file_offset, meta };
+                self.normalized_address = Some(NormalizedAddress { file_offset, meta });
             }
             Ok(())
         }
