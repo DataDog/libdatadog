@@ -5,6 +5,7 @@ use std::{collections::HashMap, env, ops::DerefMut, path::PathBuf, process, sync
 
 use anyhow::Ok;
 use once_cell::sync::OnceCell;
+use strum::{Display, EnumString};
 
 /// This crate implements an abstraction over compilation with cargo with the purpose
 /// of testing full binaries or dynamic libraries, instead if just rust static libraries.
@@ -25,6 +26,12 @@ pub enum ArtifactType {
     ExecutablePackage,
     CDylib,
     Bin,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, EnumString, Display)]
+pub enum ReceiverType {
+    ChildProcessStdin,
+    UnixSocket,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
