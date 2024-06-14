@@ -5,9 +5,6 @@ use crate::stacktrace::StackFrame;
 use crate::telemetry::TelemetryCrashUploader;
 use crate::CrashtrackerConfiguration;
 use anyhow::Context;
-use blazesym::normalize::Normalizer;
-#[cfg(unix)]
-use blazesym::symbolize::{Process, Source, Symbolizer};
 use chrono::{DateTime, Utc};
 use ddcommon::tag::Tag;
 use serde::{Deserialize, Serialize};
@@ -104,7 +101,7 @@ impl Default for CrashInfo {
 #[cfg(unix)]
 impl CrashInfo {
     pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
-        let normalizer = Normalizer::new();
+        let normalizer = blazesym::normalize::Normalizer::new();
         let pid = pid.into();
         self.stacktrace.iter_mut().for_each(|frame| {
             frame
@@ -114,8 +111,8 @@ impl CrashInfo {
         Ok(())
     }
 
-    pub fn resolve_names(&mut self, src: &Source) -> anyhow::Result<()> {
-        let symbolizer = Symbolizer::new();
+    pub fn resolve_names(&mut self, src: &blazesym::symbolize::Source) -> anyhow::Result<()> {
+        let symbolizer = blazesym::symbolize::Symbolizer::new();
         for frame in &mut self.stacktrace {
             // Resolving names is best effort, just print the error and continue
             frame
@@ -126,10 +123,10 @@ impl CrashInfo {
     }
 
     pub fn resolve_names_from_process(&mut self, pid: u32) -> anyhow::Result<()> {
-        let mut process = Process::new(pid.into());
+        let mut process = blazesym::symbolize::Process::new(pid.into());
         // https://github.com/libbpf/blazesym/issues/518
         process.map_files = false;
-        let src = Source::Process(process);
+        let src = blazesym::symbolize::Source::Process(process);
         self.resolve_names(&src)
     }
 }
