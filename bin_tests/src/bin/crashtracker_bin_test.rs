@@ -13,7 +13,7 @@ fn main() -> anyhow::Result<()> {
 mod unix {
     use anyhow::Context;
     use bin_tests::ReceiverType;
-    use std::{env, fs::File, time::Duration};
+    use std::{env, fs::File, str::FromStr, time::Duration};
 
     use datadog_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerMetadata,
@@ -69,37 +69,37 @@ mod unix {
                 tag!("language", "native"),
             ],
         };
+        match ReceiverType::from_str(&mode)? {
+            ReceiverType::ChildProcessStdin => {
+                crashtracker::init_with_receiver(
+                    config,
+                    CrashtrackerReceiverConfig::new(
+                        vec![],
+                        env::vars().collect(),
+                        receiver_binary,
+                        Some(stderr_filename),
+                        Some(stdout_filename),
+                    )?,
+                    metadata,
+                )?;
+            }
+            ReceiverType::UnixSocket => {
+                // Fork a unix socket receiver
+                // For now, this exits when a single message is received.
+                // When the listener is updated, we'll need to keep the handle and kill the receiver
+                // to avoid leaking a process.
+                std::process::Command::new(unix_socket_reciever_binary)
+                    .stderr(File::create(stderr_filename)?)
+                    .stdout(File::create(stdout_filename)?)
+                    .arg(&socket_path)
+                    .spawn()
+                    .context("failed to spawn unix receiver")?;
 
-        if mode == format!("{:?}", ReceiverType::ChildProcessStdin) {
-            crashtracker::init_with_receiver(
-                config,
-                CrashtrackerReceiverConfig::new(
-                    vec![],
-                    env::vars().collect(),
-                    receiver_binary,
-                    Some(stderr_filename),
-                    Some(stdout_filename),
-                )?,
-                metadata,
-            )?;
-        } else if mode == format!("{:?}", ReceiverType::UnixSocket) {
-            // Fork a unix socket receiver
-            // For now, this exits when a single message is received.
-            // When the listener is updated, we'll need to keep the handle and kill the receiver
-            // to avoid leaking a process.
-            std::process::Command::new(unix_socket_reciever_binary)
-                .stderr(File::create(stderr_filename)?)
-                .stdout(File::create(stdout_filename)?)
-                .arg(&socket_path)
-                .spawn()
-                .context("failed to spawn unix receiver")?;
+                // Wait long enough for the receiver to establish the socket
+                std::thread::sleep(std::time::Duration::from_secs(1));
 
-            // Wait long enough for the receiver to establish the socket
-            std::thread::sleep(std::time::Duration::from_secs(1));
-
-            crashtracker::init_with_unix_socket(config, &socket_path, metadata)?;
-        } else {
-            anyhow::bail!("unexpected mode: {mode}")
+                crashtracker::init_with_unix_socket(config, &socket_path, metadata)?;
+            }
         }
 
         crashtracker::begin_profiling_op(crashtracker::ProfilingOpTypes::CollectingSample)?;

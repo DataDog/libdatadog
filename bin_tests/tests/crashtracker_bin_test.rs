@@ -26,14 +26,12 @@ fn test_crash_tracking_bin_debug_unix_socket() {
 
 #[test]
 #[ignore] // This test is slow, only run it if explicitly opted in
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_release_stdin() {
     test_crash_tracking_bin(BuildProfile::Release, ReceiverType::ChildProcessStdin);
 }
 
 #[test]
 #[ignore] // This test is slow, only run it if explicitly opted in
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_release_unix_socket() {
     test_crash_tracking_bin(BuildProfile::Release, ReceiverType::UnixSocket);
 }
@@ -51,7 +49,7 @@ fn test_crash_tracking_bin(
     ]);
 
     let mut p = process::Command::new(&fixtures.artifacts[&crashtracker_bin])
-        .arg(format!("{receiver_type:?}"))
+        .arg(receiver_type.to_string())
         .arg(format!("file://{}", fixtures.crash_profile_path.display()))
         .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
         .arg(fixtures.artifacts[&crashtracker_unix_socket_receiver].as_os_str())
@@ -186,7 +184,7 @@ fn crash_tracking_empty_endpoint_inner(receiver_type: ReceiverType) {
 
     process::Command::new(&fixtures.artifacts[&crashtracker_bin])
         // empty url, endpoint will be set to none
-        .arg(format!("{receiver_type:?}"))
+        .arg(receiver_type.to_string())
         .arg("")
         .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
         .arg(fixtures.artifacts[&crashtracker_unix_socket_receiver].as_os_str())
