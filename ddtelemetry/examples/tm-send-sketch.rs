@@ -91,7 +91,7 @@ async fn async_main() {
         }
     }
 
-    let payload = data::Payload::Distributions(data::Distributions {
+    let payload = data::Payload::Sketches(data::Distributions {
         series: vec![Distribution {
             namespace: data::metrics::MetricNamespace::Telemetry,
             tags: Vec::new(),

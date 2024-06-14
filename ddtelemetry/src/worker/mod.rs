@@ -511,7 +511,7 @@ impl TelemetryWorker {
         }
         let distributions = self.build_metrics_distributions();
         if !distributions.series.is_empty() {
-            payloads.push(data::Payload::Distributions(distributions))
+            payloads.push(data::Payload::Sketches(distributions))
         }
         payloads
     }
@@ -608,7 +608,7 @@ impl TelemetryWorker {
             }
             AppHeartbeat(()) | AppClosing(()) => {}
             // TODO: Paul lgdc keep metrics until we know if the flush was a success
-            GenerateMetrics(_) | Distributions(_) => {}
+            GenerateMetrics(_) | Sketches(_) => {}
         }
     }
 
