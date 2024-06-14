@@ -14,7 +14,7 @@ fn test_the_tests_debug() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
+#[ignore] // This test is slow, only run it if explicitly opted in
 fn test_the_tests_release() {
     test_the_tests_inner(BuildProfile::Release);
 }
