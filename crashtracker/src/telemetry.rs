@@ -278,6 +278,7 @@ mod tests {
                     signum: 11,
                     signame: Some("SIGSEGV".to_owned()),
                 }),
+                proc_info: None,
                 stacktrace: vec![],
                 additional_stacktraces: HashMap::new(),
                 tags: HashMap::new(),
