@@ -135,7 +135,7 @@ impl MetricBuckets {
                 })
                 .add_point(point),
             metrics::MetricType::Distribution => {
-                self.distributions.entry(bucket_key).or_default().add(point);
+                let _ = self.distributions.entry(bucket_key).or_default().add(point);
             }
         }
     }

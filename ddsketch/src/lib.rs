@@ -45,24 +45,30 @@ impl DDSketch {
     }
 
     /// Add a point with value `point` to the sketch
-    pub fn add(&mut self, point: f64) -> Option<()> {
+    /// `count` and `point` must be positive
+    pub fn add(&mut self, point: f64) -> Result<(), Box<dyn std::error::Error>> {
         self.add_with_count(point, 1.0)
     }
 
     /// Add `count` point with value `point` to the sketch
-    pub fn add_with_count(&mut self, point: f64, count: f64) -> Option<()> {
+    /// `count` and `point` must be positive
+    pub fn add_with_count(
+        &mut self,
+        point: f64,
+        count: f64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if count.is_nan() || count.is_infinite() {
-            return None;
+            return Err("count is invalid".into());
         }
         if point < 0.0 || point.is_nan() || point.is_infinite() {
-            return None;
+            return Err("point is invalid".into());
         } else if point < self.mapping.min_indexable_value {
             self.zero_count += count;
         } else {
             let index = self.mapping.index(point);
             *self.store.bin_mut(index) += count;
         }
-        Some(())
+        Ok(())
     }
 
     /// Return a protobuf of the sketch
@@ -136,7 +142,6 @@ impl LowCollapsingDenseStore {
     /// Return a mutable reference to the bin at index `bin_index`
     fn bin_mut(&mut self, bin_index: i32) -> &mut f64 {
         let store_index = self.bin_idx_to_store_idx(bin_index);
-        println!("{:?}", store_index);
         &mut self.bins[store_index]
     }
 
