@@ -323,6 +323,14 @@ fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn emit_procinfo(w: &mut impl Write) -> anyhow::Result<()> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_PROCINFO}")?;
+    let pid = nix::unistd::getpid();
+    writeln!(w, "{{\"pid\": {pid} }}")?;
+    writeln!(w, "{DD_CRASHTRACK_END_PROCINFO}")?;
+    Ok(())
+}
+
 fn emit_siginfo(w: &mut impl Write, signum: i32) -> anyhow::Result<()> {
     let signame = if signum == libc::SIGSEGV {
         "SIGSEGV"
@@ -348,6 +356,7 @@ fn emit_crashreport(
     emit_metadata(pipe, metadata_string)?;
     emit_config(pipe, config_str)?;
     emit_siginfo(pipe, signum)?;
+    emit_procinfo(pipe)?;
     pipe.flush()?;
     emit_counters(pipe)?;
     pipe.flush()?;

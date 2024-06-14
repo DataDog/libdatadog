@@ -48,6 +48,11 @@ pub struct SigInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProcessInfo {
+    pub pid: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashInfo {
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     #[serde(default)]
@@ -62,6 +67,9 @@ pub struct CrashInfo {
     #[serde(default)]
     pub metadata: Option<CrashtrackerMetadata>,
     pub os_info: os_info::Info,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub proc_info: Option<ProcessInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub siginfo: Option<SigInfo>,
@@ -126,6 +134,7 @@ impl CrashInfo {
             incomplete: false,
             metadata: None,
             os_info,
+            proc_info: None,
             siginfo: None,
             stacktrace: vec![],
             tags: HashMap::new(),
@@ -177,6 +186,12 @@ impl CrashInfo {
     pub fn set_metadata(&mut self, metadata: CrashtrackerMetadata) -> anyhow::Result<()> {
         anyhow::ensure!(self.metadata.is_none());
         self.metadata = Some(metadata);
+        Ok(())
+    }
+
+    pub fn set_procinfo(&mut self, proc_info: ProcessInfo) -> anyhow::Result<()> {
+        anyhow::ensure!(self.proc_info.is_none());
+        self.proc_info = Some(proc_info);
         Ok(())
     }
 

@@ -4,7 +4,6 @@
 
 use super::*;
 use anyhow::Context;
-use nix::unistd::getppid;
 use std::{io::BufReader, os::unix::net::UnixListener};
 
 pub fn resolve_frames(
@@ -12,11 +11,11 @@ pub fn resolve_frames(
     crash_info: &mut CrashInfo,
 ) -> anyhow::Result<()> {
     if config.resolve_frames == StacktraceCollection::EnabledWithSymbolsInReceiver {
-        // The receiver is the direct child of the crashing process
-        // TODO: This pid should be sent over the wire, so that
-        // it can be used in a sidecar.
-        let ppid: u32 = getppid().as_raw().try_into()?;
-        crash_info.resolve_names_from_process(ppid)?
+        let proc_info = crash_info
+            .proc_info
+            .as_ref()
+            .context("Unable to resolve frames: No PID specified")?;
+        crash_info.resolve_names_from_process(proc_info.pid)?
     }
     Ok(())
 }
@@ -82,6 +81,7 @@ enum StdinState {
     File(String, Vec<String>),
     InternalError(String),
     Metadata,
+    ProcInfo,
     SigInfo,
     StackTrace(Vec<StackFrame>),
     Waiting,
@@ -145,6 +145,13 @@ fn process_line(
             StdinState::Metadata
         }
 
+        StdinState::ProcInfo if line.starts_with(DD_CRASHTRACK_END_PROCINFO) => StdinState::Waiting,
+        StdinState::ProcInfo => {
+            let proc_info = serde_json::from_str(&line)?;
+            crashinfo.set_procinfo(proc_info)?;
+            StdinState::ProcInfo
+        }
+
         StdinState::SigInfo if line.starts_with(DD_CRASHTRACK_END_SIGINFO) => StdinState::Waiting,
         StdinState::SigInfo => {
             let siginfo = serde_json::from_str(&line)?;
@@ -173,6 +180,9 @@ fn process_line(
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_METADATA) => {
             StdinState::Metadata
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_PROCINFO) => {
+            StdinState::ProcInfo
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SIGINFO) => StdinState::SigInfo,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_STACKTRACE) => {
