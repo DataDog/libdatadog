@@ -66,7 +66,7 @@ fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
     if s.duration < 0 {
         s.duration = 0;
     }
-    if s.duration > std::i64::MAX - s.start {
+    if s.duration > i64::MAX - s.start {
         s.duration = 0;
     }
     if s.start < YEAR_2000_NANOSEC_TS {
@@ -397,7 +397,7 @@ mod tests {
     #[test]
     fn test_normalize_large_duration() {
         let mut test_span = new_test_span();
-        test_span.duration = std::i64::MAX;
+        test_span.duration = i64::MAX;
 
         assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(test_span.duration, 0);

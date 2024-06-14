@@ -15,24 +15,28 @@ use std::borrow::Cow;
 use std::ptr::NonNull;
 use std::str::FromStr;
 
+#[allow(dead_code)]
 #[repr(C)]
 pub enum ExporterNewResult {
     Ok(NonNull<ProfileExporter>),
     Err(Error),
 }
 
+#[allow(dead_code)]
 #[repr(C)]
 pub enum RequestBuildResult {
     Ok(NonNull<Request>),
     Err(Error),
 }
 
+#[allow(dead_code)]
 #[repr(C)]
 pub enum SendResult {
     HttpResponse(HttpStatus),
     Err(Error),
 }
 
+#[allow(dead_code)]
 #[repr(C)]
 pub enum ProfilingEndpoint<'a> {
     Agent(CharSlice<'a>),
@@ -40,6 +44,7 @@ pub enum ProfilingEndpoint<'a> {
     File(CharSlice<'a>),
 }
 
+#[allow(dead_code)]
 #[repr(C)]
 pub struct File<'a> {
     name: CharSlice<'a>,
