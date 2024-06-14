@@ -335,7 +335,7 @@ mod test {
         let mut sketch = DDSketch::default();
         let points: &[f64] = &[0.0, 1e-5, 0.1, 2.0, 10.0, 25.0, 10000.0];
         for (i, &point) in points.iter().enumerate() {
-            assert!(sketch.add_with_count(point, i as f64 + 1.0).is_some());
+            assert!(sketch.add_with_count(point, i as f64 + 1.0).is_ok());
         }
 
         dbg!(sketch.store.bins.len(), sketch.store.offset);
@@ -359,13 +359,13 @@ mod test {
     #[test]
     fn test_skecth_add_negative() {
         let mut sketch = DDSketch::default();
-        assert!(sketch.add(-1.0).is_none());
+        assert!(sketch.add(-1.0).is_err());
     }
 
     #[test]
     fn test_skecth_add_nan() {
         let mut sketch = DDSketch::default();
-        assert!(sketch.add(f64::NAN).is_none());
+        assert!(sketch.add(f64::NAN).is_err());
     }
 
     #[test]
@@ -373,7 +373,7 @@ mod test {
         let mut sketch = DDSketch::default();
         let points: &[f64] = &[0.0, 1e-30, 0.1, 2.0, 10.0, 25.0, 10000.0];
         for (i, &point) in points.iter().enumerate() {
-            assert!(sketch.add_with_count(point, i as f64).is_some());
+            assert!(sketch.add_with_count(point, i as f64).is_ok());
         }
 
         let pb_sketch = sketch.into_pb().encode_to_vec();
