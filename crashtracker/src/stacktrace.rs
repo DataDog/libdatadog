@@ -54,20 +54,6 @@ pub enum NormalizedAddressMeta {
     Unexpected(String),
 }
 
-impl From<&blazesym::normalize::UserMeta> for NormalizedAddressMeta {
-    fn from(value: &blazesym::normalize::UserMeta) -> Self {
-        match value {
-            blazesym::normalize::UserMeta::Apk(a) => Self::Apk(a.path.clone()),
-            blazesym::normalize::UserMeta::Elf(e) => Self::Elf {
-                path: e.path.clone(),
-                build_id: e.build_id.clone(),
-            },
-            blazesym::normalize::UserMeta::Unknown(_) => Self::Unknown,
-            _ => Self::Unexpected(format!("{value:?}")),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NormalizedAddress {
     pub file_offset: u64,
@@ -78,10 +64,24 @@ pub struct NormalizedAddress {
 mod unix {
     use super::*;
     use blazesym::{
-        normalize::Normalizer,
+        normalize::{Normalizer, UserMeta},
         symbolize::{Input, Source, Sym, Symbolized, Symbolizer},
         Pid,
     };
+
+    impl From<&UserMeta> for NormalizedAddressMeta {
+        fn from(value: &UserMeta) -> Self {
+            match value {
+                UserMeta::Apk(a) => Self::Apk(a.path.clone()),
+                UserMeta::Elf(e) => Self::Elf {
+                    path: e.path.clone(),
+                    build_id: e.build_id.clone(),
+                },
+                UserMeta::Unknown(_) => Self::Unknown,
+                _ => Self::Unexpected(format!("{value:?}")),
+            }
+        }
+    }
 
     impl From<Sym<'_>> for StackFrameNames {
         fn from(value: Sym) -> Self {
