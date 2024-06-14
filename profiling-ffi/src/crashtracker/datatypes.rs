@@ -4,7 +4,7 @@
 use crate::exporter::{self, ProfilingEndpoint};
 pub use datadog_crashtracker::{ProfilingOpTypes, StacktraceCollection};
 use ddcommon::tag::Tag;
-use ddcommon_ffi::slice::{AsBytes, CharSlice};
+use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice};
 use ddcommon_ffi::{Error, Slice, StringWrapper};
 use std::ops::Not;
 use std::time::Duration;
@@ -264,6 +264,73 @@ impl From<anyhow::Result<()>> for CrashtrackerResult {
 }
 
 #[repr(C)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NormalizedAddressTypes {
+    // Make None 0 so that default construction gives none
+    None = 0,
+    Elf,
+}
+
+#[repr(C)]
+pub struct NormalizedAddress<'a> {
+    file_offset: u64,
+    build_id: ByteSlice<'a>,
+    path: CharSlice<'a>,
+    typ: NormalizedAddressTypes,
+}
+
+impl<'a> TryFrom<NormalizedAddress<'a>> for Option<datadog_crashtracker::NormalizedAddress> {
+    type Error = anyhow::Error;
+
+    fn try_from(value: NormalizedAddress<'a>) -> Result<Self, Self::Error> {
+        Self::try_from(&value)
+    }
+}
+
+impl<'a> TryFrom<&NormalizedAddress<'a>> for Option<datadog_crashtracker::NormalizedAddress> {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &NormalizedAddress<'a>) -> Result<Self, Self::Error> {
+        if value.typ == NormalizedAddressTypes::None {
+            Ok(None)
+        } else {
+            Ok(Some(value.try_into()?))
+        }
+    }
+}
+
+impl<'a> TryFrom<NormalizedAddress<'a>> for datadog_crashtracker::NormalizedAddress {
+    type Error = anyhow::Error;
+
+    fn try_from(value: NormalizedAddress<'a>) -> Result<Self, Self::Error> {
+        Self::try_from(&value)
+    }
+}
+
+impl<'a> TryFrom<&NormalizedAddress<'a>> for datadog_crashtracker::NormalizedAddress {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &NormalizedAddress<'a>) -> Result<Self, Self::Error> {
+        match &value.typ {
+            NormalizedAddressTypes::Elf => {
+                let build_id = if value.build_id.is_empty() {
+                    None
+                } else {
+                    Some(Vec::from(value.build_id.as_bytes()))
+                };
+                let path = value.path.try_to_utf8()?.into();
+                let meta = datadog_crashtracker::NormalizedAddressMeta::Elf { build_id, path };
+                Ok(Self {
+                    file_offset: value.file_offset,
+                    meta,
+                })
+            }
+            _ => anyhow::bail!("Unsupported normalized address type {:?}", value.typ),
+        }
+    }
+}
+
+#[repr(C)]
 pub struct StackFrameNames<'a> {
     colno: ddcommon_ffi::Option<u32>,
     filename: CharSlice<'a>,
@@ -298,9 +365,11 @@ impl<'a> TryFrom<&StackFrameNames<'a>> for datadog_crashtracker::StackFrameNames
 
 #[repr(C)]
 pub struct StackFrame<'a> {
+    build_id: CharSlice<'a>,
     ip: usize,
     module_base_address: usize,
     names: Slice<'a, StackFrameNames<'a>>,
+    normalized_ip: NormalizedAddress<'a>,
     sp: usize,
     symbol_address: usize,
 }
@@ -316,7 +385,6 @@ impl<'a> TryFrom<&StackFrame<'a>> for datadog_crashtracker::StackFrame {
                 Some(format!("{v:#X}"))
             }
         }
-
         let ip = to_hex(value.ip);
         let module_base_address = to_hex(value.module_base_address);
         let names = if value.names.is_empty() {
@@ -328,12 +396,14 @@ impl<'a> TryFrom<&StackFrame<'a>> for datadog_crashtracker::StackFrame {
             }
             Some(vec)
         };
+        let normalized_ip = (&value.normalized_ip).try_into()?;
         let sp = to_hex(value.sp);
         let symbol_address = to_hex(value.symbol_address);
         Ok(Self {
             ip,
             module_base_address,
             names,
+            normalized_ip,
             sp,
             symbol_address,
         })
