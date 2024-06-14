@@ -36,6 +36,7 @@ pub unsafe extern "C" fn ddog_crashinfo_drop(crashinfo: *mut CrashInfo) {
 ///
 /// # Safety
 /// `crashinfo` must be a valid pointer to a `CrashInfo` object.
+#[cfg(unix)]
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_crashinfo_normalize_ips(
