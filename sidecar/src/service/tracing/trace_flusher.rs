@@ -257,9 +257,6 @@ impl TraceFlusher {
             }
             Err(e) => {
                 error!("Error sending trace: {e:?}");
-                if endpoint.api_key.is_some() {
-                    // TODO: APMSP-1020 Retries when sending to intake
-                }
             }
         }
     }

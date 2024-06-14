@@ -1,21 +1,21 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod retry_strategy;
+pub mod send_data_result;
+
+pub use crate::send_data::retry_strategy::{RetryBackoffType, RetryStrategy};
+
+use crate::trace_utils::{SendDataResult, TracerHeaderTags};
 use anyhow::{anyhow, Context};
 use bytes::Bytes;
+use datadog_trace_protobuf::pb::{AgentPayload, TracerPayload};
+use ddcommon::{connector, Endpoint, HttpRequestBuilder};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use hyper::{
-    header::{HeaderMap, HeaderValue},
-    Body, Client, Method, Response,
-};
+use hyper::header::HeaderValue;
+use hyper::{Body, Client, HeaderMap, Method, Response};
 use std::collections::HashMap;
-use std::time::Duration;
-use tokio::time::sleep;
-
-use crate::tracer_header_tags::TracerHeaderTags;
-use datadog_trace_protobuf::pb::{self, TracerPayload};
-use ddcommon::{connector, Endpoint, HttpRequestBuilder};
 
 const DD_API_KEY: &str = "DD-API-KEY";
 const HEADER_DD_TRACE_COUNT: &str = "X-Datadog-Trace-Count";
@@ -47,8 +47,8 @@ impl std::fmt::Display for RequestError {
 
 impl std::error::Error for RequestError {}
 
-pub enum RequestResult {
-    /// Holds information from a succesful request.
+pub(crate) enum RequestResult {
+    /// Holds information from a successful request.
     Success((Response<Body>, Attempts, BytesSent, ChunksSent)),
     /// Treats HTTP errors.
     Error((Response<Body>, Attempts, ChunksDropped)),
@@ -60,233 +60,43 @@ pub enum RequestResult {
     BuildError((Attempts, ChunksDropped)),
 }
 
-#[derive(Debug)]
-pub struct SendDataResult {
-    // Keeps track of the last request result.
-    pub last_result: anyhow::Result<Response<Body>>,
-    // Count metric for 'trace_api.requests'.
-    pub requests_count: u64,
-    // Count metric for 'trace_api.responses'. Each key maps  a different HTTP status code.
-    pub responses_count_per_code: HashMap<u16, u64>,
-    // Count metric for 'trace_api.errors' (type: timeout).
-    pub errors_timeout: u64,
-    // Count metric for 'trace_api.errors' (type: network).
-    pub errors_network: u64,
-    // Count metric for 'trace_api.errors' (type: status_code).
-    pub errors_status_code: u64,
-    // Count metric for 'trace_api.bytes'
-    pub bytes_sent: u64,
-    // Count metric for 'trace_chunk_sent'
-    pub chunks_sent: u64,
-    // Count metric for 'trace_chunks_dropped'
-    pub chunks_dropped: u64,
-}
-
-impl Default for SendDataResult {
-    fn default() -> Self {
-        SendDataResult {
-            last_result: Err(anyhow!("No requests sent")),
-            requests_count: 0,
-            responses_count_per_code: Default::default(),
-            errors_timeout: 0,
-            errors_network: 0,
-            errors_status_code: 0,
-            bytes_sent: 0,
-            chunks_sent: 0,
-            chunks_dropped: 0,
-        }
-    }
-}
-
-impl SendDataResult {
-    ///
-    /// Updates `SendDataResult` internal information with the request's result information.
-    ///
-    /// # Arguments
-    ///
-    /// * `res` - Request result.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use datadog_trace_utils::send_data::RequestResult;
-    /// use datadog_trace_utils::trace_utils::SendDataResult;
-    ///
-    /// #[cfg_attr(miri, ignore)]
-    /// async fn update_send_results_example() {
-    ///     let result = RequestResult::NetworkError((1, 0));
-    ///     let mut data_result = SendDataResult::default();
-    ///     data_result.update(result).await;
-    /// }
-    /// ```
-
-    pub async fn update(&mut self, res: RequestResult) {
-        match res {
-            RequestResult::Success((response, attempts, bytes, chunks)) => {
-                *self
-                    .responses_count_per_code
-                    .entry(response.status().as_u16())
-                    .or_default() += 1;
-                self.bytes_sent += bytes;
-                self.chunks_sent += chunks;
-                self.last_result = Ok(response);
-                self.requests_count += u64::from(attempts);
-            }
-            RequestResult::Error((response, attempts, chunks)) => {
-                let status_code = response.status().as_u16();
-                self.errors_status_code += 1;
-                *self
-                    .responses_count_per_code
-                    .entry(status_code)
-                    .or_default() += 1;
-                self.chunks_dropped += chunks;
-                self.requests_count += u64::from(attempts);
-
-                let body_bytes = hyper::body::to_bytes(response.into_body()).await;
-                let response_body =
-                    String::from_utf8(body_bytes.unwrap_or_default().to_vec()).unwrap_or_default();
-                self.last_result = Err(anyhow::format_err!(
-                    "{} - Server did not accept traces: {}",
-                    status_code,
-                    response_body,
-                ));
-            }
-            RequestResult::TimeoutError((attempts, chunks)) => {
-                self.errors_timeout += 1;
-                self.chunks_dropped += chunks;
-                self.requests_count += u64::from(attempts);
-            }
-            RequestResult::NetworkError((attempts, chunks)) => {
-                self.errors_network += 1;
-                self.chunks_dropped += chunks;
-                self.requests_count += u64::from(attempts);
-            }
-            RequestResult::BuildError((attempts, chunks)) => {
-                self.chunks_dropped += chunks;
-                self.requests_count += u64::from(attempts);
-            }
-        }
-    }
-
-    ///
-    /// Sets `SendDataResult` last result information.
-    /// expected result.
-    ///
-    /// # Arguments
-    ///
-    /// * `err` - Error to be set.
-    fn error(mut self, err: anyhow::Error) -> SendDataResult {
-        self.last_result = Err(err);
-        self
-    }
-}
-
-fn construct_agent_payload(tracer_payloads: Vec<pb::TracerPayload>) -> pb::AgentPayload {
-    pb::AgentPayload {
-        host_name: "".to_string(),
-        env: "".to_string(),
-        agent_version: "".to_string(),
-        error_tps: 60.0,
-        target_tps: 60.0,
-        tags: HashMap::new(),
-        tracer_payloads,
-        rare_sampler_enabled: false,
-    }
-}
-
-fn serialize_proto_payload<T>(payload: &T) -> anyhow::Result<Vec<u8>>
-where
-    T: prost::Message,
-{
-    let mut buf = Vec::with_capacity(payload.encoded_len());
-    payload.encode(&mut buf)?;
-    Ok(buf)
-}
-
-/// Enum representing the type of backoff to use for the delay between retries.
-///
-/// ```
 #[derive(Debug, Clone)]
-pub enum RetryBackoffType {
-    /// Increases the delay by a fixed increment each attempt.
-    Linear,
-    /// The delay is constant for each attempt.
-    Constant,
-    /// The delay is doubled for each attempt.
-    Exponential,
-}
-
-// TODO: APMSP-1076 - RetryStrategy should be moved to a separate file when send_data is refactored.
-/// Struct representing the retry strategy for sending data.
+/// `SendData` is a structure that holds the data to be sent to a target endpoint.
+/// It includes the payloads to be sent, the size of the data, the target endpoint,
+/// headers for the request, and a retry strategy for sending the data.
 ///
-/// This struct contains the parameters that define how retries should be handled when sending data.
-/// It includes the maximum number of retries, the delay between retries, the type of backoff to
-/// use, and an optional jitter to add randomness to the delay.
-///
-/// # Examples
+/// # Example
 ///
 /// ```rust
-/// use datadog_trace_utils::send_data::{RetryBackoffType, RetryStrategy};
+/// use datadog_trace_protobuf::pb::TracerPayload;
+/// use datadog_trace_utils::send_data::{
+///     retry_strategy::{RetryBackoffType, RetryStrategy},
+///     SendData,
+/// };
+/// use datadog_trace_utils::trace_utils::TracerHeaderTags;
+/// use ddcommon::Endpoint;
 /// use std::time::Duration;
 ///
-/// let retry_strategy = RetryStrategy {
-///     max_retries: 5,
-///     delay_ms: Duration::from_millis(100),
-///     backoff_type: RetryBackoffType::Exponential,
-///     jitter: Some(Duration::from_millis(50)),
-/// };
+/// #[cfg_attr(miri, ignore)]
+/// async fn update_send_results_example() {
+///     let size = 100;
+///     let tracer_payload = TracerPayload::default(); // Replace with actual payload
+///     let tracer_header_tags = TracerHeaderTags::default(); // Replace with actual header tags
+///     let target = Endpoint::default(); // Replace with actual endpoint
+///
+///     let mut send_data = SendData::new(size, tracer_payload, tracer_header_tags, &target);
+///
+///     // Set a custom retry strategy
+///     let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
+///
+///     send_data.set_retry_strategy(retry_strategy);
+///
+///     // Send the data
+///     let result = send_data.send().await;
+/// }
 /// ```
-#[derive(Debug, Clone)]
-pub struct RetryStrategy {
-    /// The maximum number of retries to attempt.
-    pub max_retries: u32,
-    /// The minimum delay between retries.
-    pub delay_ms: Duration,
-    /// The type of backoff to use for the delay between retries.
-    pub backoff_type: RetryBackoffType,
-    /// An optional jitter to add randomness to the delay.
-    pub jitter: Option<Duration>,
-}
-
-impl Default for RetryStrategy {
-    fn default() -> Self {
-        RetryStrategy {
-            max_retries: 5,
-            delay_ms: Duration::from_millis(100),
-            backoff_type: RetryBackoffType::Exponential,
-            jitter: None,
-        }
-    }
-}
-
-impl RetryStrategy {
-    /// Delays the next request attempt based on the retry strategy.
-    ///
-    /// If a jitter duration is specified in the retry strategy, a random duration up to the jitter
-    /// value is added to the delay.
-    ///
-    /// # Arguments
-    ///
-    /// * `attempt`: The number of the current attempt (1-indexed).
-    pub(crate) async fn delay(&self, attempt: u32) {
-        let delay = match self.backoff_type {
-            RetryBackoffType::Exponential => self.delay_ms * 2u32.pow(attempt - 1),
-            RetryBackoffType::Constant => self.delay_ms,
-            RetryBackoffType::Linear => self.delay_ms + (self.delay_ms * (attempt - 1)),
-        };
-
-        if let Some(jitter) = self.jitter {
-            let jitter = rand::random::<u64>() % jitter.as_millis() as u64;
-            sleep(delay + Duration::from_millis(jitter)).await;
-        } else {
-            sleep(delay).await;
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
 pub struct SendData {
-    pub(crate) tracer_payloads: Vec<pb::TracerPayload>,
+    pub(crate) tracer_payloads: Vec<TracerPayload>,
     pub(crate) size: usize, // have a rough size estimate to force flushing if it's large
     target: Endpoint,
     headers: HashMap<&'static str, String>,
@@ -294,9 +104,21 @@ pub struct SendData {
 }
 
 impl SendData {
+    /// Creates a new instance of `SendData`.
+    ///
+    /// # Arguments
+    ///
+    /// * `size`: Approximate size of the data to be sent in bytes.
+    /// * `tracer_payload`: The payload to be sent.
+    /// * `tracer_header_tags`: The header tags for the tracer.
+    /// * `target`: The endpoint to which the data will be sent.
+    ///
+    /// # Returns
+    ///
+    /// A new `SendData` instance.
     pub fn new(
         size: usize,
-        tracer_payload: pb::TracerPayload,
+        tracer_payload: TracerPayload,
         tracer_header_tags: TracerHeaderTags,
         target: &Endpoint,
     ) -> SendData {
@@ -315,18 +137,38 @@ impl SendData {
         }
     }
 
+    /// Returns the user defined approximate size of the data to be sent in bytes.
+    ///
+    /// # Returns
+    ///
+    /// The size of the data.
     pub fn len(&self) -> usize {
         self.size
     }
 
+    /// Checks if the user defined approximate size of the data to be sent is zero.
+    ///
+    /// # Returns
+    ///
+    /// `true` if size is 0, `false` otherwise.
     pub fn is_empty(&self) -> bool {
         self.size == 0
     }
 
+    /// Returns the target endpoint.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the target endpoint.
     pub fn get_target(&self) -> &Endpoint {
         &self.target
     }
 
+    /// Returns the payloads to be sent.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the vector of payloads.
     pub fn get_payloads(&self) -> &Vec<TracerPayload> {
         &self.tracer_payloads
     }
@@ -338,6 +180,19 @@ impl SendData {
     /// * `retry_strategy`: The new retry strategy to be used.
     pub fn set_retry_strategy(&mut self, retry_strategy: RetryStrategy) {
         self.retry_strategy = retry_strategy;
+    }
+
+    /// Sends the data to the target endpoint.
+    ///
+    /// # Returns
+    ///
+    /// A `SendDataResult` instance containing the result of the operation.
+    pub async fn send(self) -> SendDataResult {
+        if self.use_protobuf() {
+            self.send_with_protobuf().await
+        } else {
+            self.send_with_msgpack().await
+        }
     }
 
     async fn send_request(
@@ -370,17 +225,10 @@ impl SendData {
         self.target.api_key.is_some()
     }
 
-    pub async fn send(self) -> SendDataResult {
-        if self.use_protobuf() {
-            self.send_with_protobuf().await
-        } else {
-            self.send_with_msgpack().await
-        }
-    }
-
     // This function wraps send_data with a retry strategy and the building of the request.
     // Hyper doesn't allow you to send a ref to a request, and you can't clone it. So we have to
-    // build a new one for every send attempt.
+    // build a new one for every send attempt. Being of type Bytes, the payload.clone() is not doing
+    // a deep clone.
     async fn send_payload(
         &self,
         content_type: &'static str,
@@ -404,50 +252,70 @@ impl SendData {
         loop {
             request_attempt += 1;
             let mut req = self.create_request_builder();
-            req.headers_mut().unwrap().extend(headers.clone());
-            let result = self.send_request(req, payload.clone()).await;
+            req.headers_mut()
+                .expect("HttpRequestBuilder unable to get headers for request")
+                .extend(headers.clone());
 
-            // If the request was successful, or if we have exhausted retries then return the
-            // result. Otherwise, delay and try again.
-            match result {
+            match self.send_request(req, payload.clone()).await {
+                // An Ok response doesn't necessarily mean the request was successful, we need to
+                // check the status code and if it's not a 2xx or 3xx we treat it as an error
                 Ok(response) => {
-                    if response.status().is_client_error() || response.status().is_server_error() {
-                        if request_attempt >= self.retry_strategy.max_retries {
-                            return RequestResult::Error((
-                                response,
-                                request_attempt,
-                                payload_chunks,
-                            ));
-                        } else {
+                    let request_result = self.build_request_result_from_ok_response(
+                        response,
+                        request_attempt,
+                        payload_chunks,
+                        payload.len(),
+                    );
+                    match request_result {
+                        RequestResult::Error(_)
+                            if request_attempt < self.retry_strategy.max_retries() =>
+                        {
                             self.retry_strategy.delay(request_attempt).await;
+                            continue;
                         }
-                    } else {
-                        return RequestResult::Success((
-                            response,
-                            request_attempt,
-                            u64::try_from(payload.len()).unwrap(),
-                            payload_chunks,
-                        ));
+                        _ => return request_result,
                     }
                 }
                 Err(e) => {
-                    if request_attempt >= self.retry_strategy.max_retries {
-                        return match e {
-                            RequestError::Build => {
-                                RequestResult::BuildError((request_attempt, payload_chunks))
-                            }
-                            RequestError::Network => {
-                                RequestResult::NetworkError((request_attempt, payload_chunks))
-                            }
-                            RequestError::Timeout => {
-                                RequestResult::TimeoutError((request_attempt, payload_chunks))
-                            }
-                        };
+                    if request_attempt >= self.retry_strategy.max_retries() {
+                        return self.handle_request_error(e, request_attempt, payload_chunks);
                     } else {
                         self.retry_strategy.delay(request_attempt).await;
                     }
                 }
             }
+        }
+    }
+
+    fn build_request_result_from_ok_response(
+        &self,
+        response: Response<Body>,
+        request_attempt: Attempts,
+        payload_chunks: ChunksSent,
+        payload_len: usize,
+    ) -> RequestResult {
+        if response.status().is_client_error() || response.status().is_server_error() {
+            RequestResult::Error((response, request_attempt, payload_chunks))
+        } else {
+            RequestResult::Success((
+                response,
+                request_attempt,
+                u64::try_from(payload_len).unwrap(),
+                payload_chunks,
+            ))
+        }
+    }
+
+    fn handle_request_error(
+        &self,
+        e: RequestError,
+        request_attempt: Attempts,
+        payload_chunks: ChunksDropped,
+    ) -> RequestResult {
+        match e {
+            RequestError::Build => RequestResult::BuildError((request_attempt, payload_chunks)),
+            RequestError::Network => RequestResult::NetworkError((request_attempt, payload_chunks)),
+            RequestError::Timeout => RequestResult::TimeoutError((request_attempt, payload_chunks)),
         }
     }
 
@@ -530,21 +398,42 @@ impl SendData {
     }
 }
 
+fn construct_agent_payload(tracer_payloads: Vec<TracerPayload>) -> AgentPayload {
+    AgentPayload {
+        host_name: "".to_string(),
+        env: "".to_string(),
+        agent_version: "".to_string(),
+        error_tps: 60.0,
+        target_tps: 60.0,
+        tags: HashMap::new(),
+        tracer_payloads,
+        rare_sampler_enabled: false,
+    }
+}
+
+fn serialize_proto_payload<T>(payload: &T) -> anyhow::Result<Vec<u8>>
+where
+    T: prost::Message,
+{
+    let mut buf = Vec::with_capacity(payload.encoded_len());
+    payload.encode(&mut buf)?;
+    Ok(buf)
+}
+
 #[cfg(test)]
-// For RetryStrategy tests the observed delay should be approximate.
 mod tests {
     use super::*;
+    use crate::send_data::retry_strategy::RetryBackoffType;
+    use crate::send_data::retry_strategy::RetryStrategy;
     use crate::test_utils::{create_send_data, poll_for_mock_hit};
     use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, RootSpanTags};
     use crate::tracer_header_tags::TracerHeaderTags;
-    use datadog_trace_protobuf::pb;
+    use datadog_trace_protobuf::pb::Span;
     use ddcommon::Endpoint;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use std::collections::HashMap;
-    use tokio::time::Instant;
 
-    const RETRY_STRATEGY_TIME_TOLERANCE_MS: u64 = 25;
     const HEADER_TAGS: TracerHeaderTags = TracerHeaderTags {
         lang: "test-lang",
         lang_version: "2.0",
@@ -556,7 +445,7 @@ mod tests {
         client_computed_stats: false,
     };
 
-    fn setup_payload(header_tags: &TracerHeaderTags) -> pb::TracerPayload {
+    fn setup_payload(header_tags: &TracerHeaderTags) -> TracerPayload {
         let root_tags = RootSpanTags {
             env: "TEST",
             app_version: "1.0",
@@ -564,7 +453,7 @@ mod tests {
             runtime_id: "id",
         };
 
-        let chunk = construct_trace_chunk(vec![pb::Span {
+        let chunk = construct_trace_chunk(vec![Span {
             service: "test-service".to_string(),
             name: "test-service-name".to_string(),
             resource: "test-service-resource".to_string(),
@@ -584,13 +473,13 @@ mod tests {
         construct_tracer_payload(vec![chunk], header_tags, root_tags)
     }
 
-    fn compute_payload_len(payload: &[pb::TracerPayload]) -> usize {
+    fn compute_payload_len(payload: &[TracerPayload]) -> usize {
         let agent_payload = construct_agent_payload(payload.to_vec());
         let serialized_trace_payload = serialize_proto_payload(&agent_payload).unwrap();
         serialized_trace_payload.len()
     }
 
-    fn rmp_compute_payload_len(payload: &Vec<pb::TracerPayload>) -> usize {
+    fn rmp_compute_payload_len(payload: &Vec<TracerPayload>) -> usize {
         let mut total: usize = 0;
         for payload in payload {
             total += rmp_serde::to_vec_named(payload).unwrap().len();
@@ -895,140 +784,6 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    async fn test_retry_strategy_constant() {
-        let retry_strategy = RetryStrategy {
-            max_retries: 5,
-            delay_ms: Duration::from_millis(100),
-            backoff_type: RetryBackoffType::Constant,
-            jitter: None,
-        };
-
-        let start = Instant::now();
-        retry_strategy.delay(1).await;
-        let elapsed = start.elapsed();
-
-        assert!(
-            elapsed >= retry_strategy.delay_ms
-                && elapsed
-                    <= retry_strategy.delay_ms
-                        + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
-        );
-
-        let start = Instant::now();
-        retry_strategy.delay(2).await;
-        let elapsed = start.elapsed();
-
-        assert!(
-            elapsed >= retry_strategy.delay_ms
-                && elapsed
-                    <= retry_strategy.delay_ms
-                        + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
-        );
-    }
-
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_retry_strategy_linear() {
-        let retry_strategy = RetryStrategy {
-            max_retries: 5,
-            delay_ms: Duration::from_millis(100),
-            backoff_type: RetryBackoffType::Linear,
-            jitter: None,
-        };
-
-        let start = Instant::now();
-        retry_strategy.delay(1).await;
-        let elapsed = start.elapsed();
-
-        assert!(
-            elapsed >= retry_strategy.delay_ms
-                && elapsed
-                    <= retry_strategy.delay_ms
-                        + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
-        );
-
-        let start = Instant::now();
-        retry_strategy.delay(3).await;
-        let elapsed = start.elapsed();
-
-        // For the Linear strategy, the delay for the 3rd attempt should be delay_ms + (delay_ms *
-        // 2).
-        assert!(
-            elapsed >= retry_strategy.delay_ms + (retry_strategy.delay_ms * 2)
-                && elapsed
-                    <= retry_strategy.delay_ms
-                        + (retry_strategy.delay_ms * 2)
-                        + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
-        );
-    }
-
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_retry_strategy_exponential() {
-        let retry_strategy = RetryStrategy {
-            max_retries: 5,
-            delay_ms: Duration::from_millis(100),
-            backoff_type: RetryBackoffType::Exponential,
-            jitter: None,
-        };
-
-        let start = Instant::now();
-        retry_strategy.delay(1).await;
-        let elapsed = start.elapsed();
-
-        assert!(
-            elapsed >= retry_strategy.delay_ms
-                && elapsed
-                    <= retry_strategy.delay_ms
-                        + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
-        );
-
-        let start = Instant::now();
-        retry_strategy.delay(3).await;
-        let elapsed = start.elapsed();
-        // For the Exponential strategy, the delay for the 3rd attempt should be delay_ms * 2^(3-1)
-        // = delay_ms * 4.
-        assert!(
-            elapsed >= retry_strategy.delay_ms * 4
-                && elapsed
-                    <= retry_strategy.delay_ms * 4
-                        + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
-        );
-    }
-
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_retry_strategy_jitter() {
-        let retry_strategy = RetryStrategy {
-            max_retries: 5,
-            delay_ms: Duration::from_millis(100),
-            backoff_type: RetryBackoffType::Constant,
-            jitter: Some(Duration::from_millis(50)),
-        };
-
-        let start = Instant::now();
-        retry_strategy.delay(1).await;
-        let elapsed = start.elapsed();
-
-        // The delay should be between delay_ms and delay_ms + jitter
-        assert!(
-            elapsed >= retry_strategy.delay_ms
-                && elapsed
-                    <= retry_strategy.delay_ms
-                        + retry_strategy.jitter.unwrap()
-                        + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
-        );
-    }
-
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
     async fn test_zero_retries_on_error() {
         let server = MockServer::start();
 
@@ -1058,12 +813,7 @@ mod tests {
         let size = 512;
 
         let mut send_data = create_send_data(size, &target_endpoint);
-        send_data.set_retry_strategy(RetryStrategy {
-            max_retries: 0,
-            delay_ms: Duration::from_millis(2),
-            backoff_type: RetryBackoffType::Constant,
-            jitter: None,
-        });
+        send_data.set_retry_strategy(RetryStrategy::new(0, 2, RetryBackoffType::Constant, None));
 
         tokio::spawn(async move {
             let result = send_data.send().await;
@@ -1102,12 +852,7 @@ mod tests {
         let size = 512;
 
         let mut send_data = create_send_data(size, &target_endpoint);
-        send_data.set_retry_strategy(RetryStrategy {
-            max_retries: 2,
-            delay_ms: Duration::from_millis(250),
-            backoff_type: RetryBackoffType::Constant,
-            jitter: None,
-        });
+        send_data.set_retry_strategy(RetryStrategy::new(2, 250, RetryBackoffType::Constant, None));
 
         tokio::spawn(async move {
             let result = send_data.send().await;
@@ -1151,12 +896,7 @@ mod tests {
         let size = 512;
 
         let mut send_data = create_send_data(size, &target_endpoint);
-        send_data.set_retry_strategy(RetryStrategy {
-            max_retries: 2,
-            delay_ms: Duration::from_millis(250),
-            backoff_type: RetryBackoffType::Constant,
-            jitter: None,
-        });
+        send_data.set_retry_strategy(RetryStrategy::new(2, 250, RetryBackoffType::Constant, None));
 
         tokio::spawn(async move {
             let result = send_data.send().await;
@@ -1190,12 +930,12 @@ mod tests {
         let size = 512;
 
         let mut send_data = create_send_data(size, &target_endpoint);
-        send_data.set_retry_strategy(RetryStrategy {
-            max_retries: expected_retry_attempts,
-            delay_ms: Duration::from_millis(10),
-            backoff_type: RetryBackoffType::Constant,
-            jitter: None,
-        });
+        send_data.set_retry_strategy(RetryStrategy::new(
+            expected_retry_attempts,
+            10,
+            RetryBackoffType::Constant,
+            None,
+        ));
 
         tokio::spawn(async move {
             send_data.send().await;
@@ -1234,12 +974,7 @@ mod tests {
         let size = 512;
 
         let mut send_data = create_send_data(size, &target_endpoint);
-        send_data.set_retry_strategy(RetryStrategy {
-            max_retries: 2,
-            delay_ms: Duration::from_millis(10),
-            backoff_type: RetryBackoffType::Constant,
-            jitter: None,
-        });
+        send_data.set_retry_strategy(RetryStrategy::new(2, 10, RetryBackoffType::Constant, None));
 
         tokio::spawn(async move {
             send_data.send().await;
