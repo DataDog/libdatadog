@@ -15,6 +15,7 @@ members = [
   "tools",
   "ipc",
   "ipc/macros",
+  "remote-config",
   "sidecar",
   "sidecar/macros",
   "sidecar-ffi",

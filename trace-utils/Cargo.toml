@@ -9,7 +9,7 @@ license.workspace = true
 [dependencies]
 anyhow = "1.0"
 hyper = { version = "0.14", features = ["client", "server"] }
-hyper-rustls = {version = "0.23", default-features = false, features = ["native-tokio", "http1", "tls12"]}
+hyper-rustls = {version = "0.27", default-features = false, features = ["native-tokio", "http1", "tls12"]}
 serde = { version = "1.0.145", features = ["derive"] }
 prost = "0.11.6"
 rmp-serde = "1.1.1"

@@ -39,10 +39,12 @@ use serde::{Deserialize, Serialize};
 use tokio::task::{JoinError, JoinHandle};
 
 use crate::dogstatsd::DogStatsDAction;
+use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats;
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
+use datadog_remote_config::fetch::ConfigInvariants;
 
 type NoResponse = Ready<()>;
 
@@ -67,6 +69,15 @@ struct SidecarStats {
     log_filter: TemporarilyRetainedMapStats,
 }
 
+#[cfg(windows)]
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub struct ProcessHandle(pub winapi::HANDLE);
+
+#[cfg(windows)]
+unsafe impl Send for ProcessHandle {}
+#[cfg(windows)]
+unsafe impl Sync for ProcessHandle {}
+
 /// The `SidecarServer` struct represents a server that handles sidecar operations.
 ///
 /// It maintains a list of active sessions and a counter for each session.
@@ -85,6 +96,11 @@ pub struct SidecarServer {
         Arc<Mutex<Option<ManualFutureCompleter<ddtelemetry::config::Config>>>>,
     /// Keeps track of the number of submitted payloads.
     pub submitted_payloads: Arc<AtomicU64>,
+    /// All remote config handling
+    remote_configs: RemoteConfigs,
+    /// The ProcessHandle tied to the connection
+    #[cfg(windows)]
+    process_handle: Option<ProcessHandle>,
 }
 
 impl SidecarServer {
@@ -97,7 +113,17 @@ impl SidecarServer {
     /// # Arguments
     ///
     /// * `async_channel`: An `AsyncChannel` that represents the connection to the client.
-    pub async fn accept_connection(self, async_channel: AsyncChannel) {
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    pub async fn accept_connection(mut self, async_channel: AsyncChannel) {
+        #[cfg(windows)]
+        {
+            self.process_handle = async_channel
+                .metadata
+                .lock()
+                .unwrap()
+                .process_handle()
+                .map(|p| ProcessHandle(p as winapi::HANDLE));
+        }
         let server = tarpc::server::BaseChannel::new(
             tarpc::server::Config {
                 pending_response_buffer: 10000,
@@ -433,6 +459,10 @@ impl SidecarServer {
             log_writer: MULTI_LOG_WRITER.stats(),
         }
     }
+
+    pub fn shutdown(&self) {
+        self.remote_configs.shutdown();
+    }
 }
 
 impl SidecarInterface for SidecarServer {
@@ -464,6 +494,7 @@ impl SidecarInterface for SidecarServer {
                         )
                     }) {
                         entry.remove();
+                        rt_info.lock_remote_config_guards().remove(&queue_id);
                     }
                     let apps = rt_info.apps.clone();
                     tokio::spawn(async move {
@@ -486,7 +517,18 @@ impl SidecarInterface for SidecarServer {
                 }
             },
             Entry::Vacant(entry) => {
-                entry.insert(AppOrQueue::Queue(EnqueuedTelemetryData::processed(actions)));
+                if actions.len() == 1
+                    && matches!(
+                        actions[0],
+                        SidecarAction::Telemetry(TelemetryActions::Lifecycle(
+                            LifecycleAction::Stop
+                        ))
+                    )
+                {
+                    rt_info.lock_remote_config_guards().remove(&queue_id);
+                } else {
+                    entry.insert(AppOrQueue::Queue(EnqueuedTelemetryData::processed(actions)));
+                }
             }
         }
 
@@ -550,6 +592,9 @@ impl SidecarInterface for SidecarServer {
                         self.get_runtime(&instance_id)
                             .lock_app_or_actions()
                             .remove(&queue_id);
+                        self.get_runtime(&instance_id)
+                            .lock_remote_config_guards()
+                            .remove(&queue_id);
                     }
 
                     app.telemetry.send_msgs(actions).await.ok();
@@ -568,9 +613,20 @@ impl SidecarInterface for SidecarServer {
         self,
         _: Context,
         session_id: String,
+        #[cfg(unix)] pid: libc::pid_t,
+        #[cfg(windows)]
+        remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
         config: SessionConfig,
     ) -> Self::SetSessionConfigFut {
         let session = self.get_session(&session_id);
+        #[cfg(unix)]
+        {
+            session.pid.store(pid, Ordering::Relaxed);
+        }
+        #[cfg(windows)]
+        {
+            *session.remote_config_notify_function.lock().unwrap() = remote_config_notify_function;
+        }
         session.modify_telemetry_config(|cfg| {
             let endpoint =
                 get_product_endpoint(ddtelemetry::config::PROD_INTAKE_SUBDOMAIN, &config.endpoint);
@@ -585,6 +641,13 @@ impl SidecarInterface for SidecarServer {
         });
         session.configure_dogstatsd(|dogstatsd| {
             dogstatsd.set_endpoint(config.dogstatsd_endpoint.clone());
+        });
+        session.set_remote_config_invariants(ConfigInvariants {
+            language: config.language,
+            tracer_version: config.tracer_version,
+            endpoint: config.endpoint,
+            products: config.remote_config_products,
+            capabilities: config.remote_config_capabilities,
         });
         self.trace_flusher
             .interval_ms
@@ -693,6 +756,53 @@ impl SidecarInterface for SidecarServer {
                 self.send_trace_v04(&headers, data.as_slice(), &endpoint);
             });
         }
+
+        no_response()
+    }
+
+    type SetRemoteConfigDataFut = NoResponse;
+
+    fn set_remote_config_data(
+        self,
+        _: Context,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        service_name: String,
+        env_name: String,
+        app_version: String,
+    ) -> Self::SetRemoteConfigDataFut {
+        let session = self.get_session(&instance_id.session_id);
+        #[cfg(windows)]
+        let notify_target = if let Some(handle) = self.process_handle {
+            RemoteConfigNotifyTarget {
+                process_handle: handle,
+                notify_function: *session.remote_config_notify_function.lock().unwrap(),
+            }
+        } else {
+            return no_response();
+        };
+        #[cfg(unix)]
+        let notify_target = RemoteConfigNotifyTarget {
+            pid: session.pid.load(Ordering::Relaxed),
+        };
+        session
+            .get_runtime(&instance_id.runtime_id)
+            .lock_remote_config_guards()
+            .insert(
+                queue_id,
+                self.remote_configs.add_runtime(
+                    session
+                        .get_remote_config_invariants()
+                        .as_ref()
+                        .expect("Expecting remote config invariants to be set early")
+                        .clone(),
+                    instance_id.runtime_id,
+                    notify_target,
+                    env_name,
+                    service_name,
+                    app_version,
+                ),
+            );
 
         no_response()
     }

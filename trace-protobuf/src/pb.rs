@@ -35,10 +35,8 @@ pub struct SpanLink {
     ///
     /// Optional. Simple mapping of keys to string values.
     #[prost(map = "string, string", tag = "4")]
-    pub attributes: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub attributes:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     /// @gotags: msg:"tracestate,omitempty"
     ///
     /// Optional. W3C tracestate.
@@ -66,8 +64,8 @@ pub struct Span {
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
     pub name: ::prost::alloc::string::String,
-    /// resource is the resource name of this span, also sometimes called the endpoint (for web spans).
-    /// @gotags: json:"resource" msg:"resource"
+    /// resource is the resource name of this span, also sometimes called the endpoint (for web
+    /// spans). @gotags: json:"resource" msg:"resource"
     #[prost(string, tag = "3")]
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
@@ -113,18 +111,16 @@ pub struct Span {
     #[prost(map = "string, string", tag = "10")]
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
-    pub meta: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub meta:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     /// metrics is a mapping from tag name to tag value for numeric-valued tags.
     /// @gotags: json:"metrics,omitempty" msg:"metrics,omitempty"
     #[prost(map = "string, double", tag = "11")]
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
     pub metrics: ::std::collections::HashMap<::prost::alloc::string::String, f64>,
-    /// type is the type of the service with which this span is associated.  Example values: web, db, lambda.
-    /// @gotags: json:"type" msg:"type"
+    /// type is the type of the service with which this span is associated.  Example values: web,
+    /// db, lambda. @gotags: json:"type" msg:"type"
     #[prost(string, tag = "12")]
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
@@ -135,19 +131,18 @@ pub struct Span {
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
     #[serde(skip_serializing_if = "::std::collections::HashMap::is_empty")]
-    pub meta_struct: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::vec::Vec<u8>,
-    >,
-    /// span_links represents a collection of links, where each link defines a causal relationship between two spans.
-    /// @gotags: json:"span_links,omitempty" msg:"span_links,omitempty"
+    pub meta_struct:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::vec::Vec<u8>>,
+    /// span_links represents a collection of links, where each link defines a causal relationship
+    /// between two spans. @gotags: json:"span_links,omitempty" msg:"span_links,omitempty"
     #[prost(message, repeated, tag = "14")]
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
     #[serde(skip_serializing_if = "::prost::alloc::vec::Vec::is_empty")]
     pub span_links: ::prost::alloc::vec::Vec<SpanLink>,
 }
-/// TraceChunk represents a list of spans with the same trace ID. In other words, a chunk of a trace.
+/// TraceChunk represents a list of spans with the same trace ID. In other words, a chunk of a
+/// trace.
 #[derive(Deserialize, Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -167,10 +162,8 @@ pub struct TraceChunk {
     /// tags specifies tags common in all `spans`.
     /// @gotags: json:"tags" msg:"tags"
     #[prost(map = "string, string", tag = "4")]
-    pub tags: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub tags:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     /// droppedTrace specifies whether the trace was dropped by samplers or not.
     /// @gotags: json:"dropped_trace" msg:"dropped_trace"
     #[prost(bool, tag = "5")]
@@ -208,10 +201,8 @@ pub struct TracerPayload {
     /// tags specifies tags common in all `chunks`.
     /// @gotags: json:"tags" msg:"tags"
     #[prost(map = "string, string", tag = "7")]
-    pub tags: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub tags:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     /// env specifies `env` tag that set with the tracer.
     /// @gotags: json:"env" msg:"env"
     #[prost(string, tag = "8")]
@@ -240,10 +231,8 @@ pub struct AgentPayload {
     pub tracer_payloads: ::prost::alloc::vec::Vec<TracerPayload>,
     /// tags specifies tags common in all `tracerPayloads`.
     #[prost(map = "string, string", tag = "6")]
-    pub tags: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub tags:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     /// agentVersion specifies version of the agent.
     #[prost(string, tag = "7")]
     pub agent_version: ::prost::alloc::string::String,
@@ -274,8 +263,9 @@ pub struct StatsPayload {
     pub agent_version: ::prost::alloc::string::String,
     #[prost(bool, tag = "5")]
     pub client_computed: bool,
-    /// splitPayload indicates if the payload is actually one of several payloads split out from a larger payload.
-    /// This field can be used in the backend to signal if re-aggregation is necessary.
+    /// splitPayload indicates if the payload is actually one of several payloads split out from a
+    /// larger payload. This field can be used in the backend to signal if re-aggregation is
+    /// necessary.
     #[prost(bool, tag = "6")]
     pub split_payload: bool,
 }
@@ -320,8 +310,8 @@ pub struct ClientStatsPayload {
     #[prost(uint64, tag = "8")]
     #[serde(default)]
     pub sequence: u64,
-    /// AgentAggregation is set by the agent on tracer payloads modified by the agent aggregation layer
-    /// characterizes counts only and distributions only payloads
+    /// AgentAggregation is set by the agent on tracer payloads modified by the agent aggregation
+    /// layer characterizes counts only and distributions only payloads
     #[prost(string, tag = "9")]
     #[serde(default)]
     pub agent_aggregation: ::prost::alloc::string::String,
@@ -330,18 +320,20 @@ pub struct ClientStatsPayload {
     #[prost(string, tag = "10")]
     #[serde(default)]
     pub service: ::prost::alloc::string::String,
-    /// ContainerID specifies the origin container ID. It is meant to be populated by the client and may
-    /// be enhanced by the agent to ensure it is unique.
+    /// ContainerID specifies the origin container ID. It is meant to be populated by the client
+    /// and may be enhanced by the agent to ensure it is unique.
     #[prost(string, tag = "11")]
     #[serde(default)]
     #[serde(rename = "ContainerID")]
     pub container_id: ::prost::alloc::string::String,
-    /// Tags specifies a set of tags obtained from the orchestrator (where applicable) using the specified containerID.
-    /// This field should be left empty by the client. It only applies to some specific environment.
+    /// Tags specifies a set of tags obtained from the orchestrator (where applicable) using the
+    /// specified containerID. This field should be left empty by the client. It only applies
+    /// to some specific environment.
     #[prost(string, repeated, tag = "12")]
     #[serde(default)]
     pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// The git commit SHA is obtained from a trace, where it may be set through a tracer <-> source code integration.
+    /// The git commit SHA is obtained from a trace, where it may be set through a tracer <->
+    /// source code integration.
     #[prost(string, tag = "13")]
     #[serde(default)]
     pub git_commit_sha: ::prost::alloc::string::String,
@@ -371,7 +363,8 @@ pub struct ClientStatsBucket {
     #[serde(default)]
     pub agent_time_shift: i64,
 }
-/// ClientGroupedStats aggregate stats on spans grouped by service, name, resource, status_code, type
+/// ClientGroupedStats aggregate stats on spans grouped by service, name, resource, status_code,
+/// type
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -422,14 +415,16 @@ pub struct ClientGroupedStats {
     #[serde(default)]
     pub span_kind: ::prost::alloc::string::String,
     /// peer_tags are supplementary tags that further describe a peer entity
-    /// E.g., `grpc.target` to describe the name of a gRPC peer, or `db.hostname` to describe the name of peer DB
+    /// E.g., `grpc.target` to describe the name of a gRPC peer, or `db.hostname` to describe the
+    /// name of peer DB
     #[prost(string, repeated, tag = "16")]
     pub peer_tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// this field's value is equal to span's ParentID == 0.
     #[prost(enumeration = "Trilean", tag = "17")]
     pub is_trace_root: i32,
 }
-/// Trilean is an expanded boolean type that is meant to differentiate between being unset and false.
+/// Trilean is an expanded boolean type that is meant to differentiate between being unset and
+/// false.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum Trilean {
