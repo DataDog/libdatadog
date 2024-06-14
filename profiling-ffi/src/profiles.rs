@@ -49,6 +49,7 @@ impl Drop for Profile {
 
 /// A generic result type for when a profiling operation may fail, but there's
 /// nothing to return in the case of success.
+#[allow(dead_code)]
 #[repr(C)]
 pub enum ProfileResult {
     Ok(
@@ -69,6 +70,7 @@ impl From<anyhow::Result<()>> for ProfileResult {
 }
 
 /// Returned by [ddog_prof_Profile_new].
+#[allow(dead_code)]
 #[repr(C)]
 pub enum ProfileNewResult {
     Ok(Profile),
@@ -76,6 +78,7 @@ pub enum ProfileNewResult {
     Err(Error),
 }
 
+#[allow(dead_code)]
 #[repr(C)]
 pub enum SerializeResult {
     Ok(EncodedProfile),
