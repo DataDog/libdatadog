@@ -11,6 +11,7 @@ use tokio::sync::mpsc::Sender;
 use datadog_trace_obfuscation::obfuscate::obfuscate_span;
 use datadog_trace_utils::trace_utils::SendData;
 use datadog_trace_utils::trace_utils::{self};
+use datadog_trace_utils::tracer_payload::TraceEncoding;
 
 use crate::{
     config::Config,
@@ -86,6 +87,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 }
             },
             true, // In mini agent, we always send agentless
+            TraceEncoding::V07,
         );
 
         let send_data = SendData::new(body_size, payload, tracer_header_tags, &config.trace_intake);
@@ -127,6 +129,7 @@ mod tests {
     use datadog_trace_utils::{
         test_utils::{create_test_json_span, create_test_span},
         trace_utils,
+        tracer_payload::TracerPayloadCollection,
     };
     use ddcommon::Endpoint;
 
@@ -217,10 +220,14 @@ mod tests {
             app_version: "".to_string(),
         };
 
-        assert_eq!(
-            expected_tracer_payload,
-            tracer_payload.unwrap().get_payloads()[0]
-        );
+        let received_payload =
+            if let TracerPayloadCollection::V07(payload) = tracer_payload.unwrap().get_payloads() {
+                Some(payload[0].clone())
+            } else {
+                None
+            };
+
+        assert_eq!(expected_tracer_payload, received_payload.unwrap());
     }
 
     #[tokio::test]
@@ -287,9 +294,14 @@ mod tests {
             hostname: "".to_string(),
             app_version: "".to_string(),
         };
-        assert_eq!(
-            expected_tracer_payload,
-            tracer_payload.unwrap().get_payloads()[0]
-        );
+
+        let received_payload =
+            if let TracerPayloadCollection::V07(payload) = tracer_payload.unwrap().get_payloads() {
+                Some(payload[0].clone())
+            } else {
+                None
+            };
+
+        assert_eq!(expected_tracer_payload, received_payload.unwrap());
     }
 }
