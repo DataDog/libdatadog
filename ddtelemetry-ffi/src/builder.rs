@@ -41,6 +41,13 @@ pub unsafe extern "C" fn ddog_telemetry_builder_instantiate(
     MaybeError::None
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn ddog_telemetry_builder_drop(builder: Option<&mut TelemetryWorkerBuilder>) {
+    if let Some(reference) = builder {
+        drop(Box::from_raw(reference as *mut _))
+    }
+}
+
 /// # Safety
 /// * builder should be a non null pointer to a null pointer to a builder
 #[no_mangle]
