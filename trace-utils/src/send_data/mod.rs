@@ -256,23 +256,20 @@ impl SendData {
                 }
             }
             TracerPayloadCollection::V04(payloads) => {
-                for tracer_payload in payloads {
-                    let chunks = u64::try_from(tracer_payload.len()).unwrap();
-                    let additional_payload_headers =
-                        Some(HashMap::from([(HEADER_DD_TRACE_COUNT, chunks.to_string())]));
+                let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
+                let headers = Some(HashMap::from([(HEADER_DD_TRACE_COUNT, chunks.to_string())]));
 
-                    let payload = match rmp_serde::to_vec_named(tracer_payload) {
-                        Ok(p) => p,
-                        Err(e) => return result.error(anyhow!(e)),
-                    };
+                let payload = match rmp_serde::to_vec_named(payloads) {
+                    Ok(p) => p,
+                    Err(e) => return result.error(anyhow!(e)),
+                };
 
-                    futures.push(self.send_payload(
+                futures.push(self.send_payload(
                         HEADER_CTYPE_MSGPACK,
                         payload,
                         chunks,
-                        additional_payload_headers,
-                    ));
-                }
+                        headers,
+                ));
             }
         }
 
@@ -526,11 +523,7 @@ mod tests {
                 total
             }
             TracerPayloadCollection::V04(payloads) => {
-                let mut total: usize = 0;
-                for payload in payloads {
-                    total += rmp_serde::to_vec_named(payload).unwrap().len();
-                }
-                total
+                rmp_serde::to_vec_named(payloads).unwrap().len()
             }
         }
     }
