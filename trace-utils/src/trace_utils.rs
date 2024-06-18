@@ -227,7 +227,7 @@ pub fn set_serverless_root_span_tags(
     let origin_tag = match env_type {
         EnvironmentType::CloudFunction => "cloudfunction",
         EnvironmentType::AzureFunction => "azurefunction",
-        EnvironmentType::LambdaFunction => "lambdafunction",
+        EnvironmentType::LambdaFunction => "lambda", // historical reasons
     };
     span.meta
         .insert("_dd.origin".to_string(), origin_tag.to_string());
