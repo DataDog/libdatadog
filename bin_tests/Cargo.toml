@@ -18,6 +18,7 @@ ddcommon = { path = "../ddcommon" }
 tempfile = "3.3" 
 serde_json = { version = "1.0" }
 hyper = { version = "0.14", default-features = false }
+strum = { version = "0.26.2", features = ["derive"] }
 
 [[bin]]
 name = "crashtracker_bin_test"

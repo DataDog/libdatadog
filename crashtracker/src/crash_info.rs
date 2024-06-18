@@ -5,8 +5,6 @@ use crate::stacktrace::StackFrame;
 use crate::telemetry::TelemetryCrashUploader;
 use crate::CrashtrackerConfiguration;
 use anyhow::Context;
-#[cfg(unix)]
-use blazesym::symbolize::{Process, Source, Symbolizer};
 use chrono::{DateTime, Utc};
 use ddcommon::tag::Tag;
 use serde::{Deserialize, Serialize};
@@ -48,6 +46,11 @@ pub struct SigInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProcessInfo {
+    pub pid: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashInfo {
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     #[serde(default)]
@@ -62,6 +65,9 @@ pub struct CrashInfo {
     #[serde(default)]
     pub metadata: Option<CrashtrackerMetadata>,
     pub os_info: os_info::Info,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub proc_info: Option<ProcessInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub siginfo: Option<SigInfo>,
@@ -94,8 +100,19 @@ impl Default for CrashInfo {
 
 #[cfg(unix)]
 impl CrashInfo {
-    pub fn resolve_names(&mut self, src: &Source) -> anyhow::Result<()> {
-        let symbolizer = Symbolizer::new();
+    pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
+        let normalizer = blazesym::normalize::Normalizer::new();
+        let pid = pid.into();
+        self.stacktrace.iter_mut().for_each(|frame| {
+            frame
+                .normalize_ip(&normalizer, pid)
+                .unwrap_or_else(|err| eprintln!("Error resolving name {err}"))
+        });
+        Ok(())
+    }
+
+    pub fn resolve_names(&mut self, src: &blazesym::symbolize::Source) -> anyhow::Result<()> {
+        let symbolizer = blazesym::symbolize::Symbolizer::new();
         for frame in &mut self.stacktrace {
             // Resolving names is best effort, just print the error and continue
             frame
@@ -106,10 +123,10 @@ impl CrashInfo {
     }
 
     pub fn resolve_names_from_process(&mut self, pid: u32) -> anyhow::Result<()> {
-        let mut process = Process::new(pid.into());
+        let mut process = blazesym::symbolize::Process::new(pid.into());
         // https://github.com/libbpf/blazesym/issues/518
         process.map_files = false;
-        let src = Source::Process(process);
+        let src = blazesym::symbolize::Source::Process(process);
         self.resolve_names(&src)
     }
 }
@@ -126,6 +143,7 @@ impl CrashInfo {
             incomplete: false,
             metadata: None,
             os_info,
+            proc_info: None,
             siginfo: None,
             stacktrace: vec![],
             tags: HashMap::new(),
@@ -177,6 +195,12 @@ impl CrashInfo {
     pub fn set_metadata(&mut self, metadata: CrashtrackerMetadata) -> anyhow::Result<()> {
         anyhow::ensure!(self.metadata.is_none());
         self.metadata = Some(metadata);
+        Ok(())
+    }
+
+    pub fn set_procinfo(&mut self, proc_info: ProcessInfo) -> anyhow::Result<()> {
+        anyhow::ensure!(self.proc_info.is_none());
+        self.proc_info = Some(proc_info);
         Ok(())
     }
 
