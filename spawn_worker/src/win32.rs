@@ -416,8 +416,7 @@ pub fn recv_passed_handle() -> Option<OwnedHandle> {
 }
 
 fn get_module_file_name(h: HMODULE) -> anyhow::Result<String> {
-    let mut buf = Vec::new();
-    buf.resize(2000, 0);
+    let mut buf = vec![0; 2000];
     loop {
         let read: usize = unsafe { GetModuleFileNameW(h, &mut buf) } as usize;
         if read == 0 {

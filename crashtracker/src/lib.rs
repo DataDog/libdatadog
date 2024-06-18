@@ -69,4 +69,4 @@ pub use crash_handler::{update_config, update_metadata};
 pub use crash_info::*;
 #[cfg(unix)]
 pub use receiver::{receiver_entry_point_stdin, reciever_entry_point_unix_socket};
-pub use stacktrace::{StackFrame, StackFrameNames};
+pub use stacktrace::{NormalizedAddress, NormalizedAddressMeta, StackFrame, StackFrameNames};
