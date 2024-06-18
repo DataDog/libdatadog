@@ -257,6 +257,7 @@ impl SendData {
             }
             TracerPayloadCollection::V04(payloads) => {
                 let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
+                println!("Chunks: {}, JSON: {}", chunks, serde_json::to_string(&payloads).unwrap());
                 let headers = Some(HashMap::from([(HEADER_DD_TRACE_COUNT, chunks.to_string())]));
 
                 let payload = match rmp_serde::to_vec_named(payloads) {
