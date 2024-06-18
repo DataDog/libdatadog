@@ -233,9 +233,10 @@ impl TraceFlusher {
             },
         )
         .send_data;
-        trace_utils::coalesce_send_data(trace_buffer)
-            .into_iter()
-            .collect()
+        // trace_utils::coalesce_send_data(trace_buffer)
+        //     .into_iter()
+        //     .collect()
+        trace_buffer
     }
 
     async fn send_and_handle_trace(&self, send_data: SendData) {

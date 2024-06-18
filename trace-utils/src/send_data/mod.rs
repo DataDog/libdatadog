@@ -264,12 +264,7 @@ impl SendData {
                     Err(e) => return result.error(anyhow!(e)),
                 };
 
-                futures.push(self.send_payload(
-                        HEADER_CTYPE_MSGPACK,
-                        payload,
-                        chunks,
-                        headers,
-                ));
+                futures.push(self.send_payload(HEADER_CTYPE_MSGPACK, payload, chunks, headers));
             }
         }
 
