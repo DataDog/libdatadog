@@ -607,7 +607,6 @@ impl TelemetryWorker {
                 }
             }
             AppHeartbeat(()) | AppClosing(()) => {}
-            // TODO: Paul lgdc keep metrics until we know if the flush was a success
             GenerateMetrics(_) | Sketches(_) => {}
         }
     }
