@@ -55,7 +55,7 @@ impl TracerPayloadCollection {
             TracerPayloadCollection::V07(collection) => {
                 collection.iter().map(|s| s.chunks.len()).sum()
             }
-            TracerPayloadCollection::V04(collection) => collection.iter().map(|s| s.len()).sum(),
+            TracerPayloadCollection::V04(collection) => collection.iter().count()
         }
     }
 
