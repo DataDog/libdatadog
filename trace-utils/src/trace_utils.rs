@@ -6,9 +6,8 @@ use log::{error, info};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-pub use crate::send_data::SendData;
-// TODO: EK - FIX THIS
 pub use crate::send_data::send_data_result::SendDataResult;
+pub use crate::send_data::SendData;
 pub use crate::tracer_header_tags::TracerHeaderTags;
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb::{self, Span, TraceChunk, TracerPayload};
