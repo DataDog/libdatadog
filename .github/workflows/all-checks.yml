@@ -1,4 +1,4 @@
-name: All checks pass
+name: Required checks pass
 on:
     pull_request:
     push:
