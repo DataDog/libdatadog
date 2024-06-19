@@ -1,27 +1,44 @@
-use std::fmt::{Display, Formatter};
-use crate::expr_defs::{BinaryComparison, CollectionMatch, CollectionSource, Condition, DslPart, NumberSource, Reference, StringComparison, StringSource, Value};
-use crate::{Capture, DslString, EvaluateAt, FilterList, InBodyLocation, LiveDebuggingData, LogProbe, MetricKind, MetricProbe, Probe, ProbeCondition, ProbeTarget, ProbeType, ProbeValue, ServiceConfiguration, SpanDecorationProbe, SpanProbe, SpanProbeDecoration, SpanProbeTarget};
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+use crate::expr_defs::{
+    BinaryComparison, CollectionMatch, CollectionSource, Condition, DslPart, NumberSource,
+    Reference, StringComparison, StringSource, Value,
+};
+use crate::{
+    Capture, DslString, EvaluateAt, FilterList, InBodyLocation, LiveDebuggingData, LogProbe,
+    MetricKind, MetricProbe, Probe, ProbeCondition, ProbeTarget, ProbeType, ProbeValue,
+    ServiceConfiguration, SpanDecorationProbe, SpanProbe, SpanProbeDecoration, SpanProbeTarget,
+};
 use serde::Deserialize;
+use std::fmt::{Display, Formatter};
 
 pub fn parse(json: &str) -> anyhow::Result<LiveDebuggingData> {
     let parsed: RawTopLevelItem = serde_json::from_str(json)?;
     fn err<T>(result: Result<T, (&'static str, RawExpr)>) -> anyhow::Result<T> {
         result.map_err(|(str, expr)| anyhow::format_err!("{str}: {expr}"))
-    } 
+    }
     Ok(match parsed.r#type {
-        ContentType::ServiceConfiguration => LiveDebuggingData::ServiceConfiguration(ServiceConfiguration {
-            id: parsed.id,
-            allow: parsed.allow.unwrap_or_default(),
-            deny: parsed.deny.unwrap_or_default(),
-            sampling_snapshots_per_second: parsed.sampling.map(|s| s.snapshots_per_second).unwrap_or(5000),
-        }),
+        ContentType::ServiceConfiguration => {
+            LiveDebuggingData::ServiceConfiguration(ServiceConfiguration {
+                id: parsed.id,
+                allow: parsed.allow.unwrap_or_default(),
+                deny: parsed.deny.unwrap_or_default(),
+                sampling_snapshots_per_second: parsed
+                    .sampling
+                    .map(|s| s.snapshots_per_second)
+                    .unwrap_or(5000),
+            })
+        }
         probe_type => LiveDebuggingData::Probe(Probe {
             id: parsed.id,
             version: parsed.version.unwrap_or(0),
             language: parsed.language,
             tags: parsed.tags.unwrap_or_default(),
             target: {
-                let target = parsed.r#where.ok_or_else(|| anyhow::format_err!("Missing where for Probe"))?;
+                let target = parsed
+                    .r#where
+                    .ok_or_else(|| anyhow::format_err!("Missing where for Probe"))?;
                 ProbeTarget {
                     type_name: target.type_name,
                     method_name: target.method_name,
@@ -34,40 +51,70 @@ pub fn parse(json: &str) -> anyhow::Result<LiveDebuggingData> {
             evaluate_at: parsed.evaluate_at.unwrap_or(EvaluateAt::Default),
             probe: match probe_type {
                 ContentType::MetricProbe => ProbeType::Metric(MetricProbe {
-                    kind: parsed.kind.ok_or_else(|| anyhow::format_err!("Missing kind for MetricProbe"))?,
-                    name: parsed.metric_name.ok_or_else(|| anyhow::format_err!("Missing name for MetricProbe"))?,
-                    value: ProbeValue(err(parsed.value.ok_or_else(|| anyhow::format_err!("Missing value for MetricProbe"))?.json.try_into())?),
+                    kind: parsed
+                        .kind
+                        .ok_or_else(|| anyhow::format_err!("Missing kind for MetricProbe"))?,
+                    name: parsed
+                        .metric_name
+                        .ok_or_else(|| anyhow::format_err!("Missing name for MetricProbe"))?,
+                    value: ProbeValue(err(parsed
+                        .value
+                        .ok_or_else(|| anyhow::format_err!("Missing value for MetricProbe"))?
+                        .json
+                        .try_into())?),
                 }),
                 ContentType::LogProbe => ProbeType::Log(LogProbe {
-                    segments: err(parsed.segments.ok_or_else(|| anyhow::format_err!("Missing segments for LogProbe"))?.try_into())?,
-                    when: ProbeCondition(err(parsed.when.map(|expr| expr.json.try_into()).transpose())?.unwrap_or(Condition::Always)),
+                    segments: err(parsed
+                        .segments
+                        .ok_or_else(|| anyhow::format_err!("Missing segments for LogProbe"))?
+                        .try_into())?,
+                    when: ProbeCondition(
+                        err(parsed.when.map(|expr| expr.json.try_into()).transpose())?
+                            .unwrap_or(Condition::Always),
+                    ),
                     capture: parsed.capture.unwrap_or_default(),
                     capture_snapshot: parsed.capture_snapshot.unwrap_or(false),
-                    sampling_snapshots_per_second: parsed.sampling.map(|s| s.snapshots_per_second).unwrap_or(5000),
+                    sampling_snapshots_per_second: parsed
+                        .sampling
+                        .map(|s| s.snapshots_per_second)
+                        .unwrap_or(5000),
                 }),
                 ContentType::SpanProbe => ProbeType::Span(SpanProbe {}),
-                ContentType::SpanDecorationProbe => ProbeType::SpanDecoration(SpanDecorationProbe {
-                    target: parsed.target_span.unwrap_or(SpanProbeTarget::Active),
-                    decorations: {
-                        let mut decorations = vec![];
-                        for decoration in parsed.decorations.ok_or_else(|| anyhow::format_err!("Missing decorations for SpanDecorationProbe"))? {
-                            decorations.push(SpanProbeDecoration {
-                                condition: ProbeCondition(err(decoration.when.map(|expr| expr.json.try_into()).transpose())?.unwrap_or(Condition::Always)),
-                                tags: {
-                                    let mut tags = vec![];
-                                    for tag in decoration.tags {
-                                        tags.push((tag.name, err(tag.value.segments.try_into())?));
-                                    }
-                                    tags
-                                },
-                            })
-                        }
-                        decorations
-                    },
-                }),
+                ContentType::SpanDecorationProbe => {
+                    ProbeType::SpanDecoration(SpanDecorationProbe {
+                        target: parsed.target_span.unwrap_or(SpanProbeTarget::Active),
+                        decorations: {
+                            let mut decorations = vec![];
+                            for decoration in parsed.decorations.ok_or_else(|| {
+                                anyhow::format_err!("Missing decorations for SpanDecorationProbe")
+                            })? {
+                                decorations.push(SpanProbeDecoration {
+                                    condition: ProbeCondition(
+                                        err(decoration
+                                            .when
+                                            .map(|expr| expr.json.try_into())
+                                            .transpose())?
+                                        .unwrap_or(Condition::Always),
+                                    ),
+                                    tags: {
+                                        let mut tags = vec![];
+                                        for tag in decoration.tags {
+                                            tags.push((
+                                                tag.name,
+                                                err(tag.value.segments.try_into())?,
+                                            ));
+                                        }
+                                        tags
+                                    },
+                                })
+                            }
+                            decorations
+                        },
+                    })
+                }
                 _ => unreachable!(),
             },
-        })
+        }),
     })
 }
 
@@ -171,7 +218,12 @@ impl TryInto<Result<CollectionSource, RawExpr>> for RawExpr {
 
     fn try_into(self) -> Result<Result<CollectionSource, RawExpr>, Self::Error> {
         Ok(Ok(match self {
-            RawExpr::Expr(Some(RawExprValue::Filter([source, cond]))) => CollectionSource::FilterOperator(Box::new(((*source).try_into()?, (*cond).try_into()?))),
+            RawExpr::Expr(Some(RawExprValue::Filter([source, cond]))) => {
+                CollectionSource::FilterOperator(Box::new((
+                    (*source).try_into()?,
+                    (*cond).try_into()?,
+                )))
+            }
             expr => return Ok(Err(expr)),
         }))
     }
@@ -182,13 +234,19 @@ impl TryInto<Reference> for RawExpr {
 
     fn try_into(self) -> Result<Reference, Self::Error> {
         Ok(match self {
-            RawExpr::Expr(Some(RawExprValue::Ref(identifier))) => if identifier == "@it" {
-                Reference::IteratorVariable
-            } else {
-                Reference::Base(identifier)
-            },
-            RawExpr::Expr(Some(RawExprValue::Index([source, index]))) => Reference::Index(Box::new(((*source).try_into()?, (*index).try_into()?))),
-            RawExpr::Expr(Some(RawExprValue::Getmember([source, member]))) => Reference::Nested(Box::new(((*source).try_into()?, (*member).try_into()?))),
+            RawExpr::Expr(Some(RawExprValue::Ref(identifier))) => {
+                if identifier == "@it" {
+                    Reference::IteratorVariable
+                } else {
+                    Reference::Base(identifier)
+                }
+            }
+            RawExpr::Expr(Some(RawExprValue::Index([source, index]))) => {
+                Reference::Index(Box::new(((*source).try_into()?, (*index).try_into()?)))
+            }
+            RawExpr::Expr(Some(RawExprValue::Getmember([source, member]))) => {
+                Reference::Nested(Box::new(((*source).try_into()?, (*member).try_into()?)))
+            }
             expr => return Err(("Found unexpected value for a reference", expr)),
         })
     }
@@ -211,25 +269,91 @@ impl TryInto<Result<Condition, RawExpr>> for RawExpr {
             RawExpr::Bool(true) => Condition::Always,
             RawExpr::Bool(false) => Condition::Never,
             RawExpr::Expr(None) => Condition::Never,
-            RawExpr::Expr(Some(RawExprValue::Or([a, b]))) => Condition::Disjunction(Box::new(((*a).try_into()?, (*b).try_into()?))),
-            RawExpr::Expr(Some(RawExprValue::And([a, b]))) => Condition::Conjunction(Box::new(((*a).try_into()?, (*b).try_into()?))),
-            RawExpr::Expr(Some(RawExprValue::Not(a))) => Condition::Negation(Box::new((*a).try_into()?)),
-            RawExpr::Expr(Some(RawExprValue::Eq([a, b]))) => Condition::BinaryComparison((*a).try_into()?, BinaryComparison::Equals, (*b).try_into()?),
-            RawExpr::Expr(Some(RawExprValue::Ne([a, b]))) => Condition::BinaryComparison((*a).try_into()?, BinaryComparison::NotEquals, (*b).try_into()?),
-            RawExpr::Expr(Some(RawExprValue::Gt([a, b]))) => Condition::BinaryComparison((*a).try_into()?, BinaryComparison::GreaterThan, (*b).try_into()?),
-            RawExpr::Expr(Some(RawExprValue::Ge([a, b]))) => Condition::BinaryComparison((*a).try_into()?, BinaryComparison::GreaterOrEquals, (*b).try_into()?),
-            RawExpr::Expr(Some(RawExprValue::Lt([a, b]))) => Condition::BinaryComparison((*a).try_into()?, BinaryComparison::LowerThan, (*b).try_into()?),
-            RawExpr::Expr(Some(RawExprValue::Le([a, b]))) => Condition::BinaryComparison((*a).try_into()?, BinaryComparison::LowerOrEquals, (*b).try_into()?),
-            RawExpr::Expr(Some(RawExprValue::StartsWith((source, value)))) => Condition::StringComparison(StringComparison::StartsWith, (*source).try_into()?, value),
-            RawExpr::Expr(Some(RawExprValue::EndsWith((source, value)))) => Condition::StringComparison(StringComparison::EndsWith, (*source).try_into()?, value),
-            RawExpr::Expr(Some(RawExprValue::Contains((source, value)))) => Condition::StringComparison(StringComparison::Contains, (*source).try_into()?, value),
-            RawExpr::Expr(Some(RawExprValue::Matches((source, value)))) => Condition::StringComparison(StringComparison::Matches, (*source).try_into()?, value),
-            RawExpr::Expr(Some(RawExprValue::Any([a, b]))) => Condition::CollectionMatch(CollectionMatch::Any, (*a).try_into()?, Box::new((*b).try_into()?)),
-            RawExpr::Expr(Some(RawExprValue::All([a, b]))) => Condition::CollectionMatch(CollectionMatch::All, (*a).try_into()?, Box::new((*b).try_into()?)),
-            RawExpr::Expr(Some(RawExprValue::Instanceof((source, name)))) => Condition::Instanceof((*source).try_into()?, name),
-            RawExpr::Expr(Some(RawExprValue::IsUndefined(source))) => Condition::Negation(Box::new(Condition::IsDefinedReference((*source).try_into()?))),
-            RawExpr::Expr(Some(RawExprValue::IsDefined(source))) => Condition::IsDefinedReference((*source).try_into()?),
-            RawExpr::Expr(Some(RawExprValue::IsEmpty(source))) => Condition::IsEmptyReference((*source).try_into()?),
+            RawExpr::Expr(Some(RawExprValue::Or([a, b]))) => {
+                Condition::Disjunction(Box::new(((*a).try_into()?, (*b).try_into()?)))
+            }
+            RawExpr::Expr(Some(RawExprValue::And([a, b]))) => {
+                Condition::Conjunction(Box::new(((*a).try_into()?, (*b).try_into()?)))
+            }
+            RawExpr::Expr(Some(RawExprValue::Not(a))) => {
+                Condition::Negation(Box::new((*a).try_into()?))
+            }
+            RawExpr::Expr(Some(RawExprValue::Eq([a, b]))) => Condition::BinaryComparison(
+                (*a).try_into()?,
+                BinaryComparison::Equals,
+                (*b).try_into()?,
+            ),
+            RawExpr::Expr(Some(RawExprValue::Ne([a, b]))) => Condition::BinaryComparison(
+                (*a).try_into()?,
+                BinaryComparison::NotEquals,
+                (*b).try_into()?,
+            ),
+            RawExpr::Expr(Some(RawExprValue::Gt([a, b]))) => Condition::BinaryComparison(
+                (*a).try_into()?,
+                BinaryComparison::GreaterThan,
+                (*b).try_into()?,
+            ),
+            RawExpr::Expr(Some(RawExprValue::Ge([a, b]))) => Condition::BinaryComparison(
+                (*a).try_into()?,
+                BinaryComparison::GreaterOrEquals,
+                (*b).try_into()?,
+            ),
+            RawExpr::Expr(Some(RawExprValue::Lt([a, b]))) => Condition::BinaryComparison(
+                (*a).try_into()?,
+                BinaryComparison::LowerThan,
+                (*b).try_into()?,
+            ),
+            RawExpr::Expr(Some(RawExprValue::Le([a, b]))) => Condition::BinaryComparison(
+                (*a).try_into()?,
+                BinaryComparison::LowerOrEquals,
+                (*b).try_into()?,
+            ),
+            RawExpr::Expr(Some(RawExprValue::StartsWith((source, value)))) => {
+                Condition::StringComparison(
+                    StringComparison::StartsWith,
+                    (*source).try_into()?,
+                    value,
+                )
+            }
+            RawExpr::Expr(Some(RawExprValue::EndsWith((source, value)))) => {
+                Condition::StringComparison(
+                    StringComparison::EndsWith,
+                    (*source).try_into()?,
+                    value,
+                )
+            }
+            RawExpr::Expr(Some(RawExprValue::Contains((source, value)))) => {
+                Condition::StringComparison(
+                    StringComparison::Contains,
+                    (*source).try_into()?,
+                    value,
+                )
+            }
+            RawExpr::Expr(Some(RawExprValue::Matches((source, value)))) => {
+                Condition::StringComparison(StringComparison::Matches, (*source).try_into()?, value)
+            }
+            RawExpr::Expr(Some(RawExprValue::Any([a, b]))) => Condition::CollectionMatch(
+                CollectionMatch::Any,
+                (*a).try_into()?,
+                Box::new((*b).try_into()?),
+            ),
+            RawExpr::Expr(Some(RawExprValue::All([a, b]))) => Condition::CollectionMatch(
+                CollectionMatch::All,
+                (*a).try_into()?,
+                Box::new((*b).try_into()?),
+            ),
+            RawExpr::Expr(Some(RawExprValue::Instanceof((source, name)))) => {
+                Condition::Instanceof((*source).try_into()?, name)
+            }
+            RawExpr::Expr(Some(RawExprValue::IsUndefined(source))) => Condition::Negation(
+                Box::new(Condition::IsDefinedReference((*source).try_into()?)),
+            ),
+            RawExpr::Expr(Some(RawExprValue::IsDefined(source))) => {
+                Condition::IsDefinedReference((*source).try_into()?)
+            }
+            RawExpr::Expr(Some(RawExprValue::IsEmpty(source))) => {
+                Condition::IsEmptyReference((*source).try_into()?)
+            }
             expr => return Ok(Err(expr)),
         }))
     }
@@ -250,8 +374,12 @@ impl TryInto<Result<NumberSource, RawExpr>> for RawExpr {
     fn try_into(self) -> Result<Result<NumberSource, RawExpr>, Self::Error> {
         Ok(Ok(match self {
             RawExpr::Number(num) => NumberSource::Number(num),
-            RawExpr::Expr(Some(RawExprValue::Count(source))) => NumberSource::CollectionSize((*source).try_into()?),
-            RawExpr::Expr(Some(RawExprValue::Len(source))) => NumberSource::StringLength((*source).try_into()?),
+            RawExpr::Expr(Some(RawExprValue::Count(source))) => {
+                NumberSource::CollectionSize((*source).try_into()?)
+            }
+            RawExpr::Expr(Some(RawExprValue::Len(source))) => {
+                NumberSource::StringLength((*source).try_into()?)
+            }
             expr => return Ok(Err(expr)),
         }))
     }
@@ -273,7 +401,13 @@ impl TryInto<Result<StringSource, RawExpr>> for RawExpr {
         Ok(Ok(match self {
             RawExpr::String(str) => StringSource::String(str),
             RawExpr::Expr(None) => StringSource::Null,
-            RawExpr::Expr(Some(RawExprValue::Substring([source, start, end]))) => StringSource::Substring(Box::new(((*source).try_into()?, (*start).try_into()?, (*end).try_into()?))),
+            RawExpr::Expr(Some(RawExprValue::Substring([source, start, end]))) => {
+                StringSource::Substring(Box::new((
+                    (*source).try_into()?,
+                    (*start).try_into()?,
+                    (*end).try_into()?,
+                )))
+            }
             expr => return Ok(Err(expr)),
         }))
     }
@@ -287,11 +421,11 @@ impl TryInto<Value> for RawExpr {
         Ok(match string {
             Ok(string) => Value::String(string),
             Err(expr) => {
-                let num: Result<NumberSource, _ > = expr.try_into()?;
+                let num: Result<NumberSource, _> = expr.try_into()?;
                 match num {
                     Ok(num) => Value::Number(num),
                     Err(expr) => {
-                        let num: Result<Condition, _ > = expr.try_into()?;
+                        let num: Result<Condition, _> = expr.try_into()?;
                         match num {
                             Ok(num) => Value::Bool(Box::new(num)),
                             Err(expr) => Value::String(StringSource::Reference(expr.try_into()?)),
@@ -380,28 +514,49 @@ impl Display for RawExpr {
             RawExpr::Expr(Some(RawExprValue::Le([a, b]))) => write!(f, "{a} <= {b}"),
             RawExpr::Expr(Some(RawExprValue::Gt([a, b]))) => write!(f, "{a} > {b}"),
             RawExpr::Expr(Some(RawExprValue::Ge([a, b]))) => write!(f, "{a} >= {b}"),
-            RawExpr::Expr(Some(RawExprValue::Contains((src, str)))) => write!(f, "contains({src}, {str})"),
-            RawExpr::Expr(Some(RawExprValue::Matches((src, str)))) => write!(f, "matches({src}, {str})"),
-            RawExpr::Expr(Some(RawExprValue::StartsWith((src, str)))) => write!(f, "startsWith({src}, {str})"),
-            RawExpr::Expr(Some(RawExprValue::EndsWith((src, str)))) => write!(f, "endsWith({src}, {str})"),
+            RawExpr::Expr(Some(RawExprValue::Contains((src, str)))) => {
+                write!(f, "contains({src}, {str})")
+            }
+            RawExpr::Expr(Some(RawExprValue::Matches((src, str)))) => {
+                write!(f, "matches({src}, {str})")
+            }
+            RawExpr::Expr(Some(RawExprValue::StartsWith((src, str)))) => {
+                write!(f, "startsWith({src}, {str})")
+            }
+            RawExpr::Expr(Some(RawExprValue::EndsWith((src, str)))) => {
+                write!(f, "endsWith({src}, {str})")
+            }
             RawExpr::Expr(Some(RawExprValue::Filter([a, b]))) => write!(f, "filter({a}, {b})"),
-            RawExpr::Expr(Some(RawExprValue::Getmember([a, b]))) => if let RawExpr::String(ref s) = **b { write!(f, "{a}.{s}") } else { write!(f, "{a}.{b}") },
+            RawExpr::Expr(Some(RawExprValue::Getmember([a, b]))) => {
+                if let RawExpr::String(ref s) = **b {
+                    write!(f, "{a}.{s}")
+                } else {
+                    write!(f, "{a}.{b}")
+                }
+            }
             RawExpr::Expr(Some(RawExprValue::Not(a))) => write!(f, "!{a}"),
             RawExpr::Expr(Some(RawExprValue::Count(a))) => write!(f, "count({a})"),
             RawExpr::Expr(Some(RawExprValue::IsEmpty(a))) => write!(f, "isEmpty({a})"),
             RawExpr::Expr(Some(RawExprValue::IsDefined(a))) => write!(f, "isDefined({a})"),
             RawExpr::Expr(Some(RawExprValue::IsUndefined(a))) => write!(f, "isUndefined({a})"),
             RawExpr::Expr(Some(RawExprValue::Len(a))) => write!(f, "len({a})"),
-            RawExpr::Expr(Some(RawExprValue::Instanceof((src, class)))) => write!(f, "instanceof({src}, {class})"),
+            RawExpr::Expr(Some(RawExprValue::Instanceof((src, class)))) => {
+                write!(f, "instanceof({src}, {class})")
+            }
             RawExpr::Expr(Some(RawExprValue::Index([a, b]))) => write!(f, "{a}[{b}]"),
-            RawExpr::Expr(Some(RawExprValue::Substring([src, start, end]))) => write!(f, "substring({src}, {start}, {end})"),
+            RawExpr::Expr(Some(RawExprValue::Substring([src, start, end]))) => {
+                write!(f, "substring({src}, {start}, {end})")
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{Capture, EvaluateAt, LiveDebuggingData, LogProbe, MetricKind, MetricProbe, parse_json, Probe, ProbeType, SpanDecorationProbe, SpanProbeTarget};
+    use crate::{
+        parse_json, Capture, EvaluateAt, LiveDebuggingData, LogProbe, MetricKind, MetricProbe,
+        Probe, ProbeType, SpanDecorationProbe, SpanProbeTarget,
+    };
 
     #[test]
     fn test_spandecoration_probe_deserialize() {
@@ -476,9 +631,22 @@ mod tests {
   }]
 }
 "#;
-        
+
         let parsed = parse_json(json).unwrap();
-        if let LiveDebuggingData::Probe(Probe {id, version, language, tags, target, evaluate_at, probe: ProbeType::SpanDecoration(SpanDecorationProbe { target: probe_target, decorations })}) = parsed {
+        if let LiveDebuggingData::Probe(Probe {
+            id,
+            version,
+            language,
+            tags,
+            target,
+            evaluate_at,
+            probe:
+                ProbeType::SpanDecoration(SpanDecorationProbe {
+                    target: probe_target,
+                    decorations,
+                }),
+        }) = parsed
+        {
             assert_eq!(id, "2142910d-d2ff-4679-85cc-bfc317d74e8f");
             assert_eq!(version, 42);
             assert_eq!(language, Some("java".to_string()));
@@ -489,11 +657,17 @@ mod tests {
             assert_eq!(decorations[0].condition.to_string(), "field1 > 10");
             let (tag, expr) = &decorations[0].tags[0];
             assert_eq!(tag, "transactions");
-            assert_eq!(expr.to_string(), r#"{transactions.id}-{filter(transaction, startsWith(@it["status"], 2))}"#);
+            assert_eq!(
+                expr.to_string(),
+                r#"{transactions.id}-{filter(transaction, startsWith(@it["status"], 2))}"#
+            );
             assert_eq!(decorations[1].condition.to_string(), "!(obj == null)");
             let (tag, expr) = &decorations[1].tags[0];
             assert_eq!(tag, "value");
-            assert_eq!(expr.to_string(), r#"{substring(arr[obj.key], 0, len(@return))}"#);
+            assert_eq!(
+                expr.to_string(),
+                r#"{substring(arr[obj.key], 0, len(@return))}"#
+            );
         } else {
             unreachable!();
         }
@@ -573,7 +747,25 @@ mod tests {
 "#;
 
         let parsed = parse_json(json).unwrap();
-        if let LiveDebuggingData::Probe(Probe { evaluate_at, probe: ProbeType::Log(LogProbe { segments, when, capture: Capture { max_reference_depth, max_collection_size, max_length, max_field_count }, capture_snapshot, sampling_snapshots_per_second }), .. }) = parsed {
+        if let LiveDebuggingData::Probe(Probe {
+            evaluate_at,
+            probe:
+                ProbeType::Log(LogProbe {
+                    segments,
+                    when,
+                    capture:
+                        Capture {
+                            max_reference_depth,
+                            max_collection_size,
+                            max_length,
+                            max_field_count,
+                        },
+                    capture_snapshot,
+                    sampling_snapshots_per_second,
+                }),
+            ..
+        }) = parsed
+        {
             assert!(matches!(evaluate_at, EvaluateAt::Entry));
             assert_eq!(segments.to_string(), "Id of transaction: {transactionId}");
             assert_eq!(when.to_string(), "(@duration > 500 && !isDefined(myField) && localVar1.field1.field2 != 15) || isEmpty(this.collectionField) || any(this.collectionField, isEmpty(@it.name))");
@@ -612,7 +804,12 @@ mod tests {
 "#;
 
         let parsed = parse_json(json).unwrap();
-        if let LiveDebuggingData::Probe(Probe { evaluate_at, probe: ProbeType::Metric(MetricProbe { kind, name, value }), .. }) = parsed {
+        if let LiveDebuggingData::Probe(Probe {
+            evaluate_at,
+            probe: ProbeType::Metric(MetricProbe { kind, name, value }),
+            ..
+        }) = parsed
+        {
             assert!(matches!(evaluate_at, EvaluateAt::Exit));
             assert!(matches!(kind, MetricKind::Count));
             assert_eq!(name, "showVetList.callcount");

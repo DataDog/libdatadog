@@ -1,12 +1,15 @@
-use std::hash::Hash;
-use std::str::FromStr;
-use hyper::{Body, Client, Method, Uri};
-use hyper::http::uri::PathAndQuery;
-use serde::Serialize;
-use uuid::Uuid;
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+use crate::debugger_defs::DebuggerPayload;
 use ddcommon::connector::Connector;
 use ddcommon::Endpoint;
-use crate::debugger_defs::DebuggerPayload;
+use hyper::http::uri::PathAndQuery;
+use hyper::{Body, Client, Method, Uri};
+use serde::Serialize;
+use std::hash::Hash;
+use std::str::FromStr;
+use uuid::Uuid;
 
 pub const PROD_INTAKE_SUBDOMAIN: &str = "http-intake.logs";
 
@@ -22,13 +25,12 @@ impl Config {
     pub fn set_endpoint(&mut self, mut endpoint: Endpoint) -> anyhow::Result<()> {
         let mut uri_parts = endpoint.url.into_parts();
         if uri_parts.scheme.is_some() && uri_parts.scheme.as_ref().unwrap().as_str() != "file" {
-            uri_parts.path_and_query = Some(PathAndQuery::from_static(
-                if endpoint.api_key.is_some() {
+            uri_parts.path_and_query =
+                Some(PathAndQuery::from_static(if endpoint.api_key.is_some() {
                     DIRECT_TELEMETRY_URL_PATH
                 } else {
                     AGENT_TELEMETRY_URL_PATH
-                },
-            ));
+                }));
         }
 
         endpoint.url = Uri::from_parts(uri_parts)?;
@@ -58,7 +60,7 @@ pub async fn send(payload: &[u8], endpoint: &Endpoint) -> anyhow::Result<()> {
         let mut query = String::from(parts.path_and_query.unwrap().as_str());
         query.push_str("?ddtags=host:");
         query.push_str(""); // TODO hostname
-        // TODO container tags and such
+                            // TODO container tags and such
         parts.path_and_query = Some(PathAndQuery::from_str(&query)?);
         url = Uri::from_parts(parts)?;
     }
@@ -69,7 +71,9 @@ pub async fn send(payload: &[u8], endpoint: &Endpoint) -> anyhow::Result<()> {
     //             "host_name:" + config.getHostName());
 
     // SAFETY: we ensure the reference exists across the request
-    let req = req.uri(url).body(Body::from(unsafe { std::mem::transmute::<&[u8], &[u8]>(payload) }))?;
+    let req = req.uri(url).body(Body::from(unsafe {
+        std::mem::transmute::<&[u8], &[u8]>(payload)
+    }))?;
 
     match Client::builder()
         .build(Connector::default())
@@ -77,10 +81,9 @@ pub async fn send(payload: &[u8], endpoint: &Endpoint) -> anyhow::Result<()> {
         .await
     {
         Ok(response) => {
-            if response.status().as_u16() >= 400  {
+            if response.status().as_u16() >= 400 {
                 let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
-                let response_body =
-                    String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
+                let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
                 anyhow::bail!("Server did not accept traces: {response_body}");
             }
             Ok(())

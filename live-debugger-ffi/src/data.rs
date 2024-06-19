@@ -1,13 +1,13 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Unless explicitly stated otherwise all files in this repository are licensed under the Apache
+// License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+use datadog_live_debugger::debugger_defs::{ProbeMetadata, ProbeMetadataLocation};
 use datadog_live_debugger::{
     Capture, DslString, EvaluateAt, InBodyLocation, MetricKind, ProbeCondition, ProbeValue,
     SpanProbeTarget,
 };
-use datadog_live_debugger::debugger_defs::{ProbeMetadata, ProbeMetadataLocation};
-use ddcommon_ffi::{CharSlice, Option};
 use ddcommon_ffi::slice::AsBytes;
+use ddcommon_ffi::{CharSlice, Option};
 
 #[repr(C)]
 pub struct CharSliceVec<'a> {
@@ -222,8 +222,16 @@ impl<'a> From<&Probe<'a>> for ProbeMetadata<'a> {
         ProbeMetadata {
             id: unsafe { val.id.assume_utf8() }.into(),
             location: ProbeMetadataLocation {
-                method: val.target.method_name.to_std_ref().map(|s| unsafe { s.assume_utf8() }.into()),
-                r#type: val.target.type_name.to_std_ref().map(|s| unsafe { s.assume_utf8() }.into()),
+                method: val
+                    .target
+                    .method_name
+                    .to_std_ref()
+                    .map(|s| unsafe { s.assume_utf8() }.into()),
+                r#type: val
+                    .target
+                    .type_name
+                    .to_std_ref()
+                    .map(|s| unsafe { s.assume_utf8() }.into()),
             },
         }
     }

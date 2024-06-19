@@ -1,5 +1,5 @@
-// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+// Unless explicitly stated otherwise all files in this repository are licensed under the Apache
+// License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use std::fmt::{Display, Formatter};
 
@@ -16,7 +16,7 @@ impl Display for CollectionSource {
             CollectionSource::FilterOperator(b) => {
                 let (source, cond) = &**b;
                 write!(f, "filter({source}, {cond})")
-            },
+            }
         }
     }
 }
@@ -37,7 +37,7 @@ impl Display for Reference {
             Reference::Index(b) => {
                 let (source, index) = &**b;
                 write!(f, "{source}[{index}]")
-            },
+            }
             Reference::Nested(b) => {
                 let (source, member) = &**b;
                 if let Value::String(StringSource::String(s)) = member {
@@ -45,7 +45,7 @@ impl Display for Reference {
                 } else {
                     write!(f, "{source}.{member}")
                 }
-            },
+            }
         }
     }
 }
@@ -153,7 +153,19 @@ impl Display for Condition {
                 }
                 write!(f, "{} && {}", is_nonassoc(x), is_nonassoc(y))
             }
-            Condition::Negation(b) => write!(f, "!{}", NonAssocBoolOp(b, matches!(**b, Condition::Conjunction(_) | Condition::Disjunction(_) | Condition::BinaryComparison(..)))),
+            Condition::Negation(b) => write!(
+                f,
+                "!{}",
+                NonAssocBoolOp(
+                    b,
+                    matches!(
+                        **b,
+                        Condition::Conjunction(_)
+                            | Condition::Disjunction(_)
+                            | Condition::BinaryComparison(..)
+                    )
+                )
+            ),
             Condition::StringComparison(cmp, s, v) => write!(f, "{cmp}({s}, {v})"),
             Condition::BinaryComparison(x, cmp, y) => write!(f, "{x} {cmp} {y}"),
             Condition::CollectionMatch(op, s, c) => write!(f, "{op}({s}, {})", **c),
@@ -194,11 +206,13 @@ pub enum StringSource {
 impl Display for StringSource {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            StringSource::String(s) => write!(f, "\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+            StringSource::String(s) => {
+                write!(f, "\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+            }
             StringSource::Substring(b) => {
                 let (source, start, end) = &**b;
                 write!(f, "substring({source}, {start}, {end})")
-            },
+            }
             StringSource::Null => f.write_str("null"),
             StringSource::Reference(r) => r.fmt(f),
         }

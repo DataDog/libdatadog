@@ -1,6 +1,9 @@
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 pub struct DebuggerPayload<'a> {
@@ -110,5 +113,3 @@ pub struct Value<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<Cow<'a, str>>,
 }
-
-
