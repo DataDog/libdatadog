@@ -289,7 +289,10 @@ impl SidecarServer {
     async fn send_debugger_data(&self, data: &[u8], target: &Endpoint) {
         if let Err(e) = datadog_live_debugger::sender::send(data, target).await {
             error!("Error sending data to live debugger endpoint: {e:?}");
-            debug!("Attempted to send the following payload: {}", String::from_utf8_lossy(data));
+            debug!(
+                "Attempted to send the following payload: {}",
+                String::from_utf8_lossy(data)
+            );
         }
     }
 
@@ -680,8 +683,10 @@ impl SidecarInterface for SidecarServer {
             *dogstatsd = d;
         });
         session.modify_debugger_config(|cfg| {
-            let endpoint =
-                get_product_endpoint(datadog_live_debugger::sender::PROD_INTAKE_SUBDOMAIN, &config.endpoint);
+            let endpoint = get_product_endpoint(
+                datadog_live_debugger::sender::PROD_INTAKE_SUBDOMAIN,
+                &config.endpoint,
+            );
             cfg.set_endpoint(endpoint).ok();
         });
         session.set_remote_config_invariants(ConfigInvariants {

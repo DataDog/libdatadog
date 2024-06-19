@@ -1,10 +1,16 @@
-use std::borrow::Cow;
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use ddcommon_ffi::CharSlice;
+use std::borrow::Cow;
 // Alias to prevent cbindgen panic
-use datadog_live_debugger::debugger_defs::{Value as DebuggerValueAlias, Capture as DebuggerCaptureAlias, Captures, DebuggerData, Entry, Fields, DebuggerPayload, Snapshot, SnapshotEvaluationError};
+use crate::data::Probe;
+use datadog_live_debugger::debugger_defs::{
+    Capture as DebuggerCaptureAlias, Captures, DebuggerData, DebuggerPayload, Entry, Fields,
+    Snapshot, SnapshotEvaluationError, Value as DebuggerValueAlias,
+};
 use datadog_live_debugger::sender::generate_new_id;
 use ddcommon_ffi::slice::AsBytes;
-use crate::data::Probe;
 
 #[repr(C)]
 pub enum FieldType {
@@ -30,14 +36,30 @@ impl<'a> From<CaptureValue<'a>> for DebuggerValueAlias<'a> {
     fn from(val: CaptureValue<'a>) -> Self {
         DebuggerValueAlias {
             r#type: val.r#type.to_utf8_lossy(),
-            value: if val.value.len() == 0 { None } else { Some(val.value.to_utf8_lossy()) },
-            fields: if let Some(boxed) = val.fields { *boxed } else { Fields::default() },
+            value: if val.value.len() == 0 {
+                None
+            } else {
+                Some(val.value.to_utf8_lossy())
+            },
+            fields: if let Some(boxed) = val.fields {
+                *boxed
+            } else {
+                Fields::default()
+            },
             elements: unsafe { std::mem::transmute(val.elements) }, // SAFETY: is transparent
             entries: val.entries,
             is_null: val.is_null,
             truncated: val.truncated,
-            not_captured_reason: if val.not_captured_reason.len() == 0 { None } else { Some(val.not_captured_reason.to_utf8_lossy()) },
-            size: if val.size.len() == 0 { None } else { Some(val.size.to_utf8_lossy()) },
+            not_captured_reason: if val.not_captured_reason.len() == 0 {
+                None
+            } else {
+                Some(val.not_captured_reason.to_utf8_lossy())
+            },
+            size: if val.size.len() == 0 {
+                None
+            } else {
+                Some(val.size.to_utf8_lossy())
+            },
         }
     }
 }
@@ -56,7 +78,14 @@ pub struct ExceptionSnapshot<'a> {
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_create_exception_snapshot<'a>(buffer: &mut Vec<DebuggerPayload<'a>>, service: CharSlice<'a>, language: CharSlice<'a>, id: CharSlice<'a>, exception_id: CharSlice<'a>, timestamp: u64) -> *mut DebuggerCapture<'a> {
+pub extern "C" fn ddog_create_exception_snapshot<'a>(
+    buffer: &mut Vec<DebuggerPayload<'a>>,
+    service: CharSlice<'a>,
+    language: CharSlice<'a>,
+    id: CharSlice<'a>,
+    exception_id: CharSlice<'a>,
+    timestamp: u64,
+) -> *mut DebuggerCapture<'a> {
     let snapshot = DebuggerPayload {
         service: service.to_utf8_lossy(),
         source: "dd_debugger",
@@ -73,14 +102,34 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(buffer: &mut Vec<DebuggerPa
                 exception_id: Some(exception_id.to_utf8_lossy()),
                 timestamp,
                 ..Default::default()
-            }
-        }
+            },
+        },
     };
     buffer.push(snapshot);
-    unsafe { std::mem::transmute(buffer.last_mut().unwrap().debugger.snapshot.captures.as_mut().unwrap().r#return.as_mut().unwrap()) }
+    unsafe {
+        std::mem::transmute(
+            buffer
+                .last_mut()
+                .unwrap()
+                .debugger
+                .snapshot
+                .captures
+                .as_mut()
+                .unwrap()
+                .r#return
+                .as_mut()
+                .unwrap(),
+        )
+    }
 }
 
-pub extern "C" fn ddog_create_log_probe_snapshot<'a>(buffer: &mut Box<DebuggerPayload<'a>>, probe: &'a Probe, service: CharSlice<'a>, language: CharSlice<'a>, timestamp: u64) -> *mut DebuggerCapture<'a> {
+pub extern "C" fn ddog_create_log_probe_snapshot<'a>(
+    buffer: &mut Box<DebuggerPayload<'a>>,
+    probe: &'a Probe,
+    service: CharSlice<'a>,
+    language: CharSlice<'a>,
+    timestamp: u64,
+) -> *mut DebuggerCapture<'a> {
     *buffer = Box::new(DebuggerPayload {
         service: service.to_utf8_lossy(),
         source: "dd_debugger",
@@ -97,15 +146,32 @@ pub extern "C" fn ddog_create_log_probe_snapshot<'a>(buffer: &mut Box<DebuggerPa
                 probe: Some(probe.into()),
                 timestamp,
                 ..Default::default()
-            }
-        }
+            },
+        },
     });
-    unsafe { std::mem::transmute(buffer.debugger.snapshot.captures.as_mut().unwrap().r#return.as_mut().unwrap()) }
+    unsafe {
+        std::mem::transmute(
+            buffer
+                .debugger
+                .snapshot
+                .captures
+                .as_mut()
+                .unwrap()
+                .r#return
+                .as_mut()
+                .unwrap(),
+        )
+    }
 }
 
 #[no_mangle]
 #[allow(improper_ctypes_definitions)] // Vec has a fixed size, and we care only about that here
-pub extern "C" fn ddog_snapshot_add_field<'a, 'b: 'a, 'c: 'a>(capture: &mut DebuggerCapture<'a>, r#type: FieldType, name: CharSlice<'b>, value: CaptureValue<'c>) {
+pub extern "C" fn ddog_snapshot_add_field<'a, 'b: 'a, 'c: 'a>(
+    capture: &mut DebuggerCapture<'a>,
+    r#type: FieldType,
+    name: CharSlice<'b>,
+    value: CaptureValue<'c>,
+) {
     let fields = match r#type {
         FieldType::STATIC => &mut capture.0.static_fields,
         FieldType::ARG => &mut capture.0.arguments,
@@ -116,24 +182,35 @@ pub extern "C" fn ddog_snapshot_add_field<'a, 'b: 'a, 'c: 'a>(capture: &mut Debu
 
 #[no_mangle]
 #[allow(improper_ctypes_definitions)] // Vec has a fixed size, and we care only about that here
-pub extern "C" fn ddog_capture_value_add_element<'a, 'b: 'a>(value: &mut CaptureValue<'a>, element: CaptureValue<'b>) {
+pub extern "C" fn ddog_capture_value_add_element<'a, 'b: 'a>(
+    value: &mut CaptureValue<'a>,
+    element: CaptureValue<'b>,
+) {
     value.elements.push(DebuggerValue(element.into()));
 }
 
 #[no_mangle]
 #[allow(improper_ctypes_definitions)] // Vec has a fixed size, and we care only about that here
-pub extern "C" fn ddog_capture_value_add_entry<'a, 'b: 'a, 'c: 'a>(value: &mut CaptureValue<'a>, key: CaptureValue<'b>, element: CaptureValue<'c>) {
+pub extern "C" fn ddog_capture_value_add_entry<'a, 'b: 'a, 'c: 'a>(
+    value: &mut CaptureValue<'a>,
+    key: CaptureValue<'b>,
+    element: CaptureValue<'c>,
+) {
     value.entries.push(Entry(key.into(), element.into()));
 }
 
 #[no_mangle]
 #[allow(improper_ctypes_definitions)] // Vec has a fixed size, and we care only about that here
-pub extern "C" fn ddog_capture_value_add_field<'a, 'b: 'a, 'c: 'a>(value: &mut CaptureValue<'a>, key: CharSlice<'b>, element: CaptureValue<'c>) {
+pub extern "C" fn ddog_capture_value_add_field<'a, 'b: 'a, 'c: 'a>(
+    value: &mut CaptureValue<'a>,
+    key: CharSlice<'b>,
+    element: CaptureValue<'c>,
+) {
     let fields = match value.fields {
         None => {
             value.fields = Some(Box::default());
             value.fields.as_mut().unwrap()
-        },
+        }
         Some(ref mut f) => f,
     };
     fields.insert(key.to_utf8_lossy(), element.into());
@@ -150,11 +227,16 @@ pub extern "C" fn ddog_evaluation_error_first_msg(vec: &Vec<SnapshotEvaluationEr
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_evaluation_error_drop(_: Box<Vec<SnapshotEvaluationError>>) {
-}
+pub extern "C" fn ddog_evaluation_error_drop(_: Box<Vec<SnapshotEvaluationError>>) {}
 
 #[no_mangle]
-pub extern "C" fn ddog_evaluation_error_snapshot<'a>(probe: &'a Probe, service: CharSlice<'a>, language: CharSlice<'a>, errors: Box<Vec<SnapshotEvaluationError>>, timestamp: u64) -> Box<DebuggerPayload<'a>> {
+pub extern "C" fn ddog_evaluation_error_snapshot<'a>(
+    probe: &'a Probe,
+    service: CharSlice<'a>,
+    language: CharSlice<'a>,
+    errors: Box<Vec<SnapshotEvaluationError>>,
+    timestamp: u64,
+) -> Box<DebuggerPayload<'a>> {
     Box::new(DebuggerPayload {
         service: service.to_utf8_lossy(),
         source: "dd_debugger",
@@ -168,7 +250,7 @@ pub extern "C" fn ddog_evaluation_error_snapshot<'a>(probe: &'a Probe, service: 
                 timestamp,
                 evaluation_errors: *errors,
                 ..Default::default()
-            }
-        }
+            },
+        },
     })
 }

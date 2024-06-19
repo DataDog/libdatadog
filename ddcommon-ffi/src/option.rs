@@ -12,7 +12,7 @@ impl<T> Option<T> {
     pub fn to_std(self) -> std::option::Option<T> {
         self.into()
     }
-    
+
     pub fn to_std_ref(&self) -> std::option::Option<&T> {
         match self {
             Option::Some(ref s) => Some(s),

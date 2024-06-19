@@ -4,6 +4,7 @@
 use datadog_ipc::platform::{
     FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle,
 };
+use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_remote_config::fetch::ConfigInvariants;
 use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use datadog_sidecar::agent_remote_config::{
@@ -626,7 +627,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
 pub unsafe extern "C" fn ddog_sidecar_send_debugger_data(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
-    payloads: Vec<DebuggerPayload>
+    payloads: Vec<DebuggerPayload>,
 ) -> MaybeError {
     if payloads.is_empty() {
         return MaybeError::None;
@@ -647,7 +648,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_debugger_data(
 pub unsafe extern "C" fn ddog_sidecar_send_debugger_datum(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
-    payload: Box<DebuggerPayload>
+    payload: Box<DebuggerPayload>,
 ) -> MaybeError {
     ddog_sidecar_send_debugger_data(transport, instance_id, vec![*payload])
 }

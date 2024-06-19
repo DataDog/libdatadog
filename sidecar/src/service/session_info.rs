@@ -186,8 +186,8 @@ impl SessionInfo {
     }
 
     pub fn modify_debugger_config<F>(&self, mut f: F)
-        where
-            F: FnMut(&mut datadog_live_debugger::sender::Config),
+    where
+        F: FnMut(&mut datadog_live_debugger::sender::Config),
     {
         f(&mut self.get_debugger_config());
     }

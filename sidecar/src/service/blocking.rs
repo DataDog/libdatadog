@@ -8,14 +8,13 @@ use super::{
 use datadog_ipc::platform::{Channel, FileBackedHandle, ShmHandle};
 use datadog_ipc::transport::blocking::BlockingTransport;
 use dogstatsd_client::DogStatsDActionOwned;
+use serde::Serialize;
 use std::sync::Mutex;
 use std::{
     borrow::Cow,
     io,
     time::{Duration, Instant},
 };
-use std::hash::Hash;
-use serde::Serialize;
 use tracing::info;
 
 /// `SidecarTransport` is a wrapper around a BlockingTransport struct from the `datadog_ipc` crate
@@ -329,7 +328,11 @@ pub fn send_debugger_data_shm_vec(
     let mut serializer = serde_json::Serializer::new(mapped.as_slice_mut());
     payloads.serialize(&mut serializer).unwrap();
 
-    Ok(send_debugger_data_shm(transport, instance_id, mapped.into())?)
+    Ok(send_debugger_data_shm(
+        transport,
+        instance_id,
+        mapped.into(),
+    )?)
 }
 
 /// Sets the state of the current remote config operation.
