@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource};
+use datadog_live_debugger::LiveDebuggingData;
 use datadog_dynamic_configuration::data::DynamicConfigFile;
 
 #[derive(Debug)]
 pub enum RemoteConfigData {
     DynamicConfig(DynamicConfigFile),
-    LiveDebugger(()),
+    LiveDebugger(LiveDebuggingData),
 }
 
 impl RemoteConfigData {
@@ -20,7 +21,8 @@ impl RemoteConfigData {
                 RemoteConfigData::DynamicConfig(datadog_dynamic_configuration::parse_json(data)?)
             }
             RemoteConfigProduct::LiveDebugger => {
-                RemoteConfigData::LiveDebugger(/* placeholder */ ())
+                let parsed = datadog_live_debugger::parse_json(&String::from_utf8_lossy(data))?;
+                RemoteConfigData::LiveDebugger(parsed)
             }
         })
     }

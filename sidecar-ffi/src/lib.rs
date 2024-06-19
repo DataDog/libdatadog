@@ -622,6 +622,27 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
 
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
+#[allow(improper_ctypes_definitions)] // DebuggerPayload is just a pointer, we hide its internals
+pub unsafe extern "C" fn ddog_sidecar_send_debugger_data(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    payloads: Vec<DebuggerPayload<ffi::CharSlice>>
+) -> MaybeError {
+    if payloads.is_empty() {
+        return MaybeError::None;
+    }
+
+    try_c!(blocking::send_debugger_data_shm_vec(
+        transport,
+        instance_id,
+        payloads,
+    ));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_set_remote_config_data(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,

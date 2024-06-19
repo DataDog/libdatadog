@@ -18,6 +18,8 @@ members = [
   "tools",
   "ipc",
   "ipc/macros",
+  "live-debugger",
+  "live-debugger-ffi",
   "sidecar",
   "sidecar/macros",
   "sidecar-ffi",

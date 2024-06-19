@@ -117,7 +117,6 @@ impl SidecarServer {
     /// # Arguments
     ///
     /// * `async_channel`: An `AsyncChannel` that represents the connection to the client.
-    #[cfg_attr(not(windows), allow(unused_mut))]
     pub async fn accept_connection(mut self, async_channel: AsyncChannel) {
         #[cfg(windows)]
         {
@@ -284,6 +283,13 @@ impl SidecarServer {
                     e
                 )
             }
+        }
+    }
+
+    async fn send_debugger_data(&self, data: &[u8], target: &Endpoint) {
+        if let Err(e) = datadog_live_debugger::sender::send(data, target).await {
+            error!("Error sending data to live debugger endpoint: {e:?}");
+            debug!("Attempted to send the following payload: {}", String::from_utf8_lossy(data));
         }
     }
 
@@ -673,6 +679,11 @@ impl SidecarInterface for SidecarServer {
             let d = new_flusher(config.dogstatsd_endpoint.clone()).ok();
             *dogstatsd = d;
         });
+        session.modify_debugger_config(|cfg| {
+            let endpoint =
+                get_product_endpoint(datadog_live_debugger::sender::PROD_INTAKE_SUBDOMAIN, &config.endpoint);
+            cfg.set_endpoint(endpoint).ok();
+        });
         session.set_remote_config_invariants(ConfigInvariants {
             language: config.language,
             tracer_version: config.tracer_version,
@@ -787,6 +798,33 @@ impl SidecarInterface for SidecarServer {
             tokio::spawn(async move {
                 let bytes = tinybytes::Bytes::from(data);
                 self.send_trace_v04(&headers, bytes, &endpoint);
+            });
+        }
+
+        no_response()
+    }
+
+    type SendDebuggerDataShmFut = NoResponse;
+
+    fn send_debugger_data_shm(
+        self,
+        _: Context,
+        instance_id: InstanceId,
+        handle: ShmHandle,
+    ) -> Self::SendDebuggerDataShmFut {
+        if let Some(endpoint) = self
+            .get_session(&instance_id.session_id)
+            .get_debugger_config()
+            .endpoint
+            .clone()
+        {
+            tokio::spawn(async move {
+                match handle.map() {
+                    Ok(mapped) => {
+                        self.send_debugger_data(mapped.as_slice(), &endpoint).await;
+                    }
+                    Err(e) => error!("Failed mapping shared trace data memory: {}", e),
+                }
             });
         }
 

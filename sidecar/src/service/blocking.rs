@@ -5,7 +5,7 @@ use super::{
     InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
     SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
-use datadog_ipc::platform::{Channel, ShmHandle};
+use datadog_ipc::platform::{Channel, FileBackedHandle, ShmHandle};
 use datadog_ipc::transport::blocking::BlockingTransport;
 use dogstatsd_client::DogStatsDActionOwned;
 use std::sync::Mutex;
@@ -14,6 +14,8 @@ use std::{
     io,
     time::{Duration, Instant},
 };
+use std::hash::Hash;
+use serde::Serialize;
 use tracing::info;
 
 /// `SidecarTransport` is a wrapper around a BlockingTransport struct from the `datadog_ipc` crate
@@ -269,6 +271,65 @@ pub fn send_trace_v04_shm(
         len,
         headers,
     })
+}
+
+/// Sends raw data from shared memory to the debugger endpoint.
+///
+/// # Arguments
+///
+/// * `transport` - The transport used for communication.
+/// * `instance_id` - The ID of the instance.
+/// * `handle` - The handle to the shared memory.
+///
+/// # Returns
+///
+/// An `io::Result<()>` indicating the result of the operation.
+pub fn send_debugger_data_shm(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    handle: ShmHandle,
+) -> io::Result<()> {
+    transport.send(SidecarInterfaceRequest::SendDebuggerDataShm {
+        instance_id: instance_id.clone(),
+        handle,
+    })
+}
+
+/// Sends a collection of debugger palyloads to the debugger endpoint.
+///
+/// # Arguments
+///
+/// * `transport` - The transport used for communication.
+/// * `instance_id` - The ID of the instance.
+/// * `payloads` - The payloads to be sent
+///
+/// # Returns
+///
+/// An `anyhow::Result<()>` indicating the result of the operation.
+pub fn send_debugger_data_shm_vec<S: Eq + Hash + Serialize>(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    payloads: Vec<datadog_live_debugger::debugger_defs::DebuggerPayload<S>>,
+) -> anyhow::Result<()> {
+    struct SizeCount(usize);
+
+    impl io::Write for SizeCount {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0 += buf.len();
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut size_serializer = serde_json::Serializer::new(SizeCount(0));
+    payloads.serialize(&mut size_serializer).unwrap();
+
+    let mut mapped = ShmHandle::new(size_serializer.into_inner().0)?.map()?;
+    let mut serializer = serde_json::Serializer::new(mapped.as_slice_mut());
+    payloads.serialize(&mut serializer).unwrap();
+
+    Ok(send_debugger_data_shm(transport, instance_id, mapped.into())?)
 }
 
 /// Sets the state of the current remote config operation.

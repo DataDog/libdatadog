@@ -1,0 +1,14 @@
+# Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+# This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+
+[package]
+name = "datadog-live-debugger-ffi"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+datadog-live-debugger = { path = "../live-debugger" }
+ddcommon-ffi = { path = "../ddcommon-ffi" }

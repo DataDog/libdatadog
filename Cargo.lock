@@ -1487,6 +1487,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-live-debugger"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "ddcommon",
+ "hyper 0.14.28",
+ "json",
+ "regex",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "datadog-live-debugger-ffi"
+version = "0.0.1"
+dependencies = [
+ "datadog-live-debugger",
+ "ddcommon-ffi",
+]
+
+[[package]]
 name = "datadog-profiling"
 version = "13.0.0"
 dependencies = [
@@ -1576,6 +1598,7 @@ dependencies = [
  "anyhow",
  "base64 0.21.7",
  "datadog-dynamic-configuration",
+ "datadog-live-debugger",
  "datadog-trace-protobuf",
  "ddcommon",
  "futures",
@@ -1624,6 +1647,7 @@ dependencies = [
  "datadog-dynamic-configuration",
  "datadog-ipc",
  "datadog-ipc-macros",
+ "datadog-live-debugger",
  "datadog-remote-config",
  "datadog-sidecar-macros",
  "datadog-trace-normalization",
@@ -1676,6 +1700,7 @@ name = "datadog-sidecar-ffi"
 version = "0.0.1"
 dependencies = [
  "datadog-ipc",
+ "datadog-live-debugger",
  "datadog-remote-config",
  "datadog-sidecar",
  "datadog-trace-utils",
@@ -3001,6 +3026,12 @@ checksum = "29c15563dc2726973df627357ce0c9ddddbea194836909d655df6a75d2cf296d"
 dependencies = [
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "json"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "078e285eafdfb6c4b434e0d31e8cfcb5115b651496faca5749b88fafd4f23bfd"
 
 [[package]]
 name = "kernel32-sys"

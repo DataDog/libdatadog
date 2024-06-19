@@ -22,7 +22,6 @@ use std::default::Default;
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::io;
-#[cfg(windows)]
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -140,7 +139,6 @@ fn store_shm(
     let len = len + 4;
     let mut handle = NamedShmHandle::create(CString::new(name)?, len)?.map()?;
 
-    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut target_slice = handle.as_slice_mut();
     #[cfg(windows)]
     {

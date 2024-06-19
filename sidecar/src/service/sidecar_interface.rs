@@ -111,6 +111,16 @@ pub trait SidecarInterface {
         headers: SerializedTracerHeaderTags,
     );
 
+    /// Transfers raw data to a live-debugger endpoint.
+    ///
+    /// # Arguments
+    /// * `instance_id` - The ID of the instance.
+    /// * `handle` - The data to send.
+    async fn send_debugger_data_shm(
+        instance_id: InstanceId,
+        #[SerializedHandle] handle: ShmHandle,
+    );
+
     /// Sets contextual data for the remote config client.
     ///
     /// # Arguments
