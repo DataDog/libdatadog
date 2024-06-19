@@ -30,7 +30,7 @@ jobs:
         uses: ./.github/actions/cache
         with:
           rust_version: ${{ matrix.rust_version }}
-      - name: Install ${{ matrix.version }} toolchain and clippy
+      - name: Install ${{ matrix.rust_version }} toolchain and clippy
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }} && rustup component add clippy
       - name: Run clippy on ${{ matrix.platform }} ${{ matrix.rust_version }} 
         shell: bash
