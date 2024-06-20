@@ -44,7 +44,7 @@ jobs:
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }} && rustup component add clippy
       - name: Run clippy on ${{ matrix.platform }} ${{ matrix.rust_version }} 
         shell: bash
-        run: cargo clippy --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.71.1 ] && echo -Aunknown-lints)
+        run: cargo clippy --all-targets --all-features -- -D warnings "$([ ${{ matrix.rust_version }} = 1.71.1 ] && echo -Aunknown-lints)"
   licensecheck:
     runs-on: ubuntu-latest
     name: "Presence of licence headers"
