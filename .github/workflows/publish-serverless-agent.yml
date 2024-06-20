@@ -52,7 +52,7 @@ jobs:
             upx "$file" --lzma
           done
       - name: Zip binaries
-        run: zip -r datadog-serverless-agent.zip *
+        run: zip -r datadog-serverless-agent.zip ./*
         working-directory: target/release/binaries
       - name: Release
         uses: softprops/action-gh-release@v1
