@@ -4,6 +4,13 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  actionlint: 
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Run actionlint
+        uses: devops-actions/actionlint@v0.1.3
   rustfmt:
     runs-on: ubuntu-latest
     steps:
