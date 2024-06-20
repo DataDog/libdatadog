@@ -14,6 +14,7 @@ use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb::{self, Span, TraceChunk, TracerPayload};
 use ddcommon::azure_app_services;
 
+use serde_json::Value;
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
 /// Span metric the tracer sets to denote a top level span
@@ -25,6 +26,9 @@ const MAX_PAYLOAD_SIZE: usize = 50 * 1024 * 1024;
 pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<(usize, Vec<Vec<Span>>)> {
     let buffer = hyper::body::aggregate(body).await?;
     let size = buffer.remaining();
+    let value: Value = rmp_serde::from_read(buffer.reader())?;
+    println!("astuyve value is {:?}", value);
+    return Err(anyhow::anyhow!("astuyve value is {:?}", value));
 
     let traces: Vec<Vec<Span>> = match rmp_serde::from_read(buffer.reader()) {
         Ok(res) => res,
