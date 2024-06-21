@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{borrow::Cow, ffi::OsString, ops::Deref, path::PathBuf, str::FromStr};
+use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
 
 use hyper::{
     header::HeaderValue,
@@ -120,7 +120,7 @@ pub fn decode_uri_path_in_authority(uri: &hyper::Uri) -> anyhow::Result<PathBuf>
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStringExt;
-        Ok(PathBuf::from(OsString::from_vec(path)))
+        Ok(PathBuf::from(std::ffi::OsString::from_vec(path)))
     }
     #[cfg(not(unix))]
     {
