@@ -49,7 +49,7 @@ impl RemoteConfigPath {
                 }
                 "employee" => {
                     if parts.len() != 4 {
-                        anyhow::bail!("{} is employee and does not have exactly 5 parts", path);
+                        anyhow::bail!("{} is employee and does not have exactly 4 parts", path);
                     }
                     RemoteConfigSource::Employee
                 }
