@@ -82,8 +82,10 @@ pub async fn send_stats_payload(
 
 #[cfg(test)]
 mod tests {
-    use datadog_trace_protobuf::pb::{ClientGroupedStats, ClientStatsBucket, ClientStatsPayload, Trilean::NotSet};
     use crate::stats_utils;
+    use datadog_trace_protobuf::pb::{
+        ClientGroupedStats, ClientStatsBucket, ClientStatsPayload, Trilean::NotSet,
+    };
     use hyper::Request;
     use serde_json::Value;
 
@@ -161,18 +163,14 @@ mod tests {
                     errors: 0,
                     duration: 10000000,
                     ok_summary: vec![0, 0, 0],
-                    error_summary: vec![
-                        0,
-                        0,
-                        0
-                    ],
+                    error_summary: vec![0, 0, 0],
                     synthetics: false,
                     top_level_hits: 1,
                     span_kind: "".to_string(),
                     peer_tags: vec![],
-                    is_trace_root: NotSet.into()
+                    is_trace_root: NotSet.into(),
                 }],
-                agent_time_shift: 0
+                agent_time_shift: 0,
             }],
             lang: "javascript".to_string(),
             tracer_version: "1.0.0".to_string(),
@@ -183,7 +181,7 @@ mod tests {
             container_id: "".to_string(),
             tags: vec![],
             git_commit_sha: "".to_string(),
-            image_tag: "".to_string()
+            image_tag: "".to_string(),
         };
 
         assert!(
