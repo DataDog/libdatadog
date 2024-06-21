@@ -49,6 +49,7 @@ if(DataPipeline_FOUND)
 		UserEnv
 		ws2_32
 		wsock32)
+   set_property(TARGET data_pipeline PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
   endif()
 
   add_library(Datadog::DataPipeline ALIAS data_pipeline)
