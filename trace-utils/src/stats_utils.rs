@@ -79,3 +79,118 @@ pub async fn send_stats_payload(
         Err(e) => anyhow::bail!("Failed to send trace stats: {e}"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use datadog_trace_protobuf::pb::{ClientGroupedStats, ClientStatsBucket, ClientStatsPayload, Trilean::NotSet};
+    use crate::stats_utils;
+    use hyper::Request;
+    use serde_json::Value;
+
+    #[tokio::test]
+    async fn test_get_stats_from_request_body() {
+        let stats_json = r#"{
+            "Hostname": "TestHost",
+            "Env": "test",
+            "Version": "1.0.0",
+            "Stats": [
+                {
+                    "Start": 0,
+                    "Duration": 10000000000,
+                    "Stats": [
+                        {
+                            "Name": "test-span",
+                            "Service": "test-service",
+                            "Resource": "test-span",
+                            "Type": "",
+                            "HTTPStatusCode": 0,
+                            "Synthetics": false,
+                            "Hits": 1,
+                            "TopLevelHits": 1,
+                            "Errors": 0,
+                            "Duration": 10000000,
+                            "OkSummary": [
+                                0,
+                                0,
+                                0
+                            ],
+                            "ErrorSummary": [
+                                0,
+                                0,
+                                0
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "Lang": "javascript",
+            "TracerVersion": "1.0.0",
+            "RuntimeID": "00000000-0000-0000-0000-000000000000",
+            "Sequence": 1
+        }"#;
+
+        let v: Value = match serde_json::from_str(stats_json) {
+            Ok(value) => value,
+            Err(err) => {
+                panic!("Failed to parse stats JSON: {}", err);
+            }
+        };
+
+        let bytes = rmp_serde::to_vec(&v).unwrap();
+        let request = Request::builder()
+            .body(hyper::body::Body::from(bytes))
+            .unwrap();
+
+        let res = stats_utils::get_stats_from_request_body(request.into_body()).await;
+
+        let client_stats_payload = ClientStatsPayload {
+            hostname: "TestHost".to_string(),
+            env: "test".to_string(),
+            version: "1.0.0".to_string(),
+            stats: vec![ClientStatsBucket {
+                start: 0,
+                duration: 10000000000,
+                stats: vec![ClientGroupedStats {
+                    service: "test-service".to_string(),
+                    name: "test-span".to_string(),
+                    resource: "test-span".to_string(),
+                    http_status_code: 0,
+                    r#type: "".to_string(),
+                    db_type: "".to_string(),
+                    hits: 1,
+                    errors: 0,
+                    duration: 10000000,
+                    ok_summary: vec![0, 0, 0],
+                    error_summary: vec![
+                        0,
+                        0,
+                        0
+                    ],
+                    synthetics: false,
+                    top_level_hits: 1,
+                    span_kind: "".to_string(),
+                    peer_tags: vec![],
+                    is_trace_root: NotSet.into()
+                }],
+                agent_time_shift: 0
+            }],
+            lang: "javascript".to_string(),
+            tracer_version: "1.0.0".to_string(),
+            runtime_id: "00000000-0000-0000-0000-000000000000".to_string(),
+            sequence: 1,
+            agent_aggregation: "".to_string(),
+            service: "".to_string(),
+            container_id: "".to_string(),
+            tags: vec![],
+            git_commit_sha: "".to_string(),
+            image_tag: "".to_string()
+        };
+
+        assert!(
+            res.is_ok(),
+            "Expected Ok result, but got Err: {}",
+            res.unwrap_err()
+        );
+        assert_eq!(res.unwrap(), client_stats_payload)
+    }
+}

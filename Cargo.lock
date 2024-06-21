@@ -1408,6 +1408,8 @@ dependencies = [
  "protoc-bin-vendored",
  "serde",
  "serde_bytes",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
