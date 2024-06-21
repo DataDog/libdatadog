@@ -444,17 +444,9 @@ fn fuzz_failure_001() {
 
 /// Fuzzes adding a bunch of samples to the profile.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_fuzz_add_sample() {
-    #[cfg(miri)]
-    let sample_types_gen = Vec::<owned_types::ValueType>::gen().with().len(0..=8usize);
-    #[cfg(not(miri))]
     let sample_types_gen = Vec::<owned_types::ValueType>::gen();
-
-    #[cfg(miri)]
-    let samples_gen = Vec::<(Option<Timestamp>, Sample)>::gen()
-        .with()
-        .len(0..=8usize);
-    #[cfg(not(miri))]
     let samples_gen = Vec::<(Option<Timestamp>, Sample)>::gen();
 
     bolero::check!()
