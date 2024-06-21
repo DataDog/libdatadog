@@ -11,7 +11,7 @@ pub struct DebuggerPayload<'a> {
     pub source: &'static str,
     pub timestamp: u64,
     pub debugger: DebuggerData<'a>,
-    pub message: Option<String>,
+    pub message: Option<Cow<'a, str>>,
 }
 
 #[derive(Serialize, Deserialize)]

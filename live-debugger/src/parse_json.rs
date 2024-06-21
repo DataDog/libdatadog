@@ -6,8 +6,8 @@ use crate::expr_defs::{
     Reference, StringComparison, StringSource, Value,
 };
 use crate::{
-    Capture, DslString, EvaluateAt, FilterList, InBodyLocation, LiveDebuggingData, LogProbe,
-    MetricKind, MetricProbe, Probe, ProbeCondition, ProbeTarget, ProbeType, ProbeValue,
+    CaptureConfiguration, DslString, EvaluateAt, FilterList, InBodyLocation, LiveDebuggingData,
+    LogProbe, MetricKind, MetricProbe, Probe, ProbeCondition, ProbeTarget, ProbeType, ProbeValue,
     ServiceConfiguration, SpanDecorationProbe, SpanProbe, SpanProbeDecoration, SpanProbeTarget,
 };
 use serde::Deserialize;
@@ -30,90 +30,105 @@ pub fn parse(json: &str) -> anyhow::Result<LiveDebuggingData> {
                     .unwrap_or(5000),
             })
         }
-        probe_type => LiveDebuggingData::Probe(Probe {
-            id: parsed.id,
-            version: parsed.version.unwrap_or(0),
-            language: parsed.language,
-            tags: parsed.tags.unwrap_or_default(),
-            target: {
-                let target = parsed
-                    .r#where
-                    .ok_or_else(|| anyhow::format_err!("Missing where for Probe"))?;
-                ProbeTarget {
-                    type_name: target.type_name,
-                    method_name: target.method_name,
-                    source_file: target.source_file,
-                    signature: target.signature,
-                    lines: target.lines.unwrap_or(vec![]),
-                    in_body_location: target.in_body_location.unwrap_or(InBodyLocation::None),
-                }
-            },
-            evaluate_at: parsed.evaluate_at.unwrap_or(EvaluateAt::Default),
-            probe: match probe_type {
-                ContentType::MetricProbe => ProbeType::Metric(MetricProbe {
-                    kind: parsed
-                        .kind
-                        .ok_or_else(|| anyhow::format_err!("Missing kind for MetricProbe"))?,
-                    name: parsed
-                        .metric_name
-                        .ok_or_else(|| anyhow::format_err!("Missing name for MetricProbe"))?,
-                    value: ProbeValue(err(parsed
-                        .value
-                        .ok_or_else(|| anyhow::format_err!("Missing value for MetricProbe"))?
-                        .json
-                        .try_into())?),
-                }),
-                ContentType::LogProbe => ProbeType::Log(LogProbe {
-                    segments: err(parsed
-                        .segments
-                        .ok_or_else(|| anyhow::format_err!("Missing segments for LogProbe"))?
-                        .try_into())?,
-                    when: ProbeCondition(
-                        err(parsed.when.map(|expr| expr.json.try_into()).transpose())?
-                            .unwrap_or(Condition::Always),
-                    ),
-                    capture: parsed.capture.unwrap_or_default(),
-                    capture_snapshot: parsed.capture_snapshot.unwrap_or(false),
-                    sampling_snapshots_per_second: parsed
-                        .sampling
-                        .map(|s| s.snapshots_per_second)
-                        .unwrap_or(5000),
-                }),
-                ContentType::SpanProbe => ProbeType::Span(SpanProbe {}),
-                ContentType::SpanDecorationProbe => {
-                    ProbeType::SpanDecoration(SpanDecorationProbe {
-                        target: parsed.target_span.unwrap_or(SpanProbeTarget::Active),
-                        decorations: {
-                            let mut decorations = vec![];
-                            for decoration in parsed.decorations.ok_or_else(|| {
-                                anyhow::format_err!("Missing decorations for SpanDecorationProbe")
-                            })? {
-                                decorations.push(SpanProbeDecoration {
-                                    condition: ProbeCondition(
-                                        err(decoration
-                                            .when
-                                            .map(|expr| expr.json.try_into())
-                                            .transpose())?
-                                        .unwrap_or(Condition::Always),
-                                    ),
-                                    tags: {
-                                        let mut tags = vec![];
-                                        for tag in decoration.tags {
-                                            tags.push((
-                                                tag.name,
-                                                err(tag.value.segments.try_into())?,
-                                            ));
-                                        }
-                                        tags
-                                    },
-                                })
-                            }
-                            decorations
-                        },
-                    })
-                }
-                _ => unreachable!(),
-            },
+        probe_type => LiveDebuggingData::Probe({
+            let mut probe = Probe {
+                id: parsed.id,
+                version: parsed.version.unwrap_or(0),
+                language: parsed.language,
+                tags: parsed.tags.unwrap_or_default(),
+                target: {
+                    let target = parsed
+                        .r#where
+                        .ok_or_else(|| anyhow::format_err!("Missing where for Probe"))?;
+                    ProbeTarget {
+                        type_name: target.type_name,
+                        method_name: target.method_name,
+                        source_file: target.source_file,
+                        signature: target.signature,
+                        lines: target.lines.unwrap_or(vec![]),
+                        in_body_location: target.in_body_location.unwrap_or(InBodyLocation::None),
+                    }
+                },
+                evaluate_at: parsed.evaluate_at.unwrap_or(EvaluateAt::Exit),
+                probe: match probe_type {
+                    ContentType::MetricProbe => ProbeType::Metric(MetricProbe {
+                        kind: parsed
+                            .kind
+                            .ok_or_else(|| anyhow::format_err!("Missing kind for MetricProbe"))?,
+                        name: parsed
+                            .metric_name
+                            .ok_or_else(|| anyhow::format_err!("Missing name for MetricProbe"))?,
+                        value: ProbeValue(err(parsed
+                            .value
+                            .ok_or_else(|| anyhow::format_err!("Missing value for MetricProbe"))?
+                            .json
+                            .try_into())?),
+                    }),
+                    ContentType::LogProbe => ProbeType::Log(LogProbe {
+                        segments: err(parsed
+                            .segments
+                            .ok_or_else(|| anyhow::format_err!("Missing segments for LogProbe"))?
+                            .try_into())?,
+                        when: ProbeCondition(
+                            err(parsed.when.map(|expr| expr.json.try_into()).transpose())?
+                                .unwrap_or(Condition::Always),
+                        ),
+                        capture: parsed.capture.unwrap_or_default(),
+                        capture_snapshot: parsed.capture_snapshot.unwrap_or(false),
+                        sampling_snapshots_per_second: parsed
+                            .sampling
+                            .map(|s| s.snapshots_per_second)
+                            .unwrap_or(5000),
+                    }),
+                    ContentType::SpanProbe => ProbeType::Span(SpanProbe {}),
+                    ContentType::SpanDecorationProbe => {
+                        ProbeType::SpanDecoration(SpanDecorationProbe {
+                            target: parsed.target_span.unwrap_or(SpanProbeTarget::Active),
+                            decorations: {
+                                let mut decorations = vec![];
+                                for decoration in parsed.decorations.ok_or_else(|| {
+                                    anyhow::format_err!(
+                                        "Missing decorations for SpanDecorationProbe"
+                                    )
+                                })? {
+                                    decorations.push(SpanProbeDecoration {
+                                        condition: ProbeCondition(
+                                            err(decoration
+                                                .when
+                                                .map(|expr| expr.json.try_into())
+                                                .transpose())?
+                                            .unwrap_or(Condition::Always),
+                                        ),
+                                        tags: {
+                                            let mut tags = vec![];
+                                            for tag in decoration.tags {
+                                                tags.push((
+                                                    tag.name,
+                                                    err(tag.value.segments.try_into())?,
+                                                ));
+                                            }
+                                            tags
+                                        },
+                                    })
+                                }
+                                decorations
+                            },
+                        })
+                    }
+                    _ => unreachable!(),
+                },
+            };
+            // unconditional log probes always capture their entry context
+            if matches!(
+                probe.probe,
+                ProbeType::Log(LogProbe {
+                    when: ProbeCondition(Condition::Always),
+                    ..
+                })
+            ) {
+                probe.evaluate_at = EvaluateAt::Entry;
+            }
+            probe
         }),
     })
 }
@@ -140,7 +155,7 @@ struct RawTopLevelItem {
     tags: Option<Vec<String>>,
     segments: Option<Vec<RawSegment>>,
     capture_snapshot: Option<bool>,
-    capture: Option<Capture>,
+    capture: Option<CaptureConfiguration>,
     kind: Option<MetricKind>,
     decorations: Option<Vec<RawSpanProbeDecoration>>,
     metric_name: Option<String>,
@@ -554,8 +569,8 @@ impl Display for RawExpr {
 #[cfg(test)]
 mod tests {
     use crate::{
-        parse_json, Capture, EvaluateAt, LiveDebuggingData, LogProbe, MetricKind, MetricProbe,
-        Probe, ProbeType, SpanDecorationProbe, SpanProbeTarget,
+        parse_json, CaptureConfiguration, EvaluateAt, LiveDebuggingData, LogProbe, MetricKind,
+        MetricProbe, Probe, ProbeType, SpanDecorationProbe, SpanProbeTarget,
     };
 
     #[test]
@@ -652,7 +667,7 @@ mod tests {
             assert_eq!(language, Some("java".to_string()));
             assert_eq!(tags, vec!["foo:bar".to_string(), "baz:baaz".to_string()]);
             assert_eq!(target.method_name, Some("showVetList".to_string()));
-            assert!(matches!(evaluate_at, EvaluateAt::Default));
+            assert!(matches!(evaluate_at, EvaluateAt::Exit));
             assert!(matches!(probe_target, SpanProbeTarget::Active));
             assert_eq!(decorations[0].condition.to_string(), "field1 > 10");
             let (tag, expr) = &decorations[0].tags[0];
@@ -754,7 +769,7 @@ mod tests {
                     segments,
                     when,
                     capture:
-                        Capture {
+                        CaptureConfiguration {
                             max_reference_depth,
                             max_collection_size,
                             max_length,

@@ -126,9 +126,9 @@ impl NamedShmHandle {
 }
 
 impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
-    pub fn ensure_space(self, expected_size: usize) -> MappedMem<T> {
+    pub fn ensure_space(&mut self, expected_size: usize) {
         if expected_size <= self.mem.get_shm().size {
-            return self;
+            return;
         }
         if expected_size > MAPPING_MAX_SIZE - page_size::get() {
             panic!(
@@ -138,7 +138,9 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
             );
         }
 
-        let mut handle: T = self.into();
+        // SAFETY: we'll overwrite the original memory later
+        let mut handle: T = unsafe { std::ptr::read(self) }.into();
+
         let page_size = NonZeroUsize::try_from(page_size::get()).unwrap();
         unsafe {
             _ = handle.set_mapping_size(expected_size);
@@ -156,7 +158,8 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
             size.fetch_max(handle.get_size(), Ordering::SeqCst);
             _ = munmap(ptr, usize::from(page_size));
         }
-        handle.map().unwrap()
+
+        unsafe { std::ptr::write(self, handle.map().unwrap()) };
     }
 }
 

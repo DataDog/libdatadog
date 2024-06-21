@@ -539,24 +539,28 @@ where
     )
 }
 
-pub fn eval_value<'a, 'e, 'v, I: 'e, E: Evaluator<'e, I>>(
+pub fn eval_value<'e, 'v, I: 'e, E: Evaluator<'e, I>>(
     eval: &mut E,
     value: &'v ProbeValue,
-) -> Result<Cow<'a, str>, SnapshotEvaluationError>
+) -> Result<IntermediateValue<'e, I>, SnapshotEvaluationError>
 where
     'v: 'e,
-    'e: 'a,
 {
     let mut eval = Eval { eval, it: None };
     eval.value(&value.0)
-        .and_then(|v| {
-            let immediate = v.try_use(&mut eval)?;
-            Ok(eval.get_string(immediate))
-        })
+        .and_then(|v| Ok(v.try_use(&mut eval)?))
         .map_err(|e| SnapshotEvaluationError {
             expr: value.to_string(),
             message: e.0,
         })
+}
+
+pub fn eval_intermediate_to_string<'e, I, E: Evaluator<'e, I>>(
+    eval: &mut E,
+    value: IntermediateValue<'e, I>,
+) -> Cow<'e, str> {
+    let mut eval = Eval { eval, it: None };
+    eval.get_string(value)
 }
 
 #[cfg(test)]
@@ -567,8 +571,8 @@ mod tests {
         Reference, StringComparison, StringSource,
     };
     use crate::{
-        eval_condition, eval_string, eval_value, DslString, Evaluator, IntermediateValue,
-        ProbeCondition, ProbeValue,
+        eval_condition, eval_intermediate_to_string, eval_string, eval_value, DslString, Evaluator,
+        IntermediateValue, ProbeCondition, ProbeValue,
     };
     use std::borrow::Cow;
     use std::cmp::Ordering;
@@ -800,7 +804,8 @@ mod tests {
         ($vars:expr, $expr:expr, $eq:expr) => {
             let val = ProbeValue($expr);
             let mut ctx = EvalCtx { variables: &$vars };
-            assert_eq!(eval_value(&mut ctx, &val).unwrap(), $eq);
+            let value = eval_value(&mut ctx, &val).unwrap();
+            assert_eq!(eval_intermediate_to_string(&mut ctx, value), $eq);
         };
     }
 

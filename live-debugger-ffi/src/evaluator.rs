@@ -2,7 +2,7 @@
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use datadog_live_debugger::debugger_defs::SnapshotEvaluationError;
-use datadog_live_debugger::{DslString, ProbeCondition};
+use datadog_live_debugger::{DslString, ProbeCondition, ProbeValue};
 use ddcommon_ffi::slice::AsBytes;
 use ddcommon_ffi::CharSlice;
 use std::borrow::Cow;
@@ -226,13 +226,8 @@ extern "C" fn ddog_drop_void_collection_string(void: VoidCollection) {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn ddog_evaluate_unmanaged_string(
-    segments: &DslString,
-    context: &mut c_void,
-    errors: &mut Option<Box<Vec<SnapshotEvaluationError>>>,
-) -> VoidCollection {
-    let string = ddog_evaluate_string(segments, context, errors).to_string();
+fn into_void_collection_string(s: &dyn ToString) -> VoidCollection {
+    let string = s.to_string();
     let new = VoidCollection {
         count: string.len() as isize,
         elements: string.as_ptr() as *const c_void,
@@ -240,4 +235,59 @@ pub extern "C" fn ddog_evaluate_unmanaged_string(
     };
     std::mem::forget(string);
     new
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_evaluate_unmanaged_string(
+    segments: &DslString,
+    context: &mut c_void,
+    errors: &mut Option<Box<Vec<SnapshotEvaluationError>>>,
+) -> VoidCollection {
+    into_void_collection_string(&ddog_evaluate_string(segments, context, errors))
+}
+
+pub struct InternalIntermediateValue<'a>(datadog_live_debugger::IntermediateValue<'a, c_void>);
+
+#[repr(C)]
+pub enum ValueEvaluationResult<'a> {
+    Success(Box<InternalIntermediateValue<'a>>),
+    Error(Box<Vec<SnapshotEvaluationError>>),
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_evaluate_value<'a>(
+    value: &'a ProbeValue,
+    context: &'a mut c_void,
+) -> ValueEvaluationResult<'a> {
+    let mut ctx = EvalCtx::new(context);
+    match datadog_live_debugger::eval_value(&mut ctx, value) {
+        Ok(value) => ValueEvaluationResult::Success(Box::new(InternalIntermediateValue(value))),
+        Err(error) => ValueEvaluationResult::Error(Box::new(vec![error])),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_evaluated_value_get<'a>(
+    value: &'a InternalIntermediateValue<'a>,
+) -> IntermediateValue<'a> {
+    (&value.0).into()
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_evaluated_value_drop(_: Box<InternalIntermediateValue>) {}
+
+pub fn ddog_evaluated_value_into_string<'a>(
+    value: Box<InternalIntermediateValue<'a>>,
+    context: &'a mut c_void,
+) -> Cow<'a, str> {
+    let mut ctx = EvalCtx::new(context);
+    datadog_live_debugger::eval_intermediate_to_string(&mut ctx, value.0)
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_evaluated_value_into_unmanaged_string<'a>(
+    value: Box<InternalIntermediateValue<'a>>,
+    context: &'a mut c_void,
+) -> VoidCollection {
+    into_void_collection_string(&ddog_evaluated_value_into_string(value, context))
 }
