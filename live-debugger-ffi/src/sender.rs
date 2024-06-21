@@ -3,11 +3,13 @@
 
 use ddcommon_ffi::CharSlice;
 use std::borrow::Cow;
+use std::collections::hash_map;
+use std::mem::transmute;
 // Alias to prevent cbindgen panic
 use crate::data::Probe;
 use datadog_live_debugger::debugger_defs::{
-    Capture as DebuggerCaptureAlias, Captures, DebuggerData, DebuggerPayload, Entry, Fields,
-    Snapshot, SnapshotEvaluationError, Value as DebuggerValueAlias,
+    Capture as DebuggerCaptureAlias, Capture, Captures, DebuggerData, DebuggerPayload, Entry,
+    Fields, Snapshot, SnapshotEvaluationError, Value as DebuggerValueAlias,
 };
 use datadog_live_debugger::sender::generate_new_id;
 use ddcommon_ffi::slice::AsBytes;
@@ -94,7 +96,7 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
         debugger: DebuggerData {
             snapshot: Snapshot {
                 captures: Some(Captures {
-                    r#return: Some(DebuggerCaptureAlias::default()),
+                    r#return: Some(Capture::default()),
                     ..Default::default()
                 }),
                 language: language.to_utf8_lossy(),
@@ -107,38 +109,33 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
     };
     buffer.push(snapshot);
     unsafe {
-        std::mem::transmute(
-            buffer
-                .last_mut()
-                .unwrap()
-                .debugger
-                .snapshot
-                .captures
-                .as_mut()
-                .unwrap()
-                .r#return
-                .as_mut()
-                .unwrap(),
-        )
+        let captures = buffer
+            .last_mut()
+            .unwrap()
+            .debugger
+            .snapshot
+            .captures
+            .as_mut();
+        transmute(captures.unwrap().r#return.as_mut().unwrap())
     }
 }
 
+#[no_mangle]
 pub extern "C" fn ddog_create_log_probe_snapshot<'a>(
-    buffer: &mut Box<DebuggerPayload<'a>>,
     probe: &'a Probe,
+    message: Option<&CharSlice<'a>>,
     service: CharSlice<'a>,
     language: CharSlice<'a>,
     timestamp: u64,
-) -> *mut DebuggerCapture<'a> {
-    *buffer = Box::new(DebuggerPayload {
+) -> Box<DebuggerPayload<'a>> {
+    Box::new(DebuggerPayload {
         service: service.to_utf8_lossy(),
         source: "dd_debugger",
         timestamp,
-        message: None,
+        message: message.map(|m| m.to_utf8_lossy()),
         debugger: DebuggerData {
             snapshot: Snapshot {
                 captures: Some(Captures {
-                    r#return: Some(DebuggerCaptureAlias::default()),
                     ..Default::default()
                 }),
                 language: language.to_utf8_lossy(),
@@ -148,20 +145,69 @@ pub extern "C" fn ddog_create_log_probe_snapshot<'a>(
                 ..Default::default()
             },
         },
-    });
-    unsafe {
-        std::mem::transmute(
-            buffer
-                .debugger
-                .snapshot
-                .captures
-                .as_mut()
-                .unwrap()
-                .r#return
-                .as_mut()
-                .unwrap(),
-        )
-    }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_update_payload_message<'a>(
+    payload: &mut DebuggerPayload<'a>,
+    message: CharSlice<'a>,
+) {
+    payload.message = Some(message.to_utf8_lossy());
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_snapshot_entry<'a>(
+    payload: &mut DebuggerPayload<'a>,
+) -> *mut DebuggerCapture<'a> {
+    transmute(
+        payload
+            .debugger
+            .snapshot
+            .captures
+            .as_mut()
+            .unwrap()
+            .entry
+            .insert(Capture::default()),
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_snapshot_lines<'a>(
+    payload: &mut DebuggerPayload<'a>,
+    line: u32,
+) -> *mut DebuggerCapture<'a> {
+    transmute(
+        match payload
+            .debugger
+            .snapshot
+            .captures
+            .as_mut()
+            .unwrap()
+            .lines
+            .entry(line)
+        {
+            hash_map::Entry::Occupied(e) => e.into_mut(),
+            hash_map::Entry::Vacant(e) => e.insert(Capture::default()),
+        },
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_snapshot_exit<'a>(
+    payload: &mut DebuggerPayload<'a>,
+) -> *mut DebuggerCapture<'a> {
+    transmute(
+        payload
+            .debugger
+            .snapshot
+            .captures
+            .as_mut()
+            .unwrap()
+            .r#return
+            .as_mut()
+            .unwrap(),
+    )
 }
 
 #[no_mangle]
@@ -241,7 +287,10 @@ pub extern "C" fn ddog_evaluation_error_snapshot<'a>(
         service: service.to_utf8_lossy(),
         source: "dd_debugger",
         timestamp,
-        message: Some(format!("Evaluation errors for probe id {}", probe.id)),
+        message: Some(Cow::Owned(format!(
+            "Evaluation errors for probe id {}",
+            probe.id
+        ))),
         debugger: DebuggerData {
             snapshot: Snapshot {
                 language: language.to_utf8_lossy(),

@@ -22,6 +22,7 @@ mod unix;
 pub use unix::*;
 
 pub mod service;
+pub mod shm_limiters;
 #[cfg(windows)]
 mod windows;
 

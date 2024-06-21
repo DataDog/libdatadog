@@ -54,16 +54,16 @@ pub async fn send(payload: &[u8], endpoint: &Endpoint) -> anyhow::Result<()> {
 
     let mut url = endpoint.url.clone();
     if endpoint.api_key.is_some() {
-        // TODO DD-REQUEST-ID header necessary?
         req = req.header("DD-EVP-ORIGIN", "agent-debugger");
-        let mut parts = url.into_parts();
-        let mut query = String::from(parts.path_and_query.unwrap().as_str());
-        query.push_str("?ddtags=host:");
-        query.push_str(""); // TODO hostname
-                            // TODO container tags and such
-        parts.path_and_query = Some(PathAndQuery::from_str(&query)?);
-        url = Uri::from_parts(parts)?;
     }
+
+    let mut parts = url.into_parts();
+    let mut query = String::from(parts.path_and_query.unwrap().as_str());
+    query.push_str("?ddtags=host:");
+    query.push_str(""); // TODO hostname
+                        // TODO container tags and such
+    parts.path_and_query = Some(PathAndQuery::from_str(&query)?);
+    url = Uri::from_parts(parts)?;
     //             "env:" + config.getEnv(),
     //             "version:" + config.getVersion(),
     //             "debugger_version:" + DDTraceCoreInfo.VERSION,
@@ -84,7 +84,7 @@ pub async fn send(payload: &[u8], endpoint: &Endpoint) -> anyhow::Result<()> {
             if response.status().as_u16() >= 400 {
                 let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
                 let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                anyhow::bail!("Server did not accept traces: {response_body}");
+                anyhow::bail!("Server did not accept debugger payload: {response_body}");
             }
             Ok(())
         }

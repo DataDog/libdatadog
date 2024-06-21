@@ -3,8 +3,8 @@
 
 use datadog_live_debugger::debugger_defs::{ProbeMetadata, ProbeMetadataLocation};
 use datadog_live_debugger::{
-    Capture, DslString, EvaluateAt, InBodyLocation, MetricKind, ProbeCondition, ProbeValue,
-    SpanProbeTarget,
+    CaptureConfiguration, DslString, EvaluateAt, InBodyLocation, MetricKind, ProbeCondition,
+    ProbeValue, SpanProbeTarget,
 };
 use ddcommon_ffi::slice::AsBytes;
 use ddcommon_ffi::{CharSlice, Option};
@@ -60,7 +60,7 @@ impl<'a> From<&'a datadog_live_debugger::MetricProbe> for MetricProbe<'a> {
 pub struct LogProbe<'a> {
     pub segments: &'a DslString,
     pub when: &'a ProbeCondition,
-    pub capture: &'a Capture,
+    pub capture: &'a CaptureConfiguration,
     pub capture_snapshot: bool,
     pub sampling_snapshots_per_second: u32,
 }
@@ -291,6 +291,7 @@ impl<'a> From<&'a datadog_live_debugger::LiveDebuggingData> for LiveDebuggingDat
     }
 }
 
-pub extern "C" fn ddog_capture_defaults() -> Capture {
-    Capture::default()
+#[no_mangle]
+pub extern "C" fn ddog_capture_defaults() -> CaptureConfiguration {
+    CaptureConfiguration::default()
 }

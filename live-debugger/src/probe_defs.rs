@@ -7,16 +7,16 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[repr(C)]
-pub struct Capture {
+pub struct CaptureConfiguration {
     pub max_reference_depth: u32,
     pub max_collection_size: u32,
     pub max_length: u32,
     pub max_field_count: u32,
 }
 
-impl Default for Capture {
+impl Default for CaptureConfiguration {
     fn default() -> Self {
-        Capture {
+        CaptureConfiguration {
             max_reference_depth: 3,
             max_collection_size: 100,
             max_length: 255,
@@ -60,7 +60,7 @@ pub struct SpanProbeDecoration {
 pub struct LogProbe {
     pub segments: DslString,
     pub when: ProbeCondition,
-    pub capture: Capture,
+    pub capture: CaptureConfiguration,
     pub capture_snapshot: bool,
     pub sampling_snapshots_per_second: u32,
 }
@@ -105,7 +105,6 @@ pub struct ProbeTarget {
 #[derive(Deserialize, Copy, Clone, Debug)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum EvaluateAt {
-    Default,
     Entry,
     Exit,
 }
