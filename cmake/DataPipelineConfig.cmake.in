@@ -33,16 +33,22 @@ if(DataPipeline_FOUND)
   if(CMAKE_C_COMPILER_ID MATCHES "MSVC")
     target_link_libraries(
       data_pipeline
-      INTERFACE NtDll
-                UserEnv
-                Bcrypt
-                crypt32
-                wsock32
-                ws2_32
-                shlwapi
-                Secur32
-                Ncrypt
-                PowrProf)
+      INTERFACE advapi32
+		Bcrypt
+		crypt32
+		cryptnet
+		kernel32
+		legacy_stdio_definitions
+		msvcrt
+		Ncrypt
+		NtDll
+		PowrProf
+		Secur32
+		shlwapi
+		synchronization
+		UserEnv
+		ws2_32
+		wsock32)
   endif()
 
   add_library(Datadog::DataPipeline ALIAS data_pipeline)
