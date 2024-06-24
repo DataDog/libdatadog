@@ -45,7 +45,7 @@ impl DDSketch {
     }
 
     /// Add a point with value `point` to the sketch
-    /// `count` and `point` must be positive
+    /// `point` must be positive
     pub fn add(&mut self, point: f64) -> Result<(), Box<dyn std::error::Error>> {
         self.add_with_count(point, 1.0)
     }
