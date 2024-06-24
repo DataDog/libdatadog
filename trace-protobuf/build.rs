@@ -63,6 +63,10 @@ fn generate_protobuf() {
         ".pb.Span.spanLinks",
         "#[serde(skip_serializing_if = \"::prost::alloc::vec::Vec::is_empty\")]",
     );
+    config.field_attribute(
+        ".pb.Span.error",
+        "#[serde(skip_serializing_if = \"is_default\")]",
+    );
 
     config.type_attribute("StatsPayload", "#[derive(Deserialize, Serialize)]");
     config.type_attribute("StatsPayload", "#[serde(rename_all = \"PascalCase\")]");
@@ -139,6 +143,10 @@ where
 {
     let opt = Option::deserialize(deserializer)?;
     Ok(opt.unwrap_or_default())
+}
+
+fn is_default<T: Default + PartialEq>(t: &T) -> bool {
+    t == &T::default()
 }
 
 "

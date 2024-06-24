@@ -12,6 +12,10 @@ where
     Ok(opt.unwrap_or_default())
 }
 
+fn is_default<T: Default + PartialEq>(t: &T) -> bool {
+    t == &T::default()
+}
+
 #[derive(Deserialize, Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -107,6 +111,7 @@ pub struct Span {
     #[prost(int32, tag = "9")]
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
+    #[serde(skip_serializing_if = "is_default")]
     pub error: i32,
     /// meta is a mapping from tag name to tag value for string-valued tags.
     /// @gotags: json:"meta,omitempty" msg:"meta,omitempty"
