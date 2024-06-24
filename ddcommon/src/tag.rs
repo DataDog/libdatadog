@@ -130,6 +130,10 @@ impl Tag {
 
         Tag::from_value(format!("{key}:{value}"))
     }
+
+    pub fn into_string(self) -> String {
+        self.value
+    }
 }
 
 /// Parse a string of tags typically provided by environment variables

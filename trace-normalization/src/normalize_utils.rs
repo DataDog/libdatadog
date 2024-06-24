@@ -154,8 +154,8 @@ pub fn normalize_tag(tag: &mut String) {
         // Grab current unicode codepoint
         let mut c = {
             let mut it = bytes[read_cursor..].iter();
-            // This won't panic because we now bytes is a valid utf8 array, and next_code_point returns
-            // and actual utf8 codepoint
+            // This won't panic because we now bytes is a valid utf8 array, and next_code_point
+            // returns and actual utf8 codepoint
             std::char::from_u32(crate::utf8_helpers::next_code_point(&mut it).unwrap()).unwrap()
         };
         read_cursor += c.len_utf8();
@@ -203,8 +203,12 @@ fn normalize_metric_name(name: &mut String) {
     let mut bytes = std::mem::take(name).into_bytes();
 
     // Find first alpha character, if none is found the metric name is empty
-    let Some((mut read_cursor, _)) = bytes.iter().enumerate().find(|(_, c)| c.is_ascii_alphabetic()) else {
-        *name =  String::new();
+    let Some((mut read_cursor, _)) = bytes
+        .iter()
+        .enumerate()
+        .find(|(_, c)| c.is_ascii_alphabetic())
+    else {
+        *name = String::new();
         return;
     };
     let mut write_cursor = 0;

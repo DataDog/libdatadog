@@ -11,7 +11,8 @@ pub mod pb;
 
 /// This is a minimal DDSketch implementation
 ///
-/// It only supports a part of the standard (which is also only the parts dd backend supports :shrug:)
+/// It only supports a part of the standard (which is also only the parts dd backend supports
+/// :shrug:)
 /// * max length contiguous bin store, with lower bin
 /// collapse behavior.
 /// * Positive or zero values

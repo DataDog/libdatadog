@@ -1,14 +1,15 @@
-use std::ptr::NonNull;
+use std::{ptr::NonNull, time};
 
 use crate::try_c;
 use data_pipeline::stats_exporter::{
-    endpoint_from_agent_url, LibraryMetadata, SpanStats, StatsExporter,
+    blocking::StatsExporter, endpoint_from_agent_url, Configuration, LibraryMetadata, SpanStats,
 };
 use ddcommon::{parse_uri, tag::Tag};
 use ddcommon_ffi as ffi;
 use ffi::slice::AsBytes;
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_stats_exporter_new(
     hostname: ffi::CharSlice,
     env: ffi::CharSlice,
@@ -20,7 +21,11 @@ pub unsafe extern "C" fn ddog_stats_exporter_new(
     container_id: ffi::CharSlice,
     git_commit_sha: ffi::CharSlice,
     tags: ffi::Vec<Tag>,
+
     agent_url: ffi::CharSlice,
+    stats_computation_interval_seconds: u64,
+    // No timeout if zero
+    request_timeout_ms: u64,
 
     out_exporter: NonNull<Box<StatsExporter>>,
 ) -> ffi::Option<ffi::Error> {
@@ -42,12 +47,23 @@ pub unsafe extern "C" fn ddog_stats_exporter_new(
                 git_commit_sha: git_commit_sha.to_utf8_lossy().into_owned(),
                 tags: tags.into(),
             },
-            endpoint,
+            Configuration {
+                endpoint,
+                stats_computation_interval: time::Duration::from_secs(
+                    stats_computation_interval_seconds
+                ),
+                request_timeout: if request_timeout_ms != 0 {
+                    Some(time::Duration::from_millis(request_timeout_ms))
+                } else {
+                    None
+                }
+            }
         ))));
     ffi::Option::None
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_stats_exporter_insert_span_data(
     exporter: &StatsExporter,
     resource_name: ffi::CharSlice,
@@ -74,11 +90,14 @@ pub unsafe extern "C" fn ddog_stats_exporter_insert_span_data(
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_stats_exporter_send(
     exporter: &StatsExporter,
 ) -> ffi::Option<ffi::Error> {
-    try_c!(exporter.send())
+    try_c!(exporter.send());
+    ffi::Option::None
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_stats_exporter_drop(_: Box<StatsExporter>) {}
