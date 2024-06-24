@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(feature = "test", derive(Serialize))]
+#[cfg_attr(feature = "test", derive(Default, Serialize))]
 pub struct DynamicConfigTarget {
     pub service: String,
     pub env: String,
@@ -106,10 +106,7 @@ pub mod tests {
     pub fn dummy_dynamic_config(enabled: bool) -> DynamicConfigFile {
         DynamicConfigFile {
             action: "".to_string(),
-            service_target: DynamicConfigTarget {
-                service: "".to_string(),
-                env: "".to_string(),
-            },
+            service_target: DynamicConfigTarget::default(),
             lib_config: DynamicConfig {
                 tracing_enabled: Some(enabled),
                 ..DynamicConfig::default()
