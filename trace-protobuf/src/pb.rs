@@ -429,9 +429,11 @@ pub struct ClientGroupedStats {
     /// peer_tags are supplementary tags that further describe a peer entity
     /// E.g., `grpc.target` to describe the name of a gRPC peer, or `db.hostname` to describe the name of peer DB
     #[prost(string, repeated, tag = "16")]
+    #[serde(default)]
     pub peer_tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// this field's value is equal to span's ParentID == 0.
     #[prost(enumeration = "Trilean", tag = "17")]
+    #[serde(default)]
     pub is_trace_root: i32,
 }
 /// Trilean is an expanded boolean type that is meant to differentiate between being unset and false.
@@ -491,5 +493,96 @@ impl TraceRootFlag {
             "DEPRECATED_FALSE" => Some(Self::DeprecatedFalse),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::pb::{ClientGroupedStats, ClientStatsBucket, ClientStatsPayload, Trilean::NotSet};
+
+    #[tokio::test]
+    async fn test_deserialize_client_stats_payload() {
+        let stats_json = r#"{
+            "Hostname": "TestHost",
+            "Env": "test",
+            "Version": "1.0.0",
+            "Stats": [
+                {
+                    "Start": 0,
+                    "Duration": 10000000000,
+                    "Stats": [
+                        {
+                            "Name": "test-span",
+                            "Service": "test-service",
+                            "Resource": "test-span",
+                            "Type": "",
+                            "HTTPStatusCode": 0,
+                            "Synthetics": false,
+                            "Hits": 1,
+                            "TopLevelHits": 1,
+                            "Errors": 0,
+                            "Duration": 10000000,
+                            "OkSummary": [
+                                0,
+                                0,
+                                0
+                            ],
+                            "ErrorSummary": [
+                                0,
+                                0,
+                                0
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "Lang": "javascript",
+            "TracerVersion": "1.0.0",
+            "RuntimeID": "00000000-0000-0000-0000-000000000000",
+            "Sequence": 1
+        }"#;
+
+        let deserialized_stats_json: ClientStatsPayload = serde_json::from_str(stats_json).unwrap();
+
+        let client_stats_payload = ClientStatsPayload {
+            hostname: "TestHost".to_string(),
+            env: "test".to_string(),
+            version: "1.0.0".to_string(),
+            stats: vec![ClientStatsBucket {
+                start: 0,
+                duration: 10000000000,
+                stats: vec![ClientGroupedStats {
+                    service: "test-service".to_string(),
+                    name: "test-span".to_string(),
+                    resource: "test-span".to_string(),
+                    http_status_code: 0,
+                    r#type: "".to_string(),
+                    db_type: "".to_string(),
+                    hits: 1,
+                    errors: 0,
+                    duration: 10000000,
+                    ok_summary: vec![0, 0, 0],
+                    error_summary: vec![0, 0, 0],
+                    synthetics: false,
+                    top_level_hits: 1,
+                    span_kind: "".to_string(),
+                    peer_tags: vec![],
+                    is_trace_root: NotSet.into(),
+                }],
+                agent_time_shift: 0,
+            }],
+            lang: "javascript".to_string(),
+            tracer_version: "1.0.0".to_string(),
+            runtime_id: "00000000-0000-0000-0000-000000000000".to_string(),
+            sequence: 1,
+            agent_aggregation: "".to_string(),
+            service: "".to_string(),
+            container_id: "".to_string(),
+            tags: vec![],
+            git_commit_sha: "".to_string(),
+            image_tag: "".to_string(),
+        };
+
+        assert_eq!(deserialized_stats_json, client_stats_payload)
     }
 }
