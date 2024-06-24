@@ -3,8 +3,8 @@
 
 #[cfg(test)]
 mod tests {
-    use serde_json;
     use crate::pb::{is_default, Span};
+    use serde_json;
 
     #[test]
     fn test_is_default() {
