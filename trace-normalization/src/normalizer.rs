@@ -3,17 +3,6 @@
 
 use crate::normalize_utils;
 use datadog_trace_protobuf::pb;
-use std::time::SystemTime;
-
-const MAX_TYPE_LEN: usize = 100;
-
-// an arbitrary cutoff to spot weird-looking values
-// nanoseconds since epoch on Jan 1, 2000
-const YEAR_2000_NANOSEC_TS: i64 = 946684800000000000;
-
-// DEFAULT_SPAN_NAME is the default name we assign a span if it's missing and we have no reasonable
-// fallback
-const DEFAULT_SPAN_NAME: &str = "unnamed_operation";
 
 const TAG_SAMPLING_PRIORITY: &str = "_sampling_priority_v1";
 const TAG_ORIGIN: &str = "_dd.origin";
@@ -31,20 +20,15 @@ fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
     anyhow::ensure!(s.trace_id != 0, "TraceID is zero (reason:trace_id_zero)");
     anyhow::ensure!(s.span_id != 0, "SpanID is zero (reason:span_id_zero)");
 
-    let normalized_service = match normalize_utils::normalize_service(&s.service) {
-        Ok(service) => service,
-        Err(_) => normalize_utils::fallback_service(),
-    };
-
-    s.service = normalized_service;
-
     // TODO: component2name: check for a feature flag to determine the component tag to become the
     // span name https://github.com/DataDog/datadog-agent/blob/dc88d14851354cada1d15265220a39dce8840dcc/pkg/trace/agent/normalizer.go#L64
 
-    let normalized_name = match normalize_utils::normalize_name(&s.name) {
-        Ok(name) => name,
-        Err(_) => DEFAULT_SPAN_NAME.to_string(),
-    };
+    normalize_utils::normalize_service(&mut s.service);
+    normalize_utils::normalize_name(&mut s.name);
+    normalize_utils::normalize_resource(&mut s.resource, &s.name);
+    normalize_utils::normalize_parent_id(&mut s.parent_id, s.trace_id, s.span_id);
+    normalize_utils::normalize_span_start_duration(&mut s.start, &mut s.duration);
+    normalize_utils::normalize_span_type(&mut s.r#type);
 
     s.name = normalized_name;
 
@@ -173,10 +157,9 @@ pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root_span_index: usize) -> an
 
 #[cfg(test)]
 mod tests {
-
     use crate::normalize_utils;
+    use crate::normalize_utils::{DEFAULT_SPAN_NAME, MAX_TYPE_LEN};
     use crate::normalizer;
-    use crate::normalizer::DEFAULT_SPAN_NAME;
     use datadog_trace_protobuf::pb;
     use rand::Rng;
     use std::collections::HashMap;
@@ -229,7 +212,7 @@ mod tests {
         let mut test_span = new_test_span();
         test_span.name = "".to_string();
         assert!(normalizer::normalize_span(&mut test_span).is_ok());
-        assert_eq!(test_span.name, normalizer::DEFAULT_SPAN_NAME);
+        assert_eq!(test_span.name, DEFAULT_SPAN_NAME);
     }
 
     #[test]
@@ -245,7 +228,7 @@ mod tests {
         let mut test_span = new_test_span();
         test_span.name = "/".to_string();
         assert!(normalizer::normalize_span(&mut test_span).is_ok());
-        assert_eq!(test_span.name, normalizer::DEFAULT_SPAN_NAME);
+        assert_eq!(test_span.name, DEFAULT_SPAN_NAME);
     }
 
     #[test]
@@ -454,7 +437,7 @@ mod tests {
         test_span.r#type = "sql".repeat(1000);
 
         assert!(normalizer::normalize_span(&mut test_span).is_ok());
-        assert_eq!(test_span.r#type.len(), normalizer::MAX_TYPE_LEN);
+        assert_eq!(test_span.r#type.len(), MAX_TYPE_LEN);
     }
 
     #[test]
