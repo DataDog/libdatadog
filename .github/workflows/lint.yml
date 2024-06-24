@@ -1,9 +1,19 @@
 name: Lint
-on: [push]
+on:
+  push:
 env: 
   CARGO_TERM_COLOR: always
 
 jobs:
+  actionlint: 
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Run actionlint
+        uses: devops-actions/actionlint@v0.1.3
+        with:
+          shellcheck_opts: '-e SC2086'
   rustfmt:
     runs-on: ubuntu-latest
     steps:
@@ -30,11 +40,11 @@ jobs:
         uses: ./.github/actions/cache
         with:
           rust_version: ${{ matrix.rust_version }}
-      - name: Install ${{ matrix.version }} toolchain and clippy
+      - name: Install ${{ matrix.rust_version }} toolchain and clippy
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }} && rustup component add clippy
       - name: Run clippy on ${{ matrix.platform }} ${{ matrix.rust_version }} 
         shell: bash
-        run: cargo clippy --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.71.1 ] && echo -Aunknown-lints)
+        run: cargo clippy --all-targets --all-features -- -D warnings "$([ ${{ matrix.rust_version }} = 1.71.1 ] && echo -Aunknown-lints)"
   licensecheck:
     runs-on: ubuntu-latest
     name: "Presence of licence headers"
@@ -45,7 +55,7 @@ jobs:
         run: sudo apt-get install -y licensecheck
       - name: Check licenses
         # Exclude symbolizer-ffi from the checks (mostly imported code)
-        run: '! find . \( -name "*.rs" -o -name "*.c" -o -name "*.sh" \)  -not -path "./symbolizer-ffi/*" -not -path "*/tarpc/*" | xargs licensecheck -c ".*" | grep -v "Apache License 2.0"'
+        run: '! find . \( -name "*.rs" -o -name "*.c" -o -name "*.sh" \)  -not -path "./symbolizer-ffi/*" -not -path "*/tarpc/*" -print0 | xargs -0 licensecheck -c ".*" | grep -v "Apache License 2.0"'
 
   # todo: fix upstream warnings; from the readme:
   # The most common cause of missing licenses seems to be workspaces that
