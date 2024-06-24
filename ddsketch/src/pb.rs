@@ -47,7 +47,17 @@ pub struct IndexMapping {
 }
 /// Nested message and enum types in `IndexMapping`.
 pub mod index_mapping {
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
     #[repr(i32)]
     pub enum Interpolation {
         None = 0,

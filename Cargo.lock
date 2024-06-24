@@ -1098,6 +1098,7 @@ dependencies = [
  "datadog-trace-utils",
  "ddcommon",
  "futures",
+ "http",
  "hyper",
  "log",
  "rmp-serde",
@@ -1111,6 +1112,7 @@ dependencies = [
  "build_common",
  "bytes",
  "data-pipeline",
+ "ddcommon",
  "ddcommon-ffi",
  "libc",
 ]
@@ -1150,7 +1152,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ddsketch"
-version = "6.0.0"
+version = "10.0.0"
 dependencies = [
  "prost 0.11.9",
  "prost-build",
