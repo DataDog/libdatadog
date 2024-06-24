@@ -145,7 +145,7 @@ where
     Ok(opt.unwrap_or_default())
 }
 
-fn is_default<T: Default + PartialEq>(t: &T) -> bool {
+pub fn is_default<T: Default + PartialEq>(t: &T) -> bool {
     t == &T::default()
 }
 
