@@ -19251,7 +19251,7 @@ third_party_libraries:
 
       END OF TERMS AND CONDITIONS
 - package_name: serde_json
-  package_version: 1.0.115
+  package_version: 1.0.117
   repository: https://github.com/serde-rs/json
   license: MIT OR Apache-2.0
   licenses:
