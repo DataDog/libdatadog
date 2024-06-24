@@ -4,24 +4,25 @@
 #[cfg(test)]
 mod tests {
     use crate::pb::{is_default, Span};
-    use serde_json;
 
     #[test]
     fn test_is_default() {
-        assert_eq!(true, is_default(&false));
-        assert_eq!(false, is_default(&true));
+        assert!(is_default(&false));
+        assert!(!is_default(&true));
 
-        assert_eq!(true, is_default(&0));
-        assert_eq!(false, is_default(&1));
+        assert!(is_default(&0));
+        assert!(!is_default(&1));
 
-        assert_eq!(true, is_default(&""));
-        assert_eq!(false, is_default(&"foo"));
+        assert!(is_default(&""));
+        assert!(!is_default(&"foo"));
     }
 
     #[test]
     fn test_serialize_span() {
-        let mut span = Span::default();
-        span.name = "test".to_string();
+        let mut span = Span {
+            name: "test".to_string(),
+            ..Default::default()
+        };
 
         let json = serde_json::to_string(&span).unwrap();
         let expected = "{\"service\":\"\",\"name\":\"test\",\"resource\":\"\",\"trace_id\":0,\"span_id\":0,\"parent_id\":0,\"start\":0,\"duration\":0,\"meta\":{},\"metrics\":{},\"type\":\"\"}";
