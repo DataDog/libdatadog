@@ -11,10 +11,10 @@ use rmpv::{Integer, Value};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-pub use crate::send_data::SendData;
-// TODO: EK - FIX THIS
 pub use crate::send_data::send_data_result::SendDataResult;
+pub use crate::send_data::SendData;
 pub use crate::tracer_header_tags::TracerHeaderTags;
+use crate::tracer_payload::{TraceEncoding, TracerPayloadCollection};
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb::{self, Span, TraceChunk, TracerPayload};
 use ddcommon::azure_app_services;
@@ -287,7 +287,7 @@ pub(crate) fn construct_tracer_payload(
     }
 }
 
-fn cmp_send_data_payloads(a: &pb::TracerPayload, b: &pb::TracerPayload) -> Ordering {
+pub(crate) fn cmp_send_data_payloads(a: &pb::TracerPayload, b: &pb::TracerPayload) -> Ordering {
     a.tracer_version
         .cmp(&b.tracer_version)
         .then(a.language_version.cmp(&b.language_version))
@@ -326,17 +326,7 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
     // Merge chunks with common properties. Reduces requests for agentful mode.
     // And reduces a little bit of data for agentless.
     for send_data in data.iter_mut() {
-        send_data
-            .tracer_payloads
-            .sort_unstable_by(cmp_send_data_payloads);
-        send_data.tracer_payloads.dedup_by(|a, b| {
-            if cmp_send_data_payloads(a, b) == Ordering::Equal {
-                // Note: dedup_by drops a, and retains b.
-                b.chunks.append(&mut a.chunks);
-                return true;
-            }
-            false
-        })
+        send_data.tracer_payloads.merge();
     }
     data
 }
@@ -526,65 +516,75 @@ pub fn collect_trace_chunks(
     tracer_header_tags: &TracerHeaderTags,
     process_chunk: impl Fn(&mut TraceChunk, usize),
     is_agentless: bool,
-) -> TracerPayload {
-    let mut trace_chunks: Vec<TraceChunk> = Vec::new();
+    encoding_type: TraceEncoding,
+) -> TracerPayloadCollection {
+    match encoding_type {
+        TraceEncoding::V04 => TracerPayloadCollection::V04(traces),
+        TraceEncoding::V07 => {
+            let mut trace_chunks: Vec<TraceChunk> = Vec::new();
 
-    // We'll skip setting the global metadata and rely on the agent to unpack these
-    let mut gathered_root_span_tags = !is_agentless;
-    let mut root_span_tags = RootSpanTags::default();
+            // We'll skip setting the global metadata and rely on the agent to unpack these
+            let mut gathered_root_span_tags = !is_agentless;
+            let mut root_span_tags = RootSpanTags::default();
 
-    for trace in traces.iter_mut() {
-        if is_agentless {
-            if let Err(e) = normalizer::normalize_trace(trace) {
-                error!("Error normalizing trace: {e}");
-            }
-        }
-
-        let mut chunk = construct_trace_chunk(trace.to_vec());
-
-        let root_span_index = match get_root_span_index(trace) {
-            Ok(res) => res,
-            Err(e) => {
-                error!("Error getting the root span index of a trace, skipping. {e}");
-                continue;
-            }
-        };
-
-        if let Err(e) = normalizer::normalize_chunk(&mut chunk, root_span_index) {
-            error!("Error normalizing trace chunk: {e}");
-        }
-
-        for span in chunk.spans.iter_mut() {
-            // TODO: obfuscate & truncate spans
-            if tracer_header_tags.client_computed_top_level {
-                update_tracer_top_level(span);
-            }
-        }
-
-        if !tracer_header_tags.client_computed_top_level {
-            compute_top_level_span(&mut chunk.spans);
-        }
-
-        process_chunk(&mut chunk, root_span_index);
-
-        trace_chunks.push(chunk);
-
-        if !gathered_root_span_tags {
-            gathered_root_span_tags = true;
-            let meta_map = &trace[root_span_index].meta;
-            parse_root_span_tags!(
-                meta_map,
-                {
-                    "env" => root_span_tags.env,
-                    "version" => root_span_tags.app_version,
-                    "_dd.hostname" => root_span_tags.hostname,
-                    "runtime-id" => root_span_tags.runtime_id,
+            for trace in traces.iter_mut() {
+                if is_agentless {
+                    if let Err(e) = normalizer::normalize_trace(trace) {
+                        error!("Error normalizing trace: {e}");
+                    }
                 }
-            );
+
+                let mut chunk = construct_trace_chunk(trace.to_vec());
+
+                let root_span_index = match get_root_span_index(trace) {
+                    Ok(res) => res,
+                    Err(e) => {
+                        error!("Error getting the root span index of a trace, skipping. {e}");
+                        continue;
+                    }
+                };
+
+                if let Err(e) = normalizer::normalize_chunk(&mut chunk, root_span_index) {
+                    error!("Error normalizing trace chunk: {e}");
+                }
+
+                for span in chunk.spans.iter_mut() {
+                    // TODO: obfuscate & truncate spans
+                    if tracer_header_tags.client_computed_top_level {
+                        update_tracer_top_level(span);
+                    }
+                }
+
+                if !tracer_header_tags.client_computed_top_level {
+                    compute_top_level_span(&mut chunk.spans);
+                }
+
+                process_chunk(&mut chunk, root_span_index);
+
+                trace_chunks.push(chunk);
+
+                if !gathered_root_span_tags {
+                    gathered_root_span_tags = true;
+                    let meta_map = &trace[root_span_index].meta;
+                    parse_root_span_tags!(
+                        meta_map,
+                        {
+                            "env" => root_span_tags.env,
+                            "version" => root_span_tags.app_version,
+                            "_dd.hostname" => root_span_tags.hostname,
+                            "runtime-id" => root_span_tags.runtime_id,
+                        }
+                    );
+                }
+            }
+
+            TracerPayloadCollection::V07(vec![construct_tracer_payload(
+                trace_chunks,
+                tracer_header_tags,
+                root_span_tags,
+            )])
         }
     }
-
-    construct_tracer_payload(trace_chunks, tracer_header_tags, root_span_tags)
 }
 
 #[cfg(test)]
@@ -595,6 +595,7 @@ mod tests {
 
     use super::{get_root_span_index, set_serverless_root_span_tags};
     use crate::trace_utils::{TracerHeaderTags, MAX_PAYLOAD_SIZE};
+    use crate::tracer_payload::TracerPayloadCollection;
     use crate::{
         test_utils::create_test_span,
         trace_utils::{self, SendData},
@@ -607,7 +608,7 @@ mod tests {
     fn test_coalescing_does_not_exceed_max_size() {
         let dummy = SendData::new(
             MAX_PAYLOAD_SIZE / 5 + 1,
-            TracerPayload {
+            TracerPayloadCollection::V07(vec![TracerPayload {
                 container_id: "".to_string(),
                 language_name: "".to_string(),
                 language_version: "".to_string(),
@@ -624,7 +625,7 @@ mod tests {
                 env: "".to_string(),
                 hostname: "".to_string(),
                 app_version: "".to_string(),
-            },
+            }]),
             TracerHeaderTags::default(),
             &Endpoint::default(),
         );
@@ -639,23 +640,20 @@ mod tests {
             5,
             coalesced
                 .iter()
-                .map(|s| s
-                    .tracer_payloads
-                    .iter()
-                    .map(|p| p.chunks.len())
-                    .sum::<usize>())
+                .map(|s| s.tracer_payloads.size())
                 .sum::<usize>()
         );
         // assert some chunks are actually coalesced
         assert!(
             coalesced
                 .iter()
-                .map(|s| s
-                    .tracer_payloads
-                    .iter()
-                    .map(|p| p.chunks.len())
-                    .max()
-                    .unwrap())
+                .map(|s| {
+                    if let TracerPayloadCollection::V07(collection) = &s.tracer_payloads {
+                        collection.iter().map(|s| s.chunks.len()).max().unwrap()
+                    } else {
+                        0
+                    }
+                })
                 .max()
                 .unwrap()
                 > 1
