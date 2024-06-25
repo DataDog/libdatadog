@@ -30,56 +30,9 @@ fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
     normalize_utils::normalize_span_start_duration(&mut s.start, &mut s.duration);
     normalize_utils::normalize_span_type(&mut s.r#type);
 
-    s.name = normalized_name;
-
-    if s.resource.is_empty() {
-        s.resource.clone_from(&s.name)
+    if let Some(env_tag) = s.meta.get_mut("env") {
+        normalize_utils::normalize_tag(env_tag);
     }
-
-    // ParentID, TraceID and SpanID set in the client could be the same
-    // Supporting the ParentID == TraceID == SpanID for the root span, is compliant
-    // with the Zipkin implementation. Furthermore, as described in the PR
-    // https://github.com/openzipkin/zipkin/pull/851 the constraint that the
-    // root span's ``trace id = span id`` has been removed
-    if s.parent_id == s.trace_id && s.parent_id == s.span_id {
-        s.parent_id = 0;
-    }
-
-    // Start & Duration as nanoseconds timestamps
-    // if s.Start is very little, less than year 2000 probably a unit issue so discard
-    if s.duration < 0 {
-        s.duration = 0;
-    }
-    if s.duration > i64::MAX - s.start {
-        s.duration = 0;
-    }
-    if s.start < YEAR_2000_NANOSEC_TS {
-        let now = match SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|t| t.as_nanos() as i64)
-        {
-            Ok(time) => time,
-            Err(err) => {
-                anyhow::bail!(format!("Normalizer Error: {err}"))
-            }
-        };
-        s.start = now - s.duration;
-        if s.start < 0 {
-            s.start = now;
-        }
-    }
-
-    if s.r#type.len() > MAX_TYPE_LEN {
-        s.r#type = normalize_utils::truncate_utf8(&s.r#type, MAX_TYPE_LEN).to_string();
-    }
-
-    if s.meta.contains_key("env") {
-        if let Some(env_tag) = s.meta.get("env") {
-            if let Ok(normalized_tag) = normalize_utils::normalize_tag(env_tag) {
-                s.meta.insert("env".to_string(), normalized_tag);
-            }
-        }
-    };
 
     if let Some(code) = s.meta.get("http.status_code") {
         if !is_valid_status_code(code) {

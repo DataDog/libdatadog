@@ -132,7 +132,7 @@ impl Tag {
     }
 
     pub fn into_string(self) -> String {
-        self.value
+        self.value.to_string()
     }
 }
 
