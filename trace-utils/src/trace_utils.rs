@@ -662,6 +662,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::type_complexity)]
     async fn v5_get_traces_from_request_body() {
         let data: (
             Vec<String>,
