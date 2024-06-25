@@ -223,36 +223,25 @@ fn str_from_dict(dict: &[String], id: Integer) -> anyhow::Result<String> {
 pub async fn v5_get_traces_from_request_body(
     body: Body,
 ) -> anyhow::Result<(usize, Vec<Vec<Span>>)> {
-    let buffer = hyper::body::aggregate(body).await.unwrap();
+    let buffer = hyper::body::aggregate(body).await?;
     let body_size = buffer.remaining();
     let mut reader = buffer.reader();
-    let wrapper_size = read_array_len(&mut reader).unwrap();
+    let wrapper_size = read_array_len(&mut reader)?;
     if wrapper_size != 2 {
         anyhow::bail!("Expected an arrary of exactly 2 elements, got {wrapper_size}");
     }
 
-    let dict = get_v5_strings_dict(&mut reader).unwrap();
+    let dict = get_v5_strings_dict(&mut reader)?;
 
-    let traces_size = match rmp::decode::read_array_len(&mut reader) {
-        Ok(res) => res,
-        Err(err) => {
-            anyhow::bail!("Error reading traces size: {err}");
-        }
-    };
+    let traces_size = rmp::decode::read_array_len(&mut reader)?;
     let mut traces: Vec<Vec<Span>> = Default::default();
 
     for _ in 0..traces_size {
-        let spans_size = match rmp::decode::read_array_len(&mut reader) {
-            Ok(res) => res,
-            Err(err) => {
-                anyhow::bail!("Error reading spans size: {err}");
-            }
-        };
+        let spans_size = rmp::decode::read_array_len(&mut reader)?;
         let mut trace: Vec<Span> = Default::default();
 
         for _ in 0..spans_size {
-            let span = get_v5_span(&mut reader, &dict).unwrap();
-            println!("ASTUYVE span is {:?}", span);
+            let span = get_v5_span(&mut reader, &dict)?;
             trace.push(span);
         }
         traces.push(trace);
