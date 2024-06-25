@@ -10,17 +10,15 @@ type TracerPayloadV04 = Vec<Span>;
 
 #[derive(Debug, Clone)]
 /// Enumerates the different encoding types.
-/// ```
 pub enum TraceEncoding {
-    /// v0.4 endoding (TracerPayloadV04).
+    /// v0.4 encoding (TracerPayloadV04).
     V04,
-    /// v0.7 endoding (TracerPayload).
+    /// v0.7 encoding (TracerPayload).
     V07,
 }
 
 #[derive(Debug, Clone)]
 /// Enum representing a general abstraction for a collection of tracer payloads.
-/// ```
 pub enum TracerPayloadCollection {
     /// Collection of TracerPayloads.
     V07(Vec<TracerPayload>),
