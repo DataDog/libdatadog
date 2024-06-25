@@ -11,7 +11,6 @@ const TRACE_STATS_INTAKE_ROUTE: &str = "/api/v0.2/stats";
 
 pub fn read_cloud_env() -> Option<(String, trace_utils::EnvironmentType)> {
     if let Ok(res) = env::var("AWS_LAMBDA_FUNCTION_NAME") {
-        // Set by Google Cloud Functions for older runtimes
         return Some((res, trace_utils::EnvironmentType::LambdaFunction));
     }
     if let Ok(res) = env::var("K_SERVICE") {
