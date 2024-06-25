@@ -429,9 +429,11 @@ pub struct ClientGroupedStats {
     /// peer_tags are supplementary tags that further describe a peer entity
     /// E.g., `grpc.target` to describe the name of a gRPC peer, or `db.hostname` to describe the name of peer DB
     #[prost(string, repeated, tag = "16")]
+    #[serde(default)]
     pub peer_tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// this field's value is equal to span's ParentID == 0.
     #[prost(enumeration = "Trilean", tag = "17")]
+    #[serde(default)]
     pub is_trace_root: i32,
 }
 /// Trilean is an expanded boolean type that is meant to differentiate between being unset and false.
