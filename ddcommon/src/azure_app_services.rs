@@ -95,11 +95,11 @@ impl AzureMetadata {
     }
 
     fn extract_resource_group(s: Option<String>) -> Option<String> {
-        let re: Regex = Regex::new(r"(.+)\+(.+)-(.+)-(.+)").unwrap();
+        let re: Regex = Regex::new(r".+\+(.+)-.+webspace(-Linux)?").unwrap();
 
         s.as_ref().and_then(|text| {
             re.captures(text)
-                .and_then(|caps| caps.get(2).map(|m| m.as_str().to_string()))
+                .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
         })
     }
 
@@ -399,11 +399,29 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_resource_group_pattern_match() {
+    fn test_extract_resource_group_pattern_match_linux() {
         let mocked_env = MockEnv::new(&[
             (
                 WEBSITE_ONWER_NAME,
                 "00000000-0000-0000-0000-000000000000+test-rg-EastUSwebspace-Linux",
+            ),
+            ("FUNCTIONS_WORKER_RUNTIME", "node"),
+            ("FUNCTIONS_EXTENSION_VERSION", "~4"),
+        ]);
+
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+
+        let expected_resource_group = "test-rg";
+
+        assert_eq!(metadata.get_resource_group(), expected_resource_group);
+    }
+
+    #[test]
+    fn test_extract_resource_group_pattern_match_windows() {
+        let mocked_env = MockEnv::new(&[
+            (
+                WEBSITE_ONWER_NAME,
+                "00000000-0000-0000-0000-000000000000+test-rg-EastUSwebspace",
             ),
             ("FUNCTIONS_WORKER_RUNTIME", "node"),
             ("FUNCTIONS_EXTENSION_VERSION", "~4"),
