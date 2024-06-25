@@ -1092,11 +1092,14 @@ version = "10.0.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "datadog-ddsketch",
  "datadog-trace-normalization",
+ "datadog-trace-obfuscation",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
  "ddcommon",
  "futures",
+ "http",
  "hyper",
  "log",
  "rmp-serde",
@@ -1110,6 +1113,7 @@ dependencies = [
  "build_common",
  "bytes",
  "data-pipeline",
+ "ddcommon",
  "ddcommon-ffi",
  "libc",
 ]
@@ -1145,6 +1149,15 @@ dependencies = [
  "tempfile",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "datadog-ddsketch"
+version = "10.0.0"
+dependencies = [
+ "prost 0.11.9",
+ "prost-build",
+ "protoc-bin-vendored",
 ]
 
 [[package]]
@@ -1376,6 +1389,7 @@ name = "datadog-trace-normalization"
 version = "10.0.0"
 dependencies = [
  "anyhow",
+ "criterion",
  "datadog-trace-protobuf",
  "duplicate",
  "rand",
