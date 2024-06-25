@@ -3,3 +3,6 @@
 
 #[rustfmt::skip]
 pub mod pb;
+
+#[cfg(test)]
+mod pb_test;
