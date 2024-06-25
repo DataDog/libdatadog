@@ -3,6 +3,8 @@
 
 pub mod dynamic_configuration;
 pub mod fetch;
+pub mod file_change_tracker;
+pub mod file_storage;
 mod parse;
 mod targets;
 

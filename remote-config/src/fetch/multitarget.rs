@@ -334,7 +334,7 @@ where
         Self::remove_target(self, runtime_id, target);
     }
 
-    fn start_fetcher(self: &Arc<Self>, known_target: &mut KnownTarget) {
+    fn start_fetcher(self: &Arc<Self>, known_target: &KnownTarget) {
         let this = self.clone();
         let fetcher = known_target.fetcher.clone();
         let status = known_target.status.clone();
