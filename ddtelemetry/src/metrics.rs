@@ -7,6 +7,7 @@ use std::{
     time,
 };
 
+use datadog_ddsketch::DDSketch;
 use ddcommon::tag::Tag;
 use serde::{Deserialize, Serialize};
 
@@ -60,7 +61,7 @@ struct BucketKey {
 pub struct MetricBuckets {
     buckets: HashMap<BucketKey, MetricBucket>,
     series: HashMap<BucketKey, Vec<(u64, f64)>>,
-    distributions: HashMap<BucketKey, Vec<f64>>,
+    distributions: HashMap<BucketKey, DDSketch>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -101,7 +102,7 @@ impl MetricBuckets {
 
     pub fn flush_distributions(
         &mut self,
-    ) -> impl Iterator<Item = (ContextKey, Vec<Tag>, Vec<f64>)> + '_ {
+    ) -> impl Iterator<Item = (ContextKey, Vec<Tag>, DDSketch)> + '_ {
         self.distributions.drain().map(
             |(
                 BucketKey {
@@ -134,10 +135,7 @@ impl MetricBuckets {
                 })
                 .add_point(point),
             metrics::MetricType::Distribution => {
-                self.distributions
-                    .entry(bucket_key)
-                    .or_default()
-                    .push(point);
+                let _ = self.distributions.entry(bucket_key).or_default().add(point);
             }
         }
     }
@@ -148,7 +146,16 @@ impl MetricBuckets {
             series: self.series.len() as u32,
             series_points: self.series.values().map(|v| v.len() as u32).sum(),
             distributions: self.distributions.len() as u32,
-            distributions_points: self.distributions.values().map(|v| v.len() as u32).sum(),
+            distributions_points: self
+                .distributions
+                .values()
+                .flat_map(|sketch| {
+                    sketch
+                        .ordered_bins()
+                        .into_iter()
+                        .map(|(_, weight)| weight as u32)
+                })
+                .sum(),
         }
     }
 }
@@ -226,11 +233,21 @@ mod tests {
     use super::*;
     use crate::data::metrics::{MetricNamespace, MetricType};
 
+    /// Check if a and b are approximately equal with the given precision or 1.0e-6 by default
     macro_rules! assert_approx_eq {
         ($a:expr, $b:expr) => {{
             let (a, b) = (&$a, &$b);
             assert!(
                 (*a - *b).abs() < 1.0e-6,
+                "{} is not approximately equal to {}",
+                *a,
+                *b
+            );
+        }};
+        ($a:expr, $b:expr, $precision:expr) => {{
+            let (a, b) = (&$a, &$b);
+            assert!(
+                (*a - *b).abs() < $precision,
                 "{} is not approximately equal to {}",
                 *a,
                 *b
@@ -243,7 +260,7 @@ mod tests {
         elems: T,
         assertions: &[&dyn Fn(&U) -> bool],
     ) {
-        let used = vec![false; assertions.len()];
+        let mut used = vec![false; assertions.len()];
         for e in elems {
             let mut found = false;
             for (i, &a) in assertions.iter().enumerate() {
@@ -252,6 +269,7 @@ mod tests {
                         panic!("Assertion {i} has been used multiple times");
                     }
                     found = true;
+                    used[i] = true;
                     break;
                 }
             }
@@ -340,5 +358,170 @@ mod tests {
                 },
             ],
         );
+    }
+
+    #[test]
+    fn test_distributions() {
+        let mut buckets = MetricBuckets::default();
+        let contexts = MetricContexts::default();
+
+        let context_key_distribution = contexts.register_metric_context(
+            "metric_distribution".into(),
+            Vec::new(),
+            MetricType::Distribution,
+            false,
+            MetricNamespace::Tracers,
+        );
+        let context_key_distribution_2 = contexts.register_metric_context(
+            "metric_distribution_2".into(),
+            Vec::new(),
+            MetricType::Distribution,
+            false,
+            MetricNamespace::Tracers,
+        );
+        let extra_tags = vec![tag!("service", "foo")];
+
+        // Create 2 distributions with 2 and 3 points
+        buckets.add_point(context_key_distribution, 1.0, Vec::new());
+        buckets.add_point(context_key_distribution, 1.0, Vec::new());
+        buckets.add_point(context_key_distribution, 100.0, Vec::new());
+        buckets.add_point(context_key_distribution, 1000.0, Vec::new());
+
+        buckets.add_point(context_key_distribution_2, 2.0, Vec::new());
+        buckets.add_point(context_key_distribution_2, 200.0, Vec::new());
+
+        buckets.add_point(context_key_distribution_2, 3.0, extra_tags.clone());
+        buckets.add_point(context_key_distribution_2, 300.0, extra_tags.clone());
+
+        let distributions: Vec<_> = buckets.flush_distributions().collect();
+
+        check_iter(
+            distributions.iter(),
+            &[
+                &|(c, t, points)| {
+                    if !(c == &context_key_distribution && t.is_empty()) {
+                        return false;
+                    }
+                    let bins: Vec<_> = points
+                        .ordered_bins()
+                        .into_iter()
+                        .filter(|(_, w)| *w != 0.0)
+                        .collect();
+                    assert_eq!(bins.len(), 3);
+                    // The precision is quite low since it is up to the ddsketch implementation to
+                    // test the precision
+                    assert_approx_eq!(bins[0].0, 1.0, 1.0e-1);
+                    assert_approx_eq!(bins[0].1, 2.0);
+                    assert_approx_eq!(bins[1].0, 100.0, 1.0);
+                    assert_approx_eq!(bins[1].1, 1.0);
+                    assert_approx_eq!(bins[2].0, 1000.0, 10.0);
+                    assert_approx_eq!(bins[2].1, 1.0);
+                    true
+                },
+                &|(c, t, points)| {
+                    if !(c == &context_key_distribution_2 && t.is_empty()) {
+                        return false;
+                    }
+                    let bins: Vec<_> = points
+                        .ordered_bins()
+                        .into_iter()
+                        .filter(|(_, w)| *w != 0.0)
+                        .collect();
+                    assert_eq!(bins.len(), 2);
+                    assert_approx_eq!(bins[0].0, 2.0, 1.0e-1);
+                    assert_approx_eq!(bins[0].1, 1.0);
+                    assert_approx_eq!(bins[1].0, 200.0, 1.0);
+                    assert_approx_eq!(bins[1].1, 1.0);
+                    true
+                },
+                &|(c, t, points)| {
+                    if !(c == &context_key_distribution_2 && !t.is_empty()) {
+                        return false;
+                    }
+                    let bins: Vec<_> = points
+                        .ordered_bins()
+                        .into_iter()
+                        .filter(|(_, w)| *w != 0.0)
+                        .collect();
+                    assert_eq!(bins.len(), 2);
+                    assert_approx_eq!(bins[0].0, 3.0, 1.0e-1);
+                    assert_approx_eq!(bins[0].1, 1.0);
+                    assert_approx_eq!(bins[1].0, 300.0, 1.0);
+                    assert_approx_eq!(bins[1].1, 1.0);
+                    true
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn test_stats() {
+        let mut buckets = MetricBuckets::default();
+        let contexts = MetricContexts::default();
+
+        let context_key_1 = contexts.register_metric_context(
+            "metric1".into(),
+            Vec::new(),
+            MetricType::Count,
+            false,
+            MetricNamespace::Tracers,
+        );
+
+        let context_key_2 = contexts.register_metric_context(
+            "metric2".into(),
+            Vec::new(),
+            MetricType::Gauge,
+            false,
+            MetricNamespace::Tracers,
+        );
+
+        let context_key_distribution = contexts.register_metric_context(
+            "metric_distribution".into(),
+            Vec::new(),
+            MetricType::Distribution,
+            false,
+            MetricNamespace::Tracers,
+        );
+
+        let context_key_distribution_2 = contexts.register_metric_context(
+            "metric_distribution_2".into(),
+            Vec::new(),
+            MetricType::Distribution,
+            false,
+            MetricNamespace::Tracers,
+        );
+
+        // Create 2 series with 2 and 3 points
+        buckets.add_point(context_key_1, 1.0, Vec::new());
+        buckets.add_point(context_key_2, 2.0, Vec::new());
+        buckets.flush_agregates();
+
+        buckets.add_point(context_key_1, 1.0, Vec::new());
+        buckets.add_point(context_key_2, 2.0, Vec::new());
+        buckets.flush_agregates();
+
+        buckets.add_point(context_key_1, 1.1, Vec::new());
+        buckets.add_point(context_key_1, 2.1, Vec::new());
+        buckets.flush_agregates();
+
+        // Create 2 buckets
+        buckets.add_point(context_key_1, 1.0, Vec::new());
+        buckets.add_point(context_key_2, 2.0, Vec::new());
+
+        // Create 2 distributions with 2 and 3 points
+        buckets.add_point(context_key_distribution, 1.0, Vec::new());
+        buckets.add_point(context_key_distribution, 1.1, Vec::new());
+        buckets.add_point(context_key_distribution, 1.2, Vec::new());
+
+        buckets.add_point(context_key_distribution_2, 2.0, Vec::new());
+        buckets.add_point(context_key_distribution_2, 2.1, Vec::new());
+
+        let stats = buckets.stats();
+
+        assert_eq!(stats.buckets, 2);
+        assert_eq!(stats.series, 2);
+        assert_eq!(stats.series_points, 5);
+        assert_eq!(stats.distributions, 2);
+        assert_eq!(stats.distributions_points, 5);
     }
 }
