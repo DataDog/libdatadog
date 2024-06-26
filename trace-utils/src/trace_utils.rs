@@ -25,6 +25,8 @@ const TOP_LEVEL_KEY: &str = "_top_level";
 const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 
 const MAX_PAYLOAD_SIZE: usize = 50 * 1024 * 1024;
+const MAX_STRING_DICT_SIZE: u32 = 25_000_000;
+const SPAN_ELEMENT_COUNT: usize = 12;
 
 /// First value of returned tuple is the payload size
 pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<(usize, Vec<Vec<Span>>)> {
@@ -46,10 +48,10 @@ pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<(usize, 
 }
 
 #[inline]
-fn get_v5_strings_dict(reader: &mut Reader<impl Buf>) -> anyhow::Result<Vec<String>> {
+fn get_v05_strings_dict(reader: &mut Reader<impl Buf>) -> anyhow::Result<Vec<String>> {
     let dict_size =
         read_array_len(reader).map_err(|err| anyhow!("Error reading dict size: {err}"))?;
-    if dict_size as i32 > 25 * 1e6 as i32 {
+    if dict_size > MAX_STRING_DICT_SIZE {
         anyhow::bail!(
             "Error deserializing strings dictionary. Dict size is too large: {dict_size}"
         );
@@ -59,6 +61,7 @@ fn get_v5_strings_dict(reader: &mut Reader<impl Buf>) -> anyhow::Result<Vec<Stri
         let val: Value = read_value(reader)?;
         match val {
             Value::String(s) => {
+                println!("astuyve string without escape is: {:?}", s);
                 let s = s.to_string().replace(&['\"'][..], "");
                 dict.push(s);
             }
@@ -69,34 +72,20 @@ fn get_v5_strings_dict(reader: &mut Reader<impl Buf>) -> anyhow::Result<Vec<Stri
 }
 
 #[inline]
-fn get_v5_span(reader: &mut Reader<impl Buf>, dict: &[String]) -> anyhow::Result<Span> {
+fn get_v05_span(reader: &mut Reader<impl Buf>, dict: &[String]) -> anyhow::Result<Span> {
     let mut span: Span = Default::default();
     let span_size = rmp::decode::read_array_len(reader)
         .map_err(|err| anyhow!("Error reading span size: {err}"))? as usize;
-    if span_size != 12 {
+    if span_size != SPAN_ELEMENT_COUNT {
         anyhow::bail!("Expected an array of exactly 12 elements in a span, got {span_size}");
     }
     //0 - service
-    match read_value(reader)? {
-        Value::Integer(s) => {
-            span.service = str_from_dict(dict, s)?;
-        },
-        val => anyhow::bail!("Error reading span service, value is not an integer and can't be looked up in dict: {val}")
-    };
+    span.service = get_v05_string(reader, dict, "service")?;
     // 1 - name
-    match read_value(reader)? {
-        Value::Integer(s) => {
-            span.name = str_from_dict(dict, s)?;
-        },
-        val => anyhow::bail!("Error reading span name, value is not an integer and can't be looked up in dict: {val}")
-    };
+    span.name = get_v05_string(reader, dict, "name")?;
     // 2 - resource
-    match read_value(reader)? {
-        Value::Integer(s) => {
-            span.resource = str_from_dict(dict, s)?;
-        },
-        val => anyhow::bail!("Error reading span resource, value is not an integer and can't be looked up in dict: {val}")
-    };
+    span.resource = get_v05_string(reader, dict, "resource")?;
+
     // 3 - trace_id
     match read_value(reader)? {
         Value::Integer(i) => {
@@ -220,6 +209,16 @@ fn str_from_dict(dict: &[String], id: Integer) -> anyhow::Result<String> {
     Ok(dict[id].to_string())
 }
 
+#[inline]
+fn get_v05_string(reader: &mut Reader<impl Buf>, dict: &[String], field_name: &str) -> anyhow::Result<String> {
+    match read_value(reader)? {
+        Value::Integer(s) => {
+            str_from_dict(dict, s)
+        },
+        val => anyhow::bail!("Error reading {field_name}, value is not an integer and can't be looked up in dict: {val}")
+    }
+}
+
 pub async fn v5_get_traces_from_request_body(
     body: Body,
 ) -> anyhow::Result<(usize, Vec<Vec<Span>>)> {
@@ -231,7 +230,7 @@ pub async fn v5_get_traces_from_request_body(
         anyhow::bail!("Expected an arrary of exactly 2 elements, got {wrapper_size}");
     }
 
-    let dict = get_v5_strings_dict(&mut reader)?;
+    let dict = get_v05_strings_dict(&mut reader)?;
 
     let traces_size = rmp::decode::read_array_len(&mut reader)?;
     let mut traces: Vec<Vec<Span>> = Default::default();
@@ -241,7 +240,7 @@ pub async fn v5_get_traces_from_request_body(
         let mut trace: Vec<Span> = Default::default();
 
         for _ in 0..spans_size {
-            let span = get_v5_span(&mut reader, &dict)?;
+            let span = get_v05_span(&mut reader, &dict)?;
             trace.push(span);
         }
         traces.push(trace);
