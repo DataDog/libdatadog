@@ -63,6 +63,10 @@ fn generate_protobuf() {
         ".pb.Span.spanLinks",
         "#[serde(skip_serializing_if = \"::prost::alloc::vec::Vec::is_empty\")]",
     );
+    config.field_attribute(
+        ".pb.Span.error",
+        "#[serde(skip_serializing_if = \"is_default\")]",
+    );
 
     config.type_attribute("StatsPayload", "#[derive(Deserialize, Serialize)]");
     config.type_attribute("StatsPayload", "#[serde(rename_all = \"PascalCase\")]");
@@ -86,6 +90,8 @@ fn generate_protobuf() {
     config.field_attribute("ClientGroupedStats.type", "#[serde(default)]");
     config.field_attribute("ClientGroupedStats.peer_service", "#[serde(default)]");
     config.field_attribute("ClientGroupedStats.span_kind", "#[serde(default)]");
+    config.field_attribute("ClientGroupedStats.peer_tags", "#[serde(default)]");
+    config.field_attribute("ClientGroupedStats.is_trace_root", "#[serde(default)]");
 
     config.field_attribute(
         "ClientGroupedStats.okSummary",
@@ -139,6 +145,10 @@ where
 {
     let opt = Option::deserialize(deserializer)?;
     Ok(opt.unwrap_or_default())
+}
+
+pub fn is_default<T: Default + PartialEq>(t: &T) -> bool {
+    t == &T::default()
 }
 
 "
