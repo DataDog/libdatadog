@@ -1,10 +1,15 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use hyper::{body::Buf, Body};
+use anyhow::Context;
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
+use hyper::http::HeaderValue;
+use hyper::{body::Buf, Body, Client, HeaderMap, Method, Response, StatusCode};
 use log::{error, info};
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub use crate::send_data::SendData;
 // TODO: EK - FIX THIS
@@ -132,49 +137,47 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
     data
 }
 
-fn get_root_span_index(trace: &Vec<Span>) -> anyhow::Result<usize> {
+pub fn get_root_span_index(trace: &[pb::Span]) -> anyhow::Result<usize> {
     if trace.is_empty() {
         anyhow::bail!("Cannot find root span index in an empty trace.");
     }
 
-    // parent_id -> (child_span, index_of_child_span_in_trace)
-    let mut parent_id_to_child_map: HashMap<u64, (&Span, usize)> = HashMap::new();
-
-    // look for the span with parent_id == 0 (starting from the end) since some clients put the root
-    // span last.
-    for i in (0..trace.len()).rev() {
-        let cur_span = &trace[i];
-        if cur_span.parent_id == 0 {
+    // Do a first pass to find if we have an obvious root span (starting from the end) since some
+    // clients put the root span last.
+    for (i, span) in trace.into_iter().enumerate().rev() {
+        if span.parent_id == 0 {
             return Ok(i);
         }
-        parent_id_to_child_map.insert(cur_span.parent_id, (cur_span, i));
     }
 
-    for span in trace {
-        if parent_id_to_child_map.contains_key(&span.span_id) {
-            parent_id_to_child_map.remove(&span.span_id);
+    let mut span_ids: HashSet<u64> = HashSet::with_capacity(trace.len());
+    for span in trace.iter() {
+        span_ids.insert(span.span_id);
+    }
+
+    let mut root_span_id = None;
+    for (i, span) in trace.iter().enumerate() {
+        // If a span's parent is not in the trace, it is a root
+        if !span_ids.contains(&span.parent_id) {
+            if root_span_id.is_some() {
+                error!(
+                    "trace has multiple root spans trace_id: {}",
+                    &trace[0].trace_id
+                );
+            }
+            root_span_id = Some(i);
         }
     }
-
-    // if the trace is valid, parent_id_to_child_map should just have 1 entry at this point.
-    if parent_id_to_child_map.len() != 1 {
-        error!(
-            "Could not find the root span for trace with trace_id: {}",
-            &trace[0].trace_id,
-        );
-    }
-
-    // pick a span without a parent
-    let span_tuple = match parent_id_to_child_map.values().copied().next() {
-        Some(res) => res,
+    Ok(match root_span_id {
+        Some(i) => i,
         None => {
-            // just return the index of the last span in the trace.
-            info!("Returning index of last span in trace as root span index.");
-            return Ok(trace.len() - 1);
+            error!(
+                "Could not find the root span for trace with trace_id: {}",
+                &trace[0].trace_id,
+            );
+            trace.len() - 1
         }
-    };
-
-    Ok(span_tuple.1)
+    })
 }
 
 /// Updates all the spans top-level attribute.
