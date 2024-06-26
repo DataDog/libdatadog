@@ -1,8 +1,6 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-// This file has been automatically @generated from build.rs
-
 /// A DDSketch is essentially a histogram that partitions the range of positive values into an infinite number of
 /// indexed bins whose size grows exponentially. It keeps track of the number of values (or possibly floating-point
 /// weights) added to each bin. Negative values are partitioned like positive values, symmetrically to zero.

@@ -15,8 +15,6 @@ use std::{
 const HEADER: &str = "// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-// This file has been automatically @generated from build.rs
-
 ";
 
 fn main() -> Result<(), Box<dyn Error>> {
