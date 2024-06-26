@@ -62,8 +62,9 @@ fn get_v05_strings_dict(reader: &mut Reader<impl Buf>) -> anyhow::Result<Vec<Str
         match val {
             Value::String(s) => {
                 println!("astuyve string without escape is: {:?}", s);
-                let s = s.to_string().replace(&['\"'][..], "");
-                dict.push(s);
+                let parsed_string = s.into_str().ok_or_else(|| anyhow!("Error reading string dict"))?;
+                println!("astuyve string after conversion is: {:?}", parsed_string);
+                dict.push(parsed_string);
             }
             _ => anyhow::bail!("Error deserializing strings dictionary. Value in string dict is not a string: {val}")
         }
