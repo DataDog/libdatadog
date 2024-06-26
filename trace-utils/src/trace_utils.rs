@@ -58,13 +58,12 @@ fn get_v05_strings_dict(reader: &mut Reader<impl Buf>) -> anyhow::Result<Vec<Str
     }
     let mut dict: Vec<String> = Vec::with_capacity(dict_size.try_into()?);
     for _ in 0..dict_size {
-        let val: Value = read_value(reader)?;
-        match val {
+        match read_value(reader)? {
             Value::String(s) => {
                 let parsed_string = s.into_str().ok_or_else(|| anyhow!("Error reading string dict"))?;
                 dict.push(parsed_string);
             }
-            _ => anyhow::bail!("Error deserializing strings dictionary. Value in string dict is not a string: {val}")
+            val => anyhow::bail!("Error deserializing strings dictionary. Value in string dict is not a string: {val}")
         }
     }
     Ok(dict)
