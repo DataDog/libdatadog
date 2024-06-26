@@ -1505,7 +1505,11 @@ name = "datadog-live-debugger-ffi"
 version = "0.0.1"
 dependencies = [
  "datadog-live-debugger",
+ "ddcommon",
  "ddcommon-ffi",
+ "log",
+ "serde_json",
+ "tokio",
  "uuid",
 ]
 

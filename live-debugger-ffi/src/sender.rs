@@ -1,305 +1,118 @@
-// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
-// SPDX-License-Identifier: Apache-2.0
-
-use ddcommon_ffi::CharSlice;
-use std::borrow::Cow;
-use std::collections::hash_map;
-use std::mem::transmute;
-// Alias to prevent cbindgen panic
-use crate::data::Probe;
-use datadog_live_debugger::debugger_defs::{
-    Capture as DebuggerCaptureAlias, Capture, Captures, DebuggerData, DebuggerPayload, Entry,
-    Fields, Snapshot, SnapshotEvaluationError, Value as DebuggerValueAlias,
-};
-use datadog_live_debugger::sender::generate_new_id;
+use crate::send_data::serialize_debugger_payload;
+use datadog_live_debugger::debugger_defs::DebuggerPayload;
+use datadog_live_debugger::sender;
+use ddcommon::Endpoint;
 use ddcommon_ffi::slice::AsBytes;
+use ddcommon_ffi::{CharSlice, MaybeError};
+use log::warn;
+use std::sync::Arc;
+use std::thread::JoinHandle;
+use tokio::sync::mpsc;
 
-#[repr(C)]
-pub enum FieldType {
-    STATIC,
-    ARG,
-    LOCAL,
-}
-
-#[repr(C)]
-pub struct CaptureValue<'a> {
-    pub r#type: CharSlice<'a>,
-    pub value: CharSlice<'a>,
-    pub fields: Option<Box<Fields<'a>>>,
-    pub elements: Vec<DebuggerValue<'a>>,
-    pub entries: Vec<Entry<'a>>,
-    pub is_null: bool,
-    pub truncated: bool,
-    pub not_captured_reason: CharSlice<'a>,
-    pub size: CharSlice<'a>,
-}
-
-impl<'a> From<CaptureValue<'a>> for DebuggerValueAlias<'a> {
-    fn from(val: CaptureValue<'a>) -> Self {
-        DebuggerValueAlias {
-            r#type: val.r#type.to_utf8_lossy(),
-            value: if val.value.len() == 0 {
-                None
-            } else {
-                Some(val.value.to_utf8_lossy())
-            },
-            fields: if let Some(boxed) = val.fields {
-                *boxed
-            } else {
-                Fields::default()
-            },
-            elements: unsafe { std::mem::transmute(val.elements) }, // SAFETY: is transparent
-            entries: val.entries,
-            is_null: val.is_null,
-            truncated: val.truncated,
-            not_captured_reason: if val.not_captured_reason.len() == 0 {
-                None
-            } else {
-                Some(val.not_captured_reason.to_utf8_lossy())
-            },
-            size: if val.size.len() == 0 {
-                None
-            } else {
-                Some(val.size.to_utf8_lossy())
-            },
+macro_rules! try_c {
+    ($failable:expr) => {
+        match $failable {
+            Ok(o) => o,
+            Err(e) => return MaybeError::Some(ddcommon_ffi::Error::from(format!("{:?}", e))),
         }
+    };
+}
+
+#[repr(C)]
+pub struct OwnedCharSlice {
+    slice: CharSlice<'static>,
+    free: extern "C" fn(CharSlice<'static>),
+}
+
+unsafe impl Send for OwnedCharSlice {}
+
+impl Drop for OwnedCharSlice {
+    fn drop(&mut self) {
+        (self.free)(self.slice)
     }
 }
 
-/// cbindgen:no-export
-#[repr(transparent)]
-pub struct DebuggerValue<'a>(DebuggerValueAlias<'a>);
-/// cbindgen:no-export
-#[repr(transparent)]
-pub struct DebuggerCapture<'a>(DebuggerCaptureAlias<'a>);
-
-#[repr(C)]
-pub struct ExceptionSnapshot<'a> {
-    pub data: *mut DebuggerPayload<'a>,
-    pub capture: *mut DebuggerCapture<'a>,
+enum SendData {
+    Raw(Vec<u8>),
+    Wrapped(OwnedCharSlice),
 }
 
-#[no_mangle]
-pub extern "C" fn ddog_create_exception_snapshot<'a>(
-    buffer: &mut Vec<DebuggerPayload<'a>>,
-    service: CharSlice<'a>,
-    language: CharSlice<'a>,
-    id: CharSlice<'a>,
-    exception_id: CharSlice<'a>,
-    timestamp: u64,
-) -> *mut DebuggerCapture<'a> {
-    let snapshot = DebuggerPayload {
-        service: service.to_utf8_lossy(),
-        source: "dd_debugger",
-        timestamp,
-        message: None,
-        debugger: DebuggerData {
-            snapshot: Snapshot {
-                captures: Some(Captures {
-                    r#return: Some(Capture::default()),
-                    ..Default::default()
-                }),
-                language: language.to_utf8_lossy(),
-                id: id.to_utf8_lossy(),
-                exception_id: Some(exception_id.to_utf8_lossy()),
-                timestamp,
-                ..Default::default()
-            },
-        },
-    };
-    buffer.push(snapshot);
-    unsafe {
-        let captures = buffer
-            .last_mut()
-            .unwrap()
-            .debugger
-            .snapshot
-            .captures
-            .as_mut();
-        transmute(captures.unwrap().r#return.as_mut().unwrap())
+async fn sender_routine(endpoint: Arc<Endpoint>, mut receiver: mpsc::Receiver<SendData>) {
+    loop {
+        let data = match receiver.recv().await {
+            None => break,
+            Some(data) => data,
+        };
+
+        let endpoint = endpoint.clone();
+        tokio::spawn(async move {
+            let data = match &data {
+                SendData::Raw(vec) => vec.as_slice(),
+                SendData::Wrapped(wrapped) => wrapped.slice.as_bytes(),
+            };
+
+            if let Err(e) = sender::send(data, &endpoint).await {
+                warn!("Failed to send debugger data: {e:?}");
+            }
+        });
     }
 }
 
-#[no_mangle]
-pub extern "C" fn ddog_create_log_probe_snapshot<'a>(
-    probe: &'a Probe,
-    message: Option<&CharSlice<'a>>,
-    service: CharSlice<'a>,
-    language: CharSlice<'a>,
-    timestamp: u64,
-) -> Box<DebuggerPayload<'a>> {
-    Box::new(DebuggerPayload {
-        service: service.to_utf8_lossy(),
-        source: "dd_debugger",
-        timestamp,
-        message: message.map(|m| m.to_utf8_lossy()),
-        debugger: DebuggerData {
-            snapshot: Snapshot {
-                captures: Some(Captures {
-                    ..Default::default()
-                }),
-                language: language.to_utf8_lossy(),
-                id: Cow::Owned(generate_new_id().as_hyphenated().to_string()),
-                probe: Some(probe.into()),
-                timestamp,
-                ..Default::default()
-            },
-        },
-    })
+pub struct SenderHandle {
+    join: JoinHandle<()>,
+    channel: mpsc::Sender<SendData>,
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_update_payload_message<'a>(
-    payload: &mut DebuggerPayload<'a>,
-    message: CharSlice<'a>,
-) {
-    payload.message = Some(message.to_utf8_lossy());
+pub extern "C" fn ddog_live_debugger_spawn_sender(
+    endpoint: &Endpoint,
+    handle: &mut *mut SenderHandle,
+) -> MaybeError {
+    let runtime = try_c!(tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build());
+
+    let (tx, mailbox) = mpsc::channel(5000);
+    let endpoint = Arc::new(endpoint.clone());
+
+    *handle = Box::into_raw(Box::new(SenderHandle {
+        join: std::thread::spawn(move || {
+            runtime.block_on(sender_routine(endpoint, mailbox));
+            runtime.shutdown_background();
+        }),
+        channel: tx,
+    }));
+
+    MaybeError::None
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_snapshot_entry<'a>(
-    payload: &mut DebuggerPayload<'a>,
-) -> *mut DebuggerCapture<'a> {
-    transmute(
-        payload
-            .debugger
-            .snapshot
-            .captures
-            .as_mut()
-            .unwrap()
-            .entry
-            .insert(Capture::default()),
-    )
+pub extern "C" fn ddog_live_debugger_send_raw_data(
+    handle: &mut SenderHandle,
+    data: OwnedCharSlice,
+) -> bool {
+    handle.channel.try_send(SendData::Wrapped(data)).is_err()
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_snapshot_lines<'a>(
-    payload: &mut DebuggerPayload<'a>,
-    line: u32,
-) -> *mut DebuggerCapture<'a> {
-    transmute(
-        match payload
-            .debugger
-            .snapshot
-            .captures
-            .as_mut()
-            .unwrap()
-            .lines
-            .entry(line)
-        {
-            hash_map::Entry::Occupied(e) => e.into_mut(),
-            hash_map::Entry::Vacant(e) => e.insert(Capture::default()),
-        },
-    )
+pub extern "C" fn ddog_live_debugger_send_payload(
+    handle: &mut SenderHandle,
+    data: &DebuggerPayload,
+) -> bool {
+    handle
+        .channel
+        .try_send(SendData::Raw(serialize_debugger_payload(data).into_bytes()))
+        .is_err()
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ddog_snapshot_exit<'a>(
-    payload: &mut DebuggerPayload<'a>,
-) -> *mut DebuggerCapture<'a> {
-    transmute(
-        payload
-            .debugger
-            .snapshot
-            .captures
-            .as_mut()
-            .unwrap()
-            .r#return
-            .as_mut()
-            .unwrap(),
-    )
+pub unsafe extern "C" fn ddog_live_debugger_drop_sender(sender: *mut SenderHandle) {
+    drop(Box::from_raw(sender));
 }
 
 #[no_mangle]
-#[allow(improper_ctypes_definitions)] // Vec has a fixed size, and we care only about that here
-pub extern "C" fn ddog_snapshot_add_field<'a, 'b: 'a, 'c: 'a>(
-    capture: &mut DebuggerCapture<'a>,
-    r#type: FieldType,
-    name: CharSlice<'b>,
-    value: CaptureValue<'c>,
-) {
-    let fields = match r#type {
-        FieldType::STATIC => &mut capture.0.static_fields,
-        FieldType::ARG => &mut capture.0.arguments,
-        FieldType::LOCAL => &mut capture.0.locals,
-    };
-    fields.insert(name.to_utf8_lossy(), value.into());
-}
-
-#[no_mangle]
-#[allow(improper_ctypes_definitions)] // Vec has a fixed size, and we care only about that here
-pub extern "C" fn ddog_capture_value_add_element<'a, 'b: 'a>(
-    value: &mut CaptureValue<'a>,
-    element: CaptureValue<'b>,
-) {
-    value.elements.push(DebuggerValue(element.into()));
-}
-
-#[no_mangle]
-#[allow(improper_ctypes_definitions)] // Vec has a fixed size, and we care only about that here
-pub extern "C" fn ddog_capture_value_add_entry<'a, 'b: 'a, 'c: 'a>(
-    value: &mut CaptureValue<'a>,
-    key: CaptureValue<'b>,
-    element: CaptureValue<'c>,
-) {
-    value.entries.push(Entry(key.into(), element.into()));
-}
-
-#[no_mangle]
-#[allow(improper_ctypes_definitions)] // Vec has a fixed size, and we care only about that here
-pub extern "C" fn ddog_capture_value_add_field<'a, 'b: 'a, 'c: 'a>(
-    value: &mut CaptureValue<'a>,
-    key: CharSlice<'b>,
-    element: CaptureValue<'c>,
-) {
-    let fields = match value.fields {
-        None => {
-            value.fields = Some(Box::default());
-            value.fields.as_mut().unwrap()
-        }
-        Some(ref mut f) => f,
-    };
-    fields.insert(key.to_utf8_lossy(), element.into());
-}
-
-#[no_mangle]
-pub extern "C" fn ddog_snapshot_format_new_uuid(buf: &mut [u8; 36]) {
-    generate_new_id().as_hyphenated().encode_lower(buf);
-}
-
-#[no_mangle]
-pub extern "C" fn ddog_evaluation_error_first_msg(vec: &Vec<SnapshotEvaluationError>) -> CharSlice {
-    CharSlice::from(vec[0].message.as_str())
-}
-
-#[no_mangle]
-pub extern "C" fn ddog_evaluation_error_drop(_: Box<Vec<SnapshotEvaluationError>>) {}
-
-#[no_mangle]
-pub extern "C" fn ddog_evaluation_error_snapshot<'a>(
-    probe: &'a Probe,
-    service: CharSlice<'a>,
-    language: CharSlice<'a>,
-    errors: Box<Vec<SnapshotEvaluationError>>,
-    timestamp: u64,
-) -> Box<DebuggerPayload<'a>> {
-    Box::new(DebuggerPayload {
-        service: service.to_utf8_lossy(),
-        source: "dd_debugger",
-        timestamp,
-        message: Some(Cow::Owned(format!(
-            "Evaluation errors for probe id {}",
-            probe.id
-        ))),
-        debugger: DebuggerData {
-            snapshot: Snapshot {
-                language: language.to_utf8_lossy(),
-                id: Cow::Owned(generate_new_id().as_hyphenated().to_string()),
-                probe: Some(probe.into()),
-                timestamp,
-                evaluation_errors: *errors,
-                ..Default::default()
-            },
-        },
-    })
+pub unsafe extern "C" fn ddog_live_debugger_join_sender(sender: *mut SenderHandle) {
+    let sender = Box::from_raw(sender);
+    drop(sender.channel);
+    _ = sender.join.join();
 }
