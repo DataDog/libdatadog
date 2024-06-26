@@ -142,11 +142,6 @@ pub fn get_root_span_index(trace: &[pb::Span]) -> anyhow::Result<usize> {
         anyhow::bail!("Cannot find root span index in an empty trace.");
     }
 
-    // parent_id -> (child_span, index_of_child_span_in_trace)
-    let mut parent_id_to_child_map: HashMap<u64, (&Span, usize)> = HashMap::new();
-
-    // look for the span with parent_id == 0 (starting from the end) since some clients put the root
-
     // Do a first pass to find if we have an obvious root span (starting from the end) since some
     // clients put the root span last.
     for (i, span) in trace.into_iter().enumerate().rev() {
