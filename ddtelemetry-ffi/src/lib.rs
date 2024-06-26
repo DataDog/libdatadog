@@ -24,7 +24,7 @@ macro_rules! c_setters {
                     $object_name: &mut $object_ty,
                     param: $property_type,
                 ) -> ffi::MaybeError {
-                    $object_name . $path $(.  $path_rest)* = Some(crate::try_c!($convert_fn (param)));
+                    $object_name . $path $(.  $path_rest)* = Some(ddcommon_ffi::try_c!($convert_fn (param)));
                     ffi::MaybeError::None
                 }
             )+
@@ -52,7 +52,7 @@ macro_rules! c_setters {
                 match property {
                     $(
                         [< $path:camel $($path_rest:camel)* >] => {
-                            $object_name . $path $(.  $path_rest)* = Some(crate::try_c!($convert_fn (param)));
+                            $object_name . $path $(.  $path_rest)* = Some(ddcommon_ffi::try_c!($convert_fn (param)));
                         }
                     )+
                 }
@@ -74,11 +74,11 @@ macro_rules! c_setters {
                 property: ffi::CharSlice,
                 param: $property_type,
             ) -> ffi::MaybeError {
-                let property = crate::try_c!(property.try_to_utf8());
+                let property = ddcommon_ffi::try_c!(property.try_to_utf8());
                 match property {
                     $(
                         stringify!($path $(. $path_rest)*) => {
-                            $object_name . $path $(.  $path_rest)* = Some(crate::try_c!($convert_fn (param)));
+                            $object_name . $path $(.  $path_rest)* = Some(ddcommon_ffi::try_c!($convert_fn (param)));
                         }
                     )+
                     // TODO this is an error
@@ -88,16 +88,6 @@ macro_rules! c_setters {
             }
         }
 
-    };
-}
-
-#[macro_export]
-macro_rules! try_c {
-    ($failable:expr) => {
-        match $failable {
-            Ok(o) => o,
-            Err(e) => return ffi::MaybeError::Some(ddcommon_ffi::Error::from(format!("{:?}", e))),
-        }
     };
 }
 

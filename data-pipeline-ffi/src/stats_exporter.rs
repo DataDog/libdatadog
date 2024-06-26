@@ -3,7 +3,6 @@
 
 use std::{ptr::NonNull, time};
 
-use crate::try_c;
 use data_pipeline::stats_exporter::{
     blocking::StatsExporter, endpoint_from_agent_url, Configuration, LibraryMetadata, SpanStats,
 };
@@ -32,12 +31,13 @@ pub unsafe extern "C" fn ddog_stats_exporter_new(
 
     out_exporter: NonNull<Box<StatsExporter>>,
 ) -> ffi::Option<ffi::Error> {
-    let endpoint =
-        try_c!(parse_uri(agent_url.to_utf8_lossy().as_ref()).and_then(endpoint_from_agent_url));
+    let endpoint = ffi::try_c!(
+        parse_uri(agent_url.to_utf8_lossy().as_ref()).and_then(endpoint_from_agent_url)
+    );
 
     out_exporter
         .as_ptr()
-        .write(Box::new(try_c!(StatsExporter::new(
+        .write(Box::new(ffi::try_c!(StatsExporter::new(
             LibraryMetadata {
                 hostname: hostname.to_utf8_lossy().into_owned(),
                 env: env.to_utf8_lossy().into_owned(),
@@ -97,7 +97,7 @@ pub unsafe extern "C" fn ddog_stats_exporter_insert_span_data(
 pub unsafe extern "C" fn ddog_stats_exporter_send(
     exporter: &StatsExporter,
 ) -> ffi::Option<ffi::Error> {
-    try_c!(exporter.send());
+    ffi::try_c!(exporter.send());
     ffi::Option::None
 }
 
