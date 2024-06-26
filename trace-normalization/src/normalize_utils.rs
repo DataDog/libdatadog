@@ -26,7 +26,7 @@ pub fn normalize_service(svc: &mut String) {
     truncate_utf8(svc, MAX_SERVICE_LEN);
     normalize_tag(svc);
     if svc.is_empty() {
-        *svc = DEFAULT_SERVICE_NAME.to_owned();
+        DEFAULT_SERVICE_NAME.clone_into(svc);
     }
 }
 
@@ -35,13 +35,14 @@ pub fn normalize_name(name: &mut String) {
     truncate_utf8(name, MAX_NAME_LEN);
     normalize_metric_name(name);
     if name.is_empty() {
-        *name = DEFAULT_SPAN_NAME.to_owned();
+        DEFAULT_SPAN_NAME.clone_into(name);
     }
 }
 
+#[allow(clippy::ptr_arg)]
 pub fn normalize_resource(resource: &mut String, name: &str) {
     if resource.is_empty() {
-        *resource = name.to_owned();
+        name.clone_into(resource);
     }
 }
 
@@ -55,7 +56,7 @@ pub fn normalize_span_start_duration(start: &mut i64, duration: &mut i64) {
     if *duration < 0 {
         *duration = 0;
     }
-    if *duration > std::i64::MAX - *start {
+    if *duration > i64::MAX - *start {
         *duration = 0;
     }
 

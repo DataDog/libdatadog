@@ -1,13 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use anyhow::Context;
-use futures::stream::FuturesUnordered;
-use futures::StreamExt;
-use hyper::http::HeaderValue;
-use hyper::{body::Buf, Body, Client, HeaderMap, Method, Response, StatusCode};
-use log::{error, info};
-use serde::{Deserialize, Serialize};
+use hyper::{body::Buf, Body};
+use log::error;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
@@ -144,7 +139,7 @@ pub fn get_root_span_index(trace: &[pb::Span]) -> anyhow::Result<usize> {
 
     // Do a first pass to find if we have an obvious root span (starting from the end) since some
     // clients put the root span last.
-    for (i, span) in trace.into_iter().enumerate().rev() {
+    for (i, span) in trace.iter().enumerate().rev() {
         if span.parent_id == 0 {
             return Ok(i);
         }
