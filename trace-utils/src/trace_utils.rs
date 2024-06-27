@@ -1,8 +1,13 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use anyhow::anyhow;
+use bytes::buf::Reader;
 use hyper::{body::Buf, Body};
 use log::{error, info};
+use rmp::decode::read_array_len;
+use rmpv::decode::read_value;
+use rmpv::{Integer, Value};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -20,6 +25,8 @@ const TOP_LEVEL_KEY: &str = "_top_level";
 const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 
 const MAX_PAYLOAD_SIZE: usize = 50 * 1024 * 1024;
+const MAX_STRING_DICT_SIZE: u32 = 25_000_000;
+const SPAN_ELEMENT_COUNT: usize = 12;
 
 /// First value of returned tuple is the payload size
 pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<(usize, Vec<Vec<Span>>)> {
@@ -38,6 +45,209 @@ pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<(usize, 
     }
 
     Ok((size, traces))
+}
+
+#[inline]
+fn get_v05_strings_dict(reader: &mut Reader<impl Buf>) -> anyhow::Result<Vec<String>> {
+    let dict_size =
+        read_array_len(reader).map_err(|err| anyhow!("Error reading dict size: {err}"))?;
+    if dict_size > MAX_STRING_DICT_SIZE {
+        anyhow::bail!(
+            "Error deserializing strings dictionary. Dict size is too large: {dict_size}"
+        );
+    }
+    let mut dict: Vec<String> = Vec::with_capacity(dict_size.try_into()?);
+    for _ in 0..dict_size {
+        match read_value(reader)? {
+            Value::String(s) => {
+                let parsed_string = s.into_str().ok_or_else(|| anyhow!("Error reading string dict"))?;
+                dict.push(parsed_string);
+            }
+            val => anyhow::bail!("Error deserializing strings dictionary. Value in string dict is not a string: {val}")
+        }
+    }
+    Ok(dict)
+}
+
+#[inline]
+fn get_v05_span(reader: &mut Reader<impl Buf>, dict: &[String]) -> anyhow::Result<Span> {
+    let mut span: Span = Default::default();
+    let span_size = rmp::decode::read_array_len(reader)
+        .map_err(|err| anyhow!("Error reading span size: {err}"))? as usize;
+    if span_size != SPAN_ELEMENT_COUNT {
+        anyhow::bail!("Expected an array of exactly 12 elements in a span, got {span_size}");
+    }
+    //0 - service
+    span.service = get_v05_string(reader, dict, "service")?;
+    // 1 - name
+    span.name = get_v05_string(reader, dict, "name")?;
+    // 2 - resource
+    span.resource = get_v05_string(reader, dict, "resource")?;
+
+    // 3 - trace_id
+    match read_value(reader)? {
+        Value::Integer(i) => {
+            span.trace_id = i.as_u64().ok_or_else(|| {
+                anyhow!("Error reading span trace_id, value is not an integer: {i}")
+            })?;
+        }
+        val => anyhow::bail!("Error reading span trace_id, value is not an integer: {val}"),
+    };
+    // 4 - span_id
+    match read_value(reader)? {
+        Value::Integer(i) => {
+            span.span_id = i.as_u64().ok_or_else(|| {
+                anyhow!("Error reading span span_id, value is not an integer: {i}")
+            })?;
+        }
+        val => anyhow::bail!("Error reading span span_id, value is not an integer: {val}"),
+    };
+    // 5 - parent_id
+    match read_value(reader)? {
+        Value::Integer(i) => {
+            span.parent_id = i.as_u64().ok_or_else(|| {
+                anyhow!("Error reading span parent_id, value is not an integer: {i}")
+            })?;
+        }
+        val => anyhow::bail!("Error reading span parent_id, value is not an integer: {val}"),
+    };
+    //6 - start
+    match read_value(reader)? {
+        Value::Integer(i) => {
+            span.start = i
+                .as_i64()
+                .ok_or_else(|| anyhow!("Error reading span start, value is not an integer: {i}"))?;
+        }
+        val => anyhow::bail!("Error reading span start, value is not an integer: {val}"),
+    };
+    //7 - duration
+    match read_value(reader)? {
+        Value::Integer(i) => {
+            span.duration = i.as_i64().ok_or_else(|| {
+                anyhow!("Error reading span duration, value is not an integer: {i}")
+            })?;
+        }
+        val => anyhow::bail!("Error reading span duration, value is not an integer: {val}"),
+    };
+    //8 - error
+    match read_value(reader)? {
+        Value::Integer(i) => {
+            span.error = i
+                .as_i64()
+                .ok_or_else(|| anyhow!("Error reading span error, value is not an integer: {i}"))?
+                as i32;
+        }
+        val => anyhow::bail!("Error reading span error, value is not an integer: {val}"),
+    }
+    //9 - meta
+    match read_value(reader)? {
+        Value::Map(meta) => {
+            for (k, v) in meta.iter() {
+                match k {
+                    Value::Integer(k) => {
+                        match v {
+                            Value::Integer(v) => {
+                                let key = str_from_dict(dict, *k)?;
+                                let val = str_from_dict(dict, *v)?;
+                                span.meta.insert(key, val);
+                            }
+                            _ => anyhow::bail!("Error reading span meta, value is not an integer and can't be looked up in dict: {v}")
+                        }
+                    }
+                    _ => anyhow::bail!("Error reading span meta, key is not an integer and can't be looked up in dict: {k}")
+                }
+            }
+        }
+        val => anyhow::bail!("Error reading span meta, value is not a map: {val}"),
+    }
+    // 10 - metrics
+    match read_value(reader)? {
+        Value::Map(metrics) => {
+            for (k, v) in metrics.iter() {
+                match k {
+                    Value::Integer(k) => {
+                        match v {
+                            Value::Integer(v) => {
+                                let key = str_from_dict(dict, *k)?;
+                                span.metrics.insert(key, v.as_f64().ok_or_else(||anyhow!("Error reading span metrics, value is not an integer: {v}"))?);
+                            }
+                            Value::F64(v) => {
+                                let key = str_from_dict(dict, *k)?;
+                                span.metrics.insert(key, *v);
+                            }
+                            _ => anyhow::bail!(
+                                "Error reading span metrics, value is not a float or integer: {v}"
+                            ),
+                        }
+                    }
+                    _ => anyhow::bail!("Error reading span metrics, key is not an integer: {k}"),
+                }
+            }
+        }
+        val => anyhow::bail!("Error reading span metrics, value is not a map: {val}"),
+    }
+
+    // 11 - type
+    match read_value(reader)? {
+        Value::Integer(s) => span.r#type = str_from_dict(dict, s)?,
+        val => anyhow::bail!("Error reading span type, value is not an integer: {val}"),
+    }
+    Ok(span)
+}
+
+#[inline]
+fn str_from_dict(dict: &[String], id: Integer) -> anyhow::Result<String> {
+    let id = id
+        .as_i64()
+        .ok_or_else(|| anyhow!("Error reading string from dict, id is not an integer: {id}"))?
+        as usize;
+    if id >= dict.len() {
+        anyhow::bail!("Error reading string from dict, id out of bounds: {id}");
+    }
+    Ok(dict[id].to_string())
+}
+
+#[inline]
+fn get_v05_string(
+    reader: &mut Reader<impl Buf>,
+    dict: &[String],
+    field_name: &str,
+) -> anyhow::Result<String> {
+    match read_value(reader)? {
+        Value::Integer(s) => {
+            str_from_dict(dict, s)
+        },
+        val => anyhow::bail!("Error reading {field_name}, value is not an integer and can't be looked up in dict: {val}")
+    }
+}
+
+pub async fn get_v05_traces_from_request_body(
+    body: Body,
+) -> anyhow::Result<(usize, Vec<Vec<Span>>)> {
+    let buffer = hyper::body::aggregate(body).await?;
+    let body_size = buffer.remaining();
+    let mut reader = buffer.reader();
+    let wrapper_size = read_array_len(&mut reader)?;
+    if wrapper_size != 2 {
+        anyhow::bail!("Expected an arrary of exactly 2 elements, got {wrapper_size}");
+    }
+
+    let dict = get_v05_strings_dict(&mut reader)?;
+
+    let traces_size = rmp::decode::read_array_len(&mut reader)?;
+    let mut traces: Vec<Vec<Span>> = Default::default();
+
+    for _ in 0..traces_size {
+        let spans_size = rmp::decode::read_array_len(&mut reader)?;
+        let mut trace: Vec<Span> = Default::default();
+
+        for _ in 0..spans_size {
+            let span = get_v05_span(&mut reader, &dict)?;
+            trace.push(span);
+        }
+        traces.push(trace);
+    }
+    Ok((body_size, traces))
 }
 
 // Tags gathered from a trace's root span
@@ -217,6 +427,7 @@ pub fn set_serverless_root_span_tags(
     let origin_tag = match env_type {
         EnvironmentType::CloudFunction => "cloudfunction",
         EnvironmentType::AzureFunction => "azurefunction",
+        EnvironmentType::LambdaFunction => "lambda", // historical reasons
     };
     span.meta
         .insert("_dd.origin".to_string(), origin_tag.to_string());
@@ -238,6 +449,7 @@ fn update_tracer_top_level(span: &mut Span) {
 pub enum EnvironmentType {
     CloudFunction,
     AzureFunction,
+    LambdaFunction,
 }
 
 #[derive(Clone, Default, Debug, Eq, PartialEq)]
@@ -448,6 +660,88 @@ mod tests {
                 > 1
         );
         assert!(coalesced.len() > 1 && coalesced.len() < 5);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::type_complexity)]
+    async fn get_v05_traces_from_request_body() {
+        let data: (
+            Vec<String>,
+            Vec<
+                Vec<(
+                    u8,
+                    u8,
+                    u8,
+                    u64,
+                    u64,
+                    u64,
+                    i64,
+                    i64,
+                    i32,
+                    HashMap<u8, u8>,
+                    HashMap<u8, f64>,
+                    u8,
+                )>,
+            >,
+        ) = (
+            vec![
+                "baggage".to_string(),
+                "item".to_string(),
+                "elasticsearch.version".to_string(),
+                "7.0".to_string(),
+                "my-name".to_string(),
+                "X".to_string(),
+                "my-service".to_string(),
+                "my-resource".to_string(),
+                "_dd.sampling_rate_whatever".to_string(),
+                "value whatever".to_string(),
+                "sql".to_string(),
+            ],
+            vec![vec![(
+                6,
+                4,
+                7,
+                1,
+                2,
+                3,
+                123,
+                456,
+                1,
+                HashMap::from([(8, 9), (0, 1), (2, 3)]),
+                HashMap::from([(5, 1.2)]),
+                10,
+            )]],
+        );
+        let bytes = rmp_serde::to_vec(&data).unwrap();
+        let res =
+            trace_utils::get_v05_traces_from_request_body(hyper::body::Body::from(bytes)).await;
+        assert!(res.is_ok());
+        let (_, traces) = res.unwrap();
+        let span = traces[0][0].clone();
+        let test_span = Span {
+            service: "my-service".to_string(),
+            name: "my-name".to_string(),
+            resource: "my-resource".to_string(),
+            trace_id: 1,
+            span_id: 2,
+            parent_id: 3,
+            start: 123,
+            duration: 456,
+            error: 1,
+            meta: HashMap::from([
+                ("baggage".to_string(), "item".to_string()),
+                ("elasticsearch.version".to_string(), "7.0".to_string()),
+                (
+                    "_dd.sampling_rate_whatever".to_string(),
+                    "value whatever".to_string(),
+                ),
+            ]),
+            metrics: HashMap::from([("X".to_string(), 1.2)]),
+            meta_struct: HashMap::default(),
+            r#type: "sql".to_string(),
+            span_links: vec![],
+        };
+        assert!(span == test_span);
     }
 
     #[tokio::test]
