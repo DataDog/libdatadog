@@ -27,16 +27,24 @@ pub(crate) struct SharedAppManualFut {
 
 /// `RuntimeInfo` is a struct that contains information about a runtime.
 /// It contains a map of apps and a map of app or actions.
-/// Each app is represented by a shared future that may contain an `Option<AppInstance>`.
-/// Each action is represented by an `AppOrQueue` enum. Combining apps and actions are necessary
-/// because service and env names are not known until later in the initialization process.
 #[derive(Clone, Default)]
 pub(crate) struct RuntimeInfo {
     pub(crate) apps: Arc<Mutex<AppMap>>,
-    app_or_actions: Arc<Mutex<HashMap<QueueId, AppOrQueue>>>,
+    applications: Arc<Mutex<HashMap<QueueId, ActiveApplication>>>,
     #[cfg(feature = "tracing")]
-    remote_config_guards: Arc<Mutex<HashMap<QueueId, RemoteConfigsGuard>>>,
     pub(crate) instance_id: InstanceId,
+}
+
+/// `ActiveApplications` is a struct the contains information about a known in flight application.
+/// Telemetry lifecycles (see `app_or_actions`) and remote_config `remote_config_guard` are bound to
+/// it.
+/// Each app is represented by a shared future that may contain an `Option<AppInstance>`.
+/// Each action is represented by an `AppOrQueue` enum. Combining apps and actions are necessary
+/// because service and env names are not known until later in the initialization process.
+#[derive(Default)]
+pub(crate) struct ActiveApplication {
+    pub app_or_actions: AppOrQueue,
+    pub remote_config_guard: Option<RemoteConfigsGuard>,
 }
 
 impl RuntimeInfo {
@@ -115,26 +123,14 @@ impl RuntimeInfo {
         self.apps.lock().unwrap()
     }
 
-    /// Locks the app or actions map and returns a mutable reference to it.
+    /// Locks the applications map and returns a mutable reference to it.
     ///
     /// # Returns
     ///
-    /// * `MutexGuard<HashMap<QueueId, AppOrQueue>>` - A mutable reference to the app or actions
-    ///   map.
-    pub(crate) fn lock_app_or_actions(&self) -> MutexGuard<HashMap<QueueId, AppOrQueue>> {
-        self.app_or_actions.lock().unwrap()
-    }
-
-    /// Locks the remote config guards map and returns a mutable reference to it.
-    ///
-    /// # Returns
-    ///
-    /// * `MutexGuard<HashMap<QueueId, RemoteConfigsGuard>>` - A mutable reference to the remote
-    ///   config guards map.
-    pub(crate) fn lock_remote_config_guards(
-        &self,
-    ) -> MutexGuard<HashMap<QueueId, RemoteConfigsGuard>> {
-        self.remote_config_guards.lock().unwrap()
+    /// * `MutexGuard<HashMap<QueueId, ActiveApplications>>` - A mutable reference to the
+    ///   applications map.
+    pub(crate) fn lock_applications(&self) -> MutexGuard<HashMap<QueueId, ActiveApplication>> {
+        self.applications.lock().unwrap()
     }
 }
 
