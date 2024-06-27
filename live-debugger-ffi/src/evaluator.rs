@@ -276,6 +276,7 @@ pub extern "C" fn ddog_evaluated_value_get<'a>(
 #[no_mangle]
 pub extern "C" fn ddog_evaluated_value_drop(_: Box<InternalIntermediateValue>) {}
 
+#[allow(clippy::boxed_local)]
 pub fn ddog_evaluated_value_into_string<'a>(
     value: Box<InternalIntermediateValue<'a>>,
     context: &'a mut c_void,

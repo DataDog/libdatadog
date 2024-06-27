@@ -12,8 +12,11 @@ use futures::{
 };
 use manual_future::{ManualFuture, ManualFutureCompleter};
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::sync::{Arc, Mutex, MutexGuard};
+use simd_json::prelude::ArrayTrait;
 use tracing::{debug, info};
+use datadog_live_debugger::sender::generate_tags;
 
 type AppMap = HashMap<(String, String), Shared<ManualFuture<Option<AppInstance>>>>;
 
@@ -41,10 +44,15 @@ pub(crate) struct RuntimeInfo {
 /// Each app is represented by a shared future that may contain an `Option<AppInstance>`.
 /// Each action is represented by an `AppOrQueue` enum. Combining apps and actions are necessary
 /// because service and env names are not known until later in the initialization process.
+/// Similarly, each application has its own global tags.
 #[derive(Default)]
 pub(crate) struct ActiveApplication {
     pub app_or_actions: AppOrQueue,
     pub remote_config_guard: Option<RemoteConfigsGuard>,
+    pub env: Option<String>,
+    pub app_version: Option<String>,
+    pub global_tags: Vec<Tag>,
+    pub live_debugger_tag_cache: Option<Arc<String>>,
 }
 
 impl RuntimeInfo {
@@ -131,6 +139,45 @@ impl RuntimeInfo {
     ///   applications map.
     pub(crate) fn lock_applications(&self) -> MutexGuard<HashMap<QueueId, ActiveApplication>> {
         self.applications.lock().unwrap()
+    }
+
+    /// Sets the cached debugger tags if not set and returns them.
+    ///
+    /// # Arguments
+    ///
+    /// * `debugger_version` - The version of the live debugger to report.
+    /// * `queue_id` - The unique identifier for the trace context.
+    ///
+    /// # Returns
+    /// 
+    /// * `Arc<String>` - A percent encoded string to be passed to datadog_live_debugger::sender::send.
+    pub fn get_debugger_tags(&mut self, debugger_version: &dyn Display, queue_id: QueueId) -> Arc<String> {
+        if let Some(app) = self.lock_applications().get_mut(&queue_id) {
+            if let Some(env) = &app.env {
+                if let Some(version) = &app.app_version {
+                    let tags = Arc::new(generate_tags(debugger_version, env, version, &self.instance_id.runtime_id, &mut app.global_tags.iter()));
+                    app.live_debugger_tag_cache = Some(tags.clone());
+                    return tags;
+                }
+            }
+        }
+        Arc::new(format!("debugger_version:{debugger_version}"))
+    }
+}
+
+impl ActiveApplication {
+    /// Sets the cached debugger tags if not set and returns them.
+    ///
+    /// # Arguments
+    ///
+    /// * `env` - The environment of the current application.
+    /// * `app_version` - The version of the current application.
+    /// * `global_tags` - The global tags of the current application.
+    pub fn set_metadata(&mut self, env: String, app_version: String, global_tags: Vec<Tag>) {
+        self.env = Some(env);
+        self.app_version = Some(app_version);
+        self.global_tags = global_tags;
+        self.live_debugger_tag_cache = None;
     }
 }
 

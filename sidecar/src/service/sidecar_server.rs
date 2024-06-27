@@ -46,6 +46,7 @@ use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
 use datadog_remote_config::fetch::ConfigInvariants;
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
+use ddcommon::tag::Tag;
 use dogstatsd_client::{new_flusher, DogStatsDActionOwned};
 use tinybytes;
 
@@ -286,8 +287,8 @@ impl SidecarServer {
         }
     }
 
-    async fn send_debugger_data(&self, data: &[u8], target: &Endpoint) {
-        if let Err(e) = datadog_live_debugger::sender::send(data, target).await {
+    async fn send_debugger_data(&self, data: &[u8], target: &Endpoint, tags: &str) {
+        if let Err(e) = datadog_live_debugger::sender::send(data, target, tags).await {
             error!("Error sending data to live debugger endpoint: {e:?}");
             debug!(
                 "Attempted to send the following payload: {}",
@@ -815,18 +816,19 @@ impl SidecarInterface for SidecarServer {
         self,
         _: Context,
         instance_id: InstanceId,
+        queue_id: QueueId,
         handle: ShmHandle,
     ) -> Self::SendDebuggerDataShmFut {
-        if let Some(endpoint) = self
-            .get_session(&instance_id.session_id)
-            .get_debugger_config()
-            .endpoint
-            .clone()
-        {
+        let session = self.get_session(&instance_id.session_id);
+        if let Some(endpoint) = session.get_debugger_config().endpoint.clone() {
+            let mut runtime = session.get_runtime(&instance_id.runtime_id);
+            let invariants = session.get_remote_config_invariants();
+            let version = invariants.as_ref().map(|i| i.tracer_version.as_str()).unwrap_or("0.0.0");
+            let tags = runtime.get_debugger_tags(&version, queue_id);
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
-                        self.send_debugger_data(mapped.as_slice(), &endpoint).await;
+                        self.send_debugger_data(mapped.as_slice(), &endpoint, tags.as_str()).await;
                     }
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                 }
@@ -846,6 +848,7 @@ impl SidecarInterface for SidecarServer {
         service_name: String,
         env_name: String,
         app_version: String,
+        global_tags: Vec<Tag>,
     ) -> Self::SetRemoteConfigDataFut {
         let session = self.get_session(&instance_id.session_id);
         #[cfg(windows)]
@@ -862,12 +865,9 @@ impl SidecarInterface for SidecarServer {
             pid: session.pid.load(Ordering::Relaxed),
         };
         let runtime_info = session.get_runtime(&instance_id.runtime_id);
-        runtime_info
-            .lock_applications()
-            .entry(queue_id)
-            .or_default()
-            .remote_config_guard = Some(
-            self.remote_configs.add_runtime(
+        let mut applications = runtime_info.lock_applications();
+        let app = applications.entry(queue_id).or_default();
+        app.remote_config_guard = Some(self.remote_configs.add_runtime(
                 session
                     .get_remote_config_invariants()
                     .as_ref()
@@ -875,11 +875,11 @@ impl SidecarInterface for SidecarServer {
                     .clone(),
                 instance_id.runtime_id,
                 notify_target,
-                env_name,
+                env_name.clone(),
                 service_name,
-                app_version,
-            ),
-        );
+                app_version.clone(),
+            ));
+        app.set_metadata(env_name, app_version, global_tags);
 
         no_response()
     }

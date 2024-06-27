@@ -1494,9 +1494,11 @@ dependencies = [
  "ddcommon",
  "hyper 0.14.28",
  "json",
+ "percent-encoding",
  "regex",
  "serde",
  "serde_json",
+ "sys-info",
  "uuid",
 ]
 
@@ -1504,10 +1506,12 @@ dependencies = [
 name = "datadog-live-debugger-ffi"
 version = "0.0.1"
 dependencies = [
+ "build_common",
  "datadog-live-debugger",
  "ddcommon",
  "ddcommon-ffi",
  "log",
+ "percent-encoding",
  "serde_json",
  "tokio",
  "uuid",

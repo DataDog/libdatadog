@@ -16,6 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tracing::info;
+use ddcommon::tag::Tag;
 
 /// `SidecarTransport` is a wrapper around a BlockingTransport struct from the `datadog_ipc` crate
 /// that handles transparent reconnection.
@@ -278,6 +279,7 @@ pub fn send_trace_v04_shm(
 ///
 /// * `transport` - The transport used for communication.
 /// * `instance_id` - The ID of the instance.
+/// * `queue_id` - The unique identifier for the trace context.
 /// * `handle` - The handle to the shared memory.
 ///
 /// # Returns
@@ -286,10 +288,12 @@ pub fn send_trace_v04_shm(
 pub fn send_debugger_data_shm(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
+    queue_id: QueueId,
     handle: ShmHandle,
 ) -> io::Result<()> {
     transport.send(SidecarInterfaceRequest::SendDebuggerDataShm {
         instance_id: instance_id.clone(),
+        queue_id,
         handle,
     })
 }
@@ -300,6 +304,7 @@ pub fn send_debugger_data_shm(
 ///
 /// * `transport` - The transport used for communication.
 /// * `instance_id` - The ID of the instance.
+/// * `queue_id` - The unique identifier for the trace context.
 /// * `payloads` - The payloads to be sent
 ///
 /// # Returns
@@ -308,6 +313,7 @@ pub fn send_debugger_data_shm(
 pub fn send_debugger_data_shm_vec(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
+    queue_id: QueueId,
     payloads: Vec<datadog_live_debugger::debugger_defs::DebuggerPayload>,
 ) -> anyhow::Result<()> {
     struct SizeCount(usize);
@@ -331,6 +337,7 @@ pub fn send_debugger_data_shm_vec(
     Ok(send_debugger_data_shm(
         transport,
         instance_id,
+        queue_id,
         mapped.into(),
     )?)
 }
@@ -358,6 +365,7 @@ pub fn set_remote_config_data(
     service_name: String,
     env_name: String,
     app_version: String,
+    global_tags: Vec<Tag>,
 ) -> io::Result<()> {
     transport.send(SidecarInterfaceRequest::SetRemoteConfigData {
         instance_id: instance_id.clone(),
@@ -365,6 +373,7 @@ pub fn set_remote_config_data(
         service_name,
         env_name,
         app_version,
+        global_tags,
     })
 }
 

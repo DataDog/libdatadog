@@ -627,6 +627,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
 pub unsafe extern "C" fn ddog_sidecar_send_debugger_data(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
+    queue_id: QueueId,
     payloads: Vec<DebuggerPayload>,
 ) -> MaybeError {
     if payloads.is_empty() {
@@ -636,6 +637,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_debugger_data(
     try_c!(blocking::send_debugger_data_shm_vec(
         transport,
         instance_id,
+        queue_id,
         payloads,
     ));
 
@@ -648,9 +650,10 @@ pub unsafe extern "C" fn ddog_sidecar_send_debugger_data(
 pub unsafe extern "C" fn ddog_sidecar_send_debugger_datum(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
+    queue_id: QueueId,
     payload: Box<DebuggerPayload>,
 ) -> MaybeError {
-    ddog_sidecar_send_debugger_data(transport, instance_id, vec![*payload])
+    ddog_sidecar_send_debugger_data(transport, instance_id, queue_id, vec![*payload])
 }
 
 #[no_mangle]
@@ -662,6 +665,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_remote_config_data(
     service_name: ffi::CharSlice,
     env_name: ffi::CharSlice,
     app_version: ffi::CharSlice,
+    global_tags: ddcommon_ffi::Vec<Tag>,
 ) -> MaybeError {
     try_c!(blocking::set_remote_config_data(
         transport,
@@ -670,6 +674,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_remote_config_data(
         service_name.to_utf8_lossy().into(),
         env_name.to_utf8_lossy().into(),
         app_version.to_utf8_lossy().into(),
+        global_tags.into(),
     ));
 
     MaybeError::None

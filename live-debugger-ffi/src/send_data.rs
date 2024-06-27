@@ -157,6 +157,7 @@ pub extern "C" fn ddog_update_payload_message<'a>(
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_snapshot_entry<'a>(
     payload: &mut DebuggerPayload<'a>,
 ) -> *mut DebuggerCapture<'a> {
@@ -173,6 +174,7 @@ pub unsafe extern "C" fn ddog_snapshot_entry<'a>(
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_snapshot_lines<'a>(
     payload: &mut DebuggerPayload<'a>,
     line: u32,
@@ -194,6 +196,7 @@ pub unsafe extern "C" fn ddog_snapshot_lines<'a>(
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_snapshot_exit<'a>(
     payload: &mut DebuggerPayload<'a>,
 ) -> *mut DebuggerCapture<'a> {
