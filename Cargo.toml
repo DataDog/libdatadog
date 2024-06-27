@@ -28,7 +28,8 @@ members = [
   "serverless",
   "bin_tests",
   "data-pipeline",
-  "data-pipeline-ffi"
+  "data-pipeline-ffi",
+  "ddsketch",
 ]
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"

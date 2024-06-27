@@ -1,0 +1,34 @@
+variables:
+  BASE_CI_IMAGE: 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/benchmarking-platform:libdatadog-benchmarks
+  # The Dockerfile to this image is located at:
+  # https://github.com/DataDog/benchmarking-platform/tree/libdatadog/benchmarks
+
+benchmarks:
+  tags: ["runner:apm-k8s-tweaked-metal"]
+  needs: []
+  image:
+    name: $BASE_CI_IMAGE
+  interruptible: true
+  timeout: 1h
+  script:
+    - export ARTIFACTS_DIR="$(pwd)/reports" && (mkdir "${ARTIFACTS_DIR}" || :)
+    - git clone --branch libdatadog/benchmarks https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ddbuild.io/DataDog/benchmarking-platform /platform && cd /platform
+    - ./steps/capture-hardware-software-info.sh
+    - ./steps/run-benchmarks.sh
+    - ./steps/analyze-results.sh
+    - "./steps/upload-results-to-s3.sh || :"
+    - "./steps/post-pr-comment.sh || :"
+  artifacts:
+    name: "reports"
+    paths:
+      - reports/
+    expire_in: 3 months
+  variables:
+    UPSTREAM_PROJECT_ID: $CI_PROJECT_ID # The ID of the current project. This ID is unique across all projects on the GitLab instance.
+    UPSTREAM_PROJECT_NAME: $CI_PROJECT_NAME # libdatadog
+    UPSTREAM_BRANCH: $CI_COMMIT_REF_NAME # The branch or tag name for which project is built.
+    UPSTREAM_COMMIT_SHA: $CI_COMMIT_SHA # The commit revision the project is built for.
+    UPSTREAM_REPO_URL: "https://github.com/DataDog/libdatadog" # The HTTP URL to the project's repository.
+
+    KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: libdatadog
+    FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY: "true"
