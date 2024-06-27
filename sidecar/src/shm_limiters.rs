@@ -208,13 +208,8 @@ impl Limiter for ShmLimiter {
     }
 }
 
+#[derive(Default)]
 pub struct LocalLimiter(LimiterData<()>);
-
-impl LocalLimiter {
-    pub fn new() -> Self {
-        LocalLimiter(Default::default())
-    }
-}
 
 impl Limiter for LocalLimiter {
     fn inc(&self, limit: u32) -> bool {

@@ -548,7 +548,7 @@ where
 {
     let mut eval = Eval { eval, it: None };
     eval.value(&value.0)
-        .and_then(|v| Ok(v.try_use(&mut eval)?))
+        .and_then(|v| v.try_use(&mut eval))
         .map_err(|e| SnapshotEvaluationError {
             expr: value.to_string(),
             message: e.0,

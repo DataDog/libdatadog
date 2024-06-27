@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::fmt::Display;
 use crate::debugger_defs::DebuggerPayload;
 use ddcommon::connector::Connector;
 use ddcommon::Endpoint;
@@ -9,7 +10,10 @@ use hyper::{Body, Client, Method, Uri};
 use serde::Serialize;
 use std::hash::Hash;
 use std::str::FromStr;
+use std::sync::Arc;
+use percent_encoding::{CONTROLS, percent_encode};
 use uuid::Uuid;
+use ddcommon::tag::Tag;
 
 pub const PROD_INTAKE_SUBDOMAIN: &str = "http-intake.logs";
 
@@ -18,7 +22,7 @@ const AGENT_TELEMETRY_URL_PATH: &str = "/debugger/v1/input";
 
 #[derive(Default)]
 pub struct Config {
-    pub endpoint: Option<Endpoint>,
+    pub endpoint: Option<Arc<Endpoint>>,
 }
 
 impl Config {
@@ -34,7 +38,7 @@ impl Config {
         }
 
         endpoint.url = Uri::from_parts(uri_parts)?;
-        self.endpoint = Some(endpoint);
+        self.endpoint = Some(Arc::new(endpoint));
         Ok(())
     }
 }
@@ -43,7 +47,20 @@ pub fn encode<S: Eq + Hash + Serialize>(data: Vec<DebuggerPayload>) -> Vec<u8> {
     serde_json::to_vec(&data).unwrap()
 }
 
-pub async fn send(payload: &[u8], endpoint: &Endpoint) -> anyhow::Result<()> {
+pub fn generate_tags(debugger_version: &dyn Display, env: &dyn Display, version: &dyn Display, runtime_id: &dyn Display, custom_tags: &mut dyn Iterator<Item=&Tag>) -> String {
+    let mut tags = format!("debugger_version:{debugger_version},env:{env},version:{version},runtime_id:{runtime_id}");
+    if let Ok(hostname) = sys_info::hostname() {
+        tags.push_str(",host_name:");
+        tags.push_str(hostname.as_str());
+    }
+    for tag in custom_tags {
+        tags.push(',');
+        tags.push_str(tag.as_ref());
+    }
+    percent_encode(tags.as_bytes(), CONTROLS).to_string()
+}
+
+pub async fn send(payload: &[u8], endpoint: &Endpoint, percent_encoded_tags: &str) -> anyhow::Result<()> {
     let mut req = hyper::Request::builder()
         .header(
             hyper::header::USER_AGENT,
@@ -58,17 +75,9 @@ pub async fn send(payload: &[u8], endpoint: &Endpoint) -> anyhow::Result<()> {
     }
 
     let mut parts = url.into_parts();
-    let mut query = String::from(parts.path_and_query.unwrap().as_str());
-    query.push_str("?ddtags=host:");
-    query.push_str(""); // TODO hostname
-                        // TODO container tags and such
+    let query = format!("{}?ddtags={}", parts.path_and_query.unwrap(), percent_encoded_tags);
     parts.path_and_query = Some(PathAndQuery::from_str(&query)?);
     url = Uri::from_parts(parts)?;
-    //             "env:" + config.getEnv(),
-    //             "version:" + config.getVersion(),
-    //             "debugger_version:" + DDTraceCoreInfo.VERSION,
-    //             "agent_version:" + DebuggerAgent.getAgentVersion(),
-    //             "host_name:" + config.getHostName());
 
     // SAFETY: we ensure the reference exists across the request
     let req = req.uri(url).body(Body::from(unsafe {
