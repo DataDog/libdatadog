@@ -606,6 +606,9 @@ mod tests {
         let expected_operating_system = "FreeBSD".to_owned();
         let expected_instance_name = "my_instance_name".to_owned();
         let expected_instance_id = "my_instance_id".to_owned();
+        let expected_function_extension_version = "~4".to_owned();
+        let expected_runtime = "node".to_owned();
+        let expected_runtime_version = "18".to_owned();
 
         let mocked_env = MockEnv::new(&[
             (WEBSITE_SITE_NAME, expected_site_name.as_str()),
@@ -615,6 +618,15 @@ mod tests {
             (INSTANCE_NAME, expected_instance_name.as_str()),
             (INSTANCE_ID, expected_instance_id.as_str()),
             (SERVICE_CONTEXT, "1"),
+            (
+                FUNCTIONS_EXTENSION_VERSION,
+                expected_function_extension_version.as_str(),
+            ),
+            (FUNCTIONS_WORKER_RUNTIME, expected_runtime.as_str()),
+            (
+                FUNCTIONS_WORKER_RUNTIME_VERSION,
+                expected_runtime_version.as_str(),
+            ),
         ]);
 
         let metadata = AzureMetadata::new(mocked_env).unwrap();
@@ -625,5 +637,11 @@ mod tests {
         assert_eq!(expected_operating_system, metadata.get_operating_system());
         assert_eq!(expected_instance_name, metadata.get_instance_name());
         assert_eq!(expected_instance_id, metadata.get_instance_id());
+        assert_eq!(
+            expected_function_extension_version,
+            metadata.get_function_runtime_version()
+        );
+        assert_eq!(expected_runtime, metadata.get_runtime());
+        assert_eq!(expected_runtime_version, metadata.get_runtime_version());
     }
 }
