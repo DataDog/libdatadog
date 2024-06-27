@@ -21,7 +21,8 @@ ddcommon = { path = "../ddcommon" }
 
 [dev-dependencies]
 duplicate = "0.4.1"
-criterion = "0.5"
+criterion = { version = "0.5", features = [ "csv_output"] }
+datadog-trace-utils = { path = "../trace-utils", features = ["test-utils"] }
 
 [[bench]]
 name = "trace_obfuscation"

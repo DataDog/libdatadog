@@ -39,6 +39,7 @@ pub enum ConfigurationOrigin {
 
 #[derive(Serialize, Debug)]
 pub struct AppStarted {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub configuration: Vec<Configuration>,
 }
 

@@ -511,7 +511,7 @@ impl TelemetryWorker {
         }
         let distributions = self.build_metrics_distributions();
         if !distributions.series.is_empty() {
-            payloads.push(data::Payload::Distributions(distributions))
+            payloads.push(data::Payload::Sketches(distributions))
         }
         payloads
     }
@@ -530,8 +530,14 @@ impl TelemetryWorker {
                 namespace: context.namespace,
                 metric: context.name.clone(),
                 tags,
-                points,
+                sketch: data::metrics::SerializedSketch::B64 {
+                    sketch_b64: base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        points.encode_to_vec(),
+                    ),
+                },
                 common: context.common,
+                _type: context.metric_type,
                 interval: MetricBuckets::METRICS_FLUSH_INTERVAL.as_secs(),
             });
         }
@@ -601,8 +607,7 @@ impl TelemetryWorker {
                 }
             }
             AppHeartbeat(()) | AppClosing(()) => {}
-            // TODO Paul lgdc keep metrics until we know if the flush was a success
-            GenerateMetrics(_) | Distributions(_) => {}
+            GenerateMetrics(_) | Sketches(_) => {}
         }
     }
 

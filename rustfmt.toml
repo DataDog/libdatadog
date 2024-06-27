@@ -6,7 +6,6 @@ ignore = [
 ]
 
 format_macro_matchers = true
-
 format_code_in_doc_comments=true
 wrap_comments = true
 max_width=100
