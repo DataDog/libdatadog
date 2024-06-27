@@ -31,7 +31,7 @@ mod unix {
         let mode = args.next().context("Unexpected number of arguments")?;
         let output_url = args.next().context("Unexpected number of arguments")?;
         let receiver_binary = args.next().context("Unexpected number of arguments")?;
-        let unix_socket_reciever_binary = args.next().context("Unexpected number of arguments")?;
+        let unix_socket_receiver_binary = args.next().context("Unexpected number of arguments")?;
         let stderr_filename = args.next().context("Unexpected number of arguments")?;
         let stdout_filename = args.next().context("Unexpected number of arguments")?;
         let socket_path = args.next().context("Unexpected number of arguments")?;
@@ -83,7 +83,7 @@ mod unix {
                 // For now, this exits when a single message is received.
                 // When the listener is updated, we'll need to keep the handle and kill the receiver
                 // to avoid leaking a process.
-                std::process::Command::new(unix_socket_reciever_binary)
+                std::process::Command::new(unix_socket_receiver_binary)
                     .stderr(File::create(stderr_filename)?)
                     .stdout(File::create(stdout_filename)?)
                     .arg(&socket_path)
