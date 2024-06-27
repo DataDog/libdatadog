@@ -167,7 +167,7 @@ impl AzureMetadata {
             site_type,
             runtime,
             runtime_version,
-            function_runtime_version
+            function_runtime_version,
         })
     }
 

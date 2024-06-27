@@ -488,8 +488,14 @@ pub fn enrich_span_with_azure_metadata(span: &mut Span, mini_agent_version: &str
             ("aas.environment.mini_agent_version", mini_agent_version),
             ("aas.environment.os", aas_metadata.get_operating_system()),
             ("aas.environment.runtime", aas_metadata.get_runtime()),
-            ("aas.environment.runtime_version", aas_metadata.get_runtime_version()),
-            ("aas.environment.function_runtime", aas_metadata.get_function_runtime_version()),
+            (
+                "aas.environment.runtime_version",
+                aas_metadata.get_runtime_version(),
+            ),
+            (
+                "aas.environment.function_runtime",
+                aas_metadata.get_function_runtime_version(),
+            ),
             ("aas.resource.group", aas_metadata.get_resource_group()),
             ("aas.site.name", aas_metadata.get_site_name()),
             ("aas.site.kind", aas_metadata.get_site_kind()),
