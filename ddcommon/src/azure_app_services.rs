@@ -648,4 +648,13 @@ mod tests {
         assert_eq!(expected_runtime, metadata.get_runtime());
         assert_eq!(expected_runtime_version, metadata.get_runtime_version());
     }
+
+    #[test]
+    fn test_get_value_or_unknown() {
+        let none: Option<String> = None;
+        let empty_string: Option<String> = Some("".to_string());
+
+        assert_eq!(get_value_or_unknown!(none), "unknown");
+        assert_eq!(get_value_or_unknown!(empty_string), "unknown");
+    }
 }
