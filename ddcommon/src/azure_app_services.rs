@@ -32,7 +32,11 @@ macro_rules! get_trimmed_env_var {
 
 macro_rules! get_value_or_unknown {
     ($name:expr) => {
-        $name.as_ref().map(|s| s.as_str()).unwrap_or(UNKNOWN_VALUE)
+        $name
+            .as_ref()
+            .map(|s| s.as_str())
+            .filter(|&s| !s.is_empty())
+            .unwrap_or(UNKNOWN_VALUE)
     };
 }
 
