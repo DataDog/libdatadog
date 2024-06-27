@@ -68,5 +68,5 @@ pub use counters::{begin_profiling_op, end_profiling_op, reset_counters, Profili
 pub use crash_handler::{update_config, update_metadata};
 pub use crash_info::*;
 #[cfg(unix)]
-pub use receiver::{receiver_entry_point_stdin, reciever_entry_point_unix_socket};
+pub use receiver::{receiver_entry_point_stdin, receiver_entry_point_unix_socket};
 pub use stacktrace::{NormalizedAddress, NormalizedAddressMeta, StackFrame, StackFrameNames};
