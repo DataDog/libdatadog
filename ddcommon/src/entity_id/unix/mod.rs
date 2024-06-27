@@ -50,7 +50,7 @@ fn compute_entity_id(
 ) -> Option<String> {
     container_id::extract_container_id(cgroup_path)
         .ok()
-        .map(|container_id| format!("cid-{container_id}"))
+        .map(|container_id| format!("ci-{container_id}"))
         .or(
             cgroup_inode::get_cgroup_inode(base_controller, cgroup_path, cgroup_mount_path)
                 .map(|inode| format!("in-{inode}")),
@@ -119,8 +119,8 @@ mod tests {
 
     lazy_static! {
         static ref IN_REGEX: Regex = Regex::new(r"in-\d+").unwrap();
-        static ref CID_REGEX: Regex =
-            Regex::new(&format!(r"cid-{}", container_id::CONTAINER_REGEX.as_str())).unwrap();
+        static ref CI_REGEX: Regex =
+            Regex::new(&format!(r"ci-{}", container_id::CONTAINER_REGEX.as_str())).unwrap();
     }
 
     /// The following test can only be run in isolation because of caching behaviour introduced
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn test_entity_id_for_container_id() {
-        test_entity_id("cgroup.docker", Some(&CID_REGEX))
+        test_entity_id("cgroup.docker", Some(&CI_REGEX))
     }
 
     #[test]
