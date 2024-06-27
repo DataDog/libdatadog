@@ -5,6 +5,9 @@ variables:
     value: "main"
     description: "downstream jobs are triggered on this branch"
 
+include:
+  - local: .gitlab/benchmarks.yml
+
 trigger_internal_build:
   variables:
     LIBDATADOG_COMMIT_BRANCH: $CI_COMMIT_BRANCH
@@ -21,7 +24,7 @@ trigger_internal_build:
 report_failure:
   tags: ["arch:amd64"]
   when: on_failure
-  needs: [trigger_internal_build]
+  needs: [trigger_internal_build, benchmarks]
   # allow_failure: true prevents the job from showing up in github statuses (because it's filtered by gitsync)
   allow_failure: true
   script:
