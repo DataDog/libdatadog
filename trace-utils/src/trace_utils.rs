@@ -221,7 +221,7 @@ fn get_v05_string(
     }
 }
 
-pub async fn v5_get_traces_from_request_body(
+pub async fn get_v05_traces_from_request_body(
     body: Body,
 ) -> anyhow::Result<(usize, Vec<Vec<Span>>)> {
     let buffer = hyper::body::aggregate(body).await?;
@@ -664,7 +664,7 @@ mod tests {
 
     #[tokio::test]
     #[allow(clippy::type_complexity)]
-    async fn v5_get_traces_from_request_body() {
+    async fn get_v05_traces_from_request_body() {
         let data: (
             Vec<String>,
             Vec<
@@ -714,7 +714,7 @@ mod tests {
         );
         let bytes = rmp_serde::to_vec(&data).unwrap();
         let res =
-            trace_utils::v5_get_traces_from_request_body(hyper::body::Body::from(bytes)).await;
+            trace_utils::get_v05_traces_from_request_body(hyper::body::Body::from(bytes)).await;
         assert!(res.is_ok());
         let (_, traces) = res.unwrap();
         let span = traces[0][0].clone();
