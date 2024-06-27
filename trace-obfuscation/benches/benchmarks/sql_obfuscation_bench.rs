@@ -14,6 +14,7 @@ fn sql_obfuscation(c: &mut Criterion) {
             b.iter(|| {
                 for (input, _) in CASES {
                     black_box(obfuscate_sql_string(input));
+                    black_box(obfuscate_sql_string(input));
                 }
             })
         });
