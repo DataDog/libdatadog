@@ -1,6 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod datadog_test_agent;
+
 use std::collections::HashMap;
 use std::time::Duration;
 
