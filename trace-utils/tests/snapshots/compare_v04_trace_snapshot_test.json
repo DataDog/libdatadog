@@ -1,0 +1,17 @@
+[[
+  {
+    "name": "test_name",
+    "service": "test-service",
+    "resource": "test-resource",
+    "trace_id": 0,
+    "span_id": 1,
+    "parent_id": 12341,
+    "type": "",
+    "meta": {
+      "env": "test-env",
+      "runtime-id": "test-runtime-id-value",
+      "service": "test-service"
+    },
+    "duration": 5,
+    "start": 1
+  }]]
