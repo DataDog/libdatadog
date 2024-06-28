@@ -226,6 +226,7 @@ pub fn set_serverless_root_span_tags(
     let origin_tag = match env_type {
         EnvironmentType::CloudFunction => "cloudfunction",
         EnvironmentType::AzureFunction => "azurefunction",
+        EnvironmentType::AzureSpringApp => "azurespringapp",
     };
     span.meta
         .insert("_dd.origin".to_string(), origin_tag.to_string());
@@ -247,6 +248,7 @@ fn update_tracer_top_level(span: &mut Span) {
 pub enum EnvironmentType {
     CloudFunction,
     AzureFunction,
+    AzureSpringApp,
 }
 
 #[derive(Clone, Default, Debug, Eq, PartialEq)]

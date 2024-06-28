@@ -22,6 +22,10 @@ pub fn read_cloud_env() -> Option<(String, trace_utils::EnvironmentType)> {
         // Set by Azure Functions
         return Some((res, trace_utils::EnvironmentType::AzureFunction));
     }
+    if let Ok(res) = env::var("SPRING_CLOUD_CONFIG_URI") {
+        // Set by Azure Functions
+        return Some((res, trace_utils::EnvironmentType::AzureSpringApp));
+    }
     None
 }
 
