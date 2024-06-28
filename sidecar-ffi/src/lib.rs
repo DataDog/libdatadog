@@ -23,7 +23,6 @@ use ddtelemetry::{
     data::{self, Dependency, Integration},
     worker::{LifecycleAction, TelemetryActions},
 };
-use ddtelemetry_ffi::try_c;
 use ffi::slice::AsBytes;
 use libc::c_char;
 use std::ffi::c_void;
@@ -82,7 +81,7 @@ pub extern "C" fn ddog_alloc_anon_shm_handle(
     size: usize,
     handle: &mut *mut ShmHandle,
 ) -> MaybeError {
-    *handle = Box::into_raw(Box::new(try_c!(ShmHandle::new(size))));
+    *handle = Box::into_raw(Box::new(ffi::try_c!(ShmHandle::new(size))));
 
     MaybeError::None
 }
@@ -94,7 +93,7 @@ pub extern "C" fn ddog_map_shm(
     pointer: &mut *mut c_void,
     size: &mut usize,
 ) -> MaybeError {
-    let mut memory_mapped = try_c!(handle.map());
+    let mut memory_mapped = ffi::try_c!(handle.map());
     let slice = memory_mapped.as_slice_mut();
     *pointer = slice as *mut [u8] as *mut c_void;
     *size = slice.len();
@@ -117,7 +116,8 @@ pub extern "C" fn ddog_create_agent_remote_config_writer(
     writer: &mut *mut AgentRemoteConfigWriter<ShmHandle>,
     handle: &mut *mut ShmHandle,
 ) -> MaybeError {
-    let (new_writer, new_handle) = try_c!(datadog_sidecar::agent_remote_config::create_anon_pair());
+    let (new_writer, new_handle) =
+        ffi::try_c!(datadog_sidecar::agent_remote_config::create_anon_pair());
     *writer = Box::into_raw(Box::new(new_writer));
     *handle = Box::into_raw(Box::new(new_handle));
 
@@ -137,7 +137,7 @@ pub unsafe extern "C" fn ddog_agent_remote_config_reader_for_anon_shm(
     handle: &ShmHandle,
     reader: &mut *mut AgentRemoteConfigReader,
 ) -> MaybeError {
-    *reader = Box::into_raw(Box::new(AgentRemoteConfigReader::Unnamed(try_c!(
+    *reader = Box::into_raw(Box::new(AgentRemoteConfigReader::Unnamed(ffi::try_c!(
         reader_from_shm(handle.clone())
     ))));
 
@@ -198,7 +198,9 @@ pub extern "C" fn ddog_sidecar_transport_drop(_: Box<SidecarTransport>) {}
 pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -> MaybeError {
     let cfg = datadog_sidecar::config::Config::get();
 
-    let stream = Box::new(try_c!(datadog_sidecar::start_or_connect_to_sidecar(cfg)));
+    let stream = Box::new(ffi::try_c!(datadog_sidecar::start_or_connect_to_sidecar(
+        cfg
+    )));
     *connection = Box::into_raw(stream);
 
     MaybeError::None
@@ -206,14 +208,14 @@ pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -
 
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<SidecarTransport>) -> MaybeError {
-    try_c!(blocking::ping(transport));
+    ffi::try_c!(blocking::ping(transport));
 
     MaybeError::None
 }
 
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_flush_traces(transport: &mut Box<SidecarTransport>) -> MaybeError {
-    try_c!(blocking::flush_traces(transport));
+    ffi::try_c!(blocking::flush_traces(transport));
 
     MaybeError::None
 }
@@ -280,7 +282,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
         value: config_value.to_utf8_lossy().into_owned(),
         origin,
     });
-    try_c!(blocking::enqueue_actions(
+    ffi::try_c!(blocking::enqueue_actions(
         transport,
         instance_id,
         queue_id,
@@ -307,7 +309,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
         version,
     });
 
-    try_c!(blocking::enqueue_actions(
+    ffi::try_c!(blocking::enqueue_actions(
         transport,
         instance_id,
         queue_id,
@@ -339,7 +341,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
         auto_enabled: None,
     });
 
-    try_c!(blocking::enqueue_actions(
+    ffi::try_c!(blocking::enqueue_actions(
         transport,
         instance_id,
         queue_id,
@@ -360,7 +362,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
     service_name: ffi::CharSlice,
     env_name: ffi::CharSlice,
 ) -> MaybeError {
-    try_c!(blocking::register_service_and_flush_queued_actions(
+    ffi::try_c!(blocking::register_service_and_flush_queued_actions(
         transport,
         instance_id,
         queue_id,
@@ -380,7 +382,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_end(
     instance_id: &InstanceId,
     queue_id: &QueueId,
 ) -> MaybeError {
-    try_c!(blocking::enqueue_actions(
+    ffi::try_c!(blocking::enqueue_actions(
         transport,
         instance_id,
         queue_id,
@@ -400,7 +402,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_flush(
     instance_id: &InstanceId,
     queue_id: &QueueId,
 ) -> MaybeError {
-    try_c!(blocking::enqueue_actions(
+    ffi::try_c!(blocking::enqueue_actions(
         transport,
         instance_id,
         queue_id,
@@ -435,7 +437,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     log_level: ffi::CharSlice,
     log_path: ffi::CharSlice,
 ) -> MaybeError {
-    try_c!(blocking::set_session_config(
+    ffi::try_c!(blocking::set_session_config(
         transport,
         session_id.to_utf8_lossy().into(),
         &SessionConfig {
@@ -502,9 +504,9 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_shm(
     len: usize,
     tracer_header_tags: &TracerHeaderTags,
 ) -> MaybeError {
-    let tracer_header_tags = try_c!(tracer_header_tags.try_into());
+    let tracer_header_tags = ffi::try_c!(tracer_header_tags.try_into());
 
-    try_c!(blocking::send_trace_v04_shm(
+    ffi::try_c!(blocking::send_trace_v04_shm(
         transport,
         instance_id,
         *shm_handle,
@@ -524,9 +526,9 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
     data: ffi::CharSlice,
     tracer_header_tags: &TracerHeaderTags,
 ) -> MaybeError {
-    let tracer_header_tags = try_c!(tracer_header_tags.try_into());
+    let tracer_header_tags = ffi::try_c!(tracer_header_tags.try_into());
 
-    try_c!(blocking::send_trace_v04_bytes(
+    ffi::try_c!(blocking::send_trace_v04_bytes(
         transport,
         instance_id,
         data.as_bytes().to_vec(),
@@ -580,7 +582,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_count(
     value: i64,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
 ) -> MaybeError {
-    try_c!(blocking::send_dogstatsd_actions(
+    ffi::try_c!(blocking::send_dogstatsd_actions(
         transport,
         instance_id,
         vec![DogStatsDAction::Count(
@@ -604,7 +606,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_distribution(
     value: f64,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
 ) -> MaybeError {
-    try_c!(blocking::send_dogstatsd_actions(
+    ffi::try_c!(blocking::send_dogstatsd_actions(
         transport,
         instance_id,
         vec![DogStatsDAction::Distribution(
@@ -628,7 +630,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_gauge(
     value: f64,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
 ) -> MaybeError {
-    try_c!(blocking::send_dogstatsd_actions(
+    ffi::try_c!(blocking::send_dogstatsd_actions(
         transport,
         instance_id,
         vec![DogStatsDAction::Gauge(
@@ -652,7 +654,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_histogram(
     value: f64,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
 ) -> MaybeError {
-    try_c!(blocking::send_dogstatsd_actions(
+    ffi::try_c!(blocking::send_dogstatsd_actions(
         transport,
         instance_id,
         vec![DogStatsDAction::Histogram(
@@ -676,7 +678,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
     value: i64,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
 ) -> MaybeError {
-    try_c!(blocking::send_dogstatsd_actions(
+    ffi::try_c!(blocking::send_dogstatsd_actions(
         transport,
         instance_id,
         vec![DogStatsDAction::Set(

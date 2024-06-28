@@ -1120,11 +1120,14 @@ version = "10.0.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "datadog-ddsketch",
  "datadog-trace-normalization",
+ "datadog-trace-obfuscation",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
  "ddcommon",
  "futures",
+ "http",
  "hyper",
  "log",
  "rmp-serde",
@@ -1138,6 +1141,7 @@ dependencies = [
  "build_common",
  "bytes",
  "data-pipeline",
+ "ddcommon",
  "ddcommon-ffi",
  "libc",
 ]

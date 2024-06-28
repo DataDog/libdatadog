@@ -22,7 +22,7 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_dependency(
     let version = dependency_version
         .is_empty()
         .then(|| dependency_version.to_utf8_lossy().into_owned());
-    crate::try_c!(handle.add_dependency(name, version));
+    ffi::try_c!(handle.add_dependency(name, version));
     MaybeError::None
 }
 
@@ -40,7 +40,7 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_integration(
     let version = dependency_version
         .is_empty()
         .then(|| dependency_version.to_utf8_lossy().into_owned());
-    crate::try_c!(handle.add_integration(
+    ffi::try_c!(handle.add_integration(
         name,
         enabled,
         version,
@@ -63,7 +63,7 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_log(
     level: ddtelemetry::data::LogLevel,
     stack_trace: ffi::CharSlice,
 ) -> MaybeError {
-    crate::try_c!(handle.add_log(
+    ffi::try_c!(handle.add_log(
         indentifier.as_bytes(),
         message.to_utf8_lossy().into_owned(),
         level,
@@ -76,7 +76,7 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_log(
 
 #[no_mangle]
 pub extern "C" fn ddog_telemetry_handle_start(handle: &TelemetryWorkerHandle) -> MaybeError {
-    crate::try_c!(handle.send_start());
+    ffi::try_c!(handle.send_start());
     MaybeError::None
 }
 
@@ -89,7 +89,7 @@ pub extern "C" fn ddog_telemetry_handle_clone(
 
 #[no_mangle]
 pub extern "C" fn ddog_telemetry_handle_stop(handle: &TelemetryWorkerHandle) -> MaybeError {
-    crate::try_c!(handle.send_stop());
+    ffi::try_c!(handle.send_stop());
     MaybeError::None
 }
 
@@ -120,7 +120,7 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_point(
     context_key: &ContextKey,
     value: f64,
 ) -> MaybeError {
-    crate::try_c!(handle.add_point(value, context_key, Vec::new()));
+    ffi::try_c!(handle.add_point(value, context_key, Vec::new()));
     MaybeError::None
 }
 
@@ -132,7 +132,7 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_point_with_tags(
     value: f64,
     extra_tags: ffi::Vec<Tag>,
 ) -> MaybeError {
-    crate::try_c!(handle.add_point(value, context_key, extra_tags.into()));
+    ffi::try_c!(handle.add_point(value, context_key, extra_tags.into()));
     MaybeError::None
 }
 
