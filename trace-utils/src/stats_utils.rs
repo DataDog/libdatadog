@@ -62,7 +62,7 @@ pub async fn send_stats_payload(
         .body(Body::from(data.clone()))?;
 
     let https = HttpsConnectorBuilder::new()
-        .with_native_roots()
+        .with_native_roots()?
         .https_only()
         .enable_http1()
         .build();
