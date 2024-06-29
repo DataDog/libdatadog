@@ -32,7 +32,7 @@ pub fn get_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<UnixListe
     Ok(unix_listener)
 }
 
-pub fn reciever_entry_point_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<()> {
+pub fn receiver_entry_point_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<()> {
     let listener = get_unix_socket(socket_path)?;
     let (unix_stream, _) = listener.accept()?;
     let stream = BufReader::new(unix_stream);
