@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::env;
+
 pub use cc_utils::cc;
 
 fn main() {
@@ -13,7 +15,7 @@ fn main() {
         .flag("-std=c99")
         .emit_rerun_if_env_changed(true);
 
-    if !cfg!(target_os = "windows") {
+    if !env::var("TARGET").unwrap().contains("windows") {
         builder.link_dynamically("dl");
         if cfg!(target_os = "linux") {
             builder.flag("-Wl,--no-as-needed");
@@ -28,7 +30,7 @@ fn main() {
 
     builder.try_compile_executable("trampoline.bin").unwrap();
 
-    if !cfg!(target_os = "windows") {
+    if !env::var("TARGET").unwrap().contains("windows")  {
         cc_utils::ImprovedBuild::new()
             .file("src/ld_preload_trampoline.c")
             .link_dynamically("dl")
