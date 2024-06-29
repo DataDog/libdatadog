@@ -2,7 +2,7 @@
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use datadog_live_debugger::debugger_defs::SnapshotEvaluationError;
-use datadog_live_debugger::{DslString, ProbeCondition, ProbeValue};
+use datadog_live_debugger::{DslString, ProbeCondition, ProbeValue, ResultError, ResultValue};
 use ddcommon_ffi::slice::AsBytes;
 use ddcommon_ffi::CharSlice;
 use std::borrow::Cow;
@@ -33,6 +33,10 @@ impl<'a> From<&'a datadog_live_debugger::IntermediateValue<'a, c_void>> for Inte
     }
 }
 
+pub const EVALUATOR_RESULT_UNDEFINED: *const c_void = 0isize as *const c_void;
+pub const EVALUATOR_RESULT_INVALID: *const c_void = -1isize as *const c_void;
+pub const EVALUATOR_RESULT_REDACTED: *const c_void = -2isize as *const c_void;
+
 #[repr(C)]
 pub struct VoidCollection {
     pub count: isize, // set to < 0 on error
@@ -50,17 +54,17 @@ pub struct Evaluator {
     pub greater_or_equals:
         for<'a> extern "C" fn(&'a mut c_void, IntermediateValue<'a>, IntermediateValue<'a>) -> bool,
     pub fetch_identifier:
-        for<'a, 'b> extern "C" fn(&'a mut c_void, &CharSlice<'b>) -> Option<&'static c_void>, /* special values: @duration, @return, @exception */
+        for<'a, 'b> extern "C" fn(&'a mut c_void, &CharSlice<'b>) -> *const c_void, /* special values: @duration, @return, @exception */
     pub fetch_index: for<'a, 'b> extern "C" fn(
         &'a mut c_void,
         &'a c_void,
         IntermediateValue<'b>,
-    ) -> Option<&'static c_void>,
+    ) -> *const c_void,
     pub fetch_nested: for<'a, 'b> extern "C" fn(
         &'a mut c_void,
         &'a c_void,
         IntermediateValue<'b>,
-    ) -> Option<&'static c_void>,
+    ) -> *const c_void,
     pub length: for<'a> extern "C" fn(&'a mut c_void, &'a c_void) -> usize,
     pub try_enumerate: for<'a> extern "C" fn(&'a mut c_void, &'a c_void) -> VoidCollection,
     pub stringify: for<'a> extern "C" fn(&'a mut c_void, &'a c_void) -> CharSlice<'static>,
@@ -82,6 +86,15 @@ impl<'e> EvalCtx<'e> {
             context,
             eval: unsafe { FFI_EVALUATOR.as_ref().unwrap() },
         }
+    }
+}
+
+fn to_fetch_result<'e>(value: *const c_void) -> ResultValue<&'e c_void> {
+    match value {
+        EVALUATOR_RESULT_UNDEFINED => Err(ResultError::Undefined),
+        EVALUATOR_RESULT_INVALID => Err(ResultError::Invalid),
+        EVALUATOR_RESULT_REDACTED => Err(ResultError::Redacted),
+        _ => Ok(unsafe { &*value }),
     }
 }
 
@@ -110,34 +123,49 @@ impl<'e> datadog_live_debugger::Evaluator<'e, c_void> for EvalCtx<'e> {
         (self.eval.greater_or_equals)(self.context, (&a).into(), (&b).into())
     }
 
-    fn fetch_identifier(&mut self, identifier: &str) -> Option<&'e c_void> {
-        (self.eval.fetch_identifier)(self.context, &CharSlice::from(identifier))
+    fn fetch_identifier(&mut self, identifier: &str) -> ResultValue<&'e c_void> {
+        to_fetch_result((self.eval.fetch_identifier)(
+            self.context,
+            &CharSlice::from(identifier),
+        ))
     }
 
     fn fetch_index(
         &mut self,
         value: &'e c_void,
         index: datadog_live_debugger::IntermediateValue<'e, c_void>,
-    ) -> Option<&'e c_void> {
-        (self.eval.fetch_index)(self.context, value, (&index).into())
+    ) -> ResultValue<&'e c_void> {
+        to_fetch_result((self.eval.fetch_index)(
+            self.context,
+            value,
+            (&index).into(),
+        ))
     }
 
     fn fetch_nested(
         &mut self,
         value: &'e c_void,
         member: datadog_live_debugger::IntermediateValue<'e, c_void>,
-    ) -> Option<&'e c_void> {
-        (self.eval.fetch_nested)(self.context, value, (&member).into())
+    ) -> ResultValue<&'e c_void> {
+        to_fetch_result((self.eval.fetch_nested)(
+            self.context,
+            value,
+            (&member).into(),
+        ))
     }
 
     fn length(&mut self, value: &'e c_void) -> usize {
         (self.eval.length)(self.context, value)
     }
 
-    fn try_enumerate(&mut self, value: &'e c_void) -> Option<Vec<&'e c_void>> {
+    fn try_enumerate(&mut self, value: &'e c_void) -> ResultValue<Vec<&'e c_void>> {
         let collection = (self.eval.try_enumerate)(self.context, value);
         if collection.count < 0 {
-            None
+            Err(if collection.count == EVALUATOR_RESULT_REDACTED as isize {
+                ResultError::Redacted
+            } else {
+                ResultError::Invalid
+            })
         } else {
             // We need to copy, Vec::from_raw_parts with only free in the allocator would be
             // unstable...
@@ -149,7 +177,7 @@ impl<'e> datadog_live_debugger::Evaluator<'e, c_void> for EvalCtx<'e> {
                 ))
             };
             (collection.free)(collection);
-            Some(vec)
+            Ok(vec)
         }
     }
 
@@ -161,12 +189,12 @@ impl<'e> datadog_live_debugger::Evaluator<'e, c_void> for EvalCtx<'e> {
         (self.eval.get_string)(self.context, value).to_utf8_lossy()
     }
 
-    fn convert_index(&mut self, value: &'e c_void) -> Option<usize> {
+    fn convert_index(&mut self, value: &'e c_void) -> ResultValue<usize> {
         let index = (self.eval.convert_index)(self.context, value);
-        if index < 0 {
-            None
-        } else {
-            Some(index as usize)
+        match index as *const c_void {
+            EVALUATOR_RESULT_INVALID => Err(ResultError::Invalid),
+            EVALUATOR_RESULT_REDACTED => Err(ResultError::Redacted),
+            _ => Ok(index as usize),
         }
     }
 

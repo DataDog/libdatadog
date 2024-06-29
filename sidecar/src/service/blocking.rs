@@ -8,6 +8,7 @@ use super::{
 use crate::dogstatsd::DogStatsDAction;
 use datadog_ipc::platform::{Channel, FileBackedHandle, ShmHandle};
 use datadog_ipc::transport::blocking::BlockingTransport;
+use ddcommon::tag::Tag;
 use serde::Serialize;
 use std::sync::Mutex;
 use std::{
@@ -16,7 +17,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tracing::info;
-use ddcommon::tag::Tag;
 
 /// `SidecarTransport` is a wrapper around a BlockingTransport struct from the `datadog_ipc` crate
 /// that handles transparent reconnection.

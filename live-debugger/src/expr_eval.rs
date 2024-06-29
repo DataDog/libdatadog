@@ -61,6 +61,14 @@ impl<'a, I> Clone for IntermediateValue<'a, I> {
     }
 }
 
+pub enum ResultError {
+    Undefined,
+    Invalid,
+    Redacted,
+}
+
+pub type ResultValue<T> = Result<T, ResultError>;
+
 pub trait Evaluator<'e, I> {
     fn equals(&mut self, a: IntermediateValue<'e, I>, b: IntermediateValue<'e, I>) -> bool;
     fn greater_than(&mut self, a: IntermediateValue<'e, I>, b: IntermediateValue<'e, I>) -> bool;
@@ -69,28 +77,39 @@ pub trait Evaluator<'e, I> {
         a: IntermediateValue<'e, I>,
         b: IntermediateValue<'e, I>,
     ) -> bool;
-    fn fetch_identifier(&mut self, identifier: &str) -> Option<&'e I>; // special values: @duration, @return, @exception
-    fn fetch_index(&mut self, value: &'e I, index: IntermediateValue<'e, I>) -> Option<&'e I>;
-    fn fetch_nested(&mut self, value: &'e I, member: IntermediateValue<'e, I>) -> Option<&'e I>;
+    fn fetch_identifier(&mut self, identifier: &str) -> ResultValue<&'e I>; // special values: @duration, @return, @exception
+    fn fetch_index(&mut self, value: &'e I, index: IntermediateValue<'e, I>) -> ResultValue<&'e I>;
+    fn fetch_nested(
+        &mut self,
+        value: &'e I,
+        member: IntermediateValue<'e, I>,
+    ) -> ResultValue<&'e I>;
     fn length(&mut self, value: &'e I) -> usize;
-    fn try_enumerate(&mut self, value: &'e I) -> Option<Vec<&'e I>>;
+    fn try_enumerate(&mut self, value: &'e I) -> ResultValue<Vec<&'e I>>;
     fn stringify(&mut self, value: &'e I) -> Cow<'e, str>; // generic string representation
     fn get_string(&mut self, value: &'e I) -> Cow<'e, str>; // log output-formatted string
-    fn convert_index(&mut self, value: &'e I) -> Option<usize>;
+    fn convert_index(&mut self, value: &'e I) -> ResultValue<usize>;
     fn instanceof(&mut self, value: &'e I, class: &'e str) -> bool;
 }
 
-enum UndefFetch<'a, I> {
+enum InvalidFetch<'a, I> {
     NoIterator,
-    Identifier(&'a String),
+    Identifier(ResultError, &'a String),
     Index(
+        ResultError,
         &'a CollectionSource,
         &'a Value,
         &'a I,
         IntermediateValue<'a, I>,
     ),
     IndexEvaluated(&'a CollectionSource, &'a Value, Vec<&'a I>, usize),
-    Nested(&'a Reference, &'a Value, &'a I, IntermediateValue<'a, I>),
+    Nested(
+        ResultError,
+        &'a Reference,
+        &'a Value,
+        &'a I,
+        IntermediateValue<'a, I>,
+    ),
 }
 
 #[derive(Debug)]
@@ -103,25 +122,40 @@ impl EvErr {
 
     pub fn refed<'a, 'e, I, E: Evaluator<'e, I>>(
         eval: &mut Eval<'a, 'e, I, E>,
-        reference: UndefFetch<'e, I>,
+        reference: InvalidFetch<'e, I>,
     ) -> Self {
+        fn fetch_mode(e: ResultError) -> &'static str {
+            match e {
+                ResultError::Undefined => "fetch",
+                ResultError::Invalid => "read invalid",
+                ResultError::Redacted => "read redacted",
+            }
+        }
         EvErr(match reference {
-            UndefFetch::NoIterator => "Attempted to use @it in non-iterator context".to_string(),
-            UndefFetch::Identifier(reference) => format!("Could not fetch {reference}"),
-            UndefFetch::Index(source, dim, base, index) => {
+            InvalidFetch::NoIterator => "Attempted to use @it in non-iterator context".to_string(),
+            InvalidFetch::Identifier(e, reference) => {
+                format!("Could not {} variable {reference}", fetch_mode(e))
+            }
+            InvalidFetch::Index(e, source, dim, base, index) => {
                 if matches!(
                     dim,
                     Value::String(StringSource::String(_)) | Value::Number(NumberSource::Number(_))
                 ) {
                     format!(
-                        "Could not fetch index {dim} on {source} (evaluated to {})",
+                        "Could not {} index {dim} on {source} (evaluated to {})",
+                        fetch_mode(e),
                         eval.iref_string(base)
                     )
                 } else {
-                    format!("Could not fetch index {dim} (evaluated to {}) on {source} (evaluated to {})", eval.get_string(index), eval.iref_string(base))
+                    format!(
+                        "Could not {} index {dim} (evaluated to {}) on {source} (evaluated to {})",
+                        fetch_mode(e),
+                        eval.get_string(index),
+                        eval.iref_string(base)
+                    )
                 }
             }
-            UndefFetch::IndexEvaluated(source, dim, vec, index) => {
+            InvalidFetch::IndexEvaluated(source, dim, vec, index) => {
                 let first_entries: Vec<_> = vec
                     .into_iter()
                     .take(5)
@@ -139,17 +173,18 @@ impl EvErr {
                     format!("Could not fetch index {dim} (evaluated to {index}) on {source} (evaluated to [{}])", first_entries.join(", "))
                 }
             }
-            UndefFetch::Nested(source, prop, base, nested) => {
+            InvalidFetch::Nested(e, source, prop, base, nested) => {
                 if matches!(
                     prop,
                     Value::String(StringSource::String(_)) | Value::Number(NumberSource::Number(_))
                 ) {
                     format!(
-                        "Could not fetch property {prop} on {source} (evaluated to {})",
+                        "Could not {} property {prop} on {source} (evaluated to {})",
+                        fetch_mode(e),
                         eval.iref_string(base)
                     )
                 } else {
-                    format!("Could not fetch property {prop} (evaluated to {}) on {source} (evaluated to {})", eval.get_string(nested), eval.iref_string(base))
+                    format!("Could not {} property {prop} (evaluated to {}) on {source} (evaluated to {})", fetch_mode(e), eval.get_string(nested), eval.iref_string(base))
                 }
             }
         })
@@ -158,7 +193,7 @@ impl EvErr {
 
 type EvalResult<T> = Result<T, EvErr>;
 
-struct DefOrUndefRef<'a, I>(Result<&'a I, UndefFetch<'a, I>>);
+struct DefOrUndefRef<'a, I>(Result<&'a I, InvalidFetch<'a, I>>);
 
 impl<'e, I> DefOrUndefRef<'e, I> {
     pub fn into_imm(self) -> InternalImm<'e, I> {
@@ -181,7 +216,7 @@ impl<'e, I> DefOrUndefRef<'e, I> {
 
 enum InternalImm<'a, I> {
     Def(IntermediateValue<'a, I>),
-    Undef(UndefFetch<'a, I>),
+    Undef(InvalidFetch<'a, I>),
 }
 
 impl<'e, I> InternalImm<'e, I> {
@@ -245,12 +280,14 @@ impl<'a, 'e, I, E: Evaluator<'e, I>> Eval<'a, 'e, I, E> {
             IntermediateValue::Bool(_) => Err(EvErr::str("Cannot take index of boolean")),
             IntermediateValue::Null => Ok(0),
             IntermediateValue::Referenced(referenced) => {
-                self.eval
-                    .convert_index(referenced)
-                    .ok_or(EvErr::str(format!(
+                self.eval.convert_index(referenced).map_err(|e| match e {
+                    ResultError::Invalid => EvErr::str(format!(
                         "Cannot convert {} to an index",
                         self.iref_string(referenced)
-                    )))
+                    )),
+                    ResultError::Redacted => EvErr::str("Could not evaluate redacted value"),
+                    _ => unreachable!("Invalid ResultError for convert_index"),
+                })
             }
         }
     }
@@ -290,21 +327,25 @@ impl<'a, 'e, I, E: Evaluator<'e, I>> Eval<'a, 'e, I, E> {
 
     fn reference_collection(&mut self, reference: &'e Reference) -> EvalResult<Vec<&'e I>> {
         let immediate = self.reference(reference)?.try_use(self)?;
-        self.eval.try_enumerate(immediate).ok_or_else(|| {
-            EvErr::str(format!(
+        self.eval.try_enumerate(immediate).map_err(|e| match e {
+            ResultError::Invalid => EvErr::str(format!(
                 "Cannot enumerate non iterable type: {reference}; evaluating to: {}",
                 self.iref_string(immediate)
-            ))
+            )),
+            ResultError::Redacted => {
+                EvErr::str(format!("Cannot enumerate redacted value {reference}"))
+            }
+            _ => unreachable!("Invalid ResultError for try_enumerate"),
         })
     }
 
     fn reference(&mut self, reference: &'e Reference) -> EvalResult<DefOrUndefRef<'e, I>> {
         Ok(DefOrUndefRef(match reference {
-            Reference::IteratorVariable => self.it.ok_or(UndefFetch::NoIterator),
+            Reference::IteratorVariable => self.it.ok_or(InvalidFetch::NoIterator),
             Reference::Base(ref identifier) => self
                 .eval
                 .fetch_identifier(identifier.as_str())
-                .ok_or(UndefFetch::Identifier(identifier)),
+                .map_err(|e| InvalidFetch::Identifier(e, identifier)),
             Reference::Index(ref boxed) => {
                 let (source, dimension) = &**boxed;
                 let dimension_val = self.value(dimension)?.try_use(self)?;
@@ -317,19 +358,22 @@ impl<'a, 'e, I, E: Evaluator<'e, I>> Eval<'a, 'e, I, E> {
                         if index < vec.len() {
                             Ok(vec[index])
                         } else {
-                            Err(UndefFetch::IndexEvaluated(source, dimension, vec, index))
+                            Err(InvalidFetch::IndexEvaluated(source, dimension, vec, index))
                         }
                     }
                     CollectionSource::Reference(ref reference) => {
                         self.reference(reference)?.0.and_then(|reference_val| {
                             self.eval
                                 .fetch_index(reference_val, dimension_val.clone())
-                                .ok_or(UndefFetch::Index(
-                                    source,
-                                    dimension,
-                                    reference_val,
-                                    dimension_val,
-                                ))
+                                .map_err(|e| {
+                                    InvalidFetch::Index(
+                                        e,
+                                        source,
+                                        dimension,
+                                        reference_val,
+                                        dimension_val,
+                                    )
+                                })
                         })
                     }
                 }
@@ -340,7 +384,9 @@ impl<'a, 'e, I, E: Evaluator<'e, I>> Eval<'a, 'e, I, E> {
                 self.reference(source)?.0.and_then(|source_val| {
                     self.eval
                         .fetch_nested(source_val, member_val.clone())
-                        .ok_or(UndefFetch::Nested(source, member, source_val, member_val))
+                        .map_err(|e| {
+                            InvalidFetch::Nested(e, source, member, source_val, member_val)
+                        })
                 })
             }
         }))
@@ -572,7 +618,7 @@ mod tests {
     };
     use crate::{
         eval_condition, eval_intermediate_to_string, eval_string, eval_value, DslString, Evaluator,
-        IntermediateValue, ProbeCondition, ProbeValue,
+        IntermediateValue, ProbeCondition, ProbeValue, ResultError, ResultValue,
     };
     use std::borrow::Cow;
     use std::cmp::Ordering;
@@ -634,39 +680,39 @@ mod tests {
             Val::from(a) >= b.into()
         }
 
-        fn fetch_identifier(&mut self, identifier: &str) -> Option<&'e Val> {
-            self.variables.get(identifier)
+        fn fetch_identifier(&mut self, identifier: &str) -> ResultValue<&'e Val> {
+            self.variables.get(identifier).ok_or(ResultError::Undefined)
         }
 
         fn fetch_index(
             &mut self,
             value: &'e Val,
             index: IntermediateValue<'e, Val>,
-        ) -> Option<&'e Val> {
+        ) -> ResultValue<&'e Val> {
             if let Val::Vec(vec) = value {
                 if let Val::Num(idx) = index.into() {
                     let idx = idx as usize;
                     if idx < vec.len() {
-                        return Some(&vec[idx]);
+                        return Ok(&vec[idx]);
                     }
                 }
             }
 
-            None
+            Err(ResultError::Undefined)
         }
 
         fn fetch_nested(
             &mut self,
             value: &'e Val,
             member: IntermediateValue<'e, Val>,
-        ) -> Option<&'e Val> {
+        ) -> ResultValue<&'e Val> {
             if let Val::Obj(obj) = value {
                 if let Val::Str(str) = member.into() {
-                    return obj.0.get(&str);
+                    return obj.0.get(&str).ok_or(ResultError::Undefined);
                 }
             }
 
-            None
+            Err(ResultError::Undefined)
         }
 
         fn length(&mut self, value: &'e Val) -> usize {
@@ -680,11 +726,11 @@ mod tests {
             }
         }
 
-        fn try_enumerate(&mut self, value: &'e Val) -> Option<Vec<&'e Val>> {
+        fn try_enumerate(&mut self, value: &'e Val) -> ResultValue<Vec<&'e Val>> {
             match value {
-                Val::Vec(v) => Some(v.iter().collect()),
-                Val::Obj(o) => Some(o.0.values().collect()),
-                _ => None,
+                Val::Vec(v) => Ok(v.iter().collect()),
+                Val::Obj(o) => Ok(o.0.values().collect()),
+                _ => Err(ResultError::Undefined),
             }
         }
 
@@ -719,11 +765,11 @@ mod tests {
             }
         }
 
-        fn convert_index(&mut self, value: &'e Val) -> Option<usize> {
+        fn convert_index(&mut self, value: &'e Val) -> ResultValue<usize> {
             if let Val::Num(n) = value {
-                Some(*n as usize)
+                Ok(*n as usize)
             } else {
-                None
+                Err(ResultError::Undefined)
             }
         }
 
@@ -861,7 +907,7 @@ mod tests {
         assert_cond_err!(
             vars,
             Condition::IsEmptyReference(Reference::Base("foo".to_string())),
-            "Could not fetch foo"
+            "Could not fetch variable foo"
         );
         assert_cond_err!(
             vars,
@@ -869,7 +915,7 @@ mod tests {
                 Reference::Base("foo".to_string()),
                 string("bar")
             )))),
-            "Could not fetch foo"
+            "Could not fetch variable foo"
         );
         assert_cond_err!(
             vars,
@@ -882,7 +928,7 @@ mod tests {
         assert_cond_err!(
             vars,
             Condition::IsEmptyReference(Reference::Index(Box::new((vecvar("foo"), num(0.))))),
-            "Could not fetch foo"
+            "Could not fetch variable foo"
         );
         assert_cond_err!(
             vars,
