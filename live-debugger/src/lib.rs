@@ -7,8 +7,10 @@ mod parse_json;
 mod probe_defs;
 
 pub mod debugger_defs;
+mod redacted_names;
 pub mod sender;
 
 pub use expr_eval::*;
 pub use parse_json::parse as parse_json;
 pub use probe_defs::*;
+pub use redacted_names::*;

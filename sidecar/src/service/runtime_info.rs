@@ -6,17 +6,18 @@ use crate::service::{
     telemetry::{AppInstance, AppOrQueue},
     InstanceId, QueueId,
 };
+use datadog_live_debugger::sender::generate_tags;
+use ddcommon::tag::Tag;
 use futures::{
     future::{self, join_all, Shared},
     FutureExt,
 };
 use manual_future::{ManualFuture, ManualFutureCompleter};
+use simd_json::prelude::ArrayTrait;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::{Arc, Mutex, MutexGuard};
-use simd_json::prelude::ArrayTrait;
 use tracing::{debug, info};
-use datadog_live_debugger::sender::generate_tags;
 
 type AppMap = HashMap<(String, String), Shared<ManualFuture<Option<AppInstance>>>>;
 
@@ -149,13 +150,24 @@ impl RuntimeInfo {
     /// * `queue_id` - The unique identifier for the trace context.
     ///
     /// # Returns
-    /// 
-    /// * `Arc<String>` - A percent encoded string to be passed to datadog_live_debugger::sender::send.
-    pub fn get_debugger_tags(&mut self, debugger_version: &dyn Display, queue_id: QueueId) -> Arc<String> {
+    ///
+    /// * `Arc<String>` - A percent encoded string to be passed to
+    ///   datadog_live_debugger::sender::send.
+    pub fn get_debugger_tags(
+        &mut self,
+        debugger_version: &dyn Display,
+        queue_id: QueueId,
+    ) -> Arc<String> {
         if let Some(app) = self.lock_applications().get_mut(&queue_id) {
             if let Some(env) = &app.env {
                 if let Some(version) = &app.app_version {
-                    let tags = Arc::new(generate_tags(debugger_version, env, version, &self.instance_id.runtime_id, &mut app.global_tags.iter()));
+                    let tags = Arc::new(generate_tags(
+                        debugger_version,
+                        env,
+                        version,
+                        &self.instance_id.runtime_id,
+                        &mut app.global_tags.iter(),
+                    ));
                     app.live_debugger_tag_cache = Some(tags.clone());
                     return tags;
                 }

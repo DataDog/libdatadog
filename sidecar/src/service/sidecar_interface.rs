@@ -121,7 +121,11 @@ pub trait SidecarInterface {
     /// * `instance_id` - The ID of the instance.
     /// * `queue_id` - The unique identifier for the trace context.
     /// * `handle` - The data to send.
-    async fn send_debugger_data_shm(instance_id: InstanceId, queue_id: QueueId, #[SerializedHandle] handle: ShmHandle);
+    async fn send_debugger_data_shm(
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        #[SerializedHandle] handle: ShmHandle,
+    );
 
     /// Sets contextual data for the remote config client.
     ///

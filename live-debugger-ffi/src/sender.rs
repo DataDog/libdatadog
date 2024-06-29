@@ -1,16 +1,16 @@
 use crate::send_data::serialize_debugger_payload;
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_live_debugger::sender;
+use datadog_live_debugger::sender::generate_tags;
+use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddcommon_ffi::slice::AsBytes;
 use ddcommon_ffi::{CharSlice, MaybeError};
 use log::warn;
+use percent_encoding::{percent_encode, CONTROLS};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use percent_encoding::{CONTROLS, percent_encode};
 use tokio::sync::mpsc;
-use datadog_live_debugger::sender::generate_tags;
-use ddcommon::tag::Tag;
 
 macro_rules! try_c {
     ($failable:expr) => {
@@ -40,7 +40,11 @@ enum SendData {
     Wrapped(OwnedCharSlice),
 }
 
-async fn sender_routine(endpoint: Arc<Endpoint>, tags: String, mut receiver: mpsc::Receiver<SendData>) {
+async fn sender_routine(
+    endpoint: Arc<Endpoint>,
+    tags: String,
+    mut receiver: mpsc::Receiver<SendData>,
+) {
     let tags = Arc::new(tags);
     loop {
         let data = match receiver.recv().await {
@@ -69,8 +73,20 @@ pub struct SenderHandle {
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_live_debugger_build_tags(debugger_version: CharSlice, env: CharSlice, version: CharSlice, runtime_id: CharSlice, global_tags: ddcommon_ffi::Vec<Tag>) -> Box<String> {
-    Box::new(generate_tags(&debugger_version.to_utf8_lossy(), &env.to_utf8_lossy(), &version.to_utf8_lossy(), &runtime_id.to_utf8_lossy(), &mut global_tags.into_iter()))
+pub extern "C" fn ddog_live_debugger_build_tags(
+    debugger_version: CharSlice,
+    env: CharSlice,
+    version: CharSlice,
+    runtime_id: CharSlice,
+    global_tags: ddcommon_ffi::Vec<Tag>,
+) -> Box<String> {
+    Box::new(generate_tags(
+        &debugger_version.to_utf8_lossy(),
+        &env.to_utf8_lossy(),
+        &version.to_utf8_lossy(),
+        &runtime_id.to_utf8_lossy(),
+        &mut global_tags.into_iter(),
+    ))
 }
 
 #[no_mangle]

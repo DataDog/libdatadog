@@ -823,12 +823,16 @@ impl SidecarInterface for SidecarServer {
         if let Some(endpoint) = session.get_debugger_config().endpoint.clone() {
             let mut runtime = session.get_runtime(&instance_id.runtime_id);
             let invariants = session.get_remote_config_invariants();
-            let version = invariants.as_ref().map(|i| i.tracer_version.as_str()).unwrap_or("0.0.0");
+            let version = invariants
+                .as_ref()
+                .map(|i| i.tracer_version.as_str())
+                .unwrap_or("0.0.0");
             let tags = runtime.get_debugger_tags(&version, queue_id);
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
-                        self.send_debugger_data(mapped.as_slice(), &endpoint, tags.as_str()).await;
+                        self.send_debugger_data(mapped.as_slice(), &endpoint, tags.as_str())
+                            .await;
                     }
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                 }
@@ -867,7 +871,8 @@ impl SidecarInterface for SidecarServer {
         let runtime_info = session.get_runtime(&instance_id.runtime_id);
         let mut applications = runtime_info.lock_applications();
         let app = applications.entry(queue_id).or_default();
-        app.remote_config_guard = Some(self.remote_configs.add_runtime(
+        app.remote_config_guard = Some(
+            self.remote_configs.add_runtime(
                 session
                     .get_remote_config_invariants()
                     .as_ref()
@@ -878,7 +883,8 @@ impl SidecarInterface for SidecarServer {
                 env_name.clone(),
                 service_name,
                 app_version.clone(),
-            ));
+            ),
+        );
         app.set_metadata(env_name, app_version, global_tags);
 
         no_response()

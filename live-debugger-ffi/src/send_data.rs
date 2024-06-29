@@ -12,6 +12,9 @@ use datadog_live_debugger::debugger_defs::{
     Fields, Snapshot, SnapshotEvaluationError, Value as DebuggerValueAlias,
 };
 use datadog_live_debugger::sender::generate_new_id;
+use datadog_live_debugger::{
+    add_redacted_name, add_redacted_type, is_redacted_name, is_redacted_type,
+};
 use ddcommon_ffi::slice::AsBytes;
 
 #[repr(C)]
@@ -211,6 +214,28 @@ pub unsafe extern "C" fn ddog_snapshot_exit<'a>(
             .as_mut()
             .unwrap(),
     )
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_snapshot_redacted_name(name: CharSlice) -> bool {
+    is_redacted_name(name.as_bytes())
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_snapshot_add_redacted_name(name: CharSlice) {
+    add_redacted_name(name.as_bytes())
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_snapshot_redacted_type(name: CharSlice) -> bool {
+    is_redacted_type(name.as_bytes())
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_snapshot_add_redacted_type(name: CharSlice) {
+    add_redacted_type(name.as_bytes())
 }
 
 #[no_mangle]

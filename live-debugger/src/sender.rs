@@ -1,19 +1,19 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::fmt::Display;
 use crate::debugger_defs::DebuggerPayload;
 use ddcommon::connector::Connector;
+use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use hyper::http::uri::PathAndQuery;
 use hyper::{Body, Client, Method, Uri};
+use percent_encoding::{percent_encode, CONTROLS};
 use serde::Serialize;
+use std::fmt::Display;
 use std::hash::Hash;
 use std::str::FromStr;
 use std::sync::Arc;
-use percent_encoding::{CONTROLS, percent_encode};
 use uuid::Uuid;
-use ddcommon::tag::Tag;
 
 pub const PROD_INTAKE_SUBDOMAIN: &str = "http-intake.logs";
 
@@ -47,8 +47,16 @@ pub fn encode<S: Eq + Hash + Serialize>(data: Vec<DebuggerPayload>) -> Vec<u8> {
     serde_json::to_vec(&data).unwrap()
 }
 
-pub fn generate_tags(debugger_version: &dyn Display, env: &dyn Display, version: &dyn Display, runtime_id: &dyn Display, custom_tags: &mut dyn Iterator<Item=&Tag>) -> String {
-    let mut tags = format!("debugger_version:{debugger_version},env:{env},version:{version},runtime_id:{runtime_id}");
+pub fn generate_tags(
+    debugger_version: &dyn Display,
+    env: &dyn Display,
+    version: &dyn Display,
+    runtime_id: &dyn Display,
+    custom_tags: &mut dyn Iterator<Item = &Tag>,
+) -> String {
+    let mut tags = format!(
+        "debugger_version:{debugger_version},env:{env},version:{version},runtime_id:{runtime_id}"
+    );
     if let Ok(hostname) = sys_info::hostname() {
         tags.push_str(",host_name:");
         tags.push_str(hostname.as_str());
@@ -60,7 +68,11 @@ pub fn generate_tags(debugger_version: &dyn Display, env: &dyn Display, version:
     percent_encode(tags.as_bytes(), CONTROLS).to_string()
 }
 
-pub async fn send(payload: &[u8], endpoint: &Endpoint, percent_encoded_tags: &str) -> anyhow::Result<()> {
+pub async fn send(
+    payload: &[u8],
+    endpoint: &Endpoint,
+    percent_encoded_tags: &str,
+) -> anyhow::Result<()> {
     let mut req = hyper::Request::builder()
         .header(
             hyper::header::USER_AGENT,
@@ -75,7 +87,11 @@ pub async fn send(payload: &[u8], endpoint: &Endpoint, percent_encoded_tags: &st
     }
 
     let mut parts = url.into_parts();
-    let query = format!("{}?ddtags={}", parts.path_and_query.unwrap(), percent_encoded_tags);
+    let query = format!(
+        "{}?ddtags={}",
+        parts.path_and_query.unwrap(),
+        percent_encoded_tags
+    );
     parts.path_and_query = Some(PathAndQuery::from_str(&query)?);
     url = Uri::from_parts(parts)?;
 

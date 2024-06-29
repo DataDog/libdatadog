@@ -665,7 +665,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_remote_config_data(
     service_name: ffi::CharSlice,
     env_name: ffi::CharSlice,
     app_version: ffi::CharSlice,
-    global_tags: ddcommon_ffi::Vec<Tag>,
+    global_tags: &ddcommon_ffi::Vec<Tag>,
 ) -> MaybeError {
     try_c!(blocking::set_remote_config_data(
         transport,
@@ -674,7 +674,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_remote_config_data(
         service_name.to_utf8_lossy().into(),
         env_name.to_utf8_lossy().into(),
         app_version.to_utf8_lossy().into(),
-        global_tags.into(),
+        global_tags.to_vec(),
     ));
 
     MaybeError::None
