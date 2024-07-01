@@ -1,13 +1,15 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Extract the entity id and container id
+//! Extract the entity id, container id and external env
 //!
 //! The container id can be extracted from `/proc/self/group`
 //!
 //! The entity id is one of:
 //! - `cid:<container id>` if available
 //! - `in:<cgroup node inode>` if container id is not available (e.g. when using cgroupV2)
+//!
+//! The external env is an environment variable provided by the admission controller.
 //!
 //! # References
 //! - [DataDog/dd-trace-go](https://github.com/DataDog/dd-trace-go/blob/v1/internal/container.go)
@@ -49,6 +51,11 @@
 //! 1:name=systemd:/ecs/8cd79a803caf4d2aa945152e934a5c00/8cd79a803caf4d2aa945152e934a5c00-1053176469
 //! ```
 
+use crate::config::parse_env;
+use lazy_static::lazy_static;
+
+const EXTERNAL_ENV_ENVIRONMENT_VARIABLE: &str = "DD_EXTERNAL_ENV";
+
 /// Unix specific module allowing the use of unix specific functions
 #[cfg(unix)]
 mod unix;
@@ -75,6 +82,15 @@ pub fn get_entity_id() -> Option<&'static str> {
     {
         None
     }
+}
+
+/// Returns the `DD_EXTERNAL_ENV` if available as an env variable
+pub fn get_external_env() -> Option<&'static str> {
+    lazy_static! {
+        static ref DD_EXTERNAL_ENV: Option<String> =
+            parse_env::str_not_empty(EXTERNAL_ENV_ENVIRONMENT_VARIABLE);
+    }
+    DD_EXTERNAL_ENV.as_deref()
 }
 
 /// Set the path to cgroup file to mock it during tests

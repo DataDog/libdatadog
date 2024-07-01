@@ -23,6 +23,7 @@ pub mod header {
     use hyper::{header::HeaderName, http::HeaderValue};
     pub const DATADOG_CONTAINER_ID: HeaderName = HeaderName::from_static("datadog-container-id");
     pub const DATADOG_ENTITY_ID: HeaderName = HeaderName::from_static("datadog-entity-id");
+    pub const DATADOG_EXTERNAL_ENV: HeaderName = HeaderName::from_static("datadog-external-env");
     pub const DATADOG_API_KEY: HeaderName = HeaderName::from_static("dd-api-key");
     pub const APPLICATION_JSON: HeaderValue = HeaderValue::from_static("application/json");
 }
@@ -144,6 +145,11 @@ impl Endpoint {
         // Add the Entity Id header if available
         if let Some(entity_id) = entity_id::get_entity_id() {
             builder = builder.header(header::DATADOG_ENTITY_ID, entity_id);
+        }
+
+        // Add the External Env header if available
+        if let Some(external_env) = entity_id::get_external_env() {
+            builder = builder.header(header::DATADOG_EXTERNAL_ENV, external_env);
         }
 
         Ok(builder)
