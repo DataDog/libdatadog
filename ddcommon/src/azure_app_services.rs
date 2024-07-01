@@ -26,17 +26,16 @@ enum AzureContext {
 
 macro_rules! get_trimmed_env_var {
     ($name:expr) => {
-        env::var($name).ok().map(|v| v.trim().to_string())
+        env::var($name)
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|s| !s.is_empty())
     };
 }
 
 macro_rules! get_value_or_unknown {
     ($name:expr) => {
-        $name
-            .as_ref()
-            .map(|s| s.as_str())
-            .filter(|&s| !s.is_empty())
-            .unwrap_or(UNKNOWN_VALUE)
+        $name.as_ref().map(|s| s.as_str()).unwrap_or(UNKNOWN_VALUE)
     };
 }
 
@@ -650,11 +649,11 @@ mod tests {
     }
 
     #[test]
-    fn test_get_value_or_unknown() {
-        let none: Option<String> = None;
-        let empty_string: Option<String> = Some("".to_string());
+    fn test_get_trimmed_env_var_empty_string() {
+        env::remove_var("TEST_VAR_NONE");
+        assert_eq!(get_trimmed_env_var!("TEST_VAR_NONE"), None);
 
-        assert_eq!(get_value_or_unknown!(none), "unknown");
-        assert_eq!(get_value_or_unknown!(empty_string), "unknown");
+        env::set_var("TEST_VAR_EMPTY_STRING", "");
+        assert_eq!(get_trimmed_env_var!("TEST_VAR_EMPTY_STRING"), None);
     }
 }
