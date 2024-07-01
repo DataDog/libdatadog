@@ -4,6 +4,7 @@
 use bytes::Bytes;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils::{self, SendData, TracerHeaderTags};
+use datadog_trace_utils::tracer_payload::TraceEncoding;
 use ddcommon::{connector, Endpoint};
 use hyper::http::uri::PathAndQuery;
 use hyper::{Body, Client, Method, Uri};
@@ -227,6 +228,7 @@ impl TraceExporter {
                     &header_tags,
                     |_chunk, _root_span_index| {},
                     self.endpoint.api_key.is_some(),
+                    TraceEncoding::V07,
                 );
 
                 let endpoint = Endpoint {

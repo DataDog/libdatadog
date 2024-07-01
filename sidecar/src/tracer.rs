@@ -17,7 +17,7 @@ impl Config {
             hyper::Uri::from_str(&trace_intake_url_prefixed(&endpoint.url.to_string()))?
         } else {
             let mut parts = endpoint.url.into_parts();
-            parts.path_and_query = Some(PathAndQuery::from_static("/v0.7/traces"));
+            parts.path_and_query = Some(PathAndQuery::from_static("/v0.4/traces"));
             hyper::Uri::from_parts(parts)?
         };
         self.endpoint = Some(Endpoint {

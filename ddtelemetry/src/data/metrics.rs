@@ -21,9 +21,19 @@ pub struct Distribution {
     pub namespace: MetricNamespace,
     pub metric: String,
     pub tags: Vec<Tag>,
-    pub points: Vec<f64>,
+    #[serde(flatten)]
+    pub sketch: SerializedSketch,
     pub common: bool,
     pub interval: u64,
+    #[serde(rename = "type")]
+    pub _type: MetricType,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(untagged)]
+pub enum SerializedSketch {
+    Bytes { sketch: Vec<u8> },
+    B64 { sketch_b64: String },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
