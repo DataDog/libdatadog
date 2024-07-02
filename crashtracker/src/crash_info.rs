@@ -9,6 +9,7 @@ use chrono::{DateTime, Utc};
 use ddcommon::tag::Tag;
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
+use std::path::Path;
 use std::{collections::HashMap, fs::File, io::BufReader};
 use uuid::Uuid;
 
@@ -241,10 +242,11 @@ impl CrashInfo {
     /// Emit the CrashInfo as structured json in file `path`.
     /// SIGNAL SAFETY:
     ///     I believe but have not verified this is signal safe.
-    pub fn to_file(&self, path: &str) -> anyhow::Result<()> {
-        let file = File::create(path).with_context(|| format!("Failed to create {path}"))?;
+    pub fn to_file(&self, path: &Path) -> anyhow::Result<()> {
+        let file =
+            File::create(path).with_context(|| format!("Failed to create {}", path.display()))?;
         serde_json::to_writer_pretty(file, self)
-            .with_context(|| format!("Failed to write json to {path}"))?;
+            .with_context(|| format!("Failed to write json to {}", path.display()))?;
         Ok(())
     }
 
@@ -252,13 +254,9 @@ impl CrashInfo {
         // If we're debugging to a file, dump the actual crashinfo into a json
         if let Some(endpoint) = &config.endpoint {
             if Some("file") == endpoint.url.scheme_str() {
-                self.to_file(
-                    endpoint
-                        .url
-                        .path_and_query()
-                        .ok_or_else(|| anyhow::format_err!("empty path for upload to file"))?
-                        .as_str(),
-                )?;
+                let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
+                    .context("crash output file was not correctly formatted")?;
+                self.to_file(&path)?;
             }
         }
         self.upload_to_telemetry(config)

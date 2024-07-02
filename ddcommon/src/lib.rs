@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{borrow::Cow, ops::Deref, str::FromStr};
+use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
 
 use hyper::{
     header::HeaderValue,
@@ -95,17 +95,7 @@ pub fn parse_uri(uri: &str) -> anyhow::Result<hyper::Uri> {
     } else if let Some(path) = uri.strip_prefix("windows:") {
         encode_uri_path_in_authority("windows", path)
     } else if let Some(path) = uri.strip_prefix("file://") {
-        let mut parts = uri::Parts::default();
-        parts.scheme = uri::Scheme::from_str("file").ok();
-        parts.authority = Some(uri::Authority::from_static("localhost"));
-
-        // TODO: handle edge cases like improperly escaped url strings
-        //
-        // this is eventually user configurable field
-        // anything we can do to ensure invalid input becomes valid - will improve usability
-        parts.path_and_query = uri::PathAndQuery::from_str(path).ok();
-
-        Ok(hyper::Uri::from_parts(parts)?)
+        encode_uri_path_in_authority("file", path)
     } else {
         Ok(hyper::Uri::from_str(uri)?)
     }
@@ -120,6 +110,26 @@ fn encode_uri_path_in_authority(scheme: &str, path: &str) -> anyhow::Result<hype
     parts.authority = uri::Authority::from_str(path.as_str()).ok();
     parts.path_and_query = Some(uri::PathAndQuery::from_static(""));
     Ok(hyper::Uri::from_parts(parts)?)
+}
+
+pub fn decode_uri_path_in_authority(uri: &hyper::Uri) -> anyhow::Result<PathBuf> {
+    let path = hex::decode(
+        uri.authority()
+            .ok_or_else(|| anyhow::anyhow!("missing uri authority"))?
+            .as_str(),
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        Ok(PathBuf::from(std::ffi::OsString::from_vec(path)))
+    }
+    #[cfg(not(unix))]
+    {
+        match String::from_utf8(path) {
+            Ok(s) => Ok(PathBuf::from(s.as_str())),
+            _ => Err(anyhow::anyhow!("file uri should be utf-8")),
+        }
+    }
 }
 
 impl Endpoint {

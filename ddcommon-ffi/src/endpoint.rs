@@ -51,3 +51,28 @@ pub extern "C" fn ddog_endpoint_from_api_key_and_site(
 
 #[no_mangle]
 pub extern "C" fn ddog_endpoint_drop(_: Box<Endpoint>) {}
+
+#[cfg(test)]
+mod tests {
+    use crate::CharSlice;
+
+    use super::ddog_endpoint_from_url;
+
+    #[test]
+    fn test_ddog_endpoint_from_url() {
+        let cases = [
+            ("", false),
+            ("http:// /hey", false),
+            ("file://", false),
+            ("http://localhost:8383/hello", true),
+            ("file:/// file / with/weird chars 🤡", true),
+            ("file://./", true),
+            ("unix://./", true),
+        ];
+
+        for (input, expected) in cases {
+            let actual = ddog_endpoint_from_url(CharSlice::from(input)).is_some();
+            assert_eq!(actual, expected);
+        }
+    }
+}

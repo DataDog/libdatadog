@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use ddcommon::HttpRequestBuilder;
-use http::uri::Parts;
 use http::{Request, Response};
 use hyper::Body;
 use std::{
@@ -41,21 +40,18 @@ pub fn request_builder(c: &Config) -> anyhow::Result<HttpRequestBuilder> {
 }
 
 pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
-    if let Some(Parts {
-        scheme: Some(scheme),
-        path_and_query: Some(path),
-        ..
-    }) = c.endpoint.as_ref().map(|e| e.url.clone().into_parts())
-    {
-        if scheme.as_str() == "file" {
+    match &c.endpoint {
+        Some(e) if e.url.scheme_str() == Some("file") => {
+            let file_path = ddcommon::decode_uri_path_in_authority(&e.url)
+                .expect("file urls should always have been encoded in authority");
             return Box::new(MockClient {
                 file: Arc::new(Mutex::new(Box::new(
-                    File::create(path.path()).expect("Couldn't open mock client file"),
+                    File::create(file_path).expect("Couldn't open mock client file"),
                 ))),
             });
         }
-    }
-
+        Some(_) | None => {}
+    };
     Box::new(HyperClient {
         inner: hyper::Client::builder()
             .pool_idle_timeout(std::time::Duration::from_secs(30))

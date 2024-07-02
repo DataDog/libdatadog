@@ -6,7 +6,7 @@ use std::fmt::Write;
 use std::time::{self, SystemTime};
 
 use super::{CrashInfo, CrashtrackerConfiguration, CrashtrackerMetadata, StackFrame};
-use anyhow::Ok;
+use anyhow::{Context, Ok};
 use ddtelemetry::{
     build_host,
     data::{self, Application, LogLevel},
@@ -70,7 +70,9 @@ impl TelemetryCrashUploader {
 
             // ignore result because what are we going to do?
             let _ = if endpoint.url.scheme_str() == Some("file") {
-                cfg.set_host_from_url(&format!("file://{}.telemetry", endpoint.url.path()))
+                let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
+                    .context("file path is not valid")?;
+                cfg.set_host_from_url(&format!("file://{}.telemetry", path.display()))
             } else {
                 cfg.set_endpoint(endpoint.clone())
             };

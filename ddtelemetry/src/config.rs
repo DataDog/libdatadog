@@ -267,6 +267,8 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     #[cfg(unix)]
     use ddcommon::connector::uds;
 
@@ -388,6 +390,10 @@ mod tests {
             ("file:///absolute/path", "/absolute/path"),
             ("file://./relative/path", "./relative/path"),
             ("file://relative/path", "relative/path"),
+            (
+                "file://c://temp//with space\\foo.json",
+                "c://temp//with space\\foo.json",
+            ),
         ];
 
         for (input, expected) in cases {
@@ -405,15 +411,8 @@ mod tests {
                     .to_string()
             );
             assert_eq!(
-                expected,
-                cfg.clone()
-                    .endpoint
-                    .unwrap()
-                    .url
-                    .into_parts()
-                    .path_and_query
-                    .unwrap()
-                    .as_str()
+                Path::new(expected),
+                ddcommon::decode_uri_path_in_authority(&cfg.endpoint.unwrap().url).unwrap(),
             );
         }
     }
