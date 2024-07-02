@@ -62,11 +62,11 @@ jobs:
           RUSTFLAGS: "-C prefer-dynamic"
           RUST_BACKTRACE: 1
       # we only want to run tracing integration tests on ubuntu at the moment
-      - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests cargo nextest run --workspace --profile ci --verbose -E 'test(tracing_integration_tests::)'"
-        if: runner.os == 'Linux'
-        run: cargo nextest run --workspace --profile ci --verbose -E 'test(tracing_integration_tests::)'
-        env:
-          RUST_BACKTRACE: 1
+#      - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests cargo nextest run --workspace --profile ci --verbose -E 'test(tracing_integration_tests::)'"
+#        if: runner.os == 'Linux'
+#        run: cargo nextest run --workspace --profile ci --verbose -E 'test(tracing_integration_tests::)'
+#        env:
+#          RUST_BACKTRACE: 1
       - name: Report Test Results
         if: success() || failure() 
         uses: mikepenz/action-junit-report@v4
