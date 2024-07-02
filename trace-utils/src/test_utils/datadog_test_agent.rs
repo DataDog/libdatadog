@@ -14,6 +14,7 @@ use testcontainers::{
     runners::AsyncRunner,
     *,
 };
+// TODO: EK - Remove
 
 const TEST_AGENT_IMAGE_NAME: &str = "ghcr.io/datadog/dd-apm-test-agent/ddapm-test-agent";
 const TEST_AGENT_IMAGE_TAG: &str = "latest";
