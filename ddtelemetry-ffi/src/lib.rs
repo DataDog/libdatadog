@@ -245,12 +245,12 @@ mod tests {
                 ddog_telemetry_builder_with_endpoint_config_endpoint(
                     &mut builder,
                     &Endpoint {
-                        api_key: None,
                         url: parse_uri(&format!(
                             "file://{}",
                             f.path().as_os_str().to_str().unwrap()
                         ))
                         .unwrap(),
+                        ..Default::default()
                     },
                 ),
                 MaybeError::None
@@ -292,12 +292,12 @@ mod tests {
                 ddog_telemetry_builder_with_endpoint_config_endpoint(
                     &mut builder,
                     &Endpoint {
-                        api_key: None,
                         url: parse_uri(&format!(
                             "file://{}",
                             f.path().as_os_str().to_str().unwrap()
                         ))
                         .unwrap(),
+                        ..Default::default()
                     },
                 ),
                 MaybeError::None

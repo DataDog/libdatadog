@@ -12,7 +12,7 @@ use std::str::FromStr;
 pub extern "C" fn ddog_endpoint_from_url(url: crate::CharSlice) -> Option<Box<Endpoint>> {
     parse_uri(url.to_utf8_lossy().as_ref())
         .ok()
-        .map(|url| Box::new(Endpoint { url, api_key: None }))
+        .map(|url| Box::new(Endpoint { url, api_key: None, ..Default::default() }))
 }
 
 // We'll just specify the base site here. If api key provided, different intakes need to use their
@@ -25,6 +25,7 @@ pub extern "C" fn ddog_endpoint_from_api_key(api_key: crate::CharSlice) -> Box<E
     Box::new(Endpoint {
         url: hyper::Uri::from_parts(parts).unwrap(),
         api_key: Some(api_key.to_utf8_lossy().to_string().into()),
+        ..Default::default()
     })
 }
 
@@ -45,6 +46,7 @@ pub extern "C" fn ddog_endpoint_from_api_key_and_site(
     *endpoint = Box::into_raw(Box::new(Endpoint {
         url: hyper::Uri::from_parts(parts).unwrap(),
         api_key: Some(api_key.to_utf8_lossy().to_string().into()),
+        ..Default::default()
     }));
     None
 }

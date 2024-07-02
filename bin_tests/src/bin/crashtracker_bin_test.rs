@@ -45,7 +45,7 @@ mod unix {
         } else {
             Some(ddcommon::Endpoint {
                 url: ddcommon::parse_uri(&output_url)?,
-                api_key: None,
+                ..Default::default()
             })
         };
 

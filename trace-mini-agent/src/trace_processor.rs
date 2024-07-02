@@ -163,10 +163,12 @@ mod tests {
             trace_intake: Endpoint {
                 url: hyper::Uri::from_static("https://trace.agent.notdog.com/traces"),
                 api_key: Some("dummy_api_key".into()),
+                ..Default::default()
             },
             trace_stats_intake: Endpoint {
                 url: hyper::Uri::from_static("https://trace.agent.notdog.com/stats"),
                 api_key: Some("dummy_api_key".into()),
+                ..Default::default()
             },
             dd_site: "datadoghq.com".to_string(),
             env_type: trace_utils::EnvironmentType::CloudFunction,
