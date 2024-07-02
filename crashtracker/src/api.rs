@@ -143,7 +143,7 @@ fn test_crash() -> anyhow::Result<()> {
 
     let endpoint = Some(Endpoint {
         url: parse_uri(&output_url).unwrap(),
-        api_key: None,
+        ..Default::default()
     });
 
     let path_to_receiver_binary =

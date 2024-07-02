@@ -318,6 +318,7 @@ impl TraceExporterBuilder {
                     .as_str(),
             )?,
             api_key: None,
+            ..Default::default()
         };
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()

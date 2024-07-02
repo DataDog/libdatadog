@@ -251,6 +251,7 @@ mod tests {
                             f.path().as_os_str().to_str().unwrap()
                         ))
                         .unwrap(),
+                        ..Default::default()
                     },
                 ),
                 MaybeError::None
@@ -298,6 +299,7 @@ mod tests {
                             f.path().as_os_str().to_str().unwrap()
                         ))
                         .unwrap(),
+                        ..Default::default()
                     },
                 ),
                 MaybeError::None
