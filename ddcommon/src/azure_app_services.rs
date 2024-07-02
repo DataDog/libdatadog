@@ -14,6 +14,7 @@ const INSTANCE_NAME: &str = "COMPUTERNAME";
 const INSTANCE_ID: &str = "WEBSITE_INSTANCE_ID";
 const SERVICE_CONTEXT: &str = "DD_AZURE_APP_SERVICES";
 const FUNCTIONS_WORKER_RUNTIME: &str = "FUNCTIONS_WORKER_RUNTIME";
+const FUNCTIONS_WORKER_RUNTIME_VERSION: &str = "FUNCTIONS_WORKER_RUNTIME_VERSION";
 const FUNCTIONS_EXTENSION_VERSION: &str = "FUNCTIONS_EXTENSION_VERSION";
 
 const UNKNOWN_VALUE: &str = "unknown";
@@ -25,7 +26,10 @@ enum AzureContext {
 
 macro_rules! get_trimmed_env_var {
     ($name:expr) => {
-        env::var($name).ok().map(|v| v.trim().to_string())
+        env::var($name)
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|s| !s.is_empty())
     };
 }
 
@@ -72,6 +76,9 @@ pub struct AzureMetadata {
     instance_id: Option<String>,
     site_kind: String,
     site_type: String,
+    runtime: Option<String>,
+    runtime_version: Option<String>,
+    function_runtime_version: Option<String>,
 }
 
 impl AzureMetadata {
@@ -146,6 +153,10 @@ impl AzureMetadata {
         let instance_name = query.get_var(INSTANCE_NAME);
         let instance_id = query.get_var(INSTANCE_ID);
 
+        let runtime = query.get_var(FUNCTIONS_WORKER_RUNTIME);
+        let runtime_version = query.get_var(FUNCTIONS_WORKER_RUNTIME_VERSION);
+        let function_runtime_version = query.get_var(FUNCTIONS_EXTENSION_VERSION);
+
         Some(AzureMetadata {
             resource_id,
             subscription_id,
@@ -157,6 +168,9 @@ impl AzureMetadata {
             instance_id,
             site_kind,
             site_type,
+            runtime,
+            runtime_version,
+            function_runtime_version,
         })
     }
 
@@ -221,6 +235,18 @@ impl AzureMetadata {
 
     pub fn get_site_kind(&self) -> &str {
         self.site_kind.as_str()
+    }
+
+    pub fn get_runtime(&self) -> &str {
+        get_value_or_unknown!(self.runtime)
+    }
+
+    pub fn get_runtime_version(&self) -> &str {
+        get_value_or_unknown!(self.runtime_version)
+    }
+
+    pub fn get_function_runtime_version(&self) -> &str {
+        get_value_or_unknown!(self.function_runtime_version)
     }
 }
 
@@ -583,6 +609,9 @@ mod tests {
         let expected_operating_system = "FreeBSD".to_owned();
         let expected_instance_name = "my_instance_name".to_owned();
         let expected_instance_id = "my_instance_id".to_owned();
+        let expected_function_extension_version = "~4".to_owned();
+        let expected_runtime = "node".to_owned();
+        let expected_runtime_version = "18".to_owned();
 
         let mocked_env = MockEnv::new(&[
             (WEBSITE_SITE_NAME, expected_site_name.as_str()),
@@ -592,6 +621,15 @@ mod tests {
             (INSTANCE_NAME, expected_instance_name.as_str()),
             (INSTANCE_ID, expected_instance_id.as_str()),
             (SERVICE_CONTEXT, "1"),
+            (
+                FUNCTIONS_EXTENSION_VERSION,
+                expected_function_extension_version.as_str(),
+            ),
+            (FUNCTIONS_WORKER_RUNTIME, expected_runtime.as_str()),
+            (
+                FUNCTIONS_WORKER_RUNTIME_VERSION,
+                expected_runtime_version.as_str(),
+            ),
         ]);
 
         let metadata = AzureMetadata::new(mocked_env).unwrap();
@@ -602,5 +640,20 @@ mod tests {
         assert_eq!(expected_operating_system, metadata.get_operating_system());
         assert_eq!(expected_instance_name, metadata.get_instance_name());
         assert_eq!(expected_instance_id, metadata.get_instance_id());
+        assert_eq!(
+            expected_function_extension_version,
+            metadata.get_function_runtime_version()
+        );
+        assert_eq!(expected_runtime, metadata.get_runtime());
+        assert_eq!(expected_runtime_version, metadata.get_runtime_version());
+    }
+
+    #[test]
+    fn test_get_trimmed_env_var_empty_string() {
+        env::remove_var("TEST_VAR_NONE");
+        assert_eq!(get_trimmed_env_var!("TEST_VAR_NONE"), None);
+
+        env::set_var("TEST_VAR_EMPTY_STRING", "");
+        assert_eq!(get_trimmed_env_var!("TEST_VAR_EMPTY_STRING"), None);
     }
 }
