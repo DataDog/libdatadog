@@ -121,6 +121,7 @@ impl<'a> From<&'a datadog_live_debugger::SpanDecorationProbe> for SpanDecoration
             span_tags: tags.as_ptr(),
             span_tags_num: tags.len(),
         };
+        std::mem::forget(conditions);
         std::mem::forget(tags);
         new
     }
