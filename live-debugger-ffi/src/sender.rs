@@ -123,7 +123,7 @@ pub extern "C" fn ddog_live_debugger_send_raw_data(
     handle: &mut SenderHandle,
     data: OwnedCharSlice,
 ) -> bool {
-    handle.channel.try_send(SendData::Wrapped(data)).is_err()
+    !handle.channel.try_send(SendData::Wrapped(data)).is_err()
 }
 
 #[no_mangle]

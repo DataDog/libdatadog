@@ -3,6 +3,7 @@
 use lazy_static::lazy_static;
 use regex_automata::dfa::regex::Regex;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 lazy_static! {
     static ref REDACTED_NAMES: HashSet<&'static [u8]> = HashSet::from([
@@ -81,12 +82,24 @@ lazy_static! {
     static ref REDACTED_TYPES: HashSet<&'static [u8]> = HashSet::new();
     static ref ADDED_REDACTED_TYPES: Vec<Vec<u8>> = vec![];
     static ref REDACTED_WILDCARD_TYPES_PATTERN: String = "".to_string();
-    static ref REDACTED_TYPES_REGEX: Regex = Regex::new(&REDACTED_WILDCARD_TYPES_PATTERN).unwrap();
+    static ref REDACTED_TYPES_REGEX: Regex = {
+        REDACTED_TYPES_INITIALIZED.store(true, Ordering::Relaxed);
+        Regex::new(&REDACTED_WILDCARD_TYPES_PATTERN).unwrap()
+    };
+    
+    static ref ASSUMED_SAFE_NAME_LEN: usize = {
+        REDACTED_NAMES_INITIALIZED.store(true, Ordering::Relaxed);
+        REDACTED_NAMES.iter().map(|n| n.len()).max().unwrap() + 5
+    };
 }
+
+static REDACTED_NAMES_INITIALIZED: AtomicBool = AtomicBool::new(false);
+static REDACTED_TYPES_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 /// # Safety
 /// May only be called while not running yet - concurrent access to is_redacted_name is forbidden.
 pub unsafe fn add_redacted_name<I: Into<Vec<u8>>>(name: I) {
+    assert!(!REDACTED_NAMES_INITIALIZED.load(Ordering::Relaxed));
     // I really don't want to Mutex this often checked value.
     // Hence, unsafe, and caller has to ensure safety.
     // An UnsafeCell would be perfect, but it isn't Sync...
@@ -98,6 +111,7 @@ pub unsafe fn add_redacted_name<I: Into<Vec<u8>>>(name: I) {
 /// # Safety
 /// May only be called while not running yet - concurrent access to is_redacted_type is forbidden.
 pub unsafe fn add_redacted_type(name: &[u8]) {
+    assert!(!REDACTED_TYPES_INITIALIZED.load(Ordering::Relaxed));
     if name.ends_with(&[b'*']) {
         let regex_str = &mut *(&*REDACTED_WILDCARD_TYPES_PATTERN as *const String).cast_mut();
         if !regex_str.is_empty() {
@@ -118,11 +132,10 @@ pub fn is_redacted_name<'a, I: Into<&'a [u8]>>(name: I) -> bool {
         c == b'_' || c == b'-' || c == b'$' || c == b'@'
     }
     let name = name.into();
-    if name.len() > 20 {
+    if name.len() > *ASSUMED_SAFE_NAME_LEN {
         return true; // short circuit for long names, assume them safe
     }
-    let mut copy = [0u8; 20];
-    let mut copy_idx = 0;
+    let mut copy = smallvec::SmallVec::<[u8; 21]>::with_capacity(name.len());
     let mut i = 0;
     while i < name.len() {
         let mut c = name[i];
@@ -130,12 +143,11 @@ pub fn is_redacted_name<'a, I: Into<&'a [u8]>>(name: I) -> bool {
             if c.is_ascii_uppercase() {
                 c |= 0x20; // lowercase it
             }
-            copy[copy_idx] = c;
-            copy_idx += 1;
+            copy.push(c);
         }
         i += 1;
     }
-    REDACTED_NAMES.contains(&copy[0..copy_idx])
+    REDACTED_NAMES.contains(&copy[0..copy.len()])
 }
 
 pub fn is_redacted_type<'a, I: Into<&'a [u8]>>(name: I) -> bool {

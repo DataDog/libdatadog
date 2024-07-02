@@ -1500,6 +1500,7 @@ dependencies = [
  "regex-automata 0.4.6",
  "serde",
  "serde_json",
+ "smallvec",
  "sys-info",
  "uuid",
 ]
