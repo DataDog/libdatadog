@@ -3,17 +3,6 @@
 
 use crate::normalize_utils;
 use datadog_trace_protobuf::pb;
-use std::time::SystemTime;
-
-const MAX_TYPE_LEN: usize = 100;
-
-// an arbitrary cutoff to spot weird-looking values
-// nanoseconds since epoch on Jan 1, 2000
-const YEAR_2000_NANOSEC_TS: i64 = 946684800000000000;
-
-// DEFAULT_SPAN_NAME is the default name we assign a span if it's missing and we have no reasonable
-// fallback
-const DEFAULT_SPAN_NAME: &str = "unnamed_operation";
 
 const TAG_SAMPLING_PRIORITY: &str = "_sampling_priority_v1";
 const TAG_ORIGIN: &str = "_dd.origin";
@@ -31,71 +20,19 @@ fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
     anyhow::ensure!(s.trace_id != 0, "TraceID is zero (reason:trace_id_zero)");
     anyhow::ensure!(s.span_id != 0, "SpanID is zero (reason:span_id_zero)");
 
-    let normalized_service = match normalize_utils::normalize_service(&s.service) {
-        Ok(service) => service,
-        Err(_) => normalize_utils::fallback_service(),
-    };
-
-    s.service = normalized_service;
-
     // TODO: component2name: check for a feature flag to determine the component tag to become the
     // span name https://github.com/DataDog/datadog-agent/blob/dc88d14851354cada1d15265220a39dce8840dcc/pkg/trace/agent/normalizer.go#L64
 
-    let normalized_name = match normalize_utils::normalize_name(&s.name) {
-        Ok(name) => name,
-        Err(_) => DEFAULT_SPAN_NAME.to_string(),
-    };
+    normalize_utils::normalize_service(&mut s.service);
+    normalize_utils::normalize_name(&mut s.name);
+    normalize_utils::normalize_resource(&mut s.resource, &s.name);
+    normalize_utils::normalize_parent_id(&mut s.parent_id, s.trace_id, s.span_id);
+    normalize_utils::normalize_span_start_duration(&mut s.start, &mut s.duration);
+    normalize_utils::normalize_span_type(&mut s.r#type);
 
-    s.name = normalized_name;
-
-    if s.resource.is_empty() {
-        s.resource.clone_from(&s.name)
+    if let Some(env_tag) = s.meta.get_mut("env") {
+        normalize_utils::normalize_tag(env_tag);
     }
-
-    // ParentID, TraceID and SpanID set in the client could be the same
-    // Supporting the ParentID == TraceID == SpanID for the root span, is compliant
-    // with the Zipkin implementation. Furthermore, as described in the PR
-    // https://github.com/openzipkin/zipkin/pull/851 the constraint that the
-    // root span's ``trace id = span id`` has been removed
-    if s.parent_id == s.trace_id && s.parent_id == s.span_id {
-        s.parent_id = 0;
-    }
-
-    // Start & Duration as nanoseconds timestamps
-    // if s.Start is very little, less than year 2000 probably a unit issue so discard
-    if s.duration < 0 {
-        s.duration = 0;
-    }
-    if s.duration > i64::MAX - s.start {
-        s.duration = 0;
-    }
-    if s.start < YEAR_2000_NANOSEC_TS {
-        let now = match SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|t| t.as_nanos() as i64)
-        {
-            Ok(time) => time,
-            Err(err) => {
-                anyhow::bail!(format!("Normalizer Error: {err}"))
-            }
-        };
-        s.start = now - s.duration;
-        if s.start < 0 {
-            s.start = now;
-        }
-    }
-
-    if s.r#type.len() > MAX_TYPE_LEN {
-        s.r#type = normalize_utils::truncate_utf8(&s.r#type, MAX_TYPE_LEN).to_string();
-    }
-
-    if s.meta.contains_key("env") {
-        if let Some(env_tag) = s.meta.get("env") {
-            if let Ok(normalized_tag) = normalize_utils::normalize_tag(env_tag) {
-                s.meta.insert("env".to_string(), normalized_tag);
-            }
-        }
-    };
 
     if let Some(code) = s.meta.get("http.status_code") {
         if !is_valid_status_code(code) {
@@ -173,10 +110,9 @@ pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root_span_index: usize) -> an
 
 #[cfg(test)]
 mod tests {
-
     use crate::normalize_utils;
+    use crate::normalize_utils::{DEFAULT_SPAN_NAME, MAX_TYPE_LEN};
     use crate::normalizer;
-    use crate::normalizer::DEFAULT_SPAN_NAME;
     use datadog_trace_protobuf::pb;
     use rand::Rng;
     use std::collections::HashMap;
@@ -229,7 +165,7 @@ mod tests {
         let mut test_span = new_test_span();
         test_span.name = "".to_string();
         assert!(normalizer::normalize_span(&mut test_span).is_ok());
-        assert_eq!(test_span.name, normalizer::DEFAULT_SPAN_NAME);
+        assert_eq!(test_span.name, DEFAULT_SPAN_NAME);
     }
 
     #[test]
@@ -245,7 +181,7 @@ mod tests {
         let mut test_span = new_test_span();
         test_span.name = "/".to_string();
         assert!(normalizer::normalize_span(&mut test_span).is_ok());
-        assert_eq!(test_span.name, normalizer::DEFAULT_SPAN_NAME);
+        assert_eq!(test_span.name, DEFAULT_SPAN_NAME);
     }
 
     #[test]
@@ -454,7 +390,7 @@ mod tests {
         test_span.r#type = "sql".repeat(1000);
 
         assert!(normalizer::normalize_span(&mut test_span).is_ok());
-        assert_eq!(test_span.r#type.len(), normalizer::MAX_TYPE_LEN);
+        assert_eq!(test_span.r#type.len(), MAX_TYPE_LEN);
     }
 
     #[test]
