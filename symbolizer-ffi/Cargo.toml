@@ -15,4 +15,4 @@ crate-type = ["lib"]
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 # Should be kept in sync with the libdatadog crashtracker crate (also using blasesym)
-blazesym-c = { git = "https://github.com/libbpf/blazesym.git", rev = "v0.2.0-alpha.11" }
+blazesym-c = { git = "https://github.com/libbpf/blazesym.git", rev = "v0.2.0-rc.0" }
