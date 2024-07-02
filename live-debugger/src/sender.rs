@@ -106,10 +106,11 @@ pub async fn send(
         .await
     {
         Ok(response) => {
-            if response.status().as_u16() >= 400 {
+            let status = response.status().as_u16();
+            if status >= 400 {
                 let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
                 let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                anyhow::bail!("Server did not accept debugger payload: {response_body}");
+                anyhow::bail!("Server did not accept debugger payload ({status}): {response_body}");
             }
             Ok(())
         }
