@@ -18,6 +18,7 @@ ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false }
 datadog-remote-config = { path = "../remote-config" }
+datadog-live-debugger = { path = "../live-debugger" }
 paste = "1"
 libc = "0.2"
 

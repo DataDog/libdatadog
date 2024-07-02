@@ -11,7 +11,7 @@ pub struct OneWayShmWriter<T>
 where
     T: FileBackedHandle + From<MappedMem<T>>,
 {
-    handle: Mutex<Option<MappedMem<T>>>,
+    handle: Mutex<MappedMem<T>>,
 }
 
 pub struct OneWayShmReader<T, D>
@@ -68,7 +68,7 @@ pub fn create_anon_pair() -> anyhow::Result<(OneWayShmWriter<ShmHandle>, ShmHand
     let handle = ShmHandle::new(0x1000)?;
     Ok((
         OneWayShmWriter {
-            handle: Mutex::new(Some(handle.clone().map()?)),
+            handle: Mutex::new(handle.clone().map()?),
         },
         handle,
     ))
@@ -87,7 +87,7 @@ impl<T: FileBackedHandle + From<MappedMem<T>>, D> OneWayShmReader<T, D> {
 impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
     pub fn new(path: CString) -> io::Result<OneWayShmWriter<NamedShmHandle>> {
         Ok(OneWayShmWriter {
-            handle: Mutex::new(Some(NamedShmHandle::create(path, 0x1000)?.map()?)),
+            handle: Mutex::new(NamedShmHandle::create(path, 0x1000)?.map()?),
         })
     }
 }
@@ -127,9 +127,8 @@ where
             let fetch_data = |reader: &'a mut OneWayShmReader<T, D>| {
                 let size = std::mem::size_of::<RawMetaData>() + source_data.meta.size;
 
-                let handle = reader.handle.take().unwrap().ensure_space(size);
-                reader.handle.replace(handle);
-                let handle = reader.handle.as_ref().unwrap();
+                let handle = reader.handle.as_mut().unwrap();
+                handle.ensure_space(size);
 
                 // aligned on 8 byte boundary, round up to closest 8 byte boundary
                 let mut new_mem = Vec::<u64>::with_capacity((size + 7) / 8);
@@ -185,11 +184,10 @@ where
 
 impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
     pub fn write(&self, contents: &[u8]) {
-        let mut handle = self.handle.lock().unwrap();
-        let mut mapped = handle.take().unwrap();
+        let mut mapped = self.handle.lock().unwrap();
 
         let size = contents.len() + 1; // trailing zero byte, to keep some C code happy
-        mapped = mapped.ensure_space(std::mem::size_of::<RawMetaData>() + size);
+        mapped.ensure_space(std::mem::size_of::<RawMetaData>() + size);
 
         // Safety: ShmHandle is always big enough
         // Actually &mut mapped.as_slice_mut() as RawData seems safe, but unsized locals are
@@ -203,13 +201,10 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
 
         data.meta.generation.fetch_add(1, Ordering::SeqCst);
         data.meta.writing.store(false, Ordering::SeqCst);
-
-        handle.replace(mapped);
     }
 
     pub fn as_slice(&self) -> &[u8] {
-        let handle = self.handle.lock().unwrap();
-        let mapped = handle.as_ref().unwrap();
+        let mapped = self.handle.lock().unwrap();
         let data = unsafe { &*(mapped.as_slice() as *const [u8] as *const RawData) };
         if data.meta.size > 0 {
             let slice = data.as_slice();
@@ -220,12 +215,6 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
     }
 
     pub fn size(&self) -> usize {
-        self.handle
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .as_slice()
-            .len()
+        self.handle.lock().unwrap().as_slice().len()
     }
 }

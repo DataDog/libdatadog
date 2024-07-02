@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::dynamic_configuration::data::DynamicConfigFile;
+use datadog_live_debugger::LiveDebuggingData;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
@@ -88,7 +89,7 @@ impl Display for RemoteConfigPath {
 #[derive(Debug)]
 pub enum RemoteConfigData {
     DynamicConfig(DynamicConfigFile),
-    LiveDebugger(()),
+    LiveDebugger(LiveDebuggingData),
 }
 
 impl RemoteConfigData {
@@ -101,7 +102,8 @@ impl RemoteConfigData {
                 RemoteConfigData::DynamicConfig(serde_json::from_slice(data)?)
             }
             RemoteConfigProduct::LiveDebugger => {
-                RemoteConfigData::LiveDebugger(/* placeholder */ ())
+                let parsed = datadog_live_debugger::parse_json(&String::from_utf8_lossy(data))?;
+                RemoteConfigData::LiveDebugger(parsed)
             }
         })
     }

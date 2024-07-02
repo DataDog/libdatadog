@@ -46,6 +46,7 @@ use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
 use datadog_remote_config::fetch::ConfigInvariants;
+use ddcommon::tag::Tag;
 
 type NoResponse = Ready<()>;
 
@@ -115,7 +116,6 @@ impl SidecarServer {
     /// # Arguments
     ///
     /// * `async_channel`: An `AsyncChannel` that represents the connection to the client.
-    #[cfg_attr(not(windows), allow(unused_mut))]
     pub async fn accept_connection(mut self, async_channel: AsyncChannel) {
         #[cfg(windows)]
         {
@@ -347,6 +347,16 @@ impl SidecarServer {
         // send trace payload to our trace flusher
         let data = SendData::new(size, payload, headers, target);
         self.trace_flusher.enqueue(data);
+    }
+
+    async fn send_debugger_data(&self, data: &[u8], target: &Endpoint, tags: &str) {
+        if let Err(e) = datadog_live_debugger::sender::send(data, target, tags).await {
+            error!("Error sending data to live debugger endpoint: {e:?}");
+            debug!(
+                "Attempted to send the following payload: {}",
+                String::from_utf8_lossy(data)
+            );
+        }
     }
 
     async fn compute_stats(&self) -> SidecarStats {
@@ -670,6 +680,13 @@ impl SidecarInterface for SidecarServer {
         session.configure_dogstatsd(|dogstatsd| {
             dogstatsd.set_endpoint(config.dogstatsd_endpoint.clone());
         });
+        session.modify_debugger_config(|cfg| {
+            let endpoint = get_product_endpoint(
+                datadog_live_debugger::sender::PROD_INTAKE_SUBDOMAIN,
+                &config.endpoint,
+            );
+            cfg.set_endpoint(endpoint).ok();
+        });
         session.set_remote_config_invariants(ConfigInvariants {
             language: config.language,
             tracer_version: config.tracer_version,
@@ -788,6 +805,38 @@ impl SidecarInterface for SidecarServer {
         no_response()
     }
 
+    type SendDebuggerDataShmFut = NoResponse;
+
+    fn send_debugger_data_shm(
+        self,
+        _: Context,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        handle: ShmHandle,
+    ) -> Self::SendDebuggerDataShmFut {
+        let session = self.get_session(&instance_id.session_id);
+        if let Some(endpoint) = session.get_debugger_config().endpoint.clone() {
+            let mut runtime = session.get_runtime(&instance_id.runtime_id);
+            let invariants = session.get_remote_config_invariants();
+            let version = invariants
+                .as_ref()
+                .map(|i| i.tracer_version.as_str())
+                .unwrap_or("0.0.0");
+            let tags = runtime.get_debugger_tags(&version, queue_id);
+            tokio::spawn(async move {
+                match handle.map() {
+                    Ok(mapped) => {
+                        self.send_debugger_data(mapped.as_slice(), &endpoint, tags.as_str())
+                            .await;
+                    }
+                    Err(e) => error!("Failed mapping shared trace data memory: {}", e),
+                }
+            });
+        }
+
+        no_response()
+    }
+
     type SetRemoteConfigDataFut = NoResponse;
 
     fn set_remote_config_data(
@@ -798,6 +847,7 @@ impl SidecarInterface for SidecarServer {
         service_name: String,
         env_name: String,
         app_version: String,
+        global_tags: Vec<Tag>,
     ) -> Self::SetRemoteConfigDataFut {
         let session = self.get_session(&instance_id.session_id);
         #[cfg(windows)]
@@ -814,11 +864,9 @@ impl SidecarInterface for SidecarServer {
             pid: session.pid.load(Ordering::Relaxed),
         };
         let runtime_info = session.get_runtime(&instance_id.runtime_id);
-        runtime_info
-            .lock_applications()
-            .entry(queue_id)
-            .or_default()
-            .remote_config_guard = Some(
+        let mut applications = runtime_info.lock_applications();
+        let app = applications.entry(queue_id).or_default();
+        app.remote_config_guard = Some(
             self.remote_configs.add_runtime(
                 session
                     .get_remote_config_invariants()
@@ -827,11 +875,12 @@ impl SidecarInterface for SidecarServer {
                     .clone(),
                 instance_id.runtime_id,
                 notify_target,
-                env_name,
+                env_name.clone(),
                 service_name,
-                app_version,
+                app_version.clone(),
             ),
         );
+        app.set_metadata(env_name, app_version, global_tags);
 
         no_response()
     }

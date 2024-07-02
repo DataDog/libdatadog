@@ -151,10 +151,10 @@ impl NamedShmHandle {
 }
 
 impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
-    pub fn ensure_space(mut self, expected_size: usize) -> MappedMem<T> {
+    pub fn ensure_space(&mut self, expected_size: usize) {
         let current_size = self.mem.get_shm().size;
         if expected_size <= current_size {
-            return self;
+            return;
         }
         if expected_size > MAPPING_MAX_SIZE {
             panic!(
@@ -175,6 +175,5 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
                 PAGE_READWRITE,
             )
         };
-        self
     }
 }
