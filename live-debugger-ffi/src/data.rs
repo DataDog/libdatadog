@@ -121,6 +121,7 @@ impl<'a> From<&'a datadog_live_debugger::SpanDecorationProbe> for SpanDecoration
             span_tags: tags.as_ptr(),
             span_tags_num: tags.len(),
         };
+        std::mem::forget(conditions);
         std::mem::forget(tags);
         new
     }
@@ -139,7 +140,7 @@ impl<'a> Drop for SpanDecorationProbe<'a> {
             );
             let num_conditions = tags.iter().filter(|p| p.next_condition).count();
             _ = Vec::from_raw_parts(
-                self.conditions as *mut ProbeCondition,
+                self.conditions as *mut &ProbeCondition,
                 num_conditions,
                 num_conditions,
             );
