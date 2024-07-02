@@ -95,13 +95,60 @@ impl DatadogTestAgentContainer {
     }
 }
 
+/// `DatadogTestAgent` is a wrapper around a containerized test agent that lives only for the test
+/// it runs in. It has convenience functions to provide agent URIs, mount snapshot directories, and
+/// assert  snapshot tests.
+///
+/// # Examples
+///
+/// Basic usage:
+///
+/// ```no_run
+/// use datadog_trace_utils::send_data::SendData;
+/// use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
+/// use datadog_trace_utils::trace_utils::TracerHeaderTags;
+/// use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
+/// use ddcommon::Endpoint;
+///
+/// use tokio;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     // Create a new DatadogTestAgent instance
+///     let test_agent = DatadogTestAgent::new(Some("relative/path/to/snapshot")).await;
+///
+///     // Get the URI for a specific endpoint
+///     let uri = test_agent
+///         .get_uri_for_endpoint("test-endpoint", Some("snapshot-token"))
+///         .await;
+///
+///     let endpoint = Endpoint {
+///         url: uri,
+///         api_key: None,
+///     };
+///
+///     let trace = vec![];
+///
+///     let data = SendData::new(
+///         100,
+///         TracerPayloadCollection::V04(vec![trace.clone()]),
+///         TracerHeaderTags::default(),
+///         &endpoint,
+///     );
+///
+///     let _result = data.send().await;
+///
+///     // Assert that the snapshot for a given token matches the expected snapshot
+///     test_agent.assert_snapshot("snapshot-token").await;
+/// }
+/// ```
 pub struct DatadogTestAgent {
     container: ContainerAsync<DatadogTestAgentContainer>,
 }
-// TODO: EK - add code example
+
 impl DatadogTestAgent {
     /// Creates a new instance of `DatadogTestAgent` and starts a docker container hosting the
-    /// test-agent.
+    /// test-agent. When `DatadogTestAgent` is dropped, the container will be stopped automatically.
     ///
     /// # Arguments
     ///
