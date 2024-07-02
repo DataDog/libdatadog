@@ -317,7 +317,7 @@ impl TraceExporterBuilder {
                     .unwrap_or(String::from("http://127.0.0.1:8126/"))
                     .as_str(),
             )?,
-            api_key: None,
+            ..Default::default()
         };
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()

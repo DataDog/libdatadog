@@ -228,7 +228,7 @@ impl Config {
             restartable: false,
         };
         if let Ok(url) = parse_uri(&trace_agent_url) {
-            let _res = this.set_endpoint(Endpoint { url, api_key });
+            let _res = this.set_endpoint(Endpoint { url, api_key, ..Default::default() });
         }
 
         this
@@ -261,6 +261,7 @@ impl Config {
         self.set_endpoint(Endpoint {
             url: parse_uri(host_url)?,
             api_key,
+            ..Default::default()
         })
     }
 }

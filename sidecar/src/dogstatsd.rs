@@ -185,7 +185,7 @@ mod test {
                 .as_str()
                 .parse::<Uri>()
                 .unwrap(),
-            api_key: None,
+            ..Default::default()
         });
         flusher.send(vec![
             Count("test_count".to_string(), 3, vec![tag!("foo", "bar")]),
@@ -226,20 +226,20 @@ mod test {
 
         let res = create_client(Some(Endpoint {
             url: "localhost:99999".parse::<Uri>().unwrap(),
-            api_key: None,
+            ..Default::default()
         }));
         assert!(res.is_err());
         assert_eq!("invalid port", res.unwrap_err().to_string().as_str());
 
         let res = create_client(Some(Endpoint {
             url: "localhost:80".parse::<Uri>().unwrap(),
-            api_key: None,
+            ..Default::default()
         }));
         assert!(res.is_ok());
 
         let res = create_client(Some(Endpoint {
             url: "http://localhost:80".parse::<Uri>().unwrap(),
-            api_key: None,
+            ..Default::default()
         }));
         assert!(res.is_ok());
     }
@@ -250,14 +250,14 @@ mod test {
     fn test_create_client_unix_domain_socket() {
         let res = create_client(Some(Endpoint {
             url: "unix://localhost:80".parse::<Uri>().unwrap(),
-            api_key: None,
+            ..Default::default()
         }));
         assert!(res.is_err());
         assert_eq!("invalid url", res.unwrap_err().to_string().as_str());
 
         let res = create_client(Some(Endpoint {
             url: socket_path_to_uri("/path/to/a/socket.sock".as_ref()).unwrap(),
-            api_key: None,
+            ..Default::default()
         }));
         assert!(res.is_ok());
     }

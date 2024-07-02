@@ -28,7 +28,7 @@ pub fn agent(base_url: Uri) -> anyhow::Result<Endpoint> {
     };
     parts.path_and_query = p_q;
     let url = Uri::from_parts(parts)?;
-    Ok(Endpoint { url, api_key: None })
+    Ok(Endpoint { url, ..Default::default() })
 }
 
 /// Creates an Endpoint for talking to the Datadog agent though a unix socket.
@@ -66,6 +66,7 @@ pub fn agentless<AsStrRef: AsRef<str>, IntoCow: Into<Cow<'static, str>>>(
     Ok(Endpoint {
         url: Uri::from_str(intake_url.as_str())?,
         api_key: Some(api_key.into()),
+        ..Default::default()
     })
 }
 
@@ -73,6 +74,6 @@ pub fn file(path: impl AsRef<str>) -> anyhow::Result<Endpoint> {
     let url: String = format!("file://{}", path.as_ref());
     Ok(Endpoint {
         url: Uri::from_str(url.as_str())?,
-        api_key: None,
+        ..Default::default()
     })
 }

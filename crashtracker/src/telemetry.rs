@@ -210,7 +210,7 @@ mod tests {
                 create_alt_stack: true,
                 endpoint: Some(Endpoint {
                     url: hyper::Uri::from_static("http://localhost:8126/profiling/v1/input"),
-                    api_key: None,
+                    ..Default::default()
                 }),
                 resolve_frames: crate::StacktraceCollection::WithoutSymbols,
                 timeout: time::Duration::from_secs(30),

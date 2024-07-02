@@ -85,8 +85,8 @@ fn test_ddog_sidecar_register_app() {
             &mut transport,
             "session_id".into(),
             &Endpoint {
-                api_key: None,
                 url: hyper::Uri::from_static("http://localhost:8082/"),
+                ..Default::default()
             },
             &Endpoint::default(),
             1000,
@@ -129,8 +129,8 @@ fn test_ddog_sidecar_register_app() {
             &mut transport,
             "session_id".into(),
             &Endpoint {
-                api_key: None,
                 url: hyper::Uri::from_static("http://localhost:8083/"),
+                ..Default::default()
             },
             &Endpoint::default(),
             1000,
