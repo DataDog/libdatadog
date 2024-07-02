@@ -35,7 +35,6 @@ pub(crate) struct SharedAppManualFut {
 pub(crate) struct RuntimeInfo {
     pub(crate) apps: Arc<Mutex<AppMap>>,
     applications: Arc<Mutex<HashMap<QueueId, ActiveApplication>>>,
-    #[cfg(feature = "tracing")]
     pub(crate) instance_id: InstanceId,
 }
 
@@ -89,7 +88,6 @@ impl RuntimeInfo {
     /// Shuts down the runtime.
     /// This involves shutting down all the instances in the runtime.
     pub(crate) async fn shutdown(self) {
-        #[cfg(feature = "tracing")]
         info!(
             "Shutting down runtime_id {} for session {}",
             self.instance_id.runtime_id, self.instance_id.session_id
@@ -114,7 +112,6 @@ impl RuntimeInfo {
             .collect();
         future::join_all(instances_shutting_down).await;
 
-        #[cfg(feature = "tracing")]
         debug!(
             "Successfully shut down runtime_id {} for session {}",
             self.instance_id.runtime_id, self.instance_id.session_id

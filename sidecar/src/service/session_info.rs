@@ -9,7 +9,7 @@ use std::{
 
 use datadog_remote_config::fetch::ConfigInvariants;
 use futures::future;
-use tracing::{enabled, info, Level};
+use tracing::info;
 
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::tracer;
@@ -32,7 +32,6 @@ pub(crate) struct SessionInfo {
         Arc<Mutex<crate::service::remote_configs::RemoteConfigNotifyFunction>>,
     pub(crate) log_guard:
         Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
-    #[cfg(feature = "tracing")]
     pub(crate) session_id: String,
     pub(crate) pid: Arc<AtomicI32>,
 }
@@ -71,18 +70,15 @@ impl SessionInfo {
             Some(runtime) => runtime.clone(),
             None => {
                 let mut runtime = RuntimeInfo::default();
+                runtime.instance_id = InstanceId {
+                    session_id: self.session_id.clone(),
+                    runtime_id: runtime_id.clone(),
+                };
                 runtimes.insert(runtime_id.clone(), runtime.clone());
-                #[cfg(feature = "tracing")]
-                if enabled!(Level::INFO) {
-                    runtime.instance_id = InstanceId {
-                        session_id: self.session_id.clone(),
-                        runtime_id: runtime_id.clone(),
-                    };
-                    info!(
-                        "Registering runtime_id {} for session {}",
-                        runtime_id, self.session_id
-                    );
-                }
+                info!(
+                    "Registering runtime_id {} for session {}",
+                    runtime_id, self.session_id
+                );
                 runtime
             }
         }

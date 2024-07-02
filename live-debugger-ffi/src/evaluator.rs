@@ -236,9 +236,8 @@ pub fn ddog_evaluate_string<'a>(
 ) -> Cow<'a, str> {
     let mut ctx = EvalCtx::new(context);
     let (result, new_errors) = datadog_live_debugger::eval_string(&mut ctx, condition);
-    if !new_errors.is_empty() {
-        *errors = Some(Box::new(new_errors));
-    }
+    let found_errors = if !new_errors.is_empty() { Some(Box::new(new_errors)) } else { None };
+    std::mem::forget(std::mem::replace(errors, found_errors));
     result
 }
 

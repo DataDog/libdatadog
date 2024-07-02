@@ -11,6 +11,7 @@ use percent_encoding::{percent_encode, CONTROLS};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use tokio::sync::mpsc;
+use tokio_util::task::TaskTracker;
 
 macro_rules! try_c {
     ($failable:expr) => {
@@ -46,6 +47,7 @@ async fn sender_routine(
     mut receiver: mpsc::Receiver<SendData>,
 ) {
     let tags = Arc::new(tags);
+    let tracker = TaskTracker::new();
     loop {
         let data = match receiver.recv().await {
             None => break,
@@ -54,7 +56,7 @@ async fn sender_routine(
 
         let endpoint = endpoint.clone();
         let tags = tags.clone();
-        tokio::spawn(async move {
+        tracker.spawn(async move {
             let data = match &data {
                 SendData::Raw(vec) => vec.as_slice(),
                 SendData::Wrapped(wrapped) => wrapped.slice.as_bytes(),
@@ -65,6 +67,8 @@ async fn sender_routine(
             }
         });
     }
+
+    tracker.wait().await;
 }
 
 pub struct SenderHandle {

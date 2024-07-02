@@ -86,7 +86,7 @@ lazy_static! {
         REDACTED_TYPES_INITIALIZED.store(true, Ordering::Relaxed);
         Regex::new(&REDACTED_WILDCARD_TYPES_PATTERN).unwrap()
     };
-    
+
     static ref ASSUMED_SAFE_NAME_LEN: usize = {
         REDACTED_NAMES_INITIALIZED.store(true, Ordering::Relaxed);
         REDACTED_NAMES.iter().map(|n| n.len()).max().unwrap() + 5

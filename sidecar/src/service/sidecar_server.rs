@@ -31,7 +31,7 @@ use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use tracing::{debug, enabled, error, info, warn, Level};
+use tracing::{debug, error, info, warn};
 
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
@@ -216,11 +216,8 @@ impl SidecarServer {
             Some(session) => session.clone(),
             None => {
                 let mut session = SessionInfo::default();
-                #[cfg(feature = "tracing")]
-                if enabled!(Level::INFO) {
-                    session.session_id.clone_from(session_id);
-                    info!("Initializing new session: {}", session_id);
-                }
+                session.session_id.clone_from(session_id);
+                info!("Initializing new session: {}", session_id);
                 sessions.insert(session_id.clone(), session.clone());
                 session
             }
