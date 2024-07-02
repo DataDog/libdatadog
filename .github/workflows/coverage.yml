@@ -21,7 +21,7 @@ jobs:
           tool: cargo-llvm-cov@0.6.9,nextest@0.9.68
       - name: Generate code coverage (including doc tests)
         run: |
-          cargo llvm-cov --all-features --workspace --no-report nextest
+          cargo llvm-cov --all-features --workspace --no-report nextest run --profile coverage -E 'all() - package(bin_tests)'
           cargo llvm-cov --all-features --workspace --no-report --doc
           cargo llvm-cov report --doctests --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
