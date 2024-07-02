@@ -32,11 +32,18 @@ pub type HttpClient = hyper::Client<connector::Connector, hyper::Body>;
 pub type HttpResponse = hyper::Response<hyper::Body>;
 pub type HttpRequestBuilder = hyper::http::request::Builder;
 
-#[derive(Default, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct Endpoint {
     #[serde(serialize_with = "serialize_uri", deserialize_with = "deserialize_uri")]
     pub url: hyper::Uri,
     pub api_key: Option<Cow<'static, str>>,
+    pub timeout: u64,
+}
+
+impl Default for Endpoint {
+    fn default() -> Self {
+        Endpoint { url: hyper::Uri::default(), api_key: Option::default(), timeout: 10_000 }
+    }
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
