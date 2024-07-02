@@ -16,16 +16,39 @@ fi
 set -eu
 
 ARG_FEATURES=""
+run_tests=true
 
-while getopts f: flag
+usage() {
+    echo "Usage: `basename "$0"` [-h] [-f FEATURES] [-T] dest-dir"
+    echo
+    echo "Options:"
+    echo "  -h          This help text"
+    echo "  -f FEATURES Enable specified features (comma separated if more than one)"
+    echo "  -T          Skip checks after building"
+    exit $1
+}
+
+while getopts f:hT flag
 do
     case "${flag}" in
-        f) ARG_FEATURES=${OPTARG}
+        f)
+            ARG_FEATURES=${OPTARG}
             shift
             shift
+            ;;
+        h)
+            usage 0
+            ;;
+        T)
+            run_tests=false
+            shift
+            ;;
     esac
 done
 
+if test -z "${1:-}"; then
+    usage 1
+fi
 destdir="$1"
 
 if [ $CARGO_TARGET_DIR = $destdir ]; then
@@ -158,28 +181,30 @@ if command -v objcopy > /dev/null && [[ "$target" != "x86_64-pc-windows-msvc" ]]
     objcopy --add-gnu-debuglink="$destdir/lib/$shared_library_name.debug" "$destdir/lib/$shared_library_name"
 fi
 
-echo "Checking that native-static-libs are as expected for this platform..."
-cd profiling-ffi
-actual_native_static_libs="$(cargo rustc --release --target "${target}" -- --print=native-static-libs 2>&1 | awk -F ':' '/note: native-static-libs:/ { print $3 }')"
-echo "Actual native-static-libs:${actual_native_static_libs}"
-echo "Expected native-static-libs:${expected_native_static_libs}"
+if $run_tests; then
+    echo "Checking that native-static-libs are as expected for this platform..."
+    cd profiling-ffi
+    actual_native_static_libs="$(cargo rustc --release --target "${target}" -- --print=native-static-libs 2>&1 | awk -F ':' '/note: native-static-libs:/ { print $3 }')"
+    echo "Actual native-static-libs:${actual_native_static_libs}"
+    echo "Expected native-static-libs:${expected_native_static_libs}"
 
-# Compare unique elements between expected and actual native static libs.
-# If actual libs is different from expected libs but still a subset of expected libs
-# (ie. we will overlink compared to what is actually needed), this is not considered as an error.
-# Raise an error only if some libs are in actual libs but not in expected libs.
+    # Compare unique elements between expected and actual native static libs.
+    # If actual libs is different from expected libs but still a subset of expected libs
+    # (ie. we will overlink compared to what is actually needed), this is not considered as an error.
+    # Raise an error only if some libs are in actual libs but not in expected libs.
 
-# trim leading and trailing spaces, then split the string on " -" by inserting new lines and sort lines while removing duplicates
-unique_expected_libs=$(echo "$expected_native_static_libs "| awk '{ gsub(/^[ \t]+|[ \t]+$/, "");gsub(/ +-/,"\n-")};1' | sort -u)
-unique_libs=$(echo "$actual_native_static_libs "| awk '{ gsub(/^[ \t]+|[ \t]+$/, "");gsub(/ +-/,"\n-")};1' | sort -u)
+    # trim leading and trailing spaces, then split the string on " -" by inserting new lines and sort lines while removing duplicates
+    unique_expected_libs=$(echo "$expected_native_static_libs "| awk '{ gsub(/^[ \t]+|[ \t]+$/, "");gsub(/ +-/,"\n-")};1' | sort -u)
+    unique_libs=$(echo "$actual_native_static_libs "| awk '{ gsub(/^[ \t]+|[ \t]+$/, "");gsub(/ +-/,"\n-")};1' | sort -u)
 
-unexpected_native_libs=$(comm -13 <(echo "$unique_expected_libs") <(echo "$unique_libs"))
-if [ -n "$unexpected_native_libs" ]; then
-    echo "Error - More native static libraries are required for linking than expected:" 1>&2
-    echo "$unexpected_native_libs" 1>&2
-    exit 1
+    unexpected_native_libs=$(comm -13 <(echo "$unique_expected_libs") <(echo "$unique_libs"))
+    if [ -n "$unexpected_native_libs" ]; then
+        echo "Error - More native static libraries are required for linking than expected:" 1>&2
+        echo "$unexpected_native_libs" 1>&2
+        exit 1
+    fi
+    cd -
 fi
-cd -
 
 echo "Building tools"
 DESTDIR=$destdir cargo build --package tools --bins
