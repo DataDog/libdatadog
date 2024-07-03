@@ -896,8 +896,16 @@ mod tests {
         let res = data.send().await;
 
         assert!(res.last_result.is_err());
-        assert_eq!(res.errors_timeout, 0);
-        assert_eq!(res.errors_network, 1);
+        match std::env::consts::OS {
+            "windows" => {
+                assert_eq!(res.errors_timeout, 1);
+                assert_eq!(res.errors_network, 0);
+            }
+            _ => {
+                assert_eq!(res.errors_timeout, 0);
+                assert_eq!(res.errors_network, 1);
+            }
+        }
         assert_eq!(res.errors_status_code, 0);
         assert_eq!(res.requests_count, 5);
         assert_eq!(res.errors_status_code, 0);
