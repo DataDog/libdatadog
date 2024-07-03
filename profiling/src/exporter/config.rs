@@ -28,7 +28,10 @@ pub fn agent(base_url: Uri) -> anyhow::Result<Endpoint> {
     };
     parts.path_and_query = p_q;
     let url = Uri::from_parts(parts)?;
-    Ok(Endpoint { url, ..Default::default() })
+    Ok(Endpoint {
+        url,
+        ..Default::default()
+    })
 }
 
 /// Creates an Endpoint for talking to the Datadog agent though a unix socket.

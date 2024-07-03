@@ -181,6 +181,7 @@ pub async fn poll_for_mock_hit(
 /// let target_endpoint = Endpoint {
 ///     url: "http://localhost:8080".to_owned().parse().unwrap(),
 ///     api_key: Some("test-key".into()),
+///     ..Default::default()
 /// };
 ///
 /// let send_data = create_send_data(size, &target_endpoint);
