@@ -42,7 +42,11 @@ pub struct Endpoint {
 
 impl Default for Endpoint {
     fn default() -> Self {
-        Endpoint { url: hyper::Uri::default(), api_key: Option::default(), timeout: 10_000 }
+        Endpoint {
+            url: hyper::Uri::default(),
+            api_key: Option::default(),
+            timeout: 10_000,
+        }
     }
 }
 

@@ -10,9 +10,12 @@ use std::str::FromStr;
 #[no_mangle]
 #[must_use]
 pub extern "C" fn ddog_endpoint_from_url(url: crate::CharSlice) -> Option<Box<Endpoint>> {
-    parse_uri(url.to_utf8_lossy().as_ref())
-        .ok()
-        .map(|url| Box::new(Endpoint { url, api_key: None, ..Default::default() }))
+    parse_uri(url.to_utf8_lossy().as_ref()).ok().map(|url| {
+        Box::new(Endpoint {
+            url,
+            ..Default::default()
+        })
+    })
 }
 
 // We'll just specify the base site here. If api key provided, different intakes need to use their

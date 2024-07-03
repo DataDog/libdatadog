@@ -17,6 +17,7 @@ use futures::StreamExt;
 use hyper::header::HeaderValue;
 use hyper::{Body, Client, HeaderMap, Method, Response};
 use std::collections::HashMap;
+use std::time::Duration;
 
 const DD_API_KEY: &str = "DD-API-KEY";
 
@@ -35,13 +36,15 @@ type Attempts = u32;
 enum RequestError {
     Build,
     Network,
-    Timeout,
+    TimeoutSocket,
+    TimeoutApi,
 }
 
 impl std::fmt::Display for RequestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RequestError::Timeout => write!(f, "Connection timed out"),
+            RequestError::TimeoutSocket => write!(f, "Socket timed out"),
+            RequestError::TimeoutApi => write!(f, "Api timeout exhausted"),
             RequestError::Network => write!(f, "Network error"),
             RequestError::Build => write!(f, "Request failed due to invalid property"),
         }
@@ -79,7 +82,6 @@ pub(crate) enum RequestResult {
 /// use datadog_trace_utils::trace_utils::TracerHeaderTags;
 /// use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
 /// use ddcommon::Endpoint;
-/// use std::time::Duration;
 ///
 /// #[cfg_attr(miri, ignore)]
 /// async fn update_send_results_example() {
@@ -210,19 +212,25 @@ impl SendData {
             Err(_) => return Err(RequestError::Build),
         };
 
-        match Client::builder()
-            .build(connector::Connector::default())
-            .request(req)
-            .await
+        match tokio::time::timeout(
+            Duration::from_millis(self.target.timeout),
+            Client::builder()
+                .build(connector::Connector::default())
+                .request(req),
+        )
+        .await
         {
-            Ok(resp) => Ok(resp),
-            Err(e) => {
-                if e.is_timeout() {
-                    Err(RequestError::Timeout)
-                } else {
-                    Err(RequestError::Network)
+            Ok(resp) => match resp {
+                Ok(body) => Ok(body),
+                Err(e) => {
+                    if e.is_timeout() {
+                        Err(RequestError::TimeoutSocket)
+                    } else {
+                        Err(RequestError::Network)
+                    }
                 }
-            }
+            },
+            Err(_) => Err(RequestError::TimeoutApi),
         }
     }
 
@@ -320,7 +328,12 @@ impl SendData {
         match e {
             RequestError::Build => RequestResult::BuildError((request_attempt, payload_chunks)),
             RequestError::Network => RequestResult::NetworkError((request_attempt, payload_chunks)),
-            RequestError::Timeout => RequestResult::TimeoutError((request_attempt, payload_chunks)),
+            RequestError::TimeoutSocket => {
+                RequestResult::TimeoutError((request_attempt, payload_chunks))
+            }
+            RequestError::TimeoutApi => {
+                RequestResult::TimeoutError((request_attempt, payload_chunks))
+            }
         }
     }
 
@@ -458,6 +471,7 @@ mod tests {
     use httpmock::MockServer;
     use std::collections::HashMap;
 
+    const MILLIS_PER_SECOND: u64 = 1_000;
     const HEADER_TAGS: TracerHeaderTags = TracerHeaderTags {
         lang: "test-lang",
         lang_version: "2.0",
@@ -524,6 +538,20 @@ mod tests {
     }
 
     #[test]
+    fn error_format() {
+        assert_eq!(
+            RequestError::Build.to_string(),
+            "Request failed due to invalid property"
+        );
+        assert_eq!(RequestError::Network.to_string(), "Network error");
+        assert_eq!(RequestError::TimeoutSocket.to_string(), "Socket timed out");
+        assert_eq!(
+            RequestError::TimeoutApi.to_string(),
+            "Api timeout exhausted"
+        );
+    }
+
+    #[test]
     fn send_data_new_api_key() {
         let header_tags = TracerHeaderTags::default();
 
@@ -535,6 +563,7 @@ mod tests {
             &Endpoint {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
                 url: "/foo/bar?baz".parse::<hyper::Uri>().unwrap(),
+                timeout: MILLIS_PER_SECOND,
             },
         );
 
@@ -558,6 +587,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: "/foo/bar?baz".parse::<hyper::Uri>().unwrap(),
+                timeout: MILLIS_PER_SECOND,
             },
         );
 
@@ -594,6 +624,7 @@ mod tests {
             &Endpoint {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
+                timeout: MILLIS_PER_SECOND,
             },
         );
 
@@ -636,6 +667,7 @@ mod tests {
             &Endpoint {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
+                timeout: MILLIS_PER_SECOND,
             },
         );
 
@@ -689,6 +721,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
+                timeout: MILLIS_PER_SECOND,
             },
         );
 
@@ -742,6 +775,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
+                timeout: MILLIS_PER_SECOND,
             },
         );
 
@@ -784,6 +818,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
+                timeout: MILLIS_PER_SECOND,
             },
         );
 
@@ -824,6 +859,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
+                timeout: MILLIS_PER_SECOND,
             },
         );
 
@@ -853,6 +889,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: "http://127.0.0.1:4321/".parse::<hyper::Uri>().unwrap(),
+                timeout: MILLIS_PER_SECOND,
             },
         );
 
@@ -864,6 +901,99 @@ mod tests {
         assert_eq!(res.errors_status_code, 0);
         assert_eq!(res.requests_count, 5);
         assert_eq!(res.errors_status_code, 0);
+        assert_eq!(res.chunks_sent, 0);
+        assert_eq!(res.bytes_sent, 0);
+        assert_eq!(res.responses_count_per_code.len(), 0);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn request_error_timeout_v04() {
+        let server = MockServer::start_async().await;
+
+        let header_tags = HEADER_TAGS;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .header(HEADER_DD_TRACE_COUNT, "2")
+                    .header("Content-type", "application/msgpack")
+                    .header("datadog-meta-lang", header_tags.lang)
+                    .header(
+                        "datadog-meta-lang-interpreter",
+                        header_tags.lang_interpreter,
+                    )
+                    .header("datadog-meta-lang-version", header_tags.lang_version)
+                    .header("datadog-meta-lang-vendor", header_tags.lang_vendor)
+                    .header("datadog-meta-tracer-version", header_tags.tracer_version)
+                    .header("datadog-container-id", header_tags.container_id)
+                    .path("/");
+                then.status(200).body("").delay(Duration::from_millis(500));
+            })
+            .await;
+
+        let header_tags = HEADER_TAGS;
+
+        let trace = vec![create_test_span(1234, 12342, 12341, 1, false)];
+        let data = SendData::new(
+            100,
+            TracerPayloadCollection::V04(vec![trace.clone(), trace.clone()]),
+            header_tags,
+            &Endpoint {
+                api_key: None,
+                url: server.url("/").parse::<hyper::Uri>().unwrap(),
+                timeout: 200,
+            },
+        );
+
+        let res = data.send().await;
+
+        mock.assert_hits_async(5).await;
+
+        assert_eq!(res.errors_timeout, 1);
+        assert_eq!(res.errors_network, 0);
+        assert_eq!(res.errors_status_code, 0);
+        assert_eq!(res.requests_count, 5);
+        assert_eq!(res.chunks_sent, 0);
+        assert_eq!(res.bytes_sent, 0);
+        assert_eq!(res.responses_count_per_code.len(), 0);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn request_error_timeout_v07() {
+        let server = MockServer::start_async().await;
+
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .header("Content-type", "application/msgpack")
+                    .path("/");
+                then.status(200).body("").delay(Duration::from_millis(500));
+            })
+            .await;
+
+        let header_tags = TracerHeaderTags::default();
+
+        let payload = setup_payload(&header_tags);
+        let data = SendData::new(
+            100,
+            TracerPayloadCollection::V07(vec![payload.clone(), payload.clone()]),
+            header_tags,
+            &Endpoint {
+                api_key: None,
+                url: server.url("/").parse::<hyper::Uri>().unwrap(),
+                timeout: 200,
+            },
+        );
+
+        let res = data.send().await;
+
+        mock.assert_hits_async(10).await;
+
+        assert_eq!(res.errors_timeout, 1);
+        assert_eq!(res.errors_network, 0);
+        assert_eq!(res.errors_status_code, 0);
+        assert_eq!(res.requests_count, 5);
         assert_eq!(res.chunks_sent, 0);
         assert_eq!(res.bytes_sent, 0);
         assert_eq!(res.responses_count_per_code.len(), 0);
@@ -895,6 +1025,7 @@ mod tests {
         let target_endpoint = Endpoint {
             url: server.url("").to_owned().parse().unwrap(),
             api_key: Some("test-key".into()),
+            ..Default::default()
         };
 
         let size = 512;
@@ -934,6 +1065,7 @@ mod tests {
         let target_endpoint = Endpoint {
             url: server.url("").to_owned().parse().unwrap(),
             api_key: Some("test-key".into()),
+            ..Default::default()
         };
 
         let size = 512;
@@ -977,7 +1109,7 @@ mod tests {
 
         let target_endpoint = Endpoint {
             url: server.url("").to_owned().parse().unwrap(),
-            api_key: None,
+            ..Default::default()
         };
 
         let size = 512;
@@ -1012,6 +1144,7 @@ mod tests {
         let target_endpoint = Endpoint {
             url: server.url("").to_owned().parse().unwrap(),
             api_key: Some("test-key".into()),
+            ..Default::default()
         };
 
         let size = 512;
@@ -1056,6 +1189,7 @@ mod tests {
         let target_endpoint = Endpoint {
             url: server.url("").to_owned().parse().unwrap(),
             api_key: Some("test-key".into()),
+            ..Default::default()
         };
 
         let size = 512;

@@ -183,6 +183,9 @@ mod serialize {
 }
 
 impl TelemetryWorker {
+    // Default request timeout in milliseconds.
+    const DEFAULT_TIMEOUT: u64 = 10_000;
+
     fn log_err(&self, err: &anyhow::Error) {
         telemetry_worker_log!(self, ERROR, "{}", err);
     }
@@ -672,6 +675,14 @@ impl TelemetryWorker {
         tokio::select! {
             _ = self.cancellation_token.cancelled() => {
                 Err(anyhow::anyhow!("Request cancelled"))
+            },
+            _ = tokio::time::sleep(time::Duration::from_millis(
+                    if let Some(endpoint) = self.config.endpoint.as_ref() {
+                        endpoint.timeout
+                    } else {
+                        Self::DEFAULT_TIMEOUT
+                    })) => {
+                Err(anyhow::anyhow!("Request timed out"))
             },
             r = self.client.request(req) => {
                 match r {
