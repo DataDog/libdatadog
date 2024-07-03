@@ -226,12 +226,13 @@ fn setup_test_fixtures<'a>(crates: &[&'a ArtifactsBuild]) -> TestFixtures<'a> {
     let artifacts = build_artifacts(crates).unwrap();
 
     let tmpdir = tempfile::TempDir::new().unwrap();
+    let dirpath = tmpdir.path();
     TestFixtures {
-        crash_profile_path: extend_path(tmpdir.path(), "crash"),
-        crash_telemetry_path: extend_path(tmpdir.path(), "crash.telemetry"),
-        stdout_path: extend_path(tmpdir.path(), "out.stdout"),
-        stderr_path: extend_path(tmpdir.path(), "out.stderr"),
-        unix_socket_path: extend_path(tmpdir.path(), "crashtracker.socket"),
+        crash_profile_path: extend_path(dirpath, "crash"),
+        crash_telemetry_path: extend_path(dirpath, "crash.telemetry"),
+        stdout_path: extend_path(dirpath, "out.stdout"),
+        stderr_path: extend_path(dirpath, "out.stderr"),
+        unix_socket_path: extend_path(dirpath, "crashtracker.socket"),
 
         artifacts,
         tmpdir,
