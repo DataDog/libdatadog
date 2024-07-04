@@ -69,13 +69,13 @@ mod unix {
         Pid,
     };
 
-    impl From<&UserMeta> for NormalizedAddressMeta {
-        fn from(value: &UserMeta) -> Self {
+    impl<'src> From<&UserMeta<'src>> for NormalizedAddressMeta {
+        fn from(value: &UserMeta<'src>) -> Self {
             match value {
                 UserMeta::Apk(a) => Self::Apk(a.path.clone()),
                 UserMeta::Elf(e) => Self::Elf {
                     path: e.path.clone(),
-                    build_id: e.build_id.clone(),
+                    build_id: e.build_id.as_ref().map(|cow| cow.clone().into_owned()),
                 },
                 UserMeta::Unknown(_) => Self::Unknown,
                 _ => Self::Unexpected(format!("{value:?}")),
