@@ -143,11 +143,17 @@ pub fn normalize_tag(tag: &mut String) {
                 continue;
             }
             // ASCII range
-            0x00..=0x77 if !is_in_illegal_span => {
+            0x00..=0x7F if !is_in_illegal_span => {
                 bytes[write_cursor] = b'_';
                 is_in_illegal_span = true;
                 write_cursor += 1;
                 codepoints_written += 1;
+                read_cursor += 1;
+                continue;
+            }
+            0x00..=0x7F if is_in_illegal_span => {
+                read_cursor += 1;
+                continue;
             }
             _ => {}
         }
@@ -161,11 +167,20 @@ pub fn normalize_tag(tag: &mut String) {
         };
         read_cursor += c.len_utf8();
 
-        // Take only first codepoint of the lowercase conversion
-        // Lowercase the current character if it has the same width as it's lower
-        if let Some(lower) = c.to_lowercase().next() {
-            if lower.len_utf8() == c.len_utf8() {
-                c = lower;
+        if c.is_lowercase() {
+            c.encode_utf8(&mut bytes[write_cursor..write_cursor + c.len_utf8()]);
+            is_in_illegal_span = false;
+            write_cursor += c.len_utf8();
+            codepoints_written += 1;
+            continue;
+        }
+        if c.is_uppercase() {
+            // Take only first codepoint of the lowercase conversion
+            // Lowercase the current character if it has the same width as it's lower
+            if let Some(lower) = c.to_lowercase().next() {
+                if lower.len_utf8() <= c.len_utf8() {
+                    c = lower;
+                }
             }
         }
 
