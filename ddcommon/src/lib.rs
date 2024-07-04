@@ -45,7 +45,7 @@ impl Default for Endpoint {
         Endpoint {
             url: hyper::Uri::default(),
             api_key: Option::default(),
-            timeout: 10_000,
+            timeout: Self::DEFAULT_TIMEOUT,
         }
     }
 }
@@ -144,6 +144,9 @@ pub fn decode_uri_path_in_authority(uri: &hyper::Uri) -> anyhow::Result<PathBuf>
 }
 
 impl Endpoint {
+    /// Default value for the timeout field in milliseconds.
+    pub const DEFAULT_TIMEOUT: u64 = 10_000;
+
     /// Return a request builder with the following headers:
     /// - User agent
     /// - Api key
