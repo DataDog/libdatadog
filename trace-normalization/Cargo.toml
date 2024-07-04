@@ -17,5 +17,5 @@ duplicate = "0.4.1"
 criterion = "0.5"
 
 [[bench]]
-name = "normalization_utils"
+name = "normalization"
 harness = false
