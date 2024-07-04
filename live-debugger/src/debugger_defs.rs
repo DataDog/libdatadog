@@ -15,8 +15,10 @@ pub struct DebuggerPayload<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct DebuggerData<'a> {
-    pub snapshot: Snapshot<'a>,
+#[serde(rename_all = "camelCase")]
+pub enum DebuggerData<'a> {
+    Snapshot(Snapshot<'a>),
+    Diagnostics(Diagnostics<'a>),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -92,6 +94,7 @@ pub struct Capture<'a> {
 pub struct Entry<'a>(pub Value<'a>, pub Value<'a>);
 
 #[derive(Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Value<'a> {
     pub r#type: Cow<'a, str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -103,13 +106,47 @@ pub struct Value<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub entries: Vec<Entry<'a>>,
     #[serde(skip_serializing_if = "<&bool as std::ops::Not>::not")]
-    #[serde(rename = "isNull")]
     pub is_null: bool,
     #[serde(skip_serializing_if = "<&bool as std::ops::Not>::not")]
     pub truncated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "notCapturedReason")]
     pub not_captured_reason: Option<Cow<'a, str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<Cow<'a, str>>,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Diagnostics<'a> {
+    pub probe_id: Cow<'a, str>,
+    pub runtime_id: Cow<'a, str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<Cow<'a, str>>,
+    pub version: u64,
+    pub status: ProbeStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exception: Option<DiagnosticsError<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Cow<'a, str>>,
+}
+
+#[derive(Serialize, Deserialize, Default, Copy, Clone)]
+#[serde(rename_all = "UPPERCASE")]
+#[repr(C)]
+pub enum ProbeStatus {
+    #[default]
+    Received,
+    Installed,
+    Emitting,
+    Error,
+    Blocked,
+    Warning,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticsError<'a> {
+    pub r#type: Cow<'a, str>,
+    pub message: Cow<'a, str>,
+    pub stacktrace: Option<Cow<'a, str>>,
 }

@@ -46,6 +46,7 @@ use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
 use datadog_remote_config::fetch::ConfigInvariants;
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
+use datadog_live_debugger::sender::{Config as DebuggerConfig, DebuggerType};
 use ddcommon::tag::Tag;
 use dogstatsd_client::{new_flusher, DogStatsDActionOwned};
 use tinybytes;
@@ -284,8 +285,8 @@ impl SidecarServer {
         }
     }
 
-    async fn send_debugger_data(&self, data: &[u8], target: &Endpoint, tags: &str) {
-        if let Err(e) = datadog_live_debugger::sender::send(data, target, tags).await {
+    async fn send_debugger_data(&self, data: &[u8], config: &DebuggerConfig, r#type: DebuggerType, tags: &str) {
+        if let Err(e) = datadog_live_debugger::sender::send(data, config, r#type, tags).await {
             error!("Error sending data to live debugger endpoint: {e:?}");
             debug!(
                 "Attempted to send the following payload: {}",
@@ -681,11 +682,15 @@ impl SidecarInterface for SidecarServer {
             *dogstatsd = d;
         });
         session.modify_debugger_config(|cfg| {
-            let endpoint = get_product_endpoint(
-                datadog_live_debugger::sender::PROD_INTAKE_SUBDOMAIN,
+            let logs_endpoint = get_product_endpoint(
+                datadog_live_debugger::sender::PROD_LOGS_INTAKE_SUBDOMAIN,
                 &config.endpoint,
             );
-            cfg.set_endpoint(endpoint).ok();
+            let diagnostics_endpoint = get_product_endpoint(
+                datadog_live_debugger::sender::PROD_DIAGNOSTICS_INTAKE_SUBDOMAIN,
+                &config.endpoint,
+            );
+            cfg.set_endpoint(logs_endpoint, diagnostics_endpoint).ok();
         });
         session.set_remote_config_invariants(ConfigInvariants {
             language: config.language,
@@ -815,26 +820,25 @@ impl SidecarInterface for SidecarServer {
         instance_id: InstanceId,
         queue_id: QueueId,
         handle: ShmHandle,
+        debugger_type: DebuggerType,
     ) -> Self::SendDebuggerDataShmFut {
         let session = self.get_session(&instance_id.session_id);
-        if let Some(endpoint) = session.get_debugger_config().endpoint.clone() {
-            let mut runtime = session.get_runtime(&instance_id.runtime_id);
-            let invariants = session.get_remote_config_invariants();
-            let version = invariants
-                .as_ref()
-                .map(|i| i.tracer_version.as_str())
-                .unwrap_or("0.0.0");
-            let tags = runtime.get_debugger_tags(&version, queue_id);
-            tokio::spawn(async move {
-                match handle.map() {
-                    Ok(mapped) => {
-                        self.send_debugger_data(mapped.as_slice(), &endpoint, tags.as_str())
-                            .await;
-                    }
-                    Err(e) => error!("Failed mapping shared trace data memory: {}", e),
+        let debugger_config = session.get_debugger_config().clone();
+        let mut runtime = session.get_runtime(&instance_id.runtime_id);
+        let invariants = session.get_remote_config_invariants();
+        let version = invariants
+            .as_ref()
+            .map(|i| i.tracer_version.as_str())
+            .unwrap_or("0.0.0");
+        let tags = runtime.get_debugger_tags(&version, queue_id);
+        tokio::spawn(async move {
+            match handle.map() {
+                Ok(mapped) => {
+                    self.send_debugger_data(mapped.as_slice(), &debugger_config, debugger_type, tags.as_str()).await;
                 }
-            });
-        }
+                Err(e) => error!("Failed mapping shared trace data memory: {}", e),
+            }
+        });
 
         no_response()
     }

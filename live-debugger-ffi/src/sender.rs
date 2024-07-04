@@ -1,7 +1,7 @@
 use crate::send_data::serialize_debugger_payload;
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_live_debugger::sender;
-use datadog_live_debugger::sender::generate_tags;
+use datadog_live_debugger::sender::{Config, DebuggerType, generate_tags};
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddcommon_ffi::slice::AsBytes;
@@ -37,12 +37,12 @@ impl Drop for OwnedCharSlice {
 }
 
 enum SendData {
-    Raw(Vec<u8>),
-    Wrapped(OwnedCharSlice),
+    Raw(Vec<u8>, DebuggerType),
+    Wrapped(OwnedCharSlice, DebuggerType),
 }
 
 async fn sender_routine(
-    endpoint: Arc<Endpoint>,
+    config: Arc<Config>,
     tags: String,
     mut receiver: mpsc::Receiver<SendData>,
 ) {
@@ -54,15 +54,15 @@ async fn sender_routine(
             Some(data) => data,
         };
 
-        let endpoint = endpoint.clone();
+        let config = config.clone();
         let tags = tags.clone();
         tracker.spawn(async move {
-            let data = match &data {
-                SendData::Raw(vec) => vec.as_slice(),
-                SendData::Wrapped(wrapped) => wrapped.slice.as_bytes(),
+            let (debugger_type, data) = match data {
+                SendData::Raw(ref vec, r#type) => (r#type, vec.as_slice()),
+                SendData::Wrapped(ref wrapped, r#type) => (r#type, wrapped.slice.as_bytes()),
             };
 
-            if let Err(e) = sender::send(data, &endpoint, &tags).await {
+            if let Err(e) = sender::send(data, &config, debugger_type, &tags).await {
                 warn!("Failed to send debugger data: {e:?}");
             }
         });
@@ -109,11 +109,13 @@ pub extern "C" fn ddog_live_debugger_spawn_sender(
         .build());
 
     let (tx, mailbox) = mpsc::channel(5000);
-    let endpoint = Arc::new(endpoint.clone());
+    let mut config = Config::default();
+    try_c!(config.set_endpoint(endpoint.clone(), endpoint.clone()));
+    let config = Arc::new(config);
 
     *handle = Box::into_raw(Box::new(SenderHandle {
         join: std::thread::spawn(move || {
-            runtime.block_on(sender_routine(endpoint, *tags, mailbox));
+            runtime.block_on(sender_routine(config, *tags, mailbox));
             runtime.shutdown_background();
         }),
         channel: tx,
@@ -125,9 +127,10 @@ pub extern "C" fn ddog_live_debugger_spawn_sender(
 #[no_mangle]
 pub extern "C" fn ddog_live_debugger_send_raw_data(
     handle: &mut SenderHandle,
+    debugger_type: DebuggerType,
     data: OwnedCharSlice,
 ) -> bool {
-    !handle.channel.try_send(SendData::Wrapped(data)).is_err()
+    !handle.channel.try_send(SendData::Wrapped(data, debugger_type)).is_err()
 }
 
 #[no_mangle]
@@ -135,9 +138,10 @@ pub extern "C" fn ddog_live_debugger_send_payload(
     handle: &mut SenderHandle,
     data: &DebuggerPayload,
 ) -> bool {
+    let debugger_type = DebuggerType::of_payload(data);
     handle
         .channel
-        .try_send(SendData::Raw(serialize_debugger_payload(data).into_bytes()))
+        .try_send(SendData::Raw(serialize_debugger_payload(data).into_bytes(), debugger_type))
         .is_err()
 }
 

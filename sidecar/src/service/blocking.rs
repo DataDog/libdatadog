@@ -17,6 +17,8 @@ use std::{
     time::{Duration, Instant},
 };
 use tracing::info;
+use datadog_live_debugger::debugger_defs::DebuggerData;
+use datadog_live_debugger::sender::DebuggerType;
 
 /// `SidecarTransport` is a wrapper around a BlockingTransport struct from the `datadog_ipc` crate
 /// that handles transparent reconnection.
@@ -281,6 +283,7 @@ pub fn send_trace_v04_shm(
 /// * `instance_id` - The ID of the instance.
 /// * `queue_id` - The unique identifier for the trace context.
 /// * `handle` - The handle to the shared memory.
+/// * `debugger_type` - Whether it's log or diagnostic data.
 ///
 /// # Returns
 ///
@@ -290,11 +293,13 @@ pub fn send_debugger_data_shm(
     instance_id: &InstanceId,
     queue_id: QueueId,
     handle: ShmHandle,
+    debugger_type: DebuggerType,
 ) -> io::Result<()> {
     transport.send(SidecarInterfaceRequest::SendDebuggerDataShm {
         instance_id: instance_id.clone(),
         queue_id,
         handle,
+        debugger_type,
     })
 }
 
@@ -316,6 +321,11 @@ pub fn send_debugger_data_shm_vec(
     queue_id: QueueId,
     payloads: Vec<datadog_live_debugger::debugger_defs::DebuggerPayload>,
 ) -> anyhow::Result<()> {
+    if payloads.len() == 0 {
+        return Ok(());
+    }
+    let debugger_type = DebuggerType::of_payload(&payloads[0]);
+    
     struct SizeCount(usize);
 
     impl io::Write for SizeCount {
@@ -339,6 +349,7 @@ pub fn send_debugger_data_shm_vec(
         instance_id,
         queue_id,
         mapped.into(),
+        debugger_type,
     )?)
 }
 
