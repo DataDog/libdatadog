@@ -27,7 +27,6 @@ pushd "${PROJECT_DIR}" > /dev/null
 # worked on going forward.
 message "Running benchmarks"
 cargo bench -p datadog-trace-obfuscation --bench trace_obfuscation -- sql/obfuscate_sql_string
-cargo bench -p datadog-trace-obfuscation --bench normalization_utils
 message "Finished running benchmarks"
 
 # Copy the benchmark results to the output directory
