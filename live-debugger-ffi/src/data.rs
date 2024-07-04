@@ -1,7 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use datadog_live_debugger::debugger_defs::{ProbeMetadata, ProbeMetadataLocation};
+use std::borrow::Cow;
+use datadog_live_debugger::debugger_defs::{ProbeMetadata, ProbeMetadataLocation, ProbeStatus};
 use datadog_live_debugger::{
     CaptureConfiguration, DslString, EvaluateAt, InBodyLocation, MetricKind, ProbeCondition,
     ProbeValue, SpanProbeTarget,
@@ -171,10 +172,10 @@ impl<'a> From<&'a datadog_live_debugger::ProbeType> for ProbeType<'a> {
 
 #[repr(C)]
 pub struct ProbeTarget<'a> {
-    pub type_name: Option<CharSlice<'a>>,
-    pub method_name: Option<CharSlice<'a>>,
-    pub source_file: Option<CharSlice<'a>>,
-    pub signature: Option<CharSlice<'a>>,
+    pub type_name: CharSlice<'a>,
+    pub method_name: CharSlice<'a>,
+    pub source_file: CharSlice<'a>,
+    pub signature: Option<CharSlice<'a>>, // we need to distinguish empty signature and not present
     pub lines: CharSliceVec<'a>,
     pub in_body_location: InBodyLocation,
 }
@@ -182,9 +183,9 @@ pub struct ProbeTarget<'a> {
 impl<'a> From<&'a datadog_live_debugger::ProbeTarget> for ProbeTarget<'a> {
     fn from(from: &'a datadog_live_debugger::ProbeTarget) -> Self {
         ProbeTarget {
-            type_name: from.type_name.as_ref().map(|s| s.as_str().into()).into(),
-            method_name: from.method_name.as_ref().map(|s| s.as_str().into()).into(),
-            source_file: from.source_file.as_ref().map(|s| s.as_str().into()).into(),
+            type_name: from.type_name.as_ref().map_or(CharSlice::empty(), |s| s.as_str().into()),
+            method_name: from.method_name.as_ref().map_or(CharSlice::empty(), |s| s.as_str().into()),
+            source_file: from.source_file.as_ref().map_or(CharSlice::empty(), |s| s.as_str().into()),
             signature: from.signature.as_ref().map(|s| s.as_str().into()).into(),
             lines: (&from.lines).into(),
             in_body_location: from.in_body_location,
@@ -196,11 +197,16 @@ impl<'a> From<&'a datadog_live_debugger::ProbeTarget> for ProbeTarget<'a> {
 pub struct Probe<'a> {
     pub id: CharSlice<'a>,
     pub version: u64,
-    pub language: Option<CharSlice<'a>>,
+    pub language: CharSlice<'a>,
     pub tags: CharSliceVec<'a>,
     pub target: ProbeTarget<'a>, // "where" is rust keyword
     pub evaluate_at: EvaluateAt,
     pub probe: ProbeType<'a>,
+    pub diagnostic_msg: CharSlice<'a>,
+    pub status: ProbeStatus,
+    pub status_msg: CharSlice<'a>,
+    pub status_exception: CharSlice<'a>,
+    pub status_stacktrace: CharSlice<'a>,
 }
 
 impl<'a> From<&'a datadog_live_debugger::Probe> for Probe<'a> {
@@ -208,31 +214,31 @@ impl<'a> From<&'a datadog_live_debugger::Probe> for Probe<'a> {
         Probe {
             id: from.id.as_str().into(),
             version: from.version,
-            language: from.language.as_ref().map(|s| s.as_str().into()).into(),
+            language: from.language.as_ref().map_or(CharSlice::empty(), |s| s.as_str().into()),
             tags: (&from.tags).into(),
             target: (&from.target).into(),
             evaluate_at: from.evaluate_at,
             probe: (&from.probe).into(),
+            status: ProbeStatus::Received,
+            diagnostic_msg: CharSlice::empty(),
+            status_msg: CharSlice::empty(),
+            status_exception: CharSlice::empty(),
+            status_stacktrace: CharSlice::empty(),
         }
     }
 }
 
 impl<'a> From<&Probe<'a>> for ProbeMetadata<'a> {
     fn from(val: &Probe<'a>) -> Self {
+        fn to_cow_option<'a>(s: &CharSlice<'a>) -> core::option::Option<Cow<'a, str>> {
+            if s.len() == 0 { None } else { unsafe { Some(s.assume_utf8().into()) } }
+        }
         // SAFETY: These values are unmodified original rust strings. Just convert it back.
         ProbeMetadata {
             id: unsafe { val.id.assume_utf8() }.into(),
             location: ProbeMetadataLocation {
-                method: val
-                    .target
-                    .method_name
-                    .to_std_ref()
-                    .map(|s| unsafe { s.assume_utf8() }.into()),
-                r#type: val
-                    .target
-                    .type_name
-                    .to_std_ref()
-                    .map(|s| unsafe { s.assume_utf8() }.into()),
+                method: to_cow_option(&val.target.method_name),
+                r#type: to_cow_option(&val.target.type_name),
             },
         }
     }

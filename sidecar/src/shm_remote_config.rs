@@ -159,7 +159,12 @@ fn store_shm(
 }
 
 impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
-    fn fetched(&self, target: &Arc<Target>, files: &[Arc<StoredShmFile>]) -> bool {
+    fn fetched(
+        &self,
+        runtime_id: &Arc<String>,
+        target: &Arc<Target>,
+        files: &[Arc<StoredShmFile>],
+    ) -> bool {
         let mut writers = self.writers.lock().unwrap();
         let writer = match writers.entry(target.clone()) {
             Entry::Occupied(e) => e.into_mut(),
@@ -173,11 +178,9 @@ impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
             }),
         };
 
-        let len = files
-            .iter()
-            .map(|f| f.handle.lock().unwrap().get_path().len() + 2)
-            .sum();
-        let mut serialized = Vec::with_capacity(len);
+        let mut serialized = vec![];
+        serialized.extend_from_slice(runtime_id.as_bytes());
+        serialized.push(b'\n');
         for file in files.iter() {
             serialized.extend_from_slice(file.handle.lock().unwrap().get_path());
             serialized.push(b':');
@@ -327,6 +330,7 @@ pub struct RemoteConfigManager {
     active_configs: HashMap<String, RemoteConfigPath>,
     last_read_configs: Vec<String>,
     check_configs: Vec<String>,
+    pub current_runtime_id: String,
 }
 
 #[derive(Debug)]
@@ -350,6 +354,7 @@ impl RemoteConfigManager {
             active_configs: Default::default(),
             last_read_configs: Default::default(),
             check_configs: vec![],
+            current_runtime_id: "".to_string(),
         }
     }
 
@@ -365,9 +370,18 @@ impl RemoteConfigManager {
             if changed {
                 'fetch_new: {
                     let mut configs = vec![];
+                    let mut runtime_id: &[u8] = b"";
                     if !data.is_empty() {
                         let mut i = 0;
-                        let mut start = 0;
+                        while i < data.len() {
+                            if data[i] == b'\n' {
+                                break;
+                            }
+                            i += 1;
+                        }
+                        runtime_id = &data[0..i];
+                        i += 1;
+                        let mut start = i;
                         while i < data.len() {
                             if data[i] == b'\n' {
                                 match std::str::from_utf8(&data[start..i]) {
@@ -380,6 +394,13 @@ impl RemoteConfigManager {
                                 start = i + 1;
                             }
                             i += 1;
+                        }
+                    }
+                    match std::str::from_utf8(runtime_id) {
+                        Ok(s) => self.current_runtime_id = s.to_string(),
+                        Err(e) => {
+                            warn!("Failed reading received configurations {e:?}");
+                            break 'fetch_new;
                         }
                     }
                     self.last_read_configs = configs;

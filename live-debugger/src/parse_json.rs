@@ -60,7 +60,7 @@ pub fn parse(json: &str) -> anyhow::Result<LiveDebuggingData> {
                             .ok_or_else(|| anyhow::format_err!("Missing name for MetricProbe"))?,
                         value: ProbeValue(err(parsed
                             .value
-                            .ok_or_else(|| anyhow::format_err!("Missing value for MetricProbe"))?
+                            .unwrap_or(Expression { json: RawExpr::Number(1f64) })
                             .json
                             .try_into())?),
                     }),

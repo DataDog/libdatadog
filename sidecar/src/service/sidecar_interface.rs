@@ -11,6 +11,7 @@ use crate::service::{
 use anyhow::Result;
 use datadog_ipc::platform::ShmHandle;
 use datadog_ipc::tarpc;
+use datadog_live_debugger::sender::DebuggerType;
 use ddcommon::tag::Tag;
 
 // This is a bit weird, but depending on the OS we're interested in different things...
@@ -120,10 +121,12 @@ pub trait SidecarInterface {
     /// * `instance_id` - The ID of the instance.
     /// * `queue_id` - The unique identifier for the trace context.
     /// * `handle` - The data to send.
+    /// * `debugger_type` - Whether it's log or diagnostic data.
     async fn send_debugger_data_shm(
         instance_id: InstanceId,
         queue_id: QueueId,
         #[SerializedHandle] handle: ShmHandle,
+        debugger_type: DebuggerType,
     );
 
     /// Sets contextual data for the remote config client.
