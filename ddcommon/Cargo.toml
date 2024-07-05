@@ -30,6 +30,7 @@ hyper-rustls = { version = "0.27", default-features = false, features = [
     "http1",
     "tls12",
 ] }
+aws-lc-rs = "1.8"
 lazy_static = "1.4"
 log = { version = "0.4" }
 pin-project = "1"
