@@ -1414,6 +1414,7 @@ name = "datadog-trace-normalization"
 version = "10.0.0"
 dependencies = [
  "anyhow",
+ "criterion",
  "datadog-trace-protobuf",
  "duplicate",
  "rand",

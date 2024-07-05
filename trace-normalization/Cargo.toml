@@ -14,3 +14,8 @@ datadog-trace-protobuf = { path = "../trace-protobuf" }
 [dev-dependencies]
 rand = "0.8.5"
 duplicate = "0.4.1"
+criterion = "0.5"
+
+[[bench]]
+name = "normalization_utils"
+harness = false
