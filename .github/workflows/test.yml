@@ -17,9 +17,20 @@ jobs:
             rust_version: "${RUST_VERSION}"
       fail-fast: false
     steps:
+      - name: Free Disk Space (Ubuntu only)
+        if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: true
+
       - name: Checkout sources
         uses: actions/checkout@v4
-
       - name: Cache
         uses: ./.github/actions/cache
         with:
@@ -37,17 +48,6 @@ jobs:
       - name: "Remove nextest CI report"
         shell: bash
         run: rm -rf target/nextest/ci/junit.xml
-      - name: Free Disk Space (Ubuntu only)
-        if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: false
-          swap-storage: true
       - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --verbose"
         run: cargo build --workspace --verbose
       - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --profile ci --verbose -E '!test(tracing_integration_tests::)'"
