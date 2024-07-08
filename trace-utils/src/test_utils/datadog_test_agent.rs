@@ -171,7 +171,11 @@ impl DatadogTestAgent {
 
     async fn get_base_uri_string(&self) -> String {
         let container_host = self.container.get_host().await.unwrap().to_string();
-        let container_port = self.container.get_host_port_ipv4(8126).await.unwrap();
+        let container_port = self
+            .container
+            .get_host_port_ipv4(TEST_AGENT_PORT)
+            .await
+            .unwrap();
 
         format!("http://{}:{}", container_host, container_port)
     }
