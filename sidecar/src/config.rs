@@ -5,7 +5,7 @@ use http::uri::{PathAndQuery, Scheme};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
-use ddcommon::{parse_uri, Endpoint};
+use ddcommon::Endpoint;
 use spawn_worker::LibDependency;
 
 const ENV_SIDECAR_IPC_MODE: &str = "_DD_DEBUG_SIDECAR_IPC_MODE";
@@ -126,16 +126,12 @@ impl FromEnv {
                 println!("help: {ENV_SIDECAR_LOG_METHOD}: {SIDECAR_LOG_METHOD_DISABLED}|{SIDECAR_LOG_METHOD_STDOUT}|{SIDECAR_LOG_METHOD_STDERR}|file:///path/to/file");
                 LogMethod::default()
             }
-            _ => parse_uri(method.as_str())
-                .ok()
-                .and_then(|u| {
-                    if Some("file") == u.scheme_str() {
-                        Some(LogMethod::File(PathBuf::from(u.path())))
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_default(),
+            method if method.starts_with("file://") => {
+                // not a real uri, just a plain (unencoded) path prefixed
+                // with file://
+                LogMethod::File(PathBuf::from(&method[7..]))
+            }
+            _ => LogMethod::default(),
         }
     }
 
