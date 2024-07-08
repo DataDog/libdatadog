@@ -98,7 +98,7 @@ impl RemoteConfigData {
     ) -> anyhow::Result<RemoteConfigData> {
         Ok(match product {
             RemoteConfigProduct::ApmTracing => {
-                RemoteConfigData::DynamicConfig(serde_json::from_slice(data)?)
+                RemoteConfigData::DynamicConfig(datadog_dynamic_configuration::parse_json(data)?)
             }
             RemoteConfigProduct::LiveDebugger => {
                 RemoteConfigData::LiveDebugger(/* placeholder */ ())

@@ -144,7 +144,7 @@ fn store_shm(
     let mut target_slice = handle.as_slice_mut();
     #[cfg(windows)]
     {
-        target_slice.write(&(file.len() as u32).to_ne_bytes())?;
+        target_slice.write_all(&(file.len() as u32).to_ne_bytes())?;
     }
     target_slice.copy_from_slice(file.as_slice());
 
@@ -465,7 +465,7 @@ impl RemoteConfigManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_dynamic_configuration::data::{tests::dummy_dynamic_config, Configs};
+    use datadog_dynamic_configuration::{data::tests::dummy_dynamic_config, Configs};
     use datadog_remote_config::fetch::test_server::RemoteConfigServer;
     use datadog_remote_config::{RemoteConfigData, RemoteConfigProduct, RemoteConfigSource};
     use lazy_static::lazy_static;

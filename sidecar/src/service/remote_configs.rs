@@ -18,7 +18,7 @@ unsafe impl Sync for RemoteConfigNotifyFunction {}
 #[cfg(windows)]
 impl Default for RemoteConfigNotifyFunction {
     fn default() -> Self {
-        return RemoteConfigNotifyFunction(std::ptr::null_mut());
+        RemoteConfigNotifyFunction(std::ptr::null_mut())
     }
 }
 
@@ -69,8 +69,8 @@ impl NotifyTarget for RemoteConfigNotifyTarget {
     }
 
     #[cfg(windows)]
+    #[allow(clippy::missing_transmute_annotations)]
     fn notify(&self) {
-        // TODO: CreateRemoteThread -> ddtrace_set_all_thread_vm_interrupt
         unsafe {
             let dummy = 0;
             kernel32::CreateRemoteThread(
