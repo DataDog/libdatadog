@@ -9,7 +9,6 @@ use std::io;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
 
 pub trait Limiter {
     fn inc(&self, limit: u32) -> bool;
@@ -31,10 +30,10 @@ impl<T> LimiterData<T> {
     /// Returns nanosecons on Unix, milliseconds on Windows.
     fn now() -> u64 {
         #[cfg(windows)]
-        let now = windows_sys::Win32::System::SystemInformation::GetTickCount64();
+        let now = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() };
         #[cfg(not(windows))]
         let now =
-            Duration::from(nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC).unwrap())
+            std::time::Duration::from(nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC).unwrap())
                 .as_nanos() as u64;
         now
     }
