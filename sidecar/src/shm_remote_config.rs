@@ -465,9 +465,7 @@ impl RemoteConfigManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_remote_config::dynamic_configuration::data::{
-        tests::dummy_dynamic_config, Configs,
-    };
+    use datadog_dynamic_configuration::data::{tests::dummy_dynamic_config, Configs};
     use datadog_remote_config::fetch::test_server::RemoteConfigServer;
     use datadog_remote_config::{RemoteConfigData, RemoteConfigProduct, RemoteConfigSource};
     use lazy_static::lazy_static;

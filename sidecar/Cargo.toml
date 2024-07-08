@@ -96,3 +96,4 @@ tempfile = { version = "3.3" }
 httpmock = "0.7.0"
 datadog-remote-config = { path = "../remote-config", features = ["test"] }
 datadog-trace-utils = { path = "../trace-utils", features = ["test-utils"] }
+datadog-dynamic-configuration = { path = "../dynamic-configuration", features = ["test"] }

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "test", derive(Default, Serialize))]
@@ -21,9 +20,9 @@ pub struct DynamicConfigFile {
 
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "test", derive(Serialize))]
-struct TracingHeaderTag {
-    header: String,
-    tag_name: String,
+pub(crate) struct TracingHeaderTag {
+    pub header: String,
+    pub tag_name: String,
 }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
@@ -55,48 +54,12 @@ pub struct TracingSamplingRule {
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "test", derive(Default, Serialize))]
 pub struct DynamicConfig {
-    tracing_header_tags: Option<Vec<TracingHeaderTag>>,
-    tracing_sample_rate: Option<f64>,
-    log_injection_enabled: Option<bool>,
-    tracing_tags: Option<Vec<String>>,
-    tracing_enabled: Option<bool>,
-    tracing_sampling_rules: Option<Vec<TracingSamplingRule>>,
-}
-
-impl From<DynamicConfig> for Vec<Configs> {
-    fn from(value: DynamicConfig) -> Self {
-        let mut vec = vec![];
-        if let Some(tags) = value.tracing_header_tags {
-            vec.push(Configs::TracingHeaderTags(
-                tags.into_iter().map(|t| (t.header, t.tag_name)).collect(),
-            ))
-        }
-        if let Some(sample_rate) = value.tracing_sample_rate {
-            vec.push(Configs::TracingSampleRate(sample_rate));
-        }
-        if let Some(log_injection) = value.log_injection_enabled {
-            vec.push(Configs::LogInjectionEnabled(log_injection));
-        }
-        if let Some(tags) = value.tracing_tags {
-            vec.push(Configs::TracingTags(tags));
-        }
-        if let Some(enabled) = value.tracing_enabled {
-            vec.push(Configs::TracingEnabled(enabled));
-        }
-        if let Some(sampling_rules) = value.tracing_sampling_rules {
-            vec.push(Configs::TracingSamplingRules(sampling_rules));
-        }
-        vec
-    }
-}
-
-pub enum Configs {
-    TracingHeaderTags(HashMap<String, String>),
-    TracingSampleRate(f64),
-    LogInjectionEnabled(bool),
-    TracingTags(Vec<String>), // "key:val" format
-    TracingEnabled(bool),
-    TracingSamplingRules(Vec<TracingSamplingRule>),
+    pub(crate) tracing_header_tags: Option<Vec<TracingHeaderTag>>,
+    pub(crate) tracing_sample_rate: Option<f64>,
+    pub(crate) log_injection_enabled: Option<bool>,
+    pub(crate) tracing_tags: Option<Vec<String>>,
+    pub(crate) tracing_enabled: Option<bool>,
+    pub(crate) tracing_sampling_rules: Option<Vec<TracingSamplingRule>>,
 }
 
 #[cfg(feature = "test")]

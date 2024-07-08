@@ -83,6 +83,7 @@ async fn main() {
 }
 
 fn print_file_contents(contents: &anyhow::Result<RemoteConfigData>) {
+    // Note: these contents may be large. Do not actually print it fully in a non-dev env.
     match contents {
         Ok(data) => {
             println!("File contents: {:?}", data);

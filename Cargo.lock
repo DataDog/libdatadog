@@ -1297,6 +1297,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-dynamic-configuration"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "datadog-ipc"
 version = "0.1.0"
 dependencies = [
@@ -1412,6 +1420,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "base64 0.21.7",
+ "datadog-dynamic-configuration",
  "datadog-trace-protobuf",
  "ddcommon",
  "futures",
@@ -1453,6 +1462,7 @@ dependencies = [
  "cadence",
  "chrono",
  "console-subscriber",
+ "datadog-dynamic-configuration",
  "datadog-ipc",
  "datadog-ipc-macros",
  "datadog-remote-config",

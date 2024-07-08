@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::dynamic_configuration::data::DynamicConfigFile;
+use datadog_dynamic_configuration::data::DynamicConfigFile;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 

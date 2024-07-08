@@ -1,7 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-pub mod dynamic_configuration;
 pub mod fetch;
 pub mod file_change_tracker;
 pub mod file_storage;

@@ -10,6 +10,7 @@ test = []
 [dependencies]
 anyhow = { version = "1.0" }
 ddcommon = { path = "../ddcommon" }
+datadog-dynamic-configuration = { path = "../dynamic-configuration" }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 hyper = { version = "0.14", features = ["client"], default-features = false }
 http = "0.2"
