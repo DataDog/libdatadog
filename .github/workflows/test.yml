@@ -79,7 +79,6 @@ jobs:
           - platform: "ubuntu-latest"
             rust_version: "${RUST_VERSION}"
     steps:
-
       - name: Checkout sources
         uses: actions/checkout@v4
 
