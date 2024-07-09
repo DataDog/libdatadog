@@ -21,12 +21,8 @@ OUTPUT_DIR="${1:-}"
 pushd "${PROJECT_DIR}" > /dev/null
 
 # Run benchmarks
-# TODO https://datadoghq.atlassian.net/browse/APMSP-1228
-# Right now we are only running a single benchmark to test the CI setup, and there is only
-# support for the Criterion SamplingMode::Flat in the new benchmarking framework. This will be
-# worked on going forward.
 message "Running benchmarks"
-cargo bench -p datadog-trace-obfuscation --bench trace_obfuscation -- sql/obfuscate_sql_string
+cargo bench --workspace -- --sample-size=200
 message "Finished running benchmarks"
 
 # Copy the benchmark results to the output directory

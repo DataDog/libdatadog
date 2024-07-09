@@ -9,6 +9,7 @@ license.workspace = true
 
 [lib]
 crate-type = ["lib"]
+bench = false
 
 [target.'cfg(unix)'.dependencies]
 # Should be kept in sync with the libdatadog symbolizer crate (also using blasesym)
