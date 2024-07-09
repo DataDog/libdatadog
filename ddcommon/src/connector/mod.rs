@@ -200,7 +200,7 @@ mod tests {
             .call(hyper::Uri::from_static("https://example.com"))
             .await;
 
-        assert!(!stream.is_err(),);
+        assert!(stream.is_ok());
 
         env::set_var(ENV_SSL_CERT_FILE, old_value);
     }
