@@ -213,7 +213,7 @@ impl SendData {
         };
 
         match tokio::time::timeout(
-            Duration::from_millis(self.target.timeout),
+            Duration::from_millis(self.target.timeout_ms),
             Client::builder()
                 .build(connector::Connector::default())
                 .request(req),
@@ -563,7 +563,7 @@ mod tests {
             &Endpoint {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
                 url: "/foo/bar?baz".parse::<hyper::Uri>().unwrap(),
-                timeout: MILLIS_PER_SECOND,
+                timeout_ms: MILLIS_PER_SECOND,
             },
         );
 
@@ -587,7 +587,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: "/foo/bar?baz".parse::<hyper::Uri>().unwrap(),
-                timeout: MILLIS_PER_SECOND,
+                timeout_ms: MILLIS_PER_SECOND,
             },
         );
 
@@ -624,7 +624,7 @@ mod tests {
             &Endpoint {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout: MILLIS_PER_SECOND,
+                timeout_ms: MILLIS_PER_SECOND,
             },
         );
 
@@ -667,7 +667,7 @@ mod tests {
             &Endpoint {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout: MILLIS_PER_SECOND,
+                timeout_ms: MILLIS_PER_SECOND,
             },
         );
 
@@ -721,7 +721,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout: MILLIS_PER_SECOND,
+                timeout_ms: MILLIS_PER_SECOND,
             },
         );
 
@@ -775,7 +775,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout: MILLIS_PER_SECOND,
+                timeout_ms: MILLIS_PER_SECOND,
             },
         );
 
@@ -818,7 +818,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout: MILLIS_PER_SECOND,
+                timeout_ms: MILLIS_PER_SECOND,
             },
         );
 
@@ -859,7 +859,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout: MILLIS_PER_SECOND,
+                timeout_ms: MILLIS_PER_SECOND,
             },
         );
 
@@ -889,7 +889,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: "http://127.0.0.1:4321/".parse::<hyper::Uri>().unwrap(),
-                timeout: MILLIS_PER_SECOND,
+                timeout_ms: MILLIS_PER_SECOND,
             },
         );
 
@@ -898,6 +898,9 @@ mod tests {
         assert!(res.last_result.is_err());
         match std::env::consts::OS {
             "windows" => {
+                // On windows the TCP/IP stack returns a timeout error (at hyper level) rather
+                // than a connection refused error despite not having a listening socket on the
+                // port.
                 assert_eq!(res.errors_timeout, 1);
                 assert_eq!(res.errors_network, 0);
             }
@@ -949,7 +952,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout: 200,
+                timeout_ms: 200,
             },
         );
 
@@ -990,7 +993,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout: 200,
+                timeout_ms: 200,
             },
         );
 

@@ -37,7 +37,7 @@ pub struct Endpoint {
     #[serde(serialize_with = "serialize_uri", deserialize_with = "deserialize_uri")]
     pub url: hyper::Uri,
     pub api_key: Option<Cow<'static, str>>,
-    pub timeout: u64,
+    pub timeout_ms: u64,
 }
 
 impl Default for Endpoint {
@@ -45,7 +45,7 @@ impl Default for Endpoint {
         Endpoint {
             url: hyper::Uri::default(),
             api_key: Option::default(),
-            timeout: Self::DEFAULT_TIMEOUT,
+            timeout_ms: Self::DEFAULT_TIMEOUT,
         }
     }
 }
@@ -177,5 +177,21 @@ impl Endpoint {
         }
 
         Ok(builder)
+    }
+
+    #[inline]
+    pub fn from_slice(url: &str) -> Endpoint {
+        Endpoint {
+            url: parse_uri(url).unwrap(),
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    pub fn from_url(url: hyper::Uri) -> Endpoint {
+        Endpoint {
+            url,
+            ..Default::default()
+        }
     }
 }

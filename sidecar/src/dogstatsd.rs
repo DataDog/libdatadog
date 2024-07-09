@@ -224,23 +224,14 @@ mod test {
         assert!(res.is_err());
         assert_eq!("invalid host", res.unwrap_err().to_string().as_str());
 
-        let res = create_client(Some(Endpoint {
-            url: "localhost:99999".parse::<Uri>().unwrap(),
-            ..Default::default()
-        }));
+        let res = create_client(Some(Endpoint::from_slice("localhost:99999")));
         assert!(res.is_err());
         assert_eq!("invalid port", res.unwrap_err().to_string().as_str());
 
-        let res = create_client(Some(Endpoint {
-            url: "localhost:80".parse::<Uri>().unwrap(),
-            ..Default::default()
-        }));
+        let res = create_client(Some(Endpoint::from_slice("localhost:80")));
         assert!(res.is_ok());
 
-        let res = create_client(Some(Endpoint {
-            url: "http://localhost:80".parse::<Uri>().unwrap(),
-            ..Default::default()
-        }));
+        let res = create_client(Some(Endpoint::from_slice("http://localhost:80")));
         assert!(res.is_ok());
     }
 
@@ -255,10 +246,9 @@ mod test {
         assert!(res.is_err());
         assert_eq!("invalid url", res.unwrap_err().to_string().as_str());
 
-        let res = create_client(Some(Endpoint {
-            url: socket_path_to_uri("/path/to/a/socket.sock".as_ref()).unwrap(),
-            ..Default::default()
-        }));
+        let res = create_client(Some(Endpoint::from_url(
+            socket_path_to_uri("/path/to/a/socket.sock".as_ref()).unwrap(),
+        )));
         assert!(res.is_ok());
     }
 }
