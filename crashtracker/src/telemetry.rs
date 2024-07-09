@@ -208,10 +208,9 @@ mod tests {
             &crate::CrashtrackerConfiguration {
                 additional_files: vec![],
                 create_alt_stack: true,
-                endpoint: Some(Endpoint {
-                    url: hyper::Uri::from_static("http://localhost:8126/profiling/v1/input"),
-                    ..Default::default()
-                }),
+                endpoint: Some(Endpoint::from_slice(
+                    "http://localhost:8126/profiling/v1/input",
+                )),
                 resolve_frames: crate::StacktraceCollection::WithoutSymbols,
                 timeout: time::Duration::from_secs(30),
                 wait_for_receiver: true,

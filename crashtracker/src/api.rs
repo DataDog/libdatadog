@@ -132,7 +132,6 @@ pub fn init_with_unix_socket(
 fn test_crash() -> anyhow::Result<()> {
     use crate::{begin_profiling_op, StacktraceCollection};
     use chrono::Utc;
-    use ddcommon::parse_uri;
     use ddcommon::tag;
     use ddcommon::Endpoint;
     use std::time::Duration;
@@ -141,10 +140,7 @@ fn test_crash() -> anyhow::Result<()> {
     let dir = "/tmp/crashreports/";
     let output_url = format!("file://{dir}{time}.txt");
 
-    let endpoint = Some(Endpoint {
-        url: parse_uri(&output_url).unwrap(),
-        ..Default::default()
-    });
+    let endpoint = Some(Endpoint::from_slice(&output_url));
 
     let path_to_receiver_binary =
         "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
