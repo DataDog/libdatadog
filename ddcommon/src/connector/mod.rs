@@ -30,7 +30,7 @@ pub enum Connector {
 }
 
 lazy_static! {
-    static ref DEFAULT_CONNECTOR: Connector = Connector::new();
+    static ref DEFAULT_CONNECTOR: Connector = Connector::new(false);
 }
 
 impl Default for Connector {
@@ -40,8 +40,8 @@ impl Default for Connector {
 }
 
 impl Connector {
-    pub fn new() -> Self {
-        match build_https_connector() {
+    pub fn new(allow_fallback_to_webpki_certs: bool) -> Self {
+        match build_https_connector(allow_fallback_to_webpki_certs) {
             Ok(connector) => Connector::Https(connector),
             Err(_) => Connector::Http(HttpConnector::new()),
         }
@@ -71,15 +71,24 @@ impl Connector {
 }
 
 fn build_https_connector(
+    allow_fallback_to_webpki_certs: bool,
 ) -> anyhow::Result<hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>>
 {
     let client_config = match load_root_certs() {
         Ok(certs) => ClientConfig::builder()
             .with_root_certificates(certs)
             .with_no_client_auth(),
-        Err(_) => ClientConfig::builder()
-            .with_webpki_roots()
-            .with_no_client_auth(),
+        Err(_) => {
+            if allow_fallback_to_webpki_certs {
+                ClientConfig::builder()
+                    .with_webpki_roots()
+                    .with_no_client_auth()
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Failed to load root certificates and allow_fallback_to_webpki_certs is false"
+                ));
+            }
+        }
     };
     Ok(hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(client_config)
@@ -141,7 +150,13 @@ mod tests {
     /// Verify that the Connector type implements the correct bound Connect + Clone
     /// to be able to use the hyper::Client
     fn test_hyper_client_from_connector() {
-        let _: hyper::Client<Connector> = hyper::Client::builder().build(Connector::new());
+        let _: hyper::Client<Connector> = hyper::Client::builder().build(Connector::new(false));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_hyper_client_from_connector_with_webpki_fallback() {
+        let _: hyper::Client<Connector> = hyper::Client::builder().build(Connector::new(true));
     }
 
     #[tokio::test]
@@ -153,7 +168,7 @@ mod tests {
         let old_value = env::var(ENV_SSL_CERT_FILE).unwrap_or_default();
 
         env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
-        let mut connector = Connector::new();
+        let mut connector = Connector::new(false);
         assert!(matches!(connector, Connector::Http(_)));
 
         let stream = connector
@@ -165,6 +180,27 @@ mod tests {
             *stream.downcast::<errors::Error>().unwrap(),
             errors::Error::CannotEstablishTlsConnection
         );
+
+        env::set_var(ENV_SSL_CERT_FILE, old_value);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    /// Verify that Connector will tls connections if root certificates
+    /// are not found but can fall back to webpki certificates
+    async fn test_missing_root_certificates_fallback_to_webpki_certificates() {
+        const ENV_SSL_CERT_FILE: &str = "SSL_CERT_FILE";
+        let old_value = env::var(ENV_SSL_CERT_FILE).unwrap_or_default();
+
+        env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
+        let mut connector = Connector::new(true);
+        assert!(matches!(connector, Connector::Https(_)));
+
+        let stream = connector
+            .call(hyper::Uri::from_static("https://example.com"))
+            .await;
+
+        assert!(!stream.is_err(),);
 
         env::set_var(ENV_SSL_CERT_FILE, old_value);
     }

@@ -61,7 +61,7 @@ pub async fn send_stats_payload(
         .header("DD-API-KEY", api_key)
         .body(Body::from(data.clone()))?;
 
-    let client: Client<_, hyper::Body> = Client::builder().build(Connector::default());
+    let client: Client<_, hyper::Body> = Client::builder().build(Connector::new(true));
     match client.request(req).await {
         Ok(response) => {
             if response.status() != StatusCode::ACCEPTED {
