@@ -13,6 +13,7 @@ use crate::{
     worker::builder::ConfigBuilder,
 };
 use ddcommon::tag::Tag;
+use ddcommon::Endpoint;
 
 use std::iter::Sum;
 use std::ops::Add;
@@ -183,9 +184,6 @@ mod serialize {
 }
 
 impl TelemetryWorker {
-    // Default request timeout in milliseconds.
-    const DEFAULT_TIMEOUT: u64 = 10_000;
-
     fn log_err(&self, err: &anyhow::Error) {
         telemetry_worker_log!(self, ERROR, "{}", err);
     }
@@ -678,9 +676,9 @@ impl TelemetryWorker {
             },
             _ = tokio::time::sleep(time::Duration::from_millis(
                     if let Some(endpoint) = self.config.endpoint.as_ref() {
-                        endpoint.timeout
+                        endpoint.timeout_ms
                     } else {
-                        Self::DEFAULT_TIMEOUT
+                        Endpoint::DEFAULT_TIMEOUT
                     })) => {
                 Err(anyhow::anyhow!("Request timed out"))
             },

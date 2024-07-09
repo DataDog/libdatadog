@@ -10,12 +10,9 @@ use std::str::FromStr;
 #[no_mangle]
 #[must_use]
 pub extern "C" fn ddog_endpoint_from_url(url: crate::CharSlice) -> Option<Box<Endpoint>> {
-    parse_uri(url.to_utf8_lossy().as_ref()).ok().map(|url| {
-        Box::new(Endpoint {
-            url,
-            ..Default::default()
-        })
-    })
+    parse_uri(url.to_utf8_lossy().as_ref())
+        .ok()
+        .map(|url| Box::new(Endpoint::from_url(url)))
 }
 
 // We'll just specify the base site here. If api key provided, different intakes need to use their
@@ -56,7 +53,7 @@ pub extern "C" fn ddog_endpoint_from_api_key_and_site(
 
 #[no_mangle]
 extern "C" fn ddog_endpoint_set_timeout(endpoint: &mut Endpoint, millis: u64) {
-    endpoint.timeout = millis;
+    endpoint.timeout_ms = millis;
 }
 
 #[no_mangle]
@@ -91,17 +88,17 @@ mod tests {
 
         let mut endpoint = ddog_endpoint_from_url(url);
         assert_eq!(
-            endpoint.as_ref().unwrap().timeout,
+            endpoint.as_ref().unwrap().timeout_ms,
             Endpoint::DEFAULT_TIMEOUT
         );
 
         ddog_endpoint_set_timeout(endpoint.as_mut().unwrap(), 2000);
-        assert_eq!(endpoint.unwrap().timeout, 2000);
+        assert_eq!(endpoint.unwrap().timeout_ms, 2000);
 
         let mut endpoint_api_key = ddog_endpoint_from_api_key(CharSlice::from("test-key"));
-        assert_eq!(endpoint_api_key.timeout, Endpoint::DEFAULT_TIMEOUT);
+        assert_eq!(endpoint_api_key.timeout_ms, Endpoint::DEFAULT_TIMEOUT);
 
         ddog_endpoint_set_timeout(&mut endpoint_api_key, 2000);
-        assert_eq!(endpoint_api_key.timeout, 2000);
+        assert_eq!(endpoint_api_key.timeout_ms, 2000);
     }
 }

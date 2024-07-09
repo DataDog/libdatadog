@@ -43,10 +43,7 @@ mod unix {
         let endpoint = if output_url.is_empty() {
             None
         } else {
-            Some(ddcommon::Endpoint {
-                url: ddcommon::parse_uri(&output_url)?,
-                ..Default::default()
-            })
+            Some(ddcommon::Endpoint::from_slice(&output_url))
         };
 
         let config = CrashtrackerConfiguration {
