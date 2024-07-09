@@ -6,6 +6,9 @@ version.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[lib]
+bench = false
+
 [dependencies]
 anyhow = "1.0"
 hyper = { version = "0.14", features = ["client", "server"] }

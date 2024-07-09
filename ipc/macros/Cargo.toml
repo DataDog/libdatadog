@@ -6,6 +6,7 @@ version = "0.0.1"
 
 [lib]
 proc-macro = true
+bench = false
 
 [dependencies]
 syn = "^2"

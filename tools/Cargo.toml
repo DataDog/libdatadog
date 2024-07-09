@@ -10,9 +10,13 @@ license.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+bench = false
+
 [dependencies]
 regex = "1"
 lazy_static = "1.4"
 
 [[bin]]
 name = "dedup_headers"
+bench = false

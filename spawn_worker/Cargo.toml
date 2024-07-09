@@ -3,6 +3,9 @@ edition = "2021"
 name = "spawn_worker"
 version = "0.0.1"
 
+[lib]
+bench = false
+
 [dependencies]
 anyhow = { version = "1.0" }
 io-lifetimes = { version = "1.0" }

@@ -6,6 +6,7 @@ version = "0.0.1"
 [lib]
 # needs to by dylib for the trampoline tests to work correctly
 crate-type = ["rlib", "dylib"]
+bench = false
 
 [features]
 # hack to avoid compilation and testing by default

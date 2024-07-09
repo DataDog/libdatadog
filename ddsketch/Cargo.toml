@@ -17,3 +17,6 @@ protoc-bin-vendored = { version = "3.0.0", optional = true }
 
 [features]
 generate-protobuf = ["dep:prost-build", "dep:protoc-bin-vendored"]
+
+[lib]
+bench = false

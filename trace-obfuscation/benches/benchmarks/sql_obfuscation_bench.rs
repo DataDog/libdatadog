@@ -1,22 +1,18 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use criterion::{black_box, criterion_group, Criterion, SamplingMode};
+use criterion::{black_box, criterion_group, Criterion};
 use datadog_trace_obfuscation::sql::obfuscate_sql_string;
 
 fn sql_obfuscation(c: &mut Criterion) {
     let mut group = c.benchmark_group("sql");
-    // TODO https://datadoghq.atlassian.net/browse/APMSP-1228
-    // Enable more sample modes for Criterion benchmarks
-    group
-        .sampling_mode(SamplingMode::Flat)
-        .bench_function("obfuscate_sql_string", |b| {
-            b.iter(|| {
-                for (input, _) in CASES {
-                    black_box(obfuscate_sql_string(input));
-                }
-            })
-        });
+    group.bench_function("obfuscate_sql_string", |b| {
+        b.iter(|| {
+            for (input, _) in CASES {
+                black_box(obfuscate_sql_string(input));
+            }
+        })
+    });
 }
 
 criterion_group!(benches, sql_obfuscation);

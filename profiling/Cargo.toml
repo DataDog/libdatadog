@@ -7,9 +7,11 @@ edition.workspace = true
 version.workspace = true
 rust-version.workspace = true
 license.workspace = true
+autobenches = false
 
 [lib]
 crate-type = ["lib"]
+bench = false
 
 [[bench]]
 name = "main"
