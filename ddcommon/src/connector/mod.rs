@@ -4,6 +4,7 @@
 use futures::future::BoxFuture;
 use futures::{future, FutureExt};
 use hyper::client::HttpConnector;
+use hyper_rustls::ConfigBuilderExt;
 
 use lazy_static::lazy_static;
 use rustls::pki_types::CertificateDer;
@@ -72,10 +73,14 @@ impl Connector {
 fn build_https_connector(
 ) -> anyhow::Result<hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>>
 {
-    let certs = load_root_certs()?;
-    let client_config = ClientConfig::builder()
-        .with_root_certificates(certs)
-        .with_no_client_auth();
+    let client_config = match load_root_certs() {
+        Ok(certs) => ClientConfig::builder()
+            .with_root_certificates(certs)
+            .with_no_client_auth(),
+        Err(_) => ClientConfig::builder()
+            .with_webpki_roots()
+            .with_no_client_auth(),
+    };
     Ok(hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(client_config)
         .https_or_http()

@@ -42,6 +42,7 @@ hyper-rustls = { version = "0.27", default-features = false, features = [
     "http1",
     "tls12",
     "aws-lc-rs",
+    "webpki-roots",
 ] }
 
 [target.'cfg(not(unix))'.dependencies]
@@ -50,6 +51,7 @@ hyper-rustls = { version = "0.27", default-features = false, features = [
     "http1",
     "tls12",
     "ring",
+    "webpki-roots",
 ] }
 
 [dev-dependencies]
