@@ -59,4 +59,4 @@ maplit = "1.0"
 
 [features]
 default = []
-webpki_cert_fallback = ["hyper-rustls/webpki-roots"]
+use_webpki_roots = ["hyper-rustls/webpki-roots"]
