@@ -10,6 +10,7 @@ license.workspace = true
 
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]
+bench = false
 
 [features]
 default = ["cbindgen", "expanded_builder_macros"]

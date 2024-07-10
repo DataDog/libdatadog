@@ -20,8 +20,21 @@ serde_json = { version = "1.0" }
 hyper = { version = "0.14", default-features = false }
 strum = { version = "0.26.2", features = ["derive"] }
 
+[lib]
+bench = false
+
 [[bin]]
 name = "crashtracker_bin_test"
+bench = false
 
 [[bin]]
 name = "test_the_tests"
+bench = false
+
+[[bin]]
+name = "crashtracker_receiver"
+bench = false
+
+[[bin]]
+name = "crashtracker_unix_socket_receiver"
+bench = false

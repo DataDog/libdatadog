@@ -3,6 +3,10 @@ name = "datadog-trace-mini-agent"
 description = "A subset of the trace agent that is shipped alongside tracers in a few serverless use cases (Google Cloud Functions and Azure Functions)"
 version = "0.4.2"
 edition = "2021"
+autobenches = false
+
+[lib]
+bench = false
 
 [dependencies]
 anyhow = "1.0"

@@ -12,6 +12,7 @@ build_common = { path = "../build-common" }
 
 [lib]
 crate-type = ["lib"]
+bench = false
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 # Should be kept in sync with the libdatadog crashtracker crate (also using blasesym)
