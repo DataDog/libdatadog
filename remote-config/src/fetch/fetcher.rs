@@ -128,7 +128,7 @@ pub struct ConfigFetcher<S: FileStorage> {
 #[derive(Default)]
 pub struct OpaqueState {
     client_state: Vec<u8>,
-    last_response: Option<ClientGetConfigsResponse>,
+    last_configs: Vec<String>,
 }
 
 impl<S: FileStorage> ConfigFetcher<S> {
@@ -181,11 +181,9 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 }
             }
 
-            if let Some(ref response) = opaque_state.last_response {
-                for config in response.client_configs.iter() {
-                    if let Some(StoredTargetFile { state, .. }) = target_files.get(config) {
-                        config_states.push(state.clone());
-                    }
+            for config in opaque_state.last_configs.iter() {
+                if let Some(StoredTargetFile { state, .. }) = target_files.get(config) {
+                    config_states.push(state.clone());
                 }
             }
         }
@@ -423,7 +421,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
             }
         }
 
-        opaque_state.last_response = Some(response);
+        opaque_state.last_configs = response.client_configs;
         Ok(Some(configs))
     }
 }

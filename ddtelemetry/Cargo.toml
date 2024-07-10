@@ -6,6 +6,9 @@ version.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[lib]
+bench = false
+
 [features]
 default = []
 tracing = ["tracing/std"]

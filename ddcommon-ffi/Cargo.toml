@@ -8,6 +8,9 @@ version.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[lib]
+bench =false
+
 [features]
 default = ["cbindgen"]
 cbindgen = ["build_common/cbindgen"]

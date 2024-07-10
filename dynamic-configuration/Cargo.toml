@@ -10,3 +10,6 @@ test = []
 [dependencies]
 serde = "1.0"
 serde_json = { version = "1.0" }
+
+[lib]
+bench = false
