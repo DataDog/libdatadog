@@ -316,12 +316,7 @@ impl TraceExporterBuilder {
             .build()?;
 
         Ok(TraceExporter {
-            endpoint: Endpoint::from_slice(
-                self.url
-                    .to_owned()
-                    .unwrap_or("http://127.0.0.1:8126/".to_string())
-                    .as_str(),
-            ),
+            endpoint: Endpoint::from_slice(self.url.as_deref().unwrap_or("http://127.0.0.1:8126")),
             tags: TracerTags {
                 tracer_version: std::mem::take(&mut self.tracer_version),
                 language_version: std::mem::take(&mut self.language_version),
