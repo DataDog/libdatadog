@@ -24,7 +24,7 @@ pub fn log_and_create_http_response(
     status: StatusCode,
 ) -> http::Result<Response<Body>> {
     if status.is_success() {
-        info!("{message}");
+        debug!("{message}");
     } else {
         error!("{message}");
     }
