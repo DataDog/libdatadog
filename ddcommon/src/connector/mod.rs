@@ -161,6 +161,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(not(feature = "webpki_cert_fallback"))]
     /// Verify that the Connector type implements the correct bound Connect + Clone
     /// to be able to use the hyper::Client
     fn test_hyper_client_from_connector() {
@@ -176,6 +177,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(not(feature = "webpki_cert_fallback"))]
     /// Verify that Connector will only allow non tls connections if root certificates
     /// are not found
     async fn test_missing_root_certificates_only_allow_http_connections() {
