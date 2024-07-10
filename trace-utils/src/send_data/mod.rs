@@ -471,7 +471,7 @@ mod tests {
     use httpmock::MockServer;
     use std::collections::HashMap;
 
-    const MILLIS_PER_SECOND: u64 = 1_000;
+    const ONE_SECOND: u64 = 1_000;
     const HEADER_TAGS: TracerHeaderTags = TracerHeaderTags {
         lang: "test-lang",
         lang_version: "2.0",
@@ -563,7 +563,7 @@ mod tests {
             &Endpoint {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
                 url: "/foo/bar?baz".parse::<hyper::Uri>().unwrap(),
-                timeout_ms: MILLIS_PER_SECOND,
+                timeout_ms: ONE_SECOND,
             },
         );
 
@@ -587,7 +587,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: "/foo/bar?baz".parse::<hyper::Uri>().unwrap(),
-                timeout_ms: MILLIS_PER_SECOND,
+                timeout_ms: ONE_SECOND,
             },
         );
 
@@ -624,7 +624,7 @@ mod tests {
             &Endpoint {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: MILLIS_PER_SECOND,
+                timeout_ms: ONE_SECOND,
             },
         );
 
@@ -667,7 +667,7 @@ mod tests {
             &Endpoint {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: MILLIS_PER_SECOND,
+                timeout_ms: ONE_SECOND,
             },
         );
 
@@ -721,7 +721,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: MILLIS_PER_SECOND,
+                timeout_ms: ONE_SECOND,
             },
         );
 
@@ -775,7 +775,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: MILLIS_PER_SECOND,
+                timeout_ms: ONE_SECOND,
             },
         );
 
@@ -818,7 +818,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: MILLIS_PER_SECOND,
+                timeout_ms: ONE_SECOND,
             },
         );
 
@@ -859,7 +859,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: MILLIS_PER_SECOND,
+                timeout_ms: ONE_SECOND,
             },
         );
 
@@ -889,7 +889,7 @@ mod tests {
             &Endpoint {
                 api_key: None,
                 url: "http://127.0.0.1:4321/".parse::<hyper::Uri>().unwrap(),
-                timeout_ms: MILLIS_PER_SECOND,
+                timeout_ms: ONE_SECOND,
             },
         );
 
