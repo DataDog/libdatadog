@@ -73,11 +73,11 @@ pub trait RefcountedFile {
         self.refcount().rc.store(val, Ordering::SeqCst)
     }
 
-    fn set_dropped_run_id(&self, val: u64) {
+    fn set_expiring_run_id(&self, val: u64) {
         self.refcount().dropped_run_id.store(val, Ordering::SeqCst)
     }
 
-    fn get_dropped_run_id(&self) -> u64 {
+    fn get_expiring_run_id(&self) -> u64 {
         self.refcount().dropped_run_id.load(Ordering::Relaxed)
     }
 }
@@ -169,13 +169,14 @@ where
         if file.refcount().rc.load(Ordering::Relaxed) != 0 {
             return; // Don't do anything if refcount was increased while acquiring the lock
         }
-        expire_lock.expire_file(&file.refcount().path);
-        drop(expire_lock); // early release
+        expire_lock.mark_expiring(&file.refcount().path);
         let (runners, run_id) = self.run_id.runners_and_run_id();
         if runners > 0 {
             file.setref(runners);
-            file.set_dropped_run_id(run_id);
+            file.set_expiring_run_id(run_id);
             inactive.insert(file.refcount().path.clone(), file);
+        } else {
+            expire_lock.expire_file(&file.refcount().path);
         }
     }
 
@@ -196,18 +197,7 @@ where
         path: RemoteConfigPath,
         contents: Vec<u8>,
     ) -> anyhow::Result<Arc<Self::StoredFile>> {
-        let mut inactive = self.inactive.lock().unwrap();
-        if let Some(existing) = inactive.remove(&path) {
-            if version <= existing.refcount().version {
-                existing.set_dropped_run_id(0);
-                existing.setref(0);
-            } else {
-                self.storage.update(&existing, version, contents)?;
-            }
-            Ok(existing)
-        } else {
-            self.storage.store(version, path, contents)
-        }
+        self.storage.store(version, path, contents)
     }
 
     fn update(
@@ -268,23 +258,39 @@ impl SharedFetcher {
                 )
                 .await;
 
-            let last_run_id = fetcher.file_storage.run_id.dec_runners();
-            fetcher
-                .file_storage
-                .inactive
-                .lock()
-                .unwrap()
-                .retain(|_, v| {
-                    (first_run_id..last_run_id).contains(&v.get_dropped_run_id()) && v.delref() == 1
+            let clean_inactive = || {
+                let run_range = first_run_id..=fetcher.file_storage.run_id.dec_runners();
+                let mut inactive = fetcher.file_storage.inactive.lock().unwrap();
+                inactive.retain(|_, v| {
+                    if run_range.contains(&v.get_expiring_run_id()) && v.delref() == 1 {
+                        fetcher
+                            .file_storage
+                            .state
+                            .files_lock()
+                            .expire_file(&v.refcount().path);
+                        false
+                    } else {
+                        true
+                    }
                 });
+            };
 
             match fetched {
-                Ok(None) => { /* unchanged */ }
+                Ok(None) => clean_inactive(), // nothing changed
                 Ok(Some(files)) => {
                     if !files.is_empty() || !last_files.is_empty() {
                         for file in files.iter() {
+                            if file.get_expiring_run_id() != 0 {
+                                let mut inactive = fetcher.file_storage.inactive.lock().unwrap();
+                                if inactive.remove(&file.refcount().path).is_some() {
+                                    file.setref(0);
+                                    file.set_expiring_run_id(0);
+                                }
+                            }
                             file.incref();
                         }
+
+                        clean_inactive();
 
                         for file in last_files {
                             if file.delref() == 1 {
@@ -295,9 +301,14 @@ impl SharedFetcher {
                         last_files = files;
 
                         last_error = on_fetch(&last_files);
+                    } else {
+                        clean_inactive();
                     }
                 }
-                Err(e) => error!("{:?}", e),
+                Err(e) => {
+                    clean_inactive();
+                    error!("{:?}", e);
+                }
             }
 
             select! {

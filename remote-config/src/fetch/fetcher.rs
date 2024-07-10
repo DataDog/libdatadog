@@ -12,10 +12,11 @@ use ddcommon::{connector, Endpoint};
 use hyper::http::uri::{PathAndQuery, Scheme};
 use hyper::{Client, StatusCode};
 use sha2::{Digest, Sha256, Sha512};
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use tracing::{debug, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 const PROD_INTAKE_SUBDOMAIN: &str = "config";
 
@@ -58,6 +59,7 @@ struct StoredTargetFile<S> {
     handle: Arc<S>,
     state: ConfigState,
     meta: TargetFileMeta,
+    expiring: bool,
 }
 
 pub struct ConfigFetcherState<S> {
@@ -72,8 +74,21 @@ pub struct ConfigFetcherFilesLock<'a, S> {
 }
 
 impl<'a, S> ConfigFetcherFilesLock<'a, S> {
+    /// Actually remove the file from the known files.
+    /// It may only be expired if already marked as expiring.
     pub fn expire_file(&mut self, path: &RemoteConfigPath) {
-        self.inner.remove(&path.to_string());
+        if let Entry::Occupied(entry) = self.inner.entry(path.to_string()) {
+            if entry.get().expiring {
+                entry.remove();
+            }
+        }
+    }
+
+    /// Stop advertising the file as known. It's the predecessor to expire_file().
+    pub fn mark_expiring(&mut self, path: &RemoteConfigPath) {
+        if let Some(target_file) = self.inner.get_mut(&path.to_string()) {
+            target_file.expiring = true;
+        }
     }
 }
 
@@ -113,6 +128,7 @@ pub struct ConfigFetcher<S: FileStorage> {
 #[derive(Default)]
 pub struct OpaqueState {
     client_state: Vec<u8>,
+    last_response: Option<ClientGetConfigsResponse>,
 }
 
 impl<S: FileStorage> ConfigFetcher<S> {
@@ -157,11 +173,21 @@ impl<S: FileStorage> ConfigFetcher<S> {
         let mut cached_target_files = vec![];
         let mut config_states = vec![];
 
-        for StoredTargetFile { state, meta, .. } in
-            self.state.target_files_by_path.lock().unwrap().values()
         {
-            config_states.push(state.clone());
-            cached_target_files.push(meta.clone());
+            let target_files = self.state.target_files_by_path.lock().unwrap();
+            for StoredTargetFile { meta, expiring, .. } in target_files.values() {
+                if !expiring {
+                    cached_target_files.push(meta.clone());
+                }
+            }
+
+            if let Some(ref response) = opaque_state.last_response {
+                for config in response.client_configs.iter() {
+                    if let Some(StoredTargetFile { state, .. }) = target_files.get(config) {
+                        config_states.push(state.clone());
+                    }
+                }
+            }
         }
 
         let config_req = ClientGetConfigsRequest {
@@ -362,6 +388,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
                                                 decoded,
                                             )?
                                         },
+                                        expiring: false,
                                     },
                                 );
                             } else {
@@ -388,11 +415,15 @@ impl<S: FileStorage> ConfigFetcher<S> {
 
         let mut configs = Vec::with_capacity(response.client_configs.len());
         for config in response.client_configs.iter() {
-            if let Some(StoredTargetFile { handle, .. }) = target_files.get(config) {
-                configs.push(handle.clone());
+            if let Some(target_file) = target_files.get_mut(config) {
+                target_file.expiring = false;
+                configs.push(target_file.handle.clone());
+            } else {
+                error!("Found {config} in client_configs response, but it isn't stored. Skipping.");
             }
         }
 
+        opaque_state.last_response = Some(response);
         Ok(Some(configs))
     }
 }
