@@ -169,6 +169,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "webpki_cert_fallback")]
     fn test_hyper_client_from_connector_with_webpki_fallback() {
         let _: hyper::Client<Connector> = hyper::Client::builder().build(Connector::new());
     }
