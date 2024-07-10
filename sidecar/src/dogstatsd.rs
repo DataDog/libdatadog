@@ -166,6 +166,7 @@ mod test {
     #[cfg(unix)]
     use ddcommon::connector::uds::socket_path_to_uri;
     use ddcommon::{tag, Endpoint};
+    #[cfg(unix)]
     use http::Uri;
     use std::net;
     use std::time::Duration;
@@ -177,16 +178,9 @@ mod test {
         let _ = socket.set_read_timeout(Some(Duration::from_millis(500)));
 
         let mut flusher = Flusher::default();
-        flusher.set_endpoint(Endpoint {
-            url: socket
-                .local_addr()
-                .unwrap()
-                .to_string()
-                .as_str()
-                .parse::<Uri>()
-                .unwrap(),
-            ..Default::default()
-        });
+        flusher.set_endpoint(Endpoint::from_slice(
+            socket.local_addr().unwrap().to_string().as_str(),
+        ));
         flusher.send(vec![
             Count("test_count".to_string(), 3, vec![tag!("foo", "bar")]),
             Count("test_neg_count".to_string(), -2, vec![]),
@@ -239,10 +233,9 @@ mod test {
     #[cfg(unix)]
     #[cfg_attr(miri, ignore)]
     fn test_create_client_unix_domain_socket() {
-        let res = create_client(Some(Endpoint {
-            url: "unix://localhost:80".parse::<Uri>().unwrap(),
-            ..Default::default()
-        }));
+        let res = create_client(Some(Endpoint::from_url(
+            "unix://localhost:80".parse::<Uri>().unwrap(),
+        )));
         assert!(res.is_err());
         assert_eq!("invalid url", res.unwrap_err().to_string().as_str());
 

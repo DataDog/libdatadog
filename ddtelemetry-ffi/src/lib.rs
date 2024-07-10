@@ -107,7 +107,7 @@ pub(crate) use c_setters;
 #[cfg(test)]
 mod tests {
     use crate::{builder::*, worker_handle::*};
-    use ddcommon::{parse_uri, Endpoint};
+    use ddcommon::Endpoint;
     use ddcommon_ffi as ffi;
     use ddtelemetry::{
         data::metrics::{MetricNamespace, MetricType},
@@ -244,14 +244,10 @@ mod tests {
             assert_eq!(
                 ddog_telemetry_builder_with_endpoint_config_endpoint(
                     &mut builder,
-                    &Endpoint {
-                        url: parse_uri(&format!(
-                            "file://{}",
-                            f.path().as_os_str().to_str().unwrap()
-                        ))
-                        .unwrap(),
-                        ..Default::default()
-                    },
+                    &Endpoint::from_slice(&format!(
+                        "file://{}",
+                        f.path().as_os_str().to_str().unwrap()
+                    )),
                 ),
                 MaybeError::None
             );
@@ -291,14 +287,10 @@ mod tests {
             assert_eq!(
                 ddog_telemetry_builder_with_endpoint_config_endpoint(
                     &mut builder,
-                    &Endpoint {
-                        url: parse_uri(&format!(
-                            "file://{}",
-                            f.path().as_os_str().to_str().unwrap()
-                        ))
-                        .unwrap(),
-                        ..Default::default()
-                    },
+                    &Endpoint::from_slice(&format!(
+                        "file://{}",
+                        f.path().as_os_str().to_str().unwrap()
+                    )),
                 ),
                 MaybeError::None
             );
