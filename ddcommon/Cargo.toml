@@ -43,7 +43,6 @@ hyper-rustls = { version = "0.27", default-features = false, features = [
     "http1",
     "tls12",
     "aws-lc-rs",
-    "webpki-roots",
 ] }
 
 [target.'cfg(not(unix))'.dependencies]
@@ -52,7 +51,6 @@ hyper-rustls = { version = "0.27", default-features = false, features = [
     "http1",
     "tls12",
     "ring",
-    "webpki-roots",
 ] }
 
 [dev-dependencies]
@@ -60,4 +58,4 @@ indexmap = "2.2"
 maplit = "1.0"
 
 [features]
-webpki_cert_fallback = []
+webpki_cert_fallback = ["hyper-rustls/webpki-roots"]
