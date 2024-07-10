@@ -4,6 +4,8 @@
 use futures::future::BoxFuture;
 use futures::{future, FutureExt};
 use hyper::client::HttpConnector;
+
+#[cfg(feature = "webpki_cert_fallback")]
 use hyper_rustls::ConfigBuilderExt;
 
 use lazy_static::lazy_static;
@@ -30,7 +32,7 @@ pub enum Connector {
 }
 
 lazy_static! {
-    static ref DEFAULT_CONNECTOR: Connector = Connector::new(false);
+    static ref DEFAULT_CONNECTOR: Connector = Connector::new();
 }
 
 impl Default for Connector {
@@ -40,8 +42,13 @@ impl Default for Connector {
 }
 
 impl Connector {
-    pub fn new(allow_fallback_to_webpki_certs: bool) -> Self {
-        match build_https_connector(allow_fallback_to_webpki_certs) {
+    pub fn new() -> Self {
+        #[cfg(feature = "webpki_cert_fallback")]
+        let connector_fn = build_https_connector_with_webpki_cert_fallback;
+        #[cfg(not(feature = "webpki_cert_fallback"))]
+        let connector_fn = build_https_connector;
+
+        match connector_fn() {
             Ok(connector) => Connector::Https(connector),
             Err(_) => Connector::Http(HttpConnector::new()),
         }
@@ -70,25 +77,32 @@ impl Connector {
     }
 }
 
+#[cfg(not(feature = "webpki_cert_fallback"))]
 fn build_https_connector(
-    allow_fallback_to_webpki_certs: bool,
+) -> anyhow::Result<hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>>
+{
+    let certs = load_root_certs()?;
+    let client_config = ClientConfig::builder()
+        .with_root_certificates(certs)
+        .with_no_client_auth();
+    Ok(hyper_rustls::HttpsConnectorBuilder::new()
+        .with_tls_config(client_config)
+        .https_or_http()
+        .enable_http1()
+        .build())
+}
+
+#[cfg(feature = "webpki_cert_fallback")]
+fn build_https_connector_with_webpki_cert_fallback(
 ) -> anyhow::Result<hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>>
 {
     let client_config = match load_root_certs() {
         Ok(certs) => ClientConfig::builder()
             .with_root_certificates(certs)
             .with_no_client_auth(),
-        Err(_) => {
-            if allow_fallback_to_webpki_certs {
-                ClientConfig::builder()
-                    .with_webpki_roots()
-                    .with_no_client_auth()
-            } else {
-                return Err(anyhow::anyhow!(
-                    "Failed to load root certificates and allow_fallback_to_webpki_certs is false"
-                ));
-            }
-        }
+        Err(_) => ClientConfig::builder()
+            .with_webpki_roots()
+            .with_no_client_auth(),
     };
     Ok(hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(client_config)
@@ -150,13 +164,13 @@ mod tests {
     /// Verify that the Connector type implements the correct bound Connect + Clone
     /// to be able to use the hyper::Client
     fn test_hyper_client_from_connector() {
-        let _: hyper::Client<Connector> = hyper::Client::builder().build(Connector::new(false));
+        let _: hyper::Client<Connector> = hyper::Client::builder().build(Connector::new());
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_hyper_client_from_connector_with_webpki_fallback() {
-        let _: hyper::Client<Connector> = hyper::Client::builder().build(Connector::new(true));
+        let _: hyper::Client<Connector> = hyper::Client::builder().build(Connector::new());
     }
 
     #[tokio::test]
@@ -168,7 +182,7 @@ mod tests {
         let old_value = env::var(ENV_SSL_CERT_FILE).unwrap_or_default();
 
         env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
-        let mut connector = Connector::new(false);
+        let mut connector = Connector::new();
         assert!(matches!(connector, Connector::Http(_)));
 
         let stream = connector
@@ -186,6 +200,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "webpki_cert_fallback")]
     /// Verify that Connector will tls connections if root certificates
     /// are not found but can fall back to webpki certificates
     async fn test_missing_root_certificates_fallback_to_webpki_certificates() {
@@ -193,7 +208,7 @@ mod tests {
         let old_value = env::var(ENV_SSL_CERT_FILE).unwrap_or_default();
 
         env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
-        let mut connector = Connector::new(true);
+        let mut connector = Connector::new();
         assert!(matches!(connector, Connector::Https(_)));
 
         let stream = connector

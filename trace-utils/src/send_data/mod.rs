@@ -211,7 +211,7 @@ impl SendData {
         };
 
         match Client::builder()
-            .build(connector::Connector::new(true))
+            .build(connector::Connector::default())
             .request(req)
             .await
         {

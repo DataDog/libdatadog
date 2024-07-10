@@ -57,3 +57,6 @@ hyper-rustls = { version = "0.27", default-features = false, features = [
 [dev-dependencies]
 indexmap = "2.2"
 maplit = "1.0"
+
+[features]
+webpki_cert_fallback = []
