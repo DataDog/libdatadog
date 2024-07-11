@@ -12,6 +12,17 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
     steps:
+      - name: Free Disk Space (Ubuntu only)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: true
+
       - uses: actions/checkout@v4
       - name: Install Rust
         run: rustup install nightly && rustup default nightly
@@ -30,3 +41,4 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
           fail_ci_if_error: true
+          verbose: true
