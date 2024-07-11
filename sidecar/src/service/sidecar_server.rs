@@ -577,6 +577,7 @@ impl SidecarInterface for SidecarServer {
             let endpoint =
                 get_product_endpoint(ddtelemetry::config::PROD_INTAKE_SUBDOMAIN, &config.endpoint);
             cfg.set_endpoint(endpoint).ok();
+            cfg.telemetry_hearbeat_interval = config.telemetry_heartbeat_interval;
         });
         session.modify_trace_config(|cfg| {
             let endpoint = get_product_endpoint(

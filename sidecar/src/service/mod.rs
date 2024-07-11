@@ -44,6 +44,7 @@ pub struct SessionConfig {
     pub endpoint: Endpoint,
     pub dogstatsd_endpoint: Endpoint,
     pub flush_interval: Duration,
+    pub telemetry_heartbeat_interval: Duration,
     pub force_flush_size: usize,
     pub force_drop_size: usize,
     pub log_level: String,

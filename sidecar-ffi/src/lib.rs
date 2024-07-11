@@ -430,6 +430,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     agent_endpoint: &Endpoint,
     dogstatsd_endpoint: &Endpoint,
     flush_interval_milliseconds: u64,
+    telemetry_heartbeat_interval_millis: u64,
     force_flush_size: usize,
     force_drop_size: usize,
     log_level: ffi::CharSlice,
@@ -442,6 +443,9 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             endpoint: agent_endpoint.clone(),
             dogstatsd_endpoint: dogstatsd_endpoint.clone(),
             flush_interval: Duration::from_millis(flush_interval_milliseconds),
+            telemetry_heartbeat_interval: Duration::from_millis(
+                telemetry_heartbeat_interval_millis
+            ),
             force_flush_size,
             force_drop_size,
             log_level: log_level.to_utf8_lossy().into(),
