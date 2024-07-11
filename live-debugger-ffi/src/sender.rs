@@ -6,7 +6,7 @@ use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddcommon_ffi::slice::AsBytes;
 use ddcommon_ffi::{CharSlice, MaybeError};
-use log::warn;
+use log::{debug, warn};
 use percent_encoding::{percent_encode, CONTROLS};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -63,7 +63,9 @@ async fn sender_routine(
             };
 
             if let Err(e) = sender::send(data, &config, debugger_type, &tags).await {
-                warn!("Failed to send debugger data: {e:?}");
+                warn!("Failed to send {debugger_type:?} debugger data: {e:?}");
+            } else {
+                debug!("Successfully sent {} debugger data byte {debugger_type:?} payload", data.len());
             }
         });
     }
