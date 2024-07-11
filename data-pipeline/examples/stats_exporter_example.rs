@@ -21,7 +21,7 @@ fn main() {
             tags: vec![],
         },
         Configuration {
-            stats_computation_interval: Duration::from_secs(10),
+            buckets_duration: Duration::from_secs(10),
             request_timeout: None,
             endpoint: Endpoint {
                 url: hyper::Uri::from_static("http://localhost:8136/v0.6/stats"),

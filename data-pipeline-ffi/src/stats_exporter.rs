@@ -10,9 +10,27 @@ use ddcommon::{parse_uri, tag::Tag};
 use ddcommon_ffi as ffi;
 use ffi::slice::AsBytes;
 
+/// Create a new StatExporter instance.
+///
+/// # Arguments
+///
+/// * `out_handle` - The handle to write the TraceExporter instance in.
+/// * `url` - The URL of the Datadog Agent to communicate with.
+/// * `hostname` - The tracer hostname
+/// * `env` - env tag, used for aggregation
+/// * `version` - version tag, used for aggregation
+/// * `lang` - The language of the client library.
+/// * `tracer_version` - The version of the client library.
+/// * `runtime_id` - Id used by the agent to identify uniquely a source
+/// * `service` - service name
+/// * `git_commit_sha` - A git commit sha set through source code integration
+/// * `stats_computation_interval_seconds` - the size of stats buckets in seconds
+/// * `request_timeout_ms` - request timeout in ms, no temout if zero
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_stats_exporter_new(
+    out_handle: NonNull<Box<StatsExporter>>,
+    url: ffi::CharSlice,
     hostname: ffi::CharSlice,
     env: ffi::CharSlice,
     version: ffi::CharSlice,
@@ -20,51 +38,45 @@ pub unsafe extern "C" fn ddog_stats_exporter_new(
     tracer_version: ffi::CharSlice,
     runtime_id: ffi::CharSlice,
     service: ffi::CharSlice,
-    container_id: ffi::CharSlice,
     git_commit_sha: ffi::CharSlice,
     tags: ffi::Vec<Tag>,
-
-    agent_url: ffi::CharSlice,
     stats_computation_interval_seconds: u64,
-    // No timeout if zero
     request_timeout_ms: u64,
-
-    out_exporter: NonNull<Box<StatsExporter>>,
 ) -> ffi::Option<ffi::Error> {
-    let endpoint = ffi::try_c!(
-        parse_uri(agent_url.to_utf8_lossy().as_ref()).and_then(endpoint_from_agent_url)
+    let endpoint =
+        ffi::try_c!(parse_uri(url.to_utf8_lossy().as_ref()).and_then(endpoint_from_agent_url));
+
+    let exporter = StatsExporter::new(
+        LibraryMetadata {
+            hostname: hostname.to_utf8_lossy().into_owned(),
+            env: env.to_utf8_lossy().into_owned(),
+            version: version.to_utf8_lossy().into_owned(),
+            lang: lang.to_utf8_lossy().into_owned(),
+            tracer_version: tracer_version.to_utf8_lossy().into_owned(),
+            runtime_id: runtime_id.to_utf8_lossy().into_owned(),
+            service: service.to_utf8_lossy().into_owned(),
+            container_id: ddcommon::entity_id::get_container_id()
+                .unwrap_or("")
+                .to_owned(),
+            git_commit_sha: git_commit_sha.to_utf8_lossy().into_owned(),
+            tags: tags.into(),
+        },
+        Configuration {
+            endpoint,
+            buckets_duration: time::Duration::from_secs(stats_computation_interval_seconds),
+            request_timeout: if request_timeout_ms != 0 {
+                Some(time::Duration::from_millis(request_timeout_ms))
+            } else {
+                None
+            },
+        },
     );
 
-    out_exporter
-        .as_ptr()
-        .write(Box::new(ffi::try_c!(StatsExporter::new(
-            LibraryMetadata {
-                hostname: hostname.to_utf8_lossy().into_owned(),
-                env: env.to_utf8_lossy().into_owned(),
-                version: version.to_utf8_lossy().into_owned(),
-                lang: lang.to_utf8_lossy().into_owned(),
-                tracer_version: tracer_version.to_utf8_lossy().into_owned(),
-                runtime_id: runtime_id.to_utf8_lossy().into_owned(),
-                service: service.to_utf8_lossy().into_owned(),
-                container_id: container_id.to_utf8_lossy().into_owned(),
-                git_commit_sha: git_commit_sha.to_utf8_lossy().into_owned(),
-                tags: tags.into(),
-            },
-            Configuration {
-                endpoint,
-                stats_computation_interval: time::Duration::from_secs(
-                    stats_computation_interval_seconds
-                ),
-                request_timeout: if request_timeout_ms != 0 {
-                    Some(time::Duration::from_millis(request_timeout_ms))
-                } else {
-                    None
-                }
-            }
-        ))));
+    out_handle.as_ptr().write(Box::new(ffi::try_c!(exporter)));
     ffi::Option::None
 }
 
+/// Insert a span in a stats exporter and add it to the stats.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_stats_exporter_insert_span_data(
@@ -94,6 +106,7 @@ pub unsafe extern "C" fn ddog_stats_exporter_insert_span_data(
 
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
+/// Flush stats form a stats exporter and send them to the agent
 pub unsafe extern "C" fn ddog_stats_exporter_send(
     exporter: &StatsExporter,
 ) -> ffi::Option<ffi::Error> {
