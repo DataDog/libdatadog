@@ -129,6 +129,7 @@ pub struct ConfigFetcher<S: FileStorage> {
 pub struct OpaqueState {
     client_state: Vec<u8>,
     last_configs: Vec<String>,
+    targets_version: u64,
 }
 
 impl<S: FileStorage> ConfigFetcher<S> {
@@ -192,7 +193,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
             client: Some(datadog_trace_protobuf::remoteconfig::Client {
                 state: Some(ClientState {
                     root_version: 1,
-                    targets_version: 0,
+                    targets_version: opaque_state.targets_version,
                     config_states,
                     has_error: last_error.is_some(),
                     error: last_error.unwrap_or_default(),
@@ -361,7 +362,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
                                             id: parsed_path.config_id.to_string(),
                                             version,
                                             product: parsed_path.product.to_string(),
-                                            apply_state: 0,
+                                            apply_state: 2, // Acknowledged
                                             apply_error: "".to_string(),
                                         },
                                         meta: TargetFileMeta {
@@ -421,6 +422,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
             }
         }
 
+        opaque_state.targets_version = targets_list.signed.version as u64;
         opaque_state.last_configs = response.client_configs;
         Ok(Some(configs))
     }
