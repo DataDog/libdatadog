@@ -261,11 +261,11 @@ impl Config {
     ///  If the host_url is http/https, any path will be ignored and replaced by the
     /// appropriate telemetry endpoint path
     pub fn set_host_from_url(&mut self, host_url: &str) -> anyhow::Result<()> {
-        let api_key = self.endpoint.take().and_then(|e| e.api_key);
+        let endpoint = self.endpoint.take().unwrap_or_default();
+
         self.set_endpoint(Endpoint {
             url: parse_uri(host_url)?,
-            api_key,
-            ..Default::default()
+            ..endpoint
         })
     }
 }

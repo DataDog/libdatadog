@@ -13,13 +13,13 @@ fn main() -> anyhow::Result<()> {
 mod unix {
     use anyhow::Context;
     use bin_tests::ReceiverType;
-    use std::{env, fs::File, str::FromStr, time::Duration};
+    use std::{env, fs::File, str::FromStr};
 
     use datadog_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerMetadata,
         CrashtrackerReceiverConfig,
     };
-    use ddcommon::tag;
+    use ddcommon::{parse_uri, tag, Endpoint};
 
     #[inline(never)]
     unsafe fn deref_ptr(p: *mut u8) {
@@ -37,13 +37,16 @@ mod unix {
         let socket_path = args.next().context("Unexpected number of arguments")?;
         anyhow::ensure!(args.next().is_none(), "unexpected extra arguments");
 
-        let timeout = Duration::from_secs(30);
         let wait_for_receiver = true;
 
         let endpoint = if output_url.is_empty() {
             None
         } else {
-            Some(ddcommon::Endpoint::from_slice(&output_url))
+            Some(Endpoint {
+                url: parse_uri(&output_url).unwrap(),
+                timeout_ms: 30_000,
+                ..Default::default()
+            })
         };
 
         let config = CrashtrackerConfiguration {
@@ -51,7 +54,6 @@ mod unix {
             create_alt_stack: true,
             resolve_frames: crashtracker::StacktraceCollection::WithoutSymbols,
             endpoint,
-            timeout,
             wait_for_receiver,
         };
 
