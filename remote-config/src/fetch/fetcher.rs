@@ -231,6 +231,8 @@ impl<S: FileStorage> ConfigFetcher<S> {
             }),
             cached_target_files,
         };
+        
+        trace!("Submitting remote config request: {config_req:?}");
 
         let req = self
             .state
@@ -290,7 +292,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
             self.interval.store(interval, Ordering::Relaxed);
         }
 
-        trace!(
+        debug!(
             "Received remote config of length {}, containing {:?} paths for target {:?}",
             body_bytes.len(),
             targets_list.signed.targets.keys().collect::<Vec<_>>(),
