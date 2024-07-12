@@ -17,7 +17,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tracing::info;
-use datadog_live_debugger::debugger_defs::DebuggerData;
 use datadog_live_debugger::sender::DebuggerType;
 
 /// `SidecarTransport` is a wrapper around a BlockingTransport struct from the `datadog_ipc` crate

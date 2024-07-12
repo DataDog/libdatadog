@@ -6,7 +6,7 @@ use crate::service::{
     telemetry::{AppInstance, AppOrQueue},
     InstanceId, QueueId,
 };
-use datadog_live_debugger::sender::generate_tags;
+use datadog_live_debugger::sender::{generate_tags, PayloadSender};
 use ddcommon::tag::Tag;
 use futures::{
     future::{self, join_all, Shared},
@@ -53,6 +53,8 @@ pub(crate) struct ActiveApplication {
     pub app_version: Option<String>,
     pub global_tags: Vec<Tag>,
     pub live_debugger_tag_cache: Option<Arc<String>>,
+    pub debugger_logs_payload_sender: Arc<tokio::sync::Mutex<Option<PayloadSender>>>,
+    pub debugger_diagnostics_payload_sender: Arc<tokio::sync::Mutex<Option<PayloadSender>>>,
 }
 
 impl RuntimeInfo {
@@ -138,40 +140,6 @@ impl RuntimeInfo {
     pub(crate) fn lock_applications(&self) -> MutexGuard<HashMap<QueueId, ActiveApplication>> {
         self.applications.lock().unwrap()
     }
-
-    /// Sets the cached debugger tags if not set and returns them.
-    ///
-    /// # Arguments
-    ///
-    /// * `debugger_version` - The version of the live debugger to report.
-    /// * `queue_id` - The unique identifier for the trace context.
-    ///
-    /// # Returns
-    ///
-    /// * `Arc<String>` - A percent encoded string to be passed to
-    ///   datadog_live_debugger::sender::send.
-    pub fn get_debugger_tags(
-        &mut self,
-        debugger_version: &dyn Display,
-        queue_id: QueueId,
-    ) -> Arc<String> {
-        if let Some(app) = self.lock_applications().get_mut(&queue_id) {
-            if let Some(env) = &app.env {
-                if let Some(version) = &app.app_version {
-                    let tags = Arc::new(generate_tags(
-                        debugger_version,
-                        env,
-                        version,
-                        &self.instance_id.runtime_id,
-                        &mut app.global_tags.iter(),
-                    ));
-                    app.live_debugger_tag_cache = Some(tags.clone());
-                    return tags;
-                }
-            }
-        }
-        Arc::new(format!("debugger_version:{debugger_version}"))
-    }
 }
 
 impl ActiveApplication {
@@ -187,6 +155,45 @@ impl ActiveApplication {
         self.app_version = Some(app_version);
         self.global_tags = global_tags;
         self.live_debugger_tag_cache = None;
+    }
+
+
+    /// Sets the cached debugger tags if not set and returns them.
+    ///
+    /// # Arguments
+    ///
+    /// * `debugger_version` - The version of the live debugger to report.
+    /// * `queue_id` - The unique identifier for the trace context.
+    ///
+    /// # Returns
+    ///
+    /// * `Arc<String>` - A percent encoded string to be passed to
+    ///   datadog_live_debugger::sender::send.
+    /// * `bool` - Whether new tags were set and a new sender needs to be started.
+    pub fn get_debugger_tags(
+        &mut self,
+        debugger_version: &dyn Display,
+        runtime_id: &str,
+    ) -> (Arc<String>, bool) {
+        if let Some(ref cached) = self.live_debugger_tag_cache {
+            return (cached.clone(), false)
+        }
+        if let Some(env) = &self.env {
+            if let Some(version) = &self.app_version {
+                let tags = Arc::new(generate_tags(
+                    debugger_version,
+                    env,
+                    version,
+                    &runtime_id,
+                    &mut self.global_tags.iter(),
+                ));
+                self.live_debugger_tag_cache = Some(tags.clone());
+                return (tags, true);
+            }
+        }
+        let tags = Arc::new(format!("debugger_version:{debugger_version}"));
+        self.live_debugger_tag_cache = Some(tags.clone());
+        (tags, true)
     }
 }
 

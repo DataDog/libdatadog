@@ -285,16 +285,6 @@ impl SidecarServer {
         }
     }
 
-    async fn send_debugger_data(&self, data: &[u8], config: &DebuggerConfig, r#type: DebuggerType, tags: &str) {
-        if let Err(e) = datadog_live_debugger::sender::send(data, config, r#type, tags).await {
-            error!("Error sending data to live debugger endpoint: {e:?}");
-            debug!(
-                "Attempted to send the following payload: {}",
-                String::from_utf8_lossy(data)
-            );
-        }
-    }
-
     async fn compute_stats(&self) -> SidecarStats {
         let mut telemetry_stats_errors = 0;
         let telemetry_stats = join_all({
@@ -823,22 +813,12 @@ impl SidecarInterface for SidecarServer {
         debugger_type: DebuggerType,
     ) -> Self::SendDebuggerDataShmFut {
         let session = self.get_session(&instance_id.session_id);
-        let debugger_config = session.get_debugger_config().clone();
-        let mut runtime = session.get_runtime(&instance_id.runtime_id);
-        let invariants = session.get_remote_config_invariants();
-        let version = invariants
-            .as_ref()
-            .map(|i| i.tracer_version.as_str())
-            .unwrap_or("0.0.0");
-        let tags = runtime.get_debugger_tags(&version, queue_id);
-        tokio::spawn(async move {
-            match handle.map() {
-                Ok(mapped) => {
-                    self.send_debugger_data(mapped.as_slice(), &debugger_config, debugger_type, tags.as_str()).await;
-                }
-                Err(e) => error!("Failed mapping shared trace data memory: {}", e),
+        match handle.map() {
+            Ok(mapped) => {
+                session.send_debugger_data(debugger_type, &instance_id.runtime_id, queue_id, mapped);
             }
-        });
+            Err(e) => error!("Failed mapping shared debugger data memory: {}", e),
+        }
 
         no_response()
     }

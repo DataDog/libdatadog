@@ -147,6 +147,12 @@ impl<T: MemoryHandle> MappedMem<T> {
     }
 }
 
+impl<T: MemoryHandle> AsRef<[u8]> for MappedMem<T> {
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
 impl MappedMem<NamedShmHandle> {
     pub fn get_path(&self) -> &[u8] {
         self.mem.get_path()

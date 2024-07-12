@@ -6,15 +6,18 @@ use std::{
     collections::HashMap,
     sync::{Arc, Mutex, MutexGuard},
 };
+use std::time::Duration;
+
+use futures::{future, FutureExt};
 
 use datadog_remote_config::fetch::ConfigInvariants;
-use futures::future;
-use tracing::info;
+use tracing::{debug, error, info, trace};
+use datadog_live_debugger::sender::{DebuggerType, PayloadSender};
 
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
-use crate::tracer;
+use crate::{spawn_map_err, tracer};
 
-use crate::service::{InstanceId, RuntimeInfo};
+use crate::service::{InstanceId, QueueId, RuntimeInfo};
 /// `SessionInfo` holds information about a session.
 ///
 /// It contains a list of runtimes, session configuration, tracer configuration, and log guards.
@@ -194,6 +197,63 @@ impl SessionInfo {
 
     pub fn get_remote_config_invariants(&self) -> MutexGuard<Option<ConfigInvariants>> {
         self.remote_config_invariants.lock().unwrap()
+    }
+
+    pub fn send_debugger_data<R: AsRef<[u8]> + Sync + Send + 'static>(&self, debugger_type: DebuggerType, runtime_id: &str, queue_id: QueueId, payload: R)  {
+        async fn do_send(config: Arc<Mutex<datadog_live_debugger::sender::Config>>, debugger_type: DebuggerType, new_tags: bool, tags: Arc<String>, guard: Arc<tokio::sync::Mutex<Option<PayloadSender>>>, payload: &[u8]) -> anyhow::Result<()> {
+            async fn finish_sender(debugger_type: DebuggerType, sender: PayloadSender) {
+                match sender.finish().await {
+                    Ok(payloads) => debug!("Successfully sent {payloads} payloads to live debugger {debugger_type:?} endpoint"),
+                    Err(e) => error!("Error sending to live debugger endpoint: {e:?}"),
+                }
+            }
+
+            let mut sender = guard.lock().await;
+            if new_tags {
+                if let Some(sender) = sender.take() {
+                    spawn_map_err!(finish_sender(debugger_type, sender), |e| {
+                        error!("Error sending to live debugger {debugger_type:?} endpoint: {e:?}");
+                    });
+                }
+            }
+            if sender.is_none() {
+                let config = &*config.lock().unwrap();
+                *sender = Some(PayloadSender::new(config, debugger_type, tags.as_str())?);
+                let guard = guard.clone();
+                spawn_map_err!(async move {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    if let Some(sender) = guard.lock().await.take() {
+                        finish_sender(debugger_type, sender).await;
+                    }
+                }, |e| error!("Error sending to live debugger {debugger_type:?} endpoint: {e:?}"));
+            }
+            trace!("Submitting live debugger {debugger_type:?} payload {:?}", String::from_utf8_lossy(payload));
+            sender.as_mut().unwrap().append(payload).await
+        }
+
+        async fn send<R: AsRef<[u8]> + Sync + Send>(config: Arc<Mutex<datadog_live_debugger::sender::Config>>, debugger_type: DebuggerType, new_tags: bool, tags: Arc<String>, guard: Arc<tokio::sync::Mutex<Option<PayloadSender>>>, payload: R) {
+            let payload = payload.as_ref();
+            if let Err(e) = do_send(config, debugger_type, new_tags, tags, guard, payload).await {
+                error!("Error sending to live debugger {debugger_type:?} endpoint: {e:?}");
+                debug!("Attempted to send the following payload: {:?}", payload);
+            }
+        }
+
+        let invariants = self.get_remote_config_invariants();
+        let version = invariants.as_ref().map(|i| i.tracer_version.as_str()).unwrap_or("0.0.0");
+        if let Some(runtime) = self.lock_runtimes().get(runtime_id) {
+            if let Some(app) = runtime.lock_applications().get_mut(&queue_id) {
+                let (tags, new_tags) = app.get_debugger_tags(&version, runtime_id);
+                let sender = match debugger_type {
+                    DebuggerType::Diagnostics => app.debugger_diagnostics_payload_sender.clone(),
+                    DebuggerType::Logs => app.debugger_logs_payload_sender.clone(),
+                };
+                let config = self.debugger_config.clone();
+                spawn_map_err!(send(config, debugger_type, new_tags, tags, sender, payload), |e| {
+                    error!("Error sending to live debugger {debugger_type:?} endpoint: {e:?}");
+                });
+            }
+        }
     }
 }
 

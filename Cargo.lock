@@ -1126,6 +1126,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "constcat"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d5cd0c57ef83705837b1cb872c973eff82b070846d3e23668322b2c0f8246d0"
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1491,6 +1497,7 @@ name = "datadog-live-debugger"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "constcat",
  "ddcommon",
  "hyper 0.14.28",
  "json",
@@ -1502,6 +1509,7 @@ dependencies = [
  "serde_json",
  "smallvec",
  "sys-info",
+ "tokio",
  "uuid",
 ]
 
