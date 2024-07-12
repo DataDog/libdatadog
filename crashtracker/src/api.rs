@@ -140,7 +140,11 @@ fn test_crash() -> anyhow::Result<()> {
     let dir = "/tmp/crashreports/";
     let output_url = format!("file://{dir}{time}.txt");
 
-    let endpoint = Some(Endpoint::from_slice(&output_url));
+    let endpoint = Some(Endpoint {
+        url: ddcommon::parse_uri(&output_url).unwrap(),
+        timeout_ms: 30_000,
+        ..Default::default()
+    });
 
     let path_to_receiver_binary =
         "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
@@ -148,7 +152,6 @@ fn test_crash() -> anyhow::Result<()> {
     let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
-    let timeout = Duration::from_secs(30);
     let wait_for_receiver = true;
     let receiver_config = CrashtrackerReceiverConfig::new(
         vec![],
@@ -162,7 +165,6 @@ fn test_crash() -> anyhow::Result<()> {
         create_alt_stack,
         endpoint,
         resolve_frames,
-        timeout,
         wait_for_receiver,
     )?;
     let metadata = CrashtrackerMetadata::new(
