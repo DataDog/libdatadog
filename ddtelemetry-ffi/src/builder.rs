@@ -113,7 +113,7 @@ pub unsafe extern "C" fn ddog_telemetry_builder_run(
 ) -> MaybeError {
     out_handle
         .as_ptr()
-        .write(Box::new(crate::try_c!(builder.run())));
+        .write(Box::new(ffi::try_c!(builder.run())));
     MaybeError::None
 }
 
@@ -130,6 +130,6 @@ pub unsafe extern "C" fn ddog_telemetry_builder_run_metric_logs(
 ) -> MaybeError {
     out_handle
         .as_ptr()
-        .write(Box::new(crate::try_c!(builder.run_metrics_logs())));
+        .write(Box::new(ffi::try_c!(builder.run_metrics_logs())));
     MaybeError::None
 }

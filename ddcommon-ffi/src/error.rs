@@ -111,3 +111,15 @@ pub type MaybeError = crate::Option<Error>;
 
 #[no_mangle]
 pub extern "C" fn ddog_MaybeError_drop(_: MaybeError) {}
+
+#[macro_export]
+macro_rules! try_c {
+    ($failable:expr) => {
+        match $failable {
+            Ok(o) => o,
+            Err(e) => {
+                return ddcommon_ffi::MaybeError::Some(ddcommon_ffi::Error::from(format!("{:?}", e)))
+            }
+        }
+    };
+}
