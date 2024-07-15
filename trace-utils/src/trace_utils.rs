@@ -16,7 +16,7 @@ pub use crate::send_data::SendData;
 pub use crate::tracer_header_tags::TracerHeaderTags;
 use crate::tracer_payload::{TraceEncoding, TracerPayloadCollection};
 use datadog_trace_normalization::normalizer;
-use datadog_trace_protobuf::pb::{self, Span, TraceChunk, TracerPayload};
+use datadog_trace_protobuf::pb;
 use ddcommon::azure_app_services;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
@@ -29,11 +29,13 @@ const MAX_STRING_DICT_SIZE: u32 = 25_000_000;
 const SPAN_ELEMENT_COUNT: usize = 12;
 
 /// First value of returned tuple is the payload size
-pub async fn get_traces_from_request_body(body: Body) -> anyhow::Result<(usize, Vec<Vec<Span>>)> {
+pub async fn get_traces_from_request_body(
+    body: Body,
+) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
     let buffer = hyper::body::aggregate(body).await?;
     let size = buffer.remaining();
 
-    let traces: Vec<Vec<Span>> = match rmp_serde::from_read(buffer.reader()) {
+    let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_read(buffer.reader()) {
         Ok(res) => res,
         Err(err) => {
             anyhow::bail!("Error deserializing trace from request body: {err}")
@@ -70,8 +72,8 @@ fn get_v05_strings_dict(reader: &mut Reader<impl Buf>) -> anyhow::Result<Vec<Str
 }
 
 #[inline]
-fn get_v05_span(reader: &mut Reader<impl Buf>, dict: &[String]) -> anyhow::Result<Span> {
-    let mut span: Span = Default::default();
+fn get_v05_span(reader: &mut Reader<impl Buf>, dict: &[String]) -> anyhow::Result<pb::Span> {
+    let mut span: pb::Span = Default::default();
     let span_size = rmp::decode::read_array_len(reader)
         .map_err(|err| anyhow!("Error reading span size: {err}"))? as usize;
     if span_size != SPAN_ELEMENT_COUNT {
@@ -223,7 +225,7 @@ fn get_v05_string(
 
 pub async fn get_v05_traces_from_request_body(
     body: Body,
-) -> anyhow::Result<(usize, Vec<Vec<Span>>)> {
+) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
     let buffer = hyper::body::aggregate(body).await?;
     let body_size = buffer.remaining();
     let mut reader = buffer.reader();
@@ -235,11 +237,11 @@ pub async fn get_v05_traces_from_request_body(
     let dict = get_v05_strings_dict(&mut reader)?;
 
     let traces_size = rmp::decode::read_array_len(&mut reader)?;
-    let mut traces: Vec<Vec<Span>> = Default::default();
+    let mut traces: Vec<Vec<pb::Span>> = Default::default();
 
     for _ in 0..traces_size {
         let spans_size = rmp::decode::read_array_len(&mut reader)?;
-        let mut trace: Vec<Span> = Default::default();
+        let mut trace: Vec<pb::Span> = Default::default();
 
         for _ in 0..spans_size {
             let span = get_v05_span(&mut reader, &dict)?;
@@ -259,8 +261,8 @@ pub struct RootSpanTags<'a> {
     pub runtime_id: &'a str,
 }
 
-pub(crate) fn construct_trace_chunk(trace: Vec<Span>) -> TraceChunk {
-    TraceChunk {
+pub(crate) fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
+    pb::TraceChunk {
         priority: normalizer::SamplerPriority::None as i32,
         origin: "".to_string(),
         spans: trace,
@@ -270,11 +272,11 @@ pub(crate) fn construct_trace_chunk(trace: Vec<Span>) -> TraceChunk {
 }
 
 pub(crate) fn construct_tracer_payload(
-    chunks: Vec<TraceChunk>,
+    chunks: Vec<pb::TraceChunk>,
     tracer_tags: &TracerHeaderTags,
     root_span_tags: RootSpanTags,
-) -> TracerPayload {
-    TracerPayload {
+) -> pb::TracerPayload {
+    pb::TracerPayload {
         app_version: root_span_tags.app_version.to_string(),
         language_name: tracer_tags.lang.to_string(),
         container_id: tracer_tags.container_id.to_string(),
@@ -381,7 +383,7 @@ pub fn get_root_span_index(trace: &[pb::Span]) -> anyhow::Result<usize> {
 ///   - OR its parent is unknown (other part of the code, distributed trace)
 ///   - OR its parent belongs to another service (in that case it's a "local root" being the highest
 ///     ancestor of other spans belonging to this service and attached to it).
-pub fn compute_top_level_span(trace: &mut [Span]) {
+pub fn compute_top_level_span(trace: &mut [pb::Span]) {
     let mut span_id_to_service: HashMap<u64, String> = HashMap::new();
     for span in trace.iter() {
         span_id_to_service.insert(span.span_id, span.service.clone());
@@ -406,7 +408,7 @@ pub fn compute_top_level_span(trace: &mut [Span]) {
     }
 }
 
-fn set_top_level_span(span: &mut Span, is_top_level: bool) {
+fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
     if !is_top_level {
         if span.metrics.contains_key(TOP_LEVEL_KEY) {
             span.metrics.remove(TOP_LEVEL_KEY);
@@ -417,7 +419,7 @@ fn set_top_level_span(span: &mut Span, is_top_level: bool) {
 }
 
 pub fn set_serverless_root_span_tags(
-    span: &mut Span,
+    span: &mut pb::Span,
     function_name: Option<String>,
     env_type: &EnvironmentType,
 ) {
@@ -437,7 +439,7 @@ pub fn set_serverless_root_span_tags(
     }
 }
 
-fn update_tracer_top_level(span: &mut Span) {
+fn update_tracer_top_level(span: &mut pb::Span) {
     if span.metrics.contains_key(TRACER_TOP_LEVEL_KEY) {
         span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
     }
@@ -457,7 +459,7 @@ pub struct MiniAgentMetadata {
 }
 
 pub fn enrich_span_with_mini_agent_metadata(
-    span: &mut Span,
+    span: &mut pb::Span,
     mini_agent_metadata: &MiniAgentMetadata,
 ) {
     if let Some(gcp_project_id) = &mini_agent_metadata.gcp_project_id {
@@ -470,7 +472,7 @@ pub fn enrich_span_with_mini_agent_metadata(
     }
 }
 
-pub fn enrich_span_with_azure_metadata(span: &mut Span, mini_agent_version: &str) {
+pub fn enrich_span_with_azure_metadata(span: &mut pb::Span, mini_agent_version: &str) {
     if let Some(aas_metadata) = azure_app_services::get_function_metadata() {
         let aas_tags = [
             ("aas.resource.id", aas_metadata.get_resource_id()),
@@ -520,16 +522,16 @@ macro_rules! parse_root_span_tags {
 }
 
 pub fn collect_trace_chunks(
-    mut traces: Vec<Vec<Span>>,
+    mut traces: Vec<Vec<pb::Span>>,
     tracer_header_tags: &TracerHeaderTags,
-    process_chunk: impl Fn(&mut TraceChunk, usize),
+    process_chunk: impl Fn(&mut pb::TraceChunk, usize),
     is_agentless: bool,
     encoding_type: TraceEncoding,
 ) -> TracerPayloadCollection {
     match encoding_type {
         TraceEncoding::V04 => TracerPayloadCollection::V04(traces),
         TraceEncoding::V07 => {
-            let mut trace_chunks: Vec<TraceChunk> = Vec::new();
+            let mut trace_chunks: Vec<pb::TraceChunk> = Vec::new();
 
             // We'll skip setting the global metadata and rely on the agent to unpack these
             let mut gathered_root_span_tags = !is_agentless;
@@ -748,7 +750,7 @@ mod tests {
             r#type: "sql".to_string(),
             span_links: vec![],
         };
-        assert!(span == test_span);
+        assert_eq!(span, test_span);
     }
 
     #[tokio::test]

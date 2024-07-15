@@ -16,9 +16,8 @@ use datadog_ipc::platform::{AsyncChannel, ShmHandle};
 use datadog_ipc::tarpc;
 use datadog_ipc::tarpc::context::Context;
 use datadog_ipc::transport::Transport;
-use datadog_trace_protobuf::pb;
-use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::SendData;
+use datadog_trace_utils::tracer_payload;
 use datadog_trace_utils::tracer_payload::TraceEncoding;
 use ddcommon::Endpoint;
 use ddtelemetry::worker::{
@@ -230,7 +229,6 @@ impl SidecarServer {
     ) -> Option<AppInstance> {
         let rt_info = self.get_runtime(instance_id);
 
-        // let (app_future, completer) = rt_info.get_app(service_name, env_name);
         let manual_app_future = rt_info.get_app(service_name, env_name);
 
         if manual_app_future.completer.is_none() {
@@ -254,7 +252,6 @@ impl SidecarServer {
             .unwrap_or_else(ddtelemetry::config::Config::from_env);
         config.restartable = true;
 
-        // TODO: APMSP-1076 - log errors
         let instance_option = match builder.spawn_with_config(config.clone()).await {
             Ok((handle, worker_join)) => {
                 info!("spawning telemetry worker {config:?}");
@@ -297,30 +294,27 @@ impl SidecarServer {
         };
 
         let size = data.len();
-        let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_slice(data) {
-            Ok(res) => res,
-            Err(err) => {
-                error!("Error deserializing trace from request body: {err}");
-                return;
-            }
-        };
 
-        if traces.is_empty() {
-            error!("No traces deserialized from the request body.");
-            return;
-        }
-
-        let payload = trace_utils::collect_trace_chunks(
-            traces,
+        match tracer_payload::TracerPayloadParams::new(
+            data,
             &headers,
-            |_chunk, _root_span_index| {},
+            Box::new(|_chunk, _root_span_index| {}),
             target.api_key.is_some(),
             TraceEncoding::V04,
-        );
-
-        // send trace payload to our trace flusher
-        let data = SendData::new(size, payload, headers, target);
-        self.trace_flusher.enqueue(data);
+        )
+        .try_into()
+        {
+            Ok(payload) => {
+                let data = SendData::new(size, payload, headers, target);
+                self.trace_flusher.enqueue(data);
+            }
+            Err(e) => {
+                error!(
+                    "Failed to collect trace chunks from msgpack with error {:?}",
+                    e
+                )
+            }
+        }
     }
 
     async fn compute_stats(&self) -> SidecarStats {
