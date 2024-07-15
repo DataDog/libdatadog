@@ -1623,6 +1623,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "cargo_metadata",
+ "criterion",
  "datadog-trace-normalization",
  "datadog-trace-protobuf",
  "ddcommon",

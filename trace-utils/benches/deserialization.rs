@@ -1,0 +1,63 @@
+// Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+use criterion::{criterion_group, Criterion};
+use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
+use datadog_trace_utils::tracer_payload::{
+    TraceEncoding, TracerPayloadCollection, TracerPayloadParams,
+};
+use serde_json::json;
+
+pub fn deserialize_msgpack_to_internal(c: &mut Criterion) {
+    let span_data1 = json!([{
+        "service": "test-service",
+        "name": "test-service-name",
+        "resource": "test-service-resource",
+        "trace_id": 111,
+        "span_id": 222,
+        "parent_id": 100,
+        "start": 1,
+        "duration": 5,
+        "error": 0,
+        "meta": {},
+        "metrics": {},
+    }]);
+
+    let span_data2 = json!([{
+        "service": "test-service",
+        "name": "test-service-name",
+        "resource": "test-service-resource",
+        "trace_id": 111,
+        "span_id": 333,
+        "parent_id": 100,
+        "start": 1,
+        "duration": 5,
+        "error": 1,
+        "meta": {},
+        "metrics": {},
+    }]);
+
+    let data =
+        rmp_serde::to_vec(&vec![span_data1, span_data2]).expect("Failed to serialize test spans.");
+    let tracer_header_tags = &TracerHeaderTags::default();
+
+    c.bench_function(
+        "benching deserializing traces from msgpack to their internal representation ",
+        |b| {
+            b.iter(|| {
+                let params = TracerPayloadParams::new(
+                    &data,
+                    tracer_header_tags,
+                    Box::new(|_chunk, _root_span_index| {}),
+                    false,
+                    TraceEncoding::V04,
+                );
+
+                let result: Result<TracerPayloadCollection, _> = params.try_into();
+                assert!(result.is_ok())
+            })
+        },
+    );
+}
+
+criterion_group!(benches, deserialize_msgpack_to_internal);
