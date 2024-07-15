@@ -16,6 +16,7 @@ log = "0.4"
 rmp-serde = "1.1.1"
 bytes = "1.4"
 tokio = {version = "1.23", features = ["rt"], default-features = false}
+http = "0.2"
 
 ddcommon = { path = "../ddcommon" }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
@@ -24,3 +25,6 @@ datadog-trace-normalization = { path = "../trace-normalization" }
 
 [lib]
 bench = false
+=======
+datadog-trace-obfuscation = { path = "../trace-obfuscation" }
+datadog-ddsketch = { path = "../ddsketch" }
