@@ -17,7 +17,7 @@ use ddcommon::{connector, tag::Tag, Endpoint};
 use hyper::{Method, Uri};
 
 /// The stats saved in the trace exporter are aggregated by BucketKey
-#[derive(Debug, Hash, PartialEq, Eq)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone)]
 struct AggregationKey {
     resource_name: String,
     service_name: String,
@@ -32,7 +32,7 @@ struct AggregationKey {
 struct GroupedStats {
     hits: u64,
     errors: u64,
-    bucket_duration: u64,
+    duration: u64,
     top_level_hits: u64,
     ok_summary: datadog_ddsketch::DDSketch,
     error_summary: datadog_ddsketch::DDSketch,
@@ -40,7 +40,7 @@ struct GroupedStats {
 
 impl GroupedStats {
     fn insert(&mut self, span_stats: &SpanStats) {
-        self.bucket_duration += span_stats.duration;
+        self.duration += span_stats.duration;
         self.hits += 1;
 
         if span_stats.is_error {
@@ -101,7 +101,7 @@ impl StatsBucket {
 }
 
 /// Stats exporter configuration
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Configuration {
     /// time range of each bucket
     pub buckets_duration: time::Duration,
@@ -241,7 +241,7 @@ fn encode_bucket(key: AggregationKey, bucket: GroupedStats) -> pb::ClientGrouped
 
         hits: bucket.hits,
         errors: bucket.errors,
-        duration: bucket.bucket_duration,
+        duration: bucket.duration,
         top_level_hits: bucket.top_level_hits,
 
         ok_summary: bucket.ok_summary.encode_to_vec(),
@@ -349,7 +349,197 @@ pub mod blocking {
 mod tests {
     use super::*;
 
-    // TODO: Implement tests for sending
+    fn get_test_metadata() -> LibraryMetadata {
+        LibraryMetadata {
+            hostname: "libdatadog-test".into(),
+            env: "test".into(),
+            version: "0.0.0".into(),
+            lang: "rust".into(),
+            tracer_version: "0.0.0".into(),
+            runtime_id: "e39d6d12-0752-489f-b488-cf80006c0378".into(),
+            service: "stats_exporter_test".into(),
+            ..Default::default()
+        }
+    }
+
+    fn get_test_configuration() -> Configuration {
+        Configuration {
+            buckets_duration: time::Duration::from_secs(10),
+            request_timeout: None,
+            endpoint: Endpoint {
+                url: hyper::Uri::from_static("http://localhost:8136/v0.6/stats"),
+                api_key: None,
+            },
+        }
+    }
+
+    #[test]
+    fn test_stats_computation() {
+        let stats_exporter =
+            StatsExporter::new(get_test_metadata(), get_test_configuration()).unwrap();
+
+        let span_stats = SpanStats {
+            resource_name: "res".into(),
+            service_name: "stats_exporter_test".into(),
+            operation_name: "insert_stats".into(),
+            span_type: "".into(),
+            http_status_code: 200,
+            is_synthetics_request: false,
+            is_error: false,
+            is_top_level: true,
+            duration: 1_000_000_000,
+        };
+
+        let span_aggregation_key = AggregationKey {
+            resource_name: "res".into(),
+            service_name: "stats_exporter_test".into(),
+            operation_name: "insert_stats".into(),
+            span_type: "".into(),
+            http_status_code: 200,
+            is_synthetics_request: false,
+        };
+
+        for i in 0..100 {
+            let mut s = span_stats.clone();
+            s.duration += 10_000_000 * i;
+            stats_exporter.insert(s)
+        }
+
+        for i in 0..100 {
+            let mut s = span_stats.clone();
+            s.is_error = true;
+            s.duration += 20_000_000 * i;
+            stats_exporter.insert(s)
+        }
+
+        let bucket = stats_exporter.buckets.lock().unwrap();
+        let stats = bucket.data.get(&span_aggregation_key).unwrap();
+        assert_eq!(stats.hits, 200);
+        assert_eq!(stats.top_level_hits, 200);
+        assert_eq!(
+            stats.duration,
+            1_000_000_000 * 200 + 10_000_000 * 4950 + 20_000_000 * 4950
+        );
+        assert_eq!(stats.errors, 100);
+    }
+
+    #[test]
+    fn test_aggregation() {
+        let stats_exporter =
+            StatsExporter::new(get_test_metadata(), get_test_configuration()).unwrap();
+
+        let span_stats = SpanStats {
+            resource_name: "res_1".into(),
+            service_name: "service_a".into(),
+            operation_name: "insert_stats".into(),
+            span_type: "".into(),
+            http_status_code: 200,
+            is_synthetics_request: false,
+            is_error: false,
+            is_top_level: true,
+            duration: 1_000_000_000,
+        };
+
+        let span_aggregation_key = AggregationKey {
+            resource_name: "res_1".into(),
+            service_name: "service_a".into(),
+            operation_name: "insert_stats".into(),
+            span_type: "".into(),
+            http_status_code: 200,
+            is_synthetics_request: false,
+        };
+
+        // Default Span
+        for _ in 0..10 {
+            let s = span_stats.clone();
+            stats_exporter.insert(s)
+        }
+
+        // Default Span with error
+        for _ in 0..10 {
+            let mut s = span_stats.clone();
+            s.is_error = true;
+            s.is_top_level = false;
+            stats_exporter.insert(s)
+        }
+
+        // Different service
+        for _ in 0..10 {
+            let mut s = span_stats.clone();
+            s.service_name = "service_b".into();
+            stats_exporter.insert(s)
+        }
+
+        // Different resource
+        for _ in 0..10 {
+            let mut s = span_stats.clone();
+            s.resource_name = "res_2".into();
+            stats_exporter.insert(s)
+        }
+
+        // Different operation
+        for _ in 0..10 {
+            let mut s = span_stats.clone();
+            s.operation_name = "insert_new_stats".into();
+            stats_exporter.insert(s)
+        }
+
+        // Different span type
+        for _ in 0..10 {
+            let mut s = span_stats.clone();
+            s.span_type = "type".into();
+            stats_exporter.insert(s)
+        }
+
+        // Different status code
+        for _ in 0..10 {
+            let mut s = span_stats.clone();
+            s.http_status_code = 201;
+            stats_exporter.insert(s)
+        }
+
+        // Synthetics
+        for _ in 0..10 {
+            let mut s = span_stats.clone();
+            s.is_synthetics_request = true;
+            stats_exporter.insert(s)
+        }
+
+        let bucket = stats_exporter.buckets.lock().unwrap();
+        let stats = bucket.data.get(&span_aggregation_key).unwrap();
+        assert_eq!(stats.hits, 20);
+
+        let mut service_aggregation_key = span_aggregation_key.clone();
+        service_aggregation_key.service_name = "service_b".into();
+        let stats = bucket.data.get(&service_aggregation_key).unwrap();
+        assert_eq!(stats.hits, 10);
+
+        let mut resource_aggregation_key = span_aggregation_key.clone();
+        resource_aggregation_key.resource_name = "res_2".into();
+        let stats = bucket.data.get(&resource_aggregation_key).unwrap();
+        assert_eq!(stats.hits, 10);
+
+        let mut operation_aggregation_key = span_aggregation_key.clone();
+        operation_aggregation_key.operation_name = "insert_new_stats".into();
+        let stats = bucket.data.get(&operation_aggregation_key).unwrap();
+        assert_eq!(stats.hits, 10);
+
+        let mut type_aggregation_key = span_aggregation_key.clone();
+        type_aggregation_key.span_type = "type".into();
+        let stats = bucket.data.get(&type_aggregation_key).unwrap();
+        assert_eq!(stats.hits, 10);
+
+        let mut status_aggregation_key = span_aggregation_key.clone();
+        status_aggregation_key.http_status_code = 201;
+        let stats = bucket.data.get(&status_aggregation_key).unwrap();
+        assert_eq!(stats.hits, 10);
+
+        let mut synthetics_aggregation_key = span_aggregation_key.clone();
+        synthetics_aggregation_key.is_synthetics_request = true;
+        let stats = bucket.data.get(&synthetics_aggregation_key).unwrap();
+        assert_eq!(stats.hits, 10);
+    }
+
     fn is_send<T: Send>() {}
     fn is_sync<T: Sync>() {}
 
