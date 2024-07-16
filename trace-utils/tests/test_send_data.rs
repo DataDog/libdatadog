@@ -29,12 +29,11 @@ mod tracing_integration_tests {
             client_computed_stats: false,
         };
 
-        let endpoint = Endpoint {
-            url: test_agent
+        let endpoint = Endpoint::from_url(
+            test_agent
                 .get_uri_for_endpoint("v0.4/traces", Some("compare_v04_trace_snapshot_test"))
                 .await,
-            api_key: None,
-        };
+        );
 
         let mut span_1 = create_test_span(1234, 12342, 12341, 1, false);
         span_1.metrics.insert("_dd_metric1".to_string(), 1.0);

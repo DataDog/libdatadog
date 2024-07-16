@@ -76,10 +76,12 @@ impl Config {
             trace_intake: Endpoint {
                 url: hyper::Uri::from_str(&trace_intake_url).unwrap(),
                 api_key: Some(api_key.clone()),
+                ..Default::default()
             },
             trace_stats_intake: Endpoint {
                 url: hyper::Uri::from_str(&trace_stats_intake_url).unwrap(),
                 api_key: Some(api_key),
+                ..Default::default()
             },
             obfuscation_config,
             mini_agent_version,

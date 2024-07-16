@@ -116,6 +116,7 @@ async fn async_main() {
             "https://instrumentation-telemetry-intake.datad0g.com/api/v2/apmtelemetry",
         ),
         api_key: Some(Cow::Owned(std::env::var("DD_API_KEY").unwrap())),
+        ..Default::default()
     });
     push_telemetry(&config, &req).await.unwrap();
 }

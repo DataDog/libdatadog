@@ -166,6 +166,7 @@ mod test {
     #[cfg(unix)]
     use ddcommon::connector::uds::socket_path_to_uri;
     use ddcommon::{tag, Endpoint};
+    #[cfg(unix)]
     use http::Uri;
     use std::net;
     use std::time::Duration;
@@ -177,16 +178,9 @@ mod test {
         let _ = socket.set_read_timeout(Some(Duration::from_millis(500)));
 
         let mut flusher = Flusher::default();
-        flusher.set_endpoint(Endpoint {
-            url: socket
-                .local_addr()
-                .unwrap()
-                .to_string()
-                .as_str()
-                .parse::<Uri>()
-                .unwrap(),
-            api_key: None,
-        });
+        flusher.set_endpoint(Endpoint::from_slice(
+            socket.local_addr().unwrap().to_string().as_str(),
+        ));
         flusher.send(vec![
             Count("test_count".to_string(), 3, vec![tag!("foo", "bar")]),
             Count("test_neg_count".to_string(), -2, vec![]),
@@ -224,23 +218,14 @@ mod test {
         assert!(res.is_err());
         assert_eq!("invalid host", res.unwrap_err().to_string().as_str());
 
-        let res = create_client(Some(Endpoint {
-            url: "localhost:99999".parse::<Uri>().unwrap(),
-            api_key: None,
-        }));
+        let res = create_client(Some(Endpoint::from_slice("localhost:99999")));
         assert!(res.is_err());
         assert_eq!("invalid port", res.unwrap_err().to_string().as_str());
 
-        let res = create_client(Some(Endpoint {
-            url: "localhost:80".parse::<Uri>().unwrap(),
-            api_key: None,
-        }));
+        let res = create_client(Some(Endpoint::from_slice("localhost:80")));
         assert!(res.is_ok());
 
-        let res = create_client(Some(Endpoint {
-            url: "http://localhost:80".parse::<Uri>().unwrap(),
-            api_key: None,
-        }));
+        let res = create_client(Some(Endpoint::from_slice("http://localhost:80")));
         assert!(res.is_ok());
     }
 
@@ -248,17 +233,15 @@ mod test {
     #[cfg(unix)]
     #[cfg_attr(miri, ignore)]
     fn test_create_client_unix_domain_socket() {
-        let res = create_client(Some(Endpoint {
-            url: "unix://localhost:80".parse::<Uri>().unwrap(),
-            api_key: None,
-        }));
+        let res = create_client(Some(Endpoint::from_url(
+            "unix://localhost:80".parse::<Uri>().unwrap(),
+        )));
         assert!(res.is_err());
         assert_eq!("invalid url", res.unwrap_err().to_string().as_str());
 
-        let res = create_client(Some(Endpoint {
-            url: socket_path_to_uri("/path/to/a/socket.sock".as_ref()).unwrap(),
-            api_key: None,
-        }));
+        let res = create_client(Some(Endpoint::from_url(
+            socket_path_to_uri("/path/to/a/socket.sock".as_ref()).unwrap(),
+        )));
         assert!(res.is_ok());
     }
 }

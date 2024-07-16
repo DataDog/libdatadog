@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use ddcommon::Endpoint;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
 /// Stacktrace collection occurs in the context of a crashing process.
 /// If the stack is sufficiently corruputed, it is possible (but unlikely),
@@ -26,7 +25,6 @@ pub struct CrashtrackerConfiguration {
     pub create_alt_stack: bool,
     pub endpoint: Option<Endpoint>,
     pub resolve_frames: StacktraceCollection,
-    pub timeout: Duration,
     pub wait_for_receiver: bool,
 }
 
@@ -74,7 +72,6 @@ impl CrashtrackerConfiguration {
         create_alt_stack: bool,
         endpoint: Option<Endpoint>,
         resolve_frames: StacktraceCollection,
-        timeout: Duration,
         wait_for_receiver: bool,
     ) -> anyhow::Result<Self> {
         Ok(Self {
@@ -82,7 +79,6 @@ impl CrashtrackerConfiguration {
             create_alt_stack,
             endpoint,
             resolve_frames,
-            timeout,
             wait_for_receiver,
         })
     }

@@ -132,7 +132,6 @@ pub fn init_with_unix_socket(
 fn test_crash() -> anyhow::Result<()> {
     use crate::{begin_profiling_op, StacktraceCollection};
     use chrono::Utc;
-    use ddcommon::parse_uri;
     use ddcommon::tag;
     use ddcommon::Endpoint;
     use std::time::Duration;
@@ -142,8 +141,9 @@ fn test_crash() -> anyhow::Result<()> {
     let output_url = format!("file://{dir}{time}.txt");
 
     let endpoint = Some(Endpoint {
-        url: parse_uri(&output_url).unwrap(),
-        api_key: None,
+        url: ddcommon::parse_uri(&output_url).unwrap(),
+        timeout_ms: 30_000,
+        ..Default::default()
     });
 
     let path_to_receiver_binary =
@@ -152,7 +152,6 @@ fn test_crash() -> anyhow::Result<()> {
     let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
-    let timeout = Duration::from_secs(30);
     let wait_for_receiver = true;
     let receiver_config = CrashtrackerReceiverConfig::new(
         vec![],
@@ -166,7 +165,6 @@ fn test_crash() -> anyhow::Result<()> {
         create_alt_stack,
         endpoint,
         resolve_frames,
-        timeout,
         wait_for_receiver,
     )?;
     let metadata = CrashtrackerMetadata::new(

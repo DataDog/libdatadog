@@ -122,10 +122,7 @@ impl DatadogTestAgentContainer {
 ///         .get_uri_for_endpoint("test-endpoint", Some("snapshot-token"))
 ///         .await;
 ///
-///     let endpoint = Endpoint {
-///         url: uri,
-///         api_key: None,
-///     };
+///     let endpoint = Endpoint::from_url(uri);
 ///
 ///     let trace = vec![];
 ///

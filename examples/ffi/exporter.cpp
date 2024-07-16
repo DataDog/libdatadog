@@ -140,10 +140,11 @@ int main(int argc, char *argv[]) {
   ddog_CharSlice info_example = DDOG_CHARSLICE_C_BARE(
       "{\"application\": {\"start_time\": \"2024-01-24T11:17:22+0000\"}, \"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
 
+  ddog_prof_Exporter_set_timeout(exporter, 30000);
+
   ddog_prof_Exporter_Request_BuildResult build_result = ddog_prof_Exporter_Request_build(
       exporter, encoded_profile->start, encoded_profile->end, files_to_compress_and_export,
-      files_to_export_unmodified, nullptr, nullptr, &internal_metadata_example, &info_example,
-      30000);
+      files_to_export_unmodified, nullptr, nullptr, &internal_metadata_example, &info_example);
   ddog_prof_EncodedProfile_drop(encoded_profile);
 
   if (build_result.tag == DDOG_PROF_EXPORTER_REQUEST_BUILD_RESULT_ERR) {

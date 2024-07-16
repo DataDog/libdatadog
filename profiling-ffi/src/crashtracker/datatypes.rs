@@ -7,7 +7,6 @@ use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice};
 use ddcommon_ffi::{Error, Slice, StringWrapper};
 use std::ops::Not;
-use std::time::Duration;
 
 #[repr(C)]
 pub struct EnvVar<'a> {
@@ -95,14 +94,12 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
         let create_alt_stack = value.create_alt_stack;
         let endpoint = unsafe { exporter::try_to_endpoint(value.endpoint).ok() };
         let resolve_frames = value.resolve_frames;
-        let timeout = Duration::from_secs(value.timeout_secs);
         let wait_for_receiver = value.wait_for_receiver;
         Self::new(
             additional_files,
             create_alt_stack,
             endpoint,
             resolve_frames,
-            timeout,
             wait_for_receiver,
         )
     }

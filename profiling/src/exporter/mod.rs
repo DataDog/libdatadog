@@ -170,7 +170,6 @@ impl ProfileExporter {
         endpoint_counts: Option<&ProfiledEndpointsStats>,
         internal_metadata: Option<serde_json::Value>,
         info: Option<serde_json::Value>,
-        timeout: std::time::Duration,
     ) -> anyhow::Result<Request> {
         let mut form = multipart::Form::default();
 
@@ -288,7 +287,7 @@ impl ProfileExporter {
 
         Ok(
             Request::from(form.set_body_convert::<hyper::Body, multipart::Body>(builder)?)
-                .with_timeout(timeout),
+                .with_timeout(std::time::Duration::from_millis(self.endpoint.timeout_ms)),
         )
     }
 
@@ -300,6 +299,10 @@ impl ProfileExporter {
         self.exporter
             .runtime
             .block_on(request.send(&self.exporter.client, cancel))
+    }
+
+    pub fn set_timeout(&mut self, timeout_ms: u64) {
+        self.endpoint.timeout_ms = timeout_ms;
     }
 }
 

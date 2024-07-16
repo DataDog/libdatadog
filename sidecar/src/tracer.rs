@@ -22,7 +22,7 @@ impl Config {
         };
         self.endpoint = Some(Endpoint {
             url: uri,
-            api_key: endpoint.api_key,
+            ..endpoint
         });
         Ok(())
     }

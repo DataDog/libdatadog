@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     builder.config.telemetry_debug_logging_enabled = Some(true);
     builder.config.endpoint = Some(ddcommon::Endpoint {
         url: ddcommon::parse_uri("file://./tm-worker-test.output").unwrap(),
-        api_key: None,
+        ..Default::default()
     });
     builder.config.telemetry_hearbeat_interval = Some(Duration::from_secs(1));
 
