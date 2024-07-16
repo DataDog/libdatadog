@@ -31,6 +31,7 @@ uuid = { version = "1.4.1", features = ["v4", "serde"] }
 ddtelemetry = {path = "../ddtelemetry"}
 tokio = { version = "1.23", features = ["rt", "macros"] }
 http = "0.2"
+portable-atomic = { version = "1.6.0", features = ["serde"] }
 
 [dev-dependencies]
 tempfile = { version = "3.3" }

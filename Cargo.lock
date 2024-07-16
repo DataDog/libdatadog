@@ -1334,6 +1334,7 @@ dependencies = [
  "nix 0.27.1",
  "os_info",
  "page_size",
+ "portable-atomic",
  "serde",
  "serde_json",
  "tempfile",
@@ -3544,6 +3545,15 @@ dependencies = [
  "rustix 0.38.32",
  "tracing",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "portable-atomic"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7170ef9988bc169ba16dd36a7fa041e5c4cbeb6a35b76d4c03daded371eae7c0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
