@@ -45,6 +45,11 @@ impl DDSketch {
         bins
     }
 
+    // Return the number of points in the sketch
+    pub fn count(&self) -> f64 {
+        self.zero_count + self.store.bins.iter().sum::<f64>()
+    }
+
     /// Add a point with value `point` to the sketch
     /// `point` must be positive
     pub fn add(&mut self, point: f64) -> Result<(), Box<dyn std::error::Error>> {
@@ -367,6 +372,39 @@ mod test {
     fn test_skecth_add_nan() {
         let mut sketch = DDSketch::default();
         assert!(sketch.add(f64::NAN).is_err());
+    }
+
+    #[test]
+    fn test_sketch_count_add_with_count() {
+        let mut sketch = DDSketch::default();
+        assert_within!(sketch.count(), 0.0, f64::EPSILON);
+
+        let points: &[f64] = &[0.0, 1e-30, 0.1, 2.0, 10.0, 25.0, 10000.0];
+        for (i, &point) in points.iter().enumerate() {
+            assert!(sketch.add_with_count(point, i as f64).is_ok());
+        }
+
+        assert_within!(sketch.count(), 21.0, f64::EPSILON);
+    }
+
+    #[test]
+    fn test_sketch_count_add() {
+        let mut sketch = DDSketch::default();
+        assert_within!(sketch.count(), 0.0, f64::EPSILON);
+
+        let points: &[f64] = &[0.0, 1e-30, 0.1, 2.0, 10.0, 25.0, 10000.0];
+        for &point in points.iter() {
+            assert!(sketch.add(point).is_ok());
+        }
+        assert_within!(sketch.count(), 7.0, f64::EPSILON);
+
+        assert!(sketch.add(1.0).is_ok());
+        assert_within!(sketch.count(), 8.0, f64::EPSILON);
+
+        for n in 0..100 {
+            assert!(sketch.add(n as f64).is_ok());
+        }
+        assert_within!(sketch.count(), 108.0, f64::EPSILON);
     }
 
     #[test]
