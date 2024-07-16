@@ -54,6 +54,7 @@ mod counters;
 mod crash_handler;
 mod crash_info;
 mod receiver;
+mod spans;
 mod stacktrace;
 mod telemetry;
 

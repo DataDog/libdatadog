@@ -1335,6 +1335,7 @@ dependencies = [
  "os_info",
  "page_size",
  "portable-atomic",
+ "rand",
  "serde",
  "serde_json",
  "tempfile",
