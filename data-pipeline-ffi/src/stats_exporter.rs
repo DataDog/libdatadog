@@ -6,7 +6,7 @@ use std::{ptr::NonNull, time};
 use data_pipeline::stats_exporter::{
     blocking::StatsExporter, stats_url_from_agent_url, Configuration, LibraryMetadata, SpanStats,
 };
-use ddcommon::{parse_uri, tag::Tag, Endpoint};
+use ddcommon::{parse_uri, Endpoint};
 use ddcommon_ffi as ffi;
 use ffi::slice::AsBytes;
 
@@ -39,7 +39,6 @@ pub unsafe extern "C" fn ddog_stats_exporter_new(
     runtime_id: ffi::CharSlice,
     service: ffi::CharSlice,
     git_commit_sha: ffi::CharSlice,
-    tags: ffi::Vec<Tag>,
     stats_computation_interval_seconds: u64,
     request_timeout_ms: u64,
 ) -> ffi::Option<ffi::Error> {
@@ -59,7 +58,7 @@ pub unsafe extern "C" fn ddog_stats_exporter_new(
                 .unwrap_or("")
                 .to_owned(),
             git_commit_sha: git_commit_sha.to_utf8_lossy().into_owned(),
-            tags: tags.into(),
+            tags: vec![],
         },
         Configuration {
             endpoint: Endpoint {

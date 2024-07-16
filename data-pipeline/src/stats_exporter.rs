@@ -69,6 +69,7 @@ pub struct LibraryMetadata {
     pub service: String,
     pub container_id: String,
     pub git_commit_sha: String,
+    /// Should be left empty by client, except for some specific environment
     pub tags: Vec<Tag>,
 }
 
