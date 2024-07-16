@@ -130,7 +130,7 @@ pub struct TracerPayloadParams<'a> {
     /// A boolean indicating whether the agent is running in an agentless mode. This is used to
     /// determine what protocol trace chunks should be serialized into when being sent.
     is_agentless: bool,
-    /// * `encoding_type`: The encoding type of the trace data, determining how the data should be
+    /// The encoding type of the trace data, determining how the data should be
     ///   deserialized and processed.
     encoding_type: TraceEncoding,
 }
@@ -206,13 +206,11 @@ impl<'a> TryInto<TracerPayloadCollection> for TracerPayloadParams<'a> {
                 let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_slice(self.data) {
                     Ok(res) => res,
                     Err(e) => {
-                        println!("Error deserializing trace from request body: {e}");
                         anyhow::bail!("Error deserializing trace from request body: {e}")
                     }
                 };
 
                 if traces.is_empty() {
-                    println!("Error trace is empty");
                     anyhow::bail!("No traces deserialized from the request body.");
                 }
 
