@@ -69,6 +69,8 @@ impl<const LEN: usize> AtomicU128Set<LEN> {
     }
 
     pub fn emit(&self, w: &mut impl Write) -> anyhow::Result<()> {
+        write!(w, "[")?;
+
         if self.used.load(SeqCst) > 0 {
             let mut first = true;
             for it in self.set.iter() {
@@ -82,6 +84,8 @@ impl<const LEN: usize> AtomicU128Set<LEN> {
                 }
             }
         }
+        write!(w, "]")?;
+
         Ok(())
     }
 
@@ -145,7 +149,7 @@ mod tests {
         let mut buf = Vec::new();
         s.emit(&mut buf).unwrap();
         let actual = String::from_utf8(buf).unwrap();
-        assert!(actual == "42, 21" || actual == "21, 42");
+        assert!(actual == "[42, 21]" || actual == "[21, 42]");
     }
 
     fn remove_and_compare(
