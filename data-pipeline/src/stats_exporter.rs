@@ -14,7 +14,9 @@ use std::{
 use datadog_trace_normalization::normalize_utils;
 use datadog_trace_protobuf::pb;
 use ddcommon::{connector, tag::Tag, Endpoint};
-use hyper::{Method, Uri};
+use hyper;
+
+const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
 
 /// The stats saved in the trace exporter are aggregated by BucketKey
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
@@ -108,7 +110,7 @@ pub struct Configuration {
     /// optional timeout for sending stats
     pub request_timeout: Option<time::Duration>,
     /// endpoint used to send stats to the agent
-    pub endpoint: ddcommon::Endpoint,
+    pub endpoint: Endpoint,
 }
 
 /// An exporter aggregating stats from traces and sending them to the agent
@@ -181,7 +183,7 @@ impl StatsExporter {
                 hyper::header::CONTENT_TYPE,
                 ddcommon::header::APPLICATION_MSGPACK,
             )
-            .method(Method::POST)
+            .method(hyper::Method::POST)
             .body(hyper::Body::from(body))?;
 
         let resp = match self.cfg.request_timeout {
@@ -303,11 +305,10 @@ fn duration_unix_timestamp(t: time::SystemTime) -> time::Duration {
 }
 
 /// Return a Endpoint to send stats to the agent at `agent_url`
-pub fn endpoint_from_agent_url(agent_url: Uri) -> anyhow::Result<Endpoint> {
+pub fn stats_url_from_agent_url(agent_url: hyper::Uri) -> anyhow::Result<hyper::Uri> {
     let mut parts = agent_url.into_parts();
-    parts.path_and_query = Some(http::uri::PathAndQuery::from_static("/v0.6/stats"));
-    let url = hyper::Uri::from_parts(parts)?;
-    Ok(Endpoint { url, api_key: None })
+    parts.path_and_query = Some(http::uri::PathAndQuery::from_static(STATS_ENDPOINT_PATH));
+    Ok(hyper::Uri::from_parts(parts)?)
 }
 
 /// Provides a blocking implementation of StatsExporter
@@ -347,7 +348,28 @@ pub mod blocking {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
+    use httpmock::prelude::*;
+    use httpmock::MockServer;
+
+    fn is_send<T: Send>() {}
+    fn is_sync<T: Sync>() {}
+
+    /// Fails to compile if stats exporter is not Send and Sync
+    #[test]
+    fn test_stats_exporter_sync_send() {
+        let _ = is_send::<StatsExporter>;
+        let _ = is_sync::<StatsExporter>;
+    }
+
+    /// Fails to compile if blocking stats exporter is not Send and Sync
+    #[test]
+    fn test_blocking_stats_exporter_sync_send() {
+        let _ = is_send::<blocking::StatsExporter>;
+        let _ = is_sync::<blocking::StatsExporter>;
+    }
 
     fn get_test_metadata() -> LibraryMetadata {
         LibraryMetadata {
@@ -367,9 +389,37 @@ mod tests {
             buckets_duration: time::Duration::from_secs(10),
             request_timeout: None,
             endpoint: Endpoint {
-                url: hyper::Uri::from_static("http://localhost:8136/v0.6/stats"),
-                api_key: None,
+                url: stats_url_from_agent_url(
+                    hyper::Uri::from_str("http://localhost:8136").unwrap(),
+                )
+                .unwrap(),
+                ..Default::default()
             },
+        }
+    }
+
+    fn get_test_span_stats() -> SpanStats {
+        SpanStats {
+            resource_name: "res_1".into(),
+            service_name: "service_a".into(),
+            operation_name: "insert_stats".into(),
+            span_type: "".into(),
+            http_status_code: 200,
+            is_synthetics_request: false,
+            is_error: false,
+            is_top_level: true,
+            duration: 1_000_000_000,
+        }
+    }
+
+    fn get_test_aggregation_key() -> AggregationKey {
+        AggregationKey {
+            resource_name: "res_1".into(),
+            service_name: "service_a".into(),
+            operation_name: "insert_stats".into(),
+            span_type: "".into(),
+            http_status_code: 200,
+            is_synthetics_request: false,
         }
     }
 
@@ -378,26 +428,9 @@ mod tests {
         let stats_exporter =
             StatsExporter::new(get_test_metadata(), get_test_configuration()).unwrap();
 
-        let span_stats = SpanStats {
-            resource_name: "res".into(),
-            service_name: "stats_exporter_test".into(),
-            operation_name: "insert_stats".into(),
-            span_type: "".into(),
-            http_status_code: 200,
-            is_synthetics_request: false,
-            is_error: false,
-            is_top_level: true,
-            duration: 1_000_000_000,
-        };
+        let span_stats = get_test_span_stats();
 
-        let span_aggregation_key = AggregationKey {
-            resource_name: "res".into(),
-            service_name: "stats_exporter_test".into(),
-            operation_name: "insert_stats".into(),
-            span_type: "".into(),
-            http_status_code: 200,
-            is_synthetics_request: false,
-        };
+        let span_aggregation_key = get_test_aggregation_key();
 
         for i in 0..100 {
             let mut s = span_stats.clone();
@@ -427,27 +460,8 @@ mod tests {
     fn test_aggregation() {
         let stats_exporter =
             StatsExporter::new(get_test_metadata(), get_test_configuration()).unwrap();
-
-        let span_stats = SpanStats {
-            resource_name: "res_1".into(),
-            service_name: "service_a".into(),
-            operation_name: "insert_stats".into(),
-            span_type: "".into(),
-            http_status_code: 200,
-            is_synthetics_request: false,
-            is_error: false,
-            is_top_level: true,
-            duration: 1_000_000_000,
-        };
-
-        let span_aggregation_key = AggregationKey {
-            resource_name: "res_1".into(),
-            service_name: "service_a".into(),
-            operation_name: "insert_stats".into(),
-            span_type: "".into(),
-            http_status_code: 200,
-            is_synthetics_request: false,
-        };
+        let span_stats = get_test_span_stats();
+        let span_aggregation_key = get_test_aggregation_key();
 
         // Default Span
         for _ in 0..10 {
@@ -540,18 +554,46 @@ mod tests {
         assert_eq!(stats.hits, 10);
     }
 
-    fn is_send<T: Send>() {}
-    fn is_sync<T: Sync>() {}
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_send_stats() {
+        let server = MockServer::start_async().await;
 
-    #[test]
-    fn test_stats_exporter_sync_send() {
-        let _ = is_send::<StatsExporter>;
-        let _ = is_sync::<StatsExporter>;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .header("Content-type", "application/msgpack")
+                    .path("/v0.6/stats")
+                    .body_contains("libdatadog-test")
+                    .body_contains("res_1");
+                then.status(200).body("");
+            })
+            .await;
+
+        let stats_exporter = StatsExporter::new(
+            get_test_metadata(),
+            Configuration {
+                buckets_duration: time::Duration::from_secs(10),
+                request_timeout: None,
+                endpoint: Endpoint {
+                    url: stats_url_from_agent_url(server.url("/").parse::<hyper::Uri>().unwrap())
+                        .unwrap(),
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+
+        for _ in 0..100 {
+            stats_exporter.insert(get_test_span_stats());
+        }
+
+        let send_status = stats_exporter.send().await;
+        send_status.unwrap();
+
+        mock.assert_async().await;
     }
 
     #[test]
-    fn test_blocking_stats_exporter_sync_send() {
-        let _ = is_send::<blocking::StatsExporter>;
-        let _ = is_sync::<blocking::StatsExporter>;
-    }
+    fn test_send_stats_blocking() {}
 }

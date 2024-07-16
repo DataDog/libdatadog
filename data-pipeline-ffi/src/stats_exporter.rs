@@ -4,9 +4,9 @@
 use std::{ptr::NonNull, time};
 
 use data_pipeline::stats_exporter::{
-    blocking::StatsExporter, endpoint_from_agent_url, Configuration, LibraryMetadata, SpanStats,
+    blocking::StatsExporter, stats_url_from_agent_url, Configuration, LibraryMetadata, SpanStats,
 };
-use ddcommon::{parse_uri, tag::Tag};
+use ddcommon::{parse_uri, tag::Tag, Endpoint};
 use ddcommon_ffi as ffi;
 use ffi::slice::AsBytes;
 
@@ -43,8 +43,8 @@ pub unsafe extern "C" fn ddog_stats_exporter_new(
     stats_computation_interval_seconds: u64,
     request_timeout_ms: u64,
 ) -> ffi::Option<ffi::Error> {
-    let endpoint =
-        ffi::try_c!(parse_uri(url.to_utf8_lossy().as_ref()).and_then(endpoint_from_agent_url));
+    let url =
+        ffi::try_c!(parse_uri(url.to_utf8_lossy().as_ref()).and_then(stats_url_from_agent_url));
 
     let exporter = StatsExporter::new(
         LibraryMetadata {
@@ -62,7 +62,10 @@ pub unsafe extern "C" fn ddog_stats_exporter_new(
             tags: tags.into(),
         },
         Configuration {
-            endpoint,
+            endpoint: Endpoint {
+                url,
+                ..Default::default()
+            },
             buckets_duration: time::Duration::from_secs(stats_computation_interval_seconds),
             request_timeout: if request_timeout_ms != 0 {
                 Some(time::Duration::from_millis(request_timeout_ms))
