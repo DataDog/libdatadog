@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::targets::TargetsList;
-use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
+use crate::{
+    RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigPathRef, RemoteConfigPathType,
+    RemoteConfigProduct, Target,
+};
 use base64::Engine;
 use datadog_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
@@ -12,8 +15,8 @@ use ddcommon::{connector, Endpoint};
 use hyper::http::uri::{PathAndQuery, Scheme};
 use hyper::{Client, StatusCode};
 use sha2::{Digest, Sha256, Sha512};
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
+use std::mem::transmute;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::{debug, error, trace, warn};
@@ -31,7 +34,7 @@ pub trait FileStorage {
     fn store(
         &self,
         version: u64,
-        path: RemoteConfigPath,
+        path: Arc<RemoteConfigPath>,
         contents: Vec<u8>,
     ) -> anyhow::Result<Arc<Self::StoredFile>>;
 
@@ -62,31 +65,40 @@ struct StoredTargetFile<S> {
     expiring: bool,
 }
 
+pub enum ConfigApplyState {
+    Unacknowledged,
+    Acknowledged,
+    Error(String),
+}
+
 pub struct ConfigFetcherState<S> {
-    target_files_by_path: Mutex<HashMap<String, StoredTargetFile<S>>>,
+    target_files_by_path: Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
     pub invariants: ConfigInvariants,
     endpoint: Endpoint,
     pub expire_unused_files: bool,
 }
 
 pub struct ConfigFetcherFilesLock<'a, S> {
-    inner: MutexGuard<'a, HashMap<String, StoredTargetFile<S>>>,
+    inner: MutexGuard<'a, HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
 }
 
 impl<'a, S> ConfigFetcherFilesLock<'a, S> {
     /// Actually remove the file from the known files.
     /// It may only be expired if already marked as expiring.
     pub fn expire_file(&mut self, path: &RemoteConfigPath) {
-        if let Entry::Occupied(entry) = self.inner.entry(path.to_string()) {
-            if entry.get().expiring {
-                entry.remove();
+        if let Some(target_file) = self.inner.get(path) {
+            if !target_file.expiring {
+                return;
             }
+        } else {
+            return;
         }
+        self.inner.remove(path);
     }
 
     /// Stop advertising the file as known. It's the predecessor to expire_file().
     pub fn mark_expiring(&mut self, path: &RemoteConfigPath) {
-        if let Some(target_file) = self.inner.get_mut(&path.to_string()) {
+        if let Some(target_file) = self.inner.get_mut(path) {
             target_file.expiring = true;
         }
     }
@@ -113,6 +125,26 @@ impl<S> ConfigFetcherState<S> {
             inner: self.target_files_by_path.lock().unwrap(),
         }
     }
+
+    /// Sets the apply state on a stored file.
+    pub fn set_config_state(&self, file: &RemoteConfigPath, state: ConfigApplyState) {
+        if let Some(target_file) = self.target_files_by_path.lock().unwrap().get_mut(file) {
+            match state {
+                ConfigApplyState::Unacknowledged => {
+                    target_file.state.apply_state = 1;
+                    target_file.state.apply_error = "".to_string();
+                }
+                ConfigApplyState::Acknowledged => {
+                    target_file.state.apply_state = 1;
+                    target_file.state.apply_error = "".to_string();
+                }
+                ConfigApplyState::Error(error) => {
+                    target_file.state.apply_state = 1;
+                    target_file.state.apply_error = error;
+                }
+            }
+        }
+    }
 }
 
 pub struct ConfigFetcher<S: FileStorage> {
@@ -129,6 +161,8 @@ pub struct ConfigFetcher<S: FileStorage> {
 pub struct OpaqueState {
     client_state: Vec<u8>,
     last_configs: Vec<String>,
+    // 'static because it actually depends on last_configs, and rust doesn't like self-referencing
+    last_config_paths: HashSet<RemoteConfigPathRef<'static>>,
     targets_version: u64,
 }
 
@@ -140,6 +174,11 @@ impl<S: FileStorage> ConfigFetcher<S> {
             timeout: AtomicU32::new(5000),
             interval: AtomicU64::new(0),
         }
+    }
+
+    /// Sets the apply state on a stored file.
+    pub fn set_config_state(&self, file: &RemoteConfigPath, state: ConfigApplyState) {
+        self.state.set_config_state(file, state)
     }
 
     /// Quite generic fetching implementation:
@@ -182,8 +221,10 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 }
             }
 
-            for config in opaque_state.last_configs.iter() {
-                if let Some(StoredTargetFile { state, .. }) = target_files.get(config) {
+            for config in opaque_state.last_config_paths.iter() {
+                if let Some(StoredTargetFile { state, .. }) =
+                    target_files.get(config as &dyn RemoteConfigPathType)
+                {
                     config_states.push(state.clone());
                 }
             }
@@ -231,7 +272,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
             }),
             cached_target_files,
         };
-        
+
         trace!("Submitting remote config request: {config_req:?}");
 
         let req = self
@@ -310,9 +351,22 @@ impl<S: FileStorage> ConfigFetcher<S> {
         // continuously
         let mut target_files = self.state.target_files_by_path.lock().unwrap();
 
+        let mut config_paths: HashSet<RemoteConfigPathRef<'static>> = HashSet::new();
+        for path in response.client_configs.iter() {
+            match RemoteConfigPath::try_parse(path) {
+                // SAFTEY: The lifetime of RemoteConfigPathRef is tied to the config_paths
+                // Vec<String>
+                Ok(parsed) => {
+                    config_paths.insert(unsafe {
+                        transmute::<RemoteConfigPathRef<'_>, RemoteConfigPathRef<'_>>(parsed)
+                    });
+                }
+                Err(e) => warn!("Failed parsing remote config path: {path} - {e:?}"),
+            }
+        }
+
         if self.state.expire_unused_files {
-            let retain: HashSet<_> = response.client_configs.iter().collect();
-            target_files.retain(|k, _| retain.contains(k));
+            target_files.retain(|k, _| config_paths.contains(&(&**k).into()));
         }
 
         for (path, target_file) in targets_list.signed.targets {
@@ -330,11 +384,18 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 warn!("Found a target file without hashes at path {path}");
                 continue;
             };
+            let parsed_path = match RemoteConfigPath::try_parse(path) {
+                Ok(parsed_path) => parsed_path,
+                Err(e) => {
+                    warn!("Failed parsing remote config path: {path} - {e:?}");
+                    continue;
+                }
+            };
             let handle = if let Some(StoredTargetFile {
                 hash: old_hash,
                 handle,
                 ..
-            }) = target_files.get(path)
+            }) = target_files.get(&parsed_path as &dyn RemoteConfigPathType)
             {
                 if old_hash == hash {
                     continue;
@@ -350,55 +411,46 @@ impl<S: FileStorage> ConfigFetcher<S> {
                         warn!("Computed hash of file {computed_hash} did not match remote config targets file hash {hash} for path {path}: file: {}", String::from_utf8_lossy(decoded.as_slice()));
                         continue;
                     }
+                    if let Some(version) = target_file.try_parse_version() {
+                        debug!(
+                            "Fetched new remote config file at path {path} targeting {target:?}"
+                        );
 
-                    match RemoteConfigPath::try_parse(path) {
-                        Ok(parsed_path) => {
-                            if let Some(version) = target_file.try_parse_version() {
-                                debug!("Fetched new remote config file at path {path} targeting {target:?}");
-
-                                target_files.insert(
-                                    path.to_string(),
-                                    StoredTargetFile {
-                                        hash: computed_hash,
-                                        state: ConfigState {
-                                            id: parsed_path.config_id.to_string(),
-                                            version,
-                                            product: parsed_path.product.to_string(),
-                                            apply_state: 2, // Acknowledged
-                                            apply_error: "".to_string(),
-                                        },
-                                        meta: TargetFileMeta {
-                                            path: path.to_string(),
-                                            length: decoded.len() as i64,
-                                            hashes: target_file
-                                                .hashes
-                                                .iter()
-                                                .map(|(algorithm, hash)| TargetFileHash {
-                                                    algorithm: algorithm.to_string(),
-                                                    hash: hash.to_string(),
-                                                })
-                                                .collect(),
-                                        },
-                                        handle: if let Some(handle) = handle {
-                                            self.file_storage.update(&handle, version, decoded)?;
-                                            handle
-                                        } else {
-                                            self.file_storage.store(
-                                                version,
-                                                parsed_path,
-                                                decoded,
-                                            )?
-                                        },
-                                        expiring: false,
-                                    },
-                                );
-                            } else {
-                                warn!("Failed parsing version from remote config path {path}");
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Failed parsing remote config path: {path} - {e:?}");
-                        }
+                        let parsed_path: Arc<RemoteConfigPath> = Arc::new(parsed_path.into());
+                        target_files.insert(
+                            parsed_path.clone(),
+                            StoredTargetFile {
+                                hash: computed_hash,
+                                state: ConfigState {
+                                    id: parsed_path.config_id.to_string(),
+                                    version,
+                                    product: parsed_path.product.to_string(),
+                                    apply_state: 2, // Acknowledged
+                                    apply_error: "".to_string(),
+                                },
+                                meta: TargetFileMeta {
+                                    path: path.to_string(),
+                                    length: decoded.len() as i64,
+                                    hashes: target_file
+                                        .hashes
+                                        .iter()
+                                        .map(|(algorithm, hash)| TargetFileHash {
+                                            algorithm: algorithm.to_string(),
+                                            hash: hash.to_string(),
+                                        })
+                                        .collect(),
+                                },
+                                handle: if let Some(handle) = handle {
+                                    self.file_storage.update(&handle, version, decoded)?;
+                                    handle
+                                } else {
+                                    self.file_storage.store(version, parsed_path, decoded)?
+                                },
+                                expiring: false,
+                            },
+                        );
+                    } else {
+                        warn!("Failed parsing version from remote config path {path}");
                     }
                 } else {
                     warn!(
@@ -414,9 +466,9 @@ impl<S: FileStorage> ConfigFetcher<S> {
             }
         }
 
-        let mut configs = Vec::with_capacity(response.client_configs.len());
-        for config in response.client_configs.iter() {
-            if let Some(target_file) = target_files.get_mut(config) {
+        let mut configs = Vec::with_capacity(config_paths.len());
+        for config in config_paths.iter() {
+            if let Some(target_file) = target_files.get_mut(config as &dyn RemoteConfigPathType) {
                 target_file.expiring = false;
                 configs.push(target_file.handle.clone());
             } else {
@@ -426,6 +478,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
 
         opaque_state.targets_version = targets_list.signed.version as u64;
         opaque_state.last_configs = response.client_configs;
+        opaque_state.last_config_paths = config_paths;
         Ok(Some(configs))
     }
 }
@@ -484,11 +537,11 @@ pub mod tests {
 
     #[derive(Default)]
     pub struct Storage {
-        pub files: Mutex<HashMap<RemoteConfigPath, Arc<Mutex<DataStore>>>>,
+        pub files: Mutex<HashMap<Arc<RemoteConfigPath>, Arc<Mutex<DataStore>>>>,
     }
 
     pub struct PathStore {
-        path: RemoteConfigPath,
+        path: Arc<RemoteConfigPath>,
         storage: Arc<Storage>,
         pub data: Arc<Mutex<DataStore>>,
     }
@@ -511,7 +564,7 @@ pub mod tests {
         fn store(
             &self,
             version: u64,
-            path: RemoteConfigPath,
+            path: Arc<RemoteConfigPath>,
             contents: Vec<u8>,
         ) -> anyhow::Result<Arc<Self::StoredFile>> {
             let data = Arc::new(Mutex::new(DataStore {
@@ -653,7 +706,7 @@ pub mod tests {
 
             assert!(Arc::ptr_eq(
                 &fetched[0].data,
-                storage.files.lock().unwrap().get(&PATH_FIRST).unwrap()
+                storage.files.lock().unwrap().get(&*PATH_FIRST).unwrap()
             ));
             assert_eq!(fetched[0].data.lock().unwrap().contents, "v1");
             assert_eq!(fetched[0].data.lock().unwrap().version, 1);
@@ -729,14 +782,14 @@ pub mod tests {
 
             assert!(Arc::ptr_eq(
                 &fetched[first].data,
-                storage.files.lock().unwrap().get(&PATH_FIRST).unwrap()
+                storage.files.lock().unwrap().get(&*PATH_FIRST).unwrap()
             ));
             assert_eq!(fetched[first].data.lock().unwrap().contents, "v2");
             assert_eq!(fetched[first].data.lock().unwrap().version, 2);
 
             assert!(Arc::ptr_eq(
                 &fetched[second].data,
-                storage.files.lock().unwrap().get(&PATH_SECOND).unwrap()
+                storage.files.lock().unwrap().get(&*PATH_SECOND).unwrap()
             ));
             assert_eq!(fetched[second].data.lock().unwrap().contents, "X");
             assert_eq!(fetched[second].data.lock().unwrap().version, 1);
@@ -756,7 +809,7 @@ pub mod tests {
             assert!(fetched.is_none()); // no change
         }
 
-        server.files.lock().unwrap().remove(&PATH_FIRST);
+        server.files.lock().unwrap().remove(&*PATH_FIRST);
 
         {
             let fetched = fetcher

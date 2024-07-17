@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::fetch::{
-    ConfigFetcherState, ConfigInvariants, FileStorage, RefcountedFile, RefcountingStorage,
-    SharedFetcher,
+    ConfigApplyState, ConfigFetcherState, ConfigInvariants, FileStorage, RefcountedFile,
+    RefcountingStorage, SharedFetcher,
 };
 use crate::Target;
 use futures_util::future::Shared;
@@ -334,6 +334,11 @@ where
         Self::remove_target(self, runtime_id, target);
     }
 
+    /// Sets the apply state on a stored file.
+    pub fn set_config_state(&self, file: &S::StoredFile, state: ConfigApplyState) {
+        self.storage.set_config_state(file, state)
+    }
+
     fn start_fetcher(self: &Arc<Self>, known_target: &KnownTarget) {
         let this = self.clone();
         let fetcher = known_target.fetcher.clone();
@@ -563,7 +568,7 @@ mod tests {
         fn store(
             &self,
             version: u64,
-            path: RemoteConfigPath,
+            path: Arc<RemoteConfigPath>,
             contents: Vec<u8>,
         ) -> anyhow::Result<Arc<Self::StoredFile>> {
             self.rc.store(version, path, contents)

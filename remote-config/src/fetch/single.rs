@@ -1,9 +1,11 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::fetch::{ConfigFetcher, ConfigFetcherState, ConfigInvariants, FileStorage, OpaqueState};
+use crate::fetch::{
+    ConfigApplyState, ConfigFetcher, ConfigFetcherState, ConfigInvariants, FileStorage, OpaqueState,
+};
 use crate::file_change_tracker::{Change, ChangeTracker, FilePath, UpdatedFiles};
-use crate::Target;
+use crate::{RemoteConfigPath, Target};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -66,6 +68,11 @@ impl<S: FileStorage> SingleFetcher<S> {
     pub fn get_config_id(&self) -> &String {
         &self.config_id
     }
+
+    /// Sets the apply state on a stored file.
+    pub fn set_config_state(&self, file: &RemoteConfigPath, state: ConfigApplyState) {
+        self.fetcher.set_config_state(file, state)
+    }
 }
 
 pub struct SingleChangesFetcher<S: FileStorage>
@@ -123,5 +130,10 @@ where
 
     pub fn get_config_id(&self) -> &String {
         self.fetcher.get_config_id()
+    }
+
+    /// Sets the apply state on a stored file.
+    pub fn set_config_state(&self, file: &S::StoredFile, state: ConfigApplyState) {
+        self.fetcher.set_config_state(file.path(), state)
     }
 }

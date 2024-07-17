@@ -5,9 +5,11 @@ pub mod fetch;
 pub mod file_change_tracker;
 pub mod file_storage;
 mod parse;
+mod path;
 mod targets;
 
 pub use parse::*;
+pub use path::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]

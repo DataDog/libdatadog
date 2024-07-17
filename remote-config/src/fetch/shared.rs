@@ -1,7 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::fetch::{ConfigFetcher, ConfigFetcherState, ConfigInvariants, FileStorage, OpaqueState};
+use crate::fetch::{
+    ConfigApplyState, ConfigFetcher, ConfigFetcherState, ConfigInvariants, FileStorage, OpaqueState,
+};
 use crate::{RemoteConfigPath, Target};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -43,12 +45,12 @@ pub struct FileRefcountData {
     rc: AtomicU32,
     /// 0, or point in time (see RunnersGeneration) where the file was moved to inactive.
     dropped_run_id: AtomicU64,
-    pub path: RemoteConfigPath,
+    pub path: Arc<RemoteConfigPath>,
     pub version: u64,
 }
 
 impl FileRefcountData {
-    pub fn new(version: u64, path: RemoteConfigPath) -> Self {
+    pub fn new(version: u64, path: Arc<RemoteConfigPath>) -> Self {
         FileRefcountData {
             rc: AtomicU32::new(0),
             dropped_run_id: AtomicU64::new(0),
@@ -130,7 +132,8 @@ where
     /// the remote config server that we know about these files. Thus, as long as these requests
     /// are being processed, we must retain the files, as these would not be resent, leaving us
     /// with a potentially incomplete configuration.
-    inactive: Arc<Mutex<HashMap<RemoteConfigPath, Arc<S::StoredFile>>>>,
+    #[allow(clippy::type_complexity)]
+    inactive: Arc<Mutex<HashMap<Arc<RemoteConfigPath>, Arc<S::StoredFile>>>>,
     /// times ConfigFetcher::<S>::fetch_once() is currently being run
     run_id: Arc<RunnersGeneration>,
 }
@@ -180,6 +183,11 @@ where
         }
     }
 
+    /// Sets the apply state on a stored file.
+    pub fn set_config_state(&self, file: &S::StoredFile, state: ConfigApplyState) {
+        self.state.set_config_state(&file.refcount().path, state)
+    }
+
     pub fn invariants(&self) -> &ConfigInvariants {
         &self.state.invariants
     }
@@ -194,7 +202,7 @@ where
     fn store(
         &self,
         version: u64,
-        path: RemoteConfigPath,
+        path: Arc<RemoteConfigPath>,
         contents: Vec<u8>,
     ) -> anyhow::Result<Arc<Self::StoredFile>> {
         self.storage.store(version, path, contents)
@@ -376,7 +384,7 @@ pub mod tests {
         fn store(
             &self,
             version: u64,
-            path: RemoteConfigPath,
+            path: Arc<RemoteConfigPath>,
             contents: Vec<u8>,
         ) -> anyhow::Result<Arc<Self::StoredFile>> {
             Ok(Arc::new(RcPathStore {
@@ -441,7 +449,7 @@ pub mod tests {
                             let state = client.state.as_ref().unwrap();
                             assert_eq!(state.error, "error");
 
-                            server.files.lock().unwrap().remove(&PATH_SECOND);
+                            server.files.lock().unwrap().remove(&*PATH_SECOND);
 
                             None
                         }
@@ -517,7 +525,7 @@ pub mod tests {
                 PATH_FIRST.clone(),
                 (vec![DUMMY_TARGET.clone()], 2, "v2".to_string()),
             );
-            server_2.files.lock().unwrap().remove(&PATH_SECOND);
+            server_2.files.lock().unwrap().remove(&*PATH_SECOND);
         };
         let server_second_2 = server_second_1.clone();
 

@@ -102,7 +102,7 @@ impl FileStorage for ConfigFileStorage {
     fn store(
         &self,
         version: u64,
-        path: RemoteConfigPath,
+        path: Arc<RemoteConfigPath>,
         file: Vec<u8>,
     ) -> anyhow::Result<Arc<StoredShmFile>> {
         Ok(Arc::new(StoredShmFile {
@@ -395,7 +395,7 @@ impl RemoteConfigManager {
                     Ok(parsed) => {
                         trace!("Adding remote config file {}: {:?}", entry.key(), parsed);
                         entry.insert(RemoteConfigPath {
-                            source: parsed.source.clone(),
+                            source: parsed.source,
                             product: (&parsed.data).into(),
                             config_id: parsed.config_id.clone(),
                             name: parsed.name.clone(),

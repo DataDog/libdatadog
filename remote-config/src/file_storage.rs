@@ -41,7 +41,7 @@ struct RawFileData<P> {
 
 /// File contents and file metadata
 pub struct RawFile<P> {
-    path: RemoteConfigPath,
+    path: Arc<RemoteConfigPath>,
     data: Mutex<RawFileData<P>>,
 }
 
@@ -78,7 +78,7 @@ impl<P: ParseFile> FileStorage for RawFileStorage<P> {
     fn store(
         &self,
         version: u64,
-        path: RemoteConfigPath,
+        path: Arc<RemoteConfigPath>,
         contents: Vec<u8>,
     ) -> anyhow::Result<Arc<Self::StoredFile>> {
         Ok(Arc::new(RawFile {
