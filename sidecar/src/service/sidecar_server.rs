@@ -88,7 +88,7 @@ pub struct SidecarServer {
 }
 
 // struct SidecarTracerPayloadChunkProcessor;
-// 
+//
 // impl tracer_payload::TracerPayloadChunkProcessor for SidecarTracerPayloadChunkProcessor {
 //     fn process(&mut self, _chunk: &mut datadog_trace_protobuf::pb::TraceChunk, _index: usize) {
 //     }
@@ -305,7 +305,7 @@ impl SidecarServer {
         match tracer_payload::TracerPayloadParams::new(
             data,
             &headers,
-            &mut tracer_payload::DefaultTracerPayloadChunkProcessor,
+            &mut tracer_payload::DefaultTraceChunkProcessor,
             target.api_key.is_some(),
             TraceEncoding::V04,
         )

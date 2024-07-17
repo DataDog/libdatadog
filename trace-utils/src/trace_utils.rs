@@ -14,11 +14,11 @@ use std::collections::{HashMap, HashSet};
 pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::send_data::SendData;
 pub use crate::tracer_header_tags::TracerHeaderTags;
+use crate::tracer_payload;
 use crate::tracer_payload::{TraceEncoding, TracerPayloadCollection};
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
 use ddcommon::azure_app_services;
-use crate::tracer_payload;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
@@ -522,7 +522,7 @@ macro_rules! parse_root_span_tags {
     }
 }
 
-pub fn collect_trace_chunks<T: tracer_payload::TracerPayloadChunkProcessor>(
+pub fn collect_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
     mut traces: Vec<Vec<pb::Span>>,
     tracer_header_tags: &TracerHeaderTags,
     process_chunk: &mut T,

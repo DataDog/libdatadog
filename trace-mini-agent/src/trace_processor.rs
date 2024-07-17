@@ -12,8 +12,8 @@ use datadog_trace_obfuscation::obfuscate::obfuscate_span;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils::SendData;
 use datadog_trace_utils::trace_utils::{self};
+use datadog_trace_utils::tracer_payload::TraceChunkProcessor;
 use datadog_trace_utils::tracer_payload::TraceEncoding;
-use datadog_trace_utils::tracer_payload::TracerPayloadChunkProcessor;
 
 use crate::{
     config::Config,
@@ -38,7 +38,7 @@ struct ChunkProcessor {
     mini_agent_metadata: Arc<trace_utils::MiniAgentMetadata>,
 }
 
-impl TracerPayloadChunkProcessor for ChunkProcessor {
+impl TraceChunkProcessor for ChunkProcessor {
     fn process(&mut self, chunk: &mut pb::TraceChunk, root_span_index: usize) {
         trace_utils::set_serverless_root_span_tags(
             &mut chunk.spans[root_span_index],
@@ -57,8 +57,6 @@ impl TracerPayloadChunkProcessor for ChunkProcessor {
 }
 #[derive(Clone)]
 pub struct ServerlessTraceProcessor {}
-
-
 
 #[async_trait]
 impl TraceProcessor for ServerlessTraceProcessor {

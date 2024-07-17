@@ -4,6 +4,7 @@
 use bytes::Bytes;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils::{self, SendData, TracerHeaderTags};
+use datadog_trace_utils::tracer_payload;
 use datadog_trace_utils::tracer_payload::TraceEncoding;
 use ddcommon::{connector, Endpoint};
 use hyper::http::uri::PathAndQuery;
@@ -11,7 +12,6 @@ use hyper::{Body, Client, Method, Uri};
 use log::error;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
 use tokio::runtime::Runtime;
-use datadog_trace_utils::tracer_payload;
 
 /// TraceExporterInputFormat represents the format of the input traces.
 /// The input format can be either Proxy or V0.4, where V0.4 is the default.
@@ -227,7 +227,7 @@ impl TraceExporter {
                 let tracer_payload = trace_utils::collect_trace_chunks(
                     traces,
                     &header_tags,
-                    &mut tracer_payload::DefaultTracerPayloadChunkProcessor,
+                    &mut tracer_payload::DefaultTraceChunkProcessor,
                     self.endpoint.api_key.is_some(),
                     TraceEncoding::V07,
                 );
