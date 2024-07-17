@@ -18,6 +18,7 @@ use crate::tracer_payload::{TraceEncoding, TracerPayloadCollection};
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
 use ddcommon::azure_app_services;
+use crate::tracer_payload;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
@@ -521,10 +522,10 @@ macro_rules! parse_root_span_tags {
     }
 }
 
-pub fn collect_trace_chunks(
+pub fn collect_trace_chunks<T: tracer_payload::TracerPayloadChunkProcessor>(
     mut traces: Vec<Vec<pb::Span>>,
     tracer_header_tags: &TracerHeaderTags,
-    process_chunk: impl Fn(&mut pb::TraceChunk, usize),
+    process_chunk: &mut T,
     is_agentless: bool,
     encoding_type: TraceEncoding,
 ) -> TracerPayloadCollection {
@@ -569,7 +570,7 @@ pub fn collect_trace_chunks(
                     compute_top_level_span(&mut chunk.spans);
                 }
 
-                process_chunk(&mut chunk, root_span_index);
+                process_chunk.process(&mut chunk, root_span_index);
 
                 trace_chunks.push(chunk);
 
