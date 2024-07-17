@@ -7,13 +7,31 @@ use rand::Rng;
 use std::io::Write;
 use std::sync::atomic::Ordering::SeqCst;
 
-static SET: AtomicU128Set<2048> = AtomicU128Set::new();
+static ACTIVE_SPANS: AtomicU128Set<2048> = AtomicU128Set::new();
+static ACTIVE_TRACES: AtomicU128Set<2048> = AtomicU128Set::new();
+
+pub fn insert_span(value: u128) -> anyhow::Result<usize> {
+    ACTIVE_SPANS.insert(value)
+}
+
+pub fn remove_span(value: u128, idx: usize) -> anyhow::Result<()> {
+    ACTIVE_SPANS.remove(value, idx)
+}
+
+pub fn insert_trace(value: u128) -> anyhow::Result<usize> {
+    ACTIVE_TRACES.insert(value)
+}
+
+pub fn remove_trace(value: u128, idx: usize) -> anyhow::Result<()> {
+    ACTIVE_TRACES.remove(value, idx)
+}
 
 struct AtomicU128Set<const LEN: usize> {
     used: AtomicUsize,
     set: [AtomicU128; LEN],
 }
 
+#[allow(dead_code)]
 impl<const LEN: usize> AtomicU128Set<LEN> {
     pub const fn new() -> Self {
         // In this case, we actually WANT multiple copies of the interior mutable struct

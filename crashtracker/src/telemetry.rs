@@ -46,7 +46,9 @@ struct TelemetryCrashInfoMessage<'a> {
     pub files: &'a HashMap<String, Vec<String>>,
     pub metadata: Option<&'a CrashtrackerMetadata>,
     pub os_info: &'a os_info::Info,
+    pub span_ids: &'a Vec<u128>,
     pub tags: &'a HashMap<String, String>,
+    pub trace_ids: &'a Vec<u128>,
 }
 
 pub struct TelemetryCrashUploader {
@@ -131,7 +133,9 @@ impl TelemetryCrashUploader {
             files: &crash_info.files,
             metadata: crash_info.metadata.as_ref(),
             os_info: &crash_info.os_info,
+            span_ids: &crash_info.span_ids,
             tags: &crash_info.tags,
+            trace_ids: &crash_info.trace_ids,
         })?;
 
         let stack_trace = serde_json::to_string(&crash_info.stacktrace)?;
@@ -282,6 +286,8 @@ mod tests {
                 }),
                 proc_info: None,
                 stacktrace: vec![],
+                span_ids: vec![42, 24],
+                trace_ids: vec![345, 666],
                 additional_stacktraces: HashMap::new(),
                 tags: HashMap::new(),
                 timestamp: DateTime::from_timestamp(1702465105, 0),

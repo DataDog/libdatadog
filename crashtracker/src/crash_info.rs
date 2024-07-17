@@ -62,6 +62,7 @@ pub struct CrashInfo {
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     #[serde(default)]
     pub files: HashMap<String, Vec<String>>,
+    pub incomplete: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub metadata: Option<CrashtrackerMetadata>,
@@ -74,8 +75,13 @@ pub struct CrashInfo {
     pub siginfo: Option<SigInfo>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     #[serde(default)]
+    pub span_ids: Vec<u128>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub stacktrace: Vec<StackFrame>,
-    pub incomplete: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
+    pub trace_ids: Vec<u128>,
     /// Any additional data goes here
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     #[serde(default)]
@@ -146,9 +152,11 @@ impl CrashInfo {
             os_info,
             proc_info: None,
             siginfo: None,
+            span_ids: vec![],
             stacktrace: vec![],
             tags: HashMap::new(),
             timestamp: None,
+            trace_ids: vec![],
             uuid,
         }
     }
