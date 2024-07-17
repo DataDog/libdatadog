@@ -5,7 +5,9 @@
 use super::*;
 use crate::shared::constants::*;
 use anyhow::Context;
-use std::{io::BufReader, os::unix::net::UnixListener};
+use tokio::io::AsyncBufReadExt;
+use tokio::io::BufReader;
+use tokio::net::UnixListener;
 
 pub fn resolve_frames(
     config: &CrashtrackerConfiguration,
@@ -34,16 +36,37 @@ pub fn get_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<UnixListe
 }
 
 pub fn receiver_entry_point_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<()> {
-    let listener = get_unix_socket(socket_path)?;
-    let (unix_stream, _) = listener.accept()?;
-    let stream = BufReader::new(unix_stream);
-    receiver_entry_point(stream)
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(async_receiver_entry_point_unix_socket(socket_path, true))?;
+    Ok(())
     // Dropping the stream closes it, allowing the collector to exit if it was waiting.
 }
 
 pub fn receiver_entry_point_stdin() -> anyhow::Result<()> {
-    let stream = std::io::stdin().lock();
-    receiver_entry_point(stream)
+    let stream = BufReader::new(tokio::io::stdin());
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(receiver_entry_point(stream))?;
+    Ok(())
+}
+
+pub async fn async_receiver_entry_point_unix_socket(
+    socket_path: impl AsRef<str>,
+    one_shot: bool,
+) -> anyhow::Result<()> {
+    let listener = get_unix_socket(socket_path)?;
+    loop {
+        let (unix_stream, _) = listener.accept().await?;
+        let stream = BufReader::new(unix_stream);
+        let res = receiver_entry_point(stream).await;
+
+        if one_shot {
+            return res;
+        }
+    }
 }
 
 /// Receives data from a crash collector via a pipe on `stdin`, formats it into
@@ -55,17 +78,19 @@ pub fn receiver_entry_point_stdin() -> anyhow::Result<()> {
 ///
 /// See comments in [crashtracker/lib.rs] for a full architecture
 /// description.
-fn receiver_entry_point(stream: impl std::io::BufRead) -> anyhow::Result<()> {
-    match receive_report(stream)? {
+async fn receiver_entry_point(
+    stream: impl AsyncBufReadExt + std::marker::Unpin,
+) -> anyhow::Result<()> {
+    match receive_report(stream).await? {
         CrashReportStatus::NoCrash => Ok(()),
         CrashReportStatus::CrashReport(config, mut crash_info) => {
             resolve_frames(&config, &mut crash_info)?;
-            crash_info.upload_to_endpoint(&config.endpoint)
+            crash_info.async_upload_to_endpoint(&config.endpoint).await
         }
         CrashReportStatus::PartialCrashReport(config, mut crash_info, stdin_state) => {
             eprintln!("Failed to fully receive crash.  Exit state was: {stdin_state:?}");
             resolve_frames(&config, &mut crash_info)?;
-            crash_info.upload_to_endpoint(&config.endpoint)
+            crash_info.async_upload_to_endpoint(&config.endpoint).await
         }
     }
 }
@@ -237,14 +262,17 @@ enum CrashReportStatus {
 /// In the case where the parent failed to transfer a full crash-report
 /// (for instance if it crashed while calculating the crash-report), we return
 /// a PartialCrashReport.
-fn receive_report(stream: impl std::io::BufRead) -> anyhow::Result<CrashReportStatus> {
+async fn receive_report(
+    stream: impl AsyncBufReadExt + std::marker::Unpin,
+) -> anyhow::Result<CrashReportStatus> {
     let mut crashinfo = CrashInfo::new();
     let mut stdin_state = StdinState::Waiting;
     let mut config = None;
 
+    let mut lines = stream.lines();
+
     //TODO: This assumes that the input is valid UTF-8.
-    for line in stream.lines() {
-        let line = line?;
+    while let Some(line) = lines.next_line().await? {
         match process_line(&mut crashinfo, &mut config, line, stdin_state) {
             Ok(next_state) => stdin_state = next_state,
             Err(e) => {

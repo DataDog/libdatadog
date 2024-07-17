@@ -117,7 +117,7 @@ pub fn parse_uri(uri: &str) -> anyhow::Result<hyper::Uri> {
     }
 }
 
-fn encode_uri_path_in_authority(scheme: &str, path: &str) -> anyhow::Result<hyper::Uri> {
+pub fn encode_uri_path_in_authority(scheme: &str, path: &str) -> anyhow::Result<hyper::Uri> {
     let mut parts = uri::Parts::default();
     parts.scheme = uri::Scheme::from_str(scheme).ok();
 
