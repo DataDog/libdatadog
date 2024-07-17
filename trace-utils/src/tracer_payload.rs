@@ -224,15 +224,15 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
     /// let data = &[/* msgpack data */];
     ///
     /// let tracer_header_tags = &TracerHeaderTags::default();
-    /// let params = TracerPayloadParams::new(
+    /// let result: Result<TracerPayloadCollection, _> = TracerPayloadParams::new(
     ///     data,
     ///     tracer_header_tags,
     ///     &mut DefaultTraceChunkProcessor,
     ///     false,
     ///     TraceEncoding::V04,
-    /// );
+    /// )
+    /// .try_into();
     ///
-    /// let result: Result<TracerPayloadCollection, _> = params.try_into();
     /// match result {
     ///     Ok(collection) => println!("Successfully converted to TracerPayloadCollection."),
     ///     Err(e) => println!("Failed to convert: {:?}", e),
