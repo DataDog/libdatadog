@@ -19,7 +19,7 @@ mod unix {
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerMetadata,
         CrashtrackerReceiverConfig,
     };
-    use ddcommon::{parse_uri, tag, Endpoint};
+    use ddcommon::{tag, Endpoint};
 
     #[inline(never)]
     unsafe fn deref_ptr(p: *mut u8) {
@@ -42,11 +42,7 @@ mod unix {
         let endpoint = if output_url.is_empty() {
             None
         } else {
-            Some(Endpoint {
-                url: parse_uri(&output_url).unwrap(),
-                timeout_ms: 30_000,
-                ..Default::default()
-            })
+            Some(Endpoint::from_slice(&output_url))
         };
 
         let config = CrashtrackerConfiguration {

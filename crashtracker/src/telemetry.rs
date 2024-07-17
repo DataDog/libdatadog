@@ -7,6 +7,7 @@ use std::time::SystemTime;
 
 use super::{CrashInfo, CrashtrackerConfiguration, CrashtrackerMetadata, StackFrame};
 use anyhow::{Context, Ok};
+use ddcommon::Endpoint;
 use ddtelemetry::{
     build_host,
     data::{self, Application, LogLevel},
@@ -167,7 +168,13 @@ impl TelemetryCrashUploader {
             .body(serde_json::to_string(&payload)?.into())?;
         self.rt.block_on(async {
             tokio::time::timeout(
-                std::time::Duration::from_millis(self.cfg.endpoint.as_ref().unwrap().timeout_ms),
+                std::time::Duration::from_millis({
+                    if let Some(endp) = self.cfg.endpoint.as_ref() {
+                        endp.timeout_ms
+                    } else {
+                        Endpoint::DEFAULT_TIMEOUT
+                    }
+                }),
                 client.request(req),
             )
             .await
@@ -199,7 +206,7 @@ mod tests {
 
     use crate::SigInfo;
     use chrono::DateTime;
-    use ddcommon::{parse_uri, tag, Endpoint};
+    use ddcommon::{tag, Endpoint};
 
     use super::TelemetryCrashUploader;
 
@@ -209,11 +216,9 @@ mod tests {
             &crate::CrashtrackerConfiguration {
                 additional_files: vec![],
                 create_alt_stack: true,
-                endpoint: Some(Endpoint {
-                    url: parse_uri("http://localhost:8126/profiling/v1/input").unwrap(),
-                    timeout_ms: 30_000,
-                    ..Default::default()
-                }),
+                endpoint: Some(Endpoint::from_slice(
+                    "http://localhost:8126/profiling/v1/input",
+                )),
                 resolve_frames: crate::StacktraceCollection::WithoutSymbols,
                 wait_for_receiver: true,
             },

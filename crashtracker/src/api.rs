@@ -140,11 +140,7 @@ fn test_crash() -> anyhow::Result<()> {
     let dir = "/tmp/crashreports/";
     let output_url = format!("file://{dir}{time}.txt");
 
-    let endpoint = Some(Endpoint {
-        url: ddcommon::parse_uri(&output_url).unwrap(),
-        timeout_ms: 30_000,
-        ..Default::default()
-    });
+    let endpoint = Some(Endpoint::from_slice(&output_url));
 
     let path_to_receiver_binary =
         "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();

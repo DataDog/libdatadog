@@ -10,7 +10,7 @@ use datadog_profiling::exporter::{ProfileExporter, Request};
 use datadog_profiling::internal::ProfiledEndpointsStats;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use ddcommon_ffi::Error;
+use ddcommon_ffi::{Error, MaybeError};
 use std::borrow::Cow;
 use std::ptr::NonNull;
 use std::str::FromStr;
@@ -192,7 +192,7 @@ fn ddog_prof_exporter_new_impl(
     )
 }
 
-/// Sets the timeout for the exporte's timeout.
+/// Sets the value for the exporter's timeout.
 /// # Arguments
 /// * `exporter` - ProfileExporter instance.
 /// * `timeout_ms` - timeout in milliseconds.
@@ -200,9 +200,12 @@ fn ddog_prof_exporter_new_impl(
 pub unsafe extern "C" fn ddog_prof_Exporter_set_timeout(
     exporter: Option<&mut ProfileExporter>,
     timeout_ms: u64,
-) {
+) -> MaybeError {
     if let Some(ptr) = exporter {
         ptr.set_timeout(timeout_ms);
+        MaybeError::None
+    } else {
+        MaybeError::Some(Error::from("Invalid argument"))
     }
 }
 

@@ -1118,10 +1118,7 @@ mod tests {
             })
             .await;
 
-        let target_endpoint = Endpoint {
-            url: server.url("").to_owned().parse().unwrap(),
-            ..Default::default()
-        };
+        let target_endpoint = Endpoint::from_slice(server.url("").as_str());
 
         let size = 512;
 

@@ -35,7 +35,7 @@ fn multipart(
     let start = now.sub(chrono::Duration::seconds(60));
     let end = now;
 
-    let timeout: u64 = 10;
+    let timeout: u64 = 10_000;
     exporter.set_timeout(timeout);
 
     let request = exporter

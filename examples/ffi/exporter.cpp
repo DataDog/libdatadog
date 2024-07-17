@@ -140,7 +140,12 @@ int main(int argc, char *argv[]) {
   ddog_CharSlice info_example = DDOG_CHARSLICE_C_BARE(
       "{\"application\": {\"start_time\": \"2024-01-24T11:17:22+0000\"}, \"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
 
-  ddog_prof_Exporter_set_timeout(exporter, 30000);
+  auto res = ddog_prof_Exporter_set_timeout(exporter, 30000);
+  if (res.tag == DDOG_PROF_OPTION_ERROR_SOME_ERROR) {
+          print_error("Failed to set the timeout", res.some);
+          ddog_Error_drop(&res.some);
+          return 1;
+  }
 
   ddog_prof_Exporter_Request_BuildResult build_result = ddog_prof_Exporter_Request_build(
       exporter, encoded_profile->start, encoded_profile->end, files_to_compress_and_export,
