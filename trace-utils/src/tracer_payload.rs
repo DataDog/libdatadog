@@ -139,6 +139,9 @@ pub trait TraceChunkProcessor {
 }
 
 #[derive(Default)]
+/// Default implementation of `TraceChunkProcessor` that does nothing.
+///
+/// If used, the compiler should optimize away calls to it.
 pub struct DefaultTraceChunkProcessor;
 
 impl TraceChunkProcessor for DefaultTraceChunkProcessor {
