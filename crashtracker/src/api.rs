@@ -3,6 +3,7 @@
 #![cfg(unix)]
 
 use crate::{
+    clear_spans, clear_traces,
     configuration::CrashtrackerReceiverConfig,
     counters::reset_counters,
     crash_handler::{
@@ -57,6 +58,8 @@ pub fn on_fork(
     receiver_config: CrashtrackerReceiverConfig,
     metadata: CrashtrackerMetadata,
 ) -> anyhow::Result<()> {
+    clear_spans()?;
+    clear_traces()?;
     reset_counters()?;
     // Leave the old signal handler in place: they are unaffected by fork.
     // https://man7.org/linux/man-pages/man2/sigaction.2.html
