@@ -10,6 +10,10 @@ use std::sync::atomic::Ordering::SeqCst;
 static ACTIVE_SPANS: AtomicU128Set<2048> = AtomicU128Set::new();
 static ACTIVE_TRACES: AtomicU128Set<2048> = AtomicU128Set::new();
 
+pub fn clear_spans() -> anyhow::Result<()> {
+    ACTIVE_SPANS.clear()
+}
+
 pub fn emit_spans(w: &mut impl Write) -> anyhow::Result<()> {
     use super::constants::*;
     writeln!(w, "{DD_CRASHTRACK_BEGIN_SPAN_IDS}")?;
@@ -26,12 +30,8 @@ pub fn remove_span(value: u128, idx: usize) -> anyhow::Result<()> {
     ACTIVE_SPANS.remove(value, idx)
 }
 
-pub fn insert_trace(value: u128) -> anyhow::Result<usize> {
-    ACTIVE_TRACES.insert(value)
-}
-
-pub fn remove_trace(value: u128, idx: usize) -> anyhow::Result<()> {
-    ACTIVE_TRACES.remove(value, idx)
+pub fn clear_traces() -> anyhow::Result<()> {
+    ACTIVE_TRACES.clear()
 }
 
 pub fn emit_traces(w: &mut impl Write) -> anyhow::Result<()> {
@@ -42,6 +42,14 @@ pub fn emit_traces(w: &mut impl Write) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn insert_trace(value: u128) -> anyhow::Result<usize> {
+    ACTIVE_TRACES.insert(value)
+}
+
+pub fn remove_trace(value: u128, idx: usize) -> anyhow::Result<()> {
+    ACTIVE_TRACES.remove(value, idx)
+}
+
 struct AtomicU128Set<const LEN: usize> {
     used: AtomicUsize,
     set: [AtomicU128; LEN],
@@ -49,6 +57,41 @@ struct AtomicU128Set<const LEN: usize> {
 
 #[allow(dead_code)]
 impl<const LEN: usize> AtomicU128Set<LEN> {
+    /// Atomicity: This is NOT ATOMIC.  If other code modifies the set while this is happening,
+    /// badness will occur.
+    pub fn clear(&self) -> anyhow::Result<()> {
+        if self.is_empty() {
+            for v in self.set.iter() {
+                let old = v.swap(0, SeqCst);
+                if old != 0 {
+                    self.used.sub(1, SeqCst)
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn emit(&self, w: &mut impl Write) -> anyhow::Result<()> {
+        write!(w, "[")?;
+
+        if self.used.load(SeqCst) > 0 {
+            let mut first = true;
+            for it in self.set.iter() {
+                let v = it.load(SeqCst);
+                if v != 0 {
+                    if !first {
+                        write!(w, ", ")?;
+                    }
+                    first = false;
+                    write!(w, "{v}")?;
+                }
+            }
+        }
+        writeln!(w, "]")?;
+
+        Ok(())
+    }
+
     pub const fn new() -> Self {
         // In this case, we actually WANT multiple copies of the interior mutable struct
         #[allow(clippy::declare_interior_mutable_const)]
@@ -57,10 +100,6 @@ impl<const LEN: usize> AtomicU128Set<LEN> {
             used: AtomicUsize::new(0),
             set: [ATOMIC_ZERO; LEN],
         }
-    }
-
-    pub fn len(&self) -> usize {
-        self.used.load(SeqCst)
     }
 
     /// Add
@@ -89,6 +128,14 @@ impl<const LEN: usize> AtomicU128Set<LEN> {
         anyhow::bail!("This should be unreachable: we ensure that there was at least one empty slot before entering the loop")
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() != 0
+    }
+
+    pub fn len(&self) -> usize {
+        self.used.load(SeqCst)
+    }
+
     pub fn remove(&self, value: u128, idx: usize) -> anyhow::Result<()> {
         anyhow::ensure!(idx < self.set.len(), "Idx {idx} out of range");
         match self.set[idx].compare_exchange(value, 0, SeqCst, SeqCst) {
@@ -100,27 +147,6 @@ impl<const LEN: usize> AtomicU128Set<LEN> {
                 anyhow::bail!("Invalid index/span_id pair: Expected {value} at {idx}, got {old}")
             }
         }
-    }
-
-    pub fn emit(&self, w: &mut impl Write) -> anyhow::Result<()> {
-        write!(w, "[")?;
-
-        if self.used.load(SeqCst) > 0 {
-            let mut first = true;
-            for it in self.set.iter() {
-                let v = it.load(SeqCst);
-                if v != 0 {
-                    if !first {
-                        write!(w, ", ")?;
-                    }
-                    first = false;
-                    write!(w, "{v}")?;
-                }
-            }
-        }
-        writeln!(w, "]")?;
-
-        Ok(())
     }
 
     pub fn values(&self) -> anyhow::Result<Vec<u128>> {
@@ -171,6 +197,11 @@ mod tests {
         remove_and_compare(&s, &mut expected, 42);
         insert_and_compare(&s, &mut expected, 12);
         remove_and_compare(&s, &mut expected, 19);
+
+        s.clear()?;
+        expected.clear();
+        compare(&s, &expected);
+        insert_and_compare(&s, &mut expected, 12);
 
         Ok(())
     }
