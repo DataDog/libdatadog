@@ -12,6 +12,7 @@ bench = false
 [[bench]]
 name = "main"
 harness = false
+path = "benches/main.rs"
 
 [dependencies]
 anyhow = "1.0"
