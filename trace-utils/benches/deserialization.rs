@@ -3,7 +3,9 @@
 
 use criterion::{criterion_group, Criterion};
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
-use datadog_trace_utils::tracer_payload::{DefaultTraceChunkProcessor, TraceEncoding, TracerPayloadCollection, TracerPayloadParams};
+use datadog_trace_utils::tracer_payload::{
+    DefaultTraceChunkProcessor, TraceEncoding, TracerPayloadCollection, TracerPayloadParams,
+};
 use serde_json::json;
 
 pub fn deserialize_msgpack_to_internal(c: &mut Criterion) {
@@ -49,7 +51,8 @@ pub fn deserialize_msgpack_to_internal(c: &mut Criterion) {
                     &mut DefaultTraceChunkProcessor,
                     false,
                     TraceEncoding::V04,
-                ).try_into();
+                )
+                .try_into();
 
                 assert!(result.is_ok())
             })
