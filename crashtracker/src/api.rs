@@ -177,6 +177,10 @@ fn test_crash() -> anyhow::Result<()> {
     );
     init_with_receiver(config, receiver_config, metadata)?;
     begin_profiling_op(crate::ProfilingOpTypes::CollectingSample)?;
+    super::insert_span(42)?;
+    super::insert_trace(u128::MAX)?;
+    super::insert_span(12)?;
+    super::insert_trace(99399939399939393993)?;
 
     let tag = tag!("apple", "banana");
     let metadata2 = CrashtrackerMetadata::new(

@@ -218,6 +218,11 @@ impl CrashInfo {
         self.siginfo = Some(siginfo);
         Ok(())
     }
+    pub fn set_span_ids(&mut self, ids: Vec<u128>) -> anyhow::Result<()> {
+        anyhow::ensure!(self.span_ids.is_empty());
+        self.span_ids = ids;
+        Ok(())
+    }
 
     pub fn set_stacktrace(
         &mut self,
@@ -243,6 +248,12 @@ impl CrashInfo {
 
     pub fn set_timestamp_to_now(&mut self) -> anyhow::Result<()> {
         self.set_timestamp(Utc::now())
+    }
+
+    pub fn set_trace_ids(&mut self, ids: Vec<u128>) -> anyhow::Result<()> {
+        anyhow::ensure!(self.trace_ids.is_empty());
+        self.trace_ids = ids;
+        Ok(())
     }
 }
 

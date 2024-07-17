@@ -4,6 +4,7 @@
 #![cfg(unix)]
 
 use crate::configuration::CrashtrackerReceiverConfig;
+use crate::spans::{emit_spans, emit_traces};
 
 use super::collectors::emit_backtrace_by_frames;
 #[cfg(target_os = "linux")]
@@ -359,6 +360,10 @@ fn emit_crashreport(
     emit_procinfo(pipe)?;
     pipe.flush()?;
     emit_counters(pipe)?;
+    pipe.flush()?;
+    emit_spans(pipe)?;
+    pipe.flush()?;
+    emit_traces(pipe)?;
     pipe.flush()?;
 
     #[cfg(target_os = "linux")]

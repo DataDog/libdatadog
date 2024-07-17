@@ -10,6 +10,14 @@ use std::sync::atomic::Ordering::SeqCst;
 static ACTIVE_SPANS: AtomicU128Set<2048> = AtomicU128Set::new();
 static ACTIVE_TRACES: AtomicU128Set<2048> = AtomicU128Set::new();
 
+pub fn emit_spans(w: &mut impl Write) -> anyhow::Result<()> {
+    use super::constants::*;
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_SPAN_IDS}")?;
+    ACTIVE_SPANS.emit(w)?;
+    writeln!(w, "{DD_CRASHTRACK_END_SPAN_IDS}")?;
+    Ok(())
+}
+
 pub fn insert_span(value: u128) -> anyhow::Result<usize> {
     ACTIVE_SPANS.insert(value)
 }
@@ -24,6 +32,14 @@ pub fn insert_trace(value: u128) -> anyhow::Result<usize> {
 
 pub fn remove_trace(value: u128, idx: usize) -> anyhow::Result<()> {
     ACTIVE_TRACES.remove(value, idx)
+}
+
+pub fn emit_traces(w: &mut impl Write) -> anyhow::Result<()> {
+    use super::constants::*;
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_TRACE_IDS}")?;
+    ACTIVE_TRACES.emit(w)?;
+    writeln!(w, "{DD_CRASHTRACK_END_TRACE_IDS}")?;
+    Ok(())
 }
 
 struct AtomicU128Set<const LEN: usize> {
@@ -102,7 +118,7 @@ impl<const LEN: usize> AtomicU128Set<LEN> {
                 }
             }
         }
-        write!(w, "]")?;
+        writeln!(w, "]")?;
 
         Ok(())
     }
@@ -167,7 +183,7 @@ mod tests {
         let mut buf = Vec::new();
         s.emit(&mut buf).unwrap();
         let actual = String::from_utf8(buf).unwrap();
-        assert!(actual == "[42, 21]" || actual == "[21, 42]");
+        assert!(actual == "[42, 21]\n" || actual == "[21, 42]\n");
     }
 
     fn remove_and_compare(
