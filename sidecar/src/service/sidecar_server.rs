@@ -87,13 +87,6 @@ pub struct SidecarServer {
     pub submitted_payloads: Arc<AtomicU64>,
 }
 
-// struct SidecarTracerPayloadChunkProcessor;
-//
-// impl tracer_payload::TracerPayloadChunkProcessor for SidecarTracerPayloadChunkProcessor {
-//     fn process(&mut self, _chunk: &mut datadog_trace_protobuf::pb::TraceChunk, _index: usize) {
-//     }
-// }
-
 impl SidecarServer {
     /// Accepts a new connection and starts processing requests.
     ///
