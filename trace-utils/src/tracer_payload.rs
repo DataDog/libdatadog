@@ -105,7 +105,20 @@ impl TracerPayloadCollection {
     }
 }
 
-pub type TracerPayloadChunkProcessor<'a> = Box<dyn Fn(&mut pb::TraceChunk, usize) + 'a>;
+pub trait TracerPayloadChunkProcessor {
+    // fn process(&mut self, chunk: &mut pb::TraceChunk, index: usize);
+    fn process(&mut self, chunk: &mut pb::TraceChunk, index: usize);
+}
+
+
+#[derive(Default)]
+pub struct DefaultTracerPayloadChunkProcessor;
+
+impl TracerPayloadChunkProcessor for DefaultTracerPayloadChunkProcessor {
+    fn process(&mut self, _chunk: &mut pb::TraceChunk, _index: usize) {
+        // Default implementation does nothing.
+    }
+}
 
 /// Represents the parameters required to collect trace chunks from msgpack data.
 ///
@@ -119,30 +132,32 @@ pub type TracerPayloadChunkProcessor<'a> = Box<dyn Fn(&mut pb::TraceChunk, usize
 /// * `process_chunk`: A boxed closure that processes each `TraceChunk`, allowing for custom
 /// * `encoding_type`: The encoding type of the trace data, determining how the data should be
 ///   deserialized and processed.
-pub struct TracerPayloadParams<'a> {
+pub struct TracerPayloadParams<'a, T: TracerPayloadChunkProcessor + 'a> {
     /// A byte slice containing the serialized msgpack data.
     data: &'a [u8],
     /// Reference to `TracerHeaderTags` containing metadata for the trace.
     tracer_header_tags: &'a TracerHeaderTags<'a>,
     /// A boxed closure that processes each `TraceChunk`, allowing for custom logic to be applied
     /// during the conversion process.
-    process_chunk: TracerPayloadChunkProcessor<'a>,
+    // process_chunk: TracerPayloadChunkProcessor<'a>,
     /// A boolean indicating whether the agent is running in an agentless mode. This is used to
     /// determine what protocol trace chunks should be serialized into when being sent.
     is_agentless: bool,
     /// The encoding type of the trace data, determining how the data should be
     ///   deserialized and processed.
     encoding_type: TraceEncoding,
+    // phantom: PhantomData<&'a T>,
+    process_chunk: &'a mut T
 }
 
-impl TracerPayloadParams<'_> {
-    pub fn new<'a>(
+impl<'a, T: TracerPayloadChunkProcessor + 'a> TracerPayloadParams<'a, T> {
+    pub fn new(
         data: &'a [u8],
         tracer_header_tags: &'a TracerHeaderTags,
-        process_chunk: TracerPayloadChunkProcessor<'a>,
+        process_chunk: &'a mut T,
         is_agentless: bool,
         encoding_type: TraceEncoding,
-    ) -> TracerPayloadParams<'a> {
+    ) -> TracerPayloadParams<'a, T> {
         TracerPayloadParams {
             data,
             tracer_header_tags,
@@ -153,9 +168,8 @@ impl TracerPayloadParams<'_> {
     }
 }
 
-impl<'a> TryInto<TracerPayloadCollection> for TracerPayloadParams<'a> {
-    type Error = anyhow::Error;
-
+impl<'a, T: TracerPayloadChunkProcessor + 'a> TryInto<TracerPayloadCollection> for TracerPayloadParams<'a, T> {
+        type Error = anyhow::Error;
     /// Attempts to convert `TracerPayloadParams` into a `TracerPayloadCollection`.
     ///
     /// This method processes the msgpack data contained within `TracerPayloadParams` based on
@@ -178,18 +192,17 @@ impl<'a> TryInto<TracerPayloadCollection> for TracerPayloadParams<'a> {
     /// use datadog_trace_protobuf::pb;
     /// use datadog_trace_utils::trace_utils::TracerHeaderTags;
     /// use datadog_trace_utils::tracer_payload::{
-    ///     TraceEncoding, TracerPayloadCollection, TracerPayloadParams,
+    ///     TraceEncoding, DefaultTracerPayloadChunkProcessor, TracerPayloadCollection, TracerPayloadParams,
     /// };
     /// use std::convert::TryInto;
     ///
     /// let data = &[/* msgpack data */];
+    ///
     /// let tracer_header_tags = &TracerHeaderTags::default();
-    /// let process_chunk =
-    ///     Box::new(|chunk: &mut pb::TraceChunk, index: usize| { /* processing logic */ });
     /// let params = TracerPayloadParams::new(
     ///     data,
     ///     tracer_header_tags,
-    ///     process_chunk,
+    ///     &mut DefaultTracerPayloadChunkProcessor,
     ///     false,
     ///     TraceEncoding::V04,
     /// );
