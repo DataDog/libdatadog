@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
+#[cfg(unix)]
 use datadog_crashtracker;
 use spawn_worker::{entrypoint, Stdio};
 use std::fs::File;
@@ -66,6 +67,7 @@ where
         cancel();
     });
 
+    #[cfg(unix)]
     tokio::spawn(async move {
         let _ =
             datadog_crashtracker::async_receiver_entry_point_unix_socket("/tmp/ct.socket", false)
