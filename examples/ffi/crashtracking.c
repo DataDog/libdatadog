@@ -21,15 +21,21 @@ int main(int argc, char **argv) {
   ddog_prof_CrashtrackerReceiverConfig receiver_config = {
       .args = {},
       .env = {},
-      .path_to_receiver_binary = DDOG_CHARSLICE_C("SET ME TO THE ACTUAL PATH ON YOUR MACHINE"),
-      .optional_stderr_filename = {},
-      .optional_stdout_filename = {},
+      //.path_to_receiver_binary = DDOG_CHARSLICE_C("SET ME TO THE ACTUAL PATH ON YOUR MACHINE"),
+      // E.g. on my machine, where I run ./build-profiling-ffi.sh build-ffi
+      .path_to_receiver_binary =
+          DDOG_CHARSLICE_C("/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/"
+                           "build-ffi/bin/libdatadog-crashtracking-receiver"),
+      .optional_stderr_filename = DDOG_CHARSLICE_C("/tmp/crashreports/stderr.txt"),
+      .optional_stdout_filename = DDOG_CHARSLICE_C("/tmp/crashreports/stdout.txt"),
   };
 
   ddog_prof_CrashtrackerConfiguration config = {
       .create_alt_stack = false,
-      .endpoint = ddog_prof_Endpoint_agent(DDOG_CHARSLICE_C("http://localhost:8126")),
-      .resolve_frames = DDOG_PROF_STACKTRACE_COLLECTION_WITHOUT_SYMBOLS,
+      .endpoint = ddog_Endpoint_file(DDOG_CHARSLICE_C("/tmp/crashreports/foo.txt")),
+      // Alternatively:
+      //.endpoint = ddog_prof_Endpoint_agent(DDOG_CHARSLICE_C("http://localhost:8126")),
+      .resolve_frames = DDOG_PROF_STACKTRACE_COLLECTION_ENABLED_WITH_INPROCESS_SYMBOLS,
   };
 
   ddog_prof_CrashtrackerMetadata metadata = {
@@ -57,5 +63,7 @@ int main(int argc, char **argv) {
   char *bug = NULL;
   *bug = 42;
 
+  // At this point, we expect the following files to be written into /tmp/crashreports
+  // foo.txt  foo.txt.telemetry  stderr.txt  stdout.txt
   return 0;
 }
