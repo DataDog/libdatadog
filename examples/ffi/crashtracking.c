@@ -67,3 +67,109 @@ int main(int argc, char **argv) {
   // foo.txt  foo.txt.telemetry  stderr.txt  stdout.txt
   return 0;
 }
+
+/* Example output file:
+{
+  "counters": {
+    "serializing": 0,
+    "not_profiling": 0,
+    "unwinding": 0,
+    "collecting_sample": 0
+  },
+  "metadata": {
+    "profiling_library_name": "crashtracking-test",
+    "profiling_library_version": "12.34.56",
+    "family": "crashtracking-test",
+    "tags": []
+  },
+  "os_info": {
+    "os_type": "Macos",
+    "version": {
+      "Semantic": [
+        14,
+        5,
+        0
+      ]
+    },
+    "edition": null,
+    "codename": null,
+    "bitness": "X64",
+    "architecture": "arm64"
+  },
+  "proc_info": {
+    "pid": 31709
+  },
+  "siginfo": {
+    "signum": 11,
+    "signame": "SIGSEGV"
+  },
+  "stacktrace": [
+    {
+      "ip": "0x10351db24",
+      "names": [
+        {
+          "colno": 5,
+          "filename": "/Users/daniel.schwartznarbonne/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backtrace-0.3.71/src/backtrace/libunwind.rs",
+          "lineno": 105,
+          "name": "trace"
+        },
+        {
+          "colno": 5,
+          "filename": "/Users/daniel.schwartznarbonne/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backtrace-0.3.71/src/backtrace/mod.rs",
+          "lineno": 66,
+          "name": "trace_unsynchronized<datadog_crashtracker::collectors::emit_backtrace_by_frames::{closure_env#0}<std::process::ChildStdin>>"
+        },
+        {
+          "colno": 5,
+          "filename": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collectors.rs",
+          "lineno": 33,
+          "name": "emit_backtrace_by_frames<std::process::ChildStdin>"
+        },
+        {
+          "colno": 18,
+          "filename": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/crash_handler.rs",
+          "lineno": 374,
+          "name": "emit_crashreport<std::process::ChildStdin>"
+        },
+        {
+          "colno": 23,
+          "filename": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/crash_handler.rs",
+          "lineno": 409,
+          "name": "handle_posix_signal_impl"
+        },
+        {
+          "colno": 13,
+          "filename": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/crash_handler.rs",
+          "lineno": 263,
+          "name": "handle_posix_sigaction"
+        }
+      ],
+      "sp": "0x16d3ad9a0",
+      "symbol_address": "0x10351db24"
+    },
+    {
+      "ip": "0x186b9b584",
+      "names": [
+        {
+          "name": "__simple_esappend"
+        }
+      ],
+      "sp": "0x16d3adb40",
+      "symbol_address": "0x186b9b584"
+    },
+    {
+      "ip": "0x102a53d54",
+      "names": [
+        {
+          "name": "_main"
+        }
+      ],
+      "sp": "0x16d3adb70",
+      "symbol_address": "0x102a53d54"
+    }
+  ],
+  "incomplete": false,
+  "timestamp": "2024-07-18T20:34:05.803806Z",
+  "uuid": "37ba1d0a-21e5-4297-ab15-23a257e19a50"
+}                                         
+*/
