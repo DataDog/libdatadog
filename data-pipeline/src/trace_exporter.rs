@@ -311,21 +311,12 @@ impl TraceExporterBuilder {
     }
 
     pub fn build(mut self) -> anyhow::Result<TraceExporter> {
-        let endpoint = Endpoint {
-            url: hyper::Uri::from_str(
-                self.url
-                    .to_owned()
-                    .unwrap_or(String::from("http://127.0.0.1:8126/"))
-                    .as_str(),
-            )?,
-            api_key: None,
-        };
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
 
         Ok(TraceExporter {
-            endpoint,
+            endpoint: Endpoint::from_slice(self.url.as_deref().unwrap_or("http://127.0.0.1:8126")),
             tags: TracerTags {
                 tracer_version: std::mem::take(&mut self.tracer_version),
                 language_version: std::mem::take(&mut self.language_version),
