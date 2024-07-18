@@ -1,18 +1,17 @@
 use anyhow::Context;
-use crossbeam_queue::ArrayQueue as CBArrayQueue;
+use datadog_profiling::internal;
 use ddcommon_ffi::Error;
 use std::ffi::c_void;
 
-#[allow(dead_code)]
 #[repr(C)]
 pub struct ArrayQueue {
-    inner: *mut CBArrayQueue<*mut c_void>,
+    pub inner: *mut internal::ArrayQueue,
 }
 
 impl ArrayQueue {
-    fn new(queue: CBArrayQueue<*mut c_void>) -> Self {
+    pub fn new(inner: internal::ArrayQueue) -> Self {
         Self {
-            inner: Box::into_raw(Box::new(queue)),
+            inner: Box::into_raw(Box::new(inner)),
         }
     }
 }
@@ -22,6 +21,25 @@ impl ArrayQueue {
 pub enum ArrayQueueNewResult {
     Ok(ArrayQueue),
     Err(Error),
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn array_queue_new(capacity: usize) -> ArrayQueueNewResult {
+    let internal_queue = internal::ArrayQueue::new(capacity);
+    let ffi_queue = ArrayQueue::new(internal_queue);
+    ArrayQueueNewResult::Ok(ffi_queue)
+}
+
+unsafe fn array_queue_ptr_to_inner<'a>(
+    queue_ptr: *mut ArrayQueue,
+) -> anyhow::Result<&'a mut internal::ArrayQueue> {
+    match queue_ptr.as_mut() {
+        None => anyhow::bail!("queue_ptr is null"),
+        Some(queue) => match queue.inner.as_mut() {
+            None => anyhow::bail!("queue.inner is null"),
+            Some(inner) => Ok(inner),
+        },
+    }
 }
 
 #[allow(unused)]
@@ -37,25 +55,6 @@ impl From<Result<(), anyhow::Error>> for ArrayQueuePushResult {
             Ok(_) => ArrayQueuePushResult::Ok(true),
             Err(err) => ArrayQueuePushResult::Err(err.into()),
         }
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn array_queue_new(capacity: usize) -> ArrayQueueNewResult {
-    let internal_queue = CBArrayQueue::new(capacity);
-    let ffi_queue = ArrayQueue::new(internal_queue);
-    ArrayQueueNewResult::Ok(ffi_queue)
-}
-
-unsafe fn array_queue_ptr_to_inner<'a>(
-    queue_ptr: *mut ArrayQueue,
-) -> anyhow::Result<&'a mut crossbeam_queue::ArrayQueue<*mut c_void>> {
-    match queue_ptr.as_mut() {
-        None => anyhow::bail!("queue_ptr is null"),
-        Some(queue) => match queue.inner.as_mut() {
-            None => anyhow::bail!("queue.inner is null"),
-            Some(inner) => Ok(inner),
-        },
     }
 }
 

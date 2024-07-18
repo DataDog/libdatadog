@@ -22,6 +22,7 @@ anyhow = "1.0"
 bitmaps = "3.2.0"
 bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
+crossbeam-queue = "0.3.11"
 datadog-alloc = {path = "../alloc"}
 ddcommon = {path = "../ddcommon"}
 derivative = "2.2.0"
