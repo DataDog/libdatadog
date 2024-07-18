@@ -1,14 +1,16 @@
 use anyhow::Context;
+use crossbeam_queue::ArrayQueue as CBArrayQueue;
 use ddcommon_ffi::Error;
-use std::{array, ffi::c_void};
+use std::ffi::c_void;
 
 #[allow(dead_code)]
+#[repr(C)]
 pub struct ArrayQueue {
-    inner: *mut crossbeam_queue::ArrayQueue<*mut c_void>,
+    inner: *mut CBArrayQueue<*mut c_void>,
 }
 
 impl ArrayQueue {
-    fn new(queue: crossbeam_queue::ArrayQueue<*mut c_void>) -> Self {
+    fn new(queue: CBArrayQueue<*mut c_void>) -> Self {
         Self {
             inner: Box::into_raw(Box::new(queue)),
         }
@@ -40,7 +42,7 @@ impl From<Result<(), anyhow::Error>> for ArrayQueuePushResult {
 
 #[no_mangle]
 pub unsafe extern "C" fn array_queue_new(capacity: usize) -> ArrayQueueNewResult {
-    let internal_queue = crossbeam_queue::ArrayQueue::new(capacity);
+    let internal_queue = CBArrayQueue::new(capacity);
     let ffi_queue = ArrayQueue::new(internal_queue);
     ArrayQueueNewResult::Ok(ffi_queue)
 }
