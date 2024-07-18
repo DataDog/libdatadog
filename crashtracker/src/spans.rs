@@ -13,6 +13,7 @@ pub fn clear_spans() -> anyhow::Result<()> {
     ACTIVE_SPANS.clear()
 }
 
+#[allow(dead_code)]
 pub fn emit_spans(w: &mut impl Write) -> anyhow::Result<()> {
     use super::constants::*;
     writeln!(w, "{DD_CRASHTRACK_BEGIN_SPAN_IDS}")?;
@@ -33,6 +34,7 @@ pub fn clear_traces() -> anyhow::Result<()> {
     ACTIVE_TRACES.clear()
 }
 
+#[allow(dead_code)]
 pub fn emit_traces(w: &mut impl Write) -> anyhow::Result<()> {
     use super::constants::*;
     writeln!(w, "{DD_CRASHTRACK_BEGIN_TRACE_IDS}")?;
