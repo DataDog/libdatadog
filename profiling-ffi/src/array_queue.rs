@@ -1,70 +1,155 @@
-use std::ffi::c_void;
-use std::ptr::NonNull;
+use anyhow::Context;
+use ddcommon_ffi::Error;
+use std::{array, ffi::c_void};
 
 #[allow(dead_code)]
 pub struct ArrayQueue {
-    inner: Box<crossbeam_queue::ArrayQueue<*mut c_void>>,
+    inner: *mut crossbeam_queue::ArrayQueue<*mut c_void>,
+}
+
+impl ArrayQueue {
+    fn new(queue: crossbeam_queue::ArrayQueue<*mut c_void>) -> Self {
+        Self {
+            inner: Box::into_raw(Box::new(queue)),
+        }
+    }
+}
+
+#[allow(unused)]
+#[repr(C)]
+pub enum ArrayQueueNewResult {
+    Ok(ArrayQueue),
+    Err(Error),
+}
+
+#[allow(unused)]
+#[repr(C)]
+pub enum ArrayQueuePushResult {
+    Ok(bool),
+    Err(Error),
+}
+
+impl From<Result<(), anyhow::Error>> for ArrayQueuePushResult {
+    fn from(result: Result<(), anyhow::Error>) -> Self {
+        match result {
+            Ok(_) => ArrayQueuePushResult::Ok(true),
+            Err(err) => ArrayQueuePushResult::Err(err.into()),
+        }
+    }
 }
 
 #[no_mangle]
-pub extern "C" fn array_queue_new(out_handle: NonNull<Box<ArrayQueue>>, capacity: usize) -> bool {
-    let queue = Box::new(ArrayQueue {
-        inner: Box::new(crossbeam_queue::ArrayQueue::new(capacity)),
-    });
-    unsafe {
-        out_handle.as_ptr().write(queue);
-    }
-    true
+pub unsafe extern "C" fn array_queue_new(capacity: usize) -> ArrayQueueNewResult {
+    let internal_queue = crossbeam_queue::ArrayQueue::new(capacity);
+    let ffi_queue = ArrayQueue::new(internal_queue);
+    ArrayQueueNewResult::Ok(ffi_queue)
 }
 
-// #[no_mangle]
-// pub extern "C" fn queue_new(capacity: usize) -> *mut ArrayQueueWrapper {
-//     let queue = Box::new(ArrayQueue::new(capacity));
-//     let wrapper = Box::new(ArrayQueueWrapper {
-//         inner: Box::into_raw(queue),
-//     });
-//     Box::into_raw(wrapper)
-// }
+unsafe fn array_queue_ptr_to_inner<'a>(
+    queue_ptr: *mut ArrayQueue,
+) -> anyhow::Result<&'a mut crossbeam_queue::ArrayQueue<*mut c_void>> {
+    match queue_ptr.as_mut() {
+        None => anyhow::bail!("queue_ptr is null"),
+        Some(queue) => match queue.inner.as_mut() {
+            None => anyhow::bail!("queue.inner is null"),
+            Some(inner) => Ok(inner),
+        },
+    }
+}
 
-// #[no_mangle]
-// pub extern "C" fn queue_drop(queue: *mut ArrayQueueWrapper) {
-//     if !queue.is_null() {
-//         unsafe { drop(Box::from_raw(queue)) };
-//     }
-// }
+#[no_mangle]
+pub unsafe extern "C" fn array_queue_push(
+    queue_ptr: *mut ArrayQueue,
+    value: *mut c_void,
+) -> ArrayQueuePushResult {
+    (|| {
+        let queue = array_queue_ptr_to_inner(queue_ptr)?;
+        queue
+            .push(value)
+            .map_err(|_| anyhow::anyhow!("array_queue full"))
+    })()
+    .context("array_queue_push failed")
+    .into()
+}
 
-// // crossbeam_queue::ArrayQueue also implements force_push, which
-// #[no_mangle]
-// pub extern "C" fn queue_push(queue: *mut ArrayQueueWrapper, value: *mut c_void) -> bool {
-//     let queue = unsafe { &(*queue) };
-//     let inner = unsafe { &*queue.inner };
-//     inner.push(value).is_ok()
-// }
+#[allow(unused)]
+#[repr(C)]
+pub enum ArrayQueuePopResult {
+    Ok(*mut c_void),
+    Err(Error),
+}
 
-// #[no_mangle]
-// pub extern "C" fn queue_pop(queue: *mut ArrayQueueWrapper) -> *mut c_void {
-//     let queue = unsafe { &(*queue) };
-//     let inner = unsafe { &*queue.inner };
-//     inner.pop().unwrap_or(std::ptr::null_mut())
-// }
+impl From<anyhow::Result<*mut c_void>> for ArrayQueuePopResult {
+    fn from(result: anyhow::Result<*mut c_void>) -> Self {
+        match result {
+            Ok(value) => ArrayQueuePopResult::Ok(value),
+            Err(err) => ArrayQueuePopResult::Err(err.into()),
+        }
+    }
+}
 
-// #[no_mangle]
-// pub extern "C" fn queue_capacity(queue: *mut ArrayQueueWrapper) -> usize {
-//     let queue = unsafe { &(*queue) };
-//     let inner = unsafe { &*queue.inner };
-//     inner.capacity()
-// }
+#[no_mangle]
+pub unsafe extern "C" fn array_queue_pop(queue_ptr: *mut ArrayQueue) -> ArrayQueuePopResult {
+    (|| {
+        let queue = array_queue_ptr_to_inner(queue_ptr)?;
+        queue
+            .pop()
+            .ok_or_else(|| anyhow::anyhow!("array_queue empty"))
+    })()
+    .context("array_queue_pop failed")
+    .into()
+}
 
-// #[no_mangle]
-// pub extern "C" fn queue_len(queue: *mut ArrayQueueWrapper) -> usize {
-//     let queue = unsafe { &(*queue) };
-//     let inner = unsafe { &*queue.inner };
-//     inner.len()
-// }
+#[allow(unused)]
+#[repr(C)]
+pub enum ArrayQueueIsEmptyResult {
+    Ok(bool),
+    Err(Error),
+}
 
-// #[no_mangle]
-// pub extern "C" fn queue_is_empty(queue: *mut ArrayQueueWrapper) -> bool {
-//     let queue = unsafe { &(*queue) };
-//     let inner = unsafe { &*queue.inner };
-//     inner.is_empty()
-// }
+impl From<anyhow::Result<bool>> for ArrayQueueIsEmptyResult {
+    fn from(result: anyhow::Result<bool>) -> Self {
+        match result {
+            Ok(value) => ArrayQueueIsEmptyResult::Ok(value),
+            Err(err) => ArrayQueueIsEmptyResult::Err(err.into()),
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn array_queue_is_empty(
+    queue_ptr: *mut ArrayQueue,
+) -> ArrayQueueIsEmptyResult {
+    (|| {
+        let queue = array_queue_ptr_to_inner(queue_ptr)?;
+        anyhow::Ok(queue.is_empty())
+    })()
+    .context("array_queue_is_empty failed")
+    .into()
+}
+
+#[allow(unused)]
+#[repr(C)]
+pub enum ArrayQueueLenResult {
+    Ok(usize),
+    Err(Error),
+}
+
+impl From<anyhow::Result<usize>> for ArrayQueueLenResult {
+    fn from(result: anyhow::Result<usize>) -> Self {
+        match result {
+            Ok(value) => ArrayQueueLenResult::Ok(value),
+            Err(err) => ArrayQueueLenResult::Err(err.into()),
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn array_queue_len(queue_ptr: *mut ArrayQueue) -> ArrayQueueLenResult {
+    (|| {
+        let queue = array_queue_ptr_to_inner(queue_ptr)?;
+        anyhow::Ok(queue.len())
+    })()
+    .context("array_queue_len failed")
+    .into()
+}
