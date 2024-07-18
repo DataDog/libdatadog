@@ -242,7 +242,7 @@ impl CrashInfo {
     ///     I believe but have not verified this is signal safe.
     pub fn to_file(&self, path: &Path) -> anyhow::Result<()> {
         let binding = path.as_os_str().to_string_lossy();
-        let path = binding.strip_prefix("file://").unwrap(); // FIXME: handle error
+        let path = binding.strip_prefix("file://").unwrap_or(&binding);
 
         let file = File::create(path).with_context(|| format!("Failed to create {}", path))?;
         serde_json::to_writer_pretty(file, self)
@@ -258,8 +258,6 @@ impl CrashInfo {
                     .context("crash output file was not correctly formatted")?;
                 self.to_file(&path)?;
             }
-            // FIXME return?
-            return Ok(());
         }
 
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -280,8 +278,6 @@ impl CrashInfo {
                     .context("crash output file was not correctly formatted")?;
                 self.to_file(&path)?;
             }
-            // FIXME return?
-            return Ok(());
         }
 
         self.upload_to_telemetry(endpoint).await
