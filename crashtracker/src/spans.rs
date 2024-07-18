@@ -3,7 +3,6 @@
 
 use portable_atomic::{AtomicU128, AtomicUsize};
 use rand::Rng;
-#[cfg(unix)]
 use std::io::Write;
 use std::sync::atomic::Ordering::SeqCst;
 
