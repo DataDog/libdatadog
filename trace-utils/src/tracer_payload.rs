@@ -1,11 +1,14 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::trace_utils::{cmp_send_data_payloads, collect_trace_chunks, TracerHeaderTags};
+use crate::{
+    msgpack,
+    trace_utils::{cmp_send_data_payloads, collect_trace_chunks, TracerHeaderTags},
+};
 use datadog_trace_protobuf::pb;
 use std::cmp::Ordering;
 
-type TracerPayloadV04 = Vec<pb::Span>;
+pub type TracerPayloadV04 = Vec<pb::Span>;
 
 #[derive(Debug, Clone)]
 /// Enumerates the different encoding types.
@@ -238,10 +241,14 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
     ///     Err(e) => println!("Failed to convert: {:?}", e),
     /// }
     /// ```
+    // Allowing useless_asref because otherwise self should me passed as mutable.
+    #[allow(clippy::useless_asref)]
     fn try_into(self) -> Result<TracerPayloadCollection, Self::Error> {
         match self.encoding_type {
             TraceEncoding::V04 => {
-                let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_slice(self.data) {
+                // TODO: investigate why as_ref() did the trick.
+                let data: &mut &[u8] = &mut self.data.as_ref();
+                let traces: Vec<Vec<pb::Span>> = match msgpack::decoder::from_slice(data) {
                     Ok(res) => res,
                     Err(e) => {
                         anyhow::bail!("Error deserializing trace from request body: {e}")
@@ -292,6 +299,15 @@ mod tests {
             hostname: "".to_string(),
             app_version: "".to_string(),
         }])
+    }
+
+    fn create_trace() -> Vec<pb::Span> {
+        vec![
+            // create a root span with metrics
+            create_test_span(1234, 12341, 0, 1, true),
+            create_test_span(1234, 12342, 12341, 1, false),
+            create_test_span(1234, 12343, 12342, 1, false),
+        ]
     }
 
     #[test]
@@ -357,6 +373,7 @@ mod tests {
             "error": 0,
             "meta": {},
             "metrics": {},
+            "type": "serverless",
         }]);
 
         let expected_serialized_span_data1 = vec![pb::Span {
@@ -372,7 +389,7 @@ mod tests {
             meta: HashMap::new(),
             metrics: HashMap::new(),
             meta_struct: HashMap::new(),
-            r#type: "".to_string(),
+            r#type: "serverless".to_string(),
             span_links: vec![],
         }];
 
@@ -388,6 +405,7 @@ mod tests {
             "error": 1,
             "meta": {},
             "metrics": {},
+            "type": "",
         }]);
 
         let expected_serialized_span_data2 = vec![pb::Span {
@@ -429,6 +447,33 @@ mod tests {
         if let TracerPayloadCollection::V04(traces) = collection {
             assert_eq!(expected_serialized_span_data1, traces[0]);
             assert_eq!(expected_serialized_span_data2, traces[1]);
+        } else {
+            panic!("Invalid collection type returned for try_into");
+        }
+    }
+
+    #[test]
+    fn test_try_into_meta_metrics_success() {
+        let dummy_trace = create_trace();
+        let expected = vec![dummy_trace.clone()];
+        let payload = rmp_serde::to_vec_named(&expected).unwrap();
+        let tracer_header_tags = &TracerHeaderTags::default();
+
+        let result: anyhow::Result<TracerPayloadCollection> = TracerPayloadParams::new(
+            &payload,
+            tracer_header_tags,
+            &mut DefaultTraceChunkProcessor,
+            false,
+            TraceEncoding::V04,
+        )
+        .try_into();
+
+        assert!(result.is_ok());
+
+        let collection = result.unwrap();
+        assert_eq!(1, collection.size());
+        if let TracerPayloadCollection::V04(traces) = collection {
+            assert_eq!(dummy_trace, traces[0]);
         } else {
             panic!("Invalid collection type returned for try_into");
         }
