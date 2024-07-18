@@ -338,6 +338,7 @@ mod tests {
         let target_endpoint = Endpoint {
             url: server.url("").to_owned().parse().unwrap(),
             api_key: Some("test-key".into()),
+            ..Default::default()
         };
 
         let send_data_1 = create_send_data(size, &target_endpoint);
@@ -379,6 +380,7 @@ mod tests {
         let target_endpoint = Endpoint {
             url: server.url("").to_owned().parse().unwrap(),
             api_key: Some("test-key".into()),
+            ..Default::default()
         };
         let send_data_1 = create_send_data(size, &target_endpoint);
 
@@ -415,6 +417,7 @@ mod tests {
         let target_endpoint = Endpoint {
             url: server.url("").to_owned().parse().unwrap(),
             api_key: Some("test-key".into()),
+            ..Default::default()
         };
 
         let send_data_1 = create_send_data(size, &target_endpoint);

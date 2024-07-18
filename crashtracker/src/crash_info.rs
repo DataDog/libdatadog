@@ -284,7 +284,7 @@ impl CrashInfo {
     fn upload_to_telemetry(&self, config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
         if let Some(metadata) = &self.metadata {
             if let Ok(uploader) = TelemetryCrashUploader::new(metadata, config) {
-                uploader.upload_to_telemetry(self, config.timeout)?;
+                uploader.upload_to_telemetry(self)?;
             }
         }
         Ok(())

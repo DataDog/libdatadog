@@ -13,6 +13,7 @@ use crate::{
     worker::builder::ConfigBuilder,
 };
 use ddcommon::tag::Tag;
+use ddcommon::Endpoint;
 
 use std::iter::Sum;
 use std::ops::Add;
@@ -672,6 +673,14 @@ impl TelemetryWorker {
         tokio::select! {
             _ = self.cancellation_token.cancelled() => {
                 Err(anyhow::anyhow!("Request cancelled"))
+            },
+            _ = tokio::time::sleep(time::Duration::from_millis(
+                    if let Some(endpoint) = self.config.endpoint.as_ref() {
+                        endpoint.timeout_ms
+                    } else {
+                        Endpoint::DEFAULT_TIMEOUT
+                    })) => {
+                Err(anyhow::anyhow!("Request timed out"))
             },
             r = self.client.request(req) => {
                 match r {

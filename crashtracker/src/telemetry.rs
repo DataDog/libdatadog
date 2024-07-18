@@ -3,10 +3,11 @@
 
 use std::collections::HashMap;
 use std::fmt::Write;
-use std::time::{self, SystemTime};
+use std::time::SystemTime;
 
 use super::{CrashInfo, CrashtrackerConfiguration, CrashtrackerMetadata, StackFrame};
 use anyhow::{Context, Ok};
+use ddcommon::Endpoint;
 use ddtelemetry::{
     build_host,
     data::{self, Application, LogLevel},
@@ -121,11 +122,7 @@ impl TelemetryCrashUploader {
         Ok(s)
     }
 
-    pub fn upload_to_telemetry(
-        &self,
-        crash_info: &CrashInfo,
-        timeout: time::Duration,
-    ) -> anyhow::Result<()> {
+    pub fn upload_to_telemetry(&self, crash_info: &CrashInfo) -> anyhow::Result<()> {
         let metadata = &self.metadata;
 
         let message = serde_json::to_string(&TelemetryCrashInfoMessage {
@@ -173,8 +170,19 @@ impl TelemetryCrashUploader {
                 ddcommon::header::APPLICATION_JSON,
             )
             .body(serde_json::to_string(&payload)?.into())?;
-        self.rt
-            .block_on(async { tokio::time::timeout(timeout, client.request(req)).await })??;
+        self.rt.block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_millis({
+                    if let Some(endp) = self.cfg.endpoint.as_ref() {
+                        endp.timeout_ms
+                    } else {
+                        Endpoint::DEFAULT_TIMEOUT
+                    }
+                }),
+                client.request(req),
+            )
+            .await
+        })??;
         Ok(())
     }
 }
@@ -197,7 +205,7 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
 mod tests {
     use std::{
         collections::{HashMap, HashSet},
-        fs, time,
+        fs,
     };
 
     use crate::SigInfo;
@@ -212,12 +220,10 @@ mod tests {
             &crate::CrashtrackerConfiguration {
                 additional_files: vec![],
                 create_alt_stack: true,
-                endpoint: Some(Endpoint {
-                    url: hyper::Uri::from_static("http://localhost:8126/profiling/v1/input"),
-                    api_key: None,
-                }),
+                endpoint: Some(Endpoint::from_slice(
+                    "http://localhost:8126/profiling/v1/input",
+                )),
                 resolve_frames: crate::StacktraceCollection::WithoutSymbols,
-                timeout: time::Duration::from_secs(30),
                 wait_for_receiver: true,
             },
         )
@@ -274,28 +280,25 @@ mod tests {
         let mut counters = HashMap::new();
         counters.insert("collecting_sample".to_owned(), 1);
         counters.insert("not_profiling".to_owned(), 0);
-        t.upload_to_telemetry(
-            &crate::CrashInfo {
-                counters,
-                files: HashMap::new(),
-                metadata: Some(new_test_prof_metadata()),
-                os_info: os_info::Info::unknown(),
-                siginfo: Some(SigInfo {
-                    signum: 11,
-                    signame: Some("SIGSEGV".to_owned()),
-                }),
-                proc_info: None,
-                stacktrace: vec![],
-                span_ids: vec![42, 24],
-                trace_ids: vec![345, 666],
-                additional_stacktraces: HashMap::new(),
-                tags: HashMap::new(),
-                timestamp: DateTime::from_timestamp(1702465105, 0),
-                uuid: uuid::uuid!("1d6b97cb-968c-40c9-af6e-e4b4d71e8781"),
-                incomplete: true,
-            },
-            time::Duration::from_secs(1),
-        )
+        t.upload_to_telemetry(&crate::CrashInfo {
+            counters,
+            files: HashMap::new(),
+            metadata: Some(new_test_prof_metadata()),
+            os_info: os_info::Info::unknown(),
+            siginfo: Some(SigInfo {
+                signum: 11,
+                signame: Some("SIGSEGV".to_owned()),
+            }),
+            proc_info: None,
+            stacktrace: vec![],
+            span_ids: vec![42, 24],
+            trace_ids: vec![345, 666],
+            additional_stacktraces: HashMap::new(),
+            tags: HashMap::new(),
+            timestamp: DateTime::from_timestamp(1702465105, 0),
+            uuid: uuid::uuid!("1d6b97cb-968c-40c9-af6e-e4b4d71e8781"),
+            incomplete: true,
+        })
         .unwrap();
 
         let payload: serde_json::value::Value =
