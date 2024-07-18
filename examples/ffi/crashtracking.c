@@ -21,11 +21,11 @@ int main(int argc, char **argv) {
   ddog_prof_CrashtrackerReceiverConfig receiver_config = {
       .args = {},
       .env = {},
-      //.path_to_receiver_binary = DDOG_CHARSLICE_C("SET ME TO THE ACTUAL PATH ON YOUR MACHINE"),
+      .path_to_receiver_binary = DDOG_CHARSLICE_C("SET ME TO THE ACTUAL PATH ON YOUR MACHINE"),
       // E.g. on my machine, where I run ./build-profiling-ffi.sh build-ffi
-      .path_to_receiver_binary =
-          DDOG_CHARSLICE_C("/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/"
-                           "build-ffi/bin/libdatadog-crashtracking-receiver"),
+      // .path_to_receiver_binary =
+      //     DDOG_CHARSLICE_C("/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/"
+      //                      "build-ffi/bin/libdatadog-crashtracking-receiver"),
       .optional_stderr_filename = DDOG_CHARSLICE_C("/tmp/crashreports/stderr.txt"),
       .optional_stdout_filename = DDOG_CHARSLICE_C("/tmp/crashreports/stdout.txt"),
   };
