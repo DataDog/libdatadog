@@ -22,3 +22,4 @@ criterion = "0.5"
 [[bench]]
 name = "normalization_utils"
 harness = false
+path = "benches/normalization_utils.rs"
