@@ -7,6 +7,9 @@ version.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[lib]
+bench = false
+
 [dependencies]
 anyhow = "1.0"
 datadog-trace-protobuf = { path = "../trace-protobuf" }
@@ -14,3 +17,8 @@ datadog-trace-protobuf = { path = "../trace-protobuf" }
 [dev-dependencies]
 rand = "0.8.5"
 duplicate = "0.4.1"
+criterion = "0.5"
+
+[[bench]]
+name = "normalization_utils"
+harness = false

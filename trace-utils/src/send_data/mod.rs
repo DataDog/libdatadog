@@ -7,6 +7,7 @@ pub mod send_data_result;
 pub use crate::send_data::retry_strategy::{RetryBackoffType, RetryStrategy};
 
 use crate::trace_utils::{SendDataResult, TracerHeaderTags};
+use crate::tracer_payload::TracerPayloadCollection;
 use anyhow::{anyhow, Context};
 use bytes::Bytes;
 use datadog_trace_protobuf::pb::{AgentPayload, TracerPayload};
@@ -18,7 +19,9 @@ use hyper::{Body, Client, HeaderMap, Method, Response};
 use std::collections::HashMap;
 
 const DD_API_KEY: &str = "DD-API-KEY";
+
 const HEADER_DD_TRACE_COUNT: &str = "X-Datadog-Trace-Count";
+
 const HEADER_HTTP_CTYPE: &str = "Content-Type";
 const HEADER_CTYPE_MSGPACK: &str = "application/msgpack";
 const HEADER_CTYPE_PROTOBUF: &str = "application/x-protobuf";
@@ -74,13 +77,15 @@ pub(crate) enum RequestResult {
 ///     SendData,
 /// };
 /// use datadog_trace_utils::trace_utils::TracerHeaderTags;
+/// use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
 /// use ddcommon::Endpoint;
 /// use std::time::Duration;
 ///
 /// #[cfg_attr(miri, ignore)]
 /// async fn update_send_results_example() {
 ///     let size = 100;
-///     let tracer_payload = TracerPayload::default(); // Replace with actual payload
+///     let tracer_payload = TracerPayloadCollection::V07(
+///         vec![TracerPayload::default()]); // Replace with actual payload
 ///     let tracer_header_tags = TracerHeaderTags::default(); // Replace with actual header tags
 ///     let target = Endpoint::default(); // Replace with actual endpoint
 ///
@@ -96,7 +101,7 @@ pub(crate) enum RequestResult {
 /// }
 /// ```
 pub struct SendData {
-    pub(crate) tracer_payloads: Vec<TracerPayload>,
+    pub(crate) tracer_payloads: TracerPayloadCollection,
     pub(crate) size: usize, // have a rough size estimate to force flushing if it's large
     target: Endpoint,
     headers: HashMap<&'static str, String>,
@@ -118,7 +123,7 @@ impl SendData {
     /// A new `SendData` instance.
     pub fn new(
         size: usize,
-        tracer_payload: TracerPayload,
+        tracer_payload: TracerPayloadCollection,
         tracer_header_tags: TracerHeaderTags,
         target: &Endpoint,
     ) -> SendData {
@@ -129,7 +134,7 @@ impl SendData {
         };
 
         SendData {
-            tracer_payloads: vec![tracer_payload],
+            tracer_payloads: tracer_payload,
             size,
             target: target.clone(),
             headers,
@@ -169,7 +174,7 @@ impl SendData {
     /// # Returns
     ///
     /// A reference to the vector of payloads.
-    pub fn get_payloads(&self) -> &Vec<TracerPayload> {
+    pub fn get_payloads(&self) -> &TracerPayloadCollection {
         &self.tracer_payloads
     }
 
@@ -187,7 +192,7 @@ impl SendData {
     /// # Returns
     ///
     /// A `SendDataResult` instance containing the result of the operation.
-    pub async fn send(self) -> SendDataResult {
+    pub async fn send(&self) -> SendDataResult {
         if self.use_protobuf() {
             self.send_with_protobuf().await
         } else {
@@ -337,53 +342,72 @@ impl SendData {
 
     async fn send_with_protobuf(&self) -> SendDataResult {
         let mut result = SendDataResult::default();
-        let mut chunks: u64 = 0;
-        for tracer_payload in &self.tracer_payloads {
-            chunks += u64::try_from(tracer_payload.chunks.len()).unwrap();
+        let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
+
+        match &self.tracer_payloads {
+            TracerPayloadCollection::V07(payloads) => {
+                let agent_payload = construct_agent_payload(payloads.to_vec());
+                let serialized_trace_payload = match serialize_proto_payload(&agent_payload)
+                    .context("Failed to serialize trace agent payload, dropping traces")
+                {
+                    Ok(p) => p,
+                    Err(e) => return result.error(e),
+                };
+
+                result
+                    .update(
+                        self.send_payload(
+                            HEADER_CTYPE_PROTOBUF,
+                            serialized_trace_payload,
+                            chunks,
+                            None,
+                        )
+                        .await,
+                    )
+                    .await;
+
+                result
+            }
+            _ => result,
         }
-        let agent_payload = construct_agent_payload(self.tracer_payloads.clone());
-        let serialized_trace_payload = match serialize_proto_payload(&agent_payload)
-            .context("Failed to serialize trace agent payload, dropping traces")
-        {
-            Ok(p) => p,
-            Err(e) => return result.error(e),
-        };
-
-        result
-            .update(
-                self.send_payload(
-                    HEADER_CTYPE_PROTOBUF,
-                    serialized_trace_payload,
-                    chunks,
-                    None,
-                )
-                .await,
-            )
-            .await;
-
-        result
     }
 
     async fn send_with_msgpack(&self) -> SendDataResult {
         let mut result = SendDataResult::default();
-
         let mut futures = FuturesUnordered::new();
-        for tracer_payload in self.tracer_payloads.iter() {
-            let chunks = u64::try_from(tracer_payload.chunks.len()).unwrap();
-            let additional_payload_headers =
-                Some(HashMap::from([(HEADER_DD_TRACE_COUNT, chunks.to_string())]));
 
-            let payload = match rmp_serde::to_vec_named(&tracer_payload) {
-                Ok(p) => p,
-                Err(e) => return result.error(anyhow!(e)),
-            };
-            futures.push(self.send_payload(
-                HEADER_CTYPE_MSGPACK,
-                payload,
-                chunks,
-                additional_payload_headers,
-            ));
+        match &self.tracer_payloads {
+            TracerPayloadCollection::V07(payloads) => {
+                for tracer_payload in payloads {
+                    let chunks = u64::try_from(tracer_payload.chunks.len()).unwrap();
+                    let additional_payload_headers =
+                        Some(HashMap::from([(HEADER_DD_TRACE_COUNT, chunks.to_string())]));
+
+                    let payload = match rmp_serde::to_vec_named(tracer_payload) {
+                        Ok(p) => p,
+                        Err(e) => return result.error(anyhow!(e)),
+                    };
+                    futures.push(self.send_payload(
+                        HEADER_CTYPE_MSGPACK,
+                        payload,
+                        chunks,
+                        additional_payload_headers,
+                    ));
+                }
+            }
+            TracerPayloadCollection::V04(payloads) => {
+                let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
+                let headers = Some(HashMap::from([(HEADER_DD_TRACE_COUNT, chunks.to_string())]));
+
+                let payload = match rmp_serde::to_vec_named(payloads) {
+                    Ok(p) => p,
+                    Err(e) => return result.error(anyhow!(e)),
+                };
+
+                futures.push(self.send_payload(HEADER_CTYPE_MSGPACK, payload, chunks, headers));
+            }
         }
+
         loop {
             match futures.next().await {
                 Some(response) => {
@@ -425,7 +449,7 @@ mod tests {
     use super::*;
     use crate::send_data::retry_strategy::RetryBackoffType;
     use crate::send_data::retry_strategy::RetryStrategy;
-    use crate::test_utils::{create_send_data, poll_for_mock_hit};
+    use crate::test_utils::{create_send_data, create_test_span, poll_for_mock_hit};
     use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, RootSpanTags};
     use crate::tracer_header_tags::TracerHeaderTags;
     use datadog_trace_protobuf::pb::Span;
@@ -473,18 +497,30 @@ mod tests {
         construct_tracer_payload(vec![chunk], header_tags, root_tags)
     }
 
-    fn compute_payload_len(payload: &[TracerPayload]) -> usize {
-        let agent_payload = construct_agent_payload(payload.to_vec());
-        let serialized_trace_payload = serialize_proto_payload(&agent_payload).unwrap();
-        serialized_trace_payload.len()
+    fn compute_payload_len(collection: &TracerPayloadCollection) -> usize {
+        match collection {
+            TracerPayloadCollection::V07(payloads) => {
+                let agent_payload = construct_agent_payload(payloads.to_vec());
+                let serialized_trace_payload = serialize_proto_payload(&agent_payload).unwrap();
+                serialized_trace_payload.len()
+            }
+            _ => 0,
+        }
     }
 
-    fn rmp_compute_payload_len(payload: &Vec<TracerPayload>) -> usize {
-        let mut total: usize = 0;
-        for payload in payload {
-            total += rmp_serde::to_vec_named(payload).unwrap().len();
+    fn rmp_compute_payload_len(collection: &TracerPayloadCollection) -> usize {
+        match collection {
+            TracerPayloadCollection::V07(payloads) => {
+                let mut total: usize = 0;
+                for payload in payloads {
+                    total += rmp_serde::to_vec_named(payload).unwrap().len();
+                }
+                total
+            }
+            TracerPayloadCollection::V04(payloads) => {
+                rmp_serde::to_vec_named(payloads).unwrap().len()
+            }
         }
-        total
     }
 
     #[test]
@@ -494,7 +530,7 @@ mod tests {
         let payload = setup_payload(&header_tags);
         let data = SendData::new(
             100,
-            payload,
+            TracerPayloadCollection::V07(vec![payload]),
             HEADER_TAGS,
             &Endpoint {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
@@ -517,7 +553,7 @@ mod tests {
         let payload = setup_payload(&header_tags);
         let data = SendData::new(
             100,
-            payload,
+            TracerPayloadCollection::V07(vec![payload]),
             header_tags.clone(),
             &Endpoint {
                 api_key: None,
@@ -553,7 +589,7 @@ mod tests {
         let payload = setup_payload(&header_tags);
         let data = SendData::new(
             100,
-            payload.clone(),
+            TracerPayloadCollection::V07(vec![payload.clone()]),
             header_tags,
             &Endpoint {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
@@ -593,9 +629,9 @@ mod tests {
         let header_tags = TracerHeaderTags::default();
 
         let payload = setup_payload(&header_tags);
-        let mut data = SendData::new(
+        let data = SendData::new(
             100,
-            payload.clone(),
+            TracerPayloadCollection::V07(vec![payload.clone(), payload.clone()]),
             header_tags,
             &Endpoint {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
@@ -603,7 +639,6 @@ mod tests {
             },
         );
 
-        data.tracer_payloads.push(payload.clone());
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
         let res = data.send().await;
 
@@ -621,7 +656,7 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    async fn request_msgpack() {
+    async fn request_msgpack_v07() {
         let server = MockServer::start_async().await;
 
         let header_tags = HEADER_TAGS;
@@ -649,7 +684,60 @@ mod tests {
         let payload = setup_payload(&header_tags);
         let data = SendData::new(
             100,
-            payload.clone(),
+            TracerPayloadCollection::V07(vec![payload.clone()]),
+            header_tags,
+            &Endpoint {
+                api_key: None,
+                url: server.url("/").parse::<hyper::Uri>().unwrap(),
+            },
+        );
+
+        let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
+        let res = data.send().await;
+
+        mock.assert_async().await;
+
+        assert_eq!(res.last_result.unwrap().status(), 200);
+        assert_eq!(res.errors_timeout, 0);
+        assert_eq!(res.errors_network, 0);
+        assert_eq!(res.errors_status_code, 0);
+        assert_eq!(res.requests_count, 1);
+        assert_eq!(res.chunks_sent, 1);
+        assert_eq!(res.bytes_sent, data_payload_len as u64);
+        assert_eq!(*res.responses_count_per_code.get(&200).unwrap(), 1_u64);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn request_msgpack_v04() {
+        let server = MockServer::start_async().await;
+
+        let header_tags = HEADER_TAGS;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .header(HEADER_DD_TRACE_COUNT, "1")
+                    .header("Content-type", "application/msgpack")
+                    .header("datadog-meta-lang", header_tags.lang)
+                    .header(
+                        "datadog-meta-lang-interpreter",
+                        header_tags.lang_interpreter,
+                    )
+                    .header("datadog-meta-lang-version", header_tags.lang_version)
+                    .header("datadog-meta-lang-vendor", header_tags.lang_vendor)
+                    .header("datadog-meta-tracer-version", header_tags.tracer_version)
+                    .header("datadog-container-id", header_tags.container_id)
+                    .path("/");
+                then.status(200).body("");
+            })
+            .await;
+
+        let header_tags = HEADER_TAGS;
+
+        let trace = vec![create_test_span(1234, 12342, 12341, 1, false)];
+        let data = SendData::new(
+            100,
+            TracerPayloadCollection::V04(vec![trace.clone()]),
             header_tags,
             &Endpoint {
                 api_key: None,
@@ -689,9 +777,9 @@ mod tests {
         let header_tags = TracerHeaderTags::default();
 
         let payload = setup_payload(&header_tags);
-        let mut data = SendData::new(
+        let data = SendData::new(
             100,
-            payload.clone(),
+            TracerPayloadCollection::V07(vec![payload.clone(), payload.clone()]),
             header_tags,
             &Endpoint {
                 api_key: None,
@@ -699,7 +787,6 @@ mod tests {
             },
         );
 
-        data.tracer_payloads.push(payload.clone());
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
         let res = data.send().await;
 
@@ -732,7 +819,7 @@ mod tests {
         let payload = setup_payload(&HEADER_TAGS);
         let data = SendData::new(
             100,
-            payload,
+            TracerPayloadCollection::V07(vec![payload]),
             HEADER_TAGS,
             &Endpoint {
                 api_key: None,
@@ -761,7 +848,7 @@ mod tests {
         let payload = setup_payload(&HEADER_TAGS);
         let data = SendData::new(
             100,
-            payload,
+            TracerPayloadCollection::V07(vec![payload]),
             HEADER_TAGS,
             &Endpoint {
                 api_key: None,

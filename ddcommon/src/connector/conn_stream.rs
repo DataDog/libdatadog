@@ -19,7 +19,7 @@ pub enum ConnStream {
     },
     Tls {
         #[pin]
-        transport: Box<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>,
+        transport: Box<tokio_rustls::client::TlsStream<TokioIo<TokioIo<tokio::net::TcpStream>>>>,
     },
     #[cfg(unix)]
     Udp {
@@ -37,6 +37,8 @@ pub enum ConnStream {
 pub type ConnStreamError = Box<dyn std::error::Error + Send + Sync>;
 
 use hyper::{client::HttpConnector, service::Service};
+use hyper_util::rt::TokioIo;
+
 impl ConnStream {
     pub async fn from_uds_uri(uri: hyper::Uri) -> Result<ConnStream, ConnStreamError> {
         #[cfg(unix)]
@@ -79,25 +81,28 @@ impl ConnStream {
     }
 
     pub fn from_https_connector_with_uri(
-        c: &mut HttpsConnector<HttpConnector>,
+        c: &mut HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
         uri: hyper::Uri,
         require_tls: bool,
     ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> {
-        c.call(uri).and_then(move |stream| match stream {
-            // move only require_tls
-            hyper_rustls::MaybeHttpsStream::Http(t) => {
-                if require_tls {
-                    future::ready(Err(
-                        super::errors::Error::CannotEstablishTlsConnection.into()
-                    ))
-                } else {
-                    future::ready(Ok(ConnStream::Tcp { transport: t }))
+        c.call(uri.to_string().parse().unwrap())
+            .and_then(move |stream| match stream {
+                // move only require_tls
+                hyper_rustls::MaybeHttpsStream::Http(t) => {
+                    if require_tls {
+                        future::ready(Err(
+                            super::errors::Error::CannotEstablishTlsConnection.into()
+                        ))
+                    } else {
+                        future::ready(Ok(ConnStream::Tcp {
+                            transport: t.into_inner(),
+                        }))
+                    }
                 }
-            }
-            hyper_rustls::MaybeHttpsStream::Https(t) => future::ready(Ok(ConnStream::Tls {
-                transport: Box::from(t),
-            })),
-        })
+                hyper_rustls::MaybeHttpsStream::Https(t) => future::ready(Ok(ConnStream::Tls {
+                    transport: Box::from(t.into_inner()),
+                })),
+            })
     }
 }
 
@@ -124,7 +129,7 @@ impl hyper::client::connect::Connection for ConnStream {
             Self::Tcp { transport } => transport.connected(),
             Self::Tls { transport } => {
                 let (tcp, _) = transport.get_ref();
-                tcp.connected()
+                tcp.inner().inner().connected()
             }
             #[cfg(unix)]
             Self::Udp { transport: _ } => hyper::client::connect::Connected::new(),

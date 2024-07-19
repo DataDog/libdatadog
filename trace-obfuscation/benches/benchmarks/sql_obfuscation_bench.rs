@@ -6,7 +6,7 @@ use datadog_trace_obfuscation::sql::obfuscate_sql_string;
 
 fn sql_obfuscation(c: &mut Criterion) {
     let mut group = c.benchmark_group("sql");
-    group.bench_function("obfsucate_sql_string", |b| {
+    group.bench_function("obfuscate_sql_string", |b| {
         b.iter(|| {
             for (input, _) in CASES {
                 black_box(obfuscate_sql_string(input));

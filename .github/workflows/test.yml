@@ -17,9 +17,20 @@ jobs:
             rust_version: "${RUST_VERSION}"
       fail-fast: false
     steps:
+      - name: Free Disk Space (Ubuntu only)
+        if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: true
+
       - name: Checkout sources
         uses: actions/checkout@v4
-
       - name: Cache
         uses: ./.github/actions/cache
         with:
@@ -37,26 +48,20 @@ jobs:
       - name: "Remove nextest CI report"
         shell: bash
         run: rm -rf target/nextest/ci/junit.xml
-      - name: Free Disk Space (Ubuntu only)
-        if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: false
-          swap-storage: true
       - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --verbose"
         run: cargo build --workspace --verbose
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --profile ci --verbose"
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --profile ci --verbose -E '!test(tracing_integration_tests::)'"
         # Run doc tests with cargo test and run tests with nextest and generate junit.xml
-        run: cargo test --workspace --doc --verbose && cargo nextest run --workspace --profile ci --verbose
+        run: cargo test --workspace --doc --verbose && cargo nextest run --workspace --profile ci --verbose -E '!test(tracing_integration_tests::)'
         env:
           RUST_BACKTRACE: 1
-      - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic"
-        run: cargo nextest run --package test_spawn_from_lib --features prefer-dynamic
+      - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests: cargo nextest run --workspace --profile ci --verbose -E 'test(tracing_integration_tests::)'"
+        if: runner.os == 'Linux'
+        run: cargo nextest run --workspace --profile ci --verbose -E 'test(tracing_integration_tests::)'
+        env:
+          RUST_BACKTRACE: 1
+      - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'"
+        run: cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'
         env:
           RUSTFLAGS: "-C prefer-dynamic"
           RUST_BACKTRACE: 1
@@ -79,7 +84,6 @@ jobs:
           - platform: "ubuntu-latest"
             rust_version: "${RUST_VERSION}"
     steps:
-
       - name: Checkout sources
         uses: actions/checkout@v4
 
@@ -203,8 +207,8 @@ jobs:
           rust_version: cross-centos7
       - run: cargo install cross || true
       - run: cross build --workspace --target x86_64-unknown-linux-gnu
-      - run: cross test --workspace --target x86_64-unknown-linux-gnu -- --skip "::single_threaded_tests::"
-      - run: cross test --workspace --target x86_64-unknown-linux-gnu --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1
+      - run: cross test --workspace --target x86_64-unknown-linux-gnu -- --skip "::single_threaded_tests::" --skip "tracing_integration_tests::"
+      - run: cross test --workspace --target x86_64-unknown-linux-gnu --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1 --skip "tracing_integration_tests::"
 
   ffi_bake:
     strategy:

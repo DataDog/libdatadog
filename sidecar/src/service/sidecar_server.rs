@@ -19,6 +19,7 @@ use datadog_ipc::transport::Transport;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::SendData;
+use datadog_trace_utils::tracer_payload::TraceEncoding;
 use ddcommon::Endpoint;
 use ddtelemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerStats,
@@ -314,6 +315,7 @@ impl SidecarServer {
             &headers,
             |_chunk, _root_span_index| {},
             target.api_key.is_some(),
+            TraceEncoding::V04,
         );
 
         // send trace payload to our trace flusher
@@ -575,6 +577,7 @@ impl SidecarInterface for SidecarServer {
             let endpoint =
                 get_product_endpoint(ddtelemetry::config::PROD_INTAKE_SUBDOMAIN, &config.endpoint);
             cfg.set_endpoint(endpoint).ok();
+            cfg.telemetry_hearbeat_interval = config.telemetry_heartbeat_interval;
         });
         session.modify_trace_config(|cfg| {
             let endpoint = get_product_endpoint(

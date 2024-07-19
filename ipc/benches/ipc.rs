@@ -3,13 +3,14 @@
 
 #[cfg(not(windows))]
 use criterion::{criterion_group, criterion_main, Criterion};
+#[cfg(all(not(windows), not(target_arch = "aarch64")))]
+use datadog_ipc::example_interface::ExampleInterfaceResponse;
 #[cfg(not(windows))]
 use datadog_ipc::{
-    example_interface::{
-        ExampleInterfaceRequest, ExampleInterfaceResponse, ExampleServer, ExampleTransport,
-    },
+    example_interface::{ExampleInterfaceRequest, ExampleServer, ExampleTransport},
     platform::Channel,
 };
+
 #[cfg(not(windows))]
 use std::{
     os::unix::net::UnixStream,
@@ -41,16 +42,22 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| transport.send(ExampleInterfaceRequest::Notify {}).unwrap())
     });
 
+    // This consistently blocks on aarch64 (both MacOS and Linux), is there an issue with the
+    // optimized code?
+    #[cfg(not(target_arch = "aarch64"))]
     c.bench_function("two way interface", |b| {
         b.iter(|| transport.call(ExampleInterfaceRequest::ReqCnt {}).unwrap())
     });
 
-    let requests_received = match transport.call(ExampleInterfaceRequest::ReqCnt {}).unwrap() {
-        ExampleInterfaceResponse::ReqCnt(cnt) => cnt,
+    // This consistently blocks on aarch64 (both MacOS and Linux), is there an issue with the
+    // optimized code?
+    #[cfg(not(target_arch = "aarch64"))]
+    match transport.call(ExampleInterfaceRequest::ReqCnt {}).unwrap() {
+        ExampleInterfaceResponse::ReqCnt(cnt) => {
+            println!("Total requests handled: {cnt}");
+        }
         _ => panic!("shouldn't happen"),
     };
-
-    println!("Total requests handled: {requests_received}");
 
     drop(transport);
     worker.join().unwrap();

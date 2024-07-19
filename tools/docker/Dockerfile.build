@@ -32,6 +32,7 @@ RUN apk update \
     pkgconf \
     unzip \
     bash \
+    clang16-libclang \
   && mkdir /usr/local/src
 
 # Tell docker to use bash as the default
@@ -59,10 +60,11 @@ ENV PATH="/root/.cargo/bin:$PATH"
 ARG CARGO_BUILD_INCREMENTAL
 ARG CARGO_NET_RETRY
 ENV CARGO_NET_RETRY="${CARGO_NET_RETRY}"
-RUN cargo install cbindgen && rm -rf /root/.cargo/registry /root/.cargo/git
+RUN cargo install cbindgen && cargo install bindgen-cli --locked && rm -rf /root/.cargo/registry /root/.cargo/git
 
 FROM alpine_aws_cli as alpine_builder
 COPY --from=alpine_cbindgen /root/.cargo/bin/cbindgen /usr/local/bin/cbindgen
+COPY --from=alpine_cbindgen /root/.cargo/bin/bindgen /usr/local/bin/bindgen
 
 
 ### Cache cargo metadata between builds
@@ -79,6 +81,7 @@ COPY "ddcommon/Cargo.toml" "ddcommon/"
 COPY "ddcommon-ffi/Cargo.toml" "ddcommon-ffi/" 
 COPY "ddtelemetry/Cargo.toml" "ddtelemetry/"
 COPY "ddtelemetry-ffi/Cargo.toml" "ddtelemetry-ffi/"
+COPY "ddsketch/Cargo.toml" "ddsketch/"
 COPY "profiling/Cargo.toml" "profiling/"
 COPY "profiling-ffi/Cargo.toml" "profiling-ffi/"
 COPY "profiling-replayer/Cargo.toml" "profiling-replayer/"
@@ -106,7 +109,30 @@ COPY "data-pipeline/Cargo.toml" "data-pipeline/"
 COPY "data-pipeline-ffi/Cargo.toml" "data-pipeline-ffi/"
 COPY "bin_tests/Cargo.toml"  "bin_tests/"
 RUN find -name "Cargo.toml" | sed -e s#Cargo.toml#src/lib.rs#g | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
-RUN echo profiling/benches/main.rs profiling/benches/interning_strings.rs trace-obfuscation/benches/trace_obfuscation.rs tools/src/bin/dedup_headers.rs tools/sidecar_mockgen/src/bin/sidecar_mockgen.rs ddtelemetry/examples/tm-worker-test.rs ipc/tarpc/tarpc/examples/compression.rs ipc/tarpc/tarpc/examples/custom_transport.rs ipc/tarpc/tarpc/examples/pubsub.rs ipc/tarpc/tarpc/examples/readme.rs ipc/tarpc/tarpc/examples/tracing.rs ipc/tarpc/tarpc/tests/compile_fail.rs ipc/tarpc/tarpc/tests/dataservice.rs ipc/tarpc/tarpc/tests/service_functional.rs bin_tests/src/bin/crashtracker_bin_test.rs bin_tests/src/bin/test_the_tests.rs | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
+RUN echo \
+    bin_tests/src/bin/crashtracker_bin_test.rs \
+    bin_tests/src/bin/crashtracker_receiver.rs \
+    bin_tests/src/bin/crashtracker_unix_socket_receiver.rs \
+    bin_tests/src/bin/test_the_tests.rs \
+    ddtelemetry/examples/tm-worker-test.rs \
+    ipc/benches/ipc.rs \
+    ipc/tarpc/tarpc/examples/compression.rs \
+    ipc/tarpc/tarpc/examples/custom_transport.rs \
+    ipc/tarpc/tarpc/examples/pubsub.rs \
+    ipc/tarpc/tarpc/examples/readme.rs \
+    ipc/tarpc/tarpc/examples/tracing.rs \
+    ipc/tarpc/tarpc/tests/compile_fail.rs \
+    ipc/tarpc/tarpc/tests/dataservice.rs \
+    ipc/tarpc/tarpc/tests/service_functional.rs \
+    profiling-replayer/src/main.rs \
+    profiling/benches/interning_strings.rs \
+    profiling/benches/main.rs \
+    serverless/src/main.rs \
+    tools/sidecar_mockgen/src/bin/sidecar_mockgen.rs \
+    tools/src/bin/dedup_headers.rs \
+    trace-normalization/benches/normalization_utils.rs \
+    trace-obfuscation/benches/trace_obfuscation.rs \
+    | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
 
 # cache dependencies
 RUN cargo fetch --locked

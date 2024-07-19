@@ -1,6 +1,6 @@
 [package]
 name = "datadog-serverless-trace-mini-agent"
-version = "0.1.0"
+version = "0.5.0"
 edition = "2021"
 
 [dependencies]
@@ -9,3 +9,7 @@ env_logger = "0.10.0"
 datadog-trace-mini-agent = { path = "../trace-mini-agent" }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-utils = { path = "../trace-utils" }
+
+[[bin]]
+name = "datadog-serverless-trace-mini-agent"
+bench = false

@@ -30,6 +30,7 @@ bash build-profiling-ffi.sh /opt/libdatadog
 #### Build Dependencies
 
 - Rust 1.71 or newer with cargo
+- `cbindgen` 0.26
 - `cmake` and `protoc`
 
 ### Running tests
@@ -46,6 +47,14 @@ The simplest way to install [cargo-nextest][nt] is to use `cargo install` like t
 
 ```bash
 cargo install --locked 'cargo-nextest@0.9.67'
+```
+
+#### Skipping tracing integration tests
+
+Tracing integration tests require docker to be installed and running. If you don't have docker installed or you want to skip these tests, you can run:
+
+```bash
+cargo nextest run -E '!test(tracing_integration_tests::)'
 ```
 
 Please note that the locked version is to make sure that it can be built using rust `1.71.1`, and if you are using a newer rust version, then it's enough to limit the version to `0.9.*`.

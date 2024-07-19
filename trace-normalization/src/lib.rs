@@ -3,6 +3,6 @@
 
 #![deny(clippy::all)]
 
-pub mod normalizer;
-
 pub mod normalize_utils;
+pub mod normalizer;
+pub(crate) mod utf8_helpers;

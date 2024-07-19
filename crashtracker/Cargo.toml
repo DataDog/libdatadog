@@ -9,10 +9,11 @@ license.workspace = true
 
 [lib]
 crate-type = ["lib"]
+bench = false
 
 [target.'cfg(unix)'.dependencies]
 # Should be kept in sync with the libdatadog symbolizer crate (also using blasesym)
-blazesym = {git = "https://github.com/libbpf/blazesym.git", rev = "v0.2.0-alpha.11"}
+blazesym = { git = "https://github.com/libbpf/blazesym.git", rev = "v0.2.0-rc.0" }
 
 [dependencies]
 anyhow = "1.0"

@@ -1,11 +1,14 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod datadog_test_agent;
+
 use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::send_data::SendData;
 use crate::trace_utils::TracerHeaderTags;
+use crate::tracer_payload::TracerPayloadCollection;
 use datadog_trace_protobuf::pb;
 use ddcommon::Endpoint;
 use httpmock::Mock;
@@ -201,5 +204,10 @@ pub fn create_send_data(size: usize, target_endpoint: &Endpoint) -> SendData {
         app_version: "2.0".to_owned(),
     };
 
-    SendData::new(size, tracer_payload, tracer_header_tags, target_endpoint)
+    SendData::new(
+        size,
+        TracerPayloadCollection::V07(vec![tracer_payload]),
+        tracer_header_tags,
+        target_endpoint,
+    )
 }

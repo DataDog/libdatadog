@@ -5,6 +5,7 @@ on:
 
 env:
   DATADOG_AGENT_TAG: "7.55.0-rc.3"
+  rust_version: "1.71.1"
 
 jobs:
   verify-proto-files:
@@ -34,3 +35,14 @@ jobs:
         working-directory: trace-protobuf/src/pb
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file span.proto --tag ${{ env.DATADOG_AGENT_TAG }}
+      - name: Cache
+        uses: ./.github/actions/cache
+        with:
+          rust_version: ${{ env.rust_version }}
+      - name: Install ${{ env.rust_version }} toolchain
+        run: rustup install ${{ env.rust_version }} && rustup default ${{ env.rust_version }}
+      - name: diff pb.rs
+        working-directory: trace-protobuf
+        run: |
+          cargo build --features generate-protobuf
+          git diff --exit-code -- src/pb.rs
