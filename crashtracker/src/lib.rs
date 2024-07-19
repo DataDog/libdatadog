@@ -47,7 +47,7 @@
 //! Safety issues
 
 mod api;
-mod collectors;
+mod collector;
 mod configuration;
 mod constants;
 mod counters;

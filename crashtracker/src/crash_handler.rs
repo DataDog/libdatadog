@@ -6,7 +6,7 @@
 use crate::configuration::CrashtrackerReceiverConfig;
 use crate::spans::{emit_spans, emit_traces};
 
-use super::collectors::emit_backtrace_by_frames;
+use super::collector::emit_backtrace_by_frames;
 #[cfg(target_os = "linux")]
 use super::collectors::emit_proc_self_maps;
 use super::configuration::{CrashtrackerConfiguration, StacktraceCollection};
