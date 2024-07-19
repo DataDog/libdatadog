@@ -5,8 +5,9 @@
 
 #[cfg(target_os = "linux")]
 use super::collectors::emit_proc_self_maps;
+use super::emitters::emit_crashreport;
+use crate::configuration::CrashtrackerConfiguration;
 use crate::configuration::CrashtrackerReceiverConfig;
-use crate::configuration::{CrashtrackerConfiguration};
 use crate::crash_info::CrashtrackerMetadata;
 use anyhow::Context;
 use libc::{
@@ -23,7 +24,6 @@ use std::process::{Command, Stdio};
 use std::ptr;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64};
-use super::emitters::emit_crashreport;
 
 #[derive(Debug)]
 struct OldHandlers {
@@ -305,7 +305,6 @@ extern "C" fn handle_posix_sigaction(signum: i32, sig_info: *mut siginfo_t, ucon
         SigHandler::SigAction(f) => f(signum, sig_info, ucontext),
     };
 }
-
 
 fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     static NUM_TIMES_CALLED: AtomicU64 = AtomicU64::new(0);

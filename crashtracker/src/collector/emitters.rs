@@ -13,21 +13,21 @@ use std::{
     io::{Read, Write},
 };
 
-pub(crate) fn emit_config(w: &mut impl Write, config_str: &str) -> anyhow::Result<()> {
+fn emit_config(w: &mut impl Write, config_str: &str) -> anyhow::Result<()> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_CONFIG}")?;
     writeln!(w, "{}", config_str)?;
     writeln!(w, "{DD_CRASHTRACK_END_CONFIG}")?;
     Ok(())
 }
 
-pub(crate) fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> anyhow::Result<()> {
+fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> anyhow::Result<()> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_METADATA}")?;
     writeln!(w, "{}", metadata_str)?;
     writeln!(w, "{DD_CRASHTRACK_END_METADATA}")?;
     Ok(())
 }
 
-pub(crate) fn emit_procinfo(w: &mut impl Write) -> anyhow::Result<()> {
+fn emit_procinfo(w: &mut impl Write) -> anyhow::Result<()> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_PROCINFO}")?;
     let pid = nix::unistd::getpid();
     writeln!(w, "{{\"pid\": {pid} }}")?;
@@ -35,7 +35,7 @@ pub(crate) fn emit_procinfo(w: &mut impl Write) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn emit_siginfo(w: &mut impl Write, signum: i32) -> anyhow::Result<()> {
+fn emit_siginfo(w: &mut impl Write, signum: i32) -> anyhow::Result<()> {
     let signame = if signum == libc::SIGSEGV {
         "SIGSEGV"
     } else if signum == libc::SIGBUS {
@@ -99,7 +99,7 @@ pub(crate) fn emit_crashreport(
 ///     https://github.com/rust-lang/backtrace-rs/issues/414
 ///     Calculating the `ip` of the frames seems safe, but resolving the frames
 ///     sometimes crashes.
-pub unsafe fn emit_backtrace_by_frames(
+unsafe fn emit_backtrace_by_frames(
     w: &mut impl Write,
     resolve_frames: StacktraceCollection,
 ) -> anyhow::Result<()> {
@@ -189,7 +189,7 @@ pub unsafe fn emit_backtrace_by_frames(
 ///     This function is careful to only write to the handle, without doing any
 ///     unnecessary mutexes or memory allocation.
 #[allow(dead_code)]
-pub fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
+fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
     // open is signal safe
     // https://man7.org/linux/man-pages/man7/signal-safety.7.html
     let mut file = File::open(path).with_context(|| path.to_string())?;
@@ -218,7 +218,7 @@ pub fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
 /// `/proc/self/maps` is very useful for debugging, and difficult to get from
 /// the child process (permissions issues on Linux).  Emit it directly onto the
 /// pipe to get around this.
-pub fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
+fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
     emit_text_file(w, "/proc/self/maps")?;
     Ok(())
 }
