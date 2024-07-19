@@ -12,6 +12,7 @@ mod self_telemetry;
 pub mod setup;
 mod tracer;
 mod watchdog;
+pub mod crashtracker;
 
 pub use entry::*;
 
