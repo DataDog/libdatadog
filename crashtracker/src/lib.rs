@@ -46,22 +46,27 @@
 //! Handling of forks
 //! Safety issues
 
+#[cfg(all(unix, feature = "collector"))]
 mod collector;
 mod crash_info;
+#[cfg(all(unix, feature = "receiver"))]
 mod receiver;
+#[cfg(any(feature = "collector", feature = "receiver"))]
 mod shared;
 
-#[cfg(unix)]
-pub use collector::api::*;
-#[cfg(unix)]
-pub use collector::crash_handler::{update_config, update_metadata};
+#[cfg(all(unix, feature = "collector"))]
 pub use collector::{
-    begin_profiling_op, clear_spans, clear_traces, end_profiling_op, insert_span, insert_trace,
-    remove_span, remove_trace, reset_counters, ProfilingOpTypes,
+    begin_profiling_op, clear_spans, clear_traces, end_profiling_op, init_with_receiver,
+    init_with_unix_socket, insert_span, insert_trace, on_fork, remove_span, remove_trace,
+    reset_counters, shutdown_crash_handler, update_config, update_metadata, ProfilingOpTypes,
 };
+
 pub use crash_info::*;
-#[cfg(unix)]
+
+#[cfg(all(unix, feature = "receiver"))]
 pub use receiver::{receiver_entry_point_stdin, reciever_entry_point_unix_socket};
+
+#[cfg(any(feature = "collector", feature = "receiver"))]
 pub use shared::configuration::{
     CrashtrackerConfiguration, CrashtrackerReceiverConfig, StacktraceCollection,
 };

@@ -11,6 +11,13 @@ license.workspace = true
 crate-type = ["lib"]
 bench = false
 
+[features]
+default = ["collector", "receiver"]
+# Enables the in-process collection of crash-info
+collector = []
+# Enables the use of this library to receiver crash-info from a suitable collector
+receiver = []
+
 [target.'cfg(unix)'.dependencies]
 # Should be kept in sync with the libdatadog symbolizer crate (also using blasesym)
 blazesym = { git = "https://github.com/libbpf/blazesym.git", rev = "v0.2.0-rc.0" }
