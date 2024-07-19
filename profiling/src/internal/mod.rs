@@ -1,7 +1,6 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-mod array_queue;
 mod endpoint_stats;
 mod endpoints;
 mod function;
@@ -17,7 +16,6 @@ mod timestamp;
 mod upscaling;
 mod value_type;
 
-pub use array_queue::*;
 pub use endpoint_stats::*;
 pub use endpoints::*;
 pub use function::*;

@@ -1,18 +1,15 @@
 use anyhow::Context;
-use datadog_profiling::internal;
 use ddcommon_ffi::Error;
 use std::ffi::c_void;
 
 #[repr(C)]
 pub struct ArrayQueue {
-    pub inner: *mut internal::ArrayQueue,
+    inner: *mut c_void,
 }
 
 impl ArrayQueue {
-    pub fn new(inner: internal::ArrayQueue) -> Self {
-        Self {
-            inner: Box::into_raw(Box::new(inner)),
-        }
+    pub fn new(inner: *mut c_void) -> Self {
+        Self { inner }
     }
 }
 
@@ -25,19 +22,23 @@ pub enum ArrayQueueNewResult {
 
 #[no_mangle]
 pub unsafe extern "C" fn array_queue_new(capacity: usize) -> ArrayQueueNewResult {
-    let internal_queue = internal::ArrayQueue::new(capacity);
-    let ffi_queue = ArrayQueue::new(internal_queue);
+    let internal_queue: crossbeam_queue::ArrayQueue<*mut c_void> =
+        crossbeam_queue::ArrayQueue::new(capacity);
+    let internal_queue_ptr = Box::into_raw(Box::new(internal_queue));
+    let ffi_queue = ArrayQueue::new(internal_queue_ptr as *mut c_void);
     ArrayQueueNewResult::Ok(ffi_queue)
 }
 
 unsafe fn array_queue_ptr_to_inner<'a>(
     queue_ptr: *mut ArrayQueue,
-) -> anyhow::Result<&'a mut internal::ArrayQueue> {
+) -> anyhow::Result<&'a mut crossbeam_queue::ArrayQueue<*mut c_void>> {
     match queue_ptr.as_mut() {
         None => anyhow::bail!("queue_ptr is null"),
         Some(queue) => match queue.inner.as_mut() {
             None => anyhow::bail!("queue.inner is null"),
-            Some(inner) => Ok(inner),
+            Some(inner) => {
+                Ok(&mut *(inner as *mut c_void as *mut crossbeam_queue::ArrayQueue<*mut c_void>))
+            }
         },
     }
 }
