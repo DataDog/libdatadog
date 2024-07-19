@@ -48,6 +48,7 @@ pub struct SessionConfig {
     pub language: String,
     pub tracer_version: String,
     pub flush_interval: Duration,
+    pub telemetry_heartbeat_interval: Duration,
     pub force_flush_size: usize,
     pub force_drop_size: usize,
     pub log_level: String,

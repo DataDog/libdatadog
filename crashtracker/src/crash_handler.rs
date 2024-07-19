@@ -386,7 +386,6 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
         // we don't want to spam the system with calls.  Make this one shot.
         return Ok(());
     }
-    eprintln!("start");
 
     // Leak receiver to avoid calling 'drop' during a crash
     let receiver = RECEIVER.swap(ptr::null_mut(), SeqCst);

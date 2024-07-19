@@ -5,8 +5,14 @@ use futures::future::BoxFuture;
 use futures::{future, FutureExt};
 use hyper::client::HttpConnector;
 
+#[cfg(feature = "use_webpki_roots")]
+use hyper_rustls::ConfigBuilderExt;
+
 use lazy_static::lazy_static;
+
+#[cfg(not(feature = "use_webpki_roots"))]
 use rustls::pki_types::CertificateDer;
+
 use rustls::ClientConfig;
 use std::future::Future;
 use std::pin::Pin;
@@ -40,7 +46,12 @@ impl Default for Connector {
 
 impl Connector {
     pub fn new() -> Self {
-        match build_https_connector() {
+        #[cfg(feature = "use_webpki_roots")]
+        let https_connector_fn = build_https_connector_with_webpki_roots;
+        #[cfg(not(feature = "use_webpki_roots"))]
+        let https_connector_fn = build_https_connector;
+
+        match https_connector_fn() {
             Ok(connector) => Connector::Https(connector),
             Err(_) => Connector::Http(HttpConnector::new()),
         }
@@ -69,6 +80,7 @@ impl Connector {
     }
 }
 
+#[cfg(not(feature = "use_webpki_roots"))]
 fn build_https_connector(
 ) -> anyhow::Result<hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>>
 {
@@ -83,6 +95,21 @@ fn build_https_connector(
         .build())
 }
 
+#[cfg(feature = "use_webpki_roots")]
+fn build_https_connector_with_webpki_roots(
+) -> anyhow::Result<hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>>
+{
+    let client_config = ClientConfig::builder()
+        .with_webpki_roots()
+        .with_no_client_auth();
+    Ok(hyper_rustls::HttpsConnectorBuilder::new()
+        .with_tls_config(client_config)
+        .https_or_http()
+        .enable_http1()
+        .build())
+}
+
+#[cfg(not(feature = "use_webpki_roots"))]
 fn load_root_certs() -> anyhow::Result<rustls::RootCertStore> {
     let mut roots = rustls::RootCertStore::empty();
 
@@ -133,14 +160,23 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(not(feature = "use_webpki_roots"))]
     /// Verify that the Connector type implements the correct bound Connect + Clone
     /// to be able to use the hyper::Client
     fn test_hyper_client_from_connector() {
         let _: hyper::Client<Connector> = hyper::Client::builder().build(Connector::new());
     }
 
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "use_webpki_roots")]
+    fn test_hyper_client_from_connector_with_webpki_roots() {
+        let _: hyper::Client<Connector> = hyper::Client::builder().build(Connector::new());
+    }
+
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(not(feature = "use_webpki_roots"))]
     /// Verify that Connector will only allow non tls connections if root certificates
     /// are not found
     async fn test_missing_root_certificates_only_allow_http_connections() {
@@ -160,6 +196,28 @@ mod tests {
             *stream.downcast::<errors::Error>().unwrap(),
             errors::Error::CannotEstablishTlsConnection
         );
+
+        env::set_var(ENV_SSL_CERT_FILE, old_value);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "use_webpki_roots")]
+    /// Verify that Connector will allow tls connections if root certificates
+    /// are not found but can use webpki certificates
+    async fn test_missing_root_certificates_use_webpki_certificates() {
+        const ENV_SSL_CERT_FILE: &str = "SSL_CERT_FILE";
+        let old_value = env::var(ENV_SSL_CERT_FILE).unwrap_or_default();
+
+        env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
+        let mut connector = Connector::new();
+        assert!(matches!(connector, Connector::Https(_)));
+
+        let stream = connector
+            .call(hyper::Uri::from_static("https://example.com"))
+            .await;
+
+        assert!(stream.is_ok());
 
         env::set_var(ENV_SSL_CERT_FILE, old_value);
     }

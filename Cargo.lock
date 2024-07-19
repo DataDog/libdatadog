@@ -777,7 +777,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -1310,7 +1310,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1327,7 +1327,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline-ffi"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "build_common",
  "bytes",
@@ -1338,7 +1338,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-alloc"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "allocator-api2",
  "bolero",
@@ -1348,7 +1348,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "backtrace",
@@ -1371,7 +1371,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ddsketch"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "prost 0.11.9",
  "prost-build",
@@ -1427,7 +1427,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -1464,7 +1464,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-ffi"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1487,7 +1487,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "clap 4.4.18",
@@ -1523,7 +1523,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-serverless-trace-mini-agent"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "datadog-trace-mini-agent",
  "datadog-trace-protobuf",
@@ -1621,7 +1621,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-mini-agent"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1643,7 +1643,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1654,7 +1654,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1672,7 +1672,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "prost 0.11.9",
  "prost-build",
@@ -1685,12 +1685,13 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-utils"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "bytes",
  "cargo-platform",
  "cargo_metadata",
+ "criterion",
  "datadog-trace-normalization",
  "datadog-trace-protobuf",
  "ddcommon",
@@ -1713,7 +1714,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -1740,7 +1741,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-ffi"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1751,7 +1752,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1777,7 +1778,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry-ffi"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "build_common",
  "ddcommon",
@@ -2620,6 +2621,7 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.26.0",
  "tower-service",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -4681,7 +4683,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5179,7 +5181,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "lazy_static",
  "regex",
@@ -5534,6 +5536,15 @@ checksum = "77afa9a11836342370f4817622a2f0f418b134426d91a82dfb48f532d2ec13ef"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "0.26.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd7c23921eeb1713a4e851530e9b9756e4fb0e89978582942612524cf09f01cd"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]
