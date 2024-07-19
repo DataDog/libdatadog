@@ -83,7 +83,9 @@ enum StdinState {
     Metadata,
     ProcInfo,
     SigInfo,
+    SpanIds,
     StackTrace(Vec<StackFrame>),
+    TraceIds,
     Waiting,
 }
 
@@ -160,6 +162,13 @@ fn process_line(
             StdinState::SigInfo
         }
 
+        StdinState::SpanIds if line.starts_with(DD_CRASHTRACK_END_SPAN_IDS) => StdinState::Waiting,
+        StdinState::SpanIds => {
+            let v: Vec<u128> = serde_json::from_str(&line)?;
+            crashinfo.set_span_ids(v)?;
+            StdinState::SpanIds
+        }
+
         StdinState::StackTrace(stacktrace) if line.starts_with(DD_CRASHTRACK_END_STACKTRACE) => {
             crashinfo.set_stacktrace(None, stacktrace)?;
             StdinState::Waiting
@@ -168,6 +177,15 @@ fn process_line(
             let frame = serde_json::from_str(&line).context(line)?;
             stacktrace.push(frame);
             StdinState::StackTrace(stacktrace)
+        }
+
+        StdinState::TraceIds if line.starts_with(DD_CRASHTRACK_END_TRACE_IDS) => {
+            StdinState::Waiting
+        }
+        StdinState::TraceIds => {
+            let v: Vec<u128> = serde_json::from_str(&line)?;
+            crashinfo.set_trace_ids(v)?;
+            StdinState::TraceIds
         }
 
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_CONFIG) => StdinState::Config,
@@ -185,8 +203,14 @@ fn process_line(
             StdinState::ProcInfo
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SIGINFO) => StdinState::SigInfo,
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SPAN_IDS) => {
+            StdinState::SpanIds
+        }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_STACKTRACE) => {
             StdinState::StackTrace(vec![])
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_TRACE_IDS) => {
+            StdinState::TraceIds
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => StdinState::Done,
         StdinState::Waiting => {

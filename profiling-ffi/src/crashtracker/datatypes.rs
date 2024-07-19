@@ -222,6 +222,22 @@ impl From<String> for StringWrapperResult {
 }
 
 #[repr(C)]
+pub enum CrashtrackerUsizeResult {
+    Ok(usize),
+    #[allow(dead_code)]
+    Err(Error),
+}
+
+impl From<anyhow::Result<usize>> for CrashtrackerUsizeResult {
+    fn from(value: anyhow::Result<usize>) -> Self {
+        match value {
+            Ok(x) => Self::Ok(x),
+            Err(err) => Self::Err(err.into()),
+        }
+    }
+}
+
+#[repr(C)]
 pub enum CrashtrackerGetCountersResult {
     Ok([i64; ProfilingOpTypes::SIZE as usize]),
     #[allow(dead_code)]

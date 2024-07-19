@@ -3,6 +3,7 @@
 #![cfg(unix)]
 
 use crate::{
+    clear_spans, clear_traces,
     configuration::CrashtrackerReceiverConfig,
     counters::reset_counters,
     crash_handler::{
@@ -57,6 +58,8 @@ pub fn on_fork(
     receiver_config: CrashtrackerReceiverConfig,
     metadata: CrashtrackerMetadata,
 ) -> anyhow::Result<()> {
+    clear_spans()?;
+    clear_traces()?;
     reset_counters()?;
     // Leave the old signal handler in place: they are unaffected by fork.
     // https://man7.org/linux/man-pages/man2/sigaction.2.html
@@ -171,6 +174,10 @@ fn test_crash() -> anyhow::Result<()> {
     );
     init_with_receiver(config, receiver_config, metadata)?;
     begin_profiling_op(crate::ProfilingOpTypes::CollectingSample)?;
+    super::insert_span(42)?;
+    super::insert_trace(u128::MAX)?;
+    super::insert_span(12)?;
+    super::insert_trace(99399939399939393993)?;
 
     let tag = tag!("apple", "banana");
     let metadata2 = CrashtrackerMetadata::new(
