@@ -3,8 +3,6 @@
 
 #![cfg(unix)]
 
-#[cfg(target_os = "linux")]
-use super::collectors::emit_proc_self_maps;
 use super::emitters::emit_crashreport;
 use crate::crash_info::CrashtrackerMetadata;
 use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
