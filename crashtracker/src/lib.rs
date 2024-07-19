@@ -46,7 +46,6 @@
 //! Handling of forks
 //! Safety issues
 
-mod api;
 mod collector;
 mod configuration;
 mod constants;
@@ -54,14 +53,17 @@ mod crash_info;
 mod receiver;
 
 #[cfg(unix)]
-pub use api::*;
+pub use collector::api::*;
+#[cfg(unix)]
+pub use collector::crash_handler::{update_config, update_metadata};
+pub use collector::{
+    begin_profiling_op, clear_spans, clear_traces, end_profiling_op, insert_span, insert_trace,
+    remove_span, remove_trace, reset_counters, ProfilingOpTypes,
+};
 pub use configuration::{
     CrashtrackerConfiguration, CrashtrackerReceiverConfig, StacktraceCollection,
 };
 pub use constants::*;
-#[cfg(unix)]
-pub use collector::crash_handler::{update_config, update_metadata};
 pub use crash_info::*;
 #[cfg(unix)]
 pub use receiver::{receiver_entry_point_stdin, reciever_entry_point_unix_socket};
-pub use collector::{begin_profiling_op, end_profiling_op, reset_counters, ProfilingOpTypes, clear_spans, clear_traces, insert_span, insert_trace, remove_span, remove_trace};

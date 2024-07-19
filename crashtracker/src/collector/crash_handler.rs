@@ -3,12 +3,12 @@
 
 #![cfg(unix)]
 
-use crate::configuration::CrashtrackerReceiverConfig;
+#[cfg(target_os = "linux")]
+use super::collectors::emit_proc_self_maps;
 use super::counters::emit_counters;
 use super::spans::{emit_spans, emit_traces};
 use crate::collector::emit_backtrace_by_frames;
-#[cfg(target_os = "linux")]
-use super::collectors::emit_proc_self_maps;
+use crate::configuration::CrashtrackerReceiverConfig;
 use crate::configuration::{CrashtrackerConfiguration, StacktraceCollection};
 use crate::constants::*;
 use crate::crash_info::CrashtrackerMetadata;

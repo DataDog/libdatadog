@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-use serde::{Deserialize, Serialize};
 use ddcommon::tag::Tag;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashtrackerMetadata {

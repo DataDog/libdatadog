@@ -4,14 +4,13 @@
 
 use crate::{
     clear_spans, clear_traces,
-    configuration::CrashtrackerReceiverConfig,
-    reset_counters,
     collector::crash_handler::{
         ensure_receiver, ensure_socket, register_crash_handlers, restore_old_handlers,
         shutdown_receiver, update_receiver_after_fork,
     },
+    configuration::CrashtrackerReceiverConfig,
     crash_info::CrashtrackerMetadata,
-    update_config, update_metadata, CrashtrackerConfiguration,
+    reset_counters, update_config, update_metadata, CrashtrackerConfiguration,
 };
 
 /// Cleans up after the crash-tracker:
