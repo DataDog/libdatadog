@@ -32,11 +32,22 @@ pub type HttpClient = hyper::Client<connector::Connector, hyper::Body>;
 pub type HttpResponse = hyper::Response<hyper::Body>;
 pub type HttpRequestBuilder = hyper::http::request::Builder;
 
-#[derive(Default, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct Endpoint {
     #[serde(serialize_with = "serialize_uri", deserialize_with = "deserialize_uri")]
     pub url: hyper::Uri,
     pub api_key: Option<Cow<'static, str>>,
+    pub timeout_ms: u64,
+}
+
+impl Default for Endpoint {
+    fn default() -> Self {
+        Endpoint {
+            url: hyper::Uri::default(),
+            api_key: Option::default(),
+            timeout_ms: Self::DEFAULT_TIMEOUT,
+        }
+    }
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -133,6 +144,9 @@ pub fn decode_uri_path_in_authority(uri: &hyper::Uri) -> anyhow::Result<PathBuf>
 }
 
 impl Endpoint {
+    /// Default value for the timeout field in milliseconds.
+    pub const DEFAULT_TIMEOUT: u64 = 3_000;
+
     /// Return a request builder with the following headers:
     /// - User agent
     /// - Api key
@@ -163,5 +177,21 @@ impl Endpoint {
         }
 
         Ok(builder)
+    }
+
+    #[inline]
+    pub fn from_slice(url: &str) -> Endpoint {
+        Endpoint {
+            url: parse_uri(url).unwrap(),
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    pub fn from_url(url: hyper::Uri) -> Endpoint {
+        Endpoint {
+            url,
+            ..Default::default()
+        }
     }
 }

@@ -96,6 +96,19 @@ jobs:
           fi
           echo "OUTPUT_FOLDER=$WORKSPACE_PATH/artifacts" >> $GITHUB_ENV
 
+      - name: Free Disk Space (Ubuntu only)
+        if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: true
+
+
       - name: Cache
         uses: ./.github/actions/cache
         with:
@@ -112,18 +125,6 @@ jobs:
       - id: rust-version
         # On Windows run happens in a PowerShell, so start bash explicitly
         run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
-
-      - name: Free Disk Space (Ubuntu only)
-        if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: false
-          swap-storage: true
 
       - name: "Generate profiling FFI"
         shell: bash

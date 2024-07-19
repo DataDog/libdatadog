@@ -17,7 +17,7 @@ fn open<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, Box<dyn Error>> {
 }
 
 fn multipart(
-    exporter: &ProfileExporter,
+    exporter: &mut ProfileExporter,
     internal_metadata: Option<serde_json::Value>,
     info: Option<serde_json::Value>,
 ) -> Request {
@@ -35,7 +35,8 @@ fn multipart(
     let start = now.sub(chrono::Duration::seconds(60));
     let end = now;
 
-    let timeout = std::time::Duration::from_secs(10);
+    let timeout: u64 = 10_000;
+    exporter.set_timeout(timeout);
 
     let request = exporter
         .build(
@@ -47,12 +48,11 @@ fn multipart(
             None,
             internal_metadata,
             info,
-            timeout,
         )
         .expect("request to be built");
 
     let actual_timeout = request.timeout().expect("timeout to exist");
-    assert_eq!(actual_timeout, timeout);
+    assert_eq!(actual_timeout, std::time::Duration::from_millis(timeout));
     request
 }
 
@@ -95,7 +95,7 @@ mod tests {
         let profiling_library_version = "1.2.3";
         let base_url = "http://localhost:8126".parse().expect("url to parse");
         let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let exporter = ProfileExporter::new(
+        let mut exporter = ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -104,7 +104,7 @@ mod tests {
         )
         .expect("exporter to construct");
 
-        let request = multipart(&exporter, None, None);
+        let request = multipart(&mut exporter, None, None);
 
         assert_eq!(
             request.uri().to_string(),
@@ -144,7 +144,7 @@ mod tests {
         let profiling_library_version = "1.2.3";
         let base_url = "http://localhost:8126".parse().expect("url to parse");
         let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let exporter = ProfileExporter::new(
+        let mut exporter = ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -158,7 +158,7 @@ mod tests {
             "execution_trace_enabled": "false",
             "extra object": {"key": [1, 2, true]}
         });
-        let request = multipart(&exporter, Some(internal_metadata.clone()), None);
+        let request = multipart(&mut exporter, Some(internal_metadata.clone()), None);
         let parsed_event_json = parsed_event_json(request);
 
         assert_eq!(parsed_event_json["internal"], internal_metadata);
@@ -173,7 +173,7 @@ mod tests {
         let profiling_library_version = "1.2.3";
         let base_url = "http://localhost:8126".parse().expect("url to parse");
         let endpoint = config::agent(base_url).expect("endpoint to construct");
-        let exporter = ProfileExporter::new(
+        let mut exporter = ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -198,7 +198,7 @@ mod tests {
                 "settings": {}
             }
         });
-        let request = multipart(&exporter, None, Some(info.clone()));
+        let request = multipart(&mut exporter, None, Some(info.clone()));
         let parsed_event_json = parsed_event_json(request);
 
         assert_eq!(parsed_event_json["info"], info);
@@ -213,7 +213,7 @@ mod tests {
         let profiling_library_version = "1.2.3";
         let api_key = "1234567890123456789012";
         let endpoint = config::agentless("datadoghq.com", api_key).expect("endpoint to construct");
-        let exporter = ProfileExporter::new(
+        let mut exporter = ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,
             "php",
@@ -222,7 +222,7 @@ mod tests {
         )
         .expect("exporter to construct");
 
-        let request = multipart(&exporter, None, None);
+        let request = multipart(&mut exporter, None, None);
 
         assert_eq!(
             request.uri().to_string(),
