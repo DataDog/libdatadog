@@ -51,7 +51,7 @@ mod collector;
 mod crash_info;
 #[cfg(all(unix, feature = "receiver"))]
 mod receiver;
-#[cfg(any(feature = "collector", feature = "receiver"))]
+#[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
 mod shared;
 
 #[cfg(all(unix, feature = "collector"))]
@@ -66,7 +66,7 @@ pub use crash_info::*;
 #[cfg(all(unix, feature = "receiver"))]
 pub use receiver::{receiver_entry_point_stdin, reciever_entry_point_unix_socket};
 
-#[cfg(any(feature = "collector", feature = "receiver"))]
+#[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
 pub use shared::configuration::{
     CrashtrackerConfiguration, CrashtrackerReceiverConfig, StacktraceCollection,
 };
