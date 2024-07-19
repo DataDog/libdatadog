@@ -4,15 +4,14 @@
 #![cfg(unix)]
 
 use crate::configuration::CrashtrackerReceiverConfig;
-use crate::spans::{emit_spans, emit_traces};
-
-use super::collector::emit_backtrace_by_frames;
+use super::counters::emit_counters;
+use super::spans::{emit_spans, emit_traces};
+use crate::collector::emit_backtrace_by_frames;
 #[cfg(target_os = "linux")]
 use super::collectors::emit_proc_self_maps;
-use super::configuration::{CrashtrackerConfiguration, StacktraceCollection};
-use super::constants::*;
-use super::counters::emit_counters;
-use super::crash_info::CrashtrackerMetadata;
+use crate::configuration::{CrashtrackerConfiguration, StacktraceCollection};
+use crate::constants::*;
+use crate::crash_info::CrashtrackerMetadata;
 use anyhow::Context;
 use libc::{
     c_void, mmap, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE, PROT_READ,

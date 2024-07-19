@@ -2,6 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
+mod counters;
+pub use counters::{begin_profiling_op, end_profiling_op, reset_counters, ProfilingOpTypes};
+
+mod spans;
+pub use spans::{clear_spans, clear_traces, insert_span, insert_trace, remove_span, remove_trace};
+
+pub(crate) mod crash_handler;
+
 use anyhow::Context;
 
 use crate::StacktraceCollection;

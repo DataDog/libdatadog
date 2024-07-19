@@ -50,11 +50,8 @@ mod api;
 mod collector;
 mod configuration;
 mod constants;
-mod counters;
-mod crash_handler;
 mod crash_info;
 mod receiver;
-mod spans;
 mod telemetry;
 
 #[cfg(unix)]
@@ -63,10 +60,9 @@ pub use configuration::{
     CrashtrackerConfiguration, CrashtrackerReceiverConfig, StacktraceCollection,
 };
 pub use constants::*;
-pub use counters::{begin_profiling_op, end_profiling_op, reset_counters, ProfilingOpTypes};
 #[cfg(unix)]
-pub use crash_handler::{update_config, update_metadata};
+pub use collector::crash_handler::{update_config, update_metadata};
 pub use crash_info::*;
 #[cfg(unix)]
 pub use receiver::{receiver_entry_point_stdin, reciever_entry_point_unix_socket};
-pub use spans::{clear_spans, clear_traces, insert_span, insert_trace, remove_span, remove_trace};
+pub use collector::{begin_profiling_op, end_profiling_op, reset_counters, ProfilingOpTypes, clear_spans, clear_traces, insert_span, insert_trace, remove_span, remove_trace};

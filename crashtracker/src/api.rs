@@ -5,8 +5,8 @@
 use crate::{
     clear_spans, clear_traces,
     configuration::CrashtrackerReceiverConfig,
-    counters::reset_counters,
-    crash_handler::{
+    reset_counters,
+    collector::crash_handler::{
         ensure_receiver, ensure_socket, register_crash_handlers, restore_old_handlers,
         shutdown_receiver, update_receiver_after_fork,
     },
