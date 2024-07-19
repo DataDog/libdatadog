@@ -55,7 +55,6 @@ mod crash_handler;
 mod crash_info;
 mod receiver;
 mod spans;
-mod stacktrace;
 mod telemetry;
 
 #[cfg(unix)]
@@ -71,4 +70,3 @@ pub use crash_info::*;
 #[cfg(unix)]
 pub use receiver::{receiver_entry_point_stdin, reciever_entry_point_unix_socket};
 pub use spans::{clear_spans, clear_traces, insert_span, insert_trace, remove_span, remove_trace};
-pub use stacktrace::{NormalizedAddress, NormalizedAddressMeta, StackFrame, StackFrameNames};

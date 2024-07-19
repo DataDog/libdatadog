@@ -3,8 +3,9 @@
 
 mod metadata;
 pub use metadata::*;
+mod stacktrace;
+pub use stacktrace::*;
 
-use crate::stacktrace::StackFrame;
 use crate::telemetry::TelemetryCrashUploader;
 use crate::CrashtrackerConfiguration;
 use anyhow::Context;
