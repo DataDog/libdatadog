@@ -8,19 +8,28 @@ use serde::Deserialize;
 #[serde(rename_all = "camelCase")]
 #[repr(C)]
 pub struct CaptureConfiguration {
+    #[serde(default = "default_max_reference_depth")]
     pub max_reference_depth: u32,
+    #[serde(default = "default_max_collection_size")]
     pub max_collection_size: u32,
+    #[serde(default = "default_max_length")]
     pub max_length: u32,
+    #[serde(default = "default_max_field_count")]
     pub max_field_count: u32,
 }
+
+fn default_max_reference_depth() -> u32 { 3 }
+fn default_max_collection_size() -> u32 { 100 }
+fn default_max_length() -> u32 { 255 }
+fn default_max_field_count() -> u32 { 20 }
 
 impl Default for CaptureConfiguration {
     fn default() -> Self {
         CaptureConfiguration {
-            max_reference_depth: 3,
-            max_collection_size: 100,
-            max_length: 255,
-            max_field_count: 20,
+            max_reference_depth: default_max_reference_depth(),
+            max_collection_size: default_max_collection_size(),
+            max_length: default_max_length(),
+            max_field_count: default_max_field_count(),
         }
     }
 }
