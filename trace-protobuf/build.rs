@@ -67,6 +67,10 @@ fn generate_protobuf() {
         ".pb.Span.error",
         "#[serde(skip_serializing_if = \"is_default\")]",
     );
+    config.field_attribute(
+        ".pb.Span.meta_struct",
+        "#[serde(serialize_with = \"serialize_meta_struct\")]",
+    );
 
     config.type_attribute("StatsPayload", "#[derive(Deserialize, Serialize)]");
     config.type_attribute("StatsPayload", "#[serde(rename_all = \"PascalCase\")]");
@@ -130,6 +134,33 @@ fn generate_protobuf() {
             &["src/pb/"],
         )
         .unwrap();
+
+    let fn_serialize_meta_struct = "
+fn serialize_meta_struct<S>(input: &::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::vec::Vec<u8>,
+    >, serializer: S) -> Result<S::Ok, S::Error>
+where S: serde::Serializer
+{
+    unsafe {
+        ::std::mem::transmute::<&::std::collections::HashMap<
+            ::prost::alloc::string::String,
+            ::prost::alloc::vec::Vec<u8>,
+        >, &::std::collections::HashMap<
+            ::prost::alloc::string::String,
+            BytesWrapper,
+        >>(input)
+    }.serialize(serializer)
+}
+
+#[derive(Serialize)]
+#[repr(transparent)]
+struct BytesWrapper(#[serde(with = \"serde_bytes\")] ::prost::alloc::vec::Vec<u8>);
+
+"
+    .as_bytes();
+
+    prepend_to_file(fn_serialize_meta_struct, &output_path.join("pb.rs"));
 
     // add license, serde imports, custom deserializer code to the top of the protobuf rust structs
     // file

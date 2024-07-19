@@ -16,6 +16,28 @@ pub fn is_default<T: Default + PartialEq>(t: &T) -> bool {
     t == &T::default()
 }
 
+
+fn serialize_meta_struct<S>(input: &::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::vec::Vec<u8>,
+    >, serializer: S) -> Result<S::Ok, S::Error>
+where S: serde::Serializer
+{
+    unsafe {
+        ::std::mem::transmute::<&::std::collections::HashMap<
+            ::prost::alloc::string::String,
+            ::prost::alloc::vec::Vec<u8>,
+        >, &::std::collections::HashMap<
+            ::prost::alloc::string::String,
+            BytesWrapper,
+        >>(input)
+    }.serialize(serializer)
+}
+
+#[derive(Serialize)]
+#[repr(transparent)]
+struct BytesWrapper(#[serde(with = "serde_bytes")] ::prost::alloc::vec::Vec<u8>);
+
 #[derive(Deserialize, Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -140,6 +162,7 @@ pub struct Span {
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_null_into_default")]
     #[serde(skip_serializing_if = "::std::collections::HashMap::is_empty")]
+    #[serde(serialize_with = "serialize_meta_struct")]
     pub meta_struct: ::std::collections::HashMap<
         ::prost::alloc::string::String,
         ::prost::alloc::vec::Vec<u8>,
