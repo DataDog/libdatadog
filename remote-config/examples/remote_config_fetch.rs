@@ -39,14 +39,12 @@ async fn main() {
             endpoint: Endpoint {
                 url: hyper::Uri::from_static("http://localhost:8126"),
                 api_key: None,
+                timeout_ms: 5000, // custom timeout, defaults to 3 seconds
             },
             products: vec![ApmTracing],
             capabilities: vec![],
         },
     );
-
-    // Custom timeout, defaults to 5 seconds.
-    fetcher.set_timeout(2000);
 
     loop {
         match fetcher.fetch_changes().await {

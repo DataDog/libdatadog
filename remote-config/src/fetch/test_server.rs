@@ -41,10 +41,7 @@ impl RemoteConfigServer {
             last_request: Mutex::new(None),
             files: Default::default(),
             next_response: Mutex::new(None),
-            endpoint: Endpoint {
-                url: format!("http://127.0.0.1:{port}/").parse().unwrap(),
-                api_key: None,
-            },
+            endpoint: Endpoint::from_slice(&format!("http://127.0.0.1:{port}/")),
             shutdown_complete_tx,
         });
         let this = server.clone();

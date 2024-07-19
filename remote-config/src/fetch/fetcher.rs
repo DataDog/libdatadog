@@ -17,8 +17,9 @@ use hyper::{Client, StatusCode};
 use sha2::{Digest, Sha256, Sha512};
 use std::collections::{HashMap, HashSet};
 use std::mem::transmute;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 use tracing::{debug, error, trace, warn};
 
 const PROD_INTAKE_SUBDOMAIN: &str = "config";
@@ -150,8 +151,6 @@ impl<S> ConfigFetcherState<S> {
 pub struct ConfigFetcher<S: FileStorage> {
     pub file_storage: S,
     state: Arc<ConfigFetcherState<S::StoredFile>>,
-    /// Timeout after which to report failure, in milliseconds.
-    pub timeout: AtomicU32,
     /// Collected interval. May be zero if not provided by the remote config server or fetched yet.
     /// Given in nanoseconds.
     pub interval: AtomicU64,
@@ -171,7 +170,6 @@ impl<S: FileStorage> ConfigFetcher<S> {
         ConfigFetcher {
             file_storage,
             state,
-            timeout: AtomicU32::new(5000),
             interval: AtomicU64::new(0),
         }
     }
@@ -285,13 +283,15 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 ddcommon::header::APPLICATION_JSON,
             )
             .body(serde_json::to_string(&config_req)?)?;
-        let response = Client::builder()
-            .build(connector::Connector::default())
-            .request(req)
-            .await
-            .map_err(|e| {
-                anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint))
-            })?;
+        let response = tokio::time::timeout(
+            Duration::from_millis(self.state.endpoint.timeout_ms),
+            Client::builder()
+                .build(connector::Connector::default())
+                .request(req),
+        )
+        .await
+        .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?
+        .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?;
         let status = response.status();
         let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
         if status != StatusCode::OK {

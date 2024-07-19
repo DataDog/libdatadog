@@ -32,8 +32,6 @@ pub struct SharedFetcher {
     cancellation: CancellationToken,
     /// Interval used if the remote server does not specify a refetch interval, in nanoseconds.
     pub default_interval: AtomicU64,
-    /// Timeout after which to report failure, in milliseconds.
-    pub timeout: AtomicU32,
 }
 
 pub struct FileRefcountData {
@@ -226,7 +224,6 @@ impl SharedFetcher {
             client_id: uuid::Uuid::new_v4().to_string(),
             cancellation: CancellationToken::new(),
             default_interval: AtomicU64::new(5_000_000_000),
-            timeout: AtomicU32::new(5000),
         }
     }
 
@@ -243,9 +240,6 @@ impl SharedFetcher {
     {
         let state = storage.state.clone();
         let mut fetcher = ConfigFetcher::new(storage, state);
-        fetcher
-            .timeout
-            .store(self.timeout.load(Ordering::Relaxed), Ordering::Relaxed);
 
         let mut opaque_state = OpaqueState::default();
 

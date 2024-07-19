@@ -41,8 +41,6 @@ where
     runtimes: Mutex<HashMap<String, RuntimeInfo<N>>>,
     /// Interval used if the remote server does not specify a refetch interval, in nanoseconds.
     pub remote_config_interval: AtomicU64,
-    /// Timeout after which to report failure, in milliseconds.
-    pub remote_config_timeout: AtomicU32,
     /// All services by target in use
     services: Mutex<HashMap<Arc<Target>, KnownTarget>>,
     pending_async_insertions: AtomicU32,
@@ -106,7 +104,6 @@ where
             target_runtimes: Mutex::new(Default::default()),
             runtimes: Mutex::new(Default::default()),
             remote_config_interval: AtomicU64::new(5_000_000_000),
-            remote_config_timeout: AtomicU32::new(5_000),
             services: Mutex::new(Default::default()),
             pending_async_insertions: AtomicU32::new(0),
             fetcher_semaphore: Semaphore::new(Self::DEFAULT_CLIENTS_LIMIT as usize),

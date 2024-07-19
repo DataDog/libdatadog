@@ -49,11 +49,6 @@ impl<S: FileStorage> SingleFetcher<S> {
             .await
     }
 
-    /// Timeout after which to report failure, in milliseconds.
-    pub fn set_timeout(&self, milliseconds: u32) {
-        self.fetcher.timeout.store(milliseconds, Ordering::Relaxed);
-    }
-
     /// Collected interval. May be zero if not provided by the remote config server or fetched yet.
     /// Given in nanoseconds.
     pub fn get_interval(&self) -> u64 {
@@ -110,11 +105,6 @@ where
                 .changes
                 .get_changes(files, self.fetcher.fetcher.file_storage.updated()),
         })
-    }
-
-    /// Timeout after which to report failure, in milliseconds.
-    pub fn set_timeout(&self, milliseconds: u32) {
-        self.fetcher.set_timeout(milliseconds)
     }
 
     /// Collected interval. May be zero if not provided by the remote config server or fetched yet.
