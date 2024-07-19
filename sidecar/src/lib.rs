@@ -13,6 +13,7 @@ pub mod setup;
 pub mod shm_remote_config;
 mod tracer;
 mod watchdog;
+pub mod crashtracker;
 
 pub use entry::*;
 
