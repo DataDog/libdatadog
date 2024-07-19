@@ -5,8 +5,9 @@ mod metadata;
 pub use metadata::*;
 mod stacktrace;
 pub use stacktrace::*;
+mod telemetry;
 
-use crate::telemetry::TelemetryCrashUploader;
+use self::telemetry::TelemetryCrashUploader;
 use crate::CrashtrackerConfiguration;
 use anyhow::Context;
 use chrono::{DateTime, Utc};

@@ -52,7 +52,6 @@ mod configuration;
 mod constants;
 mod crash_info;
 mod receiver;
-mod telemetry;
 
 #[cfg(unix)]
 pub use api::*;
