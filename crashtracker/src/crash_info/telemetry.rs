@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::time::SystemTime;
 
-use super::{CrashInfo, CrashtrackerConfiguration, CrashtrackerMetadata, StackFrame};
+use super::{CrashInfo, CrashtrackerMetadata, StackFrame};
 use anyhow::{Context, Ok};
 use ddcommon::Endpoint;
 use ddtelemetry::{
@@ -61,10 +61,10 @@ pub struct TelemetryCrashUploader {
 impl TelemetryCrashUploader {
     pub fn new(
         prof_metadata: &CrashtrackerMetadata,
-        prof_cfg: &CrashtrackerConfiguration,
+        endpoint: &Option<Endpoint>,
     ) -> anyhow::Result<Self> {
         let mut cfg = ddtelemetry::config::Config::from_env();
-        if let Some(endpoint) = &prof_cfg.endpoint {
+        if let Some(endpoint) = endpoint {
             // TODO: This changes the path part of the query to target the agent.
             // What about if the crashtracker is sending directly to the intake?
             // We probably need to remap the host from intake.profile.{site} to
@@ -217,15 +217,9 @@ mod tests {
     fn new_test_uploader() -> TelemetryCrashUploader {
         TelemetryCrashUploader::new(
             &new_test_prof_metadata(),
-            &crate::CrashtrackerConfiguration {
-                additional_files: vec![],
-                create_alt_stack: true,
-                endpoint: Some(Endpoint::from_slice(
-                    "http://localhost:8126/profiling/v1/input",
-                )),
-                resolve_frames: crate::StacktraceCollection::WithoutSymbols,
-                wait_for_receiver: true,
-            },
+            &Some(Endpoint::from_slice(
+                "http://localhost:8126/profiling/v1/input",
+            )),
         )
         .unwrap()
     }

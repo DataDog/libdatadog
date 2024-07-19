@@ -1,10 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{CrashtrackerConfiguration, CrashtrackerMetadata, SigInfo};
-use crate::crashtracker::{
-    crashinfo_ptr_to_inner, option_from_char_slice, CrashInfo, CrashInfoNewResult,
-    CrashtrackerResult, StackFrame,
+use super::{CrashtrackerMetadata, SigInfo};
+use crate::{
+    crashtracker::{
+        crashinfo_ptr_to_inner, option_from_char_slice, CrashInfo, CrashInfoNewResult,
+        CrashtrackerResult, StackFrame,
+    },
+    exporter::ProfilingEndpoint,
 };
 use anyhow::Context;
 use chrono::DateTime;
@@ -237,12 +240,12 @@ pub unsafe extern "C" fn ddog_crashinfo_set_timestamp_to_now(
 #[must_use]
 pub unsafe extern "C" fn ddog_crashinfo_upload_to_endpoint(
     crashinfo: *mut CrashInfo,
-    config: CrashtrackerConfiguration,
+    endpoint: ProfilingEndpoint,
 ) -> CrashtrackerResult {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
-        let config = config.try_into()?;
-        crashinfo.upload_to_endpoint(&config)
+        let endpoint = Some(unsafe { crate::exporter::try_to_endpoint(endpoint)? });
+        crashinfo.upload_to_endpoint(&endpoint)
     })()
     .context("ddog_crashinfo_upload_to_endpoint failed")
     .into()
