@@ -47,8 +47,7 @@
 //! Safety issues
 
 mod collector;
-mod configuration;
-mod constants;
+mod common;
 mod crash_info;
 mod receiver;
 
@@ -60,10 +59,9 @@ pub use collector::{
     begin_profiling_op, clear_spans, clear_traces, end_profiling_op, insert_span, insert_trace,
     remove_span, remove_trace, reset_counters, ProfilingOpTypes,
 };
-pub use configuration::{
+pub use common::configuration::{
     CrashtrackerConfiguration, CrashtrackerReceiverConfig, StacktraceCollection,
 };
-pub use constants::*;
 pub use crash_info::*;
 #[cfg(unix)]
 pub use receiver::{receiver_entry_point_stdin, reciever_entry_point_unix_socket};

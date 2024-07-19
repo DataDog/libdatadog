@@ -6,8 +6,7 @@
 #[cfg(target_os = "linux")]
 use super::collectors::emit_proc_self_maps;
 use super::emitters::emit_crashreport;
-use crate::configuration::CrashtrackerConfiguration;
-use crate::configuration::CrashtrackerReceiverConfig;
+use crate::common::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
 use crate::crash_info::CrashtrackerMetadata;
 use anyhow::Context;
 use libc::{
