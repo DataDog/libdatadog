@@ -15,7 +15,7 @@ pub fn clear_spans() -> anyhow::Result<()> {
 
 #[allow(dead_code)]
 pub fn emit_spans(w: &mut impl Write) -> anyhow::Result<()> {
-    use crate::common::constants::*;
+    use crate::shared::constants::*;
     writeln!(w, "{DD_CRASHTRACK_BEGIN_SPAN_IDS}")?;
     ACTIVE_SPANS.emit(w)?;
     writeln!(w, "{DD_CRASHTRACK_END_SPAN_IDS}")?;
@@ -36,7 +36,7 @@ pub fn clear_traces() -> anyhow::Result<()> {
 
 #[allow(dead_code)]
 pub fn emit_traces(w: &mut impl Write) -> anyhow::Result<()> {
-    use crate::common::constants::*;
+    use crate::shared::constants::*;
     writeln!(w, "{DD_CRASHTRACK_BEGIN_TRACE_IDS}")?;
     ACTIVE_TRACES.emit(w)?;
     writeln!(w, "{DD_CRASHTRACK_END_TRACE_IDS}")?;

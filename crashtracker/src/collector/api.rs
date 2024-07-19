@@ -8,9 +8,10 @@ use crate::{
         ensure_receiver, ensure_socket, register_crash_handlers, restore_old_handlers,
         shutdown_receiver, update_receiver_after_fork,
     },
-    common::configuration::CrashtrackerReceiverConfig,
     crash_info::CrashtrackerMetadata,
-    reset_counters, update_config, update_metadata, CrashtrackerConfiguration,
+    reset_counters,
+    shared::configuration::CrashtrackerReceiverConfig,
+    update_config, update_metadata, CrashtrackerConfiguration,
 };
 
 /// Cleans up after the crash-tracker:

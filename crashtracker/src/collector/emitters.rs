@@ -4,7 +4,7 @@
 use crate::collector::counters::emit_counters;
 use crate::collector::spans::emit_spans;
 use crate::collector::spans::emit_traces;
-use crate::common::constants::*;
+use crate::shared::constants::*;
 use crate::CrashtrackerConfiguration;
 use crate::StacktraceCollection;
 use anyhow::Context;
