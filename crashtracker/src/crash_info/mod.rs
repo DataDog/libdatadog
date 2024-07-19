@@ -1,42 +1,19 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+mod metadata;
+pub use metadata::*;
+
 use crate::stacktrace::StackFrame;
 use crate::telemetry::TelemetryCrashUploader;
 use crate::CrashtrackerConfiguration;
 use anyhow::Context;
 use chrono::{DateTime, Utc};
-use ddcommon::tag::Tag;
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 use std::path::Path;
 use std::{collections::HashMap, fs::File, io::BufReader};
 use uuid::Uuid;
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CrashtrackerMetadata {
-    pub profiling_library_name: String,
-    pub profiling_library_version: String,
-    pub family: String,
-    // Should include "service", "environment", etc
-    pub tags: Vec<Tag>,
-}
-
-impl CrashtrackerMetadata {
-    pub fn new(
-        profiling_library_name: String,
-        profiling_library_version: String,
-        family: String,
-        tags: Vec<Tag>,
-    ) -> Self {
-        Self {
-            profiling_library_name,
-            profiling_library_version,
-            family,
-            tags,
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SigInfo {
