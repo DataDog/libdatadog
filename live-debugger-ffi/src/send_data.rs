@@ -172,7 +172,7 @@ pub unsafe extern "C" fn ddog_snapshot_exit<'a>(
     payload: &mut DebuggerPayload<'a>,
 ) -> *mut DebuggerCapture<'a> {
     let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else { unreachable!(); };
-    transmute(snapshot.captures.as_mut().unwrap().r#return.as_mut().unwrap())
+    transmute(snapshot.captures.as_mut().unwrap().r#return.insert(Capture::default()))
 }
 
 #[no_mangle]
