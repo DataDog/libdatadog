@@ -8,6 +8,7 @@ use crate::{
 use datadog_trace_protobuf::pb;
 use std::cmp::Ordering;
 
+// TODO: EK - Should this really be public?
 pub type TracerPayloadV04 = Vec<pb::Span>;
 
 #[derive(Debug, Clone)]
@@ -241,13 +242,14 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
     ///     Err(e) => println!("Failed to convert: {:?}", e),
     /// }
     /// ```
-    // Allowing useless_asref because otherwise self should me passed as mutable.
-    #[allow(clippy::useless_asref)]
     fn try_into(self) -> Result<TracerPayloadCollection, Self::Error> {
         match self.encoding_type {
             TraceEncoding::V04 => {
-                // TODO: investigate why as_ref() did the trick.
-                let data: &mut &[u8] = &mut self.data.as_ref();
+                // msgpack::decoder::from_slice requires a mutable ref to self.data, so we need to
+                // create a local copy of the ref to make the ref mutable
+                let mut data_slice: &[u8] = self.data;
+                let data: &mut &[u8] = &mut data_slice;
+
                 let traces: Vec<Vec<pb::Span>> = match msgpack::decoder::from_slice(data) {
                     Ok(res) => res,
                     Err(e) => {
