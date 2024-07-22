@@ -8,6 +8,7 @@ use super::{
 use crate::dogstatsd::DogStatsDAction;
 use datadog_ipc::platform::{Channel, FileBackedHandle, ShmHandle};
 use datadog_ipc::transport::blocking::BlockingTransport;
+use datadog_live_debugger::sender::DebuggerType;
 use ddcommon::tag::Tag;
 use serde::Serialize;
 use std::sync::Mutex;
@@ -17,7 +18,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tracing::info;
-use datadog_live_debugger::sender::DebuggerType;
 
 /// `SidecarTransport` is a wrapper around a BlockingTransport struct from the `datadog_ipc` crate
 /// that handles transparent reconnection.
@@ -324,7 +324,7 @@ pub fn send_debugger_data_shm_vec(
         return Ok(());
     }
     let debugger_type = DebuggerType::of_payload(&payloads[0]);
-    
+
     struct SizeCount(usize);
 
     impl io::Write for SizeCount {

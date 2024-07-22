@@ -95,9 +95,7 @@ lazy_static! {
         b"customidentifier1",
         b"customidentifier2",
     ]);
-
     static ref ADDED_REDACTED_NAMES: Vec<Vec<u8>> = vec![];
-
     static ref REDACTED_TYPES: HashSet<&'static [u8]> = HashSet::new();
     static ref ADDED_REDACTED_TYPES: Vec<Vec<u8>> = vec![];
     static ref REDACTED_WILDCARD_TYPES_PATTERN: String = "".to_string();
@@ -105,7 +103,6 @@ lazy_static! {
         REDACTED_TYPES_INITIALIZED.store(true, Ordering::Relaxed);
         Regex::new(&REDACTED_WILDCARD_TYPES_PATTERN).unwrap()
     };
-
     static ref ASSUMED_SAFE_NAME_LEN: usize = {
         REDACTED_NAMES_INITIALIZED.store(true, Ordering::Relaxed);
         REDACTED_NAMES.iter().map(|n| n.len()).max().unwrap() + 5

@@ -45,9 +45,9 @@ use crate::service::telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats;
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
+use datadog_live_debugger::sender::{Config as DebuggerConfig, DebuggerType};
 use datadog_remote_config::fetch::ConfigInvariants;
 use ddcommon::tag::Tag;
-use datadog_live_debugger::sender::{Config as DebuggerConfig, DebuggerType};
 
 type NoResponse = Ready<()>;
 
@@ -807,7 +807,12 @@ impl SidecarInterface for SidecarServer {
         let session = self.get_session(&instance_id.session_id);
         match handle.map() {
             Ok(mapped) => {
-                session.send_debugger_data(debugger_type, &instance_id.runtime_id, queue_id, mapped);
+                session.send_debugger_data(
+                    debugger_type,
+                    &instance_id.runtime_id,
+                    queue_id,
+                    mapped,
+                );
             }
             Err(e) => error!("Failed mapping shared debugger data memory: {}", e),
         }

@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::debugger_defs::{DebuggerData, DebuggerPayload};
+use constcat::concat;
 use ddcommon::connector::Connector;
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
+use hyper::body::{Bytes, Sender};
+use hyper::client::ResponseFuture;
 use hyper::http::uri::PathAndQuery;
 use hyper::{Body, Client, Method, Response, Uri};
 use percent_encoding::{percent_encode, CONTROLS};
@@ -12,11 +15,8 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::hash::Hash;
 use std::str::FromStr;
-use hyper::body::{Bytes, Sender};
-use uuid::Uuid;
-use constcat::concat;
-use hyper::client::ResponseFuture;
 use tokio::task::JoinHandle;
+use uuid::Uuid;
 
 pub const PROD_LOGS_INTAKE_SUBDOMAIN: &str = "http-intake.logs";
 pub const PROD_DIAGNOSTICS_INTAKE_SUBDOMAIN: &str = "debugger-intake";
@@ -33,22 +33,30 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn set_endpoint(&mut self, mut logs_endpoint: Endpoint, mut diagnostics_endpoint: Endpoint) -> anyhow::Result<()> {
+    pub fn set_endpoint(
+        &mut self,
+        mut logs_endpoint: Endpoint,
+        mut diagnostics_endpoint: Endpoint,
+    ) -> anyhow::Result<()> {
         let mut logs_uri_parts = logs_endpoint.url.into_parts();
         let mut diagnostics_uri_parts = diagnostics_endpoint.url.into_parts();
-        if logs_uri_parts.scheme.is_some() && logs_uri_parts.scheme.as_ref().unwrap().as_str() != "file" {
-            logs_uri_parts.path_and_query =
-                Some(PathAndQuery::from_static(if logs_endpoint.api_key.is_some() {
+        if logs_uri_parts.scheme.is_some()
+            && logs_uri_parts.scheme.as_ref().unwrap().as_str() != "file"
+        {
+            logs_uri_parts.path_and_query = Some(PathAndQuery::from_static(
+                if logs_endpoint.api_key.is_some() {
                     DIRECT_DEBUGGER_LOGS_URL_PATH
                 } else {
                     AGENT_DEBUGGER_LOGS_URL_PATH
-                }));
-            diagnostics_uri_parts.path_and_query =
-                Some(PathAndQuery::from_static(if diagnostics_endpoint.api_key.is_some() {
+                },
+            ));
+            diagnostics_uri_parts.path_and_query = Some(PathAndQuery::from_static(
+                if diagnostics_endpoint.api_key.is_some() {
                     DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH
                 } else {
                     AGENT_DEBUGGER_DIAGNOSTICS_URL_PATH
-                }));
+                },
+            ));
         }
 
         logs_endpoint.url = Uri::from_parts(logs_uri_parts)?;
@@ -119,11 +127,17 @@ const BOUNDARY: &str = "------------------------44617461646f67";
 const BOUNDARY_LINE: &str = concat!("--", BOUNDARY, "\r\n");
 
 impl PayloadSender {
-    pub fn new(config: &Config, debugger_type: DebuggerType, percent_encoded_tags: &str) -> anyhow::Result<Self> {
+    pub fn new(
+        config: &Config,
+        debugger_type: DebuggerType,
+        percent_encoded_tags: &str,
+    ) -> anyhow::Result<Self> {
         let endpoint = match debugger_type {
             DebuggerType::Diagnostics => &config.diagnostics_endpoint,
             DebuggerType::Logs => &config.logs_endpoint,
-        }.as_ref().unwrap();
+        }
+        .as_ref()
+        .unwrap();
 
         let mut url = endpoint.url.clone();
         let mut parts = url.into_parts();
@@ -150,14 +164,24 @@ impl PayloadSender {
         let (sender, body) = Body::channel();
 
         let needs_boundary = debugger_type == DebuggerType::Diagnostics;
-        let req = req.header("Content-type", if needs_boundary {
-            concat!("multipart/form-data; boundary=", BOUNDARY)
-        } else {
-            "application/json"
-        });
+        let req = req.header(
+            "Content-type",
+            if needs_boundary {
+                concat!("multipart/form-data; boundary=", BOUNDARY)
+            } else {
+                "application/json"
+            },
+        );
 
-        let future = Client::builder().build(Connector::default()).request(req.body(body)?);
-        Ok(PayloadSender { future: SenderFuture::Outstanding(future), sender, needs_boundary, payloads: 0 })
+        let future = Client::builder()
+            .build(Connector::default())
+            .request(req.body(body)?);
+        Ok(PayloadSender {
+            future: SenderFuture::Outstanding(future),
+            sender,
+            needs_boundary,
+            payloads: 0,
+        })
     }
 
     pub async fn append(&mut self, data: &[u8]) -> anyhow::Result<()> {
@@ -172,7 +196,7 @@ impl PayloadSender {
                     );
                     self.sender.send_data(header.into()).await?;
                 }
-    
+
                 self.future = SenderFuture::Submitted(tokio::spawn(async { future.await }));
                 true
             }
@@ -198,7 +222,9 @@ impl PayloadSender {
         if let SenderFuture::Submitted(future) = self.future {
             // insert a trailing ]
             if self.needs_boundary {
-                self.sender.send_data(concat!("]\r\n", BOUNDARY_LINE).into()).await?;
+                self.sender
+                    .send_data(concat!("]\r\n", BOUNDARY_LINE).into())
+                    .await?;
             } else {
                 self.sender.send_data(Bytes::from_static(b"]")).await?;
             }
@@ -209,8 +235,11 @@ impl PayloadSender {
                     let status = response.status().as_u16();
                     if status >= 400 {
                         let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
-                        let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                        anyhow::bail!("Server did not accept debugger payload ({status}): {response_body}");
+                        let response_body =
+                            String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
+                        anyhow::bail!(
+                            "Server did not accept debugger payload ({status}): {response_body}"
+                        );
                     }
                     Ok(self.payloads)
                 }

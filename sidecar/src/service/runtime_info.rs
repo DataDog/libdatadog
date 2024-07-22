@@ -157,7 +157,6 @@ impl ActiveApplication {
         self.live_debugger_tag_cache = None;
     }
 
-
     /// Sets the cached debugger tags if not set and returns them.
     ///
     /// # Arguments
@@ -176,7 +175,7 @@ impl ActiveApplication {
         runtime_id: &str,
     ) -> (Arc<String>, bool) {
         if let Some(ref cached) = self.live_debugger_tag_cache {
-            return (cached.clone(), false)
+            return (cached.clone(), false);
         }
         if let Some(env) = &self.env {
             if let Some(version) = &self.app_version {

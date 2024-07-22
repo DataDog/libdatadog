@@ -10,6 +10,7 @@ use crate::{
     LogProbe, MetricKind, MetricProbe, Probe, ProbeCondition, ProbeTarget, ProbeType, ProbeValue,
     ServiceConfiguration, SpanDecorationProbe, SpanProbe, SpanProbeDecoration, SpanProbeTarget,
 };
+use anyhow::Context;
 use serde::Deserialize;
 use std::fmt::{Display, Formatter};
 
@@ -45,7 +46,15 @@ pub fn parse(json: &str) -> anyhow::Result<LiveDebuggingData> {
                         method_name: target.method_name,
                         source_file: target.source_file,
                         signature: target.signature,
-                        lines: target.lines.unwrap_or(vec![]),
+                        lines: {
+                            let mut lines = vec![];
+                            for line in target.lines.unwrap_or(vec![]) {
+                                lines.push(line.parse().with_context(|| {
+                                    format!("'{line}' is not a valid Probe line target")
+                                })?);
+                            }
+                            lines
+                        },
                         in_body_location: target.in_body_location.unwrap_or(InBodyLocation::None),
                     }
                 },
@@ -60,7 +69,9 @@ pub fn parse(json: &str) -> anyhow::Result<LiveDebuggingData> {
                             .ok_or_else(|| anyhow::format_err!("Missing name for MetricProbe"))?,
                         value: ProbeValue(err(parsed
                             .value
-                            .unwrap_or(Expression { json: RawExpr::Number(1f64) })
+                            .unwrap_or(Expression {
+                                json: RawExpr::Number(1f64),
+                            })
                             .json
                             .try_into())?),
                     }),
