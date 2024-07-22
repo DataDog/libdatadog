@@ -1,3 +1,6 @@
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 #![allow(invalid_reference_casting)]
 
 use lazy_static::lazy_static;

@@ -260,6 +260,7 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_limiters() {
         let mut limiters = ShmLimiterMemory::create().unwrap();
         let limiter = limiters.alloc();

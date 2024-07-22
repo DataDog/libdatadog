@@ -11,7 +11,6 @@ use std::borrow::Cow;
 use std::cmp::min;
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
-use std::usize;
 
 #[derive(Debug)]
 pub struct DslString(pub(crate) Vec<DslPart>);
@@ -308,7 +307,7 @@ impl<'a, 'e, I, E: Evaluator<'e, I>> Eval<'a, 'e, I, E> {
                 let str = self.stringify(string)?;
                 let start = self.number_to_index(start)?;
                 let mut end = self.number_to_index(end)?;
-                if start > end || start >= str.len() {
+                if start > end || start > str.len() || (start == str.len() && start != end) {
                     return Err(EvErr::str(format!(
                         "[{start}..{end}] is out of bounds of {value} (string size: {})",
                         str.len()
@@ -730,7 +729,7 @@ mod tests {
             match value {
                 Val::Vec(v) => Ok(v.iter().collect()),
                 Val::Obj(o) => Ok(o.0.values().collect()),
-                _ => Err(ResultError::Undefined),
+                _ => Err(ResultError::Invalid),
             }
         }
 
@@ -769,7 +768,7 @@ mod tests {
             if let Val::Num(n) = value {
                 Ok(*n as usize)
             } else {
-                Err(ResultError::Undefined)
+                Err(ResultError::Invalid)
             }
         }
 
@@ -1246,6 +1245,15 @@ mod tests {
                 NumberSource::Number(2.)
             )))),
             "a"
+        );
+        assert_val_eq!(
+            vars,
+            Value::String(StringSource::Substring(Box::new((
+                StringSource::String("".to_string()),
+                NumberSource::Number(0.),
+                NumberSource::Number(0.)
+            )))),
+            ""
         );
         assert_val_eq!(
             vars,
