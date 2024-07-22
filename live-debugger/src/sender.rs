@@ -197,7 +197,7 @@ impl PayloadSender {
                     self.sender.send_data(header.into()).await?;
                 }
 
-                self.future = SenderFuture::Submitted(tokio::spawn(async { future.await }));
+                self.future = SenderFuture::Submitted(tokio::spawn(future));
                 true
             }
             future => {
