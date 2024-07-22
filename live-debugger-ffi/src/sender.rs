@@ -1,7 +1,7 @@
 use crate::send_data::serialize_debugger_payload;
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_live_debugger::sender;
-use datadog_live_debugger::sender::{Config, DebuggerType, generate_tags};
+use datadog_live_debugger::sender::{generate_tags, Config, DebuggerType};
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddcommon_ffi::slice::AsBytes;
@@ -41,11 +41,7 @@ enum SendData {
     Wrapped(OwnedCharSlice, DebuggerType),
 }
 
-async fn sender_routine(
-    config: Arc<Config>,
-    tags: String,
-    mut receiver: mpsc::Receiver<SendData>,
-) {
+async fn sender_routine(config: Arc<Config>, tags: String, mut receiver: mpsc::Receiver<SendData>) {
     let tags = Arc::new(tags);
     let tracker = TaskTracker::new();
     loop {
@@ -65,7 +61,10 @@ async fn sender_routine(
             if let Err(e) = sender::send(data, &config, debugger_type, &tags).await {
                 warn!("Failed to send {debugger_type:?} debugger data: {e:?}");
             } else {
-                debug!("Successfully sent {} debugger data byte {debugger_type:?} payload", data.len());
+                debug!(
+                    "Successfully sent {} debugger data byte {debugger_type:?} payload",
+                    data.len()
+                );
             }
         });
     }
@@ -132,7 +131,10 @@ pub extern "C" fn ddog_live_debugger_send_raw_data(
     debugger_type: DebuggerType,
     data: OwnedCharSlice,
 ) -> bool {
-    !handle.channel.try_send(SendData::Wrapped(data, debugger_type)).is_err()
+    !handle
+        .channel
+        .try_send(SendData::Wrapped(data, debugger_type))
+        .is_err()
 }
 
 #[no_mangle]
@@ -143,7 +145,10 @@ pub extern "C" fn ddog_live_debugger_send_payload(
     let debugger_type = DebuggerType::of_payload(data);
     handle
         .channel
-        .try_send(SendData::Raw(serialize_debugger_payload(data).into_bytes(), debugger_type))
+        .try_send(SendData::Raw(
+            serialize_debugger_payload(data).into_bytes(),
+            debugger_type,
+        ))
         .is_err()
 }
 

@@ -18,10 +18,18 @@ pub struct CaptureConfiguration {
     pub max_field_count: u32,
 }
 
-fn default_max_reference_depth() -> u32 { 3 }
-fn default_max_collection_size() -> u32 { 100 }
-fn default_max_length() -> u32 { 255 }
-fn default_max_field_count() -> u32 { 20 }
+fn default_max_reference_depth() -> u32 {
+    3
+}
+fn default_max_collection_size() -> u32 {
+    100
+}
+fn default_max_length() -> u32 {
+    255
+}
+fn default_max_field_count() -> u32 {
+    20
+}
 
 impl Default for CaptureConfiguration {
     fn default() -> Self {
@@ -106,7 +114,7 @@ pub struct ProbeTarget {
     pub method_name: Option<String>,
     pub source_file: Option<String>,
     pub signature: Option<String>,
-    pub lines: Vec<String>,
+    pub lines: Vec<u32>,
     pub in_body_location: InBodyLocation,
 }
 

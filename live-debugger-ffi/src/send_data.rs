@@ -7,7 +7,11 @@ use std::collections::hash_map;
 use std::mem::transmute;
 // Alias to prevent cbindgen panic
 use crate::data::Probe;
-use datadog_live_debugger::debugger_defs::{Capture as DebuggerCaptureAlias, Capture, Captures, DebuggerData, DebuggerPayload, Diagnostics, DiagnosticsError, Entry, Fields, ProbeStatus, Snapshot, SnapshotEvaluationError, Value as DebuggerValueAlias};
+use datadog_live_debugger::debugger_defs::{
+    Capture as DebuggerCaptureAlias, Capture, Captures, DebuggerData, DebuggerPayload, Diagnostics,
+    DiagnosticsError, Entry, Fields, ProbeStatus, Snapshot, SnapshotEvaluationError,
+    Value as DebuggerValueAlias,
+};
 use datadog_live_debugger::sender::generate_new_id;
 use datadog_live_debugger::{
     add_redacted_name, add_redacted_type, is_redacted_name, is_redacted_type,
@@ -106,8 +110,20 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
         }),
     };
     buffer.push(snapshot);
-    let DebuggerData::Snapshot(ref mut snapshot) = buffer.last_mut().unwrap().debugger else { unreachable!(); };
-    unsafe { transmute(snapshot.captures.as_mut().unwrap().r#return.as_mut().unwrap()) }
+    let DebuggerData::Snapshot(ref mut snapshot) = buffer.last_mut().unwrap().debugger else {
+        unreachable!();
+    };
+    unsafe {
+        transmute(
+            snapshot
+                .captures
+                .as_mut()
+                .unwrap()
+                .r#return
+                .as_mut()
+                .unwrap(),
+        )
+    }
 }
 
 #[no_mangle]
@@ -149,8 +165,17 @@ pub extern "C" fn ddog_update_payload_message<'a>(
 pub unsafe extern "C" fn ddog_snapshot_entry<'a>(
     payload: &mut DebuggerPayload<'a>,
 ) -> *mut DebuggerCapture<'a> {
-    let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else { unreachable!(); };
-    transmute(snapshot.captures.as_mut().unwrap().entry.insert(Capture::default()))
+    let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
+        unreachable!();
+    };
+    transmute(
+        snapshot
+            .captures
+            .as_mut()
+            .unwrap()
+            .entry
+            .insert(Capture::default()),
+    )
 }
 
 #[no_mangle]
@@ -159,11 +184,15 @@ pub unsafe extern "C" fn ddog_snapshot_lines<'a>(
     payload: &mut DebuggerPayload<'a>,
     line: u32,
 ) -> *mut DebuggerCapture<'a> {
-    let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else { unreachable!(); };
-    transmute(match snapshot.captures.as_mut().unwrap().lines.entry(line) {
-        hash_map::Entry::Occupied(e) => e.into_mut(),
-        hash_map::Entry::Vacant(e) => e.insert(Capture::default()),
-    })
+    let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
+        unreachable!();
+    };
+    transmute(
+        match snapshot.captures.as_mut().unwrap().lines.entry(line) {
+            hash_map::Entry::Occupied(e) => e.into_mut(),
+            hash_map::Entry::Vacant(e) => e.insert(Capture::default()),
+        },
+    )
 }
 
 #[no_mangle]
@@ -171,8 +200,17 @@ pub unsafe extern "C" fn ddog_snapshot_lines<'a>(
 pub unsafe extern "C" fn ddog_snapshot_exit<'a>(
     payload: &mut DebuggerPayload<'a>,
 ) -> *mut DebuggerCapture<'a> {
-    let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else { unreachable!(); };
-    transmute(snapshot.captures.as_mut().unwrap().r#return.insert(Capture::default()))
+    let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
+        unreachable!();
+    };
+    transmute(
+        snapshot
+            .captures
+            .as_mut()
+            .unwrap()
+            .r#return
+            .insert(Capture::default()),
+    )
 }
 
 #[no_mangle]
@@ -305,7 +343,12 @@ pub extern "C" fn ddog_serialize_debugger_payload(
 #[no_mangle]
 pub extern "C" fn ddog_drop_debugger_payload(_: Box<DebuggerPayload>) {}
 
-pub fn ddog_debugger_diagnostics_create_unboxed<'a>(probe: &'a Probe, service: Cow<'a, str>, runtime_id: Cow<'a, str>, timestamp: u64) -> DebuggerPayload<'a> {
+pub fn ddog_debugger_diagnostics_create_unboxed<'a>(
+    probe: &'a Probe,
+    service: Cow<'a, str>,
+    runtime_id: Cow<'a, str>,
+    timestamp: u64,
+) -> DebuggerPayload<'a> {
     let mut diagnostics = Diagnostics {
         probe_id: probe.id.to_utf8_lossy(),
         version: probe.version,
@@ -324,9 +367,9 @@ pub fn ddog_debugger_diagnostics_create_unboxed<'a>(probe: &'a Probe, service: C
                     None
                 },
             });
-        },
+        }
         ProbeStatus::Warning => diagnostics.details = Some(probe.status_msg.to_utf8_lossy()),
-        _ => {},
+        _ => {}
     }
     DebuggerPayload {
         service,
@@ -336,11 +379,25 @@ pub fn ddog_debugger_diagnostics_create_unboxed<'a>(probe: &'a Probe, service: C
             probe.diagnostic_msg.to_utf8_lossy()
         } else {
             Cow::Owned(match probe.status {
-                ProbeStatus::Received => format!("Received definition for probe {}", &diagnostics.probe_id),
-                ProbeStatus::Installed | ProbeStatus::Emitting => format!("Instrumented probe {}", &diagnostics.probe_id),
-                ProbeStatus::Blocked => format!("Instrumentation denied for probe {}", &diagnostics.probe_id),
-                ProbeStatus::Error => format!("Encountered error while instrumenting probe {}: {}", &diagnostics.probe_id, diagnostics.exception.as_ref().unwrap().message),
-                ProbeStatus::Warning => format!("Probe {} warning: {}", &diagnostics.probe_id, diagnostics.details.as_ref().unwrap()),
+                ProbeStatus::Received => {
+                    format!("Received definition for probe {}", &diagnostics.probe_id)
+                }
+                ProbeStatus::Installed | ProbeStatus::Emitting => {
+                    format!("Instrumented probe {}", &diagnostics.probe_id)
+                }
+                ProbeStatus::Blocked => {
+                    format!("Instrumentation denied for probe {}", &diagnostics.probe_id)
+                }
+                ProbeStatus::Error => format!(
+                    "Encountered error while instrumenting probe {}: {}",
+                    &diagnostics.probe_id,
+                    diagnostics.exception.as_ref().unwrap().message
+                ),
+                ProbeStatus::Warning => format!(
+                    "Probe {} warning: {}",
+                    &diagnostics.probe_id,
+                    diagnostics.details.as_ref().unwrap()
+                ),
             })
         }),
         debugger: DebuggerData::Diagnostics(diagnostics),
@@ -348,12 +405,27 @@ pub fn ddog_debugger_diagnostics_create_unboxed<'a>(probe: &'a Probe, service: C
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_debugger_diagnostics_create<'a>(probe: &'a Probe, service: CharSlice<'a>, runtime_id: CharSlice<'a>, timestamp: u64) -> Box<DebuggerPayload<'a>> {
-    Box::new(ddog_debugger_diagnostics_create_unboxed(probe, service.to_utf8_lossy(), runtime_id.to_utf8_lossy(), timestamp))
+pub extern "C" fn ddog_debugger_diagnostics_create<'a>(
+    probe: &'a Probe,
+    service: CharSlice<'a>,
+    runtime_id: CharSlice<'a>,
+    timestamp: u64,
+) -> Box<DebuggerPayload<'a>> {
+    Box::new(ddog_debugger_diagnostics_create_unboxed(
+        probe,
+        service.to_utf8_lossy(),
+        runtime_id.to_utf8_lossy(),
+        timestamp,
+    ))
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_debugger_diagnostics_set_parent_id<'a>(payload: &mut DebuggerPayload<'a>, parent_id: CharSlice<'a>) {
-    let DebuggerData::Diagnostics(ref mut diagnostics) = payload.debugger else { unreachable!(); };
+pub extern "C" fn ddog_debugger_diagnostics_set_parent_id<'a>(
+    payload: &mut DebuggerPayload<'a>,
+    parent_id: CharSlice<'a>,
+) {
+    let DebuggerData::Diagnostics(ref mut diagnostics) = payload.debugger else {
+        unreachable!();
+    };
     diagnostics.parent_id = Some(parent_id.to_utf8_lossy());
 }

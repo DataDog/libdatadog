@@ -23,9 +23,9 @@ pub use unix::*;
 
 pub mod service;
 pub mod shm_limiters;
+mod tokio_util;
 #[cfg(windows)]
 mod windows;
-mod tokio_util;
 
 #[cfg(windows)]
 pub use self::windows::*;

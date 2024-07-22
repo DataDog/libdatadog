@@ -1,7 +1,6 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use std::borrow::Cow;
 use datadog_live_debugger::debugger_defs::{ProbeMetadata, ProbeMetadataLocation, ProbeStatus};
 use datadog_live_debugger::{
     CaptureConfiguration, DslString, EvaluateAt, InBodyLocation, MetricKind, ProbeCondition,
@@ -9,6 +8,7 @@ use datadog_live_debugger::{
 };
 use ddcommon_ffi::slice::AsBytes;
 use ddcommon_ffi::{CharSlice, Option};
+use std::borrow::Cow;
 
 #[repr(C)]
 pub struct CharSliceVec<'a> {
@@ -176,18 +176,29 @@ pub struct ProbeTarget<'a> {
     pub method_name: CharSlice<'a>,
     pub source_file: CharSlice<'a>,
     pub signature: Option<CharSlice<'a>>, // we need to distinguish empty signature and not present
-    pub lines: CharSliceVec<'a>,
+    pub lines: *const u32,
+    pub lines_count: u32,
     pub in_body_location: InBodyLocation,
 }
 
 impl<'a> From<&'a datadog_live_debugger::ProbeTarget> for ProbeTarget<'a> {
     fn from(from: &'a datadog_live_debugger::ProbeTarget) -> Self {
         ProbeTarget {
-            type_name: from.type_name.as_ref().map_or(CharSlice::empty(), |s| s.as_str().into()),
-            method_name: from.method_name.as_ref().map_or(CharSlice::empty(), |s| s.as_str().into()),
-            source_file: from.source_file.as_ref().map_or(CharSlice::empty(), |s| s.as_str().into()),
+            type_name: from
+                .type_name
+                .as_ref()
+                .map_or(CharSlice::empty(), |s| s.as_str().into()),
+            method_name: from
+                .method_name
+                .as_ref()
+                .map_or(CharSlice::empty(), |s| s.as_str().into()),
+            source_file: from
+                .source_file
+                .as_ref()
+                .map_or(CharSlice::empty(), |s| s.as_str().into()),
             signature: from.signature.as_ref().map(|s| s.as_str().into()).into(),
-            lines: (&from.lines).into(),
+            lines: from.lines.as_ptr(),
+            lines_count: from.lines.len() as u32,
             in_body_location: from.in_body_location,
         }
     }
@@ -214,7 +225,10 @@ impl<'a> From<&'a datadog_live_debugger::Probe> for Probe<'a> {
         Probe {
             id: from.id.as_str().into(),
             version: from.version,
-            language: from.language.as_ref().map_or(CharSlice::empty(), |s| s.as_str().into()),
+            language: from
+                .language
+                .as_ref()
+                .map_or(CharSlice::empty(), |s| s.as_str().into()),
             tags: (&from.tags).into(),
             target: (&from.target).into(),
             evaluate_at: from.evaluate_at,
@@ -231,7 +245,11 @@ impl<'a> From<&'a datadog_live_debugger::Probe> for Probe<'a> {
 impl<'a> From<&Probe<'a>> for ProbeMetadata<'a> {
     fn from(val: &Probe<'a>) -> Self {
         fn to_cow_option<'a>(s: &CharSlice<'a>) -> core::option::Option<Cow<'a, str>> {
-            if s.len() == 0 { None } else { unsafe { Some(s.assume_utf8().into()) } }
+            if s.len() == 0 {
+                None
+            } else {
+                unsafe { Some(s.assume_utf8().into()) }
+            }
         }
         // SAFETY: These values are unmodified original rust strings. Just convert it back.
         ProbeMetadata {

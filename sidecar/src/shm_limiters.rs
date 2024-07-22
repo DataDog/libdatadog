@@ -32,9 +32,10 @@ impl<T> LimiterData<T> {
         #[cfg(windows)]
         let now = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() };
         #[cfg(not(windows))]
-        let now =
-            std::time::Duration::from(nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC).unwrap())
-                .as_nanos() as u64;
+        let now = std::time::Duration::from(
+            nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC).unwrap(),
+        )
+        .as_nanos() as u64;
         now
     }
 
