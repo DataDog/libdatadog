@@ -5,7 +5,7 @@ use std::{env, path::PathBuf};
 
 use crate::primary_sidecar_identifier;
 
-pub fn crashtraker_unix_socket_path() -> PathBuf {
+pub fn crashtracker_unix_socket_path() -> PathBuf {
     env::temp_dir()
         // .join("libdatadog") // FIXME
         .join(format!(
