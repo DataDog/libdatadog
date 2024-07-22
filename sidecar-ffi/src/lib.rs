@@ -832,7 +832,8 @@ pub extern "C" fn ddog_sidecar_reconnect(
 /// Return the path of the crashtracker unix domain socket.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_get_crashtracker_unix_socket_path() -> ffi::CharSlice<'static> {
+pub unsafe extern "C" fn ddog_sidecar_get_crashtracker_unix_socket_path() -> ffi::CharSlice<'static>
+{
     let socket_path = crashtraker_unix_socket_path();
     let str = socket_path.to_str().unwrap_or_default();
 

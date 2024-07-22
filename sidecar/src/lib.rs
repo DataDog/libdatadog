@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 pub mod agent_remote_config;
 pub mod config;
+pub mod crashtracker;
 pub mod dogstatsd;
 mod dump;
 pub mod entry;
@@ -13,7 +14,6 @@ pub mod setup;
 pub mod shm_remote_config;
 mod tracer;
 mod watchdog;
-pub mod crashtracker;
 
 pub use entry::*;
 
