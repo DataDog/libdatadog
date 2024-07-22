@@ -96,13 +96,12 @@ fn read_meta_struct(buf: &mut &[u8]) -> Result<HashMap<String, Vec<u8>>, DecodeE
     }
 }
 
-#[allow(clippy::explicit_auto_deref)]
 fn decode_span_link(buf: &mut &[u8]) -> Result<SpanLink, DecodeError> {
     let mut span = SpanLink::default();
     let span_size = rmp::decode::read_map_len(buf).map_err(|_| DecodeError::WrongType)?;
 
     for _ in 0..span_size {
-        let (key, value) = read_string_ref(*buf)?;
+        let (key, value) = read_string_ref(buf)?;
         *buf = value;
         if key == "trace_id" {
             span.trace_id = read_number(buf)?.try_into()?;
@@ -113,7 +112,7 @@ fn decode_span_link(buf: &mut &[u8]) -> Result<SpanLink, DecodeError> {
         } else if key == "attributes" {
             span.attributes = read_map_strs(buf)?;
         } else if key == "tracestate" {
-            let (value, next) = read_string_ref(*buf)?;
+            let (value, next) = read_string_ref(buf)?;
             span.tracestate = String::from_str(value).unwrap();
             *buf = next;
         } else if key == "flags" {
@@ -141,23 +140,22 @@ fn read_span_links(buf: &mut &[u8]) -> Result<Vec<SpanLink>, DecodeError> {
 
 // Disabling explicit_auto_deref warning because passing buf instead of *buf to read_string_ref
 // leads to borrow checker errors.
-#[allow(clippy::explicit_auto_deref)]
 fn fill_span(span: &mut Span, buf: &mut &[u8]) -> Result<(), DecodeError> {
     // field's key won't be held so no need to copy it in a buffer.
-    let (key, value) = read_string_ref(*buf)?;
+    let (key, value) = read_string_ref(buf)?;
 
     // Go to the value
     *buf = value;
     if key == "service" {
-        let (value, next) = read_string_ref(*buf)?;
+        let (value, next) = read_string_ref(buf)?;
         span.service = String::from_str(value).unwrap();
         *buf = next;
     } else if key == "name" {
-        let (value, next) = read_string_ref(*buf)?;
+        let (value, next) = read_string_ref(buf)?;
         span.name = String::from_str(value).unwrap();
         *buf = next;
     } else if key == "resource" {
-        let (value, next) = read_string_ref(*buf)?;
+        let (value, next) = read_string_ref(buf)?;
         span.resource = String::from_str(value).unwrap();
         *buf = next;
     } else if key == "trace_id" {
@@ -177,7 +175,7 @@ fn fill_span(span: &mut Span, buf: &mut &[u8]) -> Result<(), DecodeError> {
     } else if key == "metrics" {
         span.metrics = read_metrics(buf)?;
     } else if key == "type" {
-        let (value, next) = read_string_ref(*buf)?;
+        let (value, next) = read_string_ref(buf)?;
         span.r#type = String::from_str(value).unwrap();
         *buf = next;
     } else if key == "meta_struct" {
