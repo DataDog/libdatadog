@@ -6,9 +6,11 @@ mod collector;
 mod crash_info;
 mod datatypes;
 mod demangler;
+mod receiver;
 
 #[cfg(unix)]
 pub use collector::*;
 pub use crash_info::*;
 pub use datatypes::*;
 pub use demangler::*;
+pub use receiver::*;
