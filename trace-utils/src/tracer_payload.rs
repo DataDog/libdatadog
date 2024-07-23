@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    msgpack,
+    msgpack_decoder,
     trace_utils::{cmp_send_data_payloads, collect_trace_chunks, TracerHeaderTags},
 };
 use datadog_trace_protobuf::pb;
@@ -250,12 +250,13 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
                 let mut data_slice: &[u8] = self.data;
                 let data: &mut &[u8] = &mut data_slice;
 
-                let traces: Vec<Vec<pb::Span>> = match msgpack::decoder::from_slice(data) {
-                    Ok(res) => res,
-                    Err(e) => {
-                        anyhow::bail!("Error deserializing trace from request body: {e}")
-                    }
-                };
+                let traces: Vec<Vec<pb::Span>> =
+                    match msgpack_decoder::v04::decoder::from_slice(data) {
+                        Ok(res) => res,
+                        Err(e) => {
+                            anyhow::bail!("Error deserializing trace from request body: {e}")
+                        }
+                    };
 
                 if traces.is_empty() {
                     anyhow::bail!("No traces deserialized from the request body.");
