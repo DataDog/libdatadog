@@ -3,4 +3,4 @@
 
 pub mod decoder;
 pub mod error;
-mod number;
+pub mod number;
