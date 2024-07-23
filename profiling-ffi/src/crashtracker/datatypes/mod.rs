@@ -4,7 +4,7 @@
 pub use datadog_crashtracker::ProfilingOpTypes;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
-use ddcommon_ffi::{Error, StringWrapper};
+use ddcommon_ffi::Error;
 use std::ops::Not;
 
 pub fn option_from_char_slice(s: CharSlice) -> anyhow::Result<Option<String>> {
@@ -37,39 +37,6 @@ impl<'a> TryFrom<CrashtrackerMetadata<'a>> for datadog_crashtracker::Crashtracke
             family,
             tags,
         ))
-    }
-}
-
-/// Returned by [ddog_prof_Profile_new].
-#[repr(C)]
-pub enum StringWrapperResult {
-    Ok(StringWrapper),
-    #[allow(dead_code)]
-    Err(Error),
-}
-
-// Useful for testing
-impl StringWrapperResult {
-    pub fn unwrap(self) -> StringWrapper {
-        match self {
-            StringWrapperResult::Ok(s) => s,
-            StringWrapperResult::Err(e) => panic!("{e}"),
-        }
-    }
-}
-
-impl From<anyhow::Result<String>> for StringWrapperResult {
-    fn from(value: anyhow::Result<String>) -> Self {
-        match value {
-            Ok(x) => Self::Ok(x.into()),
-            Err(err) => Self::Err(err.into()),
-        }
-    }
-}
-
-impl From<String> for StringWrapperResult {
-    fn from(value: String) -> Self {
-        Self::Ok(value.into())
     }
 }
 
