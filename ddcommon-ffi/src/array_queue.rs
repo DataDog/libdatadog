@@ -50,7 +50,7 @@ pub enum ArrayQueueNewResult {
 /// Creates a new ArrayQueue with the given capacity and item_delete_fn.
 /// The item_delete_fn is called when an item is dropped from the queue.
 #[no_mangle]
-pub extern "C" fn array_queue_new(
+pub extern "C" fn ddog_array_queue_new(
     capacity: usize,
     item_delete_fn: unsafe extern "C" fn(*mut c_void) -> c_void,
 ) -> ArrayQueueNewResult {
@@ -64,7 +64,7 @@ pub extern "C" fn array_queue_new(
 /// Converts a *mut ArrayQueue to a &mut crossbeam_queue::ArrayQueue<*mut c_void>.
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
-unsafe fn array_queue_ptr_to_inner<'a>(
+unsafe fn ddog_array_queue_ptr_to_inner<'a>(
     queue_ptr: *mut ArrayQueue,
 ) -> anyhow::Result<&'a mut crossbeam_queue::ArrayQueue<*mut c_void>> {
     match queue_ptr.as_mut() {
@@ -82,7 +82,7 @@ unsafe fn array_queue_ptr_to_inner<'a>(
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn array_queue_drop(queue_ptr: *mut ArrayQueue) {
+pub unsafe extern "C" fn ddog_array_queue_drop(queue_ptr: *mut ArrayQueue) {
     if !queue_ptr.is_null() {
         drop(Box::from_raw(queue_ptr));
     }
@@ -109,12 +109,12 @@ impl From<Result<(), anyhow::Error>> for ArrayQueuePushResult {
 /// The pointer is null or points to a valid memory location allocated by array_queue_new. The value
 /// is null or points to a valid memory location that can be deallocated by the item_delete_fn.
 #[no_mangle]
-pub unsafe extern "C" fn array_queue_push(
+pub unsafe extern "C" fn ddog_array_queue_push(
     queue_ptr: *mut ArrayQueue,
     value: *mut c_void,
 ) -> ArrayQueuePushResult {
     (|| {
-        let queue = array_queue_ptr_to_inner(queue_ptr)?;
+        let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
         queue
             .push(value)
             .map_err(|_| anyhow::anyhow!("array_queue full"))
@@ -143,9 +143,9 @@ impl From<anyhow::Result<*mut c_void>> for ArrayQueuePopResult {
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn array_queue_pop(queue_ptr: *mut ArrayQueue) -> ArrayQueuePopResult {
+pub unsafe extern "C" fn ddog_array_queue_pop(queue_ptr: *mut ArrayQueue) -> ArrayQueuePopResult {
     (|| {
-        let queue = array_queue_ptr_to_inner(queue_ptr)?;
+        let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
         queue
             .pop()
             .ok_or_else(|| anyhow::anyhow!("array_queue empty"))
@@ -174,11 +174,11 @@ impl From<anyhow::Result<bool>> for ArrayQueueIsEmptyResult {
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn array_queue_is_empty(
+pub unsafe extern "C" fn ddog_array_queue_is_empty(
     queue_ptr: *mut ArrayQueue,
 ) -> ArrayQueueIsEmptyResult {
     (|| {
-        let queue = array_queue_ptr_to_inner(queue_ptr)?;
+        let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
         anyhow::Ok(queue.is_empty())
     })()
     .context("array_queue_is_empty failed")
@@ -205,9 +205,9 @@ impl From<anyhow::Result<usize>> for ArrayQueueLenResult {
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn array_queue_len(queue_ptr: *mut ArrayQueue) -> ArrayQueueLenResult {
+pub unsafe extern "C" fn ddog_array_queue_len(queue_ptr: *mut ArrayQueue) -> ArrayQueueLenResult {
     (|| {
-        let queue = array_queue_ptr_to_inner(queue_ptr)?;
+        let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
         anyhow::Ok(queue.len())
     })()
     .context("array_queue_len failed")
