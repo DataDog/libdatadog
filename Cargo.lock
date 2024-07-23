@@ -1444,7 +1444,6 @@ dependencies = [
  "anyhow",
  "build_common",
  "chrono",
- "crossbeam-queue",
  "data-pipeline-ffi",
  "datadog-crashtracker",
  "datadog-profiling",
@@ -1688,6 +1687,7 @@ version = "11.0.0"
 dependencies = [
  "anyhow",
  "build_common",
+ "crossbeam-queue",
  "ddcommon",
  "hyper 0.14.28",
 ]

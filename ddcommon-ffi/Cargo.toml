@@ -19,6 +19,7 @@ cbindgen = ["build_common/cbindgen"]
 build_common = { path = "../build-common" }
 
 [dependencies]
-ddcommon = { path = "../ddcommon" }
 anyhow = "1.0"
+crossbeam-queue = "0.3.11"
+ddcommon = { path = "../ddcommon" }
 hyper = {version = "0.14", default-features = false}

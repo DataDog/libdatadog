@@ -9,7 +9,6 @@ use std::time::SystemTime;
 
 use chrono::{DateTime, TimeZone, Utc};
 
-mod array_queue;
 mod crashtracker;
 mod exporter;
 mod profiles;

@@ -31,7 +31,6 @@ build_common = { path = "../build-common" }
 [dependencies]
 anyhow = "1.0"
 chrono = {version = "0.4", default-features = false }
-crossbeam-queue = "0.3.11"
 datadog-crashtracker = { path = "../crashtracker" }
 datadog-profiling = { path = "../profiling" }
 hyper = { version = "0.14", default-features = false }
