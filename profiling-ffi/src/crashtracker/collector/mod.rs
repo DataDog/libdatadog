@@ -1,9 +1,11 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 mod counters;
+mod datatypes;
 mod spans;
 
 pub use counters::*;
+pub use datatypes::*;
 pub use spans::*;
 
 use crate::crashtracker::datatypes::*;
@@ -66,7 +68,6 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_update_on_fork(
     .context("ddog_prof_Crashtracker_update_on_fork failed")
     .into()
 }
-
 
 #[no_mangle]
 #[must_use]
