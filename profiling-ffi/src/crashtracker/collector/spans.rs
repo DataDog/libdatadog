@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::crashtracker::datatypes::*;
+use crate::{crashtracker::datatypes::*, CrashtrackerUsizeResult};
 use anyhow::Context;
 
 /// Resets all stored spans to 0.

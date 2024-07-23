@@ -5,7 +5,7 @@ use crate::exporter::{self, ProfilingEndpoint};
 use crate::option_from_char_slice;
 pub use datadog_crashtracker::{ProfilingOpTypes, StacktraceCollection};
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
-use ddcommon_ffi::Slice;
+use ddcommon_ffi::{Error, Slice};
 
 #[repr(C)]
 pub struct EnvVar<'a> {
@@ -96,5 +96,39 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
             resolve_frames,
             wait_for_receiver,
         )
+    }
+}
+
+#[repr(C)]
+pub enum CrashtrackerUsizeResult {
+    Ok(usize),
+    #[allow(dead_code)]
+    Err(Error),
+}
+
+impl From<anyhow::Result<usize>> for CrashtrackerUsizeResult {
+    fn from(value: anyhow::Result<usize>) -> Self {
+        match value {
+            Ok(x) => Self::Ok(x),
+            Err(err) => Self::Err(err.into()),
+        }
+    }
+}
+
+#[repr(C)]
+pub enum CrashtrackerGetCountersResult {
+    Ok([i64; ProfilingOpTypes::SIZE as usize]),
+    #[allow(dead_code)]
+    Err(Error),
+}
+
+impl From<anyhow::Result<[i64; ProfilingOpTypes::SIZE as usize]>>
+    for CrashtrackerGetCountersResult
+{
+    fn from(value: anyhow::Result<[i64; ProfilingOpTypes::SIZE as usize]>) -> Self {
+        match value {
+            Ok(x) => Self::Ok(x),
+            Err(err) => Self::Err(err.into()),
+        }
     }
 }

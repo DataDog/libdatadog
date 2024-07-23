@@ -11,40 +11,6 @@ pub fn option_from_char_slice(s: CharSlice) -> anyhow::Result<Option<String>> {
     Ok(s.is_empty().not().then_some(s))
 }
 
-#[repr(C)]
-pub enum CrashtrackerUsizeResult {
-    Ok(usize),
-    #[allow(dead_code)]
-    Err(Error),
-}
-
-impl From<anyhow::Result<usize>> for CrashtrackerUsizeResult {
-    fn from(value: anyhow::Result<usize>) -> Self {
-        match value {
-            Ok(x) => Self::Ok(x),
-            Err(err) => Self::Err(err.into()),
-        }
-    }
-}
-
-#[repr(C)]
-pub enum CrashtrackerGetCountersResult {
-    Ok([i64; ProfilingOpTypes::SIZE as usize]),
-    #[allow(dead_code)]
-    Err(Error),
-}
-
-impl From<anyhow::Result<[i64; ProfilingOpTypes::SIZE as usize]>>
-    for CrashtrackerGetCountersResult
-{
-    fn from(value: anyhow::Result<[i64; ProfilingOpTypes::SIZE as usize]>) -> Self {
-        match value {
-            Ok(x) => Self::Ok(x),
-            Err(err) => Self::Err(err.into()),
-        }
-    }
-}
-
 /// A generic result type for when a crashtracking operation may fail,
 /// but there's nothing to return in the case of success.
 #[repr(C)]
