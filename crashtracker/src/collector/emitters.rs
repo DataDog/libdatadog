@@ -46,7 +46,7 @@ unsafe fn emit_backtrace_by_frames(
 
             let mut first = true;
             // This can give multiple answers in the case of inlined functions
-            // https://docs.rs/backtrace/latest/backtrace/pub(crate) fn.resolve.html
+            // https://docs.rs/backtrace/latest/backtrace/fn.resolve.html
             // Store them all into an array of names
             unsafe {
                 backtrace::resolve_frame_unsynchronized(frame, |symbol| {
