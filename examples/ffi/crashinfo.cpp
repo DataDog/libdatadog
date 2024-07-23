@@ -118,11 +118,7 @@ int main(void) {
   check_result(ddog_crashinfo_set_timestamp(crashinfo.get(), 1568899800, 0),
                "Failed to set timestamp");
 
-  ddog_prof_CrashtrackerConfiguration config = {
-      .endpoint = ddog_Endpoint_file(to_slice_c_char("file://tmp/test")),
-      .timeout_secs = 1,
-  };
-
-  check_result(ddog_crashinfo_upload_to_endpoint(crashinfo.get(), config),
+  check_result(ddog_crashinfo_upload_to_endpoint(
+                   crashinfo.get(), ddog_Endpoint_file(to_slice_c_char("file://tmp/test"))),
                "Failed to export to file");
 }

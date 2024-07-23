@@ -1,42 +1,21 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::stacktrace::StackFrame;
-use crate::telemetry::TelemetryCrashUploader;
-use crate::CrashtrackerConfiguration;
+mod metadata;
+use ddcommon::Endpoint;
+pub use metadata::*;
+mod stacktrace;
+pub use stacktrace::*;
+mod telemetry;
+
+use self::telemetry::TelemetryCrashUploader;
 use anyhow::Context;
 use chrono::{DateTime, Utc};
-use ddcommon::tag::Tag;
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 use std::path::Path;
 use std::{collections::HashMap, fs::File, io::BufReader};
 use uuid::Uuid;
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CrashtrackerMetadata {
-    pub profiling_library_name: String,
-    pub profiling_library_version: String,
-    pub family: String,
-    // Should include "service", "environment", etc
-    pub tags: Vec<Tag>,
-}
-
-impl CrashtrackerMetadata {
-    pub fn new(
-        profiling_library_name: String,
-        profiling_library_version: String,
-        family: String,
-        tags: Vec<Tag>,
-    ) -> Self {
-        Self {
-            profiling_library_name,
-            profiling_library_version,
-            family,
-            tags,
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SigInfo {
@@ -269,21 +248,21 @@ impl CrashInfo {
         Ok(())
     }
 
-    pub fn upload_to_endpoint(&self, config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
+    pub fn upload_to_endpoint(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
         // If we're debugging to a file, dump the actual crashinfo into a json
-        if let Some(endpoint) = &config.endpoint {
+        if let Some(endpoint) = endpoint {
             if Some("file") == endpoint.url.scheme_str() {
                 let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
                     .context("crash output file was not correctly formatted")?;
                 self.to_file(&path)?;
             }
         }
-        self.upload_to_telemetry(config)
+        self.upload_to_telemetry(endpoint)
     }
 
-    fn upload_to_telemetry(&self, config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
+    fn upload_to_telemetry(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
         if let Some(metadata) = &self.metadata {
-            if let Ok(uploader) = TelemetryCrashUploader::new(metadata, config) {
+            if let Ok(uploader) = TelemetryCrashUploader::new(metadata, endpoint) {
                 uploader.upload_to_telemetry(self)?;
             }
         }
