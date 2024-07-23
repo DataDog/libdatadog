@@ -4,10 +4,10 @@
 mod datatypes;
 pub use datatypes::*;
 
-use super::{CrashtrackerMetadata, SigInfo};
 use crate::{
-    crashtracker::{option_from_char_slice, CrashtrackerResult, StackFrame},
+    crashtracker::{option_from_char_slice, CrashtrackerResult},
     exporter::ProfilingEndpoint,
+    CrashtrackerMetadata,
 };
 use anyhow::Context;
 use chrono::DateTime;
