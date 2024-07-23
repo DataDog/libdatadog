@@ -1,7 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-pub use datadog_crashtracker::ProfilingOpTypes;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use ddcommon_ffi::Error;
 use std::ops::Not;
