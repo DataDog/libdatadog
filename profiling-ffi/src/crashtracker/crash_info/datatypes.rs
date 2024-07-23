@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::option_from_char_slice;
+use ddcommon::tag::Tag;
 use ddcommon_ffi::{
     slice::{AsBytes, ByteSlice},
     CharSlice, Error, Slice,
@@ -222,5 +223,33 @@ impl<'a> TryFrom<SigInfo<'a>> for datadog_crashtracker::SigInfo {
         let signum = value.signum;
         let signame = option_from_char_slice(value.signame)?;
         Ok(Self { signum, signame })
+    }
+}
+
+#[repr(C)]
+pub struct CrashtrackerMetadata<'a> {
+    pub profiling_library_name: CharSlice<'a>,
+    pub profiling_library_version: CharSlice<'a>,
+    pub family: CharSlice<'a>,
+    /// Should include "service", "environment", etc
+    pub tags: Option<&'a ddcommon_ffi::Vec<Tag>>,
+}
+
+impl<'a> TryFrom<CrashtrackerMetadata<'a>> for datadog_crashtracker::CrashtrackerMetadata {
+    type Error = anyhow::Error;
+    fn try_from(value: CrashtrackerMetadata<'a>) -> anyhow::Result<Self> {
+        let profiling_library_name = value.profiling_library_name.try_to_utf8()?.to_string();
+        let profiling_library_version = value.profiling_library_version.try_to_utf8()?.to_string();
+        let family = value.family.try_to_utf8()?.to_string();
+        let tags = value
+            .tags
+            .map(|tags| tags.iter().cloned().collect())
+            .unwrap_or_default();
+        Ok(Self::new(
+            profiling_library_name,
+            profiling_library_version,
+            family,
+            tags,
+        ))
     }
 }

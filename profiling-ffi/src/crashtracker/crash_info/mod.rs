@@ -7,7 +7,6 @@ pub use datatypes::*;
 use crate::{
     crashtracker::{option_from_char_slice, CrashtrackerResult},
     exporter::ProfilingEndpoint,
-    CrashtrackerMetadata,
 };
 use anyhow::Context;
 use chrono::DateTime;

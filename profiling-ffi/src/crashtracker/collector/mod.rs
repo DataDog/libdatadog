@@ -4,12 +4,12 @@ mod counters;
 mod datatypes;
 mod spans;
 
+use super::crash_info::CrashtrackerMetadata;
+use crate::crashtracker::datatypes::*;
+use anyhow::Context;
 pub use counters::*;
 pub use datatypes::*;
 pub use spans::*;
-
-use crate::crashtracker::datatypes::*;
-use anyhow::Context;
 
 #[no_mangle]
 #[must_use]

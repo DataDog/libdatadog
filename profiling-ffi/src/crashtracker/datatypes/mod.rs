@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub use datadog_crashtracker::ProfilingOpTypes;
-use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use ddcommon_ffi::Error;
 use std::ops::Not;
@@ -10,34 +9,6 @@ use std::ops::Not;
 pub fn option_from_char_slice(s: CharSlice) -> anyhow::Result<Option<String>> {
     let s = s.try_to_utf8()?.to_string();
     Ok(s.is_empty().not().then_some(s))
-}
-
-#[repr(C)]
-pub struct CrashtrackerMetadata<'a> {
-    pub profiling_library_name: CharSlice<'a>,
-    pub profiling_library_version: CharSlice<'a>,
-    pub family: CharSlice<'a>,
-    /// Should include "service", "environment", etc
-    pub tags: Option<&'a ddcommon_ffi::Vec<Tag>>,
-}
-
-impl<'a> TryFrom<CrashtrackerMetadata<'a>> for datadog_crashtracker::CrashtrackerMetadata {
-    type Error = anyhow::Error;
-    fn try_from(value: CrashtrackerMetadata<'a>) -> anyhow::Result<Self> {
-        let profiling_library_name = value.profiling_library_name.try_to_utf8()?.to_string();
-        let profiling_library_version = value.profiling_library_version.try_to_utf8()?.to_string();
-        let family = value.family.try_to_utf8()?.to_string();
-        let tags = value
-            .tags
-            .map(|tags| tags.iter().cloned().collect())
-            .unwrap_or_default();
-        Ok(Self::new(
-            profiling_library_name,
-            profiling_library_version,
-            family,
-            tags,
-        ))
-    }
 }
 
 #[repr(C)]
