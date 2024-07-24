@@ -57,8 +57,8 @@ rename_types = "PascalCase"
 "ArrayQueueNewResult" = "ddog_ArrayQueue_NewResult"
 "ArrayQueuePushResult" = "ddog_ArrayQueue_PushResult"
 "ArrayQueuePopResult" = "ddog_ArrayQueue_PopResult"
-"ArrayQueueIsEmptyResult" = "ddog_ArrayQueue_IsEmptyResult"
-"ArrayQueueLenResult" = "ddog_ArrayQueue_LenResult"
+"ArrayQueueBoolResult" = "ddog_ArrayQueue_BoolResult"
+"ArrayQueueUsizeResult" = "ddog_ArrayQueue_UsizeResult"
 
 
 [enum]
