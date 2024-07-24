@@ -269,7 +269,7 @@ impl CrashInfo {
 
     pub async fn async_upload_to_endpoint(
         &self,
-        endpoint: &Option<Endpoint>
+        endpoint: &Option<Endpoint>,
     ) -> anyhow::Result<()> {
         // If we're debugging to a file, dump the actual crashinfo into a json
         if let Some(endpoint) = endpoint {

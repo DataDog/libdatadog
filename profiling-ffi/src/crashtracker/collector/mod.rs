@@ -9,6 +9,7 @@ use crate::crashtracker::datatypes::*;
 use anyhow::Context;
 pub use counters::*;
 pub use datatypes::*;
+use ddcommon_ffi::{slice::AsBytes, CharSlice};
 pub use spans::*;
 
 #[no_mangle]
