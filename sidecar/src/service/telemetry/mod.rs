@@ -11,7 +11,10 @@ pub mod enqueued_telemetry_data;
 pub mod enqueued_telemetry_stats;
 
 #[allow(clippy::large_enum_variant)]
+#[derive(Default)]
 pub(crate) enum AppOrQueue {
+    #[default]
+    Inactive,
     App(Shared<ManualFuture<(String, String)>>),
     Queue(EnqueuedTelemetryData),
 }

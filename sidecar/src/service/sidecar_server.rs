@@ -39,10 +39,13 @@ use serde::{Deserialize, Serialize};
 use tokio::task::{JoinError, JoinHandle};
 
 use crate::dogstatsd::DogStatsDAction;
+use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
+use crate::service::runtime_info::ActiveApplication;
 use crate::service::telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats;
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
+use datadog_remote_config::fetch::ConfigInvariants;
 
 type NoResponse = Ready<()>;
 
@@ -60,12 +63,22 @@ struct SidecarStats {
     active_apps: u32,
     enqueued_apps: u32,
     enqueued_telemetry_data: EnqueuedTelemetryStats,
+    remote_config_clients: u32,
     telemetry_metrics_contexts: u32,
     telemetry_worker: TelemetryWorkerStats,
     telemetry_worker_errors: u32,
     log_writer: TemporarilyRetainedMapStats,
     log_filter: TemporarilyRetainedMapStats,
 }
+
+#[cfg(windows)]
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub struct ProcessHandle(pub winapi::HANDLE);
+
+#[cfg(windows)]
+unsafe impl Send for ProcessHandle {}
+#[cfg(windows)]
+unsafe impl Sync for ProcessHandle {}
 
 /// The `SidecarServer` struct represents a server that handles sidecar operations.
 ///
@@ -85,6 +98,11 @@ pub struct SidecarServer {
         Arc<Mutex<Option<ManualFutureCompleter<ddtelemetry::config::Config>>>>,
     /// Keeps track of the number of submitted payloads.
     pub submitted_payloads: Arc<AtomicU64>,
+    /// All remote config handling
+    remote_configs: RemoteConfigs,
+    /// The ProcessHandle tied to the connection
+    #[cfg(windows)]
+    process_handle: Option<ProcessHandle>,
 }
 
 impl SidecarServer {
@@ -97,7 +115,17 @@ impl SidecarServer {
     /// # Arguments
     ///
     /// * `async_channel`: An `AsyncChannel` that represents the connection to the client.
-    pub async fn accept_connection(self, async_channel: AsyncChannel) {
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    pub async fn accept_connection(mut self, async_channel: AsyncChannel) {
+        #[cfg(windows)]
+        {
+            self.process_handle = async_channel
+                .metadata
+                .lock()
+                .unwrap()
+                .process_handle()
+                .map(|p| ProcessHandle(p as winapi::HANDLE));
+        }
         let server = tarpc::server::BaseChannel::new(
             tarpc::server::Config {
                 pending_response_buffer: 10000,
@@ -141,7 +169,7 @@ impl SidecarServer {
 
     async fn process_interceptor_response(
         &self,
-        result: Result<(HashSet<String>, HashSet<InstanceId>), tokio::task::JoinError>,
+        result: Result<(HashSet<String>, HashSet<InstanceId>), JoinError>,
     ) {
         match result {
             Ok((sessions, instances)) => {
@@ -366,7 +394,7 @@ impl SidecarServer {
                 .map(|s| {
                     s.lock_runtimes()
                         .values()
-                        .map(|r| r.lock_app_or_actions().len() as u32)
+                        .map(|r| r.lock_applications().len() as u32)
                         .sum::<u32>()
                 })
                 .sum(),
@@ -376,9 +404,9 @@ impl SidecarServer {
                     s.lock_runtimes()
                         .values()
                         .map(|r| {
-                            r.lock_app_or_actions()
+                            r.lock_applications()
                                 .values()
-                                .filter(|a| matches!(a, AppOrQueue::Queue(_)))
+                                .filter(|a| matches!(a.app_or_actions, AppOrQueue::Queue(_)))
                                 .count() as u32
                         })
                         .sum::<u32>()
@@ -390,15 +418,29 @@ impl SidecarServer {
                     s.lock_runtimes()
                         .values()
                         .map(|r| {
-                            r.lock_app_or_actions()
+                            r.lock_applications()
                                 .values()
-                                .filter_map(|a| match a {
+                                .filter_map(|a| match &a.app_or_actions {
                                     AppOrQueue::Queue(q) => Some(q.stats()),
                                     _ => None,
                                 })
                                 .sum()
                         })
                         .sum()
+                })
+                .sum(),
+            remote_config_clients: sessions
+                .values()
+                .map(|s| {
+                    s.lock_runtimes()
+                        .values()
+                        .map(|r| {
+                            r.lock_applications()
+                                .values()
+                                .filter_map(|a| a.remote_config_guard.as_ref())
+                                .count() as u32
+                        })
+                        .sum::<u32>()
                 })
                 .sum(),
             telemetry_metrics_contexts: sessions
@@ -429,6 +471,10 @@ impl SidecarServer {
             log_writer: MULTI_LOG_WRITER.stats(),
         }
     }
+
+    pub fn shutdown(&self) {
+        self.remote_configs.shutdown();
+    }
 }
 
 impl SidecarInterface for SidecarServer {
@@ -442,47 +488,69 @@ impl SidecarInterface for SidecarServer {
         actions: Vec<SidecarAction>,
     ) -> Self::EnqueueActionsFut {
         let rt_info = self.get_runtime(&instance_id);
-        let mut queue = rt_info.lock_app_or_actions();
-        match queue.entry(queue_id) {
-            Entry::Occupied(mut entry) => match entry.get_mut() {
-                AppOrQueue::Queue(ref mut data) => {
-                    data.process(actions);
-                }
-                AppOrQueue::App(service_future) => {
-                    let service_future = service_future.clone();
-                    // drop on stop
-                    if actions.iter().any(|action| {
-                        matches!(
-                            action,
-                            SidecarAction::Telemetry(TelemetryActions::Lifecycle(
-                                LifecycleAction::Stop
-                            ))
-                        )
-                    }) {
-                        entry.remove();
+        let mut applications = rt_info.lock_applications();
+        match applications.entry(queue_id) {
+            Entry::Occupied(mut entry) => {
+                let value = entry.get_mut();
+                match value.app_or_actions {
+                    AppOrQueue::Inactive => {
+                        value.app_or_actions =
+                            AppOrQueue::Queue(EnqueuedTelemetryData::processed(actions));
                     }
-                    let apps = rt_info.apps.clone();
-                    tokio::spawn(async move {
-                        let service = service_future.await;
-                        let app_future = if let Some(fut) = apps
-                            .lock()
-                            .expect("Unable to acquire lock on apps")
-                            .get(&service)
-                        {
-                            fut.clone()
-                        } else {
-                            return;
-                        };
-                        if let Some(mut app) = app_future.await {
-                            let actions =
-                                EnqueuedTelemetryData::process_immediately(actions, &mut app).await;
-                            app.telemetry.send_msgs(actions).await.ok();
+                    AppOrQueue::Queue(ref mut data) => {
+                        data.process(actions);
+                    }
+                    AppOrQueue::App(ref service_future) => {
+                        let service_future = service_future.clone();
+                        // drop on stop
+                        if actions.iter().any(|action| {
+                            matches!(
+                                action,
+                                SidecarAction::Telemetry(TelemetryActions::Lifecycle(
+                                    LifecycleAction::Stop
+                                ))
+                            )
+                        }) {
+                            entry.remove();
                         }
+                        let apps = rt_info.apps.clone();
+                        tokio::spawn(async move {
+                            let service = service_future.await;
+                            let app_future = if let Some(fut) = apps
+                                .lock()
+                                .expect("Unable to acquire lock on apps")
+                                .get(&service)
+                            {
+                                fut.clone()
+                            } else {
+                                return;
+                            };
+                            if let Some(mut app) = app_future.await {
+                                let actions =
+                                    EnqueuedTelemetryData::process_immediately(actions, &mut app)
+                                        .await;
+                                app.telemetry.send_msgs(actions).await.ok();
+                            }
+                        });
+                    }
+                }
+            }
+            Entry::Vacant(entry) => {
+                if actions.len() != 1
+                    || !matches!(
+                        actions[0],
+                        SidecarAction::Telemetry(TelemetryActions::Lifecycle(
+                            LifecycleAction::Stop
+                        ))
+                    )
+                {
+                    entry.insert(ActiveApplication {
+                        app_or_actions: AppOrQueue::Queue(EnqueuedTelemetryData::processed(
+                            actions,
+                        )),
+                        ..Default::default()
                     });
                 }
-            },
-            Entry::Vacant(entry) => {
-                entry.insert(AppOrQueue::Queue(EnqueuedTelemetryData::processed(actions)));
             }
         }
 
@@ -503,12 +571,17 @@ impl SidecarInterface for SidecarServer {
         let (future, completer) = ManualFuture::new();
         let app_or_queue = {
             let rt_info = self.get_runtime(&instance_id);
-            let mut app_or_actions = rt_info.lock_app_or_actions();
-            match app_or_actions.get(&queue_id) {
-                Some(AppOrQueue::Queue(_)) => {
-                    app_or_actions.insert(queue_id, AppOrQueue::App(future.shared()))
-                }
-                None => Some(AppOrQueue::Queue(EnqueuedTelemetryData::default())),
+            let mut applications = rt_info.lock_applications();
+            match applications.get_mut(&queue_id) {
+                Some(ActiveApplication {
+                    app_or_actions: ref mut app @ AppOrQueue::Queue(_),
+                    ..
+                }) => Some(std::mem::replace(app, AppOrQueue::App(future.shared()))),
+                None
+                | Some(ActiveApplication {
+                    app_or_actions: AppOrQueue::Inactive,
+                    ..
+                }) => Some(AppOrQueue::Queue(EnqueuedTelemetryData::default())),
                 _ => None,
             }
         };
@@ -544,7 +617,7 @@ impl SidecarInterface for SidecarServer {
                         matches!(action, TelemetryActions::Lifecycle(LifecycleAction::Stop))
                     }) {
                         self.get_runtime(&instance_id)
-                            .lock_app_or_actions()
+                            .lock_applications()
                             .remove(&queue_id);
                     }
 
@@ -564,9 +637,20 @@ impl SidecarInterface for SidecarServer {
         self,
         _: Context,
         session_id: String,
+        #[cfg(unix)] pid: libc::pid_t,
+        #[cfg(windows)]
+        remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
         config: SessionConfig,
     ) -> Self::SetSessionConfigFut {
         let session = self.get_session(&session_id);
+        #[cfg(unix)]
+        {
+            session.pid.store(pid, Ordering::Relaxed);
+        }
+        #[cfg(windows)]
+        {
+            *session.remote_config_notify_function.lock().unwrap() = remote_config_notify_function;
+        }
         session.modify_telemetry_config(|cfg| {
             let endpoint =
                 get_product_endpoint(ddtelemetry::config::PROD_INTAKE_SUBDOMAIN, &config.endpoint);
@@ -582,6 +666,13 @@ impl SidecarInterface for SidecarServer {
         });
         session.configure_dogstatsd(|dogstatsd| {
             dogstatsd.set_endpoint(config.dogstatsd_endpoint.clone());
+        });
+        session.set_remote_config_invariants(ConfigInvariants {
+            language: config.language,
+            tracer_version: config.tracer_version,
+            endpoint: config.endpoint,
+            products: config.remote_config_products,
+            capabilities: config.remote_config_capabilities,
         });
         self.trace_flusher
             .interval_ms
@@ -690,6 +781,54 @@ impl SidecarInterface for SidecarServer {
                 self.send_trace_v04(&headers, data.as_slice(), &endpoint);
             });
         }
+
+        no_response()
+    }
+
+    type SetRemoteConfigDataFut = NoResponse;
+
+    fn set_remote_config_data(
+        self,
+        _: Context,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        service_name: String,
+        env_name: String,
+        app_version: String,
+    ) -> Self::SetRemoteConfigDataFut {
+        let session = self.get_session(&instance_id.session_id);
+        #[cfg(windows)]
+        let notify_target = if let Some(handle) = self.process_handle {
+            RemoteConfigNotifyTarget {
+                process_handle: handle,
+                notify_function: *session.remote_config_notify_function.lock().unwrap(),
+            }
+        } else {
+            return no_response();
+        };
+        #[cfg(unix)]
+        let notify_target = RemoteConfigNotifyTarget {
+            pid: session.pid.load(Ordering::Relaxed),
+        };
+        let runtime_info = session.get_runtime(&instance_id.runtime_id);
+        runtime_info
+            .lock_applications()
+            .entry(queue_id)
+            .or_default()
+            .remote_config_guard = Some(
+            self.remote_configs.add_runtime(
+                session
+                    .get_remote_config_invariants()
+                    .as_ref()
+                    .expect("Expecting remote config invariants to be set early")
+                    .clone(),
+                instance_id.runtime_id,
+                notify_target,
+                env_name,
+                service_name,
+                app_version,
+            ),
+        );
 
         no_response()
     }

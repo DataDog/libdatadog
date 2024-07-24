@@ -18,6 +18,7 @@ datadog-ipc = { path = "../ipc" }
 ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false }
+datadog-remote-config = { path = "../remote-config" }
 paste = "1"
 libc = "0.2"
 
