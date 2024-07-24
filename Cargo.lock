@@ -768,7 +768,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -1282,7 +1282,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1299,7 +1299,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline-ffi"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "build_common",
  "bytes",
@@ -1310,7 +1310,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-alloc"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "allocator-api2",
  "bolero",
@@ -1320,7 +1320,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "backtrace",
@@ -1334,6 +1334,8 @@ dependencies = [
  "nix 0.27.1",
  "os_info",
  "page_size",
+ "portable-atomic",
+ "rand",
  "serde",
  "serde_json",
  "tempfile",
@@ -1343,7 +1345,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ddsketch"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "prost 0.11.9",
  "prost-build",
@@ -1391,7 +1393,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -1428,7 +1430,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-ffi"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1451,7 +1453,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "clap 4.4.18",
@@ -1576,7 +1578,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1587,7 +1589,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1605,7 +1607,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "prost 0.11.9",
  "prost-build",
@@ -1618,11 +1620,12 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-utils"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "bytes",
  "cargo_metadata",
+ "criterion",
  "datadog-trace-normalization",
  "datadog-trace-protobuf",
  "ddcommon",
@@ -1645,7 +1648,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -1672,7 +1675,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-ffi"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1682,7 +1685,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1708,7 +1711,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry-ffi"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "build_common",
  "ddcommon",
@@ -3547,6 +3550,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "portable-atomic"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7170ef9988bc169ba16dd36a7fa041e5c4cbeb6a35b76d4c03daded371eae7c0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "powerfmt"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4582,7 +4594,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5080,7 +5092,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "lazy_static",
  "regex",

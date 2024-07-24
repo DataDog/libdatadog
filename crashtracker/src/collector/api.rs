@@ -3,13 +3,14 @@
 #![cfg(unix)]
 
 use crate::{
-    configuration::CrashtrackerReceiverConfig,
-    counters::reset_counters,
-    crash_handler::{
+    clear_spans, clear_traces,
+    collector::crash_handler::{
         ensure_receiver, ensure_socket, register_crash_handlers, restore_old_handlers,
         shutdown_receiver, update_receiver_after_fork,
     },
     crash_info::CrashtrackerMetadata,
+    reset_counters,
+    shared::configuration::CrashtrackerReceiverConfig,
     update_config, update_metadata, CrashtrackerConfiguration,
 };
 
@@ -57,6 +58,8 @@ pub fn on_fork(
     receiver_config: CrashtrackerReceiverConfig,
     metadata: CrashtrackerMetadata,
 ) -> anyhow::Result<()> {
+    clear_spans()?;
+    clear_traces()?;
     reset_counters()?;
     // Leave the old signal handler in place: they are unaffected by fork.
     // https://man7.org/linux/man-pages/man2/sigaction.2.html
@@ -132,7 +135,6 @@ pub fn init_with_unix_socket(
 fn test_crash() -> anyhow::Result<()> {
     use crate::{begin_profiling_op, StacktraceCollection};
     use chrono::Utc;
-    use ddcommon::parse_uri;
     use ddcommon::tag;
     use ddcommon::Endpoint;
     use std::time::Duration;
@@ -141,10 +143,7 @@ fn test_crash() -> anyhow::Result<()> {
     let dir = "/tmp/crashreports/";
     let output_url = format!("file://{dir}{time}.txt");
 
-    let endpoint = Some(Endpoint {
-        url: parse_uri(&output_url).unwrap(),
-        api_key: None,
-    });
+    let endpoint = Some(Endpoint::from_slice(&output_url));
 
     let path_to_receiver_binary =
         "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
@@ -152,7 +151,6 @@ fn test_crash() -> anyhow::Result<()> {
     let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
-    let timeout = Duration::from_secs(30);
     let wait_for_receiver = true;
     let receiver_config = CrashtrackerReceiverConfig::new(
         vec![],
@@ -166,7 +164,6 @@ fn test_crash() -> anyhow::Result<()> {
         create_alt_stack,
         endpoint,
         resolve_frames,
-        timeout,
         wait_for_receiver,
     )?;
     let metadata = CrashtrackerMetadata::new(
@@ -177,6 +174,10 @@ fn test_crash() -> anyhow::Result<()> {
     );
     init_with_receiver(config, receiver_config, metadata)?;
     begin_profiling_op(crate::ProfilingOpTypes::CollectingSample)?;
+    super::insert_span(42)?;
+    super::insert_trace(u128::MAX)?;
+    super::insert_span(12)?;
+    super::insert_trace(99399939399939393993)?;
 
     let tag = tag!("apple", "banana");
     let metadata2 = CrashtrackerMetadata::new(

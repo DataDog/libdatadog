@@ -3,10 +3,11 @@
 
 use std::collections::HashMap;
 use std::fmt::Write;
-use std::time::{self, SystemTime};
+use std::time::SystemTime;
 
-use super::{CrashInfo, CrashtrackerConfiguration, CrashtrackerMetadata, StackFrame};
+use super::{CrashInfo, CrashtrackerMetadata, StackFrame};
 use anyhow::{Context, Ok};
+use ddcommon::Endpoint;
 use ddtelemetry::{
     build_host,
     data::{self, Application, LogLevel},
@@ -46,7 +47,9 @@ struct TelemetryCrashInfoMessage<'a> {
     pub files: &'a HashMap<String, Vec<String>>,
     pub metadata: Option<&'a CrashtrackerMetadata>,
     pub os_info: &'a os_info::Info,
+    pub span_ids: &'a Vec<u128>,
     pub tags: &'a HashMap<String, String>,
+    pub trace_ids: &'a Vec<u128>,
 }
 
 pub struct TelemetryCrashUploader {
@@ -58,10 +61,10 @@ pub struct TelemetryCrashUploader {
 impl TelemetryCrashUploader {
     pub fn new(
         prof_metadata: &CrashtrackerMetadata,
-        prof_cfg: &CrashtrackerConfiguration,
+        endpoint: &Option<Endpoint>,
     ) -> anyhow::Result<Self> {
         let mut cfg = ddtelemetry::config::Config::from_env();
-        if let Some(endpoint) = &prof_cfg.endpoint {
+        if let Some(endpoint) = endpoint {
             // TODO: This changes the path part of the query to target the agent.
             // What about if the crashtracker is sending directly to the intake?
             // We probably need to remap the host from intake.profile.{site} to
@@ -119,11 +122,7 @@ impl TelemetryCrashUploader {
         Ok(s)
     }
 
-    pub fn upload_to_telemetry(
-        &self,
-        crash_info: &CrashInfo,
-        timeout: time::Duration,
-    ) -> anyhow::Result<()> {
+    pub fn upload_to_telemetry(&self, crash_info: &CrashInfo) -> anyhow::Result<()> {
         let metadata = &self.metadata;
 
         let message = serde_json::to_string(&TelemetryCrashInfoMessage {
@@ -131,7 +130,9 @@ impl TelemetryCrashUploader {
             files: &crash_info.files,
             metadata: crash_info.metadata.as_ref(),
             os_info: &crash_info.os_info,
+            span_ids: &crash_info.span_ids,
             tags: &crash_info.tags,
+            trace_ids: &crash_info.trace_ids,
         })?;
 
         let stack_trace = serde_json::to_string(&crash_info.stacktrace)?;
@@ -169,8 +170,19 @@ impl TelemetryCrashUploader {
                 ddcommon::header::APPLICATION_JSON,
             )
             .body(serde_json::to_string(&payload)?.into())?;
-        self.rt
-            .block_on(async { tokio::time::timeout(timeout, client.request(req)).await })??;
+        self.rt.block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_millis({
+                    if let Some(endp) = self.cfg.endpoint.as_ref() {
+                        endp.timeout_ms
+                    } else {
+                        Endpoint::DEFAULT_TIMEOUT
+                    }
+                }),
+                client.request(req),
+            )
+            .await
+        })??;
         Ok(())
     }
 }
@@ -193,7 +205,7 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
 mod tests {
     use std::{
         collections::{HashMap, HashSet},
-        fs, time,
+        fs,
     };
 
     use crate::SigInfo;
@@ -205,17 +217,9 @@ mod tests {
     fn new_test_uploader() -> TelemetryCrashUploader {
         TelemetryCrashUploader::new(
             &new_test_prof_metadata(),
-            &crate::CrashtrackerConfiguration {
-                additional_files: vec![],
-                create_alt_stack: true,
-                endpoint: Some(Endpoint {
-                    url: hyper::Uri::from_static("http://localhost:8126/profiling/v1/input"),
-                    api_key: None,
-                }),
-                resolve_frames: crate::StacktraceCollection::WithoutSymbols,
-                timeout: time::Duration::from_secs(30),
-                wait_for_receiver: true,
-            },
+            &Some(Endpoint::from_slice(
+                "http://localhost:8126/profiling/v1/input",
+            )),
         )
         .unwrap()
     }
@@ -270,26 +274,25 @@ mod tests {
         let mut counters = HashMap::new();
         counters.insert("collecting_sample".to_owned(), 1);
         counters.insert("not_profiling".to_owned(), 0);
-        t.upload_to_telemetry(
-            &crate::CrashInfo {
-                counters,
-                files: HashMap::new(),
-                metadata: Some(new_test_prof_metadata()),
-                os_info: os_info::Info::unknown(),
-                siginfo: Some(SigInfo {
-                    signum: 11,
-                    signame: Some("SIGSEGV".to_owned()),
-                }),
-                proc_info: None,
-                stacktrace: vec![],
-                additional_stacktraces: HashMap::new(),
-                tags: HashMap::new(),
-                timestamp: DateTime::from_timestamp(1702465105, 0),
-                uuid: uuid::uuid!("1d6b97cb-968c-40c9-af6e-e4b4d71e8781"),
-                incomplete: true,
-            },
-            time::Duration::from_secs(1),
-        )
+        t.upload_to_telemetry(&crate::CrashInfo {
+            counters,
+            files: HashMap::new(),
+            metadata: Some(new_test_prof_metadata()),
+            os_info: os_info::Info::unknown(),
+            siginfo: Some(SigInfo {
+                signum: 11,
+                signame: Some("SIGSEGV".to_owned()),
+            }),
+            proc_info: None,
+            stacktrace: vec![],
+            span_ids: vec![42, 24],
+            trace_ids: vec![345, 666],
+            additional_stacktraces: HashMap::new(),
+            tags: HashMap::new(),
+            timestamp: DateTime::from_timestamp(1702465105, 0),
+            uuid: uuid::uuid!("1d6b97cb-968c-40c9-af6e-e4b4d71e8781"),
+            incomplete: true,
+        })
         .unwrap();
 
         let payload: serde_json::value::Value =

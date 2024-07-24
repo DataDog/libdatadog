@@ -1,12 +1,13 @@
-// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-#![cfg(unix)]
 
-use anyhow::Context;
-
+use crate::collector::counters::emit_counters;
+use crate::collector::spans::emit_spans;
+use crate::collector::spans::emit_traces;
+use crate::shared::constants::*;
+use crate::CrashtrackerConfiguration;
 use crate::StacktraceCollection;
-
-use super::constants::*;
+use anyhow::Context;
 use std::{
     fs::File,
     io::{Read, Write},
@@ -24,7 +25,7 @@ use std::{
 ///     https://github.com/rust-lang/backtrace-rs/issues/414
 ///     Calculating the `ip` of the frames seems safe, but resolving the frames
 ///     sometimes crashes.
-pub unsafe fn emit_backtrace_by_frames(
+unsafe fn emit_backtrace_by_frames(
     w: &mut impl Write,
     resolve_frames: StacktraceCollection,
 ) -> anyhow::Result<()> {
@@ -94,6 +95,89 @@ pub unsafe fn emit_backtrace_by_frames(
     Ok(())
 }
 
+pub(crate) fn emit_crashreport(
+    pipe: &mut impl Write,
+    config: &CrashtrackerConfiguration,
+    config_str: &str,
+    metadata_string: &str,
+    signum: i32,
+) -> anyhow::Result<()> {
+    emit_metadata(pipe, metadata_string)?;
+    emit_config(pipe, config_str)?;
+    emit_siginfo(pipe, signum)?;
+    emit_procinfo(pipe)?;
+    pipe.flush()?;
+    emit_counters(pipe)?;
+    pipe.flush()?;
+    emit_spans(pipe)?;
+    pipe.flush()?;
+    emit_traces(pipe)?;
+    pipe.flush()?;
+
+    #[cfg(target_os = "linux")]
+    emit_proc_self_maps(pipe)?;
+
+    // Getting a backtrace on rust is not guaranteed to be signal safe
+    // https://github.com/rust-lang/backtrace-rs/issues/414
+    // let current_backtrace = backtrace::Backtrace::new();
+    // In fact, if we look into the code here, we see mallocs.
+    // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
+    // Do this last, so even if it crashes, we still get the other info.
+    if config.resolve_frames != StacktraceCollection::Disabled {
+        unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames)? };
+    }
+    writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
+    pipe.flush()?;
+
+    Ok(())
+}
+
+fn emit_config(w: &mut impl Write, config_str: &str) -> anyhow::Result<()> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_CONFIG}")?;
+    writeln!(w, "{}", config_str)?;
+    writeln!(w, "{DD_CRASHTRACK_END_CONFIG}")?;
+    Ok(())
+}
+
+fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> anyhow::Result<()> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_METADATA}")?;
+    writeln!(w, "{}", metadata_str)?;
+    writeln!(w, "{DD_CRASHTRACK_END_METADATA}")?;
+    Ok(())
+}
+
+fn emit_procinfo(w: &mut impl Write) -> anyhow::Result<()> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_PROCINFO}")?;
+    let pid = nix::unistd::getpid();
+    writeln!(w, "{{\"pid\": {pid} }}")?;
+    writeln!(w, "{DD_CRASHTRACK_END_PROCINFO}")?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+/// `/proc/self/maps` is very useful for debugging, and difficult to get from
+/// the child process (permissions issues on Linux).  Emit it directly onto the
+/// pipe to get around this.
+fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
+    emit_text_file(w, "/proc/self/maps")?;
+    Ok(())
+}
+
+fn emit_siginfo(w: &mut impl Write, signum: i32) -> anyhow::Result<()> {
+    let signame = if signum == libc::SIGSEGV {
+        "SIGSEGV"
+    } else if signum == libc::SIGBUS {
+        "SIGBUS"
+    } else {
+        "UNKNOWN"
+    };
+
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
+    writeln!(w, "{{\"signum\": {signum}, \"signame\": \"{signame}\"}}")?;
+    writeln!(w, "{DD_CRASHTRACK_END_SIGINFO}")?;
+    Ok(())
+}
+
 /// Emit a file onto the given handle.
 /// The file will be emitted in the format
 ///
@@ -114,7 +198,7 @@ pub unsafe fn emit_backtrace_by_frames(
 ///     This function is careful to only write to the handle, without doing any
 ///     unnecessary mutexes or memory allocation.
 #[allow(dead_code)]
-pub fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
+fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
     // open is signal safe
     // https://man7.org/linux/man-pages/man7/signal-safety.7.html
     let mut file = File::open(path).with_context(|| path.to_string())?;
@@ -136,14 +220,5 @@ pub fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
     }
     writeln!(w, "\n{DD_CRASHTRACK_END_FILE} \"{path}\"")?;
     w.flush()?;
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-/// `/proc/self/maps` is very useful for debugging, and difficult to get from
-/// the child process (permissions issues on Linux).  Emit it directly onto the
-/// pipe to get around this.
-pub fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
-    emit_text_file(w, "/proc/self/maps")?;
     Ok(())
 }

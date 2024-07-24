@@ -1,16 +1,11 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+mod datatypes;
+pub use datatypes::*;
 
-use crate::StringWrapperResult;
 use ddcommon_ffi::{slice::AsBytes, CharSlice};
 use symbolic_common::Name;
 use symbolic_demangle::Demangle;
-
-#[repr(C)]
-pub enum DemangleOptions {
-    Complete,
-    NameOnly,
-}
 
 /// Demangles the string "name".
 /// If demangling fails, returns an empty string ""

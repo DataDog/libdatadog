@@ -95,7 +95,7 @@ pub fn end_profiling_op(op: ProfilingOpTypes) -> anyhow::Result<()> {
 ///     unnecessary mutexes or memory allocation.
 #[cfg(unix)]
 pub fn emit_counters(w: &mut impl Write) -> anyhow::Result<()> {
-    use super::constants::*;
+    use crate::shared::constants::*;
 
     writeln!(w, "{DD_CRASHTRACK_BEGIN_COUNTERS}")?;
     for (i, c) in PROFILING_OP_COUNTERS.iter().enumerate() {
