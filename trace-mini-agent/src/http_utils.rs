@@ -28,7 +28,7 @@ pub fn log_and_create_http_response(
     } else {
         error!("{message}");
     }
-    let body = json!({ "message": message }).to_string();
+    let body = json!({"rate_by_service":{"service:,env:":1}}).to_string();
     Response::builder().status(status).body(Body::from(body))
 }
 

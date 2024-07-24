@@ -97,7 +97,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
             Ok(_) => {
                 return log_and_create_http_response(
                     "Successfully buffered traces to be flushed.",
-                    StatusCode::ACCEPTED,
+                    StatusCode::OK,
                 );
             }
             Err(err) => {
