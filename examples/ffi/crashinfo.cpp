@@ -119,6 +119,6 @@ int main(void) {
                "Failed to set timestamp");
 
   check_result(ddog_crashinfo_upload_to_endpoint(
-                   crashinfo.get(), ddog_Endpoint_file(to_slice_c_char("file://tmp/test"))),
+                   crashinfo.get(), ddog_Endpoint_file(to_slice_c_char("/tmp/test"))),
                "Failed to export to file");
 }

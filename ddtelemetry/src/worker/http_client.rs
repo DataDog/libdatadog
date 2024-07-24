@@ -44,11 +44,9 @@ pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
         Some(e) if e.url.scheme_str() == Some("file") => {
             let file_path = ddcommon::decode_uri_path_in_authority(&e.url)
                 .expect("file urls should always have been encoded in authority");
-            let binding = file_path.as_os_str().to_string_lossy();
-            let path: &str = binding.strip_prefix("file://").unwrap_or(&binding);
             return Box::new(MockClient {
                 file: Arc::new(Mutex::new(Box::new(
-                    File::create(path).expect("Couldn't open mock client file"),
+                    File::create(file_path).expect("Couldn't open mock client file"),
                 ))),
             });
         }
