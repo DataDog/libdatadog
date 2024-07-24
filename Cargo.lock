@@ -1120,6 +1120,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "crashtracker-ffi"
+version = "11.0.0"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "ddcommon",
+ "hyper 0.14.28",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

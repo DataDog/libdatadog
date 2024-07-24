@@ -1,0 +1,24 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "crashtracker-ffi"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+bench =false
+
+[features]
+default = ["cbindgen"]
+cbindgen = ["build_common/cbindgen"]
+
+[build-dependencies]
+build_common = { path = "../build-common" }
+
+[dependencies]
+ddcommon = { path = "../ddcommon" }
+anyhow = "1.0"
+hyper = {version = "0.14", default-features = false}
