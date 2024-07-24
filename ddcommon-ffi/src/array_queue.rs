@@ -131,6 +131,35 @@ pub unsafe extern "C" fn ddog_array_queue_push(
     .into()
 }
 
+impl From<Result<Option<*mut c_void>, anyhow::Error>> for ArrayQueuePushResult {
+    fn from(result: Result<Option<*mut c_void>, anyhow::Error>) -> Self {
+        match result {
+            Ok(value) => match value {
+                Some(value) => ArrayQueuePushResult::Full(value),
+                None => ArrayQueuePushResult::Ok,
+            },
+            Err(err) => ArrayQueuePushResult::Err(err.into()),
+        }
+    }
+}
+
+/// Pushes an element into the queue, replacing the oldest element if necessary.
+/// # Safety
+/// The pointer is null or points to a valid memory location allocated by array_queue_new. The value
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_array_queue_force_push(
+    queue_ptr: *mut ArrayQueue,
+    value: *mut c_void,
+) -> ArrayQueuePushResult {
+    (|| {
+        let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
+        anyhow::Ok(queue.force_push(value))
+    })()
+    .context("array_queue_force_push failed")
+    .into()
+}
+
 #[allow(unused)]
 #[repr(C)]
 pub enum ArrayQueuePopResult {
@@ -154,6 +183,7 @@ impl From<anyhow::Result<Option<*mut c_void>>> for ArrayQueuePopResult {
 /// Pops an item from the ArrayQueue.
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
+#[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_array_queue_pop(queue_ptr: *mut ArrayQueue) -> ArrayQueuePopResult {
     (|| {
@@ -221,5 +251,35 @@ pub unsafe extern "C" fn ddog_array_queue_len(queue_ptr: *mut ArrayQueue) -> Arr
         anyhow::Ok(queue.len())
     })()
     .context("array_queue_len failed")
+    .into()
+}
+
+/// Returns true if the underlying queue is full.
+/// # Safety
+/// The pointer is null or points to a valid memory location allocated by array_queue_new.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_array_queue_is_full(
+    queue_ptr: *mut ArrayQueue,
+) -> ArrayQueueBoolResult {
+    (|| {
+        let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
+        anyhow::Ok(queue.is_full())
+    })()
+    .context("array_queue_is_full failed")
+    .into()
+}
+
+/// Returns the capacity of the ArrayQueue.
+/// # Safety
+/// The pointer is null or points to a valid memory location allocated by array_queue_new.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_array_queue_capacity(
+    queue_ptr: *mut ArrayQueue,
+) -> ArrayQueueUsizeResult {
+    (|| {
+        let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
+        anyhow::Ok(queue.capacity())
+    })()
+    .context("array_queue_capacity failed")
     .into()
 }
