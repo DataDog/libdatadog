@@ -484,8 +484,10 @@ pub fn enrich_span_with_mini_agent_metadata(
             .insert("location".to_string(), gcp_region.to_string());
     }
     if let Some(mini_agent_version) = &mini_agent_metadata.version {
-        span.meta
-            .insert("_dd.mini_agent_version".to_string(), mini_agent_version.to_string());
+        span.meta.insert(
+            "_dd.mini_agent_version".to_string(),
+            mini_agent_version.to_string(),
+        );
     }
 }
 
