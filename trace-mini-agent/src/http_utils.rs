@@ -6,11 +6,11 @@ use hyper::{
     http::{self, HeaderMap},
     Body, Response, StatusCode,
 };
-use log::{error, info};
+use log::{debug, error};
 use serde_json::json;
 
 /// Does two things:
-/// 1. Logs the given message. A success status code (within 200-299) will cause an info log to be
+/// 1. Logs the given message. A success status code (within 200-299) will cause a debug log to be
 ///    written,
 /// otherwise error will be written.
 /// 2. Returns the given message in the body of JSON response with the given status code.
@@ -24,7 +24,7 @@ pub fn log_and_create_http_response(
     status: StatusCode,
 ) -> http::Result<Response<Body>> {
     if status.is_success() {
-        info!("{message}");
+        debug!("{message}");
     } else {
         error!("{message}");
     }
