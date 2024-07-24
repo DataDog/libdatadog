@@ -45,7 +45,7 @@ int main(void) {
 
   auto consumer = [&array_queue, &counts, num_elements]() {
     for (size_t i = 0; i < num_elements; ++i) {
-      do {
+      while (true) {
         ddog_ArrayQueue_PopResult pop_result = ddog_array_queue_pop(array_queue.get());
         if (pop_result.tag == DDOG_ARRAY_QUEUE_POP_RESULT_OK) {
           Sample *sample = (Sample *)pop_result.ok;
@@ -59,7 +59,7 @@ int main(void) {
           ddog_Error_drop(&pop_result.err);
           return;
         }
-      } while (true);
+      }
     }
   };
 
@@ -68,7 +68,7 @@ int main(void) {
       Sample *sample = new Sample();
       sample->x = i;
       sample->y = i;
-      do {
+      while (true) {
         ddog_ArrayQueue_PushResult push_result = ddog_array_queue_push(array_queue.get(), sample);
         if (push_result.tag == DDOG_ARRAY_QUEUE_PUSH_RESULT_OK) {
           break;
@@ -79,7 +79,7 @@ int main(void) {
           ddog_Error_drop(&push_result.err);
           return;
         }
-      } while (true);
+      }
     }
   };
 
