@@ -36,8 +36,8 @@ pub fn log_and_create_http_response(
 /// 1. Logs the given message. A success status code (within 200-299) will cause an info log to be
 ///    written,
 /// otherwise error will be written.
-/// 2. Returns the rate_by_service map to use to set the sampling priority in the body of JSON response
-/// with the given status code.
+/// 2. Returns the rate_by_service map to use to set the sampling priority in the body of JSON
+/// response with the given status code.
 ///
 /// Response body format:
 /// {
