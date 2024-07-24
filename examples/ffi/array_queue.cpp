@@ -77,6 +77,7 @@ int main(void) {
         } else {
           print_error("Failed to push to array queue", push_result.err);
           ddog_Error_drop(&push_result.err);
+          delete sample;
           return;
         }
       }
