@@ -15,7 +15,7 @@ use datadog_trace_utils::tracer_payload::TraceEncoding;
 
 use crate::{
     config::Config,
-    http_utils::{self, log_and_create_http_response},
+    http_utils::{self, log_and_create_http_response, log_and_create_traces_success_http_response},
 };
 
 #[async_trait]
@@ -95,7 +95,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
         // send trace payload to our trace flusher
         match tx.send(send_data).await {
             Ok(_) => {
-                return log_and_create_http_response(
+                return log_and_create_traces_success_http_response(
                     "Successfully buffered traces to be flushed.",
                     StatusCode::OK,
                 );
