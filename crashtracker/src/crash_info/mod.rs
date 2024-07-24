@@ -241,12 +241,10 @@ impl CrashInfo {
     /// SIGNAL SAFETY:
     ///     I believe but have not verified this is signal safe.
     pub fn to_file(&self, path: &Path) -> anyhow::Result<()> {
-        let binding = path.as_os_str().to_string_lossy();
-        let path = binding.strip_prefix("file://").unwrap_or(&binding);
-
-        let file = File::create(path).with_context(|| format!("Failed to create {}", path))?;
+        let file =
+            File::create(path).with_context(|| format!("Failed to create {}", path.display()))?;
         serde_json::to_writer_pretty(file, self)
-            .with_context(|| format!("Failed to write json to {}", path))?;
+            .with_context(|| format!("Failed to write json to {}", path.display()))?;
         Ok(())
     }
 
