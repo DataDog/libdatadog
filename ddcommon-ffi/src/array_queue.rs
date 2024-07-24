@@ -36,15 +36,23 @@ impl ArrayQueue {
         if raw.is_null() {
             None
         } else {
+            // # Safety: the raw pointer is not null and points to a valid memory location.
             let queue =
                 unsafe { Box::from_raw(raw as *mut crossbeam_queue::ArrayQueue<*mut c_void>) };
             while let Some(item) = queue.pop() {
+                // # Safety: the item is a valid memory location that can be deallocated by the item_delete_fn.
                 unsafe {
                     (self.item_delete_fn)(item);
                 }
             }
             Some(queue)
         }
+    }
+}
+
+impl Drop for ArrayQueue {
+    fn drop(&mut self) {
+        drop(self.take())
     }
 }
 
@@ -78,6 +86,7 @@ unsafe fn ddog_array_queue_ptr_to_inner<'a>(
         Some(queue) => match queue.inner.as_mut() {
             None => anyhow::bail!("queue.inner is null"),
             Some(inner) => {
+                // # Safety: the inner points to a valid memory location which is a crossbeam_queue::ArrayQueue<*mut c_void>.
                 Ok(&mut *(inner as *mut c_void as *mut crossbeam_queue::ArrayQueue<*mut c_void>))
             }
         },
