@@ -9,16 +9,26 @@ rust-version.workspace = true
 license.workspace = true
 
 [lib]
+#FIXME: should this be like profiling-ffi or like ddcommon-ffi?
 bench =false
 
 [features]
-default = ["cbindgen"]
+default = ["cbindgen", "collector", "receiver"]
 cbindgen = ["build_common/cbindgen"]
+# Enables the in-process collection of crash-info
+collector = []
+# Enables the use of this library to receiver crash-info from a suitable collector
+receiver = []
 
 [build-dependencies]
 build_common = { path = "../build-common" }
 
 [dependencies]
-ddcommon = { path = "../ddcommon" }
 anyhow = "1.0"
+chrono = {version = "0.4", default-features = false }
+datadog-crashtracker = { path = "../crashtracker" }
+ddcommon = { path = "../ddcommon" }
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 hyper = {version = "0.14", default-features = false}
+symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"] }
+symbolic-common = "12.8.0"

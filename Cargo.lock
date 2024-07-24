@@ -1125,8 +1125,13 @@ version = "11.0.0"
 dependencies = [
  "anyhow",
  "build_common",
+ "chrono",
+ "datadog-crashtracker",
  "ddcommon",
+ "ddcommon-ffi",
  "hyper 0.14.28",
+ "symbolic-common",
+ "symbolic-demangle",
 ]
 
 [[package]]
