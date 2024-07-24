@@ -17,6 +17,7 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+#[cfg(unix)]
 use crate::crashtracker::crashtracker_unix_socket_path;
 use crate::service::blocking::SidecarTransport;
 use crate::service::SidecarServer;
