@@ -18,24 +18,32 @@ pub struct ArrayQueue {
 
 impl ArrayQueue {
     pub fn new(
-        inner: *mut c_void,
+        capacity: usize,
         item_delete_fn: unsafe extern "C" fn(*mut c_void) -> c_void,
     ) -> Self {
+        let internal_queue: crossbeam_queue::ArrayQueue<*mut c_void> =
+            crossbeam_queue::ArrayQueue::new(capacity);
+        let inner = Box::into_raw(Box::new(internal_queue)) as *mut c_void;
         Self {
             inner,
             item_delete_fn,
         }
     }
-}
 
-impl Drop for ArrayQueue {
-    fn drop(&mut self) {
-        unsafe {
-            let queue = self.inner as *mut crossbeam_queue::ArrayQueue<*mut c_void>;
-            while let Some(item) = (*queue).pop() {
-                (self.item_delete_fn)(item);
+    pub fn take(&mut self) -> Option<Box<crossbeam_queue::ArrayQueue<*mut c_void>>> {
+        let raw = std::mem::replace(&mut self.inner, std::ptr::null_mut());
+
+        if raw.is_null() {
+            None
+        } else {
+            let queue =
+                unsafe { Box::from_raw(raw as *mut crossbeam_queue::ArrayQueue<*mut c_void>) };
+            while let Some(item) = queue.pop() {
+                unsafe {
+                    (self.item_delete_fn)(item);
+                }
             }
-            drop(Box::from_raw(queue));
+            Some(queue)
         }
     }
 }
@@ -50,14 +58,12 @@ pub enum ArrayQueueNewResult {
 /// Creates a new ArrayQueue with the given capacity and item_delete_fn.
 /// The item_delete_fn is called when an item is dropped from the queue.
 #[no_mangle]
+#[must_use]
 pub extern "C" fn ddog_array_queue_new(
     capacity: usize,
     item_delete_fn: unsafe extern "C" fn(*mut c_void) -> c_void,
 ) -> ArrayQueueNewResult {
-    let internal_queue: crossbeam_queue::ArrayQueue<*mut c_void> =
-        crossbeam_queue::ArrayQueue::new(capacity);
-    let internal_queue_ptr = Box::into_raw(Box::new(internal_queue));
-    let ffi_queue = ArrayQueue::new(internal_queue_ptr as *mut c_void, item_delete_fn);
+    let ffi_queue = ArrayQueue::new(capacity, item_delete_fn);
     ArrayQueueNewResult::Ok(ffi_queue)
 }
 
@@ -84,7 +90,7 @@ unsafe fn ddog_array_queue_ptr_to_inner<'a>(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_array_queue_drop(queue_ptr: *mut ArrayQueue) {
     if !queue_ptr.is_null() {
-        drop(Box::from_raw(queue_ptr));
+        drop((*queue_ptr).take());
     }
 }
 
