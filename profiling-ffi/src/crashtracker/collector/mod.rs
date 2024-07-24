@@ -21,14 +21,14 @@ pub use spans::*;
 /// exit.
 ///
 /// # Preconditions
-///     This function assumes that the crash-tracker has previously been
-///     initialized.
+/// This function assumes that the crash-tracker has previously been
+/// initialized.
 /// # Safety
-///     Crash-tracking functions are not reentrant.
-///     No other crash-handler functions should be called concurrently.
+/// Crash-tracking functions are not reentrant.
+/// No other crash-handler functions should be called concurrently.
 /// # Atomicity
-///     This function is not atomic. A crash during its execution may lead to
-///     unexpected crash-handling behaviour.
+/// This function is not atomic. A crash during its execution may lead to
+/// unexpected crash-handling behaviour.
 pub unsafe extern "C" fn ddog_prof_Crashtracker_shutdown() -> CrashtrackerResult {
     datadog_crashtracker::shutdown_crash_handler()
         .context("ddog_prof_Crashtracker_shutdown failed")
@@ -47,14 +47,14 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_shutdown() -> CrashtrackerResult
 /// advantage would be to have fewer processes in `ps -a`.
 ///
 /// # Preconditions
-///     This function assumes that the crash-tracker has previously been
-///     initialized.
+/// This function assumes that the crash-tracker has previously been
+/// initialized.
 /// # Safety
-///     Crash-tracking functions are not reentrant.
-///     No other crash-handler functions should be called concurrently.
+/// Crash-tracking functions are not reentrant.
+/// No other crash-handler functions should be called concurrently.
 /// # Atomicity
-///     This function is not atomic. A crash during its execution may lead to
-///     unexpected crash-handling behaviour.
+/// This function is not atomic. A crash during its execution may lead to
+/// unexpected crash-handling behaviour.
 pub unsafe extern "C" fn ddog_prof_Crashtracker_update_on_fork(
     config: CrashtrackerConfiguration,
     receiver_config: CrashtrackerReceiverConfig,
@@ -72,16 +72,16 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_update_on_fork(
 
 #[no_mangle]
 #[must_use]
-/// Initialize the crash-tracking infrastructure.
+/// Initialize the crash-tracking infrastructure, spawning a receiver process.
 ///
 /// # Preconditions
-///     None.
+/// None.
 /// # Safety
-///     Crash-tracking functions are not reentrant.
-///     No other crash-handler functions should be called concurrently.
+/// Crash-tracking functions are not reentrant.
+/// No other crash-handler functions should be called concurrently.
 /// # Atomicity
-///     This function is not atomic. A crash during its execution may lead to
-///     unexpected crash-handling behaviour.
+/// This function is not atomic. A crash during its execution may lead to
+/// unexpected crash-handling behaviour.
 pub unsafe extern "C" fn ddog_prof_Crashtracker_init_with_receiver(
     config: CrashtrackerConfiguration,
     receiver_config: CrashtrackerReceiverConfig,
@@ -102,13 +102,13 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_init_with_receiver(
 /// Initialize the crash-tracking infrastructure, writing to an unix socket in case of crash.
 ///
 /// # Preconditions
-///     None.
+/// None.
 /// # Safety
-///     Crash-tracking functions are not reentrant.
-///     No other crash-handler functions should be called concurrently.
+/// Crash-tracking functions are not reentrant.
+/// No other crash-handler functions should be called concurrently.
 /// # Atomicity
-///     This function is not atomic. A crash during its execution may lead to
-///     unexpected crash-handling behaviour.
+/// This function is not atomic. A crash during its execution may lead to
+/// unexpected crash-handling behaviour.
 pub unsafe extern "C" fn ddog_prof_Crashtracker_init_with_unix_socket(
     config: CrashtrackerConfiguration,
     socket_path: CharSlice,
