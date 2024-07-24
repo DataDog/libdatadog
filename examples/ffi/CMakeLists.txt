@@ -4,6 +4,7 @@ project(datadog_profiling_ffi_examples LANGUAGES C CXX)
 find_package(Datadog REQUIRED)
 
 set(VCRUNTIME_LINK_TYPE DLL CACHE STRING "Specify the Runtime Library to use when compiling with MSVC")
+set(CMAKE_EXPORT_COMPILE_COMMANDS on)
 
 function(set_vcruntime_link_type binary link_type)
   if (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")

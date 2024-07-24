@@ -1,10 +1,14 @@
 CMakeFiles/
-array_queue
 CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+array_queue
 crashinfo
 crashtracking
 exporter
-Makefile
 profiles
 telemetry
 telemetry_metrics
+trace_exporter

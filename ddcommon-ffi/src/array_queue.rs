@@ -97,14 +97,18 @@ pub unsafe extern "C" fn ddog_array_queue_drop(queue_ptr: *mut ArrayQueue) {
 #[allow(unused)]
 #[repr(C)]
 pub enum ArrayQueuePushResult {
-    Ok(bool),
+    Ok,
+    Full(*mut c_void),
     Err(Error),
 }
 
-impl From<Result<(), anyhow::Error>> for ArrayQueuePushResult {
-    fn from(result: Result<(), anyhow::Error>) -> Self {
+impl From<Result<Result<(), *mut c_void>, anyhow::Error>> for ArrayQueuePushResult {
+    fn from(result: Result<Result<(), *mut c_void>, anyhow::Error>) -> Self {
         match result {
-            Ok(_) => ArrayQueuePushResult::Ok(true),
+            Ok(value) => match value {
+                Ok(()) => ArrayQueuePushResult::Ok,
+                Err(value) => ArrayQueuePushResult::Full(value),
+            },
             Err(err) => ArrayQueuePushResult::Err(err.into()),
         }
     }
@@ -121,9 +125,7 @@ pub unsafe extern "C" fn ddog_array_queue_push(
 ) -> ArrayQueuePushResult {
     (|| {
         let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
-        queue
-            .push(value)
-            .map_err(|_| anyhow::anyhow!("array_queue full"))
+        anyhow::Ok(queue.push(value))
     })()
     .context("array_queue_push failed")
     .into()
@@ -133,13 +135,17 @@ pub unsafe extern "C" fn ddog_array_queue_push(
 #[repr(C)]
 pub enum ArrayQueuePopResult {
     Ok(*mut c_void),
+    Empty,
     Err(Error),
 }
 
-impl From<anyhow::Result<*mut c_void>> for ArrayQueuePopResult {
-    fn from(result: anyhow::Result<*mut c_void>) -> Self {
+impl From<anyhow::Result<Option<*mut c_void>>> for ArrayQueuePopResult {
+    fn from(result: anyhow::Result<Option<*mut c_void>>) -> Self {
         match result {
-            Ok(value) => ArrayQueuePopResult::Ok(value),
+            Ok(value) => match value {
+                Some(value) => ArrayQueuePopResult::Ok(value),
+                None => ArrayQueuePopResult::Empty,
+            },
             Err(err) => ArrayQueuePopResult::Err(err.into()),
         }
     }
@@ -152,9 +158,7 @@ impl From<anyhow::Result<*mut c_void>> for ArrayQueuePopResult {
 pub unsafe extern "C" fn ddog_array_queue_pop(queue_ptr: *mut ArrayQueue) -> ArrayQueuePopResult {
     (|| {
         let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
-        queue
-            .pop()
-            .ok_or_else(|| anyhow::anyhow!("array_queue empty"))
+        anyhow::Ok(queue.pop())
     })()
     .context("array_queue_pop failed")
     .into()
@@ -162,16 +166,16 @@ pub unsafe extern "C" fn ddog_array_queue_pop(queue_ptr: *mut ArrayQueue) -> Arr
 
 #[allow(unused)]
 #[repr(C)]
-pub enum ArrayQueueIsEmptyResult {
+pub enum ArrayQueueBoolResult {
     Ok(bool),
     Err(Error),
 }
 
-impl From<anyhow::Result<bool>> for ArrayQueueIsEmptyResult {
+impl From<anyhow::Result<bool>> for ArrayQueueBoolResult {
     fn from(result: anyhow::Result<bool>) -> Self {
         match result {
-            Ok(value) => ArrayQueueIsEmptyResult::Ok(value),
-            Err(err) => ArrayQueueIsEmptyResult::Err(err.into()),
+            Ok(value) => ArrayQueueBoolResult::Ok(value),
+            Err(err) => ArrayQueueBoolResult::Err(err.into()),
         }
     }
 }
@@ -182,7 +186,7 @@ impl From<anyhow::Result<bool>> for ArrayQueueIsEmptyResult {
 #[no_mangle]
 pub unsafe extern "C" fn ddog_array_queue_is_empty(
     queue_ptr: *mut ArrayQueue,
-) -> ArrayQueueIsEmptyResult {
+) -> ArrayQueueBoolResult {
     (|| {
         let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
         anyhow::Ok(queue.is_empty())
@@ -193,16 +197,16 @@ pub unsafe extern "C" fn ddog_array_queue_is_empty(
 
 #[allow(unused)]
 #[repr(C)]
-pub enum ArrayQueueLenResult {
+pub enum ArrayQueueUsizeResult {
     Ok(usize),
     Err(Error),
 }
 
-impl From<anyhow::Result<usize>> for ArrayQueueLenResult {
+impl From<anyhow::Result<usize>> for ArrayQueueUsizeResult {
     fn from(result: anyhow::Result<usize>) -> Self {
         match result {
-            Ok(value) => ArrayQueueLenResult::Ok(value),
-            Err(err) => ArrayQueueLenResult::Err(err.into()),
+            Ok(value) => ArrayQueueUsizeResult::Ok(value),
+            Err(err) => ArrayQueueUsizeResult::Err(err.into()),
         }
     }
 }
@@ -211,7 +215,7 @@ impl From<anyhow::Result<usize>> for ArrayQueueLenResult {
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_array_queue_len(queue_ptr: *mut ArrayQueue) -> ArrayQueueLenResult {
+pub unsafe extern "C" fn ddog_array_queue_len(queue_ptr: *mut ArrayQueue) -> ArrayQueueUsizeResult {
     (|| {
         let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
         anyhow::Ok(queue.len())
