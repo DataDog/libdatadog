@@ -61,7 +61,7 @@ impl<'a> ArrayQueue {
         }
         // # Safety: the inner points to a valid memory location which is a
         // crossbeam_queue::ArrayQueue<*mut c_void>.
-        Ok(unsafe { &*(inner as *mut c_void as *mut crossbeam_queue::ArrayQueue<*mut c_void>) })
+        Ok(unsafe { &*(inner as *mut crossbeam_queue::ArrayQueue<*mut c_void>) })
     }
 }
 
@@ -94,7 +94,7 @@ pub extern "C" fn ddog_ArrayQueue_new(
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ArrayQueue_drop<'a>(queue: &'a mut ArrayQueue) {
+pub unsafe extern "C" fn ddog_ArrayQueue_drop(queue: &mut ArrayQueue) {
     drop(queue.take());
 }
 
@@ -127,8 +127,8 @@ impl From<Result<Result<(), *mut c_void>, anyhow::Error>> for ArrayQueuePushResu
 /// The pointer is null or points to a valid memory location allocated by array_queue_new. The value
 /// is null or points to a valid memory location that can be deallocated by the item_delete_fn.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ArrayQueue_push<'a>(
-    queue_ptr: &'a mut ArrayQueue,
+pub unsafe extern "C" fn ddog_ArrayQueue_push(
+    queue_ptr: &mut ArrayQueue,
     value: *mut c_void,
 ) -> ArrayQueuePushResult {
     (|| {
@@ -157,8 +157,8 @@ impl From<Result<Option<*mut c_void>, anyhow::Error>> for ArrayQueuePushResult {
 /// is null or points to a valid memory location that can be deallocated by the item_delete_fn.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_ArrayQueue_force_push<'a>(
-    queue_ptr: &'a mut ArrayQueue,
+pub unsafe extern "C" fn ddog_ArrayQueue_force_push(
+    queue_ptr: &mut ArrayQueue,
     value: *mut c_void,
 ) -> ArrayQueuePushResult {
     (|| {
@@ -194,9 +194,7 @@ impl From<anyhow::Result<Option<*mut c_void>>> for ArrayQueuePopResult {
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ArrayQueue_pop<'a>(
-    queue_ptr: &'a mut ArrayQueue,
-) -> ArrayQueuePopResult {
+pub unsafe extern "C" fn ddog_ArrayQueue_pop(queue_ptr: &mut ArrayQueue) -> ArrayQueuePopResult {
     (|| {
         let queue = ArrayQueue::as_inner_ref(queue_ptr)?;
         anyhow::Ok(queue.pop())
@@ -225,8 +223,8 @@ impl From<anyhow::Result<bool>> for ArrayQueueBoolResult {
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ArrayQueue_is_empty<'a>(
-    queue_ptr: &'a mut ArrayQueue,
+pub unsafe extern "C" fn ddog_ArrayQueue_is_empty(
+    queue_ptr: &mut ArrayQueue,
 ) -> ArrayQueueBoolResult {
     (|| {
         let queue = ArrayQueue::as_inner_ref(queue_ptr)?;
@@ -256,9 +254,7 @@ impl From<anyhow::Result<usize>> for ArrayQueueUsizeResult {
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ArrayQueue_len<'a>(
-    queue_ptr: &'a mut ArrayQueue,
-) -> ArrayQueueUsizeResult {
+pub unsafe extern "C" fn ddog_ArrayQueue_len(queue_ptr: &mut ArrayQueue) -> ArrayQueueUsizeResult {
     (|| {
         let queue = ArrayQueue::as_inner_ref(queue_ptr)?;
         anyhow::Ok(queue.len())
@@ -271,8 +267,8 @@ pub unsafe extern "C" fn ddog_ArrayQueue_len<'a>(
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ArrayQueue_is_full<'a>(
-    queue_ptr: &'a mut ArrayQueue,
+pub unsafe extern "C" fn ddog_ArrayQueue_is_full(
+    queue_ptr: &mut ArrayQueue,
 ) -> ArrayQueueBoolResult {
     (|| {
         let queue = ArrayQueue::as_inner_ref(queue_ptr)?;
@@ -286,8 +282,8 @@ pub unsafe extern "C" fn ddog_ArrayQueue_is_full<'a>(
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ArrayQueue_capacity<'a>(
-    queue_ptr: &'a mut ArrayQueue,
+pub unsafe extern "C" fn ddog_ArrayQueue_capacity(
+    queue_ptr: &mut ArrayQueue,
 ) -> ArrayQueueUsizeResult {
     (|| {
         let queue = ArrayQueue::as_inner_ref(queue_ptr)?;
