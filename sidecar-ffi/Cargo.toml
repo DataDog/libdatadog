@@ -28,5 +28,5 @@ tempfile = { version = "3.3" }
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
     "cfg(coverage_nightly)",
-    'cfg(feature, values("prefer_dynamic")',
+    'cfg(feature, values("prefer_dynamic"))',
 ] }
