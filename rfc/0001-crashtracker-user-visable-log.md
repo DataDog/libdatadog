@@ -66,7 +66,8 @@ Consumers MUST accept json with elided optional fields.
     The collector SHOULD collect as many as it can, but MAY cap the number of spans that it tracks.
     TODO: What format do users expect here?
 - `tags`:
-    A set of key:value pairs, representing user 
+    A set of key:value pairs, representing any tags the crashtracking system wishes to associate with the crash.
+    The receiver SHOULD NOT assume that any particular tags will be present. 
 
 ### Extensibility
 
