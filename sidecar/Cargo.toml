@@ -95,3 +95,5 @@ tempfile = { version = "3.3" }
 httpmock = "0.7.0"
 datadog-trace-utils = { path = "../trace-utils", features = ["test-utils"] }
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_taskdump)', 'cfg(feature, values("logging"))'] }

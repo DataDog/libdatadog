@@ -146,6 +146,7 @@ impl TraceFlusher {
     ///
     /// * A `Result` which is `Ok` if the flusher task successfully joins, or `Err` if the flusher
     ///   task panics.
+    ///
     /// If the flusher task is not running, it returns `Ok`.
     pub(crate) async fn join(&self) -> anyhow::Result<(), JoinError> {
         let flusher = {
