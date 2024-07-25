@@ -17,34 +17,39 @@ Due to the use of native extensions, it is possible for a single stack-trace to 
 Having a single structured format allows us to work across languages.
 
 ## Proposed format
+A natural language description of the proposed json format is given here.
+An example is given in Appendix A, and the schema is given in Appendix B.
 
 ### Required fields
-- Timestamp: The time at which the crash occurred, in ISO 8601 format.
-- UUID: A UUID which uniquely identifies the crash.
 - incomplete: Boolean `false` if the crashreport is complete (i.e. contains all intended data), `true` if there is important missing data (e.g. the crashtracker itself crashed during stack trace collection).
-- Version ID: A Semver compatible ID for this format. [TODO, should it be semver?]
+    This MUST be set to `true` if any required field is missing.
+- [TODO] there should probably be an errortype:crash field?
+- os_info: The architecture on which the 
+- stacktrace: This represents the stack 
+- timestamp: The time at which the crash occurred, in ISO 8601 format.
+- uuid: A UUID which uniquely identifies the crash.
+- version_id: A Semver compatible ID for this format. [TODO, should it be semver?]
 
 ### Optional fields
 Any field not listed as "Required" is optional.
 In order to minimize logging overhead, producers SHOULD NOT emit anything for an optional field.
 Consumers MUST accept json with elided optional fields.
 
-- additional_stacktraces: In a multi-threaded program, the collector SHOULD collect 
-- counters
+- additional_stacktraces: This field contains a `Map<ThreadId, Stacktrace>`.
+    In a multi-threaded program, the collector SHOULD collect the stacktraces of all active threads, and report them here.
+- counters: The crashtracker offers a mechanism for programs to register counters which track the state of the system.
+    At present, 
 - files
 - metadata: Option<CrashtrackerMetadata>,
-- os_info: os_info::Info,
 - proc_info: Currently, just tracks the PID of the crashing process.  
-             In the 
-- siginfo: Option<SigInfo>,
+             In the future, this may record additional info about the crashing process.
+- siginfo: The name and 
 - span_ids: Vec<u128>,
-- stacktrace: This represents 
     pub trace_ids: Vec<u128>,
     pub tags: HashMap<String, String>,
 
 ### Extensibility
 
-TODO, there should be a version id field
 
 ### Stacktraces
 Different languages and language runtimes have different representations of a stacktrace.
@@ -232,6 +237,131 @@ A stack frame can be represented as the following `json` schema, whose `rust` im
 ### Other data
 
 ## Appendix A: Example output
+```json
+{
+  "counters": {
+    "unwinding": 0,
+    "not_profiling": 0,
+    "serializing": 1,
+    "collecting_sample": 0
+  },
+  "incomplete": false,
+  "metadata": {
+    "profiling_library_name": "crashtracking-test",
+    "profiling_library_version": "12.34.56",
+    "family": "crashtracking-test",
+    "tags": []
+  },
+  "os_info": {
+    "os_type": "Macos",
+    "version": {
+      "Semantic": [
+        14,
+        5,
+        0
+      ]
+    },
+    "edition": null,
+    "codename": null,
+    "bitness": "X64",
+    "architecture": "arm64"
+  },
+  "proc_info": {
+    "pid": 95565
+  },
+  "siginfo": {
+    "signum": 11,
+    "signame": "SIGSEGV"
+  },
+  "span_ids": [
+    42
+  ],
+  "stacktrace": [
+    {
+      "ip": "0x100f702ac",
+      "names": [
+        {
+          "colno": 5,
+          "filename":
+"/Users/daniel.schwartznarbonne/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backtrace-0.3.71/src/backtrace/libunwind.rs",
+          "lineno": 105,
+          "name": "trace"
+        },
+        {
+          "colno": 5,
+          "filename":
+"/Users/daniel.schwartznarbonne/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backtrace-0.3.71/src/backtrace/mod.rs",
+          "lineno": 66,
+          "name":
+"trace_unsynchronized<datadog_crashtracker::collectors::emit_backtrace_by_frames::{closure_env#0}<std::process::ChildStdin>>"
+        },
+        {
+          "colno": 5,
+          "filename":
+"/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collectors.rs",
+          "lineno": 33,
+          "name": "emit_backtrace_by_frames<std::process::ChildStdin>"
+        }
+      ],
+      "sp": "0x16f9658c0",
+      "symbol_address": "0x100f702ac"
+    },
+    {
+      "ip": "0x100f6f518",
+      "names": [
+        {
+          "colno": 18,
+          "filename":
+"/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/crash_handler.rs",
+          "lineno": 379,
+          "name": "emit_crashreport<std::process::ChildStdin>"
+        },
+        {
+          "colno": 23,
+          "filename":
+"/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/crash_handler.rs",
+          "lineno": 414,
+          "name": "handle_posix_signal_impl"
+        },
+        {
+          "colno": 13,
+          "filename":
+"/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/crash_handler.rs",
+          "lineno": 264,
+          "name": "handle_posix_sigaction"
+        }
+      ],
+      "sp": "0x16f965940",
+      "symbol_address": "0x100f6f518"
+    },
+    {
+      "ip": "0x186b9b584",
+      "names": [
+        {
+          "name": "__simple_esappend"
+        }
+      ],
+      "sp": "0x16f965ae0",
+      "symbol_address": "0x186b9b584"
+    },
+    {
+      "ip": "0x10049bd94",
+      "names": [
+        {
+          "name": "_main"
+        }
+      ],
+      "sp": "0x16f965b10",
+      "symbol_address": "0x10049bd94"
+    }
+  ],
+  "trace_ids": [
+    18446744073709551617
+  ],
+  "timestamp": "2024-07-19T16:52:16.422378Z",
+  "uuid": "a42add90-0e60-4799-b9f7-cbe0ebec4f27"
+}
+```
 
 ## Appendix B: Rust implementation of stacktrace format
 
