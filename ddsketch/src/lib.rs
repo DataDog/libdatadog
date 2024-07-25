@@ -21,8 +21,7 @@ pub mod pb;
 ///
 /// This implementation only supports a part of the standard (which is also only the parts dd
 /// backend supports :shrug:)
-/// - max length contiguous bin store, with lower bin
-/// collapse behavior.
+/// - max length contiguous bin store, with lower bin collapse behavior.
 /// - Positive or zero values
 ///
 /// The default sketch has a 1% relative accuracy, and only accepts positive points
