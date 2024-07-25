@@ -21,7 +21,7 @@ A natural language description of the proposed json format is given here.
 An example is given in Appendix A, and the schema is given in Appendix B.
 
 ### Required fields
-- incomplete: Boolean `false` if the crashreport is complete (i.e. contains all intended data), `true` if there is important missing data (e.g. the crashtracker itself crashed during stack trace collection).
+- `incomplete`: Boolean `false` if the crashreport is complete (i.e. contains all intended data), `true` if there is important missing data (e.g. the crashtracker itself crashed during stack trace collection).
     This MUST be set to `true` if any required field is missing.
 - [TODO] there should probably be an errortype:crash field?
 - os_info: The architecture on which the 
