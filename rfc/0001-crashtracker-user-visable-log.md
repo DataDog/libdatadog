@@ -21,32 +21,52 @@ A natural language description of the proposed json format is given here.
 An example is given in Appendix A, and the schema is given in Appendix B.
 
 ### Required fields
-- `incomplete`: Boolean `false` if the crashreport is complete (i.e. contains all intended data), `true` if there is important missing data (e.g. the crashtracker itself crashed during stack trace collection).
+- `incomplete`:
+    Boolean `false` if the crashreport is complete (i.e. contains all intended data), `true` if there is important missing data (e.g. the crashtracker itself crashed during stack trace collection).
     This MUST be set to `true` if any required field is missing.
 - [TODO] there should probably be an errortype:crash field?
-- os_info: The architecture on which the 
-- stacktrace: This represents the stack 
-- timestamp: The time at which the crash occurred, in ISO 8601 format.
-- uuid: A UUID which uniquely identifies the crash.
-- version_id: A Semver compatible ID for this format. [TODO, should it be semver?]
+- `os_info`: 
+    The architecture on which the 
+- `stacktrace`: 
+    This represents the stack of the crashing thread.
+    See below for more details on how stacktraces are formatted.
+- `timestamp`:
+    The time at which the crash occurred, in ISO 8601 format.
+- `uuid`:
+    A UUID which uniquely identifies the crash.
+- `version_id`:
+    A Semver compatible ID for this format. [TODO, should it be semver?]
 
 ### Optional fields
 Any field not listed as "Required" is optional.
 In order to minimize logging overhead, producers SHOULD NOT emit anything for an optional field.
 Consumers MUST accept json with elided optional fields.
 
-- additional_stacktraces: This field contains a `Map<ThreadId, Stacktrace>`.
+- `additional_stacktraces`:
+    This field contains a `Map<ThreadId, Stacktrace>`.
     In a multi-threaded program, the collector SHOULD collect the stacktraces of all active threads, and report them here.
-- counters: The crashtracker offers a mechanism for programs to register counters which track the state of the system.
-    At present, 
-- files
-- metadata: Option<CrashtrackerMetadata>,
-- proc_info: Currently, just tracks the PID of the crashing process.  
+- `counters`:
+    The crashtracker offers a mechanism for programs to register counters to track which operations were active at the time of the crash.
+    At present, this is only used by the profiler, but this may be extended in the future.
+- `files`:
+    The collector MAY collect useful files, such as `/proc/self/maps` or `/proc/meminfo`, and include them here.
+    Files are stored as an array of plain text strings, one per line.
+- `metadata`:
+    The library name and version that created this crash report.
+- `proc_info`: Currently, just tracks the PID of the crashing process.  
              In the future, this may record additional info about the crashing process.
-- siginfo: The name and 
-- span_ids: Vec<u128>,
-    pub trace_ids: Vec<u128>,
-    pub tags: HashMap<String, String>,
+- `siginfo`:
+    The name and signal number of the crashing signal (on UNIX systems)
+- `span_ids`: 
+    A vector of 128 bit numbers, representing the active span ids at the time of program crash.
+    The collector SHOULD collect as many as it can, but MAY cap the number of spans that it tracks.
+    TODO: What format do users expect here?
+- `trace_ids:`
+    A vector of 128 bit numbers, representing the active span ids at the time of program crash.
+    The collector SHOULD collect as many as it can, but MAY cap the number of spans that it tracks.
+    TODO: What format do users expect here?
+- `tags`:
+    A set of key:value pairs, representing user 
 
 ### Extensibility
 
