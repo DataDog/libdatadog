@@ -1,5 +1,7 @@
 # RFC 0001: Crashtracker Structured Log Format
 
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED",  "MAY", and "OPTIONAL" in this document are to be interpreted as described in [IETF RFC 2119](https://datatracker.ietf.org/doc/html/rfc2119).
+
 ## Summary
 
 ## Motivation
@@ -12,9 +14,37 @@ As a text-based format, json can be written to standard logging endpoints.
 It is (somewhat) human readable, so users can directly interpret the crash info off their log if necessary.
 As a structured format, it avoids the ambiguity of standard semi-structured stacktrace formats (as used by e.g. Java, .Net, etc).
 Due to the use of native extensions, it is possible for a single stack-trace to include frames from multiple languages (e.g. python may call C code, which calls Rust code, etc).
-A single structured format 
+Having a single structured format allows us to work across languages.
 
 ## Proposed format
+
+### Required fields
+- Timestamp: The time at which the crash occurred, in ISO 8601 format.
+- UUID: A UUID which uniquely identifies the crash.
+- incomplete: Boolean `false` if the crashreport is complete (i.e. contains all intended data), `true` if there is important missing data (e.g. the crashtracker itself crashed during stack trace collection).
+- Version ID: A Semver compatible ID for this format. [TODO, should it be semver?]
+
+### Optional fields
+Any field not listed as "Required" is optional.
+In order to minimize logging overhead, producers SHOULD NOT emit anything for an optional field.
+Consumers MUST accept json with elided optional fields.
+
+- additional_stacktraces: In a multi-threaded program, the collector SHOULD collect 
+- counters
+- files
+- metadata: Option<CrashtrackerMetadata>,
+- os_info: os_info::Info,
+- proc_info: Currently, just tracks the PID of the crashing process.  
+             In the 
+- siginfo: Option<SigInfo>,
+- span_ids: Vec<u128>,
+- stacktrace: This represents 
+    pub trace_ids: Vec<u128>,
+    pub tags: HashMap<String, String>,
+
+### Extensibility
+
+TODO, there should be a version id field
 
 ### Stacktraces
 Different languages and language runtimes have different representations of a stacktrace.
@@ -199,12 +229,10 @@ A stack frame can be represented as the following `json` schema, whose `rust` im
 }
 ```
 
-```rust
-
-```
-
 ### Other data
 
 ## Appendix A: Example output
 
 ## Appendix B: Rust implementation of stacktrace format
+
+## Appendic C: Schema for the entire json thing as it stands
