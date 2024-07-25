@@ -3,21 +3,21 @@
 
 #[derive(Debug, PartialEq)]
 pub enum DecodeError {
-    WrongConversion,
-    WrongType,
-    WrongFormat,
+    InvalidConversion(String),
+    InvalidType(String),
+    InvalidFormat(String),
     IOError,
-    Utf8Error,
+    Utf8Error(String),
 }
 
 impl std::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DecodeError::WrongConversion => write!(f, "Failed to cast value"),
+            DecodeError::InvalidConversion(msg) => write!(f, "Failed to convert value: {}", msg),
             DecodeError::IOError => write!(f, "Failed to read from buffer"),
-            DecodeError::WrongType => write!(f, "Invalid type encountered"),
-            DecodeError::WrongFormat => write!(f, "Invalid format"),
-            DecodeError::Utf8Error => write!(f, "Failed to read utf8 value"),
+            DecodeError::InvalidType(msg) => write!(f, "Invalid type encountered: {}", msg),
+            DecodeError::InvalidFormat(msg) => write!(f, "Invalid format: {}", msg),
+            DecodeError::Utf8Error(msg) => write!(f, "Failed to read utf8 value: {}", msg),
         }
     }
 }

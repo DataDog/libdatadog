@@ -3,6 +3,7 @@
 
 use super::error::DecodeError;
 use rmp::{decode::RmpRead, Marker};
+use std::fmt;
 
 pub enum Number {
     U8(u8),
@@ -13,6 +14,19 @@ pub enum Number {
     I64(i64),
     F64(f64),
 }
+impl fmt::Display for Number {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Number::U8(val) => write!(f, "{}", val),
+            Number::U32(val) => write!(f, "{}", val),
+            Number::U64(val) => write!(f, "{}", val),
+            Number::I8(val) => write!(f, "{}", val),
+            Number::I32(val) => write!(f, "{}", val),
+            Number::I64(val) => write!(f, "{}", val),
+            Number::F64(val) => write!(f, "{}", val),
+        }
+    }
+}
 
 impl TryFrom<Number> for u8 {
     type Error = DecodeError;
@@ -20,7 +34,10 @@ impl TryFrom<Number> for u8 {
         match value {
             Number::U8(val) => Ok(val),
             Number::I8(val) => Ok(val as u8),
-            _ => Err(DecodeError::WrongConversion),
+            _ => Err(DecodeError::InvalidConversion(format!(
+                "unable to convert {} to u8",
+                value
+            ))),
         }
     }
 }
@@ -31,7 +48,10 @@ impl TryFrom<Number> for i8 {
         match value {
             Number::U8(val) => Ok(val as i8),
             Number::I8(val) => Ok(val),
-            _ => Err(DecodeError::WrongConversion),
+            _ => Err(DecodeError::InvalidConversion(format!(
+                "unable to convert {} to i8",
+                value
+            ))),
         }
     }
 }
@@ -42,7 +62,10 @@ impl TryFrom<Number> for u32 {
         match value {
             Number::U8(val) => Ok(val as u32),
             Number::U32(val) => Ok(val),
-            _ => Err(DecodeError::WrongConversion),
+            _ => Err(DecodeError::InvalidConversion(format!(
+                "unable to convert {} to u32",
+                value
+            ))),
         }
     }
 }
@@ -54,7 +77,10 @@ impl TryFrom<Number> for u64 {
             Number::U8(val) => Ok(val as u64),
             Number::U32(val) => Ok(val as u64),
             Number::U64(val) => Ok(val),
-            _ => Err(DecodeError::WrongConversion),
+            _ => Err(DecodeError::InvalidConversion(format!(
+                "unable to convert {} to u64",
+                value
+            ))),
         }
     }
 }
@@ -68,7 +94,10 @@ impl TryFrom<Number> for i64 {
             Number::I8(val) => Ok(val as i64),
             Number::I32(val) => Ok(val as i64),
             Number::I64(val) => Ok(val),
-            _ => Err(DecodeError::WrongConversion),
+            _ => Err(DecodeError::InvalidConversion(format!(
+                "unable to convert {} to i64",
+                value
+            ))),
         }
     }
 }
@@ -81,7 +110,10 @@ impl TryFrom<Number> for i32 {
             Number::I8(val) => Ok(val as i32),
             Number::U32(val) => Ok(val as i32),
             Number::I32(val) => Ok(val),
-            _ => Err(DecodeError::WrongConversion),
+            _ => Err(DecodeError::InvalidConversion(format!(
+                "unable to convert {} to i32",
+                value
+            ))),
         }
     }
 }
@@ -102,7 +134,9 @@ impl TryFrom<Number> for f64 {
 }
 
 pub fn read_number(buf: &mut &[u8]) -> Result<Number, DecodeError> {
-    match rmp::decode::read_marker(buf).map_err(|_| DecodeError::WrongFormat)? {
+    match rmp::decode::read_marker(buf)
+        .map_err(|_| DecodeError::InvalidFormat("Unable to read marker for number".to_owned()))?
+    {
         Marker::FixPos(val) => Ok(Number::U8(val)),
         Marker::FixNeg(val) => Ok(Number::I8(val)),
         Marker::U8 => Ok(Number::U8(
@@ -135,7 +169,7 @@ pub fn read_number(buf: &mut &[u8]) -> Result<Number, DecodeError> {
         Marker::F64 => Ok(Number::F64(
             buf.read_data_f64().map_err(|_| DecodeError::IOError)?,
         )),
-        _ => Err(DecodeError::WrongType),
+        _ => Err(DecodeError::InvalidType("Invalid number type".to_owned())),
     }
 }
 

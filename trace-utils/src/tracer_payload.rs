@@ -8,7 +8,6 @@ use crate::{
 use datadog_trace_protobuf::pb;
 use std::cmp::Ordering;
 
-// TODO: EK - Should this really be public?
 pub type TracerPayloadV04 = Vec<pb::Span>;
 
 #[derive(Debug, Clone)]
