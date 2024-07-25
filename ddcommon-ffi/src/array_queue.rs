@@ -68,7 +68,7 @@ pub enum ArrayQueueNewResult {
 /// The item_delete_fn is called when an item is dropped from the queue.
 #[no_mangle]
 #[must_use]
-pub extern "C" fn ddog_array_queue_new(
+pub extern "C" fn ddog_ArrayQueue_new(
     capacity: usize,
     item_delete_fn: unsafe extern "C" fn(*mut c_void) -> c_void,
 ) -> ArrayQueueNewResult {
@@ -79,7 +79,7 @@ pub extern "C" fn ddog_array_queue_new(
 /// Converts a *mut ArrayQueue to a &mut crossbeam_queue::ArrayQueue<*mut c_void>.
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
-unsafe fn ddog_array_queue_ptr_to_inner<'a>(
+unsafe fn ddog_ArrayQueue_ptr_to_inner<'a>(
     queue_ptr: *mut ArrayQueue,
 ) -> anyhow::Result<&'a mut crossbeam_queue::ArrayQueue<*mut c_void>> {
     match queue_ptr.as_mut() {
@@ -99,12 +99,16 @@ unsafe fn ddog_array_queue_ptr_to_inner<'a>(
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_array_queue_drop(queue_ptr: *mut ArrayQueue) {
+pub unsafe extern "C" fn ddog_ArrayQueue_drop(queue_ptr: *mut ArrayQueue) {
     if !queue_ptr.is_null() {
         drop((*queue_ptr).take());
     }
 }
 
+/// Data structure for the result of the push() and force_push() functions.
+/// force_push() replaces the oldest element if the queue is full, while push() returns the given
+/// value if the queue is full. For push(), it's redundant to return the value since the caller
+/// already has it, but it's returned for consistency with crossbeam API and with force_push().
 #[allow(unused)]
 #[repr(C)]
 pub enum ArrayQueuePushResult {
@@ -130,12 +134,12 @@ impl From<Result<Result<(), *mut c_void>, anyhow::Error>> for ArrayQueuePushResu
 /// The pointer is null or points to a valid memory location allocated by array_queue_new. The value
 /// is null or points to a valid memory location that can be deallocated by the item_delete_fn.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_array_queue_push(
+pub unsafe extern "C" fn ddog_ArrayQueue_push(
     queue_ptr: *mut ArrayQueue,
     value: *mut c_void,
 ) -> ArrayQueuePushResult {
     (|| {
-        let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
+        let queue = ddog_ArrayQueue_ptr_to_inner(queue_ptr)?;
         anyhow::Ok(queue.push(value))
     })()
     .context("array_queue_push failed")
@@ -157,14 +161,15 @@ impl From<Result<Option<*mut c_void>, anyhow::Error>> for ArrayQueuePushResult {
 /// Pushes an element into the queue, replacing the oldest element if necessary.
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new. The value
+/// is null or points to a valid memory location that can be deallocated by the item_delete_fn.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_array_queue_force_push(
+pub unsafe extern "C" fn ddog_ArrayQueue_force_push(
     queue_ptr: *mut ArrayQueue,
     value: *mut c_void,
 ) -> ArrayQueuePushResult {
     (|| {
-        let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
+        let queue = ddog_ArrayQueue_ptr_to_inner(queue_ptr)?;
         anyhow::Ok(queue.force_push(value))
     })()
     .context("array_queue_force_push failed")
@@ -196,9 +201,9 @@ impl From<anyhow::Result<Option<*mut c_void>>> for ArrayQueuePopResult {
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_array_queue_pop(queue_ptr: *mut ArrayQueue) -> ArrayQueuePopResult {
+pub unsafe extern "C" fn ddog_ArrayQueue_pop(queue_ptr: *mut ArrayQueue) -> ArrayQueuePopResult {
     (|| {
-        let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
+        let queue = ddog_ArrayQueue_ptr_to_inner(queue_ptr)?;
         anyhow::Ok(queue.pop())
     })()
     .context("array_queue_pop failed")
@@ -225,11 +230,11 @@ impl From<anyhow::Result<bool>> for ArrayQueueBoolResult {
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_array_queue_is_empty(
+pub unsafe extern "C" fn ddog_ArrayQueue_is_empty(
     queue_ptr: *mut ArrayQueue,
 ) -> ArrayQueueBoolResult {
     (|| {
-        let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
+        let queue = ddog_ArrayQueue_ptr_to_inner(queue_ptr)?;
         anyhow::Ok(queue.is_empty())
     })()
     .context("array_queue_is_empty failed")
@@ -256,9 +261,9 @@ impl From<anyhow::Result<usize>> for ArrayQueueUsizeResult {
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_array_queue_len(queue_ptr: *mut ArrayQueue) -> ArrayQueueUsizeResult {
+pub unsafe extern "C" fn ddog_ArrayQueue_len(queue_ptr: *mut ArrayQueue) -> ArrayQueueUsizeResult {
     (|| {
-        let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
+        let queue = ddog_ArrayQueue_ptr_to_inner(queue_ptr)?;
         anyhow::Ok(queue.len())
     })()
     .context("array_queue_len failed")
@@ -269,11 +274,11 @@ pub unsafe extern "C" fn ddog_array_queue_len(queue_ptr: *mut ArrayQueue) -> Arr
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_array_queue_is_full(
+pub unsafe extern "C" fn ddog_ArrayQueue_is_full(
     queue_ptr: *mut ArrayQueue,
 ) -> ArrayQueueBoolResult {
     (|| {
-        let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
+        let queue = ddog_ArrayQueue_ptr_to_inner(queue_ptr)?;
         anyhow::Ok(queue.is_full())
     })()
     .context("array_queue_is_full failed")
@@ -284,11 +289,11 @@ pub unsafe extern "C" fn ddog_array_queue_is_full(
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_array_queue_capacity(
+pub unsafe extern "C" fn ddog_ArrayQueue_capacity(
     queue_ptr: *mut ArrayQueue,
 ) -> ArrayQueueUsizeResult {
     (|| {
-        let queue = ddog_array_queue_ptr_to_inner(queue_ptr)?;
+        let queue = ddog_ArrayQueue_ptr_to_inner(queue_ptr)?;
         anyhow::Ok(queue.capacity())
     })()
     .context("array_queue_capacity failed")

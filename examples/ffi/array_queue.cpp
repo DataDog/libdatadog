@@ -19,7 +19,7 @@ struct Sample {
 void delete_fn(void *sample) { delete (Sample *)sample; }
 
 struct Deleter {
-  void operator()(ddog_ArrayQueue *object) { ddog_array_queue_drop(object); }
+  void operator()(ddog_ArrayQueue *object) { ddog_ArrayQueue_drop(object); }
 };
 
 void print_error(const char *s, const ddog_Error &err) {
@@ -28,7 +28,7 @@ void print_error(const char *s, const ddog_Error &err) {
 }
 
 int main(void) {
-  ddog_ArrayQueue_NewResult array_queue_new_result = ddog_array_queue_new(5, delete_fn);
+  ddog_ArrayQueue_NewResult array_queue_new_result = ddog_ArrayQueue_new(5, delete_fn);
   if (array_queue_new_result.tag != DDOG_ARRAY_QUEUE_NEW_RESULT_OK) {
     print_error("Failed to create array queue", array_queue_new_result.err);
     ddog_Error_drop(&array_queue_new_result.err);
@@ -46,7 +46,7 @@ int main(void) {
   auto consumer = [&array_queue, &counts, num_elements]() {
     for (size_t i = 0; i < num_elements; ++i) {
       while (true) {
-        ddog_ArrayQueue_PopResult pop_result = ddog_array_queue_pop(array_queue.get());
+        ddog_ArrayQueue_PopResult pop_result = ddog_ArrayQueue_pop(array_queue.get());
         if (pop_result.tag == DDOG_ARRAY_QUEUE_POP_RESULT_OK) {
           Sample *sample = (Sample *)pop_result.ok;
           counts[sample->x].fetch_add(1, std::memory_order_seq_cst);
@@ -69,7 +69,7 @@ int main(void) {
       sample->x = i;
       sample->y = i;
       while (true) {
-        ddog_ArrayQueue_PushResult push_result = ddog_array_queue_push(array_queue.get(), sample);
+        ddog_ArrayQueue_PushResult push_result = ddog_ArrayQueue_push(array_queue.get(), sample);
         if (push_result.tag == DDOG_ARRAY_QUEUE_PUSH_RESULT_OK) {
           break;
         } else if (push_result.tag == DDOG_ARRAY_QUEUE_PUSH_RESULT_FULL) {
