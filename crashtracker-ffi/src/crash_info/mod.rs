@@ -8,7 +8,7 @@ pub use datatypes::*;
 #[repr(C)]
 pub struct ProfilingEndpoint<'a> {
     _nonempty: bool,
-    _pd: std::marker::PhantomData<&'a bool>
+    _pd: std::marker::PhantomData<&'a bool>,
 }
 
 use crate::{option_from_char_slice, CrashtrackerResult};

@@ -3,7 +3,7 @@
 
 use crate::slice::AsBytes;
 use crate::Error;
-use ddcommon::{parse_uri};
+use ddcommon::{parse_uri, Endpoint};
 use hyper::http::uri::{Authority, Parts};
 use std::str::FromStr;
 
@@ -103,7 +103,10 @@ mod tests {
         assert_eq!(endpoint.unwrap().timeout_ms, 2000);
 
         let mut endpoint_api_key = ddog_endpoint_from_api_key(CharSlice::from("test-key"));
-        assert_eq!(endpoint_api_key.timeout_ms, ddcommon::Endpoint::DEFAULT_TIMEOUT);
+        assert_eq!(
+            endpoint_api_key.timeout_ms,
+            ddcommon::Endpoint::DEFAULT_TIMEOUT
+        );
 
         ddog_endpoint_set_timeout(&mut endpoint_api_key, 2000);
         assert_eq!(endpoint_api_key.timeout_ms, 2000);

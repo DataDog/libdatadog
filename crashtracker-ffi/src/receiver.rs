@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{CrashtrackerResult};
+use crate::CrashtrackerResult;
 use anyhow::Context;
 use ddcommon_ffi::{slice::AsBytes, CharSlice};
 #[no_mangle]
