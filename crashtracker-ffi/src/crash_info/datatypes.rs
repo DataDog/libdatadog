@@ -227,7 +227,7 @@ impl<'a> TryFrom<SigInfo<'a>> for datadog_crashtracker::SigInfo {
 }
 
 #[repr(C)]
-pub struct CrashtrackerMetadata<'a> {
+pub struct Metadata<'a> {
     pub profiling_library_name: CharSlice<'a>,
     pub profiling_library_version: CharSlice<'a>,
     pub family: CharSlice<'a>,
@@ -235,9 +235,9 @@ pub struct CrashtrackerMetadata<'a> {
     pub tags: Option<&'a ddcommon_ffi::Vec<Tag>>,
 }
 
-impl<'a> TryFrom<CrashtrackerMetadata<'a>> for datadog_crashtracker::CrashtrackerMetadata {
+impl<'a> TryFrom<Metadata<'a>> for datadog_crashtracker::CrashtrackerMetadata {
     type Error = anyhow::Error;
-    fn try_from(value: CrashtrackerMetadata<'a>) -> anyhow::Result<Self> {
+    fn try_from(value: Metadata<'a>) -> anyhow::Result<Self> {
         let profiling_library_name = value.profiling_library_name.try_to_utf8()?.to_string();
         let profiling_library_version = value.profiling_library_version.try_to_utf8()?.to_string();
         let family = value.family.try_to_utf8()?.to_string();

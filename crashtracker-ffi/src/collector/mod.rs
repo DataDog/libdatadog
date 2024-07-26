@@ -4,8 +4,8 @@ mod counters;
 mod datatypes;
 mod spans;
 
-use super::crash_info::CrashtrackerMetadata;
-use crate::CrashtrackerResult;
+use super::crash_info::Metadata;
+use crate::Result;
 use anyhow::Context;
 pub use counters::*;
 pub use datatypes::*;
@@ -28,9 +28,9 @@ pub use spans::*;
 /// # Atomicity
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
-pub unsafe extern "C" fn ddog_prof_Crashtracker_shutdown() -> CrashtrackerResult {
+pub unsafe extern "C" fn ddog_crashtracker_shutdown() -> Result {
     datadog_crashtracker::shutdown_crash_handler()
-        .context("ddog_prof_Crashtracker_shutdown failed")
+        .context("ddog_crashtracker_shutdown failed")
         .into()
 }
 
@@ -54,18 +54,18 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_shutdown() -> CrashtrackerResult
 /// # Atomicity
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
-pub unsafe extern "C" fn ddog_prof_Crashtracker_update_on_fork(
-    config: CrashtrackerConfiguration,
-    receiver_config: CrashtrackerReceiverConfig,
-    metadata: CrashtrackerMetadata,
-) -> CrashtrackerResult {
+pub unsafe extern "C" fn ddog_crashtracker_update_on_fork(
+    config: Configuration,
+    receiver_config: ReceiverConfig,
+    metadata: Metadata,
+) -> Result {
     (|| {
         let config = config.try_into()?;
         let receiver_config = receiver_config.try_into()?;
         let metadata = metadata.try_into()?;
         datadog_crashtracker::on_fork(config, receiver_config, metadata)
     })()
-    .context("ddog_prof_Crashtracker_update_on_fork failed")
+    .context("ddog_crashtracker_update_on_fork failed")
     .into()
 }
 
@@ -81,17 +81,17 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_update_on_fork(
 /// # Atomicity
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
-pub unsafe extern "C" fn ddog_prof_Crashtracker_init_with_receiver(
-    config: CrashtrackerConfiguration,
-    receiver_config: CrashtrackerReceiverConfig,
-    metadata: CrashtrackerMetadata,
-) -> CrashtrackerResult {
+pub unsafe extern "C" fn ddog_crashtracker_init_with_receiver(
+    config: Configuration,
+    receiver_config: ReceiverConfig,
+    metadata: Metadata,
+) -> Result {
     (|| {
         let config = config.try_into()?;
         let receiver_config = receiver_config.try_into()?;
         let metadata = metadata.try_into()?;
         datadog_crashtracker::init_with_receiver(config, receiver_config, metadata)
     })()
-    .context("ddog_prof_Crashtracker_init failed")
+    .context("ddog_crashtracker_init failed")
     .into()
 }

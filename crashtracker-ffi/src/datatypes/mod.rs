@@ -13,7 +13,7 @@ pub fn option_from_char_slice(s: CharSlice) -> anyhow::Result<Option<String>> {
 /// A generic result type for when a crashtracking operation may fail,
 /// but there's nothing to return in the case of success.
 #[repr(C)]
-pub enum CrashtrackerResult {
+pub enum Result {
     Ok(
         /// Do not use the value of Ok. This value only exists to overcome
         /// Rust -> C code generation.
@@ -22,7 +22,7 @@ pub enum CrashtrackerResult {
     Err(Error),
 }
 
-impl From<anyhow::Result<()>> for CrashtrackerResult {
+impl From<anyhow::Result<()>> for Result {
     fn from(value: anyhow::Result<()>) -> Self {
         match value {
             Ok(_) => Self::Ok(true),

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::datatypes::ProfilingOpTypes;
-use crate::CrashtrackerResult;
+use crate::Result;
 use anyhow::Context;
 
 /// Resets all counters to 0.
@@ -15,9 +15,9 @@ use anyhow::Context;
 /// No safety concerns.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_prof_Crashtracker_reset_counters() -> CrashtrackerResult {
+pub unsafe extern "C" fn ddog_crashtracker_reset_counters() -> Result {
     datadog_crashtracker::reset_counters()
-        .context("ddog_prof_Crashtracker_begin_profiling_op failed")
+        .context("ddog_crashtracker_begin_profiling_op failed")
         .into()
 }
 
@@ -28,11 +28,9 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_reset_counters() -> Crashtracker
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_prof_Crashtracker_begin_profiling_op(
-    op: ProfilingOpTypes,
-) -> CrashtrackerResult {
+pub unsafe extern "C" fn ddog_crashtracker_begin_profiling_op(op: ProfilingOpTypes) -> Result {
     datadog_crashtracker::begin_profiling_op(op)
-        .context("ddog_prof_Crashtracker_begin_profiling_op failed")
+        .context("ddog_crashtracker_begin_profiling_op failed")
         .into()
 }
 
@@ -43,10 +41,8 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_begin_profiling_op(
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_prof_Crashtracker_end_profiling_op(
-    op: ProfilingOpTypes,
-) -> CrashtrackerResult {
+pub unsafe extern "C" fn ddog_crashtracker_end_profiling_op(op: ProfilingOpTypes) -> Result {
     datadog_crashtracker::end_profiling_op(op)
-        .context("ddog_prof_Crashtracker_end_profiling_op failed")
+        .context("ddog_crashtracker_end_profiling_op failed")
         .into()
 }

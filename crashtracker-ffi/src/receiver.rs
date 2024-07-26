@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::CrashtrackerResult;
+use crate::Result;
 use anyhow::Context;
 use ddcommon_ffi::{slice::AsBytes, CharSlice};
 #[no_mangle]
@@ -17,9 +17,9 @@ use ddcommon_ffi::{slice::AsBytes, CharSlice};
 /// description.
 /// # Safety
 /// No safety concerns
-pub unsafe extern "C" fn ddog_prof_Crashtracker_receiver_entry_point_stdin() -> CrashtrackerResult {
+pub unsafe extern "C" fn ddog_crashtracker_receiver_entry_point_stdin() -> Result {
     datadog_crashtracker::receiver_entry_point_stdin()
-        .context("ddog_prof_Crashtracker_receiver_entry_point_stdin failed")
+        .context("ddog_crashtracker_receiver_entry_point_stdin failed")
         .into()
 }
 
@@ -36,13 +36,13 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_receiver_entry_point_stdin() -> 
 /// description.
 /// # Safety
 /// No safety concerns
-pub unsafe extern "C" fn ddog_prof_Crashtracker_receiver_entry_point_unix_socket(
+pub unsafe extern "C" fn ddog_crashtracker_receiver_entry_point_unix_socket(
     socket_path: CharSlice,
-) -> CrashtrackerResult {
+) -> Result {
     (|| {
         let socket_path = socket_path.try_to_utf8()?;
         datadog_crashtracker::reciever_entry_point_unix_socket(socket_path)
     })()
-    .context("ddog_prof_Crashtracker_receiver_entry_point_unix_socket failed")
+    .context("ddog_crashtracker_receiver_entry_point_unix_socket failed")
     .into()
 }

@@ -4,16 +4,10 @@
 mod datatypes;
 pub use datatypes::*;
 
-//DSN
-#[repr(C)]
-pub struct ProfilingEndpoint<'a> {
-    _nonempty: bool,
-    _pd: std::marker::PhantomData<&'a bool>,
-}
-
-use crate::{option_from_char_slice, CrashtrackerResult};
+use crate::{option_from_char_slice, Result};
 use anyhow::Context;
 use chrono::DateTime;
+use ddcommon::Endpoint;
 use ddcommon_ffi::{slice::AsBytes, CharSlice, Slice};
 
 /// Create a new crashinfo, and returns an opaque reference to it.
@@ -48,7 +42,7 @@ pub unsafe extern "C" fn ddog_crashinfo_drop(crashinfo: *mut CrashInfo) {
 pub unsafe extern "C" fn ddog_crashinfo_normalize_ips(
     crashinfo: *mut CrashInfo,
     pid: u32,
-) -> CrashtrackerResult {
+) -> Result {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         crashinfo.normalize_ips(pid)
@@ -71,7 +65,7 @@ pub unsafe extern "C" fn ddog_crashinfo_add_counter(
     crashinfo: *mut CrashInfo,
     name: CharSlice,
     val: i64,
-) -> CrashtrackerResult {
+) -> Result {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         let name = name.to_utf8_lossy();
@@ -93,7 +87,7 @@ pub unsafe extern "C" fn ddog_crashinfo_add_counter(
 pub unsafe extern "C" fn ddog_crashinfo_add_file(
     crashinfo: *mut CrashInfo,
     name: CharSlice,
-) -> CrashtrackerResult {
+) -> Result {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         let name = name.to_utf8_lossy();
@@ -117,7 +111,7 @@ pub unsafe extern "C" fn ddog_crashinfo_add_tag(
     crashinfo: *mut CrashInfo,
     key: CharSlice,
     value: CharSlice,
-) -> CrashtrackerResult {
+) -> Result {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         let key = key.to_utf8_lossy().to_string();
@@ -138,8 +132,8 @@ pub unsafe extern "C" fn ddog_crashinfo_add_tag(
 #[must_use]
 pub unsafe extern "C" fn ddog_crashinfo_set_metadata(
     crashinfo: *mut CrashInfo,
-    metadata: CrashtrackerMetadata,
-) -> CrashtrackerResult {
+    metadata: Metadata,
+) -> Result {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         let metadata = metadata.try_into()?;
@@ -160,7 +154,7 @@ pub unsafe extern "C" fn ddog_crashinfo_set_metadata(
 pub unsafe extern "C" fn ddog_crashinfo_set_siginfo(
     crashinfo: *mut CrashInfo,
     siginfo: SigInfo,
-) -> CrashtrackerResult {
+) -> Result {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         let siginfo = siginfo.try_into()?;
@@ -183,7 +177,7 @@ pub unsafe extern "C" fn ddog_crashinfo_set_stacktrace(
     crashinfo: *mut CrashInfo,
     thread_id: CharSlice,
     stacktrace: Slice<StackFrame>,
-) -> CrashtrackerResult {
+) -> Result {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         let thread_id = option_from_char_slice(thread_id)?;
@@ -207,7 +201,7 @@ pub unsafe extern "C" fn ddog_crashinfo_set_timestamp(
     crashinfo: *mut CrashInfo,
     secs: i64,
     nsecs: u32,
-) -> CrashtrackerResult {
+) -> Result {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         let ts = DateTime::from_timestamp(secs, nsecs)
@@ -224,9 +218,7 @@ pub unsafe extern "C" fn ddog_crashinfo_set_timestamp(
 /// `crashinfo` must be a valid pointer to a `CrashInfo` object.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crashinfo_set_timestamp_to_now(
-    crashinfo: *mut CrashInfo,
-) -> CrashtrackerResult {
+pub unsafe extern "C" fn ddog_crashinfo_set_timestamp_to_now(crashinfo: *mut CrashInfo) -> Result {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         crashinfo.set_timestamp_to_now()
@@ -243,12 +235,11 @@ pub unsafe extern "C" fn ddog_crashinfo_set_timestamp_to_now(
 #[must_use]
 pub unsafe extern "C" fn ddog_crashinfo_upload_to_endpoint(
     crashinfo: *mut CrashInfo,
-    _endpoint: ProfilingEndpoint,
-) -> CrashtrackerResult {
+    endpoint: Option<&Endpoint>,
+) -> Result {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
-        // DSN
-        let endpoint = None; //Some(unsafe { crate::exporter::try_to_endpoint(endpoint)? });
+        let endpoint = endpoint.cloned();
         crashinfo.upload_to_endpoint(&endpoint)
     })()
     .context("ddog_crashinfo_upload_to_endpoint failed")

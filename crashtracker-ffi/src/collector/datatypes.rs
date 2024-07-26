@@ -14,7 +14,7 @@ pub struct EnvVar<'a> {
 }
 
 #[repr(C)]
-pub struct CrashtrackerReceiverConfig<'a> {
+pub struct ReceiverConfig<'a> {
     pub args: Slice<'a, CharSlice<'a>>,
     pub env: Slice<'a, EnvVar<'a>>,
     pub path_to_receiver_binary: CharSlice<'a>,
@@ -24,11 +24,9 @@ pub struct CrashtrackerReceiverConfig<'a> {
     pub optional_stdout_filename: CharSlice<'a>,
 }
 
-impl<'a> TryFrom<CrashtrackerReceiverConfig<'a>>
-    for datadog_crashtracker::CrashtrackerReceiverConfig
-{
+impl<'a> TryFrom<ReceiverConfig<'a>> for datadog_crashtracker::CrashtrackerReceiverConfig {
     type Error = anyhow::Error;
-    fn try_from(value: CrashtrackerReceiverConfig<'a>) -> anyhow::Result<Self> {
+    fn try_from(value: ReceiverConfig<'a>) -> anyhow::Result<Self> {
         let args = {
             let mut vec = Vec::with_capacity(value.args.len());
             for x in value.args.iter() {
@@ -60,7 +58,7 @@ impl<'a> TryFrom<CrashtrackerReceiverConfig<'a>>
 }
 
 #[repr(C)]
-pub struct CrashtrackerConfiguration<'a> {
+pub struct Configuration<'a> {
     pub additional_files: Slice<'a, CharSlice<'a>>,
     pub create_alt_stack: bool,
     /// The endpoint to send the crash report to (can be a file://).
@@ -71,11 +69,9 @@ pub struct CrashtrackerConfiguration<'a> {
     pub wait_for_receiver: bool,
 }
 
-impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
-    for datadog_crashtracker::CrashtrackerConfiguration
-{
+impl<'a> TryFrom<Configuration<'a>> for datadog_crashtracker::CrashtrackerConfiguration {
     type Error = anyhow::Error;
-    fn try_from(value: CrashtrackerConfiguration<'a>) -> anyhow::Result<Self> {
+    fn try_from(value: Configuration<'a>) -> anyhow::Result<Self> {
         let additional_files = {
             let mut vec = Vec::with_capacity(value.additional_files.len());
             for x in value.additional_files.iter() {
@@ -84,7 +80,7 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
             vec
         };
         let create_alt_stack = value.create_alt_stack;
-        let endpoint = None; // DSNunsafe { exporter::try_to_endpoint(value.endpoint).ok() };
+        let endpoint = value.endpoint.cloned();
         let resolve_frames = value.resolve_frames;
         let wait_for_receiver = value.wait_for_receiver;
         Self::new(
@@ -98,13 +94,13 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
 }
 
 #[repr(C)]
-pub enum CrashtrackerUsizeResult {
+pub enum UsizeResult {
     Ok(usize),
     #[allow(dead_code)]
     Err(Error),
 }
 
-impl From<anyhow::Result<usize>> for CrashtrackerUsizeResult {
+impl From<anyhow::Result<usize>> for UsizeResult {
     fn from(value: anyhow::Result<usize>) -> Self {
         match value {
             Ok(x) => Self::Ok(x),

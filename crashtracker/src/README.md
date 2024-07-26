@@ -13,10 +13,10 @@ It has three related parts:
 
 ## How to use the crashhandler
 
-1. Initilize it using `ddog_prof_Crashtracker_init`
-2. After a fork, reset the crashtracker in the child using `ddog_prof_Crashtracker_update_on_fork`.
+1. Initilize it using `ddog_crashtracker_init`
+2. After a fork, reset the crashtracker in the child using `ddog_crashtracker_update_on_fork`.
    This can be done in an `pthread_atfork` handler.  
-2. [Optional].  The crash-tracker can be shutdown, and the previous crash handler restored, using `ddog_prof_Crashtracker_shutdown`.
+2. [Optional].  The crash-tracker can be shutdown, and the previous crash handler restored, using `ddog_crashtracker_shutdown`.
     Currently, there is a state machine that stops you from then restarting the crash-tracker.
     Fixing this is a todo
 
