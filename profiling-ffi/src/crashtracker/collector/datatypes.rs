@@ -1,7 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporter::{self, ProfilingEndpoint};
 use crate::option_from_char_slice;
 pub use datadog_crashtracker::{ProfilingOpTypes, StacktraceCollection};
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
@@ -67,7 +66,7 @@ pub struct CrashtrackerConfiguration<'a> {
     ///
     /// If ProfilingEndpoint is left to a zero value (enum value for Agent + empty charslice),
     /// the crashtracker will infer the agent host from env variables.
-    pub endpoint: ProfilingEndpoint<'a>,
+    pub endpoint: Option<&'a ddcommon::Endpoint>,
     pub resolve_frames: StacktraceCollection,
     pub timeout_secs: u64,
     pub wait_for_receiver: bool,
@@ -86,7 +85,7 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
             vec
         };
         let create_alt_stack = value.create_alt_stack;
-        let endpoint = unsafe { exporter::try_to_endpoint(value.endpoint).ok() };
+        let endpoint = value.endpoint.cloned();
         let resolve_frames = value.resolve_frames;
         let wait_for_receiver = value.wait_for_receiver;
         Self::new(
