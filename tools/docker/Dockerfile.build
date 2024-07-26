@@ -77,6 +77,7 @@ COPY [ "Cargo.lock", "Cargo.toml", "./"]
 COPY "alloc/Cargo.toml" "alloc/"
 COPY "build-common/Cargo.toml" "build-common/"
 COPY "crashtracker/Cargo.toml" "crashtracker/"
+COPY "crashtracker-ffi/Cargo.toml" "crashtracker-ffi/"
 COPY "ddcommon/Cargo.toml" "ddcommon/"
 COPY "ddcommon-ffi/Cargo.toml" "ddcommon-ffi/" 
 COPY "ddtelemetry/Cargo.toml" "ddtelemetry/"
