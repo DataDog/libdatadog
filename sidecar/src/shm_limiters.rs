@@ -11,59 +11,107 @@ use std::sync::atomic::{AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 pub trait Limiter {
+    /// Takes the limit per interval.
+    /// Returns false if the limit is exceeded, otherwise true.
     fn inc(&self, limit: u32) -> bool;
+    /// Returns the effective rate per interval.
+    fn rate(&self) -> f64;
 }
 
+/// A thread-safe limiter built on Atomics.
+/// It's base unit is in seconds, i.e. the minimum allowed rate is 1 per second.
+/// Internally the limiter works with the system time granularity, i.e. nanoseconds on unix and
+/// milliseconds on windows.
+/// The implementation is a sliding window: every time the limiter is increased, the as much time as
+/// has passed is also refilled.
 #[repr(C)]
-#[derive(Default)]
-struct LimiterData<T> {
-    next_free: AtomicU32, // free list
-    rc: AtomicI32,
+pub struct LocalLimiter {
     hit_count: AtomicI64,
     last_update: AtomicU64,
-    _phantom: PhantomData<T>,
+    last_limit: AtomicU32,
+    granularity: i64,
 }
 
-type ShmLimiterData<'a> = LimiterData<&'a ShmLimiterMemory>;
+/// Returns nanoseconds on Unix, milliseconds on Windows (system time granularity is bad there).
+#[cfg(windows)]
+const TIME_PER_SECOND: i64 = 1_000; // milliseconds
+#[cfg(not(windows))]
+const TIME_PER_SECOND: i64 = 1_000_000_000; // nanoseconds
 
-impl<T> LimiterData<T> {
-    /// Returns nanosecons on Unix, milliseconds on Windows.
-    fn now() -> u64 {
-        #[cfg(windows)]
-        let now = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() };
-        #[cfg(not(windows))]
-        let now = std::time::Duration::from(
-            nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC).unwrap(),
-        )
-        .as_nanos() as u64;
-        now
+impl Default for LocalLimiter {
+    fn default() -> Self {
+        LocalLimiter {
+            hit_count: Default::default(),
+            last_update: Default::default(),
+            last_limit: Default::default(),
+            granularity: TIME_PER_SECOND,
+        }
     }
+}
 
+impl LocalLimiter {
+    /// Allows setting a custom time granularity. The default() implementation is 1 second.
+    pub fn with_granularity(seconds: u32) -> LocalLimiter {
+        let mut limiter = LocalLimiter::default();
+        limiter.granularity *= seconds as i64;
+        limiter
+    }
+}
+
+fn now() -> u64 {
     #[cfg(windows)]
-    const TIME_PER_SEC: i64 = 1_000; // milliseconds
+    let now = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() };
     #[cfg(not(windows))]
-    const TIME_PER_SEC: i64 = 1_000_000_000; // nanoseconds
+    let now = std::time::Duration::from(
+        nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC).unwrap(),
+    )
+    .as_nanos() as u64;
+    now
+}
 
-    pub fn inc(&self, limit: u32) -> bool {
-        let now = Self::now();
+impl Limiter for LocalLimiter {
+    fn inc(&self, limit: u32) -> bool {
+        let now = now();
         let last = self.last_update.swap(now, Ordering::SeqCst);
-        let clear_counter = (now as i64 - last as i64) * (limit as i64);
-        let mut previous_hits = self
-            .hit_count
-            .fetch_sub(clear_counter - Self::TIME_PER_SEC, Ordering::SeqCst);
-        if previous_hits < clear_counter - Self::TIME_PER_SEC {
+        // Make sure reducing the limit doesn't stall for a long time
+        let clear_limit = limit.max(self.last_limit.load(Ordering::Relaxed));
+        let clear_counter = (now as i64 - last as i64) * (clear_limit as i64);
+        let subtract = clear_counter - self.granularity;
+        let mut previous_hits = self.hit_count.fetch_sub(subtract, Ordering::SeqCst);
+        // Handle where the limiter goes below zero
+        if previous_hits < subtract {
             let add = clear_counter - previous_hits.max(0);
             self.hit_count.fetch_add(add, Ordering::Acquire);
             previous_hits += add - clear_counter;
         }
-        if previous_hits / Self::TIME_PER_SEC >= limit as i64 {
+        if previous_hits / self.granularity >= limit as i64 {
             self.hit_count
-                .fetch_sub(Self::TIME_PER_SEC, Ordering::Acquire);
+                .fetch_sub(self.granularity, Ordering::Acquire);
             false
         } else {
+            // We don't care about race conditions here:
+            // If the last limit was high enough to increase the previous_hits, we are anyway close
+            // to a number realistic to decrease the count quickly; i.e. we won't stall the limiter
+            // indefinitely when switching from a high to a low limit.
+            self.last_limit.store(limit, Ordering::Relaxed);
             true
         }
     }
+
+    fn rate(&self) -> f64 {
+        let last_limit = self.last_limit.load(Ordering::Relaxed) as f64;
+        let hit_count = self.hit_count.load(Ordering::Relaxed) as f64;
+        (last_limit / hit_count * self.granularity as f64).clamp(0., 1.)
+    }
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct ShmLimiterData<'a> {
+    next_free: AtomicU32, // free list
+    rc: AtomicI32,
+    limiter: LocalLimiter,
+    _phantom: PhantomData<&'a ShmLimiterMemory>,
 }
 
 #[derive(Clone)]
@@ -138,10 +186,14 @@ impl ShmLimiterMemory {
             memory: self.clone(),
         };
         let limiter = reference.limiter();
-        limiter
-            .last_update
-            .store(ShmLimiterData::now(), Ordering::Relaxed);
+        limiter.limiter.last_update.store(now(), Ordering::Relaxed);
         limiter.rc.store(1, Ordering::Relaxed);
+        unsafe {
+            // SAFETY: we initialize the struct here
+            (*(limiter as *const _ as *mut ShmLimiterData))
+                .limiter
+                .granularity = TIME_PER_SECOND;
+        }
         reference
     }
 
@@ -204,16 +256,11 @@ impl ShmLimiter {
 
 impl Limiter for ShmLimiter {
     fn inc(&self, limit: u32) -> bool {
-        self.limiter().inc(limit)
+        self.limiter().limiter.inc(limit)
     }
-}
 
-#[derive(Default)]
-pub struct LocalLimiter(LimiterData<()>);
-
-impl Limiter for LocalLimiter {
-    fn inc(&self, limit: u32) -> bool {
-        self.0.inc(limit)
+    fn rate(&self) -> f64 {
+        self.limiter().limiter.rate()
     }
 }
 
@@ -244,19 +291,28 @@ pub enum AnyLimiter {
     Shm(ShmLimiter),
 }
 
-impl Limiter for AnyLimiter {
-    fn inc(&self, limit: u32) -> bool {
+impl AnyLimiter {
+    fn limiter(&self) -> &dyn Limiter {
         match self {
             AnyLimiter::Local(local) => local as &dyn Limiter,
             AnyLimiter::Shm(shm) => shm as &dyn Limiter,
         }
-        .inc(limit)
+    }
+}
+
+impl Limiter for AnyLimiter {
+    fn inc(&self, limit: u32) -> bool {
+        self.limiter().inc(limit)
+    }
+
+    fn rate(&self) -> f64 {
+        self.limiter().rate()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::shm_limiters::{Limiter, ShmLimiterData, ShmLimiterMemory};
+    use crate::shm_limiters::{Limiter, ShmLimiterData, ShmLimiterMemory, TIME_PER_SECOND};
     use std::sync::atomic::Ordering;
 
     #[test]
@@ -275,8 +331,9 @@ mod tests {
         // reduce 4 times, we're going into negative territory. Next increment will reset to zero.
         limiter
             .limiter()
+            .limiter
             .last_update
-            .fetch_sub(3 * ShmLimiterData::TIME_PER_SEC as u64, Ordering::Relaxed);
+            .fetch_sub(3 * TIME_PER_SECOND as u64, Ordering::Relaxed);
         assert!(limiter.inc(2));
         assert!(limiter.inc(2));
         assert!(limiter.inc(2));
