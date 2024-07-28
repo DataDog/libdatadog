@@ -13,7 +13,7 @@ pub struct ArrayQueue {
     // The actual type here should be Box<crossbeam_queue::ArrayQueue<*mut c_void>>.
     // However, cbindgen does not use the module name crossbeam_queue to generate the C header.
     // So we use NonNull<c_void> here and cast it to the correct type in the FFI functions.
-    inner: *mut c_void,
+    inner: NonNull<c_void>,
     item_delete_fn: unsafe extern "C" fn(*mut c_void) -> c_void,
 }
 
@@ -30,7 +30,9 @@ impl ArrayQueue {
             crossbeam_queue::ArrayQueue::new(capacity);
         // # Safety: internal_queue must be non-null If the memory allocation had failed, the
         // program would panic.
-        let inner = Box::into_raw(Box::new(internal_queue)) as *mut c_void;
+        let inner = unsafe {
+            NonNull::new_unchecked(Box::into_raw(Box::new(internal_queue)) as *mut c_void)
+        };
         Ok(Self {
             inner,
             item_delete_fn,
@@ -44,24 +46,21 @@ impl<'a> ArrayQueue {
     ) -> anyhow::Result<&'a crossbeam_queue::ArrayQueue<*mut c_void>> {
         // # Safety: the inner points to a valid memory location which is a
         // crossbeam_queue::ArrayQueue<*mut c_void>.
-        Ok(unsafe { &*(queue.inner as *mut crossbeam_queue::ArrayQueue<*mut c_void>) })
+        Ok(unsafe { &*(queue.inner.as_ptr() as *mut crossbeam_queue::ArrayQueue<*mut c_void>) })
     }
 }
 
 impl Drop for ArrayQueue {
     fn drop(&mut self) {
-        let raw = std::mem::replace(&mut self.inner, std::ptr::null_mut());
-
-        if !raw.is_null() {
-            // # Safety: the raw pointer is not null and points to a valid memory location.
-            let queue =
-                unsafe { Box::from_raw(raw as *mut crossbeam_queue::ArrayQueue<*mut c_void>) };
-            while let Some(item) = queue.pop() {
-                // # Safety: the item is a valid memory location that can be deallocated by the
-                // item_delete_fn.
-                unsafe {
-                    (self.item_delete_fn)(item);
-                }
+        // # Safety: the inner pointer is not null and points to a valid memory location.
+        let queue = unsafe {
+            Box::from_raw(self.inner.as_ptr() as *mut crossbeam_queue::ArrayQueue<*mut c_void>)
+        };
+        while let Some(item) = queue.pop() {
+            // # Safety: the item is a valid memory location that can be deallocated by the
+            // item_delete_fn.
+            unsafe {
+                (self.item_delete_fn)(item);
             }
         }
     }
@@ -84,7 +83,8 @@ pub extern "C" fn ddog_ArrayQueue_new(
 ) -> ArrayQueueNewResult {
     match ArrayQueue::new(capacity, item_delete_fn) {
         Ok(queue) => ArrayQueueNewResult::Ok(
-            // # Safety: ptr is not null and points to a valid memory location holding an ArrayQueue
+            // # Safety: ptr is not null and points to a valid memory location holding an
+            // ArrayQueue
             unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(queue))) },
         ),
         Err(err) => ArrayQueueNewResult::Err(err.into()),
@@ -306,14 +306,44 @@ mod tests {
     }
 
     #[test]
-    fn test_drop() {
-        let mut queue = ArrayQueue::new(1, drop_item).unwrap();
-
+    fn test_new_drop() {
+        let queue_new_result = ddog_ArrayQueue_new(1, drop_item);
+        assert!(matches!(queue_new_result, ArrayQueueNewResult::Ok(_)));
+        let queue_ptr = match queue_new_result {
+            ArrayQueueNewResult::Ok(ptr) => ptr.as_ptr(),
+            _ => std::ptr::null_mut(),
+        };
         let item = Box::new(1i32);
         let item_ptr = Box::into_raw(item);
+        let item2 = Box::new(2i32);
+        let item2_ptr = Box::into_raw(item2);
+        let item3 = Box::new(3i32);
+        let item3_ptr = Box::into_raw(item3);
         unsafe {
-            let result = ddog_ArrayQueue_push(&mut queue, item_ptr as *mut c_void);
+            let result = ddog_ArrayQueue_push(&mut *queue_ptr, item_ptr as *mut c_void);
             assert!(matches!(result, ArrayQueuePushResult::Ok));
+            let result = ddog_ArrayQueue_push(&mut *queue_ptr, item2_ptr as *mut c_void);
+            assert!(
+                matches!(result, ArrayQueuePushResult::Full(ptr) if ptr == item2_ptr as *mut c_void)
+            );
+            let result = ddog_ArrayQueue_pop(&mut *queue_ptr);
+            assert!(
+                matches!(result, ArrayQueuePopResult::Ok(ptr) if ptr == item_ptr as *mut c_void)
+            );
+            let item_ptr = match result {
+                ArrayQueuePopResult::Ok(ptr) => ptr,
+                _ => std::ptr::null_mut(),
+            };
+            drop(Box::from_raw(item_ptr));
+            ddog_ArrayQueue_drop(queue_ptr);
+            drop(Box::from_raw(item2_ptr));
         }
+    }
+
+    #[test]
+    fn test_capacity_zero() {
+        let queue_new_result = ddog_ArrayQueue_new(0, drop_item);
+        assert!(matches!(queue_new_result,
+                ArrayQueueNewResult::Err(err) if err == Error::from("capacity must be greater than 0")));
     }
 }
