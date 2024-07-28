@@ -34,7 +34,7 @@ int main(void) {
     ddog_Error_drop(&array_queue_new_result.err);
     return 1;
   }
-  std::unique_ptr<ddog_ArrayQueue, Deleter> array_queue(&array_queue_new_result.ok);
+  std::unique_ptr<ddog_ArrayQueue, Deleter> array_queue(array_queue_new_result.ok);
 
   size_t num_threads = 4;
   size_t num_elements = 50;
