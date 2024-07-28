@@ -289,9 +289,9 @@ mod tests {
     macro_rules! assert_is_allowed {
         ($limiter:expr, $ts:expr, $iterations:expr) => {
             for _ in 0..$iterations as u64 {
-                assert_eq!($limiter.is_allowed(Some($ts)), true);
+                assert!($limiter.is_allowed(Some($ts)));
             }
-            assert_eq!($limiter.is_allowed(Some($ts)), false);
+            assert!(!$limiter.is_allowed(Some($ts)));
         };
     }
 
@@ -328,22 +328,16 @@ mod tests {
     fn test_tbrl_is_allowed_capacity_zero(#[values(1e3, 1e6, 1e9)] interval: f64) {
         let mut limiter = TokenBucketRateLimiter::new(0.0, interval);
         let now = duration_since_epoch();
-        for i in 0..1_000_000 as u64 {
-            assert_eq!(
-                limiter.is_allowed(Some(now + Duration::from_nanos(interval as u64 * i))),
-                false
-            );
+        for i in 0..1_000_000_u64 {
+            assert!(!limiter.is_allowed(Some(now + Duration::from_nanos(interval as u64 * i))));
         }
     }
     #[rstest]
     fn test_tbrl_is_allowed_capacity_negative(#[values(1e3, 1e6, 1e9)] interval: f64) {
         let mut limiter = TokenBucketRateLimiter::new(-1.0, interval);
         let now = duration_since_epoch();
-        for i in 0..1_000_000 as u64 {
-            assert_eq!(
-                limiter.is_allowed(Some(now + Duration::from_nanos(interval as u64 * i))),
-                true
-            );
+        for i in 0..1_000_000_u64 {
+            assert!(limiter.is_allowed(Some(now + Duration::from_nanos(interval as u64 * i))));
         }
     }
 
@@ -352,10 +346,9 @@ mod tests {
         let mut limiter = TokenBucketRateLimiter::new(100.0, 1e9);
         let now = duration_since_epoch();
         assert_is_allowed!(limiter, now, 100.0);
-        assert_eq!(
+        assert!(
             // Go back multiple intervals
-            limiter.is_allowed(Some(now - Duration::from_nanos(gap * 1e9 as u64))),
-            false
+            !limiter.is_allowed(Some(now - Duration::from_nanos(gap * 1e9 as u64)))
         );
 
         // We do not process an older window
@@ -369,10 +362,9 @@ mod tests {
         let mut limiter = TokenBucketRateLimiter::new(100.0, 1e9);
         let now = duration_since_epoch();
         assert_is_allowed!(limiter, now, 100.0);
-        assert_eq!(
+        assert!(
             // Go forward multiple intervals
-            limiter.is_allowed(Some(now + Duration::from_nanos(gap * 1e9 as u64)),),
-            true
+            limiter.is_allowed(Some(now + Duration::from_nanos(gap * 1e9 as u64)))
         );
 
         // We reset counters between windows
@@ -388,10 +380,7 @@ mod tests {
         // Increment the interval by just a little to never run out of tokens
         let gap = interval as u64 / 100;
         for i in 0..1_000_000 {
-            assert_eq!(
-                limiter.is_allowed(Some(now + Duration::from_nanos(gap * i))),
-                true
-            );
+            assert!(limiter.is_allowed(Some(now + Duration::from_nanos(gap * i))));
         }
     }
 
