@@ -22,7 +22,8 @@ fn duration_since_epoch() -> Duration {
 /// The effective rate is calculated as the average of the current window rate and the previous
 /// window rate.
 ///
-/// <div class="warning">This implementation is not thread safe, consider wrapping in a <code>Mutex</code></div>
+/// <div class="warning">This implementation is not thread safe, consider wrapping in a
+/// <code>Mutex</code></div>
 ///
 /// # Example
 ///
@@ -92,7 +93,8 @@ impl TokenBucketRateLimiter {
     ///
     /// # Arguments
     ///
-    /// * `ts` - The timestamp of the request as a `Duration` since Unix Epoch. If `None`, the current time is used.
+    /// * `ts` - The timestamp of the request as a `Duration` since Unix Epoch. If `None`, the
+    ///   current time is used.
     ///
     /// # Returns
     ///
@@ -207,10 +209,10 @@ impl TokenBucketRateLimiter {
     /// # Example
     ///
     /// ```rust
+    /// use ddcommon::rate_limiter::TokenBucketRateLimiter;
     /// use std::time::Duration;
     /// use std::time::SystemTime;
     /// use std::time::UNIX_EPOCH;
-    /// use ddcommon::rate_limiter::TokenBucketRateLimiter;
     ///
     /// let mut limiter = TokenBucketRateLimiter::new(100.0, 1e9);
     ///
@@ -251,10 +253,10 @@ impl TokenBucketRateLimiter {
     /// # Example
     ///
     /// ```rust
+    /// use ddcommon::rate_limiter::TokenBucketRateLimiter;
     /// use std::time::Duration;
     /// use std::time::SystemTime;
     /// use std::time::UNIX_EPOCH;
-    /// use ddcommon::rate_limiter::TokenBucketRateLimiter;
     ///
     /// let mut limiter = TokenBucketRateLimiter::new(100.0, 1e9);
     ///
