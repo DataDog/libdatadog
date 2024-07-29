@@ -14,13 +14,13 @@ pub struct ArrayQueue {
     // However, cbindgen does not use the module name crossbeam_queue to generate the C header.
     // So we use NonNull<c_void> here and cast it to the correct type in the FFI functions.
     inner: NonNull<c_void>,
-    item_delete_fn: unsafe extern "C" fn(*mut c_void) -> c_void,
+    item_delete_fn: Option<unsafe extern "C" fn(*mut c_void) -> c_void>,
 }
 
 impl ArrayQueue {
     pub fn new(
         capacity: usize,
-        item_delete_fn: unsafe extern "C" fn(*mut c_void) -> c_void,
+        item_delete_fn: Option<unsafe extern "C" fn(*mut c_void) -> c_void>,
     ) -> anyhow::Result<Self, anyhow::Error> {
         if capacity == 0 {
             return Err(anyhow::anyhow!("capacity must be greater than 0"));
@@ -60,7 +60,9 @@ impl Drop for ArrayQueue {
             // # Safety: the item is a valid memory location that can be deallocated by the
             // item_delete_fn.
             unsafe {
-                (self.item_delete_fn)(item);
+                if let Some(item_delete_fn) = self.item_delete_fn {
+                    item_delete_fn(item);
+                }
             }
         }
     }
@@ -79,7 +81,7 @@ pub enum ArrayQueueNewResult {
 #[must_use]
 pub extern "C" fn ddog_ArrayQueue_new(
     capacity: usize,
-    item_delete_fn: unsafe extern "C" fn(*mut c_void) -> c_void,
+    item_delete_fn: Option<unsafe extern "C" fn(*mut c_void) -> c_void>,
 ) -> ArrayQueueNewResult {
     match ArrayQueue::new(capacity, item_delete_fn) {
         Ok(queue) => ArrayQueueNewResult::Ok(
@@ -307,7 +309,7 @@ mod tests {
 
     #[test]
     fn test_new_drop() {
-        let queue_new_result = ddog_ArrayQueue_new(1, drop_item);
+        let queue_new_result = ddog_ArrayQueue_new(1, Some(drop_item));
         assert!(matches!(queue_new_result, ArrayQueueNewResult::Ok(_)));
         let queue_ptr = match queue_new_result {
             ArrayQueueNewResult::Ok(ptr) => ptr.as_ptr(),
@@ -344,8 +346,21 @@ mod tests {
 
     #[test]
     fn test_capacity_zero() {
-        let queue_new_result = ddog_ArrayQueue_new(0, drop_item);
+        let queue_new_result = ddog_ArrayQueue_new(0, Some(drop_item));
         assert!(matches!(queue_new_result,
                 ArrayQueueNewResult::Err(err) if err == Error::from("capacity must be greater than 0")));
+    }
+
+    #[test]
+    fn test_none_delete_fn() {
+        let queue_new_result = ddog_ArrayQueue_new(1, None);
+        assert!(matches!(queue_new_result, ArrayQueueNewResult::Ok(_)));
+        let queue_ptr = match queue_new_result {
+            ArrayQueueNewResult::Ok(ptr) => ptr.as_ptr(),
+            _ => std::ptr::null_mut(),
+        };
+        unsafe {
+            ddog_ArrayQueue_drop(queue_ptr);
+        }
     }
 }
