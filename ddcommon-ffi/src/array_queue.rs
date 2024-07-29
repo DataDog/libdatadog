@@ -338,7 +338,7 @@ mod tests {
             let result = ddog_ArrayQueue_push(&mut *queue_ptr, item3_ptr as *mut c_void);
             assert!(matches!(result, ArrayQueuePushResult::Ok));
             ddog_ArrayQueue_drop(queue_ptr);
-            drop(Box::from_raw(item2_ptr as *mut i32));
+            drop(Box::from_raw(item2_ptr));
         }
     }
 
