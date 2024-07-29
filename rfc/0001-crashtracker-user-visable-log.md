@@ -1,8 +1,9 @@
-# RFC 0001: Crashtracker Structured Log Format
+# RFC 0001: Crashtracker Structured Log Format (v1)
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED",  "MAY", and "OPTIONAL" in this document are to be interpreted as described in [IETF RFC 2119](https://datatracker.ietf.org/doc/html/rfc2119).
 
 ## Summary
+This document describes version 1 of the crashinfo data format.
 
 ## Motivation
 The `libdatadog` crashtracker detects program crashes.
@@ -21,12 +22,22 @@ A natural language description of the proposed json format is given here.
 An example is given in Appendix A, and the schema is given in Appendix B.
 
 ### Required fields
+- `errortype`:
+    Currently, the only value is "crash", but this allows for extension to capture unhandled soft-errors, e.g. "panic", "uncaught exception", etc.
 - `incomplete`:
-    Boolean `false` if the crashreport is complete (i.e. contains all intended data), `true` if there is important missing data (e.g. the crashtracker itself crashed during stack trace collection).
+    Boolean `false` if the crashreport is complete (i.e. contains all intended data), `true` if there is expected missing data.
+    This can happen becasue the crashtracker is architected to stream data to an out of process receiver, allowing a partial crash report to be emitted even in the case where the crashtracker itself crashed during stack trace collection.
     This MUST be set to `true` if any required field is missing.
-- [TODO] there should probably be an errortype:crash field?
+- `metadata`:
+    Metadata about the system in which the crash occurred:
+    - `library_name`
+    - `library_version`
+    - `family`
+    - `tags`:
+      A set of key:value pairs, representing any tags the crashtracking system wishes to associate with the crash.
+      Examples would include "hostname", "service", and any configuration information the system wishes to track.
 - `os_info`: 
-    The architecture on which the 
+    The OS + processor architecture on which the crash occurred.
 - `stacktrace`: 
     This represents the stack of the crashing thread.
     See below for more details on how stacktraces are formatted.
@@ -51,10 +62,9 @@ Consumers MUST accept json with elided optional fields.
 - `files`:
     The collector MAY collect useful files, such as `/proc/self/maps` or `/proc/meminfo`, and include them here.
     Files are stored as an array of plain text strings, one per line.
-- `metadata`:
-    The library name and version that created this crash report.
-- `proc_info`: Currently, just tracks the PID of the crashing process.  
-             In the future, this may record additional info about the crashing process.
+- `proc_info`: 
+    Currently, just tracks the PID of the crashing process.  
+    In the future, this may record additional info about the crashing process.
 - `siginfo`:
     The name and signal number of the crashing signal (on UNIX systems)
 - `span_ids`: 
@@ -65,12 +75,11 @@ Consumers MUST accept json with elided optional fields.
     A vector of 128 bit numbers, representing the active span ids at the time of program crash.
     The collector SHOULD collect as many as it can, but MAY cap the number of spans that it tracks.
     TODO: What format do users expect here?
-- `tags`:
-    A set of key:value pairs, representing any tags the crashtracking system wishes to associate with the crash.
-    The receiver SHOULD NOT assume that any particular tags will be present. 
 
 ### Extensibility
-
+Future versions of the crashtracker MAY add additional fields.
+Parsers MUST accept unexpected optional fields, either by ignoring them, or by displaying them as additional data.
+The version number SHOULD be incremented for important optional fields, and MUST be incremented when a required field is added or removed.
 
 ### Stacktraces
 Different languages and language runtimes have different representations of a stacktrace.
@@ -81,6 +90,8 @@ This address may be given as an absolute address, or a `NormalizedAddress`, whic
 We follow the [blazezym](https://github.com/libbpf/blazesym) format for normalized addresses.
 For frames where debug information is available, this information is stored in an array of `StackFrameNames`.
 Note that an array is necessary, since a single assembly level instruction may correspond to multiple code locations (e.g. in the case of inlined functions).
+
+
 
 A stack frame can be represented as the following `json` schema, whose `rust` implementation is given in the appendix:
 
