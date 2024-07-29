@@ -138,6 +138,7 @@ NOTE: All of the given fields below are optional.
 ## Appendix A: Example output
 <details>
   <summary>Example Output</summary>
+  
 ```json
 {
   "counters": {
