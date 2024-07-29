@@ -132,65 +132,92 @@ fn read_metric_pair(buf: &mut &[u8]) -> Result<(String, f64), DecodeError> {
 }
 
 fn read_map_strs(buf: &mut &[u8]) -> Result<HashMap<String, String>, DecodeError> {
-    match decode::read_marker(buf)
-        .map_err(|_| DecodeError::InvalidFormat("Unable to read marker for map".to_owned()))?
-    {
-        Marker::FixMap(len) => {
-            let mut map = HashMap::new();
-            for _ in 0..len {
-                let (k, v) = read_str_pair(buf)?;
-                map.insert(k, v);
-            }
-            Ok(map)
-        }
-        _ => Err(DecodeError::InvalidType(
-            "Unable to read map from buffer".to_owned(),
-        )),
-    }
+    let len = read_map_len(buf)?;
+    read_map(len, buf, read_str_pair)
 }
 
 fn read_metrics(buf: &mut &[u8]) -> Result<HashMap<String, f64>, DecodeError> {
-    match decode::read_marker(buf)
-        .map_err(|_| DecodeError::InvalidFormat("Unable to read marker for metrics".to_owned()))?
-    {
-        Marker::FixMap(len) => {
-            let mut metrics = HashMap::new();
-            for _ in 0..len {
-                let (k, v) = read_metric_pair(buf)?;
-                metrics.insert(k, v);
-            }
-            Ok(metrics)
-        }
-        _ => Err(DecodeError::InvalidType(
-            "Unable to read metrics from buffer".to_owned(),
-        )),
-    }
+    let len = read_map_len(buf)?;
+    read_map(len, buf, read_metric_pair)
 }
 
 fn read_meta_struct(buf: &mut &[u8]) -> Result<HashMap<String, Vec<u8>>, DecodeError> {
-    match decode::read_marker(buf).map_err(|_| {
-        DecodeError::InvalidFormat("Unable to read marker for meta_struct".to_owned())
-    })? {
-        Marker::FixMap(len) => {
-            let mut meta_struct = HashMap::new();
-            for _ in 0..len {
-                let k = read_string(buf)?;
-                let mut v = vec![];
-                let array_len = decode::read_array_len(buf).map_err(|_| {
-                    DecodeError::InvalidFormat(
-                        "Unable to read array len for meta_struct".to_owned(),
-                    )
-                })?;
-                for _ in 0..array_len {
-                    let value = read_number(buf)?.try_into()?;
-                    v.push(value);
-                }
-                meta_struct.insert(k, v);
-            }
-            Ok(meta_struct)
+    fn read_meta_struct_pair(buf: &mut &[u8]) -> Result<(String, Vec<u8>), DecodeError> {
+        let k = read_string(buf)?;
+        let mut v = vec![];
+        let array_len = decode::read_array_len(buf).map_err(|_| {
+            DecodeError::InvalidFormat("Unable to read array len for meta_struct".to_owned())
+        })?;
+        for _ in 0..array_len {
+            let value = read_number(buf)?.try_into()?;
+            v.push(value);
         }
+        Ok((k, v))
+    }
+
+    let len = read_map_len(buf)?;
+    read_map(len, buf, read_meta_struct_pair)
+}
+
+/// Reads a map from the buffer and returns it as a `HashMap`.
+///
+/// This function is generic over the key and value types of the map, and it uses a provided
+/// function to read key-value pairs from the buffer.
+///
+/// # Arguments
+///
+/// * `len` - The number of key-value pairs to read from the buffer.
+/// * `buf` - A mutable reference to the buffer containing the encoded map data.
+/// * `read_pair` - A function that reads a key-value pair from the buffer and returns it as a
+///   `Result<(K, V), DecodeError>`.
+///
+/// # Returns
+///
+/// * `Ok(HashMap<K, V>)` - A `HashMap` containing the decoded key-value pairs if successful.
+/// * `Err(DecodeError)` - An error if the decoding process fails.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - The `read_pair` function returns an error while reading a key-value pair.
+///
+/// # Type Parameters
+///
+/// * `K` - The type of the keys in the map. Must implement `std::hash::Hash` and `Eq`.
+/// * `V` - The type of the values in the map.
+/// * `F` - The type of the function used to read key-value pairs from the buffer.
+fn read_map<K, V, F>(
+    len: usize,
+    buf: &mut &[u8],
+    read_pair: F,
+) -> Result<HashMap<K, V>, DecodeError>
+where
+    K: std::hash::Hash + Eq,
+    F: Fn(&mut &[u8]) -> Result<(K, V), DecodeError>,
+{
+    let mut map = HashMap::new();
+    for _ in 0..len {
+        let (k, v) = read_pair(buf)?;
+        map.insert(k, v);
+    }
+    Ok(map)
+}
+
+fn read_map_len(buf: &mut &[u8]) -> Result<usize, DecodeError> {
+    match decode::read_marker(buf)
+        .map_err(|_| DecodeError::InvalidFormat("Unable to read marker for map".to_owned()))?
+    {
+        Marker::FixMap(len) => Ok(len as usize),
+        Marker::Map16 => buf
+            .read_data_u16()
+            .map_err(|_| DecodeError::IOError)
+            .map(|len| len as usize),
+        Marker::Map32 => buf
+            .read_data_u32()
+            .map_err(|_| DecodeError::IOError)
+            .map(|len| len as usize),
         _ => Err(DecodeError::InvalidType(
-            "Unable to read meta_struct from buffer".to_owned(),
+            "Unable to read map from buffer".to_owned(),
         )),
     }
 }
@@ -217,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn test_decoder_meta_struct_success() {
+    fn test_decoder_meta_struct_fixed_map_success() {
         let expected_meta_struct = HashMap::from([
             ("key1".to_string(), vec![1, 2, 3]),
             ("key2".to_string(), vec![4, 5, 6]),
@@ -236,7 +263,26 @@ mod tests {
     }
 
     #[test]
-    fn test_decoder_meta_success() {
+    fn test_decoder_meta_struct_map_16_success() {
+        let expected_meta_struct: HashMap<String, Vec<u8>> = (0..20)
+            .map(|i| (format!("key {}", i), vec![1 + i, 2 + i, 3 + i]))
+            .collect();
+
+        let span = Span {
+            meta_struct: expected_meta_struct.clone(),
+            ..Default::default()
+        };
+        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+        let decoded_traces = from_slice(&mut encoded_data.as_slice()).expect("Decoding failed");
+
+        assert_eq!(1, decoded_traces.len());
+        assert_eq!(1, decoded_traces[0].len());
+        let decoded_span = &decoded_traces[0][0];
+        assert_eq!(expected_meta_struct, decoded_span.meta_struct);
+    }
+
+    #[test]
+    fn test_decoder_meta_fixed_map_success() {
         let expected_meta = HashMap::from([
             ("key1".to_string(), "value1".to_string()),
             ("key2".to_string(), "value2".to_string()),
@@ -255,10 +301,46 @@ mod tests {
     }
 
     #[test]
-    fn test_decoder_metrics_success() {
+    fn test_decoder_meta_map_16_success() {
+        let expected_meta: HashMap<String, String> = (0..20)
+            .map(|i| (format!("key {}", i), format!("value {}", i)))
+            .collect();
+
+        let span = Span {
+            meta: expected_meta.clone(),
+            ..Default::default()
+        };
+        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+        let decoded_traces = from_slice(&mut encoded_data.as_slice()).expect("Decoding failed");
+
+        assert_eq!(1, decoded_traces.len());
+        assert_eq!(1, decoded_traces[0].len());
+        let decoded_span = &decoded_traces[0][0];
+        assert_eq!(expected_meta, decoded_span.meta);
+    }
+
+    #[test]
+    fn test_decoder_metrics_fixed_map_success() {
         let mut span = Span::default();
         let expected_metrics =
             HashMap::from([("metric1".to_string(), 1.23), ("metric2".to_string(), 4.56)]);
+        span.metrics = expected_metrics.clone();
+        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+        let decoded_traces = from_slice(&mut encoded_data.as_slice()).expect("Decoding failed");
+
+        assert_eq!(1, decoded_traces.len());
+        assert_eq!(1, decoded_traces[0].len());
+        let decoded_span = &decoded_traces[0][0];
+        assert_eq!(expected_metrics, decoded_span.metrics);
+    }
+
+    #[test]
+    fn test_decoder_metrics_map16_success() {
+        let mut span = Span::default();
+        let expected_metrics: HashMap<String, f64> = (0..20)
+            .map(|i| (format!("metric{}", i), i as f64))
+            .collect();
+
         span.metrics = expected_metrics.clone();
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let decoded_traces = from_slice(&mut encoded_data.as_slice()).expect("Decoding failed");
