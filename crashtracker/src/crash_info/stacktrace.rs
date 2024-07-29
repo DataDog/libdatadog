@@ -50,7 +50,7 @@ pub struct StackFrame {
     pub symbol_address: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema )]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum NormalizedAddressMeta {
     Apk(PathBuf),
     Elf {

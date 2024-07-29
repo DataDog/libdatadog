@@ -7,7 +7,7 @@ use std::fmt::{Debug, Display, Formatter};
 
 pub use static_assertions::{const_assert, const_assert_ne};
 
-#[derive(Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Eq, PartialEq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct Tag {
     /// Many tags are made from literal strings, such as:
