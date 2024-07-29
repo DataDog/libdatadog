@@ -108,7 +108,7 @@ NOTE: All of the given fields below are optional.
       In some cases, however, backends will just return ip from this function.
     - `module_base_address`:
       The base address of the module to which the frame belongs
-- ** Relative Addresses**
+- **Relative Addresses**
     Addresses expressed as an offset into a given library or executable.
     Can be used by backend symbolication to generate debug names etc.
     These follow the [blazezym](https://github.com/libbpf/blazesym) format for normalized addresses.
@@ -118,7 +118,7 @@ NOTE: All of the given fields below are optional.
       Metadata to allow the backend symbolizer to identify the file that symbol is in.
       Currently, this includes the file type: "Apk", "Elf" or "Unknown", as well as the `path` and `build_id` identifying the file.
 - **Names**
-    
+
 
 
 
