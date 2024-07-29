@@ -10,11 +10,13 @@ use std::{ffi::c_void, ptr::NonNull};
 // A simple wrapper around crossbeam_queue::ArrayQueue<*mut c_void>, which is a lock free
 // bounded multi-producer and multi-consumer (MPMC) queue.
 pub struct ArrayQueue {
-    // The actual type here should be Box<crossbeam_queue::ArrayQueue<*mut c_void>>.
-    // However, cbindgen does not use the module name crossbeam_queue to generate the C header.
-    // So we use NonNull<c_void> here and cast it to the correct type in the FFI functions.
-    inner: NonNull<c_void>,
-    item_delete_fn: Option<unsafe extern "C" fn(*mut c_void) -> c_void>,
+    // The actual type here should be NonNull<crossbeam_queue::ArrayQueue<*mut c_void>>.
+    // However, cbindgen does not use the module name crossbeam_queue to generate the C header, and
+    // above will be generated into ArrayQueue<*void>. So we use NonNull<ArrayQueue> here and cast
+    // it to the correct type in the FFI functions. Also, we use NonNull instead of Box to avoid
+    // getting into trouble with the drop implementation.
+    inner: NonNull<ArrayQueue>,
+    item_delete_fn: unsafe extern "C" fn(*mut c_void) -> c_void,
 }
 
 impl ArrayQueue {
@@ -25,13 +27,14 @@ impl ArrayQueue {
         if capacity == 0 {
             return Err(anyhow::anyhow!("capacity must be greater than 0"));
         }
+        let item_delete_fn = item_delete_fn.context("item_delete_fn must be non-null")?;
 
         let internal_queue: crossbeam_queue::ArrayQueue<*mut c_void> =
             crossbeam_queue::ArrayQueue::new(capacity);
         // # Safety: internal_queue must be non-null If the memory allocation had failed, the
         // program would panic.
         let inner = unsafe {
-            NonNull::new_unchecked(Box::into_raw(Box::new(internal_queue)) as *mut c_void)
+            NonNull::new_unchecked(Box::into_raw(Box::new(internal_queue)) as *mut ArrayQueue)
         };
         Ok(Self {
             inner,
@@ -46,13 +49,14 @@ impl<'a> ArrayQueue {
     ) -> anyhow::Result<&'a crossbeam_queue::ArrayQueue<*mut c_void>> {
         // # Safety: the inner points to a valid memory location which is a
         // crossbeam_queue::ArrayQueue<*mut c_void>.
-        Ok(unsafe { &*(queue.inner.as_ptr() as *mut crossbeam_queue::ArrayQueue<*mut c_void>) })
+        Ok(unsafe { &*(queue.inner.as_ptr() as *const crossbeam_queue::ArrayQueue<*mut c_void>) })
     }
 }
 
 impl Drop for ArrayQueue {
     fn drop(&mut self) {
-        // # Safety: the inner pointer is not null and points to a valid memory location.
+        // # Safety: the inner pointer is not null and points to a valid memory location
+        // holding an crossbeam::ArrayQueue<*mut c_void> created via ArrayQueue::new.
         let queue = unsafe {
             Box::from_raw(self.inner.as_ptr() as *mut crossbeam_queue::ArrayQueue<*mut c_void>)
         };
@@ -60,9 +64,7 @@ impl Drop for ArrayQueue {
             // # Safety: the item is a valid memory location that can be deallocated by the
             // item_delete_fn.
             unsafe {
-                if let Some(item_delete_fn) = self.item_delete_fn {
-                    item_delete_fn(item);
-                }
+                (self.item_delete_fn)(item);
             }
         }
     }
@@ -98,6 +100,8 @@ pub extern "C" fn ddog_ArrayQueue_new(
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_ArrayQueue_drop(queue: *mut ArrayQueue) {
+    // Technically, this function has been designed so if it's double-dropped
+    // then it's okay, but it's not something that should be relied on.
     if !queue.is_null() {
         drop(Box::from_raw(queue));
     }
@@ -354,13 +358,7 @@ mod tests {
     #[test]
     fn test_none_delete_fn() {
         let queue_new_result = ddog_ArrayQueue_new(1, None);
-        assert!(matches!(queue_new_result, ArrayQueueNewResult::Ok(_)));
-        let queue_ptr = match queue_new_result {
-            ArrayQueueNewResult::Ok(ptr) => ptr.as_ptr(),
-            _ => std::ptr::null_mut(),
-        };
-        unsafe {
-            ddog_ArrayQueue_drop(queue_ptr);
-        }
+        assert!(matches!(queue_new_result, ArrayQueueNewResult::Err(err)
+            if err == Error::from("item_delete_fn must be non-null")));
     }
 }
