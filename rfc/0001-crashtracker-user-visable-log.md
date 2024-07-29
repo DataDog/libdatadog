@@ -94,30 +94,43 @@ Note that an array is necessary, since a single assembly level instruction may c
 NOTE: All of the given fields below are optional.
 
 - **Absolute Addresses**
-    The actual in-memory addresses used in the crashing process.
-    Combined with mapping information, such as from `/proc/self/maps`, and the relevant binaries, this can be used to reconstruct relevant symbols.
-    These fields follow the scheme used by the [backtrace crate](https://docs.rs/backtrace/latest/backtrace/struct.Frame.html)
-    - `ip`:
-      The current instruction pointer of this frame.
-      This is normally the next instruction to execute in the frame, but not all implementations list this with 100% accuracy (but it’s generally pretty close).
-    - `sp`:
-      The current stack pointer of this frame.
-    - `symbol_address`:
-      The starting symbol address of the frame of this function.
-      This will attempt to rewind the instruction pointer returned by ip to the start of the function, returning that value.
-      In some cases, however, backends will just return ip from this function.
-    - `module_base_address`:
-      The base address of the module to which the frame belongs
+  The actual in-memory addresses used in the crashing process.
+  Combined with mapping information, such as from `/proc/self/maps`, and the relevant binaries, this can be used to reconstruct relevant symbols.
+  These fields follow the scheme used by the [backtrace crate](https://docs.rs/backtrace/latest/backtrace/struct.Frame.html)
+  - `ip`:
+    The current instruction pointer of this frame.
+    This is normally the next instruction to execute in the frame, but not all implementations list this with 100% accuracy (but it’s generally pretty close).
+  - `sp`:
+    The current stack pointer of this frame.
+  - `symbol_address`:
+    The starting symbol address of the frame of this function.
+    This will attempt to rewind the instruction pointer returned by ip to the start of the function, returning that value.
+    In some cases, however, backends will just return ip from this function.
+  - `module_base_address`:
+    The base address of the module to which the frame belongs
 - **Relative Addresses**
-    Addresses expressed as an offset into a given library or executable.
-    Can be used by backend symbolication to generate debug names etc.
-    These follow the [blazezym](https://github.com/libbpf/blazesym) format for normalized addresses.
-    - `file_offset`: 
-      The relative offset of the symbol, in the base file
-    - `meta`:
-      Metadata to allow the backend symbolizer to identify the file that symbol is in.
-      Currently, this includes the file type: "Apk", "Elf" or "Unknown", as well as the `path` and `build_id` identifying the file.
-- **Names**
+  Addresses expressed as an offset into a given library or executable.
+  Can be used by backend symbolication to generate debug names etc.
+  These follow the [blazezym](https://github.com/libbpf/blazesym) format for normalized addresses.
+  - `file_offset`: 
+    The relative offset of the symbol, in the base file
+  - `meta`:
+    Metadata to allow the backend symbolizer to identify the file that symbol is in.
+    Currently, this includes the file type: "Apk", "Elf" or "Unknown", as well as the `path` and `build_id` identifying the file.
+- **Debug information (e.g. "names")**
+  Human readable debug information representing the location of the stack frame in the high-level code.
+  Note that this is a best effort collection: for optimized code, it may be difficult to associate a given instruction back to file, line and column.
+  Also note that a given stack frame may have more than one associated name, e.g. if function inlining has occurred.
+  - `colno`:
+    The column number in the given file where the symbol was defined.
+  - `filename`:
+    The file name where this function was defined.
+  - `lineno`
+    The line number in the given file where the symbol was defined.
+  - `name`
+    The name of the function.
+    This may or may not include module information.
+    It may or may not be demangled (e.g. "_ZNSt28__atomic_futex_unsigned_base26_M_futex_wait_until_steadyEPjjbNSt6chrono8durationIlSt5ratioILl1ELl1EEEENS2_IlS3_ILl1ELl1000000000EEEE" vs "std::__atomic_futex_unsigned_base::_M_futex_wait_until_steady")
 
 
 
