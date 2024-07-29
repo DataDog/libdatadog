@@ -136,6 +136,8 @@ NOTE: All of the given fields below are optional.
 ### Other data
 
 ## Appendix A: Example output
+<details>
+  <summary>Example Output</summary>
 ```json
 {
   "counters": {
@@ -261,10 +263,15 @@ NOTE: All of the given fields below are optional.
   "uuid": "a42add90-0e60-4799-b9f7-cbe0ebec4f27"
 }
 ```
+</details>
 
 ## Appendix B: Rust implementation of stacktrace format
 
 ## Appendic C: Json Schema
+
+<details>
+  <summary>Json Schema</summary>
+
 ``` json
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
@@ -693,3 +700,5 @@ NOTE: All of the given fields below are optional.
   }
 }
 ```
+</details>
+
