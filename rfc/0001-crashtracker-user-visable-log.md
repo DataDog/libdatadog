@@ -138,7 +138,7 @@ NOTE: All of the given fields below are optional.
 ## Appendix A: Example output
 <details>
   <summary>Example Output</summary>
-  
+
 ```json
 {
   "counters": {
@@ -266,9 +266,7 @@ NOTE: All of the given fields below are optional.
 ```
 </details>
 
-## Appendix B: Rust implementation of stacktrace format
-
-## Appendic C: Json Schema
+## Appendix B: Json Schema
 
 <details>
   <summary>Json Schema</summary>
