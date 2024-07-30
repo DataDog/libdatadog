@@ -1,11 +1,10 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct StackFrameNames {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
@@ -21,14 +20,8 @@ pub struct StackFrameNames {
     pub name: Option<String>,
 }
 
-#[test]
-fn schema() {
-    let schema = schemars::schema_for!(StackFrame);
-    println!("{}", serde_json::to_string_pretty(&schema).unwrap());
-}
-
 /// All fields are hex encoded integers.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StackFrame {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
@@ -50,7 +43,7 @@ pub struct StackFrame {
     pub symbol_address: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum NormalizedAddressMeta {
     Apk(PathBuf),
     Elf {
@@ -61,7 +54,7 @@ pub enum NormalizedAddressMeta {
     Unexpected(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NormalizedAddress {
     pub file_offset: u64,
     pub meta: NormalizedAddressMeta,
