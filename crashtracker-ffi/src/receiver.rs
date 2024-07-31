@@ -17,9 +17,9 @@ use ddcommon_ffi::{slice::AsBytes, CharSlice};
 /// description.
 /// # Safety
 /// No safety concerns
-pub unsafe extern "C" fn ddog_crashtracker_receiver_entry_point_stdin() -> Result {
+pub unsafe extern "C" fn ddog_crasht_receiver_entry_point_stdin() -> Result {
     datadog_crashtracker::receiver_entry_point_stdin()
-        .context("ddog_crashtracker_receiver_entry_point_stdin failed")
+        .context("ddog_crasht_receiver_entry_point_stdin failed")
         .into()
 }
 
@@ -36,13 +36,13 @@ pub unsafe extern "C" fn ddog_crashtracker_receiver_entry_point_stdin() -> Resul
 /// description.
 /// # Safety
 /// No safety concerns
-pub unsafe extern "C" fn ddog_crashtracker_receiver_entry_point_unix_socket(
+pub unsafe extern "C" fn ddog_crasht_receiver_entry_point_unix_socket(
     socket_path: CharSlice,
 ) -> Result {
     (|| {
         let socket_path = socket_path.try_to_utf8()?;
         datadog_crashtracker::reciever_entry_point_unix_socket(socket_path)
     })()
-    .context("ddog_crashtracker_receiver_entry_point_unix_socket failed")
+    .context("ddog_crasht_receiver_entry_point_unix_socket failed")
     .into()
 }
