@@ -107,9 +107,10 @@ int main(void) {
 
   add_stacktrace(crashinfo);
 
+  ddog_Timespec timestamp = {.seconds = 1568899800, .nanoseconds = 0};
   // Datadog IPO at 2019-09-19T13:30:00Z = 1568899800 unix
   check_result(ddog_crasht_CrashInfo_set_timestamp(
-                   crashinfo.get(), (ddog_Timespec){.seconds = 1568899800, .nanoseconds = 0}),
+                   crashinfo.get(), timestamp),
                "Failed to set timestamp");
 
   auto endpoint = ddog_endpoint_from_filename(to_slice_c_char("/tmp/test"));
