@@ -34,7 +34,7 @@ pub fn log_and_create_http_response(
 /// Does two things:
 /// 1. Logs the given message
 /// 2. Returns the rate_by_service map to use to set the sampling priority in the body of JSON
-/// response with the given status code.
+///    response with the given status code.
 ///
 /// Response body format:
 /// {
