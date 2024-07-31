@@ -17,6 +17,15 @@ use rmp::{
 };
 use std::{collections::HashMap, f64};
 
+// TODO: EK - TEMPORARY FOR TESTING
+
+pub fn buggy_add(x: u32, y: u32) -> u32 {
+    if x % 37 == 0 || y % 39 == 0 {
+        return x.wrapping_sub(y);
+    }
+    return x.wrapping_add(y);
+}
+
 /// Decodes a slice of bytes into a vector of `TracerPayloadV04` objects.
 ///
 ///
@@ -496,5 +505,57 @@ mod tests {
             )),
             result
         );
+    }
+
+
+    use bolero::check;
+    use datadog_trace_protobuf::pb::Span;
+    use rmp_serde::to_vec_named;
+
+    // #[test]
+    // fn fuzz_from_slice() {
+    //     check!()
+    //         .with_type::<(String, String, String, String, String, String, String, String, u64, u64, u64, i64)>()
+    //         .cloned()
+    //         .for_each(|(name, service, resource, span_type, meta_key, meta_value, metric_key, metric_value, trace_id, span_id, parent_id, start)| {
+    //             let span = Span {
+    //                 name,
+    //                 service,
+    //                 resource,
+    //                 r#type: span_type,
+    //                 meta: HashMap::from([(meta_key, meta_value)]),
+    //                 metrics: HashMap::from([(metric_key, metric_value.parse::<f64>().unwrap_or_default())]),
+    //                 trace_id,
+    //                 span_id,
+    //                 parent_id,
+    //                 start,
+    //                 ..Default::default()
+    //             };
+    //             let encoded_data = to_vec_named(&vec![vec![span]]).unwrap();
+    //             let result = from_slice(&mut encoded_data.as_slice());
+    //             println!("result: {:?}", result);
+    //
+    //             assert!(result.is_ok());
+    //         });
+    // }
+
+    #[test]
+    fn testing_start_field_bug() {
+        // let start_val: i64 =  72_057_594_037_927_936;
+        let mut start_val: i64 =  4000;
+        while start_val < 72_057_594_037_927_936 {
+            let span = Span {
+                start: start_val,
+                ..Default::default()
+            };
+
+            let encoded_data = to_vec_named(&vec![vec![span]]).unwrap();
+            println!("encoded_data: {:?}", encoded_data);
+            let result = from_slice(&mut encoded_data.as_slice());
+            println!("result: {:?}", result);
+
+            assert!(result.is_ok());
+            start_val = start_val * 10;
+        }
     }
 }

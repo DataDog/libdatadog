@@ -1623,6 +1623,8 @@ name = "datadog-trace-utils"
 version = "11.0.0"
 dependencies = [
  "anyhow",
+ "bolero",
+ "bolero-generator",
  "bytes",
  "cargo_metadata",
  "criterion",

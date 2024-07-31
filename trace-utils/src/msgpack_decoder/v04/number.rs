@@ -5,6 +5,7 @@ use super::error::DecodeError;
 use rmp::{decode::RmpRead, Marker};
 use std::fmt;
 
+#[derive(Debug, PartialEq)]
 pub enum Number {
     U8(u8),
     U32(u32),
@@ -88,6 +89,7 @@ impl TryFrom<Number> for u64 {
 impl TryFrom<Number> for i64 {
     type Error = DecodeError;
     fn try_from(value: Number) -> Result<Self, Self::Error> {
+        println!("value: {:?}", value);
         match value {
             Number::U8(val) => Ok(val as i64),
             Number::U32(val) => Ok(val as i64),
