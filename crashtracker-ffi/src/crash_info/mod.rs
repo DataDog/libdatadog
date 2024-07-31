@@ -218,7 +218,9 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_set_timestamp(
 /// `crashinfo` must be a valid pointer to a `CrashInfo` object.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crasht_CrashInfo_set_timestamp_to_now(crashinfo: *mut CrashInfo) -> Result {
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_set_timestamp_to_now(
+    crashinfo: *mut CrashInfo,
+) -> Result {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         crashinfo.set_timestamp_to_now()
