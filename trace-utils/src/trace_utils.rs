@@ -10,6 +10,7 @@ use rmpv::decode::read_value;
 use rmpv::{Integer, Value};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::env;
 
 pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::send_data::SendData;
@@ -455,10 +456,21 @@ pub enum EnvironmentType {
     LambdaFunction,
 }
 
-#[derive(Clone, Default, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MiniAgentMetadata {
     pub gcp_project_id: Option<String>,
     pub gcp_region: Option<String>,
+    pub version: Option<String>,
+}
+
+impl Default for MiniAgentMetadata {
+    fn default() -> Self {
+        MiniAgentMetadata {
+            gcp_project_id: Default::default(),
+            gcp_region: Default::default(),
+            version: env::var("DD_MINI_AGENT_VERSION").ok(),
+        }
+    }
 }
 
 pub fn enrich_span_with_mini_agent_metadata(
@@ -473,9 +485,15 @@ pub fn enrich_span_with_mini_agent_metadata(
         span.meta
             .insert("location".to_string(), gcp_region.to_string());
     }
+    if let Some(mini_agent_version) = &mini_agent_metadata.version {
+        span.meta.insert(
+            "_dd.mini_agent_version".to_string(),
+            mini_agent_version.to_string(),
+        );
+    }
 }
 
-pub fn enrich_span_with_azure_metadata(span: &mut pb::Span, mini_agent_version: &str) {
+pub fn enrich_span_with_azure_metadata(span: &mut pb::Span) {
     if let Some(aas_metadata) = azure_app_services::get_function_metadata() {
         let aas_tags = [
             ("aas.resource.id", aas_metadata.get_resource_id()),
@@ -488,7 +506,6 @@ pub fn enrich_span_with_azure_metadata(span: &mut pb::Span, mini_agent_version: 
                 aas_metadata.get_instance_name(),
             ),
             ("aas.subscription.id", aas_metadata.get_subscription_id()),
-            ("aas.environment.mini_agent_version", mini_agent_version),
             ("aas.environment.os", aas_metadata.get_operating_system()),
             ("aas.environment.runtime", aas_metadata.get_runtime()),
             (
