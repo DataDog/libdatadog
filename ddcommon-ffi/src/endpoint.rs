@@ -15,6 +15,13 @@ pub extern "C" fn ddog_endpoint_from_url(url: crate::CharSlice) -> Option<Box<En
         .map(|url| Box::new(Endpoint::from_url(url)))
 }
 
+#[no_mangle]
+#[must_use]
+pub extern "C" fn ddog_endpoint_from_filename(filename: crate::CharSlice) -> Option<Box<Endpoint>> {
+    let url = format!("file://{}", filename.to_utf8_lossy());
+    Some(Box::new(Endpoint::from_slice(&url)))
+}
+
 // We'll just specify the base site here. If api key provided, different intakes need to use their
 // own subdomains.
 #[no_mangle]

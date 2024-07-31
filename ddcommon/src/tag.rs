@@ -14,6 +14,7 @@ pub struct Tag {
     ///  - "language:native"
     ///  - "src_library:libdatadog"
     ///  - "type:timeout"
+    ///
     /// So being able to save allocations is nice.
     value: Cow<'static, str>,
 }

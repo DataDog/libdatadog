@@ -631,10 +631,11 @@ mod tests {
         );
     }
 
-    #[cfg(tcp)]
+    #[cfg(feature = "tcp")]
     #[tokio::test]
     async fn tcp() -> io::Result<()> {
         use super::tcp;
+        use futures::{SinkExt, StreamExt};
 
         let mut listener = tcp::listen("0.0.0.0:0", SymmetricalJson::<String>::default).await?;
         let addr = listener.local_addr();

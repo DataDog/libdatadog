@@ -73,9 +73,8 @@ pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
 
 /// normalize_chunk takes a trace chunk and
 /// * populates origin field if it wasn't populated
-/// * populates priority field if it wasn't populated
-/// the root span is used to populate these fields, and it's index in TraceChunk spans vec must be
-/// passed.
+/// * populates priority field if it wasn't populated the root span is used to populate these
+///   fields, and it's index in TraceChunk spans vec must be passed.
 pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root_span_index: usize) -> anyhow::Result<()> {
     // check if priority is not populated
     let root_span = match chunk.spans.get(root_span_index) {
