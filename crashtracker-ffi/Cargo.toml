@@ -9,7 +9,6 @@ rust-version.workspace = true
 license.workspace = true
 
 [lib]
-#FIXME: should this be like profiling-ffi or like ddcommon-ffi?
 bench =false
 
 [features]
