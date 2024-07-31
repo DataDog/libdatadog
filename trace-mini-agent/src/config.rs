@@ -19,7 +19,6 @@ pub struct Config {
     pub env_type: trace_utils::EnvironmentType,
     pub function_name: Option<String>,
     pub max_request_content_length: usize,
-    pub mini_agent_version: String,
     pub obfuscation_config: obfuscation_config::ObfuscationConfig,
     pub os: String,
     /// how often to flush stats, in seconds
@@ -62,8 +61,6 @@ impl Config {
             )
         })?;
 
-        let mini_agent_version: String = env!("CARGO_PKG_VERSION").to_string();
-
         Ok(Config {
             function_name: Some(function_name),
             env_type,
@@ -84,7 +81,6 @@ impl Config {
                 ..Default::default()
             },
             obfuscation_config,
-            mini_agent_version,
         })
     }
 }
