@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
   //  struct ddog_Endpoint * endpoint =
   //      ddog_endpoint_from_url(DDOG_CHARSLICE_C("http://localhost:8126"));
 
-  ddog_crasht_Configuration config = {
+  ddog_crasht_Config config = {
       .create_alt_stack = false,
       .endpoint = endpoint,
       .resolve_frames = DDOG_CRASHT_STACKTRACE_COLLECTION_ENABLED_WITH_INPROCESS_SYMBOLS,
@@ -71,8 +71,7 @@ int main(int argc, char **argv) {
   handle_result(ddog_crasht_init_with_receiver(config, receiver_config, metadata));
   ddog_endpoint_drop(endpoint);
 
-  handle_result(
-      ddog_crasht_begin_profiling_op(DDOG_CRASHT_PROFILING_OP_TYPES_SERIALIZING));
+  handle_result(ddog_crasht_begin_profiling_op(DDOG_CRASHT_PROFILING_OP_TYPES_SERIALIZING));
   handle_uintptr_t_result(ddog_crasht_insert_span_id(0, 42));
   handle_uintptr_t_result(ddog_crasht_insert_trace_id(1, 1));
 

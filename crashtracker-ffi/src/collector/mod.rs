@@ -55,7 +55,7 @@ pub unsafe extern "C" fn ddog_crasht_shutdown() -> Result {
 ///   This function is not atomic. A crash during its execution may lead to
 ///   unexpected crash-handling behaviour.
 pub unsafe extern "C" fn ddog_crasht_update_on_fork(
-    config: Configuration,
+    config: Config,
     receiver_config: ReceiverConfig,
     metadata: Metadata,
 ) -> Result {
@@ -82,7 +82,7 @@ pub unsafe extern "C" fn ddog_crasht_update_on_fork(
 ///   This function is not atomic. A crash during its execution may lead to
 ///   unexpected crash-handling behaviour.
 pub unsafe extern "C" fn ddog_crasht_init_with_receiver(
-    config: Configuration,
+    config: Config,
     receiver_config: ReceiverConfig,
     metadata: Metadata,
 ) -> Result {

@@ -58,7 +58,7 @@ impl<'a> TryFrom<ReceiverConfig<'a>> for datadog_crashtracker::CrashtrackerRecei
 }
 
 #[repr(C)]
-pub struct Configuration<'a> {
+pub struct Config<'a> {
     pub additional_files: Slice<'a, CharSlice<'a>>,
     pub create_alt_stack: bool,
     /// The endpoint to send the crash report to (can be a file://).
@@ -69,9 +69,9 @@ pub struct Configuration<'a> {
     pub wait_for_receiver: bool,
 }
 
-impl<'a> TryFrom<Configuration<'a>> for datadog_crashtracker::CrashtrackerConfiguration {
+impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration {
     type Error = anyhow::Error;
-    fn try_from(value: Configuration<'a>) -> anyhow::Result<Self> {
+    fn try_from(value: Config<'a>) -> anyhow::Result<Self> {
         let additional_files = {
             let mut vec = Vec::with_capacity(value.additional_files.len());
             for x in value.additional_files.iter() {
