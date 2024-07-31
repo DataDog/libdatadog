@@ -24,7 +24,6 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 anyhow = "1.0"
-chrono = {version = "0.4", default-features = false }
 datadog-crashtracker = { path = "../crashtracker" }
 ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }

@@ -31,7 +31,6 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 anyhow = "1.0"
-chrono = {version = "0.4", default-features = false }
 datadog-crashtracker-ffi = { path = "../crashtracker-ffi", default-features = false, optional = true} 
 datadog-profiling = { path = "../profiling" }
 hyper = { version = "0.14", default-features = false }

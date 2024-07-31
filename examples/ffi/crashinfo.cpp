@@ -57,16 +57,17 @@ void add_stacktrace(std::unique_ptr<ddog_crasht_CrashInfo, Deleter> &crashinfo) 
   std::vector<ddog_crasht_StackFrame> trace;
   for (uintptr_t i = 0; i < 20; ++i) {
     ddog_crasht_StackFrame frame = {.ip = i,
-                                          .module_base_address = 0,
-                                          .names = {.ptr = &names[i], .len = 1},
-                                          .sp = 0,
-                                          .symbol_address = 0};
+                                    .module_base_address = 0,
+                                    .names = {.ptr = &names[i], .len = 1},
+                                    .sp = 0,
+                                    .symbol_address = 0};
     trace.push_back(frame);
   }
   ddog_crasht_Slice_StackFrame trace_slice = {.ptr = trace.data(), .len = trace.size()};
 
-  check_result(ddog_crasht_CrashInfo_set_stacktrace(crashinfo.get(), to_slice_c_char(""), trace_slice),
-               "Failed to set stacktrace");
+  check_result(
+      ddog_crasht_CrashInfo_set_stacktrace(crashinfo.get(), to_slice_c_char(""), trace_slice),
+      "Failed to set stacktrace");
 }
 
 int main(void) {
@@ -92,9 +93,10 @@ int main(void) {
   };
 
   // TODO: We should set more tags that are expected by telemetry
-  check_result(ddog_crasht_CrashInfo_set_metadata(crashinfo.get(), metadata), "Failed to add metadata");
+  check_result(ddog_crasht_CrashInfo_set_metadata(crashinfo.get(), metadata),
+               "Failed to add metadata");
   check_result(ddog_crasht_CrashInfo_add_tag(crashinfo.get(), to_slice_c_char("best hockey team"),
-                                      to_slice_c_char("Habs")),
+                                             to_slice_c_char("Habs")),
                "Failed to add tag");
 
   // This API allows one to capture useful files (e.g. /proc/pid/maps)
@@ -106,7 +108,8 @@ int main(void) {
   add_stacktrace(crashinfo);
 
   // Datadog IPO at 2019-09-19T13:30:00Z = 1568899800 unix
-  check_result(ddog_crasht_CrashInfo_set_timestamp(crashinfo.get(), 1568899800, 0),
+  check_result(ddog_crasht_CrashInfo_set_timestamp(
+                   crashinfo.get(), (ddog_Timespec){.seconds = 1568899800, .nanoseconds = 0}),
                "Failed to set timestamp");
 
   auto endpoint = ddog_endpoint_from_filename(to_slice_c_char("/tmp/test"));

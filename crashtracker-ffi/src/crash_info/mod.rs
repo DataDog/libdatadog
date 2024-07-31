@@ -6,9 +6,8 @@ pub use datatypes::*;
 
 use crate::{option_from_char_slice, Result};
 use anyhow::Context;
-use chrono::DateTime;
 use ddcommon::Endpoint;
-use ddcommon_ffi::{slice::AsBytes, CharSlice, Slice};
+use ddcommon_ffi::{slice::AsBytes, CharSlice, Slice, Timespec};
 
 /// Create a new crashinfo, and returns an opaque reference to it.
 /// # Safety
@@ -86,12 +85,12 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_add_counter(
 #[must_use]
 pub unsafe extern "C" fn ddog_crasht_CrashInfo_add_file(
     crashinfo: *mut CrashInfo,
-    name: CharSlice,
+    filename: CharSlice,
 ) -> Result {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
-        let name = name.to_utf8_lossy();
-        crashinfo.add_file(&name)
+        let filename = filename.to_utf8_lossy();
+        crashinfo.add_file(&filename)
     })()
     .context("ddog_crasht_CrashInfo_add_file failed")
     .into()
@@ -199,14 +198,11 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_set_stacktrace(
 #[must_use]
 pub unsafe extern "C" fn ddog_crasht_CrashInfo_set_timestamp(
     crashinfo: *mut CrashInfo,
-    secs: i64,
-    nsecs: u32,
+    ts: Timespec,
 ) -> Result {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
-        let ts = DateTime::from_timestamp(secs, nsecs)
-            .with_context(|| format!("Invalid timestamp {secs} {nsecs}"))?;
-        crashinfo.set_timestamp(ts)
+        crashinfo.set_timestamp(ts.into())
     })()
     .context("ddog_crasht_CrashInfo_set_timestamp_to_now failed")
     .into()

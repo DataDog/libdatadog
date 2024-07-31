@@ -1349,7 +1349,6 @@ version = "11.0.0"
 dependencies = [
  "anyhow",
  "build_common",
- "chrono",
  "datadog-crashtracker",
  "ddcommon",
  "ddcommon-ffi",
@@ -1449,7 +1448,6 @@ version = "11.0.0"
 dependencies = [
  "anyhow",
  "build_common",
- "chrono",
  "data-pipeline-ffi",
  "datadog-crashtracker-ffi",
  "datadog-profiling",
@@ -1694,6 +1692,7 @@ version = "11.0.0"
 dependencies = [
  "anyhow",
  "build_common",
+ "chrono",
  "ddcommon",
  "hyper 0.14.28",
 ]
