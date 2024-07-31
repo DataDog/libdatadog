@@ -305,6 +305,7 @@ pub unsafe extern "C" fn ddog_ArrayQueue_capacity(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bolero::TypeGenerator;
 
     unsafe extern "C" fn drop_item(item: *mut c_void) -> c_void {
         _ = Box::from_raw(item as *mut i32);
@@ -360,5 +361,130 @@ mod tests {
         let queue_new_result = ddog_ArrayQueue_new(1, None);
         assert!(matches!(queue_new_result, ArrayQueueNewResult::Err(err)
             if err == Error::from("item_delete_fn must be non-null")));
+    }
+
+    #[derive(Debug, TypeGenerator)]
+    enum Operation {
+        Push,
+        ForcePush,
+        Pop,
+        IsEmpty,
+        Len,
+        IsFull,
+    }
+
+    #[test]
+    fn fuzz() {
+        let capacity_gen = 1..=32usize;
+        let ops_gen = Vec::<Operation>::gen();
+
+        bolero::check!()
+            .with_generator((capacity_gen, ops_gen))
+            .for_each(|(capacity, ops)| {
+                let queue_new_result = ddog_ArrayQueue_new(*capacity, Some(drop_item));
+                assert!(matches!(queue_new_result, ArrayQueueNewResult::Ok(_)));
+                let queue_ptr = match queue_new_result {
+                    ArrayQueueNewResult::Ok(ptr) => ptr.as_ptr(),
+                    _ => std::ptr::null_mut(),
+                };
+
+                let mut cnt = 0;
+
+                for op in ops {
+                    match op {
+                        Operation::Push => {
+                            let item = Box::new(cnt);
+                            let item_ptr = Box::into_raw(item);
+                            let result = unsafe {
+                                ddog_ArrayQueue_push(&mut *queue_ptr, item_ptr as *mut c_void)
+                            };
+                            match result {
+                                ArrayQueuePushResult::Ok => {
+                                    cnt += 1;
+                                }
+                                ArrayQueuePushResult::Full(ptr) => {
+                                    assert_eq!(ptr, item_ptr as *mut c_void);
+                                    unsafe {
+                                        drop(Box::from_raw(ptr as *mut i32));
+                                    }
+                                }
+                                ArrayQueuePushResult::Err(_) => {
+                                    panic!("push failed");
+                                }
+                            }
+                        }
+                        Operation::ForcePush => {
+                            let item = Box::new(cnt);
+                            let item_ptr = Box::into_raw(item);
+                            let result = unsafe {
+                                ddog_ArrayQueue_force_push(&mut *queue_ptr, item_ptr as *mut c_void)
+                            };
+                            match result {
+                                ArrayQueuePushResult::Ok => {
+                                    cnt += 1;
+                                }
+                                ArrayQueuePushResult::Full(ptr) => {
+                                    unsafe {
+                                        drop(Box::from_raw(ptr as *mut i32));
+                                    }
+                                }
+                                ArrayQueuePushResult::Err(_) => {
+                                    panic!("force_push failed");
+                                }
+                            }
+                        }
+                        Operation::Pop => {
+                            let result = unsafe { ddog_ArrayQueue_pop(&mut *queue_ptr) };
+                            match result {
+                                ArrayQueuePopResult::Ok(ptr) => {
+                                    unsafe {
+                                        drop(Box::from_raw(ptr as *mut i32));
+                                    }
+                                    cnt -= 1;
+                                }
+                                ArrayQueuePopResult::Empty => {
+                                    assert_eq!(cnt, 0);
+                                }
+                                ArrayQueuePopResult::Err(_) => {
+                                    panic!("pop failed");
+                                }
+                            }
+                        }
+                        Operation::IsEmpty => {
+                            let result = unsafe { ddog_ArrayQueue_is_empty(&mut *queue_ptr) };
+                            match result {
+                                ArrayQueueBoolResult::Ok(is_empty) => {
+                                    assert_eq!(is_empty, cnt == 0);
+                                }
+                                ArrayQueueBoolResult::Err(_) => {
+                                    panic!("is_empty failed");
+                                }
+                            }
+                        }
+                        Operation::Len => {
+                            let result = unsafe { ddog_ArrayQueue_len(&mut *queue_ptr) };
+                            match result {
+                                ArrayQueueUsizeResult::Ok(len) => {
+                                    assert_eq!(len, cnt);
+                                }
+                                ArrayQueueUsizeResult::Err(_) => {
+                                    panic!("len failed");
+                                }
+                            }
+                        }
+                        Operation::IsFull => {
+                            let result = unsafe { ddog_ArrayQueue_is_full(&mut *queue_ptr) };
+                            match result {
+                                ArrayQueueBoolResult::Ok(is_full) => {
+                                    assert_eq!(is_full, cnt == *capacity);
+                                }
+                                ArrayQueueBoolResult::Err(_) => {
+                                    panic!("is_full failed");
+                                }
+                            }
+                        }
+                    }
+                }
+            })
     }
 }

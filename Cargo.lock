@@ -1686,6 +1686,7 @@ name = "ddcommon-ffi"
 version = "11.0.0"
 dependencies = [
  "anyhow",
+ "bolero",
  "build_common",
  "crossbeam-queue",
  "ddcommon",

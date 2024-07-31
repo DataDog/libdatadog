@@ -23,3 +23,6 @@ anyhow = "1.0"
 crossbeam-queue = "0.3.11"
 ddcommon = { path = "../ddcommon" }
 hyper = {version = "0.14", default-features = false}
+
+[dev-dependencies]
+bolero = "0.10.1"
