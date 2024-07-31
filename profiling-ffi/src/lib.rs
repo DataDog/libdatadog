@@ -14,7 +14,7 @@ mod profiles;
 
 // re-export crashtracker ffi
 #[cfg(feature = "crashtracker-ffi")]
-pub use crashtracker_ffi::*;
+pub use datadog_crashtracker_ffi::*;
 
 // re-export telemetry ffi
 #[cfg(feature = "ddtelemetry-ffi")]

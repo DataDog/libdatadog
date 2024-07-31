@@ -1120,21 +1120,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crashtracker-ffi"
-version = "11.0.0"
-dependencies = [
- "anyhow",
- "build_common",
- "chrono",
- "datadog-crashtracker",
- "ddcommon",
- "ddcommon-ffi",
- "hyper 0.14.28",
- "symbolic-common",
- "symbolic-demangle",
-]
-
-[[package]]
 name = "crc32fast"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1359,6 +1344,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-crashtracker-ffi"
+version = "11.0.0"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "chrono",
+ "datadog-crashtracker",
+ "ddcommon",
+ "ddcommon-ffi",
+ "hyper 0.14.28",
+ "symbolic-common",
+ "symbolic-demangle",
+]
+
+[[package]]
 name = "datadog-ddsketch"
 version = "11.0.0"
 dependencies = [
@@ -1450,8 +1450,8 @@ dependencies = [
  "anyhow",
  "build_common",
  "chrono",
- "crashtracker-ffi",
  "data-pipeline-ffi",
+ "datadog-crashtracker-ffi",
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
