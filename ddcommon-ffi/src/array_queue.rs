@@ -19,6 +19,9 @@ pub struct ArrayQueue {
     item_delete_fn: unsafe extern "C" fn(*mut c_void) -> c_void,
 }
 
+unsafe impl Sync for ArrayQueue {}
+unsafe impl Send for ArrayQueue {}
+
 impl ArrayQueue {
     pub fn new(
         capacity: usize,
@@ -45,7 +48,7 @@ impl ArrayQueue {
 
 impl<'a> ArrayQueue {
     pub fn as_inner_ref(
-        queue: &'a mut ArrayQueue,
+        queue: &'a ArrayQueue,
     ) -> anyhow::Result<&'a crossbeam_queue::ArrayQueue<*mut c_void>> {
         // # Safety: the inner points to a valid memory location which is a
         // crossbeam_queue::ArrayQueue<*mut c_void>.
@@ -137,7 +140,7 @@ impl From<Result<Result<(), *mut c_void>, anyhow::Error>> for ArrayQueuePushResu
 /// is null or points to a valid memory location that can be deallocated by the item_delete_fn.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_ArrayQueue_push(
-    queue_ptr: &mut ArrayQueue,
+    queue_ptr: &ArrayQueue,
     value: *mut c_void,
 ) -> ArrayQueuePushResult {
     (|| {
@@ -167,7 +170,7 @@ impl From<Result<Option<*mut c_void>, anyhow::Error>> for ArrayQueuePushResult {
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_ArrayQueue_force_push(
-    queue_ptr: &mut ArrayQueue,
+    queue_ptr: &ArrayQueue,
     value: *mut c_void,
 ) -> ArrayQueuePushResult {
     (|| {
@@ -203,7 +206,7 @@ impl From<anyhow::Result<Option<*mut c_void>>> for ArrayQueuePopResult {
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ArrayQueue_pop(queue_ptr: &mut ArrayQueue) -> ArrayQueuePopResult {
+pub unsafe extern "C" fn ddog_ArrayQueue_pop(queue_ptr: &ArrayQueue) -> ArrayQueuePopResult {
     (|| {
         let queue = ArrayQueue::as_inner_ref(queue_ptr)?;
         anyhow::Ok(queue.pop())
@@ -232,9 +235,7 @@ impl From<anyhow::Result<bool>> for ArrayQueueBoolResult {
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ArrayQueue_is_empty(
-    queue_ptr: &mut ArrayQueue,
-) -> ArrayQueueBoolResult {
+pub unsafe extern "C" fn ddog_ArrayQueue_is_empty(queue_ptr: &ArrayQueue) -> ArrayQueueBoolResult {
     (|| {
         let queue = ArrayQueue::as_inner_ref(queue_ptr)?;
         anyhow::Ok(queue.is_empty())
@@ -263,7 +264,7 @@ impl From<anyhow::Result<usize>> for ArrayQueueUsizeResult {
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ArrayQueue_len(queue_ptr: &mut ArrayQueue) -> ArrayQueueUsizeResult {
+pub unsafe extern "C" fn ddog_ArrayQueue_len(queue_ptr: &ArrayQueue) -> ArrayQueueUsizeResult {
     (|| {
         let queue = ArrayQueue::as_inner_ref(queue_ptr)?;
         anyhow::Ok(queue.len())
@@ -276,9 +277,7 @@ pub unsafe extern "C" fn ddog_ArrayQueue_len(queue_ptr: &mut ArrayQueue) -> Arra
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ArrayQueue_is_full(
-    queue_ptr: &mut ArrayQueue,
-) -> ArrayQueueBoolResult {
+pub unsafe extern "C" fn ddog_ArrayQueue_is_full(queue_ptr: &ArrayQueue) -> ArrayQueueBoolResult {
     (|| {
         let queue = ArrayQueue::as_inner_ref(queue_ptr)?;
         anyhow::Ok(queue.is_full())
@@ -291,9 +290,7 @@ pub unsafe extern "C" fn ddog_ArrayQueue_is_full(
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by array_queue_new.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ArrayQueue_capacity(
-    queue_ptr: &mut ArrayQueue,
-) -> ArrayQueueUsizeResult {
+pub unsafe extern "C" fn ddog_ArrayQueue_capacity(queue_ptr: &ArrayQueue) -> ArrayQueueUsizeResult {
     (|| {
         let queue = ArrayQueue::as_inner_ref(queue_ptr)?;
         anyhow::Ok(queue.capacity())
@@ -304,6 +301,8 @@ pub unsafe extern "C" fn ddog_ArrayQueue_capacity(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
     use bolero::TypeGenerator;
 
@@ -327,13 +326,14 @@ mod tests {
         let item3 = Box::new(3i32);
         let item3_ptr = Box::into_raw(item3);
         unsafe {
-            let result = ddog_ArrayQueue_push(&mut *queue_ptr, item_ptr as *mut c_void);
+            let queue = &*queue_ptr;
+            let result = ddog_ArrayQueue_push(queue, item_ptr as *mut c_void);
             assert!(matches!(result, ArrayQueuePushResult::Ok));
-            let result = ddog_ArrayQueue_push(&mut *queue_ptr, item2_ptr as *mut c_void);
+            let result = ddog_ArrayQueue_push(queue, item2_ptr as *mut c_void);
             assert!(
                 matches!(result, ArrayQueuePushResult::Full(ptr) if ptr == item2_ptr as *mut c_void)
             );
-            let result = ddog_ArrayQueue_pop(&mut *queue_ptr);
+            let result = ddog_ArrayQueue_pop(queue);
             assert!(
                 matches!(result, ArrayQueuePopResult::Ok(ptr) if ptr == item_ptr as *mut c_void)
             );
@@ -342,7 +342,7 @@ mod tests {
                 _ => std::ptr::null_mut(),
             };
             drop(Box::from_raw(item_ptr as *mut i32));
-            let result = ddog_ArrayQueue_push(&mut *queue_ptr, item3_ptr as *mut c_void);
+            let result = ddog_ArrayQueue_push(queue, item3_ptr as *mut c_void);
             assert!(matches!(result, ArrayQueuePushResult::Ok));
             ddog_ArrayQueue_drop(queue_ptr);
             drop(Box::from_raw(item2_ptr));
@@ -368,122 +368,106 @@ mod tests {
         Push,
         ForcePush,
         Pop,
-        IsEmpty,
-        Len,
-        IsFull,
+    }
+
+    fn process_ops(ops: &[Operation], queue: &ArrayQueue, cnt: &AtomicUsize) {
+        for op in ops {
+            match op {
+                Operation::Push => {
+                    let item = Box::new(cnt);
+                    let item_ptr = Box::into_raw(item);
+                    let result = unsafe { ddog_ArrayQueue_push(queue, item_ptr as *mut c_void) };
+                    match result {
+                        ArrayQueuePushResult::Ok => {
+                            cnt.fetch_add(1, Ordering::SeqCst);
+                        }
+                        ArrayQueuePushResult::Full(ptr) => {
+                            assert_eq!(ptr, item_ptr as *mut c_void);
+                            unsafe {
+                                drop(Box::from_raw(ptr as *mut i32));
+                            }
+                        }
+                        ArrayQueuePushResult::Err(_) => {
+                            panic!("push failed");
+                        }
+                    }
+                }
+                Operation::ForcePush => {
+                    let item = Box::new(cnt);
+                    let item_ptr = Box::into_raw(item);
+                    let result =
+                        unsafe { ddog_ArrayQueue_force_push(queue, item_ptr as *mut c_void) };
+                    match result {
+                        ArrayQueuePushResult::Ok => {
+                            cnt.fetch_add(1, Ordering::SeqCst);
+                        }
+                        ArrayQueuePushResult::Full(ptr) => unsafe {
+                            drop(Box::from_raw(ptr as *mut i32));
+                        },
+                        ArrayQueuePushResult::Err(_) => {
+                            panic!("force_push failed");
+                        }
+                    }
+                }
+                Operation::Pop => {
+                    let result = unsafe { ddog_ArrayQueue_pop(queue) };
+                    match result {
+                        ArrayQueuePopResult::Ok(ptr) => {
+                            cnt.fetch_sub(1, Ordering::SeqCst);
+                            unsafe {
+                                drop(Box::from_raw(ptr as *mut i32));
+                            }
+                        }
+                        ArrayQueuePopResult::Empty => {
+                            // No guarantee that cnt is 0, but would likely be.
+                        }
+                        ArrayQueuePopResult::Err(_) => {
+                            panic!("pop failed");
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
-    fn fuzz() {
+    fn fuzz_with_threads() {
         let capacity_gen = 1..=32usize;
         let ops_gen = Vec::<Operation>::gen();
 
         bolero::check!()
-            .with_generator((capacity_gen, ops_gen))
-            .for_each(|(capacity, ops)| {
+            .with_generator((capacity_gen, ops_gen, ops_gen, ops_gen, ops_gen))
+            .for_each(|(capacity, ops1, ops2, ops3, ops4)| {
                 let queue_new_result = ddog_ArrayQueue_new(*capacity, Some(drop_item));
                 assert!(matches!(queue_new_result, ArrayQueueNewResult::Ok(_)));
                 let queue_ptr = match queue_new_result {
                     ArrayQueueNewResult::Ok(ptr) => ptr.as_ptr(),
                     _ => std::ptr::null_mut(),
                 };
+                let queue = unsafe { &*queue_ptr };
 
-                let mut cnt = 0;
+                let cnt = AtomicUsize::new(0);
 
-                for op in ops {
-                    match op {
-                        Operation::Push => {
-                            let item = Box::new(cnt);
-                            let item_ptr = Box::into_raw(item);
-                            let result = unsafe {
-                                ddog_ArrayQueue_push(&mut *queue_ptr, item_ptr as *mut c_void)
-                            };
-                            match result {
-                                ArrayQueuePushResult::Ok => {
-                                    cnt += 1;
-                                }
-                                ArrayQueuePushResult::Full(ptr) => {
-                                    assert_eq!(ptr, item_ptr as *mut c_void);
-                                    unsafe {
-                                        drop(Box::from_raw(ptr as *mut i32));
-                                    }
-                                }
-                                ArrayQueuePushResult::Err(_) => {
-                                    panic!("push failed");
-                                }
-                            }
-                        }
-                        Operation::ForcePush => {
-                            let item = Box::new(cnt);
-                            let item_ptr = Box::into_raw(item);
-                            let result = unsafe {
-                                ddog_ArrayQueue_force_push(&mut *queue_ptr, item_ptr as *mut c_void)
-                            };
-                            match result {
-                                ArrayQueuePushResult::Ok => {
-                                    cnt += 1;
-                                }
-                                ArrayQueuePushResult::Full(ptr) => {
-                                    unsafe {
-                                        drop(Box::from_raw(ptr as *mut i32));
-                                    }
-                                }
-                                ArrayQueuePushResult::Err(_) => {
-                                    panic!("force_push failed");
-                                }
-                            }
-                        }
-                        Operation::Pop => {
-                            let result = unsafe { ddog_ArrayQueue_pop(&mut *queue_ptr) };
-                            match result {
-                                ArrayQueuePopResult::Ok(ptr) => {
-                                    unsafe {
-                                        drop(Box::from_raw(ptr as *mut i32));
-                                    }
-                                    cnt -= 1;
-                                }
-                                ArrayQueuePopResult::Empty => {
-                                    assert_eq!(cnt, 0);
-                                }
-                                ArrayQueuePopResult::Err(_) => {
-                                    panic!("pop failed");
-                                }
-                            }
-                        }
-                        Operation::IsEmpty => {
-                            let result = unsafe { ddog_ArrayQueue_is_empty(&mut *queue_ptr) };
-                            match result {
-                                ArrayQueueBoolResult::Ok(is_empty) => {
-                                    assert_eq!(is_empty, cnt == 0);
-                                }
-                                ArrayQueueBoolResult::Err(_) => {
-                                    panic!("is_empty failed");
-                                }
-                            }
-                        }
-                        Operation::Len => {
-                            let result = unsafe { ddog_ArrayQueue_len(&mut *queue_ptr) };
-                            match result {
-                                ArrayQueueUsizeResult::Ok(len) => {
-                                    assert_eq!(len, cnt);
-                                }
-                                ArrayQueueUsizeResult::Err(_) => {
-                                    panic!("len failed");
-                                }
-                            }
-                        }
-                        Operation::IsFull => {
-                            let result = unsafe { ddog_ArrayQueue_is_full(&mut *queue_ptr) };
-                            match result {
-                                ArrayQueueBoolResult::Ok(is_full) => {
-                                    assert_eq!(is_full, cnt == *capacity);
-                                }
-                                ArrayQueueBoolResult::Err(_) => {
-                                    panic!("is_full failed");
-                                }
-                            }
-                        }
+                std::thread::scope(|s| {
+                    s.spawn(|| process_ops(ops1, queue, &cnt));
+                    s.spawn(|| process_ops(ops2, queue, &cnt));
+                    s.spawn(|| process_ops(ops3, queue, &cnt));
+                    s.spawn(|| process_ops(ops4, queue, &cnt));
+                });
+
+                // Check the length
+                let result = unsafe { ddog_ArrayQueue_len(queue) };
+                match result {
+                    ArrayQueueUsizeResult::Ok(len) => {
+                        assert_eq!(len, cnt.load(Ordering::SeqCst));
                     }
+                    ArrayQueueUsizeResult::Err(_) => {
+                        panic!("len failed");
+                    }
+                }
+
+                unsafe {
+                    ddog_ArrayQueue_drop(queue_ptr);
                 }
             })
     }
