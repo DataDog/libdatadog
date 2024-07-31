@@ -20,7 +20,7 @@ pub use spans::*;
 /// exit.
 ///
 /// # Preconditions
-///   This function assumes that the crash-tracker has previously been
+///   This function assumes that the crashtracker has previously been
 ///   initialized.
 /// # Safety
 ///   Crash-tracking functions are not reentrant.
