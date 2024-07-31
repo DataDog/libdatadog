@@ -92,6 +92,6 @@ pub unsafe extern "C" fn ddog_crasht_init_with_receiver(
         let metadata = metadata.try_into()?;
         datadog_crashtracker::init_with_receiver(config, receiver_config, metadata)
     })()
-    .context("ddog_crasht_init failed")
+    .context("ddog_crasht_init_with_receiver failed")
     .into()
 }
