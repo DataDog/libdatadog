@@ -3,27 +3,36 @@
 
 use crate::one_way_shared_memory::open_named_shm;
 use crate::primary_sidecar_identifier;
+use crate::setup::Liaison;
 use arrayref::array_ref;
 use datadog_ipc::platform::metadata::ProcessHandle;
 use datadog_ipc::platform::{Channel, PIPE_PATH};
-use kernel32::{CreateFileA, CreateNamedPipeA};
 use libc::getpid;
 use std::error::Error;
 use std::ffi::CString;
-use std::os::windows::io::{FromRawHandle, OwnedHandle};
+use std::os::windows::io::{FromRawHandle, OwnedHandle, RawHandle};
 use std::ptr::null_mut;
 use std::time::{Duration, Instant};
 use std::{env, io, mem};
 use tokio::net::windows::named_pipe::NamedPipeServer;
 use tracing::warn;
 use winapi::{
-    DWORD, ERROR_ACCESS_DENIED, ERROR_PIPE_BUSY, FILE_FLAG_FIRST_PIPE_INSTANCE,
-    FILE_FLAG_OVERLAPPED, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, LPSECURITY_ATTRIBUTES,
-    OPEN_EXISTING, PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
-    PIPE_UNLIMITED_INSTANCES, SECURITY_ATTRIBUTES,
+    shared::{
+        minwindef::DWORD,
+        winerror::{ERROR_ACCESS_DENIED, ERROR_PIPE_BUSY},
+    },
+    um::{
+        fileapi::{CreateFileA, OPEN_EXISTING},
+        handleapi::INVALID_HANDLE_VALUE,
+        minwinbase::SECURITY_ATTRIBUTES,
+        winbase::{
+            CreateNamedPipeA, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED,
+            PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
+            PIPE_UNLIMITED_INSTANCES,
+        },
+        winnt::{GENERIC_READ, GENERIC_WRITE},
+    },
 };
-
-use crate::setup::Liaison;
 
 pub type IpcClient = NamedPipeServer;
 pub type IpcServer = OwnedHandle;
@@ -70,7 +79,7 @@ impl Liaison for NamedPipeLiaison {
         // Have a ProcessHandle::Getter() so that we don't immediately block in case the sidecar is
         // still starting up, but only the first time we want to submit shared memory
         Ok(Channel::from_client_handle_and_pid(
-            unsafe { OwnedHandle::from_raw_handle(pipe) },
+            unsafe { OwnedHandle::from_raw_handle(pipe as RawHandle) },
             ProcessHandle::Getter(Box::new(move || {
                 // Await the shared memory handle which will contain the pid of the sidecar
                 // As it may not be immediately available during startup
@@ -129,7 +138,7 @@ impl Liaison for NamedPipeLiaison {
                 65536,
                 65536,
                 0,
-                &mut sec_attributes as LPSECURITY_ATTRIBUTES,
+                &mut sec_attributes,
             )
         } {
             INVALID_HANDLE_VALUE => {
@@ -143,7 +152,9 @@ impl Liaison for NamedPipeLiaison {
                     Err(error)
                 }
             }
-            h => Ok(Some(unsafe { OwnedHandle::from_raw_handle(h) })),
+            h => Ok(Some(unsafe {
+                OwnedHandle::from_raw_handle(h as RawHandle)
+            })),
         }
     }
 
@@ -188,16 +199,15 @@ pub type DefaultLiason = NamedPipeLiaison;
 
 #[cfg(test)]
 mod tests {
+    use super::Liaison;
     use futures::future;
-    use kernel32::CloseHandle;
     use rand::distributions::Alphanumeric;
     use rand::{thread_rng, Rng};
     use std::io::Write;
     use std::os::windows::io::IntoRawHandle;
     use tokio::io::AsyncReadExt;
     use tokio::net::windows::named_pipe::NamedPipeServer;
-
-    use super::Liaison;
+    use winapi::um::{handleapi::CloseHandle, winnt::HANDLE};
 
     #[tokio::test]
     async fn test_shared_dir_can_connect_to_socket() -> anyhow::Result<()> {
@@ -232,7 +242,7 @@ mod tests {
 
             // for this test: Somehow, NamedPipeServer remains tangled with the event-loop and won't
             // free itself in time
-            unsafe { CloseHandle(raw_handle) };
+            unsafe { CloseHandle(raw_handle as HANDLE) };
             std::mem::forget(srv);
 
             liaison

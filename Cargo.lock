@@ -1511,7 +1511,6 @@ dependencies = [
  "httpmock",
  "hyper 0.14.28",
  "io-lifetimes",
- "kernel32-sys",
  "lazy_static",
  "libc",
  "manual_future",
@@ -1537,7 +1536,7 @@ dependencies = [
  "tracing-log",
  "tracing-subscriber",
  "uuid",
- "winapi 0.2.8",
+ "winapi 0.3.9",
  "windows 0.51.1",
  "zwohash",
 ]
