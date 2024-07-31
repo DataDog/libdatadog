@@ -31,6 +31,26 @@ pub fn log_and_create_http_response(
     Response::builder().status(status).body(Body::from(body))
 }
 
+/// Does two things:
+/// 1. Logs the given message
+/// 2. Returns the rate_by_service map to use to set the sampling priority in the body of JSON
+///    response with the given status code.
+///
+/// Response body format:
+/// {
+///     "rate_by_service": {
+///         "service:,env:":1
+///     }
+/// }
+pub fn log_and_create_traces_success_http_response(
+    message: &str,
+    status: StatusCode,
+) -> http::Result<Response<Body>> {
+    info!("{message}");
+    let body = json!({"rate_by_service":{"service:,env:":1}}).to_string();
+    Response::builder().status(status).body(Body::from(body))
+}
+
 /// Takes a request's header map, and verifies that the "content-length" header is present, valid,
 /// and less than the given max_content_length.
 ///
