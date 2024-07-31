@@ -117,6 +117,7 @@ impl ServerlessEnvVerifier {
             gcp_region: Some(get_region_from_gcp_region_string(
                 gcp_metadata.instance.region,
             )),
+            version: trace_utils::MiniAgentMetadata::default().version,
         }
     }
 }
@@ -466,6 +467,7 @@ mod tests {
             trace_utils::MiniAgentMetadata {
                 gcp_project_id: Some("unknown".to_string()),
                 gcp_region: Some("unknown".to_string()),
+                version: None
             }
         );
     }

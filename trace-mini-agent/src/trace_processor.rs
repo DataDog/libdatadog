@@ -47,10 +47,7 @@ impl TraceChunkProcessor for ChunkProcessor {
         );
         for span in chunk.spans.iter_mut() {
             trace_utils::enrich_span_with_mini_agent_metadata(span, &self.mini_agent_metadata);
-            trace_utils::enrich_span_with_azure_metadata(
-                span,
-                self.config.mini_agent_version.as_str(),
-            );
+            trace_utils::enrich_span_with_azure_metadata(span);
             obfuscate_span(span, &self.config.obfuscation_config);
         }
     }
@@ -174,7 +171,6 @@ mod tests {
             env_type: trace_utils::EnvironmentType::CloudFunction,
             os: "linux".to_string(),
             obfuscation_config: ObfuscationConfig::new().unwrap(),
-            mini_agent_version: "0.1.0".to_string(),
         }
     }
 
