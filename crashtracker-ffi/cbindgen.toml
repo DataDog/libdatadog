@@ -26,6 +26,7 @@ renaming_overrides_prefixing = true
 "Endpoint" = "ddog_Endpoint"
 "Error" = "ddog_Error"
 "HttpStatus" = "ddog_HttpStatus"
+"Option_U32" = "ddog_Option_U32"
 "Slice_CChar" = "ddog_Slice_CChar"
 "Slice_I64" = "ddog_Slice_I64"
 "Slice_U8" = "ddog_Slice_U8"

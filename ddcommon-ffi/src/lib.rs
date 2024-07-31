@@ -13,6 +13,6 @@ pub mod vec;
 pub use error::*;
 pub use string::*;
 
-pub use option::Option;
+pub use option::*;
 pub use slice::{CharSlice, Slice};
 pub use vec::Vec;

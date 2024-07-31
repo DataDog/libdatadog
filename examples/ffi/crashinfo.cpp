@@ -19,17 +19,6 @@ static ddog_CharSlice to_slice_string(std::string &s) {
   return {.ptr = s.data(), .len = s.length()};
 }
 
-// TODO: Testing on my mac, the tags appear to have the opposite meaning you'd
-// expect
-static ddog_crasht_Option_U32 some_u32(uint32_t i) {
-  ddog_crasht_Option_U32 rval = {.tag = DDOG_CRASHT_OPTION_U32_SOME_U32};
-  rval.some = i;
-  return rval;
-}
-static ddog_crasht_Option_U32 none_u32() {
-  return {.tag = DDOG_CRASHT_OPTION_U32_NONE_U32};
-}
-
 struct Deleter {
   void operator()(ddog_crasht_CrashInfo *object) { ddog_crasht_CrashInfo_drop(object); }
 };
@@ -59,9 +48,9 @@ void add_stacktrace(std::unique_ptr<ddog_crasht_CrashInfo, Deleter> &crashinfo) 
 
   std::vector<ddog_crasht_StackFrameNames> names;
   for (uintptr_t i = 0; i < 20; ++i) {
-    names.push_back({.colno = some_u32(i),
+    names.push_back({.colno = ddog_Option_U32_some(i),
                      .filename = to_slice_string(filenames[i]),
-                     .lineno = some_u32(2 * i + 3),
+                     .lineno = ddog_Option_U32_some(2 * i + 3),
                      .name = to_slice_string(function_names[i])});
   }
 
