@@ -16,6 +16,7 @@ pub mod entity_id;
 #[macro_use]
 pub mod cstr;
 pub mod config;
+pub mod rate_limiter;
 pub mod tag;
 
 pub mod header {
