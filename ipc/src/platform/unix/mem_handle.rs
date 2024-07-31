@@ -107,14 +107,15 @@ impl NamedShmHandle {
 }
 
 impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
-    pub fn ensure_space(self, expected_size: usize) -> MappedMem<T> {
+    pub fn ensure_space(&mut self, expected_size: usize) {
         if expected_size <= self.mem.get_shm().size {
-            return self;
+            return;
         }
 
-        let mut handle: T = self.into();
+        // SAFETY: we'll overwrite the original memory later
+        let mut handle: T = unsafe { std::ptr::read(self) }.into();
         _ = handle.resize(expected_size);
-        handle.map().unwrap()
+        unsafe { std::ptr::write(self, handle.map().unwrap()) };
     }
 }
 
