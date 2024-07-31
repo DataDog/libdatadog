@@ -25,6 +25,10 @@ pub fn read_cloud_env() -> Option<(String, trace_utils::EnvironmentType)> {
         // Set by Azure Functions
         return Some((res, trace_utils::EnvironmentType::AzureFunction));
     }
+    if let Ok(res) = env::var("ASCSVCRT_SPRING__APPLICATION__NAME") {
+        // Set by Azure Spring Apps
+        return Some((res, trace_utils::EnvironmentType::AzureSpringApp));
+    }
     None
 }
 

@@ -429,6 +429,7 @@ pub fn set_serverless_root_span_tags(
     let origin_tag = match env_type {
         EnvironmentType::CloudFunction => "cloudfunction",
         EnvironmentType::AzureFunction => "azurefunction",
+        EnvironmentType::AzureSpringApp => "azurespringapp",
         EnvironmentType::LambdaFunction => "lambda", // historical reasons
     };
     span.meta
@@ -451,6 +452,7 @@ fn update_tracer_top_level(span: &mut pb::Span) {
 pub enum EnvironmentType {
     CloudFunction,
     AzureFunction,
+    AzureSpringApp,
     LambdaFunction,
 }
 
