@@ -14,9 +14,9 @@ use anyhow::Context;
 /// No safety concerns.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crashtracker_clear_span_ids() -> Result {
+pub unsafe extern "C" fn ddog_crasht_clear_span_ids() -> Result {
     datadog_crashtracker::clear_spans()
-        .context("ddog_crashtracker_clear_span_ids failed")
+        .context("ddog_crasht_clear_span_ids failed")
         .into()
 }
 
@@ -30,9 +30,9 @@ pub unsafe extern "C" fn ddog_crashtracker_clear_span_ids() -> Result {
 /// No safety concerns.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crashtracker_clear_trace_ids() -> Result {
+pub unsafe extern "C" fn ddog_crasht_clear_trace_ids() -> Result {
     datadog_crashtracker::clear_traces()
-        .context("ddog_crashtracker_clear_trace_ids failed")
+        .context("ddog_crasht_clear_trace_ids failed")
         .into()
 }
 
@@ -57,13 +57,13 @@ pub unsafe extern "C" fn ddog_crashtracker_clear_trace_ids() -> Result {
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_crashtracker_insert_trace_id(
+pub unsafe extern "C" fn ddog_crasht_insert_trace_id(
     id_high: u64,
     id_low: u64,
 ) -> UsizeResult {
     let id: u128 = (id_high as u128) << 64 | (id_low as u128);
     datadog_crashtracker::insert_trace(id)
-        .context("ddog_crashtracker_insert_trace_id failed")
+        .context("ddog_crasht_insert_trace_id failed")
         .into()
 }
 
@@ -89,13 +89,13 @@ pub unsafe extern "C" fn ddog_crashtracker_insert_trace_id(
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_crashtracker_insert_span_id(
+pub unsafe extern "C" fn ddog_crasht_insert_span_id(
     id_high: u64,
     id_low: u64,
 ) -> UsizeResult {
     let id: u128 = (id_high as u128) << 64 | (id_low as u128);
     datadog_crashtracker::insert_span(id)
-        .context("ddog_crashtracker_insert_span_id failed")
+        .context("ddog_crasht_insert_span_id failed")
         .into()
 }
 
@@ -121,14 +121,14 @@ pub unsafe extern "C" fn ddog_crashtracker_insert_span_id(
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_crashtracker_remove_span_id(
+pub unsafe extern "C" fn ddog_crasht_remove_span_id(
     id_high: u64,
     id_low: u64,
     idx: usize,
 ) -> Result {
     let id: u128 = (id_high as u128) << 64 | (id_low as u128);
     datadog_crashtracker::remove_span(id, idx)
-        .context("ddog_crashtracker_remove_span_id failed")
+        .context("ddog_crasht_remove_span_id failed")
         .into()
 }
 
@@ -154,13 +154,13 @@ pub unsafe extern "C" fn ddog_crashtracker_remove_span_id(
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_crashtracker_remove_trace_id(
+pub unsafe extern "C" fn ddog_crasht_remove_trace_id(
     id_high: u64,
     id_low: u64,
     idx: usize,
 ) -> Result {
     let id: u128 = (id_high as u128) << 64 | (id_low as u128);
     datadog_crashtracker::remove_trace(id, idx)
-        .context("ddog_crashtracker_remove_trace_id failed")
+        .context("ddog_crasht_remove_trace_id failed")
         .into()
 }

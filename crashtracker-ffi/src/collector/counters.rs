@@ -15,9 +15,9 @@ use anyhow::Context;
 /// No safety concerns.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crashtracker_reset_counters() -> Result {
+pub unsafe extern "C" fn ddog_crasht_reset_counters() -> Result {
     datadog_crashtracker::reset_counters()
-        .context("ddog_crashtracker_begin_profiling_op failed")
+        .context("ddog_crasht_reset_counters failed")
         .into()
 }
 
@@ -28,9 +28,9 @@ pub unsafe extern "C" fn ddog_crashtracker_reset_counters() -> Result {
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_crashtracker_begin_profiling_op(op: ProfilingOpTypes) -> Result {
+pub unsafe extern "C" fn ddog_crasht_begin_profiling_op(op: ProfilingOpTypes) -> Result {
     datadog_crashtracker::begin_profiling_op(op)
-        .context("ddog_crashtracker_begin_profiling_op failed")
+        .context("ddog_crasht_begin_profiling_op failed")
         .into()
 }
 
@@ -41,8 +41,8 @@ pub unsafe extern "C" fn ddog_crashtracker_begin_profiling_op(op: ProfilingOpTyp
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_crashtracker_end_profiling_op(op: ProfilingOpTypes) -> Result {
+pub unsafe extern "C" fn ddog_crasht_end_profiling_op(op: ProfilingOpTypes) -> Result {
     datadog_crashtracker::end_profiling_op(op)
-        .context("ddog_crashtracker_end_profiling_op failed")
+        .context("ddog_crasht_end_profiling_op failed")
         .into()
 }

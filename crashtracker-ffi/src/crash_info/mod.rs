@@ -15,7 +15,7 @@ use ddcommon_ffi::{slice::AsBytes, CharSlice, Slice};
 /// No safety issues.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crashinfo_new() -> CrashInfoNewResult {
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_new() -> CrashInfoNewResult {
     CrashInfoNewResult::Ok(CrashInfo::new(datadog_crashtracker::CrashInfo::new()))
 }
 
@@ -23,7 +23,7 @@ pub unsafe extern "C" fn ddog_crashinfo_new() -> CrashInfoNewResult {
 /// The `crash_info` can be null, but if non-null it must point to a CrashInfo
 /// made by this module, which has not previously been dropped.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_crashinfo_drop(crashinfo: *mut CrashInfo) {
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_drop(crashinfo: *mut CrashInfo) {
     // Technically, this function has been designed so if it's double-dropped
     // then it's okay, but it's not something that should be relied on.
     if !crashinfo.is_null() {
@@ -39,7 +39,7 @@ pub unsafe extern "C" fn ddog_crashinfo_drop(crashinfo: *mut CrashInfo) {
 #[cfg(unix)]
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crashinfo_normalize_ips(
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_normalize_ips(
     crashinfo: *mut CrashInfo,
     pid: u32,
 ) -> Result {
@@ -47,7 +47,7 @@ pub unsafe extern "C" fn ddog_crashinfo_normalize_ips(
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         crashinfo.normalize_ips(pid)
     })()
-    .context("ddog_crashinfo_normalize_ips failed")
+    .context("ddog_crasht_CrashInfo_normalize_ips failed")
     .into()
 }
 
@@ -61,7 +61,7 @@ pub unsafe extern "C" fn ddog_crashinfo_normalize_ips(
 /// call.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crashinfo_add_counter(
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_add_counter(
     crashinfo: *mut CrashInfo,
     name: CharSlice,
     val: i64,
@@ -71,7 +71,7 @@ pub unsafe extern "C" fn ddog_crashinfo_add_counter(
         let name = name.to_utf8_lossy();
         crashinfo.add_counter(&name, val)
     })()
-    .context("ddog_crashinfo_add_counter failed")
+    .context("ddog_crasht_CrashInfo_add_counter failed")
     .into()
 }
 
@@ -84,7 +84,7 @@ pub unsafe extern "C" fn ddog_crashinfo_add_counter(
 /// call.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crashinfo_add_file(
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_add_file(
     crashinfo: *mut CrashInfo,
     name: CharSlice,
 ) -> Result {
@@ -93,7 +93,7 @@ pub unsafe extern "C" fn ddog_crashinfo_add_file(
         let name = name.to_utf8_lossy();
         crashinfo.add_file(&name)
     })()
-    .context("ddog_crashinfo_add_file failed")
+    .context("ddog_crasht_CrashInfo_add_file failed")
     .into()
 }
 
@@ -107,7 +107,7 @@ pub unsafe extern "C" fn ddog_crashinfo_add_file(
 /// call.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crashinfo_add_tag(
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_add_tag(
     crashinfo: *mut CrashInfo,
     key: CharSlice,
     value: CharSlice,
@@ -118,7 +118,7 @@ pub unsafe extern "C" fn ddog_crashinfo_add_tag(
         let value = value.to_utf8_lossy().to_string();
         crashinfo.add_tag(key, value)
     })()
-    .context("ddog_crashinfo_add_tag failed")
+    .context("ddog_crasht_CrashInfo_add_tag failed")
     .into()
 }
 
@@ -130,7 +130,7 @@ pub unsafe extern "C" fn ddog_crashinfo_add_tag(
 /// Strings are copied into the crashinfo, and do not need to outlive this call.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crashinfo_set_metadata(
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_set_metadata(
     crashinfo: *mut CrashInfo,
     metadata: Metadata,
 ) -> Result {
@@ -139,7 +139,7 @@ pub unsafe extern "C" fn ddog_crashinfo_set_metadata(
         let metadata = metadata.try_into()?;
         crashinfo.set_metadata(metadata)
     })()
-    .context("ddog_crashinfo_set_metadata failed")
+    .context("ddog_crasht_CrashInfo_set_metadata failed")
     .into()
 }
 
@@ -151,7 +151,7 @@ pub unsafe extern "C" fn ddog_crashinfo_set_metadata(
 /// Strings are copied into the crashinfo, and do not need to outlive this call.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crashinfo_set_siginfo(
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_set_siginfo(
     crashinfo: *mut CrashInfo,
     siginfo: SigInfo,
 ) -> Result {
@@ -160,7 +160,7 @@ pub unsafe extern "C" fn ddog_crashinfo_set_siginfo(
         let siginfo = siginfo.try_into()?;
         crashinfo.set_siginfo(siginfo)
     })()
-    .context("ddog_crashinfo_set_siginfo failed")
+    .context("ddog_crasht_CrashInfo_set_siginfo failed")
     .into()
 }
 
@@ -173,7 +173,7 @@ pub unsafe extern "C" fn ddog_crashinfo_set_siginfo(
 /// Strings are copied into the crashinfo, and do not need to outlive this call.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crashinfo_set_stacktrace(
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_set_stacktrace(
     crashinfo: *mut CrashInfo,
     thread_id: CharSlice,
     stacktrace: Slice<StackFrame>,
@@ -187,7 +187,7 @@ pub unsafe extern "C" fn ddog_crashinfo_set_stacktrace(
         }
         crashinfo.set_stacktrace(thread_id, stacktrace_vec)
     })()
-    .context("ddog_crashinfo_set_stacktrace failed")
+    .context("ddog_crasht_CrashInfo_set_stacktrace failed")
     .into()
 }
 
@@ -197,7 +197,7 @@ pub unsafe extern "C" fn ddog_crashinfo_set_stacktrace(
 /// `crashinfo` must be a valid pointer to a `CrashInfo` object.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crashinfo_set_timestamp(
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_set_timestamp(
     crashinfo: *mut CrashInfo,
     secs: i64,
     nsecs: u32,
@@ -208,7 +208,7 @@ pub unsafe extern "C" fn ddog_crashinfo_set_timestamp(
             .with_context(|| format!("Invalid timestamp {secs} {nsecs}"))?;
         crashinfo.set_timestamp(ts)
     })()
-    .context("ddog_crashinfo_set_timestamp_to_now failed")
+    .context("ddog_crasht_CrashInfo_set_timestamp_to_now failed")
     .into()
 }
 
@@ -218,12 +218,12 @@ pub unsafe extern "C" fn ddog_crashinfo_set_timestamp(
 /// `crashinfo` must be a valid pointer to a `CrashInfo` object.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crashinfo_set_timestamp_to_now(crashinfo: *mut CrashInfo) -> Result {
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_set_timestamp_to_now(crashinfo: *mut CrashInfo) -> Result {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
         crashinfo.set_timestamp_to_now()
     })()
-    .context("ddog_crashinfo_set_timestamp_to_now failed")
+    .context("ddog_crasht_CrashInfo_set_timestamp_to_now failed")
     .into()
 }
 
@@ -233,7 +233,7 @@ pub unsafe extern "C" fn ddog_crashinfo_set_timestamp_to_now(crashinfo: *mut Cra
 /// `crashinfo` must be a valid pointer to a `CrashInfo` object.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crashinfo_upload_to_endpoint(
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_upload_to_endpoint(
     crashinfo: *mut CrashInfo,
     endpoint: Option<&Endpoint>,
 ) -> Result {
@@ -242,6 +242,6 @@ pub unsafe extern "C" fn ddog_crashinfo_upload_to_endpoint(
         let endpoint = endpoint.cloned();
         crashinfo.upload_to_endpoint(&endpoint)
     })()
-    .context("ddog_crashinfo_upload_to_endpoint failed")
+    .context("ddog_crasht_CrashInfo_upload_to_endpoint failed")
     .into()
 }

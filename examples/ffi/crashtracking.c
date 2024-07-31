@@ -12,8 +12,8 @@ void example_segfault_handler(int signal) {
   exit(-1);
 }
 
-void handle_result(ddog_crashtracker_Result result) {
-  if (result.tag == DDOG_CRASHTRACKER_RESULT_ERR) {
+void handle_result(ddog_crasht_Result result) {
+  if (result.tag == DDOG_CRASHT_RESULT_ERR) {
     ddog_CharSlice message = ddog_Error_message(&result.err);
     fprintf(stderr, "%.*s\n", (int)message.len, message.ptr);
     ddog_Error_drop(&result.err);
@@ -21,8 +21,8 @@ void handle_result(ddog_crashtracker_Result result) {
   }
 }
 
-uintptr_t handle_uintptr_t_result(ddog_crashtracker_UsizeResult result) {
-  if (result.tag == DDOG_CRASHTRACKER_USIZE_RESULT_ERR) {
+uintptr_t handle_uintptr_t_result(ddog_crasht_UsizeResult result) {
+  if (result.tag == DDOG_CRASHT_USIZE_RESULT_ERR) {
     ddog_CharSlice message = ddog_Error_message(&result.err);
     fprintf(stderr, "%.*s\n", (int)message.len, message.ptr);
     ddog_Error_drop(&result.err);
@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
     return -1;
   }
 
-  ddog_crashtracker_ReceiverConfig receiver_config = {
+  ddog_crasht_ReceiverConfig receiver_config = {
       .args = {},
       .env = {},
       .path_to_receiver_binary = DDOG_CHARSLICE_C("SET ME TO THE ACTUAL PATH ON YOUR MACHINE"),
@@ -55,26 +55,26 @@ int main(int argc, char **argv) {
   //  struct ddog_Endpoint * endpoint =
   //      ddog_endpoint_from_url(DDOG_CHARSLICE_C("http://localhost:8126"));
 
-  ddog_crashtracker_Configuration config = {
+  ddog_crasht_Configuration config = {
       .create_alt_stack = false,
       .endpoint = endpoint,
-      .resolve_frames = DDOG_CRASHTRACKER_STACKTRACE_COLLECTION_ENABLED_WITH_INPROCESS_SYMBOLS,
+      .resolve_frames = DDOG_CRASHT_STACKTRACE_COLLECTION_ENABLED_WITH_INPROCESS_SYMBOLS,
   };
 
-  ddog_crashtracker_Metadata metadata = {
+  ddog_crasht_Metadata metadata = {
       .profiling_library_name = DDOG_CHARSLICE_C("crashtracking-test"),
       .profiling_library_version = DDOG_CHARSLICE_C("12.34.56"),
       .family = DDOG_CHARSLICE_C("crashtracking-test"),
       .tags = NULL,
   };
 
-  handle_result(ddog_crashtracker_init_with_receiver(config, receiver_config, metadata));
+  handle_result(ddog_crasht_init_with_receiver(config, receiver_config, metadata));
   ddog_endpoint_drop(endpoint);
 
   handle_result(
-      ddog_crashtracker_begin_profiling_op(DDOG_CRASHTRACKER_PROFILING_OP_TYPES_SERIALIZING));
-  handle_uintptr_t_result(ddog_crashtracker_insert_span_id(0, 42));
-  handle_uintptr_t_result(ddog_crashtracker_insert_trace_id(1, 1));
+      ddog_crasht_begin_profiling_op(DDOG_CRASHT_PROFILING_OP_TYPES_SERIALIZING));
+  handle_uintptr_t_result(ddog_crasht_insert_span_id(0, 42));
+  handle_uintptr_t_result(ddog_crasht_insert_trace_id(1, 1));
 
 #ifdef EXPLICIT_RAISE_SEGV
   // Test raising SEGV explicitly, to ensure chaining works

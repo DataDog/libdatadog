@@ -28,9 +28,9 @@ pub use spans::*;
 /// # Atomicity
 ///   This function is not atomic. A crash during its execution may lead to
 ///   unexpected crash-handling behaviour.
-pub unsafe extern "C" fn ddog_crashtracker_shutdown() -> Result {
+pub unsafe extern "C" fn ddog_crasht_shutdown() -> Result {
     datadog_crashtracker::shutdown_crash_handler()
-        .context("ddog_crashtracker_shutdown failed")
+        .context("ddog_crasht_shutdown failed")
         .into()
 }
 
@@ -54,7 +54,7 @@ pub unsafe extern "C" fn ddog_crashtracker_shutdown() -> Result {
 /// # Atomicity
 ///   This function is not atomic. A crash during its execution may lead to
 ///   unexpected crash-handling behaviour.
-pub unsafe extern "C" fn ddog_crashtracker_update_on_fork(
+pub unsafe extern "C" fn ddog_crasht_update_on_fork(
     config: Configuration,
     receiver_config: ReceiverConfig,
     metadata: Metadata,
@@ -65,7 +65,7 @@ pub unsafe extern "C" fn ddog_crashtracker_update_on_fork(
         let metadata = metadata.try_into()?;
         datadog_crashtracker::on_fork(config, receiver_config, metadata)
     })()
-    .context("ddog_crashtracker_update_on_fork failed")
+    .context("ddog_crasht_update_on_fork failed")
     .into()
 }
 
@@ -81,7 +81,7 @@ pub unsafe extern "C" fn ddog_crashtracker_update_on_fork(
 /// # Atomicity
 ///   This function is not atomic. A crash during its execution may lead to
 ///   unexpected crash-handling behaviour.
-pub unsafe extern "C" fn ddog_crashtracker_init_with_receiver(
+pub unsafe extern "C" fn ddog_crasht_init_with_receiver(
     config: Configuration,
     receiver_config: ReceiverConfig,
     metadata: Metadata,
@@ -92,6 +92,6 @@ pub unsafe extern "C" fn ddog_crashtracker_init_with_receiver(
         let metadata = metadata.try_into()?;
         datadog_crashtracker::init_with_receiver(config, receiver_config, metadata)
     })()
-    .context("ddog_crashtracker_init failed")
+    .context("ddog_crasht_init failed")
     .into()
 }
