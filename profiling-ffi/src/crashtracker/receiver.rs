@@ -41,7 +41,7 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_receiver_entry_point_unix_socket
 ) -> CrashtrackerResult {
     (|| {
         let socket_path = socket_path.try_to_utf8()?;
-        datadog_crashtracker::reciever_entry_point_unix_socket(socket_path)
+        datadog_crashtracker::receiver_entry_point_unix_socket(socket_path)
     })()
     .context("ddog_prof_Crashtracker_receiver_entry_point_unix_socket failed")
     .into()

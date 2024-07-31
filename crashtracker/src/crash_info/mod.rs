@@ -257,13 +257,34 @@ impl CrashInfo {
                 self.to_file(&path)?;
             }
         }
-        self.upload_to_telemetry(endpoint)
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+
+        rt.block_on(async { self.upload_to_telemetry(endpoint).await })
     }
 
-    fn upload_to_telemetry(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
+    pub async fn async_upload_to_endpoint(
+        &self,
+        endpoint: &Option<Endpoint>,
+    ) -> anyhow::Result<()> {
+        // If we're debugging to a file, dump the actual crashinfo into a json
+        if let Some(endpoint) = endpoint {
+            if Some("file") == endpoint.url.scheme_str() {
+                let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
+                    .context("crash output file was not correctly formatted")?;
+                self.to_file(&path)?;
+            }
+        }
+
+        self.upload_to_telemetry(endpoint).await
+    }
+
+    async fn upload_to_telemetry(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
         if let Some(metadata) = &self.metadata {
             if let Ok(uploader) = TelemetryCrashUploader::new(metadata, endpoint) {
-                uploader.upload_to_telemetry(self)?;
+                uploader.upload_to_telemetry(self).await?
             }
         }
         Ok(())

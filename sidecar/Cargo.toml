@@ -24,6 +24,7 @@ ddtelemetry = { path = "../ddtelemetry", features = ["tracing"] }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-utils = { path = "../trace-utils" }
 datadog-trace-normalization = { path = "../trace-normalization" }
+datadog-crashtracker = { path = "../crashtracker" }
 
 futures = { version = "0.3", default-features = false }
 manual_future = "0.1.1"

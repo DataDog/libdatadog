@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
+#[cfg(unix)]
+use datadog_crashtracker;
 use spawn_worker::{entrypoint, Stdio};
 use std::fs::File;
 use std::future::Future;
@@ -15,6 +17,8 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+#[cfg(unix)]
+use crate::crashtracker::crashtracker_unix_socket_path;
 use crate::service::blocking::SidecarTransport;
 use crate::service::SidecarServer;
 use datadog_ipc::platform::AsyncChannel;
@@ -63,6 +67,16 @@ where
         }
         tracing::info!("Received Ctrl-C Signal, shutting down");
         cancel();
+    });
+
+    #[cfg(unix)]
+    tokio::spawn(async move {
+        let socket_path = crashtracker_unix_socket_path();
+        let _ = datadog_crashtracker::async_receiver_entry_point_unix_socket(
+            socket_path.to_str().unwrap_or_default(),
+            false,
+        )
+        .await;
     });
 
     let server = SidecarServer::default();

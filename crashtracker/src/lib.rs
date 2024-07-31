@@ -64,7 +64,10 @@ pub use collector::{
 pub use crash_info::*;
 
 #[cfg(all(unix, feature = "receiver"))]
-pub use receiver::{receiver_entry_point_stdin, reciever_entry_point_unix_socket};
+pub use receiver::{
+    async_receiver_entry_point_unix_socket, receiver_entry_point_stdin,
+    receiver_entry_point_unix_socket,
+};
 
 #[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
 pub use shared::configuration::{

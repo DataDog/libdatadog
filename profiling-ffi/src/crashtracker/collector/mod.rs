@@ -9,6 +9,7 @@ use crate::crashtracker::datatypes::*;
 use anyhow::Context;
 pub use counters::*;
 pub use datatypes::*;
+use ddcommon_ffi::{slice::AsBytes, CharSlice};
 pub use spans::*;
 
 #[no_mangle]
@@ -20,14 +21,14 @@ pub use spans::*;
 /// exit.
 ///
 /// # Preconditions
-///     This function assumes that the crash-tracker has previously been
-///     initialized.
+/// This function assumes that the crash-tracker has previously been
+/// initialized.
 /// # Safety
-///     Crash-tracking functions are not reentrant.
-///     No other crash-handler functions should be called concurrently.
+/// Crash-tracking functions are not reentrant.
+/// No other crash-handler functions should be called concurrently.
 /// # Atomicity
-///     This function is not atomic. A crash during its execution may lead to
-///     unexpected crash-handling behaviour.
+/// This function is not atomic. A crash during its execution may lead to
+/// unexpected crash-handling behaviour.
 pub unsafe extern "C" fn ddog_prof_Crashtracker_shutdown() -> CrashtrackerResult {
     datadog_crashtracker::shutdown_crash_handler()
         .context("ddog_prof_Crashtracker_shutdown failed")
@@ -46,14 +47,14 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_shutdown() -> CrashtrackerResult
 /// advantage would be to have fewer processes in `ps -a`.
 ///
 /// # Preconditions
-///     This function assumes that the crash-tracker has previously been
-///     initialized.
+/// This function assumes that the crash-tracker has previously been
+/// initialized.
 /// # Safety
-///     Crash-tracking functions are not reentrant.
-///     No other crash-handler functions should be called concurrently.
+/// Crash-tracking functions are not reentrant.
+/// No other crash-handler functions should be called concurrently.
 /// # Atomicity
-///     This function is not atomic. A crash during its execution may lead to
-///     unexpected crash-handling behaviour.
+/// This function is not atomic. A crash during its execution may lead to
+/// unexpected crash-handling behaviour.
 pub unsafe extern "C" fn ddog_prof_Crashtracker_update_on_fork(
     config: CrashtrackerConfiguration,
     receiver_config: CrashtrackerReceiverConfig,
@@ -71,16 +72,16 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_update_on_fork(
 
 #[no_mangle]
 #[must_use]
-/// Initialize the crash-tracking infrastructure.
+/// Initialize the crash-tracking infrastructure, spawning a receiver process.
 ///
 /// # Preconditions
-///     None.
+/// None.
 /// # Safety
-///     Crash-tracking functions are not reentrant.
-///     No other crash-handler functions should be called concurrently.
+/// Crash-tracking functions are not reentrant.
+/// No other crash-handler functions should be called concurrently.
 /// # Atomicity
-///     This function is not atomic. A crash during its execution may lead to
-///     unexpected crash-handling behaviour.
+/// This function is not atomic. A crash during its execution may lead to
+/// unexpected crash-handling behaviour.
 pub unsafe extern "C" fn ddog_prof_Crashtracker_init_with_receiver(
     config: CrashtrackerConfiguration,
     receiver_config: CrashtrackerReceiverConfig,
@@ -92,6 +93,33 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_init_with_receiver(
         let metadata = metadata.try_into()?;
         datadog_crashtracker::init_with_receiver(config, receiver_config, metadata)
     })()
-    .context("ddog_prof_Crashtracker_init failed")
+    .context("ddog_prof_Crashtracker_init_with_receiver failed")
+    .into()
+}
+
+#[no_mangle]
+#[must_use]
+/// Initialize the crash-tracking infrastructure, writing to an unix socket in case of crash.
+///
+/// # Preconditions
+/// None.
+/// # Safety
+/// Crash-tracking functions are not reentrant.
+/// No other crash-handler functions should be called concurrently.
+/// # Atomicity
+/// This function is not atomic. A crash during its execution may lead to
+/// unexpected crash-handling behaviour.
+pub unsafe extern "C" fn ddog_prof_Crashtracker_init_with_unix_socket(
+    config: CrashtrackerConfiguration,
+    socket_path: CharSlice,
+    metadata: CrashtrackerMetadata,
+) -> CrashtrackerResult {
+    (|| {
+        let config = config.try_into()?;
+        let socket_path = socket_path.try_to_utf8()?;
+        let metadata = metadata.try_into()?;
+        datadog_crashtracker::init_with_unix_socket(config, socket_path, metadata)
+    })()
+    .context("ddog_prof_Crashtracker_init_with_unix_socket failed")
     .into()
 }
