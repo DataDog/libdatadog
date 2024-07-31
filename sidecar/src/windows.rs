@@ -136,14 +136,14 @@ fn fetch_sidecar_identifier() -> String {
     unsafe {
         let mut access_token = null_mut();
 
-        loop {
+        'token: {
             if OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &mut access_token) != 0 {
-                break;
+                break 'token;
             }
             let mut err = Error::last_os_error();
             if err.raw_os_error() == Some(ERROR_NO_TOKEN as i32) {
                 if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut access_token) != 0 {
-                    break;
+                    break 'token;
                 }
                 err = Error::last_os_error();
             }
