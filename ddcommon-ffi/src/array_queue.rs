@@ -374,7 +374,7 @@ mod tests {
         for op in ops {
             match op {
                 Operation::Push => {
-                    let item = Box::new(cnt);
+                    let item = Box::new(1i32);
                     let item_ptr = Box::into_raw(item);
                     let result = unsafe { ddog_ArrayQueue_push(queue, item_ptr as *mut c_void) };
                     match result {
@@ -393,7 +393,7 @@ mod tests {
                     }
                 }
                 Operation::ForcePush => {
-                    let item = Box::new(cnt);
+                    let item = Box::new(2i32);
                     let item_ptr = Box::into_raw(item);
                     let result =
                         unsafe { ddog_ArrayQueue_force_push(queue, item_ptr as *mut c_void) };
