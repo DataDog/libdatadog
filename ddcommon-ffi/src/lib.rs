@@ -3,6 +3,7 @@
 
 mod error;
 
+pub mod array_queue;
 pub mod endpoint;
 pub mod option;
 pub mod slice;
