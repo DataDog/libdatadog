@@ -54,8 +54,8 @@ mod unix {
         };
 
         let metadata = CrashtrackerMetadata {
-            profiling_library_name: "libdatadog".to_owned(),
-            profiling_library_version: "1.0.0".to_owned(),
+            library_name: "libdatadog".to_owned(),
+            library_version: "1.0.0".to_owned(),
             family: "native".to_owned(),
             tags: vec![
                 tag!("service", "foo"),
