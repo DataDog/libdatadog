@@ -211,7 +211,7 @@ DESTDIR=$destdir cargo build --package tools --bins
 
 echo "Generating $destdir/include/libdatadog headers..."
 # ADD headers based on selected features.
-HEADERS="$destdir/include/datadog/common.h $destdir/include/datadog/profiling.h $destdir/include/datadog/telemetry.h"
+HEADERS="$destdir/include/datadog/common.h $destdir/include/datadog/profiling.h $destdir/include/datadog/telemetry.h $destdir/include/datadog/crashtracker.h"
 case $ARG_FEATURES in
     *data-pipeline-ffi*)
         HEADERS="$HEADERS $destdir/include/datadog/data-pipeline.h"

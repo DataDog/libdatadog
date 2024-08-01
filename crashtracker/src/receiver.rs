@@ -223,6 +223,7 @@ fn process_line(
     Ok(next)
 }
 
+#[derive(Debug)]
 enum CrashReportStatus {
     NoCrash,
     CrashReport(CrashtrackerConfiguration, CrashInfo),

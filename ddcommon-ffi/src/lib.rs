@@ -9,11 +9,12 @@ pub mod option;
 pub mod slice;
 pub mod string;
 pub mod tags;
+pub mod timespec;
 pub mod vec;
 
 pub use error::*;
-pub use string::*;
-
-pub use option::Option;
+pub use option::*;
 pub use slice::{CharSlice, Slice};
+pub use string::*;
+pub use timespec::*;
 pub use vec::Vec;

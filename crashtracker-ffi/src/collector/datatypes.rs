@@ -3,6 +3,7 @@
 
 use crate::option_from_char_slice;
 pub use datadog_crashtracker::{ProfilingOpTypes, StacktraceCollection};
+use ddcommon::Endpoint;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use ddcommon_ffi::{Error, Slice};
 
@@ -13,7 +14,7 @@ pub struct EnvVar<'a> {
 }
 
 #[repr(C)]
-pub struct CrashtrackerReceiverConfig<'a> {
+pub struct ReceiverConfig<'a> {
     pub args: Slice<'a, CharSlice<'a>>,
     pub env: Slice<'a, EnvVar<'a>>,
     pub path_to_receiver_binary: CharSlice<'a>,
@@ -23,11 +24,9 @@ pub struct CrashtrackerReceiverConfig<'a> {
     pub optional_stdout_filename: CharSlice<'a>,
 }
 
-impl<'a> TryFrom<CrashtrackerReceiverConfig<'a>>
-    for datadog_crashtracker::CrashtrackerReceiverConfig
-{
+impl<'a> TryFrom<ReceiverConfig<'a>> for datadog_crashtracker::CrashtrackerReceiverConfig {
     type Error = anyhow::Error;
-    fn try_from(value: CrashtrackerReceiverConfig<'a>) -> anyhow::Result<Self> {
+    fn try_from(value: ReceiverConfig<'a>) -> anyhow::Result<Self> {
         let args = {
             let mut vec = Vec::with_capacity(value.args.len());
             for x in value.args.iter() {
@@ -59,24 +58,20 @@ impl<'a> TryFrom<CrashtrackerReceiverConfig<'a>>
 }
 
 #[repr(C)]
-pub struct CrashtrackerConfiguration<'a> {
+pub struct Config<'a> {
     pub additional_files: Slice<'a, CharSlice<'a>>,
     pub create_alt_stack: bool,
-    /// The endpoint to send the crash report to (can be a file://)
-    ///
-    /// If ProfilingEndpoint is left to a zero value (enum value for Agent + empty charslice),
-    /// the crashtracker will infer the agent host from env variables.
-    pub endpoint: Option<&'a ddcommon::Endpoint>,
+    /// The endpoint to send the crash report to (can be a file://).
+    /// If None, the crashtracker will infer the agent host from env variables.
+    pub endpoint: Option<&'a Endpoint>,
     pub resolve_frames: StacktraceCollection,
     pub timeout_secs: u64,
     pub wait_for_receiver: bool,
 }
 
-impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
-    for datadog_crashtracker::CrashtrackerConfiguration
-{
+impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration {
     type Error = anyhow::Error;
-    fn try_from(value: CrashtrackerConfiguration<'a>) -> anyhow::Result<Self> {
+    fn try_from(value: Config<'a>) -> anyhow::Result<Self> {
         let additional_files = {
             let mut vec = Vec::with_capacity(value.additional_files.len());
             for x in value.additional_files.iter() {
@@ -99,13 +94,13 @@ impl<'a> TryFrom<CrashtrackerConfiguration<'a>>
 }
 
 #[repr(C)]
-pub enum CrashtrackerUsizeResult {
+pub enum UsizeResult {
     Ok(usize),
     #[allow(dead_code)]
     Err(Error),
 }
 
-impl From<anyhow::Result<usize>> for CrashtrackerUsizeResult {
+impl From<anyhow::Result<usize>> for UsizeResult {
     fn from(value: anyhow::Result<usize>) -> Self {
         match value {
             Ok(x) => Self::Ok(x),

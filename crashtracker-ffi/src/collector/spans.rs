@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{crashtracker::datatypes::*, CrashtrackerUsizeResult};
+use crate::{Result, UsizeResult};
 use anyhow::Context;
 
 /// Resets all stored spans to 0.
@@ -14,9 +14,9 @@ use anyhow::Context;
 /// No safety concerns.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_prof_Crashtracker_clear_span_ids() -> CrashtrackerResult {
+pub unsafe extern "C" fn ddog_crasht_clear_span_ids() -> Result {
     datadog_crashtracker::clear_spans()
-        .context("ddog_prof_Crashtracker_clear_span_ids failed")
+        .context("ddog_crasht_clear_span_ids failed")
         .into()
 }
 
@@ -30,9 +30,9 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_clear_span_ids() -> Crashtracker
 /// No safety concerns.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_prof_Crashtracker_clear_trace_ids() -> CrashtrackerResult {
+pub unsafe extern "C" fn ddog_crasht_clear_trace_ids() -> Result {
     datadog_crashtracker::clear_traces()
-        .context("ddog_prof_Crashtracker_clear_trace_ids failed")
+        .context("ddog_crasht_clear_trace_ids failed")
         .into()
 }
 
@@ -57,13 +57,10 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_clear_trace_ids() -> Crashtracke
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_prof_Crashtracker_insert_trace_id(
-    id_high: u64,
-    id_low: u64,
-) -> CrashtrackerUsizeResult {
+pub unsafe extern "C" fn ddog_crasht_insert_trace_id(id_high: u64, id_low: u64) -> UsizeResult {
     let id: u128 = (id_high as u128) << 64 | (id_low as u128);
     datadog_crashtracker::insert_trace(id)
-        .context("ddog_prof_Crashtracker_insert_trace_id failed")
+        .context("ddog_crasht_insert_trace_id failed")
         .into()
 }
 
@@ -89,13 +86,10 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_insert_trace_id(
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_prof_Crashtracker_insert_span_id(
-    id_high: u64,
-    id_low: u64,
-) -> CrashtrackerUsizeResult {
+pub unsafe extern "C" fn ddog_crasht_insert_span_id(id_high: u64, id_low: u64) -> UsizeResult {
     let id: u128 = (id_high as u128) << 64 | (id_low as u128);
     datadog_crashtracker::insert_span(id)
-        .context("ddog_prof_Crashtracker_insert_span_id failed")
+        .context("ddog_crasht_insert_span_id failed")
         .into()
 }
 
@@ -121,14 +115,14 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_insert_span_id(
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_prof_Crashtracker_remove_span_id(
+pub unsafe extern "C" fn ddog_crasht_remove_span_id(
     id_high: u64,
     id_low: u64,
     idx: usize,
-) -> CrashtrackerResult {
+) -> Result {
     let id: u128 = (id_high as u128) << 64 | (id_low as u128);
     datadog_crashtracker::remove_span(id, idx)
-        .context("ddog_prof_Crashtracker_remove_span_id failed")
+        .context("ddog_crasht_remove_span_id failed")
         .into()
 }
 
@@ -154,13 +148,13 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_remove_span_id(
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_prof_Crashtracker_remove_trace_id(
+pub unsafe extern "C" fn ddog_crasht_remove_trace_id(
     id_high: u64,
     id_low: u64,
     idx: usize,
-) -> CrashtrackerResult {
+) -> Result {
     let id: u128 = (id_high as u128) << 64 | (id_low as u128);
     datadog_crashtracker::remove_trace(id, idx)
-        .context("ddog_prof_Crashtracker_remove_trace_id failed")
+        .context("ddog_crasht_remove_trace_id failed")
         .into()
 }

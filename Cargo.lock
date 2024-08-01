@@ -903,9 +903,9 @@ checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
 
 [[package]]
 name = "chrono"
-version = "0.4.37"
+version = "0.4.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a0d04d43504c61aa6c7531f1871dd0d418d91130162063b789da00fd7057a5e"
+checksum = "a21f936df1771bf62b77f047b726c4625ff2e8aa607c01ec06e5a05bd8463401"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
@@ -1353,6 +1353,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-crashtracker-ffi"
+version = "11.0.0"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "datadog-crashtracker",
+ "ddcommon",
+ "ddcommon-ffi",
+ "hyper 0.14.28",
+ "symbolic-common",
+ "symbolic-demangle",
+]
+
+[[package]]
 name = "datadog-ddsketch"
 version = "11.0.0"
 dependencies = [
@@ -1443,9 +1457,8 @@ version = "11.0.0"
 dependencies = [
  "anyhow",
  "build_common",
- "chrono",
  "data-pipeline-ffi",
- "datadog-crashtracker",
+ "datadog-crashtracker-ffi",
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
@@ -1688,6 +1701,7 @@ dependencies = [
  "anyhow",
  "bolero",
  "build_common",
+ "chrono",
  "crossbeam-queue",
  "ddcommon",
  "hyper 0.14.28",
