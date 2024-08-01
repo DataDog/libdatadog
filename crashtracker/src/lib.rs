@@ -56,9 +56,9 @@ mod shared;
 
 #[cfg(all(unix, feature = "collector"))]
 pub use collector::{
-    begin_profiling_op, clear_spans, clear_traces, end_profiling_op, init_with_receiver,
+    begin_op, clear_spans, clear_traces, end_op, init_with_receiver,
     init_with_unix_socket, insert_span, insert_trace, on_fork, remove_span, remove_trace,
-    reset_counters, shutdown_crash_handler, update_config, update_metadata, ProfilingOpTypes,
+    reset_counters, shutdown_crash_handler, update_config, update_metadata, OpTypes,
 };
 
 pub use crash_info::*;

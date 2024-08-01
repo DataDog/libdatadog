@@ -71,7 +71,7 @@ int main(int argc, char **argv) {
   handle_result(ddog_crasht_init_with_receiver(config, receiver_config, metadata));
   ddog_endpoint_drop(endpoint);
 
-  handle_result(ddog_crasht_begin_op(DDOG_CRASHT_PROFILING_OP_TYPES_SERIALIZING));
+  handle_result(ddog_crasht_begin_op(DDOG_CRASHT_OP_TYPES_PROFILER_COLLECTING_SAMPLE));
   handle_uintptr_t_result(ddog_crasht_insert_span_id(0, 42));
   handle_uintptr_t_result(ddog_crasht_insert_trace_id(1, 1));
 

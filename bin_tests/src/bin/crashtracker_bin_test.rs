@@ -97,11 +97,11 @@ mod unix {
             }
         }
 
-        crashtracker::begin_profiling_op(crashtracker::ProfilingOpTypes::CollectingSample)?;
+        crashtracker::begin_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
         unsafe {
             deref_ptr(std::ptr::null_mut::<u8>());
         }
-        crashtracker::end_profiling_op(crashtracker::ProfilingOpTypes::CollectingSample)?;
+        crashtracker::end_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
         Ok(())
     }
 }

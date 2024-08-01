@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicI64, Ordering::SeqCst};
 #[cfg(unix)]
 use std::io::Write;
 
-/// This enum represents operations a profiler might be engaged in.
+/// This enum represents operations a the tracked library might be engaged in.
+/// Currently only implemented for profiling.
 /// The idea is that if a crash consistently occurs while a particular operation
 /// is ongoing, its likely related.
 ///
@@ -17,26 +18,25 @@ use std::io::Write;
 ///       as needed.
 #[repr(C)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum ProfilingOpTypes {
-    // TODO: Do we want this, or just keep it implicit?
-    NotProfiling = 0,
-    CollectingSample,
-    Unwinding,
-    Serializing,
+pub enum OpTypes {
+    ProfilerInactive = 0,
+    ProfilerCollectingSample,
+    ProfilerUnwinding,
+    ProfilerSerializing,
     /// Dummy value to allow easier iteration
     SIZE,
 }
 
-impl ProfilingOpTypes {
+impl OpTypes {
     /// A static string giving the name of the `ProfilingOpType`.
     /// We implement this, rather than `to_string`, to avoid the memory
     /// allocation associated with `String`.
     pub fn name(i: usize) -> anyhow::Result<&'static str> {
         let rval = match i {
-            0 => "not_profiling",
-            1 => "collecting_sample",
-            2 => "unwinding",
-            3 => "serializing",
+            0 => "profiler_inactive",
+            1 => "profiler_collecting_sample",
+            2 => "profiler_unwinding",
+            3 => "profiler_serializing",
             _ => anyhow::bail!("invalid enum val {i}"),
         };
         Ok(rval)
@@ -48,29 +48,29 @@ impl ProfilingOpTypes {
 const ATOMIC_ZERO: AtomicI64 = AtomicI64::new(0);
 
 // TODO: Is this
-static PROFILING_OP_COUNTERS: [AtomicI64; ProfilingOpTypes::SIZE as usize] =
-    [ATOMIC_ZERO; ProfilingOpTypes::SIZE as usize];
+static OP_COUNTERS: [AtomicI64; OpTypes::SIZE as usize] =
+    [ATOMIC_ZERO; OpTypes::SIZE as usize];
 
-/// Track that a profiling operation (of type op) has begun.
+/// Track that an operation (of type op) has begun.
 /// Currently, we assume states are discrete (i.e. not nested).
 /// PRECONDITIONS:
 ///     This function assumes that the crash-tracker is initialized.
 /// ATOMICITY:
 ///     This function is atomic.  
-pub fn begin_profiling_op(op: ProfilingOpTypes) -> anyhow::Result<()> {
+pub fn begin_op(op: OpTypes) -> anyhow::Result<()> {
     // TODO: I'm making everything SeqCst for now.  Could possibly gain some
     // performance by using a weaker ordering.
-    let old = PROFILING_OP_COUNTERS[op as usize].fetch_add(1, SeqCst);
+    let old = OP_COUNTERS[op as usize].fetch_add(1, SeqCst);
     anyhow::ensure!(old < i64::MAX, "Overflowed counter {op:?}");
     Ok(())
 }
 
-/// Track that a profiling operation (of type op) has finished.
+/// Track that an operation (of type op) has finished.
 /// Currently, we assume states are discrete (i.e. not nested).
 /// PRECONDITIONS: This function assumes that the crash-tracker is initialized.
 /// ATOMICITY: This function is atomic.  
-pub fn end_profiling_op(op: ProfilingOpTypes) -> anyhow::Result<()> {
-    let old = PROFILING_OP_COUNTERS[op as usize].fetch_sub(1, SeqCst);
+pub fn end_op(op: OpTypes) -> anyhow::Result<()> {
+    let old = OP_COUNTERS[op as usize].fetch_sub(1, SeqCst);
     anyhow::ensure!(old > 0, "Can't end profiling '{op:?}' with count 0");
     Ok(())
 }
@@ -98,11 +98,11 @@ pub fn emit_counters(w: &mut impl Write) -> anyhow::Result<()> {
     use crate::shared::constants::*;
 
     writeln!(w, "{DD_CRASHTRACK_BEGIN_COUNTERS}")?;
-    for (i, c) in PROFILING_OP_COUNTERS.iter().enumerate() {
+    for (i, c) in OP_COUNTERS.iter().enumerate() {
         writeln!(
             w,
             "{{\"{}\": {}}}",
-            ProfilingOpTypes::name(i)?,
+            OpTypes::name(i)?,
             c.load(SeqCst)
         )?;
     }
@@ -115,9 +115,9 @@ pub fn emit_counters(w: &mut impl Write) -> anyhow::Result<()> {
 /// ATOMICITY:
 ///     This is NOT ATOMIC.
 ///     Should only be used when no conflicting updates can occur,
-///     e.g. after a fork but before profiling ops start on the child.
+///     e.g. after a fork but before ops start on the child.
 pub fn reset_counters() -> anyhow::Result<()> {
-    for c in PROFILING_OP_COUNTERS.iter() {
+    for c in OP_COUNTERS.iter() {
         c.store(0, SeqCst);
     }
     Ok(())

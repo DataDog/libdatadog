@@ -133,7 +133,7 @@ pub fn init_with_unix_socket(
 #[ignore]
 #[test]
 fn test_crash() -> anyhow::Result<()> {
-    use crate::{begin_profiling_op, StacktraceCollection};
+    use crate::{begin_op, StacktraceCollection};
     use chrono::Utc;
     use ddcommon::tag;
     use ddcommon::Endpoint;
@@ -173,7 +173,7 @@ fn test_crash() -> anyhow::Result<()> {
         vec![],
     );
     init_with_receiver(config, receiver_config, metadata)?;
-    begin_profiling_op(crate::ProfilingOpTypes::CollectingSample)?;
+    begin_op(crate::OpTypes::ProfilerCollectingSample)?;
     super::insert_span(42)?;
     super::insert_trace(u128::MAX)?;
     super::insert_span(12)?;
