@@ -54,8 +54,8 @@ mod unix {
         };
 
         let metadata = CrashtrackerMetadata {
-            profiling_library_name: "libdatadog".to_owned(),
-            profiling_library_version: "1.0.0".to_owned(),
+            library_name: "libdatadog".to_owned(),
+            library_version: "1.0.0".to_owned(),
             family: "native".to_owned(),
             tags: vec![
                 tag!("service", "foo"),
@@ -97,11 +97,11 @@ mod unix {
             }
         }
 
-        crashtracker::begin_profiling_op(crashtracker::ProfilingOpTypes::CollectingSample)?;
+        crashtracker::begin_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
         unsafe {
             deref_ptr(std::ptr::null_mut::<u8>());
         }
-        crashtracker::end_profiling_op(crashtracker::ProfilingOpTypes::CollectingSample)?;
+        crashtracker::end_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
         Ok(())
     }
 }

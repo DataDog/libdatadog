@@ -86,8 +86,8 @@ int main(void) {
   // TODO add some tags here
   auto tags = ddog_Vec_Tag_new();
   const ddog_crasht_Metadata metadata = {
-      .profiling_library_name = to_slice_c_char("libdatadog"),
-      .profiling_library_version = to_slice_c_char("42"),
+      .library_name = to_slice_c_char("libdatadog"),
+      .library_version = to_slice_c_char("42"),
       .family = to_slice_c_char("rust"),
       .tags = &tags,
   };
@@ -109,8 +109,7 @@ int main(void) {
 
   ddog_Timespec timestamp = {.seconds = 1568899800, .nanoseconds = 0};
   // Datadog IPO at 2019-09-19T13:30:00Z = 1568899800 unix
-  check_result(ddog_crasht_CrashInfo_set_timestamp(
-                   crashinfo.get(), timestamp),
+  check_result(ddog_crasht_CrashInfo_set_timestamp(crashinfo.get(), timestamp),
                "Failed to set timestamp");
 
   auto endpoint = ddog_endpoint_from_filename(to_slice_c_char("/tmp/test"));

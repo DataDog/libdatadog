@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::datatypes::ProfilingOpTypes;
+use super::datatypes::OpTypes;
 use crate::Result;
 use anyhow::Context;
 
@@ -28,9 +28,9 @@ pub unsafe extern "C" fn ddog_crasht_reset_counters() -> Result {
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_crasht_begin_profiling_op(op: ProfilingOpTypes) -> Result {
-    datadog_crashtracker::begin_profiling_op(op)
-        .context("ddog_crasht_begin_profiling_op failed")
+pub unsafe extern "C" fn ddog_crasht_begin_op(op: OpTypes) -> Result {
+    datadog_crashtracker::begin_op(op)
+        .context("ddog_crasht_begin_op failed")
         .into()
 }
 
@@ -41,8 +41,8 @@ pub unsafe extern "C" fn ddog_crasht_begin_profiling_op(op: ProfilingOpTypes) ->
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_crasht_end_profiling_op(op: ProfilingOpTypes) -> Result {
-    datadog_crashtracker::end_profiling_op(op)
-        .context("ddog_crasht_end_profiling_op failed")
+pub unsafe extern "C" fn ddog_crasht_end_op(op: OpTypes) -> Result {
+    datadog_crashtracker::end_op(op)
+        .context("ddog_crasht_end_op failed")
         .into()
 }

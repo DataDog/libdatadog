@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::option_from_char_slice;
-pub use datadog_crashtracker::{ProfilingOpTypes, StacktraceCollection};
+pub use datadog_crashtracker::{OpTypes, StacktraceCollection};
 use ddcommon::Endpoint;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use ddcommon_ffi::{Error, Slice};
@@ -111,15 +111,13 @@ impl From<anyhow::Result<usize>> for UsizeResult {
 
 #[repr(C)]
 pub enum CrashtrackerGetCountersResult {
-    Ok([i64; ProfilingOpTypes::SIZE as usize]),
+    Ok([i64; OpTypes::SIZE as usize]),
     #[allow(dead_code)]
     Err(Error),
 }
 
-impl From<anyhow::Result<[i64; ProfilingOpTypes::SIZE as usize]>>
-    for CrashtrackerGetCountersResult
-{
-    fn from(value: anyhow::Result<[i64; ProfilingOpTypes::SIZE as usize]>) -> Self {
+impl From<anyhow::Result<[i64; OpTypes::SIZE as usize]>> for CrashtrackerGetCountersResult {
+    fn from(value: anyhow::Result<[i64; OpTypes::SIZE as usize]>) -> Self {
         match value {
             Ok(x) => Self::Ok(x),
             Err(err) => Self::Err(err.into()),

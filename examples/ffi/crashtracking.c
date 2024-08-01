@@ -62,8 +62,8 @@ int main(int argc, char **argv) {
   };
 
   ddog_crasht_Metadata metadata = {
-      .profiling_library_name = DDOG_CHARSLICE_C("crashtracking-test"),
-      .profiling_library_version = DDOG_CHARSLICE_C("12.34.56"),
+      .library_name = DDOG_CHARSLICE_C("crashtracking-test"),
+      .library_version = DDOG_CHARSLICE_C("12.34.56"),
       .family = DDOG_CHARSLICE_C("crashtracking-test"),
       .tags = NULL,
   };
@@ -71,7 +71,7 @@ int main(int argc, char **argv) {
   handle_result(ddog_crasht_init_with_receiver(config, receiver_config, metadata));
   ddog_endpoint_drop(endpoint);
 
-  handle_result(ddog_crasht_begin_profiling_op(DDOG_CRASHT_PROFILING_OP_TYPES_SERIALIZING));
+  handle_result(ddog_crasht_begin_op(DDOG_CRASHT_OP_TYPES_PROFILER_COLLECTING_SAMPLE));
   handle_uintptr_t_result(ddog_crasht_insert_span_id(0, 42));
   handle_uintptr_t_result(ddog_crasht_insert_trace_id(1, 1));
 
@@ -99,8 +99,8 @@ int main(int argc, char **argv) {
   },
   "incomplete": false,
   "metadata": {
-    "profiling_library_name": "crashtracking-test",
-    "profiling_library_version": "12.34.56",
+    "library_name": "crashtracking-test",
+    "library_version": "12.34.56",
     "family": "crashtracking-test",
     "tags": []
   },

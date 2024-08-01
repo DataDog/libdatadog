@@ -217,17 +217,15 @@ mod tests {
     fn new_test_uploader() -> TelemetryCrashUploader {
         TelemetryCrashUploader::new(
             &new_test_prof_metadata(),
-            &Some(Endpoint::from_slice(
-                "http://localhost:8126/profiling/v1/input",
-            )),
+            &Some(Endpoint::from_slice("http://localhost:8126")),
         )
         .unwrap()
     }
 
     fn new_test_prof_metadata() -> super::CrashtrackerMetadata {
         super::CrashtrackerMetadata {
-            profiling_library_name: "libdatadog".to_owned(),
-            profiling_library_version: "1.0.0".to_owned(),
+            library_name: "libdatadog".to_owned(),
+            library_version: "1.0.0".to_owned(),
             family: "native".to_owned(),
             tags: vec![
                 tag!("service", "foo"),
