@@ -27,18 +27,14 @@ impl ArrayQueue {
         capacity: usize,
         item_delete_fn: Option<unsafe extern "C" fn(*mut c_void) -> c_void>,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        if capacity == 0 {
-            return Err(anyhow::anyhow!("capacity must be greater than 0"));
-        }
+        anyhow::ensure!(capacity > 0, "capacity must be greater than 0");
         let item_delete_fn = item_delete_fn.context("item_delete_fn must be non-null")?;
 
         let internal_queue: crossbeam_queue::ArrayQueue<*mut c_void> =
             crossbeam_queue::ArrayQueue::new(capacity);
-        // # Safety: internal_queue must be non-null If the memory allocation had failed, the
-        // program would panic.
-        let inner = unsafe {
-            NonNull::new_unchecked(Box::into_raw(Box::new(internal_queue)) as *mut ArrayQueue)
-        };
+        // # Safety: internal_queue must be non-null.
+        // If the memory allocation had failed, the program would panic.
+        let inner = NonNull::new(Box::into_raw(Box::new(internal_queue)) as *mut ArrayQueue)?;
         Ok(Self {
             inner,
             item_delete_fn,
