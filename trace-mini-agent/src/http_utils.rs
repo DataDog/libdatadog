@@ -11,8 +11,7 @@ use serde_json::json;
 
 /// Does two things:
 /// 1. Logs the given message. A success status code (within 200-299) will cause an info log to be
-///    written,
-/// otherwise error will be written.
+///    written, otherwise error will be written.
 /// 2. Returns the given message in the body of JSON response with the given status code.
 ///
 /// Response body format:
@@ -29,6 +28,26 @@ pub fn log_and_create_http_response(
         error!("{message}");
     }
     let body = json!({ "message": message }).to_string();
+    Response::builder().status(status).body(Body::from(body))
+}
+
+/// Does two things:
+/// 1. Logs the given message
+/// 2. Returns the rate_by_service map to use to set the sampling priority in the body of JSON
+///    response with the given status code.
+///
+/// Response body format:
+/// {
+///     "rate_by_service": {
+///         "service:,env:":1
+///     }
+/// }
+pub fn log_and_create_traces_success_http_response(
+    message: &str,
+    status: StatusCode,
+) -> http::Result<Response<Body>> {
+    info!("{message}");
+    let body = json!({"rate_by_service":{"service:,env:":1}}).to_string();
     Response::builder().status(status).body(Body::from(body))
 }
 

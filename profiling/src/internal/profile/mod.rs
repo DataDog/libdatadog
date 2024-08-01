@@ -142,6 +142,7 @@ impl Profile {
     ///  - "" (the empty string)
     ///  - "local root span id"
     ///  - "trace endpoint"
+    ///
     /// All other fields are default.
     #[inline]
     pub fn new(

@@ -9,13 +9,15 @@ use log::info;
 use tokio::sync::mpsc::Sender;
 
 use datadog_trace_obfuscation::obfuscate::obfuscate_span;
+use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils::SendData;
 use datadog_trace_utils::trace_utils::{self};
+use datadog_trace_utils::tracer_payload::TraceChunkProcessor;
 use datadog_trace_utils::tracer_payload::TraceEncoding;
 
 use crate::{
     config::Config,
-    http_utils::{self, log_and_create_http_response},
+    http_utils::{self, log_and_create_http_response, log_and_create_traces_success_http_response},
 };
 
 #[async_trait]
@@ -31,6 +33,25 @@ pub trait TraceProcessor {
     ) -> http::Result<Response<Body>>;
 }
 
+struct ChunkProcessor {
+    config: Arc<Config>,
+    mini_agent_metadata: Arc<trace_utils::MiniAgentMetadata>,
+}
+
+impl TraceChunkProcessor for ChunkProcessor {
+    fn process(&mut self, chunk: &mut pb::TraceChunk, root_span_index: usize) {
+        trace_utils::set_serverless_root_span_tags(
+            &mut chunk.spans[root_span_index],
+            self.config.function_name.clone(),
+            &self.config.env_type,
+        );
+        for span in chunk.spans.iter_mut() {
+            trace_utils::enrich_span_with_mini_agent_metadata(span, &self.mini_agent_metadata);
+            trace_utils::enrich_span_with_azure_metadata(span);
+            obfuscate_span(span, &self.config.obfuscation_config);
+        }
+    }
+}
 #[derive(Clone)]
 pub struct ServerlessTraceProcessor {}
 
@@ -71,20 +92,9 @@ impl TraceProcessor for ServerlessTraceProcessor {
         let payload = trace_utils::collect_trace_chunks(
             traces,
             &tracer_header_tags,
-            |chunk, root_span_index| {
-                trace_utils::set_serverless_root_span_tags(
-                    &mut chunk.spans[root_span_index],
-                    config.function_name.clone(),
-                    &config.env_type,
-                );
-                for span in chunk.spans.iter_mut() {
-                    trace_utils::enrich_span_with_mini_agent_metadata(span, &mini_agent_metadata);
-                    trace_utils::enrich_span_with_azure_metadata(
-                        span,
-                        config.mini_agent_version.as_str(),
-                    );
-                    obfuscate_span(span, &config.obfuscation_config);
-                }
+            &mut ChunkProcessor {
+                config: config.clone(),
+                mini_agent_metadata: mini_agent_metadata.clone(),
             },
             true, // In mini agent, we always send agentless
             TraceEncoding::V07,
@@ -95,9 +105,9 @@ impl TraceProcessor for ServerlessTraceProcessor {
         // send trace payload to our trace flusher
         match tx.send(send_data).await {
             Ok(_) => {
-                return log_and_create_http_response(
+                return log_and_create_traces_success_http_response(
                     "Successfully buffered traces to be flushed.",
-                    StatusCode::ACCEPTED,
+                    StatusCode::OK,
                 );
             }
             Err(err) => {
@@ -150,16 +160,17 @@ mod tests {
             trace_intake: Endpoint {
                 url: hyper::Uri::from_static("https://trace.agent.notdog.com/traces"),
                 api_key: Some("dummy_api_key".into()),
+                ..Default::default()
             },
             trace_stats_intake: Endpoint {
                 url: hyper::Uri::from_static("https://trace.agent.notdog.com/stats"),
                 api_key: Some("dummy_api_key".into()),
+                ..Default::default()
             },
             dd_site: "datadoghq.com".to_string(),
             env_type: trace_utils::EnvironmentType::CloudFunction,
             os: "linux".to_string(),
             obfuscation_config: ObfuscationConfig::new().unwrap(),
-            mini_agent_version: "0.1.0".to_string(),
         }
     }
 

@@ -54,6 +54,12 @@ rename_types = "PascalCase"
 [export.rename]
 "ParseTagsResult" = "ddog_Vec_Tag_ParseResult"
 "PushTagResult" = "ddog_Vec_Tag_PushResult"
+"ArrayQueueNewResult" = "ddog_ArrayQueue_NewResult"
+"ArrayQueuePushResult" = "ddog_ArrayQueue_PushResult"
+"ArrayQueuePopResult" = "ddog_ArrayQueue_PopResult"
+"ArrayQueueBoolResult" = "ddog_ArrayQueue_BoolResult"
+"ArrayQueueUsizeResult" = "ddog_ArrayQueue_UsizeResult"
+
 
 [enum]
 prefix_with_name = true

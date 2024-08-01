@@ -192,6 +192,9 @@ impl MiniAgent {
                     INFO_ENDPOINT_PATH
                 ],
                 "client_drop_p0s": true,
+                "config": {
+                    "statsd_port": MINI_AGENT_PORT
+                }
             }
         );
         Response::builder()

@@ -3,6 +3,7 @@
 #![cfg(unix)]
 
 use super::*;
+use crate::shared::constants::*;
 use anyhow::Context;
 use std::{io::BufReader, os::unix::net::UnixListener};
 
@@ -52,19 +53,19 @@ pub fn receiver_entry_point_stdin() -> anyhow::Result<()> {
 /// signal handler is dangerous, so we fork a sidecar to do the stuff we aren't
 /// allowed to do in the handler.
 ///
-/// See comments in [profiling/crashtracker/mod.rs] for a full architecture
+/// See comments in [crashtracker/lib.rs] for a full architecture
 /// description.
 fn receiver_entry_point(stream: impl std::io::BufRead) -> anyhow::Result<()> {
     match receive_report(stream)? {
         CrashReportStatus::NoCrash => Ok(()),
         CrashReportStatus::CrashReport(config, mut crash_info) => {
             resolve_frames(&config, &mut crash_info)?;
-            crash_info.upload_to_endpoint(&config)
+            crash_info.upload_to_endpoint(&config.endpoint)
         }
         CrashReportStatus::PartialCrashReport(config, mut crash_info, stdin_state) => {
             eprintln!("Failed to fully receive crash.  Exit state was: {stdin_state:?}");
             resolve_frames(&config, &mut crash_info)?;
-            crash_info.upload_to_endpoint(&config)
+            crash_info.upload_to_endpoint(&config.endpoint)
         }
     }
 }
@@ -83,7 +84,9 @@ enum StdinState {
     Metadata,
     ProcInfo,
     SigInfo,
+    SpanIds,
     StackTrace(Vec<StackFrame>),
+    TraceIds,
     Waiting,
 }
 
@@ -160,6 +163,13 @@ fn process_line(
             StdinState::SigInfo
         }
 
+        StdinState::SpanIds if line.starts_with(DD_CRASHTRACK_END_SPAN_IDS) => StdinState::Waiting,
+        StdinState::SpanIds => {
+            let v: Vec<u128> = serde_json::from_str(&line)?;
+            crashinfo.set_span_ids(v)?;
+            StdinState::SpanIds
+        }
+
         StdinState::StackTrace(stacktrace) if line.starts_with(DD_CRASHTRACK_END_STACKTRACE) => {
             crashinfo.set_stacktrace(None, stacktrace)?;
             StdinState::Waiting
@@ -168,6 +178,15 @@ fn process_line(
             let frame = serde_json::from_str(&line).context(line)?;
             stacktrace.push(frame);
             StdinState::StackTrace(stacktrace)
+        }
+
+        StdinState::TraceIds if line.starts_with(DD_CRASHTRACK_END_TRACE_IDS) => {
+            StdinState::Waiting
+        }
+        StdinState::TraceIds => {
+            let v: Vec<u128> = serde_json::from_str(&line)?;
+            crashinfo.set_trace_ids(v)?;
+            StdinState::TraceIds
         }
 
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_CONFIG) => StdinState::Config,
@@ -185,8 +204,14 @@ fn process_line(
             StdinState::ProcInfo
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SIGINFO) => StdinState::SigInfo,
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SPAN_IDS) => {
+            StdinState::SpanIds
+        }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_STACKTRACE) => {
             StdinState::StackTrace(vec![])
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_TRACE_IDS) => {
+            StdinState::TraceIds
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => StdinState::Done,
         StdinState::Waiting => {
@@ -198,6 +223,7 @@ fn process_line(
     Ok(next)
 }
 
+#[derive(Debug)]
 enum CrashReportStatus {
     NoCrash,
     CrashReport(CrashtrackerConfiguration, CrashInfo),
@@ -207,6 +233,7 @@ enum CrashReportStatus {
 /// Listens to `stream`, reading it line by line, until
 /// 1. A crash-report is received, in which case it is processed for upload
 /// 2. `stdin` closes without a crash report (i.e. if the parent terminated normally)
+///
 /// In the case where the parent failed to transfer a full crash-report
 /// (for instance if it crashed while calculating the crash-report), we return
 /// a PartialCrashReport.

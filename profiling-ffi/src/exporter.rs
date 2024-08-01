@@ -4,13 +4,12 @@
 #![allow(renamed_and_removed_lints)]
 #![allow(clippy::box_vec)]
 
-use crate::Timespec;
 use datadog_profiling::exporter;
 use datadog_profiling::exporter::{ProfileExporter, Request};
 use datadog_profiling::internal::ProfiledEndpointsStats;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use ddcommon_ffi::Error;
+use ddcommon_ffi::{Error, MaybeError, Timespec};
 use std::borrow::Cow;
 use std::ptr::NonNull;
 use std::str::FromStr;
@@ -192,6 +191,23 @@ fn ddog_prof_exporter_new_impl(
     )
 }
 
+/// Sets the value for the exporter's timeout.
+/// # Arguments
+/// * `exporter` - ProfileExporter instance.
+/// * `timeout_ms` - timeout in milliseconds.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Exporter_set_timeout(
+    exporter: Option<&mut ProfileExporter>,
+    timeout_ms: u64,
+) -> MaybeError {
+    if let Some(ptr) = exporter {
+        ptr.set_timeout(timeout_ms);
+        MaybeError::None
+    } else {
+        MaybeError::Some(Error::from("Invalid argument"))
+    }
+}
+
 /// # Safety
 /// The `exporter` may be null, but if non-null the pointer must point to a
 /// valid `ddog_prof_Exporter_Request` object made by the Rust Global
@@ -255,12 +271,10 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     optional_endpoints_stats: Option<&ProfiledEndpointsStats>,
     optional_internal_metadata_json: Option<&CharSlice>,
     optional_info_json: Option<&CharSlice>,
-    timeout_ms: u64,
 ) -> RequestBuildResult {
     match exporter {
         None => RequestBuildResult::Err(anyhow::anyhow!("exporter was null").into()),
         Some(exporter) => {
-            let timeout = std::time::Duration::from_millis(timeout_ms);
             let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
             let files_to_export_unmodified = into_vec_files(files_to_export_unmodified);
             let tags = optional_additional_tags.map(|tags| tags.iter().cloned().collect());
@@ -285,7 +299,6 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
                 optional_endpoints_stats,
                 internal_metadata,
                 info,
-                timeout,
             ) {
                 Ok(request) => {
                     RequestBuildResult::Ok(NonNull::new_unchecked(Box::into_raw(Box::new(request))))
@@ -573,6 +586,9 @@ mod tests {
             nanoseconds: 78,
         };
         let timeout_milliseconds = 90;
+        unsafe {
+            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds);
+        }
 
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
@@ -585,7 +601,6 @@ mod tests {
                 None,
                 None,
                 None,
-                timeout_milliseconds,
             )
         };
 
@@ -644,6 +659,9 @@ mod tests {
             nanoseconds: 78,
         };
         let timeout_milliseconds = 90;
+        unsafe {
+            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds);
+        }
 
         let raw_internal_metadata = CharSlice::from(
             r#"
@@ -666,7 +684,6 @@ mod tests {
                 None,
                 Some(&raw_internal_metadata),
                 None,
-                timeout_milliseconds,
             )
         };
 
@@ -716,6 +733,9 @@ mod tests {
             nanoseconds: 78,
         };
         let timeout_milliseconds = 90;
+        unsafe {
+            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds);
+        }
 
         let raw_internal_metadata = CharSlice::from("this is not a valid json string");
 
@@ -730,7 +750,6 @@ mod tests {
                 None,
                 Some(&raw_internal_metadata),
                 None,
-                timeout_milliseconds,
             )
         };
 
@@ -776,6 +795,9 @@ mod tests {
             nanoseconds: 78,
         };
         let timeout_milliseconds = 90;
+        unsafe {
+            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds);
+        }
 
         let raw_info = CharSlice::from(
             r#"
@@ -819,7 +841,6 @@ mod tests {
                 None,
                 None,
                 Some(&raw_info),
-                timeout_milliseconds,
             )
         };
 
@@ -890,6 +911,9 @@ mod tests {
             nanoseconds: 78,
         };
         let timeout_milliseconds = 90;
+        unsafe {
+            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds);
+        }
 
         let raw_info = CharSlice::from("this is not a valid json string");
 
@@ -904,7 +928,6 @@ mod tests {
                 None,
                 None,
                 Some(&raw_info),
-                timeout_milliseconds,
             )
         };
 
@@ -926,7 +949,6 @@ mod tests {
             seconds: 56,
             nanoseconds: 78,
         };
-        let timeout_milliseconds = 90;
 
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
@@ -939,7 +961,6 @@ mod tests {
                 None,
                 None,
                 None,
-                timeout_milliseconds,
             )
         };
 

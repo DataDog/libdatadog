@@ -1,16 +1,20 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "collector"))]
 mod collector;
-mod counters;
 mod crash_info;
 mod datatypes;
+#[cfg(feature = "demangler")]
 mod demangler;
+#[cfg(all(unix, feature = "receiver"))]
+mod receiver;
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "collector"))]
 pub use collector::*;
-pub use counters::*;
 pub use crash_info::*;
 pub use datatypes::*;
+#[cfg(feature = "demangler")]
 pub use demangler::*;
+#[cfg(all(unix, feature = "receiver"))]
+pub use receiver::*;

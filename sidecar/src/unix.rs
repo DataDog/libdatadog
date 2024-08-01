@@ -3,8 +3,10 @@
 
 use spawn_worker::{getpid, SpawnWorker, Stdio};
 
+use std::ffi::CString;
 use std::os::unix::net::UnixListener as StdUnixListener;
 
+use crate::config::FromEnv;
 use crate::enter_listener_loop;
 use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
 use nix::sys::socket::{shutdown, Shutdown};
@@ -27,6 +29,8 @@ pub extern "C" fn ddog_daemon_entry_point() {
     let _ = prctl::set_name("dd-ipc-helper");
 
     let now = Instant::now();
+
+    let appsec_started = maybe_start_appsec();
 
     if let Some(fd) = spawn_worker::recv_passed_fd() {
         let listener: StdUnixListener = fd.into();
@@ -54,6 +58,10 @@ pub extern "C" fn ddog_daemon_entry_point() {
         if let Err(err) = enter_listener_loop(acquire_listener) {
             error!("Error: {err}")
         }
+    }
+
+    if appsec_started {
+        shutdown_appsec();
     }
 
     info!(
@@ -88,4 +96,52 @@ pub fn setup_daemon_process(
 
 pub fn primary_sidecar_identifier() -> u32 {
     unsafe { libc::geteuid() }
+}
+
+fn maybe_start_appsec() -> bool {
+    let cfg = FromEnv::appsec_config();
+    if cfg.is_none() {
+        return false;
+    }
+
+    info!("Starting appsec helper");
+
+    let entrypoint_sym_name = CString::new("appsec_helper_main").unwrap();
+
+    let func_ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, entrypoint_sym_name.as_ptr()) };
+    if func_ptr.is_null() {
+        error!("Failed to load appsec helper: can't find the symbol 'appsec_helper_main'");
+        return false;
+    }
+
+    let appsec_entry_fn: extern "C" fn() -> i32 = unsafe { std::mem::transmute(func_ptr) };
+    let res = appsec_entry_fn();
+    if res != 0 {
+        error!("Appsec helper failed to start");
+        return false;
+    }
+
+    info!("Appsec helper started");
+    true
+}
+
+fn shutdown_appsec() -> bool {
+    info!("Shutting down appsec helper");
+
+    let shutdown_sym_name = CString::new("appsec_helper_shutdown").unwrap();
+
+    let func_ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, shutdown_sym_name.as_ptr()) };
+    if func_ptr.is_null() {
+        error!("Failed to load appsec helper: can't find the symbol 'appsec_helper_shutdown'");
+        return false;
+    }
+    let appsec_shutdown_fn: extern "C" fn() -> i32 = unsafe { std::mem::transmute(func_ptr) };
+    let res = appsec_shutdown_fn();
+    if res != 0 {
+        error!("Appsec helper failed to shutdown");
+        return false;
+    }
+
+    info!("Appsec helper shutdown");
+    true
 }

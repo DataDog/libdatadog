@@ -146,6 +146,7 @@ impl TraceFlusher {
     ///
     /// * A `Result` which is `Ok` if the flusher task successfully joins, or `Err` if the flusher
     ///   task panics.
+    ///
     /// If the flusher task is not running, it returns `Ok`.
     pub(crate) async fn join(&self) -> anyhow::Result<(), JoinError> {
         let flusher = {
@@ -338,6 +339,7 @@ mod tests {
         let target_endpoint = Endpoint {
             url: server.url("").to_owned().parse().unwrap(),
             api_key: Some("test-key".into()),
+            ..Default::default()
         };
 
         let send_data_1 = create_send_data(size, &target_endpoint);
@@ -379,6 +381,7 @@ mod tests {
         let target_endpoint = Endpoint {
             url: server.url("").to_owned().parse().unwrap(),
             api_key: Some("test-key".into()),
+            ..Default::default()
         };
         let send_data_1 = create_send_data(size, &target_endpoint);
 
@@ -415,6 +418,7 @@ mod tests {
         let target_endpoint = Endpoint {
             url: server.url("").to_owned().parse().unwrap(),
             api_key: Some("test-key".into()),
+            ..Default::default()
         };
 
         let send_data_1 = create_send_data(size, &target_endpoint);

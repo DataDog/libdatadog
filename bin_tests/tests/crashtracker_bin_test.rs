@@ -94,10 +94,10 @@ fn test_crash_tracking_bin(
         .unwrap();
     assert_eq!(
         serde_json::json!({
-          "collecting_sample": 1,
-          "not_profiling": 0,
-          "unwinding": 0,
-          "serializing": 0
+          "profiler_collecting_sample": 1,
+          "profiler_inactive": 0,
+          "profiler_serializing": 0,
+          "profiler_unwinding": 0
         }),
         crash_payload["counters"],
     );
@@ -142,11 +142,11 @@ fn assert_telemetry_message(crash_telemetry: &[u8]) {
     assert_eq!(
         std::collections::HashSet::from_iter([
             "signum:11",
-            "signame:SIGSEGV",
-            "collecting_sample:1",
-            "not_profiling:0",
-            "serializing:0",
-            "unwinding:0",
+            "profiler_unwinding:0",
+            "profiler_collecting_sample:1",
+            "profiler_inactive:0",
+            "profiler_serializing:0",
+            "signame:SIGSEGV"
         ]),
         tags
     );

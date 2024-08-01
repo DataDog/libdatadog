@@ -236,11 +236,12 @@ mod tests {
     /// This is a fuzz test for the allocation optimized `StringTable`.
     /// It checks both safety (lack of crashes / sanitizer failures),
     /// as well as functional correctness (the table should behave like an
-    /// ordered set).  
+    /// ordered set).
     /// Limitations:
     ///   - The crate used here to generate Strings internally has a default range for the length of
     ///     a string, (0..=64) We should experiment with longer strings to see what happens. https://github.com/camshaft/bolero/blob/f401669697ffcbe7f34cbfd09fd57b93d5df734c/lib/bolero-generator/src/alloc/mod.rs#L17
     ///   - Since iterating is destructive, can only check the string values once.
+    ///
     /// `cargo +nightly bolero test collections::string_table::tests::fuzz_string_table -T 1min`
     #[test]
     fn fuzz_string_table() {

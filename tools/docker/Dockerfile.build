@@ -77,6 +77,7 @@ COPY [ "Cargo.lock", "Cargo.toml", "./"]
 COPY "alloc/Cargo.toml" "alloc/"
 COPY "build-common/Cargo.toml" "build-common/"
 COPY "crashtracker/Cargo.toml" "crashtracker/"
+COPY "crashtracker-ffi/Cargo.toml" "crashtracker-ffi/"
 COPY "ddcommon/Cargo.toml" "ddcommon/"
 COPY "ddcommon-ffi/Cargo.toml" "ddcommon-ffi/" 
 COPY "ddtelemetry/Cargo.toml" "ddtelemetry/"
@@ -132,6 +133,8 @@ RUN echo \
     tools/src/bin/dedup_headers.rs \
     trace-normalization/benches/normalization_utils.rs \
     trace-obfuscation/benches/trace_obfuscation.rs \
+    trace-utils/benches/deserialization.rs \
+    trace-utils/benches/main.rs \
     | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
 
 # cache dependencies

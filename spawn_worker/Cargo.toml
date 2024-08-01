@@ -39,3 +39,7 @@ tempfile = { version = "3.3" }
 
 [target.'cfg(not(windows))'.dev-dependencies]
 rlimit = {version = "0.9"}
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
+

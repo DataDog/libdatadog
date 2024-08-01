@@ -13,13 +13,13 @@ fn main() -> anyhow::Result<()> {
 mod unix {
     use anyhow::Context;
     use bin_tests::ReceiverType;
-    use std::{env, fs::File, str::FromStr, time::Duration};
+    use std::{env, fs::File, str::FromStr};
 
     use datadog_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerMetadata,
         CrashtrackerReceiverConfig,
     };
-    use ddcommon::tag;
+    use ddcommon::{tag, Endpoint};
 
     #[inline(never)]
     unsafe fn deref_ptr(p: *mut u8) {
@@ -37,16 +37,12 @@ mod unix {
         let socket_path = args.next().context("Unexpected number of arguments")?;
         anyhow::ensure!(args.next().is_none(), "unexpected extra arguments");
 
-        let timeout = Duration::from_secs(30);
         let wait_for_receiver = true;
 
         let endpoint = if output_url.is_empty() {
             None
         } else {
-            Some(ddcommon::Endpoint {
-                url: ddcommon::parse_uri(&output_url)?,
-                api_key: None,
-            })
+            Some(Endpoint::from_slice(&output_url))
         };
 
         let config = CrashtrackerConfiguration {
@@ -54,13 +50,12 @@ mod unix {
             create_alt_stack: true,
             resolve_frames: crashtracker::StacktraceCollection::WithoutSymbols,
             endpoint,
-            timeout,
             wait_for_receiver,
         };
 
         let metadata = CrashtrackerMetadata {
-            profiling_library_name: "libdatadog".to_owned(),
-            profiling_library_version: "1.0.0".to_owned(),
+            library_name: "libdatadog".to_owned(),
+            library_version: "1.0.0".to_owned(),
             family: "native".to_owned(),
             tags: vec![
                 tag!("service", "foo"),
@@ -102,11 +97,11 @@ mod unix {
             }
         }
 
-        crashtracker::begin_profiling_op(crashtracker::ProfilingOpTypes::CollectingSample)?;
+        crashtracker::begin_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
         unsafe {
             deref_ptr(std::ptr::null_mut::<u8>());
         }
-        crashtracker::end_profiling_op(crashtracker::ProfilingOpTypes::CollectingSample)?;
+        crashtracker::end_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
         Ok(())
     }
 }

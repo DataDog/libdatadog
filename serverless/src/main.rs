@@ -3,7 +3,7 @@
 
 use env_logger::{Builder, Env, Target};
 use log::{error, info};
-use std::sync::Arc;
+use std::{env, sync::Arc};
 
 use datadog_trace_mini_agent::{
     config, env_verifier, mini_agent, stats_flusher, stats_processor, trace_flusher,
@@ -15,6 +15,9 @@ pub fn main() {
     Builder::from_env(env).target(Target::Stdout).init();
 
     info!("Starting serverless trace mini agent");
+
+    let mini_agent_version = env!("CARGO_PKG_VERSION").to_string();
+    env::set_var("DD_MINI_AGENT_VERSION", mini_agent_version);
 
     let env_verifier = Arc::new(env_verifier::ServerlessEnvVerifier::default());
 

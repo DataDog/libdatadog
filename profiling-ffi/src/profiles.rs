@@ -1,13 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::Timespec;
 use anyhow::Context;
 use datadog_profiling::api;
 use datadog_profiling::internal;
 use datadog_profiling::internal::ProfiledEndpointsStats;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
-use ddcommon_ffi::Error;
+use ddcommon_ffi::{Error, Timespec};
 use std::num::NonZeroI64;
 use std::str::Utf8Error;
 use std::time::{Duration, SystemTime};

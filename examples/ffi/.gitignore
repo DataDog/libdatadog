@@ -1,0 +1,14 @@
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+array_queue
+crashinfo
+crashtracking
+exporter
+profiles
+telemetry
+telemetry_metrics
+trace_exporter

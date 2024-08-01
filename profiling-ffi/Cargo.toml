@@ -20,14 +20,18 @@ cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
 ddtelemetry-ffi = ["dep:ddtelemetry-ffi"]
 symbolizer = ["symbolizer-ffi"]
 data-pipeline-ffi = ["dep:data-pipeline-ffi"]
+crashtracker-ffi = ["dep:datadog-crashtracker-ffi"]
+# Enables the in-process collection of crash-info
+crashtracker-collector = ["crashtracker-ffi", "datadog-crashtracker-ffi/collector"]
+# Enables the use of this library to receiver crash-info from a suitable collector
+crashtracker-receiver = ["crashtracker-ffi", "datadog-crashtracker-ffi/receiver"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
 
 [dependencies]
 anyhow = "1.0"
-chrono = {version = "0.4", default-features = false }
-datadog-crashtracker = { path = "../crashtracker" }
+datadog-crashtracker-ffi = { path = "../crashtracker-ffi", default-features = false, optional = true} 
 datadog-profiling = { path = "../profiling" }
 hyper = { version = "0.14", default-features = false }
 ddcommon = { path = "../ddcommon"}
