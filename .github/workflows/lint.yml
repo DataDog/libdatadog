@@ -121,3 +121,10 @@ jobs:
           name: LICENSE-3rdparty.yml
           path: /tmp/CI.yaml
           overwrite: true
+  verify-json-schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v13
+      - uses: DeterminateSystems/magic-nix-cache-action@v7
+      - run: rfc/0001-crashtracker-user-visable-log/verify_examples.sh
