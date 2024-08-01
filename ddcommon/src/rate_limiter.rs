@@ -25,15 +25,25 @@ pub struct LocalLimiter {
     granularity: i64,
 }
 
-/// Returns nanoseconds on Unix, milliseconds on Windows (system time granularity is bad there).
-#[cfg(windows)]
-const TIME_PER_SECOND: i64 = 1_000; // milliseconds
-#[cfg(not(windows))]
 const TIME_PER_SECOND: i64 = 1_000_000_000; // nanoseconds
 
 fn now() -> u64 {
     #[cfg(windows)]
-    let now = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() };
+    let now = unsafe {
+        static FREQUENCY: AtomicU64 = AtomicU64::new(0);
+
+        let mut frequency = FREQUENCY.load(Ordering::Relaxed);
+        if frequency == 0 {
+            windows_sys::Win32::System::Performance::QueryPerformanceFrequency(
+                &mut frequency as *mut u64 as *mut i64,
+            );
+            FREQUENCY.store(frequency, Ordering::Relaxed);
+        }
+
+        let mut perf_counter = 0;
+        windows_sys::Win32::System::Performance::QueryPerformanceCounter(&mut perf_counter);
+        perf_counter as u64 * frequency / TIME_PER_SECOND as u64
+    };
     #[cfg(not(windows))]
     let now = {
         let mut ts: libc::timespec = libc::timespec {
@@ -117,7 +127,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    #[cfg(not(windows))] // clock time resolution is too low on windows for this test
     fn test_rate_limiter() {
         let limiter = LocalLimiter::default();
         // Two are allowed, then one more because a small amount of time passed since the first one

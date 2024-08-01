@@ -42,7 +42,7 @@ libc = "0.2"
 version = "0.52"
 features = [
     "Win32_Foundation",
-    "Win32_System_SystemInformation",
+    "Win32_System_Performance",
 ]
 
 [target.'cfg(unix)'.dependencies]
