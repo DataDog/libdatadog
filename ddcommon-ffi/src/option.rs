@@ -31,3 +31,13 @@ impl<T: Copy> From<&Option<T>> for std::option::Option<T> {
         }
     }
 }
+
+#[no_mangle]
+pub extern "C" fn ddog_Option_U32_some(v: u32) -> Option<u32> {
+    Option::Some(v)
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_Option_U32_none() -> Option<u32> {
+    Option::None
+}

@@ -5,6 +5,7 @@
 members = [
   "alloc",
   "crashtracker",
+  "crashtracker-ffi",
   "profiling",
   "profiling-ffi",
   "profiling-replayer",
