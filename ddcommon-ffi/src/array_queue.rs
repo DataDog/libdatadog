@@ -32,7 +32,10 @@ impl ArrayQueue {
 
         let internal_queue: crossbeam_queue::ArrayQueue<*mut c_void> =
             crossbeam_queue::ArrayQueue::new(capacity);
-        let inner = NonNull::new(Box::into_raw(Box::new(internal_queue)) as *mut ArrayQueue)?;
+        // # Safety: internal_queue must be non-null.
+        // If the memory allocation had failed, the program would panic.
+        let inner = NonNull::new(Box::into_raw(Box::new(internal_queue)) as *mut ArrayQueue)
+            .context("nullptr passed to NonNull, failed to create internal_queue")?;
         Ok(Self {
             inner,
             item_delete_fn,
