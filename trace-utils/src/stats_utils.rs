@@ -283,6 +283,10 @@ mod tests {
             client_stats_payload_without_inner_stats,
         ]));
 
-        assert!(res.is_ok(), "Expected Ok result, but got Err: {}", res.unwrap_err());
+        assert!(
+            res.is_ok(),
+            "Expected Ok result, but got Err: {}",
+            res.unwrap_err()
+        );
     }
 }
