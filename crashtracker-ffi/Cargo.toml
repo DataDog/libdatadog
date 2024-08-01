@@ -12,10 +12,11 @@ license.workspace = true
 bench = false
 
 [features]
-default = ["cbindgen", "collector", "receiver"]
+default = ["cbindgen", "collector", "demangler", "receiver"]
 cbindgen = ["build_common/cbindgen"]
 # Enables the in-process collection of crash-info
 collector = []
+demangler = ["dep:symbolic-demangle", "dep:symbolic-common"]
 # Enables the use of this library to receiver crash-info from a suitable collector
 receiver = []
 
@@ -28,5 +29,5 @@ datadog-crashtracker = { path = "../crashtracker" }
 ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 hyper = {version = "0.14", default-features = false}
-symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"] }
-symbolic-common = "12.8.0"
+symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"], optional = true }
+symbolic-common = { version = "12.8.0", default-features = false, optional = true }
