@@ -9,7 +9,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [lib]
-bench =false
+bench = false
 
 [features]
 default = ["cbindgen", "collector", "receiver"]
