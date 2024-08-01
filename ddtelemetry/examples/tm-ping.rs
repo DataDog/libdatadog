@@ -46,7 +46,7 @@ fn build_request<'a>(
 
 pub async fn push_telemetry(telemetry: &Telemetry<'_>) -> anyhow::Result<()> {
     let config = Config::get();
-    let client = ddtelemetry::worker::http_client::from_config(config);
+    let client = ddcommon::http_client::from_endpoint(&config.endpoint);
     let req = request_builder(config)?
         .method(http::Method::POST)
         .header(CONTENT_TYPE, ddcommon::header::APPLICATION_JSON)

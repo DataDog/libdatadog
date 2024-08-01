@@ -123,7 +123,7 @@ pub struct TelemetryWorker {
     cancellation_token: CancellationToken,
     seq_id: AtomicU64,
     runtime_id: String,
-    client: Box<dyn http_client::HttpClient + Sync + Send>,
+    client: Box<dyn ddcommon::http_client::HttpClient + Sync + Send>,
     deadlines: scheduler::Scheduler<LifecycleAction>,
     data: TelemetryWorkerData,
 }
@@ -959,7 +959,7 @@ impl TelemetryWorkerBuilder {
         let token = CancellationToken::new();
         let config = self.config.merge(external_config);
         let telemetry_hearbeat_interval = config.telemetry_hearbeat_interval;
-        let client = http_client::from_config(&config);
+        let client = ddcommon::http_client::from_endpoint(&config.endpoint);
 
         let worker = TelemetryWorker {
             data: TelemetryWorkerData {
