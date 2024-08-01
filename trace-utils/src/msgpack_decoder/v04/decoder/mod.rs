@@ -486,4 +486,66 @@ mod tests {
             result
         );
     }
+
+    use bolero::check;
+    use datadog_trace_protobuf::pb::Span;
+    use rmp_serde::to_vec_named;
+
+    #[test]
+    fn fuzz_from_slice() {
+        check!()
+            .with_type::<(
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                u64,
+                u64,
+                u64,
+                i64,
+            )>()
+            .cloned()
+            .for_each(
+                |(
+                    name,
+                    service,
+                    resource,
+                    span_type,
+                    meta_key,
+                    meta_value,
+                    metric_key,
+                    metric_value,
+                    trace_id,
+                    span_id,
+                    parent_id,
+                    start,
+                )| {
+                    let span = Span {
+                        name,
+                        service,
+                        resource,
+                        r#type: span_type,
+                        meta: HashMap::from([(meta_key, meta_value)]),
+                        metrics: HashMap::from([(
+                            metric_key,
+                            metric_value.parse::<f64>().unwrap_or_default(),
+                        )]),
+                        trace_id,
+                        span_id,
+                        parent_id,
+                        start,
+                        ..Default::default()
+                    };
+                    let encoded_data = to_vec_named(&vec![vec![span]]).unwrap();
+                    let result = from_slice(&mut encoded_data.as_slice());
+                    println!("result: {:?}", result);
+
+                    assert!(result.is_ok());
+                },
+            );
+    }
 }
