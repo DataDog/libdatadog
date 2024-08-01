@@ -48,8 +48,7 @@ impl OpTypes {
 const ATOMIC_ZERO: AtomicI64 = AtomicI64::new(0);
 
 // TODO: Is this
-static OP_COUNTERS: [AtomicI64; OpTypes::SIZE as usize] =
-    [ATOMIC_ZERO; OpTypes::SIZE as usize];
+static OP_COUNTERS: [AtomicI64; OpTypes::SIZE as usize] = [ATOMIC_ZERO; OpTypes::SIZE as usize];
 
 /// Track that an operation (of type op) has begun.
 /// Currently, we assume states are discrete (i.e. not nested).
@@ -99,12 +98,7 @@ pub fn emit_counters(w: &mut impl Write) -> anyhow::Result<()> {
 
     writeln!(w, "{DD_CRASHTRACK_BEGIN_COUNTERS}")?;
     for (i, c) in OP_COUNTERS.iter().enumerate() {
-        writeln!(
-            w,
-            "{{\"{}\": {}}}",
-            OpTypes::name(i)?,
-            c.load(SeqCst)
-        )?;
+        writeln!(w, "{{\"{}\": {}}}", OpTypes::name(i)?, c.load(SeqCst))?;
     }
     writeln!(w, "{DD_CRASHTRACK_END_COUNTERS}")?;
     Ok(())

@@ -116,9 +116,7 @@ pub enum CrashtrackerGetCountersResult {
     Err(Error),
 }
 
-impl From<anyhow::Result<[i64; OpTypes::SIZE as usize]>>
-    for CrashtrackerGetCountersResult
-{
+impl From<anyhow::Result<[i64; OpTypes::SIZE as usize]>> for CrashtrackerGetCountersResult {
     fn from(value: anyhow::Result<[i64; OpTypes::SIZE as usize]>) -> Self {
         match value {
             Ok(x) => Self::Ok(x),
