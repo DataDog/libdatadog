@@ -62,12 +62,14 @@ impl StatsProcessor for ServerlessStatsProcessor {
                 }
             };
 
-        let start = SystemTime::now();
-        let timestamp = start
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        stats.stats[0].start = timestamp as u64;
+        if !stats.stats.is_empty() {
+            let start = SystemTime::now();
+            let timestamp = start
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            stats.stats[0].start = timestamp as u64;
+        }
 
         // send trace payload to our trace flusher
         match tx.send(stats).await {
