@@ -129,12 +129,7 @@ jobs:
       - name: "Generate profiling FFI"
         shell: bash
         run: |
-           ./build-profiling-ffi.sh -f data-pipeline-ffi ${OUTPUT_FOLDER}/profiling
-
-      - name: "Generate Telemetry FFI"
-        shell: bash
-        run: |
-           ./build-telemetry-ffi.sh ${OUTPUT_FOLDER}/telemetry
+           cargo build -p builder --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release
 
       - name: 'Publish libdatadog'
         uses: actions/upload-artifact@v4
@@ -153,7 +148,7 @@ jobs:
           set -e
           mkdir examples/ffi/build_dll
           cd examples/ffi/build_dll
-          cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DVCRUNTIME_LINK_TYPE=DLL
+          cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DVCRUNTIME_LINK_TYPE=DLL
           cmake --build .
 
       - name: "(Windows) Test building Profiling C bindings - static link vc runtime"
@@ -163,7 +158,7 @@ jobs:
           set -e
           mkdir examples/ffi/build_static
           cd examples/ffi/build_static
-          cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DVCRUNTIME_LINK_TYPE=STATIC
+          cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DVCRUNTIME_LINK_TYPE=STATIC
           cmake --build .
 
       - name: "Test building Profiling C bindings"
@@ -175,11 +170,11 @@ jobs:
           cd examples/ffi/build
           # Add BUILD_SYMBOLIZER variable only for Linux platforms
           if [[ "${{ matrix.platform }}" == "ubuntu-latest" ]]; then
-            cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DBUILD_SYMBOLIZER=true
+            cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DBUILD_SYMBOLIZER=true
             cmake --build  .
             ./symbolizer
           else
-            cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling
+            cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER
             cmake --build .
           fi
 
