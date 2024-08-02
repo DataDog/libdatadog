@@ -129,6 +129,10 @@ fn generate_protobuf() {
         "#[derive(Deserialize, Serialize)]",
     );
     config.type_attribute("Client", "#[derive(Deserialize, Serialize)]");
+    config.field_attribute(
+        "Client.client_agent",
+        "#[serde(skip_serializing_if = \"Option::is_none\")]",
+    );
     config.type_attribute("ClientState", "#[derive(Deserialize, Serialize)]");
     config.type_attribute("ClientTracer", "#[derive(Deserialize, Serialize)]");
     config.type_attribute("ClientAgent", "#[derive(Deserialize, Serialize)]");

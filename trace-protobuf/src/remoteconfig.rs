@@ -30,6 +30,7 @@ pub struct Client {
     #[prost(bool, tag = "8")]
     pub is_agent: bool,
     #[prost(message, optional, tag = "9")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_agent: ::core::option::Option<ClientAgent>,
     #[prost(uint64, tag = "10")]
     pub last_seen: u64,
