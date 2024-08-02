@@ -1,7 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon::HttpRequestBuilder;
+use ddcommon::{
+    http_client::{HttpClient, HyperClient, MockClient},
+    HttpRequestBuilder,
+};
 
 use crate::config::Config;
 
@@ -21,4 +24,17 @@ pub fn request_builder(c: &Config) -> anyhow::Result<HttpRequestBuilder> {
             "no valid endpoint found, can't build the request".to_string(),
         )),
     }
+}
+
+pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
+    if let Some(e) = &c.endpoint {
+        if let Ok(client) = MockClient::try_from(e) {
+            return Box::new(client);
+        }
+    }
+    Box::new(HyperClient::new(
+        hyper::Client::builder()
+            .pool_idle_timeout(std::time::Duration::from_secs(30))
+            .build(ddcommon::connector::Connector::default()),
+    ))
 }

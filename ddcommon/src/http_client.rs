@@ -19,28 +19,14 @@ pub trait HttpClient {
     fn request(&self, req: Request<Body>) -> ResponseFuture;
 }
 
-pub fn from_endpoint(endpoint_opt: &Option<Endpoint>) -> Box<dyn HttpClient + Sync + Send> {
-    match &endpoint_opt {
-        Some(e) if e.url.scheme_str() == Some("file") => {
-            let file_path = crate::decode_uri_path_in_authority(&e.url)
-                .expect("file urls should always have been encoded in authority");
-            return Box::new(MockClient {
-                file: Arc::new(Mutex::new(Box::new(
-                    File::create(file_path).expect("Couldn't open mock client file"),
-                ))),
-            });
-        }
-        Some(_) | None => {}
-    };
-    Box::new(HyperClient {
-        inner: hyper::Client::builder()
-            .pool_idle_timeout(std::time::Duration::from_secs(30))
-            .build(crate::connector::Connector::default()),
-    })
-}
-
 pub struct HyperClient {
     inner: crate::HttpClient,
+}
+
+impl HyperClient {
+    pub fn new(inner: crate::HttpClient) -> Self {
+        Self { inner }
+    }
 }
 
 impl HttpClient for HyperClient {
@@ -52,6 +38,25 @@ impl HttpClient for HyperClient {
 #[derive(Clone)]
 pub struct MockClient {
     file: Arc<Mutex<Box<dyn Write + Sync + Send>>>,
+}
+
+impl TryFrom<&Endpoint> for MockClient {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &Endpoint) -> Result<Self, Self::Error> {
+        match value.url.scheme_str() {
+            Some("file") => {
+                let file_path = crate::decode_uri_path_in_authority(&value.url)
+                    .expect("file urls should always have been encoded in authority");
+                Ok(Self {
+                    file: Arc::new(Mutex::new(Box::new(
+                        File::create(file_path).expect("Couldn't open mock client file"),
+                    ))),
+                })
+            }
+            _ => anyhow::bail!("MockClient only supports file:// URLs"),
+        }
+    }
 }
 
 impl HttpClient for MockClient {

@@ -162,7 +162,7 @@ impl TelemetryCrashUploader {
                 count: 1,
             }]),
         };
-        let client = ddcommon::http_client::from_endpoint(&self.cfg.endpoint);
+        let client = ddtelemetry::worker::http_client::from_config(&self.cfg);
         let req = request_builder(&self.cfg)?
             .method(http::Method::POST)
             .header(

@@ -959,7 +959,7 @@ impl TelemetryWorkerBuilder {
         let token = CancellationToken::new();
         let config = self.config.merge(external_config);
         let telemetry_hearbeat_interval = config.telemetry_hearbeat_interval;
-        let client = ddcommon::http_client::from_endpoint(&config.endpoint);
+        let client = http_client::from_config(&config);
 
         let worker = TelemetryWorker {
             data: TelemetryWorkerData {

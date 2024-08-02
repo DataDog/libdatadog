@@ -15,7 +15,11 @@ use serde_json::json;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
-use ddcommon::{azure_app_services, connector, Endpoint, HttpClient, HttpResponse};
+use ddcommon::{
+    azure_app_services, connector,
+    http_client::{HttpClient, HyperClient, MockClient},
+    Endpoint, HttpResponse,
+};
 
 pub mod config;
 mod errors;
@@ -31,7 +35,7 @@ use crate::internal::ProfiledEndpointsStats;
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
 
 pub struct Exporter {
-    client: HttpClient,
+    client: Box<dyn HttpClient + Sync + Send>,
     runtime: Runtime,
 }
 
@@ -94,7 +98,7 @@ impl Request {
 
     async fn send(
         self,
-        client: &HttpClient,
+        client: &(dyn HttpClient + Sync + Send),
         cancel: Option<&CancellationToken>,
     ) -> anyhow::Result<hyper::Response<hyper::Body>> {
         tokio::select! {
@@ -141,7 +145,7 @@ impl ProfileExporter {
         V: Into<Cow<'static, str>>,
     {
         Ok(Self {
-            exporter: Exporter::new()?,
+            exporter: Exporter::new(&endpoint)?,
             endpoint,
             family: family.into(),
             profiling_library_name: profiling_library_name.into(),
@@ -298,7 +302,7 @@ impl ProfileExporter {
     ) -> anyhow::Result<HttpResponse> {
         self.exporter
             .runtime
-            .block_on(request.send(&self.exporter.client, cancel))
+            .block_on(request.send(self.exporter.client.as_ref(), cancel))
     }
 
     pub fn set_timeout(&mut self, timeout_ms: u64) {
@@ -308,14 +312,22 @@ impl ProfileExporter {
 
 impl Exporter {
     /// Creates a new Exporter, initializing the TLS stack.
-    pub fn new() -> anyhow::Result<Self> {
-        // Set idle to 0, which prevents the pipe being broken every 2nd request
-        let client = hyper::Client::builder()
-            .pool_max_idle_per_host(0)
-            .build(connector::Connector::default());
+    pub fn new(endpoint: &Endpoint) -> anyhow::Result<Self> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
+        if let Ok(client) = MockClient::try_from(endpoint) {
+            return Ok(Self {
+                client: Box::new(client),
+                runtime,
+            });
+        }
+        // Set idle to 0, which prevents the pipe being broken every 2nd
+        let client = Box::new(HyperClient::new(
+            hyper::Client::builder()
+                .pool_max_idle_per_host(0)
+                .build(connector::Connector::default()),
+        ));
         Ok(Self { client, runtime })
     }
 
@@ -335,7 +347,10 @@ impl Exporter {
             std::mem::swap(request.headers_mut(), &mut headers);
 
             let request: Request = request.into();
-            request.with_timeout(timeout).send(&self.client, None).await
+            request
+                .with_timeout(timeout)
+                .send(self.client.as_ref(), None)
+                .await
         })
     }
 }
