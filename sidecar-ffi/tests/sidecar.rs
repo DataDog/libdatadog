@@ -44,6 +44,7 @@ fn test_ddog_ph_file_handling() {
 
     let mut file = unsafe { File::from_raw_fd(fd) };
     writeln!(file, "test").unwrap_err(); // file is closed, so write returns an error
+    std::mem::forget(file); // leak to avoid debug runtime SIGABRT: "file descriptor already closed"
 }
 
 #[test]
