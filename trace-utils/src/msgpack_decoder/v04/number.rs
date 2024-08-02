@@ -201,7 +201,7 @@ mod tests {
         let zero_unsigned = Number::Unsigned(0u64);
         let zero_signed = Number::Unsigned(0u64);
         let valid_signed_number = Number::Signed(valid_max);
-        let invalid_float_number = Number::Float(3.14);
+        let invalid_float_number = Number::Float(4.14);
         let invalid_unsigned = u64::MAX;
         let invalid_unsigned_number = Number::Unsigned(invalid_unsigned);
 
@@ -238,7 +238,7 @@ mod tests {
         let valid_signed_number_upper = Number::Signed(valid_signed_upper as i64);
         let valid_signed_lower = i32::MIN;
         let valid_signed_number_lower = Number::Signed(valid_signed_lower as i64);
-        let invalid_float_number = Number::Float(3.14);
+        let invalid_float_number = Number::Float(4.14);
         let invalid_unsigned = u64::MAX;
         let invalid_unsigned_number = Number::Unsigned(invalid_unsigned);
         let invalid_signed_upper = i32::MAX as i64 + 1;
@@ -298,7 +298,7 @@ mod tests {
         let valid_signed_number_upper = Number::Signed(valid_signed_upper as i64);
         let valid_signed_lower = i8::MIN;
         let valid_signed_number_lower = Number::Signed(valid_signed_lower as i64);
-        let invalid_float_number = Number::Float(3.14);
+        let invalid_float_number = Number::Float(4.14);
         let invalid_unsigned = u8::MAX;
         let invalid_unsigned_number = Number::Unsigned(invalid_unsigned as u64);
         let invalid_signed_upper = i8::MAX as i64 + 1;
@@ -358,7 +358,7 @@ mod tests {
         let valid_signed_number_upper = Number::Signed(valid_signed_upper as i64);
         let valid_signed_lower = u8::MIN;
         let valid_signed_number_lower = Number::Signed(valid_signed_lower as i64);
-        let invalid_float_number = Number::Float(3.14);
+        let invalid_float_number = Number::Float(4.14);
         let invalid_unsigned = (u8::MAX as u64) + 1;
         let invalid_unsigned_number = Number::Unsigned(invalid_unsigned);
         let invalid_signed_upper = i32::MAX as i64 + 1;
@@ -418,7 +418,7 @@ mod tests {
         let valid_signed_number_upper = Number::Signed(valid_signed_upper as i64);
         let valid_signed_lower = u32::MIN;
         let valid_signed_number_lower = Number::Signed(valid_signed_lower as i64);
-        let invalid_float_number = Number::Float(3.14);
+        let invalid_float_number = Number::Float(4.14);
         let invalid_unsigned = (u32::MAX as u64) + 1;
         let invalid_unsigned_number = Number::Unsigned(invalid_unsigned);
         let invalid_signed_upper = i64::MAX;
@@ -479,7 +479,7 @@ mod tests {
         let valid_signed_number_upper = Number::Signed(valid_signed_upper as i64);
         let valid_signed_lower = u32::MIN as u64;
         let valid_signed_number_lower = Number::Signed(valid_signed_lower as i64);
-        let invalid_float_number = Number::Float(3.14);
+        let invalid_float_number = Number::Float(4.14);
         let invalid_signed_lower = i8::MIN as i64;
         let invalid_signed_number_lower = Number::Signed(invalid_signed_lower);
 

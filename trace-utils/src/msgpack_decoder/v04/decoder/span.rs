@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{
-    read_map_strs, read_meta_struct, read_metrics, read_string_ref, span_link::read_span_links,
+    read_map_strs, read_meta_struct, read_metrics, read_string, read_string_ref,
+    span_link::read_span_links,
 };
 use crate::msgpack_decoder::v04::error::DecodeError;
 use crate::msgpack_decoder::v04::number::read_number;
@@ -84,11 +85,7 @@ impl FromStr for SpanKey {
 
 fn fill_span(span: &mut Span, buf: &mut &[u8]) -> Result<(), DecodeError> {
     // field's key won't be held so no need to copy it in a buffer.
-    let (key, value) = read_string_ref(buf)?;
-
-    // Go to the value
-    *buf = value;
-
+    let key = read_string(buf)?;
     let key = key.parse::<SpanKey>()?;
 
     match key {

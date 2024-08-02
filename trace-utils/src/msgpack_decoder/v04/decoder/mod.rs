@@ -100,19 +100,9 @@ fn read_string_ref(buf: &[u8]) -> Result<(&str, &[u8]), DecodeError> {
 
 #[inline]
 fn read_string(buf: &mut &[u8]) -> Result<String, DecodeError> {
-    let value_len: usize = decode::read_str_len(buf)
-        .map_err(|e| DecodeError::InvalidFormat(e.to_string()))?
-        .try_into()
-        .map_err(|_| {
-            DecodeError::InvalidConversion("unable to get len of string buffer".to_owned())
-        })?;
-
-    let mut vec = vec![0; value_len];
-    buf.read_exact_buf(vec.as_mut_slice())
-        .map_err(|_| DecodeError::IOError)?;
-
-    let str = String::from_utf8(vec).map_err(|e| DecodeError::Utf8Error(e.to_string()))?;
-    Ok(str)
+    let (str_ref, remaining_buf) = read_string_ref(buf)?;
+    *buf = remaining_buf;
+    Ok(str_ref.to_string())
 }
 
 #[inline]
