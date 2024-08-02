@@ -78,7 +78,7 @@ pub trait NotifyTarget: Sync + Send + Sized + Hash + Eq + Clone + Debug {
 }
 
 pub trait MultiTargetHandlers<S> {
-    fn fetched(&self, target: &Arc<Target>, files: &[Arc<S>]) -> (Option<String>, bool);
+    fn fetched(&self, target: &Arc<Target>, files: &[Arc<S>]) -> bool;
 
     fn expired(&self, target: &Arc<Target>);
 
@@ -366,7 +366,7 @@ where
                 .run(
                     this.storage.clone(),
                     Box::new(move |files| {
-                        let (error, notify) = inner_this
+                        let notify = inner_this
                             .storage
                             .storage
                             .fetched(&inner_fetcher.target, files);
@@ -395,8 +395,6 @@ where
                                 notify_target.notify();
                             }
                         }
-
-                        error
                     }),
                 )
                 .shared();
@@ -510,7 +508,7 @@ mod tests {
             &self,
             target: &Arc<Target>,
             files: &[Arc<RcPathStore>],
-        ) -> (Option<String>, bool) {
+        ) -> bool {
             match self.recent_fetches.lock().unwrap().entry(target.clone()) {
                 Entry::Occupied(_) => panic!("Double fetch without recent_fetches clear"),
                 Entry::Vacant(e) => {
@@ -533,7 +531,7 @@ mod tests {
                 ..=0 => panic!("Got unexpected fetch"),
             }
 
-            (None, true)
+            true
         }
 
         fn expired(&self, target: &Arc<Target>) {

@@ -15,7 +15,6 @@ pub struct SingleFetcher<S: FileStorage> {
     target: Arc<Target>,
     runtime_id: String,
     config_id: String,
-    last_error: Option<String>,
     opaque_state: OpaqueState,
 }
 
@@ -26,7 +25,6 @@ impl<S: FileStorage> SingleFetcher<S> {
             target: Arc::new(target),
             runtime_id,
             config_id: uuid::Uuid::new_v4().to_string(),
-            last_error: None,
             opaque_state: OpaqueState::default(),
         }
     }
@@ -43,7 +41,6 @@ impl<S: FileStorage> SingleFetcher<S> {
                 self.runtime_id.as_str(),
                 self.target.clone(),
                 self.config_id.as_str(),
-                self.last_error.take(),
                 &mut self.opaque_state,
             )
             .await
@@ -53,11 +50,6 @@ impl<S: FileStorage> SingleFetcher<S> {
     /// Given in nanoseconds.
     pub fn get_interval(&self) -> u64 {
         self.fetcher.interval.load(Ordering::Relaxed)
-    }
-
-    /// Sets the error to be reported to the backend.
-    pub fn set_last_error(&mut self, error: String) {
-        self.last_error = Some(error);
     }
 
     pub fn get_config_id(&self) -> &String {
@@ -111,11 +103,6 @@ where
     /// Given in nanoseconds.
     pub fn get_interval(&self) -> u64 {
         self.fetcher.get_interval()
-    }
-
-    /// Sets the error to be reported to the backend.
-    pub fn set_last_error(&mut self, error: String) {
-        self.fetcher.set_last_error(error);
     }
 
     pub fn get_config_id(&self) -> &String {

@@ -20,7 +20,7 @@ use std::mem::transmute;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, trace, warn};
 
 const PROD_INTAKE_SUBDOMAIN: &str = "config";
 
@@ -163,6 +163,7 @@ pub struct OpaqueState {
     // 'static because it actually depends on last_configs, and rust doesn't like self-referencing
     last_config_paths: HashSet<RemoteConfigPathRef<'static>>,
     targets_version: u64,
+    last_error: Option<String>,
 }
 
 impl<S: FileStorage> ConfigFetcher<S> {
@@ -194,7 +195,6 @@ impl<S: FileStorage> ConfigFetcher<S> {
         runtime_id: &str,
         target: Arc<Target>,
         config_id: &str,
-        last_error: Option<String>,
         opaque_state: &mut OpaqueState,
     ) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
         if self.state.endpoint.api_key.is_some() {
@@ -234,8 +234,8 @@ impl<S: FileStorage> ConfigFetcher<S> {
                     root_version: 1,
                     targets_version: opaque_state.targets_version,
                     config_states,
-                    has_error: last_error.is_some(),
-                    error: last_error.unwrap_or_default(),
+                    has_error: opaque_state.last_error.is_some(),
+                    error: opaque_state.last_error.take().unwrap_or_default(),
                     backend_client_state: std::mem::take(&mut opaque_state.client_state),
                 }),
                 id: config_id.into(),
@@ -450,16 +450,16 @@ impl<S: FileStorage> ConfigFetcher<S> {
                             },
                         );
                     } else {
-                        warn!("Failed parsing version from remote config path {path}");
+                        anyhow::bail!("Failed parsing version from remote config path {path}");
                     }
                 } else {
-                    warn!(
+                    anyhow::bail!(
                         "Failed base64 decoding config for path {path}: {}",
                         String::from_utf8_lossy(raw_file)
                     )
                 }
             } else {
-                warn!(
+                anyhow::bail!(
                     "Found changed config data for path {path}, but no file; existing files: {:?}",
                     incoming_files.keys().collect::<Vec<_>>()
                 )
@@ -472,7 +472,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 target_file.expiring = false;
                 configs.push(target_file.handle.clone());
             } else {
-                error!("Found {config} in client_configs response, but it isn't stored. Skipping.");
+                anyhow::bail!("Found {config} in client_configs response, but it isn't stored.");
             }
         }
 
@@ -619,7 +619,6 @@ pub mod tests {
                 DUMMY_RUNTIME_ID,
                 DUMMY_TARGET.clone(),
                 "foo",
-                Some("test".to_string()),
                 &mut opaque_state,
             )
             .await
@@ -658,12 +657,12 @@ pub mod tests {
         let mut opaque_state = OpaqueState::default();
 
         {
+            opaque_state.last_error = Some("test".to_string());
             let fetched = fetcher
                 .fetch_once(
                     DUMMY_RUNTIME_ID,
                     DUMMY_TARGET.clone(),
                     "foo",
-                    Some("test".to_string()),
                     &mut opaque_state,
                 )
                 .await
@@ -719,7 +718,6 @@ pub mod tests {
                     DUMMY_RUNTIME_ID,
                     DUMMY_TARGET.clone(),
                     "foo",
-                    None,
                     &mut opaque_state,
                 )
                 .await
@@ -766,7 +764,6 @@ pub mod tests {
                     DUMMY_RUNTIME_ID,
                     DUMMY_TARGET.clone(),
                     "foo",
-                    None,
                     &mut opaque_state,
                 )
                 .await
@@ -802,7 +799,6 @@ pub mod tests {
                     DUMMY_RUNTIME_ID,
                     DUMMY_TARGET.clone(),
                     "foo",
-                    None,
                     &mut opaque_state,
                 )
                 .await
@@ -818,7 +814,6 @@ pub mod tests {
                     DUMMY_RUNTIME_ID,
                     DUMMY_TARGET.clone(),
                     "foo",
-                    None,
                     &mut opaque_state,
                 )
                 .await

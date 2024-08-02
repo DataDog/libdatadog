@@ -234,7 +234,7 @@ impl SharedFetcher {
     pub async fn run<S: FileStorage + Clone>(
         &self,
         storage: RefcountingStorage<S>,
-        on_fetch: Box<dyn Send + Fn(&Vec<Arc<S::StoredFile>>) -> Option<String>>,
+        on_fetch: Box<dyn Send + Fn(&Vec<Arc<S::StoredFile>>)>,
     ) where
         S::StoredFile: RefcountedFile,
     {
@@ -244,7 +244,6 @@ impl SharedFetcher {
         let mut opaque_state = OpaqueState::default();
 
         let mut last_files: Vec<Arc<S::StoredFile>> = vec![];
-        let mut last_error = None;
 
         loop {
             let first_run_id = fetcher.file_storage.run_id.inc_runners();
@@ -255,7 +254,6 @@ impl SharedFetcher {
                     runtime_id.as_str(),
                     self.target.clone(),
                     self.client_id.as_str(),
-                    last_error.take(),
                     &mut opaque_state,
                 )
                 .await;
@@ -302,7 +300,7 @@ impl SharedFetcher {
 
                         last_files = files;
 
-                        last_error = on_fetch(&last_files);
+                        on_fetch(&last_files);
                     } else {
                         clean_inactive();
                     }
@@ -432,20 +430,11 @@ pub mod tests {
                                 PATH_SECOND.clone(),
                                 (vec![DUMMY_TARGET.clone()], 1, "X".to_string()),
                             );
-
-                            Some("error".to_string())
                         }
                         1 => {
                             assert_eq!(fetched.len(), 2);
-                            let req = server.last_request.lock().unwrap();
-                            let req = req.as_ref().unwrap();
-                            let client = req.client.as_ref().unwrap();
-                            let state = client.state.as_ref().unwrap();
-                            assert_eq!(state.error, "error");
 
                             server.files.lock().unwrap().remove(&*PATH_SECOND);
-
-                            None
                         }
                         2 => {
                             assert_eq!(fetched.len(), 1);
@@ -457,8 +446,6 @@ pub mod tests {
                             assert!(!state.has_error);
 
                             inner_fetcher.cancel();
-
-                            None
                         }
                         _ => panic!("Unexpected"),
                     },
@@ -595,7 +582,6 @@ pub mod tests {
                         }
                         _ => panic!("Unexpected"),
                     }
-                    None
                 }),
             ),
             fetcher_2.run(
@@ -628,7 +614,6 @@ pub mod tests {
                         }
                         _ => panic!("Unexpected"),
                     }
-                    None
                 }),
             ),
         ])

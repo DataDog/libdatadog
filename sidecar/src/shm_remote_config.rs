@@ -152,11 +152,7 @@ fn store_shm(
 }
 
 impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
-    fn fetched(
-        &self,
-        target: &Arc<Target>,
-        files: &[Arc<StoredShmFile>],
-    ) -> (Option<String>, bool) {
+    fn fetched(&self, target: &Arc<Target>, files: &[Arc<StoredShmFile>]) -> bool {
         let mut writers = self.writers.lock().unwrap();
         let writer = match writers.entry(target.clone()) {
             Entry::Occupied(e) => e.into_mut(),
@@ -165,7 +161,7 @@ impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
                 Err(e) => {
                     let msg = format!("Failed acquiring a remote config shm writer: {:?}", e);
                     error!(msg);
-                    return (Some(msg), false);
+                    return false;
                 }
             }),
         };
@@ -194,9 +190,9 @@ impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
                 String::from_utf8_lossy(&serialized)
             );
 
-            (None, true)
+            true
         } else {
-            (None, false)
+            false
         }
     }
 
