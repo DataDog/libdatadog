@@ -35,7 +35,7 @@ impl AggregationKey {
     pub fn from_span(
         span: &pb::Span,
         peer_tags_aggregation: bool,
-        peer_tag_keys: &Vec<String>,
+        peer_tag_keys: &[String],
     ) -> Self {
         let span_kind = span
             .meta
@@ -43,7 +43,7 @@ impl AggregationKey {
             .map(|s| s.to_string())
             .unwrap_or_default();
         let peer_tags = if peer_tags_aggregation && client_or_producer(&span_kind) {
-            get_peer_tags(&span, peer_tag_keys)
+            get_peer_tags(span, peer_tag_keys)
         } else {
             vec![]
         };
@@ -77,18 +77,15 @@ fn get_status_code(span: &pb::Span) -> u32 {
 
 /// Return true if the span kind is "client" or "producer"
 fn client_or_producer(span_kind: &str) -> bool {
-    match span_kind.to_lowercase().as_str() {
-        "client" | "producer" => true,
-        _ => false,
-    }
+    matches!(span_kind.to_lowercase().as_str(), "client" | "producer")
 }
 
 /// Parse the meta tags of a span and return a list of the peer tags based on the list of
 /// `peer_tag_keys`
-fn get_peer_tags(span: &pb::Span, peer_tag_keys: &Vec<String>) -> Vec<Tag> {
+fn get_peer_tags(span: &pb::Span, peer_tag_keys: &[String]) -> Vec<Tag> {
     peer_tag_keys
         .iter()
-        .filter_map(|key| Some(Tag::new(key, span.meta.get(key)?).ok()?))
+        .filter_map(|key| Tag::new(key, span.meta.get(key)?).ok())
         .collect()
 }
 
@@ -141,10 +138,7 @@ impl StatsBucket {
     /// Insert a value as stats in the group corresponding to the aggregation key, if it does
     /// not exist it creates it.
     pub fn insert(&mut self, key: AggregationKey, value: &pb::Span) {
-        self.data
-            .entry(key)
-            .or_insert(GroupedStats::default())
-            .insert(value);
+        self.data.entry(key).or_default().insert(value);
     }
 
     /// Consume the bucket and return a ClientStatsBucket containing the bucket stats.
@@ -490,10 +484,7 @@ mod tests {
         ];
 
         for (span, expected_key) in test_cases {
-            assert_eq!(
-                AggregationKey::from_span(&span, false, &vec![]),
-                expected_key
-            );
+            assert_eq!(AggregationKey::from_span(&span, false, &[]), expected_key);
         }
 
         for (span, expected_key) in test_cases_with_peer_tags {

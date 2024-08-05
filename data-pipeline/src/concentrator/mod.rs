@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-//! This module implements the SpanConcentrator used to aggregate spans into stats
+//! This module implements the Concentrator used to aggregate spans into stats
+#![allow(dead_code)] // TODO: Remove once the trace exporter uses the concentrator
 use std::collections::HashMap;
 use std::time::{self, Duration, SystemTime};
 
@@ -29,12 +30,12 @@ fn align_timestamp(t: u64, bucket_size: u64) -> u64 {
 
 /// Return true if the span has a span.kind that is eligible for stats computation
 fn compute_stats_for_span_kind(span: &pb::Span) -> bool {
-    span.meta
-        .get("span.kind")
-        .is_some_and(|span_kind| match span_kind.to_lowercase().as_str() {
-            "server" | "consumer" | "client" | "producer" => true,
-            _ => false,
-        })
+    span.meta.get("span.kind").is_some_and(|span_kind| {
+        matches!(
+            span_kind.to_lowercase().as_str(),
+            "server" | "consumer" | "client" | "producer"
+        )
+    })
 }
 
 /// The concentrator compute stats on span aggregated by time and span attributes
@@ -137,9 +138,7 @@ impl Concentrator {
                 // if the tracer stops while the latest buckets aren't old enough to be flushed.
                 // The "force" boolean skips the delay and flushes all buckets, typically on agent
                 // shutdown.
-                if !force
-                    && timestamp
-                        > (now_timestamp - self.buffer_len as u64 * self.bucket_size as u64)
+                if !force && timestamp > (now_timestamp - self.buffer_len as u64 * self.bucket_size)
                 {
                     self.buckets.insert(timestamp, bucket);
                     return None;
@@ -160,10 +159,11 @@ mod tests {
 
     /// Return a random timestamp within the corresponding bucket (now - offset)
     fn get_timestamp_in_bucket(aligned_now: u64, bucket_size: u64, offset: u64) -> u64 {
-        return aligned_now - bucket_size * offset + thread_rng().gen_range(0..BUCKET_SIZE);
+        aligned_now - bucket_size * offset + thread_rng().gen_range(0..BUCKET_SIZE)
     }
 
     /// Create a test span with given attributes
+    #[allow(clippy::too_many_arguments)]
     fn get_test_span(
         now: SystemTime,
         span_id: u64,
@@ -192,6 +192,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn get_test_span_with_meta(
         now: SystemTime,
         span_id: u64,
@@ -300,7 +301,7 @@ mod tests {
             is_trace_root: pb::Trilean::True.into(),
             ..Default::default()
         }];
-        assert_counts_equal(expected, stats.get(0).unwrap().stats.clone());
+        assert_counts_equal(expected, stats.first().unwrap().stats.clone());
     }
 
     /// Test that the concentrator does not create buckets older than the exporter initialization
@@ -328,12 +329,12 @@ mod tests {
             * concentrator.bucket_size;
 
         for span in &spans {
-            concentrator.add_span(&span).expect("Failed to add span");
+            concentrator.add_span(span).expect("Failed to add span");
         }
 
         for _ in 0..(concentrator.buffer_len - 1) {
             let stats = concentrator.flush(flushtime, false);
-            assert_eq!(stats.len(), 0, "We should get 0 time buckets");
+            assert!(stats.is_empty(), "We should get 0 time buckets");
             flushtime += Duration::from_nanos(concentrator.bucket_size);
         }
 
@@ -354,7 +355,7 @@ mod tests {
             is_trace_root: pb::Trilean::True.into(),
             ..Default::default()
         }];
-        assert_counts_equal(expected, stats.get(0).unwrap().stats.clone());
+        assert_counts_equal(expected, stats.first().unwrap().stats.clone());
 
         flushtime += Duration::from_nanos(concentrator.bucket_size);
         let stats = concentrator.flush(flushtime, false);
@@ -373,7 +374,7 @@ mod tests {
             is_trace_root: pb::Trilean::True.into(),
             ..Default::default()
         }];
-        assert_counts_equal(expected, stats.get(0).unwrap().stats.clone());
+        assert_counts_equal(expected, stats.first().unwrap().stats.clone());
     }
 
     /// TestConcentratorStatsTotals tests that the total stats are correct, independently of the
@@ -416,11 +417,11 @@ mod tests {
 
         for _ in 0..=concentrator.buffer_len {
             let stats = concentrator.flush(flushtime, false);
-            if stats.len() == 0 {
+            if stats.is_empty() {
                 continue;
             }
 
-            for group in &stats.get(0).unwrap().stats {
+            for group in &stats.first().unwrap().stats {
                 total_duration += group.duration;
                 total_hits += group.hits;
                 total_errors += group.errors;
@@ -667,21 +668,20 @@ mod tests {
             if expected_counts_by_time
                 .get(&expected_flushed_timestamps)
                 .expect("Unexpected flushed timestamps")
-                .len()
-                == 0
+                .is_empty()
             {
                 // That's a flush for which we expect no data
                 continue;
             }
 
             assert_eq!(stats.len(), 1, "We should get exactly one bucket");
-            assert_eq!(expected_flushed_timestamps, stats.get(0).unwrap().start);
+            assert_eq!(expected_flushed_timestamps, stats.first().unwrap().start);
             assert_counts_equal(
                 expected_counts_by_time
                     .get(&expected_flushed_timestamps)
                     .unwrap()
                     .clone(),
-                stats.get(0).unwrap().stats.clone(),
+                stats.first().unwrap().stats.clone(),
             );
 
             let stats = concentrator.flush(flushtime, false);
@@ -789,7 +789,7 @@ mod tests {
         assert_counts_equal(
             expected,
             stats
-                .get(0)
+                .first()
                 .expect("There should be at least one time bucket")
                 .stats
                 .clone(),
@@ -1010,7 +1010,7 @@ mod tests {
         assert_counts_equal(
             expected_with_peer_tags,
             stats_with_peer_tags
-                .get(0)
+                .first()
                 .expect("There should be at least one time bucket")
                 .stats
                 .clone(),
@@ -1020,7 +1020,7 @@ mod tests {
         assert_counts_equal(
             expected_without_peer_tags,
             stats_without_peer_tags
-                .get(0)
+                .first()
                 .expect("There should be at least one time bucket")
                 .stats
                 .clone(),
