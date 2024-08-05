@@ -37,12 +37,12 @@ pub enum DogStatsDAction {
 
 #[derive(Default)]
 pub struct Flusher {
-    endpoint: Option<Endpoint>,
+    pub endpoint: Option<Endpoint>,
     client: Option<StatsdClient>,
 }
 
 impl Flusher {
-    pub fn set_endpoint(&mut self, endpoint: Endpoint) {
+    pub fn set_endpoint(&mut self, endpoint: Endpoint) -> anyhow::Result<()> {
         self.client = None;
         self.endpoint = match endpoint.api_key {
             Some(_) => {
@@ -53,7 +53,8 @@ impl Flusher {
                 debug!("Updating DogStatsD endpoint to {}", endpoint.url);
                 Some(endpoint)
             }
-        }
+        };
+        Ok(())
     }
 
     pub fn send(&mut self, actions: Vec<DogStatsDAction>) {
