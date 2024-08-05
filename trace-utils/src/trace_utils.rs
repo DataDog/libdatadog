@@ -627,7 +627,7 @@ pub fn collect_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
 }
 
 // Returns true if a span should be measured (i.e., it should get trace metrics calculated).
-pub fn is_measured(span: &Span) -> bool {
+pub fn is_measured(span: &pb::Span) -> bool {
     span.metrics.get(MEASURED_KEY).is_some_and(|v| *v == 1.0)
 }
 
@@ -636,7 +636,7 @@ pub fn is_measured(span: &Span) -> bool {
 /// When incomplete, a partial snapshot has a metric _dd.partial_version which is a positive
 /// integer. The metric usually increases each time a new version of the same span is sent by the
 /// tracer
-pub fn is_partial_snapshot(span: &Span) -> bool {
+pub fn is_partial_snapshot(span: &pb::Span) -> bool {
     span.metrics
         .get(PARTIAL_VERSION_KEY)
         .is_some_and(|v| *v >= 0.0)
