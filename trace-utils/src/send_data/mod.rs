@@ -129,11 +129,14 @@ impl SendData {
         tracer_header_tags: TracerHeaderTags,
         target: &Endpoint,
     ) -> SendData {
-        let headers = if let Some(api_key) = &target.api_key {
+        let mut headers = if let Some(api_key) = &target.api_key {
             HashMap::from([(DD_API_KEY, api_key.as_ref().to_string())])
         } else {
             tracer_header_tags.into()
         };
+        if let Some(token) = &target.test_token {
+            headers.insert("x-datadog-test-session-token", token.to_string());
+        }
 
         SendData {
             tracer_payloads: tracer_payload,
@@ -564,6 +567,7 @@ mod tests {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
                 url: "/foo/bar?baz".parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
         );
 
@@ -588,6 +592,7 @@ mod tests {
                 api_key: None,
                 url: "/foo/bar?baz".parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
         );
 
@@ -625,6 +630,7 @@ mod tests {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
         );
 
@@ -668,6 +674,7 @@ mod tests {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
         );
 
@@ -722,6 +729,7 @@ mod tests {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
         );
 
@@ -776,6 +784,7 @@ mod tests {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
         );
 
@@ -819,6 +828,7 @@ mod tests {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
         );
 
@@ -860,6 +870,7 @@ mod tests {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
         );
 
@@ -890,6 +901,7 @@ mod tests {
                 api_key: None,
                 url: "http://127.0.0.1:4321/".parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
         );
 
@@ -953,6 +965,7 @@ mod tests {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
                 timeout_ms: 200,
+                ..Endpoint::default()
             },
         );
 
@@ -994,6 +1007,7 @@ mod tests {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
                 timeout_ms: 200,
+                ..Endpoint::default()
             },
         );
 

@@ -26,6 +26,8 @@ pub mod header {
     pub const DATADOG_EXTERNAL_ENV: HeaderName = HeaderName::from_static("datadog-external-env");
     pub const DATADOG_API_KEY: HeaderName = HeaderName::from_static("dd-api-key");
     pub const APPLICATION_JSON: HeaderValue = HeaderValue::from_static("application/json");
+    pub const X_DATADOG_TEST_SESSION_TOKEN: HeaderName =
+        HeaderName::from_static("x-datadog-test-session-token");
 }
 
 pub type HttpClient = hyper::Client<connector::Connector, hyper::Body>;
@@ -38,14 +40,17 @@ pub struct Endpoint {
     pub url: hyper::Uri,
     pub api_key: Option<Cow<'static, str>>,
     pub timeout_ms: u64,
+    /// Sets X-Datadog-Test-Session-Token header on any request
+    pub test_token: Option<Cow<'static, str>>,
 }
 
 impl Default for Endpoint {
     fn default() -> Self {
         Endpoint {
             url: hyper::Uri::default(),
-            api_key: Option::default(),
+            api_key: None,
             timeout_ms: Self::DEFAULT_TIMEOUT,
+            test_token: None,
         }
     }
 }
@@ -159,6 +164,14 @@ impl Endpoint {
         // Add the Api key header if available
         if let Some(api_key) = &self.api_key {
             builder = builder.header(header::DATADOG_API_KEY, HeaderValue::from_str(api_key)?);
+        }
+
+        // Add the test session token if available
+        if let Some(token) = &self.test_token {
+            builder = builder.header(
+                header::X_DATADOG_TEST_SESSION_TOKEN,
+                HeaderValue::from_str(token)?,
+            );
         }
 
         // Add the Container Id header if available
