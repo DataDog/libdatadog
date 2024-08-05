@@ -1295,6 +1295,7 @@ version = "11.0.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "datadog-ddsketch",
  "datadog-trace-normalization",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
@@ -1302,6 +1303,7 @@ dependencies = [
  "futures",
  "hyper 0.14.28",
  "log",
+ "rand",
  "rmp-serde",
  "tokio",
 ]
