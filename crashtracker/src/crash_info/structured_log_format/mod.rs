@@ -13,9 +13,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use super::CrashInfo;
-
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProcessInfo {
     pub pid: u32,

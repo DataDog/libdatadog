@@ -1,9 +1,9 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use super::stacktrace::{StackFrame, StackType};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use super::stacktrace::{StackType, StackFrame};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ErrorKind {
