@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::msgpack_decoder::v04::decoder::{read_map_strs, read_string_ref};
+use crate::msgpack_decoder::v04::decoder::{read_map_strs, read_string, read_string_ref};
 use crate::msgpack_decoder::v04::error::DecodeError;
 use crate::msgpack_decoder::v04::number::read_number;
 use datadog_trace_protobuf::pb::SpanLink;
@@ -84,9 +84,8 @@ fn decode_span_link(buf: &mut &[u8]) -> Result<SpanLink, DecodeError> {
             SpanLinkKey::SpanId => span.span_id = read_number(buf)?.try_into()?,
             SpanLinkKey::Attributes => span.attributes = read_map_strs(buf)?,
             SpanLinkKey::Tracestate => {
-                let (value, next) = read_string_ref(buf)?;
-                span.tracestate = String::from_str(value).unwrap();
-                *buf = next;
+                let value = read_string(buf)?;
+                span.tracestate = value;
             }
             SpanLinkKey::Flags => span.flags = read_number(buf)?.try_into()?,
         }

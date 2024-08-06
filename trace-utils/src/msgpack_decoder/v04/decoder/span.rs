@@ -84,25 +84,23 @@ impl FromStr for SpanKey {
 }
 
 fn fill_span(span: &mut Span, buf: &mut &[u8]) -> Result<(), DecodeError> {
-    // field's key won't be held so no need to copy it in a buffer.
-    let key = read_string(buf)?;
+    let (key, value) = read_string_ref(buf)?;
     let key = key.parse::<SpanKey>()?;
+
+    *buf = value;
 
     match key {
         SpanKey::Service => {
-            let (value, next) = read_string_ref(buf)?;
-            span.service = String::from_str(value).unwrap();
-            *buf = next;
+            let value = read_string(buf)?;
+            span.service = value;
         }
         SpanKey::Name => {
-            let (value, next) = read_string_ref(buf)?;
-            span.name = String::from_str(value).unwrap();
-            *buf = next;
+            let value = read_string(buf)?;
+            span.name = value;
         }
         SpanKey::Resource => {
-            let (value, next) = read_string_ref(buf)?;
-            span.resource = String::from_str(value).unwrap();
-            *buf = next;
+            let value = read_string(buf)?;
+            span.resource = value;
         }
         SpanKey::TraceId => span.trace_id = read_number(buf)?.try_into()?,
         SpanKey::SpanId => span.span_id = read_number(buf)?.try_into()?,
@@ -113,9 +111,8 @@ fn fill_span(span: &mut Span, buf: &mut &[u8]) -> Result<(), DecodeError> {
         SpanKey::Meta => span.meta = read_map_strs(buf)?,
         SpanKey::Metrics => span.metrics = read_metrics(buf)?,
         SpanKey::Type => {
-            let (value, next) = read_string_ref(buf)?;
-            span.r#type = String::from_str(value).unwrap();
-            *buf = next;
+            let value = read_string(buf)?;
+            span.r#type = value;
         }
         SpanKey::MetaStruct => span.meta_struct = read_meta_struct(buf)?,
         SpanKey::SpanLinks => span.span_links = read_span_links(buf)?,
