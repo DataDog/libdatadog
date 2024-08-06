@@ -46,7 +46,7 @@ An example is given in Appendix A, and the schema is given in Appendix B.
 - `uuid`:
     A UUID which uniquely identifies the crash.
 - `version_id`:
-    A Semver compatible ID for this format. [TODO, should it be semver?]
+    An integer version id.
 
 ### Optional fields
 Any field not listed as "Required" is optional.
@@ -61,7 +61,7 @@ Consumers MUST accept json with elided optional fields.
     At present, this is only used by the profiler, but this may be extended in the future.
 - `files`:
     The collector MAY collect useful files, such as `/proc/self/maps` or `/proc/meminfo`, and include them here.
-    Files are stored as an array of plain text strings, one per line.
+    Files are stored as a `Map<filename, contents>` where `contents` is an array of plain text strings, one per line.
 - `proc_info`: 
     Currently, just tracks the PID of the crashing process.  
     In the future, this may record additional info about the crashing process.
@@ -83,7 +83,7 @@ The version number SHOULD be incremented for important optional fields, and MUST
 
 ### Stacktraces
 Different languages and language runtimes have different representations of a stacktrace.
-The representation below attempts to collect as much information.
+The representation below attempts to collect as much information as possible.
 In addition, not all information may be available at crash-time on a given machine.
 For example, some libraries may have been shipped with debug symbols stripped, meaning that the only information available about a given frame may be the instruction pointer (`ip`) address, stored as a hex number "0xDEADBEEF".
 This address may be given as an absolute address, or a `NormalizedAddress`, which can be used by backend symbolication.
@@ -121,13 +121,13 @@ NOTE: All of the given fields below are optional.
   Human readable debug information representing the location of the stack frame in the high-level code.
   Note that this is a best effort collection: for optimized code, it may be difficult to associate a given instruction back to file, line and column.
   Also note that a given stack frame may have more than one associated name, e.g. if function inlining has occurred.
-  - `colno`:
+  - `column`:
     The column number in the given file where the symbol was defined.
-  - `filename`:
+  - `file`:
     The file name where this function was defined.
-  - `lineno`
+  - `line`
     The line number in the given file where the symbol was defined.
-  - `name`
+  - `function`
     The name of the function.
     This may or may not include module information.
     It may or may not be demangled (e.g. "_ZNSt28__atomic_futex_unsigned_base26_M_futex_wait_until_steadyEPjjbNSt6chrono8durationIlSt5ratioILl1ELl1EEEENS2_IlS3_ILl1ELl1000000000EEEE" vs "std::__atomic_futex_unsigned_base::_M_futex_wait_until_steady")
