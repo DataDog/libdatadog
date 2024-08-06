@@ -412,6 +412,7 @@ pub fn compute_top_level_span(trace: &mut [pb::Span]) {
     }
 }
 
+/// Return true if the span has a top level key set
 pub fn has_top_level(span: &pb::Span) -> bool {
     span.metrics
         .get(TRACER_TOP_LEVEL_KEY)
@@ -649,7 +650,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{get_root_span_index, set_serverless_root_span_tags};
-    use crate::trace_utils::{TracerHeaderTags, MAX_PAYLOAD_SIZE};
+    use crate::trace_utils::{has_top_level, TracerHeaderTags, MAX_PAYLOAD_SIZE};
     use crate::tracer_payload::TracerPayloadCollection;
     use crate::{
         test_utils::create_test_span,
@@ -948,5 +949,13 @@ mod tests {
             ]),
         );
         assert_eq!(span.r#type, "serverless".to_string())
+    }
+
+    #[test]
+    fn test_has_top_level() {
+        let top_level_span = create_test_span(123, 1234, 12, 1, true);
+        let not_top_level_span = create_test_span(123, 1234, 12, 1, false);
+        assert!(has_top_level(&top_level_span));
+        assert!(!has_top_level(&not_top_level_span));
     }
 }
