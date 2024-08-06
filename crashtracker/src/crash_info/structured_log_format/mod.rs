@@ -38,3 +38,27 @@ pub struct StructuredCrashInfo {
     pub timestamp: Option<DateTime<Utc>>,
     pub uuid: Uuid,
 }
+
+impl From<super::internal::CrashInfo> for StructuredCrashInfo {
+    fn from(value: super::internal::CrashInfo) -> Self {
+        let kind = if let Some(siginfo) = value.siginfo {
+            match siginfo.signum as libc::c_int {
+                libc::SIGSEGV => ErrorKind::SigSegv,
+                libc::SIGBUS => ErrorKind::SigBus,
+                _ => ErrorKind::Unknown,
+            }
+        } else {
+            ErrorKind::Unknown
+        };
+        let error_data = ErrorData {
+            additional_stacks: HashMap::new(),
+            is_crash : true,
+            kind,
+            message: "placeholder".to_string(),
+            stack: vec![],
+            stack_type: StackType::CrashTrackerV1
+        };
+
+        todo!()
+    }
+}

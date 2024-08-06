@@ -9,6 +9,7 @@ use std::collections::HashMap;
 pub enum ErrorKind {
     SigBus,
     SigSegv,
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
