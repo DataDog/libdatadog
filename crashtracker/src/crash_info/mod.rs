@@ -6,6 +6,7 @@ use ddcommon::Endpoint;
 pub use metadata::*;
 mod stacktrace;
 pub use stacktrace::*;
+mod structured;
 mod telemetry;
 
 use self::telemetry::TelemetryCrashUploader;
