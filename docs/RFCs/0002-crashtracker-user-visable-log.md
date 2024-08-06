@@ -49,8 +49,8 @@ An example is given in Appendix A, and the schema is given in Appendix B.
     An integer version id.
 
 ### ErrorData
-- `additional_stacks` **Optional**:
-    This field contains a `Map<Identifier, Stacktrace>`.
+- `additional_stacks`:
+    This **optional** field contains a `Map<Identifier, Stacktrace>`.
     In a multi-threaded program, the collector SHOULD collect the stacktraces of all active threads, and report them here.
     `Identifier` MAY be any identifier that makes sense for the given language (e.g. `ThreadId` for languages which have one).
     See below for more details on how stacktraces are formatted.
