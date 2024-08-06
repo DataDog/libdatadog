@@ -58,7 +58,7 @@ pub struct StructuredCrashInfo {
     pub files: HashMap<String, Vec<String>>,
     pub incomplete: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<CrashtrackerMetadata>,
+    pub metadata: Option<Metadata>,
     pub os_info: os_info::Info,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proc_info: Option<ProcessInfo>,
@@ -68,7 +68,7 @@ pub struct StructuredCrashInfo {
     pub stacktrace: Vec<StackFrame>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trace_ids: Vec<u128>,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<DateTime<Utc>>,
     pub uuid: Uuid,
 }
