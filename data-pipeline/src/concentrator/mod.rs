@@ -38,6 +38,13 @@ fn compute_stats_for_span_kind(span: &pb::Span) -> bool {
     })
 }
 
+fn should_ignore_span(span: &pb::Span, compute_stats_by_span_kind: bool) -> bool {
+    !(trace_utils::has_top_level(span)
+        || trace_utils::is_measured(span)
+        || (compute_stats_by_span_kind && compute_stats_for_span_kind(span)))
+        || trace_utils::is_partial_snapshot(span)
+}
+
 /// The concentrator compute stats on span aggregated by time and span attributes
 ///
 /// The ingested spans are only aggregated if they are root, top-level, measured or if their
@@ -89,11 +96,7 @@ impl Concentrator {
     }
 
     pub fn add_span(&mut self, span: &pb::Span) -> Result<()> {
-        if !(trace_utils::has_top_level(span)
-            || trace_utils::is_measured(span)
-            || (self.compute_stats_by_span_kind && compute_stats_for_span_kind(span)))
-            || trace_utils::is_partial_snapshot(span)
-        {
+        if should_ignore_span(span, self.compute_stats_by_span_kind) {
             return Ok(()); // Span is ignored
         }
         if let Ok(end_time) = u64::try_from(span.start + span.duration) {
