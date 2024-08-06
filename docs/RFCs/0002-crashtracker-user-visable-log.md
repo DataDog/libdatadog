@@ -44,7 +44,7 @@ An example is given in Appendix A, and the schema is given in Appendix B.
 - `timestamp`:
     The time at which the crash occurred, in ISO 8601 format.
 - `uuid`:
-    A UUID which uniquely identifies the crash.
+    A UUID v4 which uniquely identifies the crash.
 - `version_id`:
     An integer version id.
 
