@@ -4,6 +4,11 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum StackType {
+    CrashTrackerV1,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct StackFrameNames {
     #[serde(default, skip_serializing_if = "Option::is_none")]

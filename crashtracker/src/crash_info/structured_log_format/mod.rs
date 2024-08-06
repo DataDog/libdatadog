@@ -3,45 +3,18 @@
 
 mod stacktrace;
 pub use stacktrace::*;
+mod error_data;
+pub use error_data::*;
+mod metadata;
+pub use metadata::*;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum ErrorKind {
-    SigBus,
-    SigSegv,
-}
+use super::CrashInfo;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum StackType {
-    CrashTrackerV1,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Metadata {
-    pub library_name: String,
-    pub library_version: String,
-    pub family: String,
-    // Should include "service", "environment", etc
-    pub tags: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StackFrame {}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ErrorData {
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub additional_stacks: HashMap<String, Vec<StackFrame>>,
-    pub is_crash: bool,
-    pub kind: ErrorKind,
-    pub message: String,
-    pub stack: Vec<StackFrame>,
-    pub stack_type: StackType,
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProcessInfo {
@@ -50,8 +23,6 @@ pub struct ProcessInfo {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StructuredCrashInfo {
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub additional_stacktraces: HashMap<String, Vec<StackFrame>>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub counters: HashMap<String, i64>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -63,11 +34,9 @@ pub struct StructuredCrashInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proc_info: Option<ProcessInfo>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub span_ids: Vec<u128>,
+    pub span_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub stacktrace: Vec<StackFrame>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub trace_ids: Vec<u128>,
+    pub trace_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<DateTime<Utc>>,
     pub uuid: Uuid,
