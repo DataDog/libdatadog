@@ -37,7 +37,10 @@ pub struct StructuredCrashInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<DateTime<Utc>>,
     pub uuid: Uuid,
+    pub version_id: u64,
 }
+
+
 
 impl From<super::internal::CrashInfo> for StructuredCrashInfo {
     fn from(value: super::internal::CrashInfo) -> Self {
@@ -59,6 +62,18 @@ impl From<super::internal::CrashInfo> for StructuredCrashInfo {
             stack_type: StackType::CrashTrackerV1
         };
 
-        todo!()
+        Self {
+            counters: value.counters,
+            files: value.files,
+            incomplete: value.incomplete,
+            metadata: None,//TODO
+            os_info: value.os_info, //TODO, make this defined
+            proc_info: value.proc_info,
+            span_ids: value.span_ids.into_iter().map(|v| v.to_string()).collect(),
+            trace_ids: value.trace_ids.into_iter().map(|v| v.to_string()).collect(),
+            timestamp : value.timestamp,
+            uuid: value.uuid,
+            version_id: 1
+        }
     }
 }
