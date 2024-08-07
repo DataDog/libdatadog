@@ -13,12 +13,11 @@ mod process_info;
 pub use process_info::*;
 
 use anyhow::Context;
-use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs::File, path::Path};
-use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct StructuredCrashInfo {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub counters: HashMap<String, i64>,
@@ -36,8 +35,8 @@ pub struct StructuredCrashInfo {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trace_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timestamp: Option<DateTime<Utc>>,
-    pub uuid: Uuid,
+    pub timestamp: Option<String>,
+    pub uuid: String,
     pub version_id: u64,
 }
 
@@ -77,12 +76,12 @@ impl From<super::internal::CrashInfo> for StructuredCrashInfo {
             files: value.files,
             incomplete: value.incomplete,
             metadata: value.metadata.map(Metadata::from),
-            os_info: value.os_info.into(), //TODO, make this defined
+            os_info: value.os_info.into(),
             proc_info: value.proc_info.map(ProcessInfo::from),
             span_ids: value.span_ids.into_iter().map(|v| v.to_string()).collect(),
             trace_ids: value.trace_ids.into_iter().map(|v| v.to_string()).collect(),
-            timestamp: value.timestamp,
-            uuid: value.uuid,
+            timestamp: value.timestamp.map(|v| v.to_string()),
+            uuid: value.uuid.to_string(),
             version_id: 1,
         }
     }

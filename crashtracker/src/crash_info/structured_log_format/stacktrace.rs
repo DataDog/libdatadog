@@ -1,22 +1,23 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum StackType {
     CrashTrackerV1,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct StackTrace {
     pub format: StackType,
     pub trace: Vec<StackFrame>,
 }
 
 /// All fields are hex encoded integers.
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct StackFrame {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub column: Option<u32>,
@@ -38,7 +39,7 @@ pub struct StackFrame {
     pub symbol_address: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum NormalizedAddressMeta {
     Apk(PathBuf),
     Elf {
@@ -62,7 +63,7 @@ impl From<crate::crash_info::internal::NormalizedAddressMeta> for NormalizedAddr
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct NormalizedAddress {
     pub file_offset: u64,
     pub meta: NormalizedAddressMeta,
