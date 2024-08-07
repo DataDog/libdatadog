@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StructuredCrashInfo {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -39,8 +38,6 @@ pub struct StructuredCrashInfo {
     pub version_id: u64,
 }
 
-
-
 impl From<super::internal::CrashInfo> for StructuredCrashInfo {
     fn from(value: super::internal::CrashInfo) -> Self {
         let kind = if let Some(siginfo) = value.siginfo {
@@ -54,11 +51,11 @@ impl From<super::internal::CrashInfo> for StructuredCrashInfo {
         };
         let error_data = ErrorData {
             additional_stacks: HashMap::new(),
-            is_crash : true,
+            is_crash: true,
             kind,
             message: "placeholder".to_string(),
             stack: vec![],
-            stack_type: StackType::CrashTrackerV1
+            stack_type: StackType::CrashTrackerV1,
         };
 
         Self {
@@ -66,14 +63,14 @@ impl From<super::internal::CrashInfo> for StructuredCrashInfo {
             error: error_data,
             files: value.files,
             incomplete: value.incomplete,
-            metadata: None,//TODO
+            metadata: None,         //TODO
             os_info: value.os_info, //TODO, make this defined
             proc_info: value.proc_info.map(ProcessInfo::from),
             span_ids: value.span_ids.into_iter().map(|v| v.to_string()).collect(),
             trace_ids: value.trace_ids.into_iter().map(|v| v.to_string()).collect(),
-            timestamp : value.timestamp,
+            timestamp: value.timestamp,
             uuid: value.uuid,
-            version_id: 1
+            version_id: 1,
         }
     }
 }

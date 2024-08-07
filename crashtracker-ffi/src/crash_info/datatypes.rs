@@ -187,13 +187,11 @@ impl<'a> TryFrom<&StackFrame<'a>> for datadog_crashtracker::StackFrame {
         }
         let ip = to_hex(value.ip);
         let module_base_address = to_hex(value.module_base_address);
-        let names = {
-            let mut vec = Vec::with_capacity(value.names.len());
-            for x in value.names.iter() {
-                vec.push(x.try_into()?);
-            }
-            vec
-        };
+        let names = value
+            .names
+            .iter()
+            .map(datadog_crashtracker::StackFrameNames::try_from)
+            .collect::<anyhow::Result<Vec<_>>>()?;
         let normalized_ip = (&value.normalized_ip).try_into()?;
         let sp = to_hex(value.sp);
         let symbol_address = to_hex(value.symbol_address);

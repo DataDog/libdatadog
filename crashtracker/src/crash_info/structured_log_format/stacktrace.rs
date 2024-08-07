@@ -12,7 +12,7 @@ pub enum StackType {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StackTrace {
     pub format: StackType,
-    pub trace: Vec<StackFrame>
+    pub trace: Vec<StackFrame>,
 }
 
 /// All fields are hex encoded integers.
@@ -29,7 +29,7 @@ pub struct StackFrame {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub module_base_address: Option<String>,    
+    pub module_base_address: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub normalized_ip: Option<NormalizedAddress>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -57,12 +57,11 @@ pub struct NormalizedAddress {
 
 impl From<Vec<crate::crash_info::internal::StackFrame>> for StackTrace {
     fn from(value: Vec<crate::crash_info::internal::StackFrame>) -> Self {
-        let mut trace = vec![];
-        for frame in value {
-        }
+        let trace = vec![];
+        for _frame in value {}
         Self {
             trace,
-            format: StackType::CrashTrackerV1
+            format: StackType::CrashTrackerV1,
         }
     }
 }
