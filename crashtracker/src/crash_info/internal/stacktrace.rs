@@ -23,8 +23,8 @@ pub struct StackFrame {
     pub ip: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub module_base_address: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub names: Option<Vec<StackFrameNames>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub names: Vec<StackFrameNames>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub normalized_ip: Option<NormalizedAddress>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -112,7 +112,7 @@ mod unix {
                 match symbolizer.symbolize_single(src, input)? {
                     Symbolized::Sym(s) => {
                         //TODO: handle
-                        self.names = Some(vec![s.into()]);
+                        self.names = vec![s.into()];
                     }
                     Symbolized::Unknown(reason) => {
                         anyhow::bail!("Couldn't symbolize {ip}: {reason}");

@@ -20,6 +20,7 @@ use uuid::Uuid;
 pub struct StructuredCrashInfo {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub counters: HashMap<String, i64>,
+    pub error: ErrorData,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub files: HashMap<String, Vec<String>>,
     pub incomplete: bool,
@@ -62,6 +63,7 @@ impl From<super::internal::CrashInfo> for StructuredCrashInfo {
 
         Self {
             counters: value.counters,
+            error: error_data,
             files: value.files,
             incomplete: value.incomplete,
             metadata: None,//TODO
