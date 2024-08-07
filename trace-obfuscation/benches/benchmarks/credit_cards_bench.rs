@@ -1,31 +1,32 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::hint::black_box;
+use std::time::Duration;
+
 use criterion::Throughput::Elements;
-use criterion::{criterion_group, BenchmarkId, Criterion};
+use criterion::{criterion_group, BatchSize, BenchmarkId, Criterion};
 use datadog_trace_obfuscation::credit_cards::is_card_number;
 
 pub fn is_card_number_bench(c: &mut Criterion) {
-    let mut group = c.benchmark_group("credit_card");
-    let ccs = [
-        "378282246310005",
-        "  378282246310005",
-        "  3782-8224-6310-005 ",
-        "37828224631000521389798", // valid but too long
-        "37828224631",             // valid but too short
-        "x371413321323331",        // invalid characters
-        "",
-    ];
-    for c in ccs.iter() {
-        group.throughput(Elements(1));
-        group.bench_with_input(BenchmarkId::new("is_card_number", c), c, |b, i| {
-            b.iter(|| is_card_number(i, true))
-        });
-    }
+    bench_is_card_number(c, "is_card_number", true);
 }
 
 fn is_card_number_no_luhn_bench(c: &mut Criterion) {
+    bench_is_card_number(c, "is_card_number_no_luhn", false);
+}
+
+#[inline]
+fn bench_is_card_number(c: &mut Criterion, function_name: &str, validate_luhn: bool) {
     let mut group = c.benchmark_group("credit_card");
+    // Measure over a number of calls to minimize impact of OS noise
+    let elements = 1000;
+    group.throughput(Elements(elements));
+    // We only need to measure for a small time since the function is very fast
+    group.warm_up_time(Duration::from_secs(1));
+    group.measurement_time(Duration::from_secs(2));
+    group.sampling_mode(criterion::SamplingMode::Flat);
+    group.sample_size(200);
     let ccs = [
         "378282246310005",
         "  378282246310005",
@@ -36,9 +37,16 @@ fn is_card_number_no_luhn_bench(c: &mut Criterion) {
         "",
     ];
     for c in ccs.iter() {
-        group.throughput(Elements(1));
-        group.bench_with_input(BenchmarkId::new("is_card_number_no_luhn", c), c, |b, i| {
-            b.iter(|| is_card_number(i, false))
+        group.bench_with_input(BenchmarkId::new(function_name, c), c, |b, i| {
+            b.iter_batched(
+                || {},
+                |_| {
+                    (0..elements).for_each(|_| {
+                        black_box(is_card_number(black_box(i), black_box(validate_luhn)));
+                    })
+                },
+                BatchSize::SmallInput,
+            )
         });
     }
 }

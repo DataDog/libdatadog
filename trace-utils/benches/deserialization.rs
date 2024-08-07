@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use criterion::{criterion_group, Criterion};
+use criterion::{black_box, criterion_group, Criterion};
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
 use datadog_trace_utils::tracer_payload::{
     DefaultTraceChunkProcessor, TraceEncoding, TracerPayloadCollection, TracerPayloadParams,
@@ -44,18 +44,25 @@ pub fn deserialize_msgpack_to_internal(c: &mut Criterion) {
     c.bench_function(
         "benching deserializing traces from msgpack to their internal representation ",
         |b| {
-            b.iter(|| {
-                let result: anyhow::Result<TracerPayloadCollection> = TracerPayloadParams::new(
-                    &data,
-                    tracer_header_tags,
-                    &mut DefaultTraceChunkProcessor,
-                    false,
-                    TraceEncoding::V04,
-                )
-                .try_into();
-
-                assert!(result.is_ok())
-            })
+            b.iter_batched(
+                || &data,
+                |data| {
+                    let result: anyhow::Result<TracerPayloadCollection> = black_box(
+                        TracerPayloadParams::new(
+                            data,
+                            tracer_header_tags,
+                            &mut DefaultTraceChunkProcessor,
+                            false,
+                            TraceEncoding::V04,
+                        )
+                        .try_into(),
+                    );
+                    assert!(result.is_ok());
+                    // Return the result to avoid measuring the deallocation time
+                    result
+                },
+                criterion::BatchSize::LargeInput,
+            );
         },
     );
 }
