@@ -10,9 +10,10 @@ pub use metadata::*;
 mod process_info;
 pub use process_info::*;
 
+use anyhow::Context;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, fs::File, path::Path};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -54,7 +55,7 @@ impl From<super::internal::CrashInfo> for StructuredCrashInfo {
             is_crash: true,
             kind,
             message: "placeholder".to_string(),
-            stack: vec![],
+            stack: value.stacktrace.into(),
             stack_type: StackType::CrashTrackerV1,
         };
 
@@ -72,5 +73,18 @@ impl From<super::internal::CrashInfo> for StructuredCrashInfo {
             uuid: value.uuid,
             version_id: 1,
         }
+    }
+}
+
+impl StructuredCrashInfo {
+    /// Emit the CrashInfo as structured json in file `path`.
+    /// SIGNAL SAFETY:
+    ///     I believe but have not verified this is signal safe.
+    pub fn to_file(&self, path: &Path) -> anyhow::Result<()> {
+        let file =
+            File::create(path).with_context(|| format!("Failed to create {}", path.display()))?;
+        serde_json::to_writer_pretty(file, self)
+            .with_context(|| format!("Failed to write json to {}", path.display()))?;
+        Ok(())
     }
 }

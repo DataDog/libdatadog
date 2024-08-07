@@ -146,7 +146,8 @@ fn test_crash() -> anyhow::Result<()> {
     let endpoint = Some(Endpoint::from_slice(&output_url));
 
     let path_to_receiver_binary =
-        "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
+    "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/build-ffi/bin/libdatadog-crashtracking-receiver".to_string();
+    // "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
     let create_alt_stack = true;
     let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));

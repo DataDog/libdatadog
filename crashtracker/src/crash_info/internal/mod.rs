@@ -255,6 +255,9 @@ impl CrashInfo {
                 let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
                     .context("crash output file was not correctly formatted")?;
                 self.to_file(&path)?;
+                let structured: crate::crash_info::structured_log_format::StructuredCrashInfo =
+                    self.clone().into();
+                structured.to_file(&path.with_extension(".structured.json"))?;
             }
         }
         self.upload_to_telemetry(endpoint)
