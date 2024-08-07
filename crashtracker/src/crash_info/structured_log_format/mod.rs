@@ -7,16 +7,14 @@ mod error_data;
 pub use error_data::*;
 mod metadata;
 pub use metadata::*;
+mod process_info;
+pub use process_info::*;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ProcessInfo {
-    pub pid: u32,
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StructuredCrashInfo {
@@ -68,7 +66,7 @@ impl From<super::internal::CrashInfo> for StructuredCrashInfo {
             incomplete: value.incomplete,
             metadata: None,//TODO
             os_info: value.os_info, //TODO, make this defined
-            proc_info: value.proc_info,
+            proc_info: value.proc_info.map(ProcessInfo::from),
             span_ids: value.span_ids.into_iter().map(|v| v.to_string()).collect(),
             trace_ids: value.trace_ids.into_iter().map(|v| v.to_string()).collect(),
             timestamp : value.timestamp,
