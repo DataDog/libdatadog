@@ -41,20 +41,30 @@ pub struct StructuredCrashInfo {
 
 impl From<super::internal::CrashInfo> for StructuredCrashInfo {
     fn from(value: super::internal::CrashInfo) -> Self {
-        let kind = if let Some(siginfo) = value.siginfo {
-            match siginfo.signum as libc::c_int {
-                libc::SIGSEGV => ErrorKind::SigSegv,
-                libc::SIGBUS => ErrorKind::SigBus,
-                _ => ErrorKind::Unknown,
-            }
+        let (message, kind) = if let Some(siginfo) = value.siginfo {
+            (
+                siginfo.signame.unwrap_or_default(),
+                match siginfo.signum as libc::c_int {
+                    libc::SIGSEGV => ErrorKind::SigSegv,
+                    libc::SIGBUS => ErrorKind::SigBus,
+                    _ => ErrorKind::Unknown,
+                },
+            )
         } else {
-            ErrorKind::Unknown
+            ("Unknown".to_string(), ErrorKind::Unknown)
         };
+
+        let additional_stacks = value
+            .additional_stacktraces
+            .into_iter()
+            .map(|(k, v)| (k, v.into()))
+            .collect();
+
         let error_data = ErrorData {
-            additional_stacks: HashMap::new(),
+            additional_stacks,
             is_crash: true,
             kind,
-            message: "placeholder".to_string(),
+            message,
             stack: value.stacktrace.into(),
             stack_type: StackType::CrashTrackerV1,
         };
