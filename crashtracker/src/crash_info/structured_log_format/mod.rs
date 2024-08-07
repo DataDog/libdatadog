@@ -74,7 +74,7 @@ impl From<super::internal::CrashInfo> for StructuredCrashInfo {
             error: error_data,
             files: value.files,
             incomplete: value.incomplete,
-            metadata: None,         //TODO
+            metadata: value.metadata.map(Metadata::from),
             os_info: value.os_info, //TODO, make this defined
             proc_info: value.proc_info.map(ProcessInfo::from),
             span_ids: value.span_ids.into_iter().map(|v| v.to_string()).collect(),
