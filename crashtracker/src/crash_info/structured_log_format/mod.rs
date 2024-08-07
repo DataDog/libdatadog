@@ -7,6 +7,8 @@ mod error_data;
 pub use error_data::*;
 mod metadata;
 pub use metadata::*;
+mod os_info;
+pub use os_info::*;
 mod process_info;
 pub use process_info::*;
 
@@ -26,7 +28,7 @@ pub struct StructuredCrashInfo {
     pub incomplete: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
-    pub os_info: os_info::Info,
+    pub os_info: OsInfo,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proc_info: Option<ProcessInfo>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -75,7 +77,7 @@ impl From<super::internal::CrashInfo> for StructuredCrashInfo {
             files: value.files,
             incomplete: value.incomplete,
             metadata: value.metadata.map(Metadata::from),
-            os_info: value.os_info, //TODO, make this defined
+            os_info: value.os_info.into(), //TODO, make this defined
             proc_info: value.proc_info.map(ProcessInfo::from),
             span_ids: value.span_ids.into_iter().map(|v| v.to_string()).collect(),
             trace_ids: value.trace_ids.into_iter().map(|v| v.to_string()).collect(),
