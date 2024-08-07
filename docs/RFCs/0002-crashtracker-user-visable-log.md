@@ -288,10 +288,5 @@ NOTE: All of the given fields below are optional.
 </details>
 
 ## Appendix B: Json Schema
-
-<details>
-  <summary>Json Schema</summary>
-
-<div w3-include-html="0002-crashtracker-schema.json"></div>
-</details>
+[Linked here](0002-crashtracker-schema.json)
 
