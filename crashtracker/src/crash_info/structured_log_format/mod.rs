@@ -99,3 +99,9 @@ impl StructuredCrashInfo {
         Ok(())
     }
 }
+
+#[test]
+fn schema() {
+    let schema = schemars::schema_for!(StructuredCrashInfo);
+    println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+}
