@@ -84,11 +84,12 @@ pub trait RefcountedFile {
 
 #[derive(Default)]
 struct RunnersGeneration {
+    /// This atomic contains both run_id and runners count; saving us from needing a Mutex.
     val: AtomicU64,
 }
 
 /// Atomic structure to represent the exact amount of remote config fetching runners at a specific
-/// point in time represented by the generation, an integer which is only ever incremented.
+/// point in time represented by the generation (run_id), an integer which is only ever incremented.
 /// This data structure helps contain which inactive files are pending deletion.
 impl RunnersGeneration {
     const RUN_ID_SHIFT: i32 = 20;
