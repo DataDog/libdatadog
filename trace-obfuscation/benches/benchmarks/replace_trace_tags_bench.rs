@@ -48,11 +48,13 @@ fn criterion_benchmark(c: &mut Criterion) {
         span_links: vec![],
     };
 
-    let mut trace = [span_1];
+    let trace = [span_1];
     group.bench_function("replace_trace_tags", |b| {
-        b.iter(|| {
-            replacer::replace_trace_tags(black_box(&mut trace), black_box(rules));
-        })
+        b.iter_batched_ref(
+            || trace.to_owned(),
+            |t| replacer::replace_trace_tags(black_box(t), black_box(rules)),
+            criterion::BatchSize::LargeInput,
+        )
     });
 }
 
