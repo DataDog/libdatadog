@@ -5,6 +5,7 @@ use crate::slice::AsBytes;
 use crate::Error;
 use ddcommon::{parse_uri, Endpoint};
 use hyper::http::uri::{Authority, Parts};
+use std::borrow::Cow;
 use std::str::FromStr;
 
 #[no_mangle]
@@ -61,6 +62,15 @@ pub extern "C" fn ddog_endpoint_from_api_key_and_site(
 #[no_mangle]
 extern "C" fn ddog_endpoint_set_timeout(endpoint: &mut Endpoint, millis: u64) {
     endpoint.timeout_ms = millis;
+}
+
+#[no_mangle]
+extern "C" fn ddog_endpoint_set_test_token(endpoint: &mut Endpoint, token: crate::CharSlice) {
+    endpoint.test_token = if token.is_empty() {
+        None
+    } else {
+        Some(Cow::Owned(token.to_utf8_lossy().to_string()))
+    };
 }
 
 #[no_mangle]

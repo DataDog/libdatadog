@@ -54,27 +54,27 @@ pub fn is_aligned_and_not_null<T>(ptr: *const T) -> bool {
 }
 
 pub trait AsBytes<'a> {
-    fn as_bytes(&'a self) -> &'a [u8];
+    fn as_bytes(&self) -> &'a [u8];
 
     #[inline]
-    fn try_to_utf8(&'a self) -> Result<&'a str, Utf8Error> {
+    fn try_to_utf8(&self) -> Result<&'a str, Utf8Error> {
         std::str::from_utf8(self.as_bytes())
     }
 
     #[inline]
-    fn to_utf8_lossy(&'a self) -> Cow<'a, str> {
+    fn to_utf8_lossy(&self) -> Cow<'a, str> {
         String::from_utf8_lossy(self.as_bytes())
     }
 }
 
 impl<'a> AsBytes<'a> for Slice<'a, u8> {
-    fn as_bytes(&'a self) -> &'a [u8] {
+    fn as_bytes(&self) -> &'a [u8] {
         self.as_slice()
     }
 }
 
 impl<'a> AsBytes<'a> for Slice<'a, i8> {
-    fn as_bytes(&'a self) -> &'a [u8] {
+    fn as_bytes(&self) -> &'a [u8] {
         unsafe { slice::from_raw_parts(self.ptr.cast(), self.len) }
     }
 }

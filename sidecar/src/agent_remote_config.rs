@@ -24,6 +24,7 @@ fn path_for_endpoint(endpoint: &Endpoint) -> CString {
     // We need a stable hash so that the outcome is independent of the process
     let mut hasher = ZwoHasher::default();
     endpoint.url.authority().unwrap().hash(&mut hasher);
+    endpoint.test_token.hash(&mut hasher);
     CString::new(format!(
         "/ddcfg-{}-{}", // short enough because 31 character macos limitation
         primary_sidecar_identifier(),
