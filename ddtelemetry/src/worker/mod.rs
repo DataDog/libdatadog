@@ -242,10 +242,10 @@ impl TelemetryWorker {
             Lifecycle(Start) => {
                 if !self.data.started {
                     self.deadlines
-                        .schedule_event(LifecycleAction::FlushData)
+                        .schedule_event(LifecycleAction::FlushMetricAggr)
                         .unwrap();
                     self.deadlines
-                        .schedule_event(LifecycleAction::FlushMetricAggr)
+                        .schedule_event(LifecycleAction::FlushData)
                         .unwrap();
                     self.data.started = true;
                 }
@@ -266,7 +266,7 @@ impl TelemetryWorker {
                     .unwrap();
             }
             Lifecycle(FlushData) => {
-                if !self.data.started {
+                if !(self.data.started || self.config.restartable) {
                     return CONTINUE;
                 }
                 let batch = self.build_observability_batch();
@@ -297,7 +297,9 @@ impl TelemetryWorker {
                     self.log_err(&e);
                 }
                 self.data.started = false;
-                self.deadlines.clear_pending();
+                if !self.config.restartable {
+                    self.deadlines.clear_pending();
+                }
                 return BREAK;
             }
             CollectStats(stats_sender) => {
@@ -342,10 +344,10 @@ impl TelemetryWorker {
                         Err(err) => self.log_err(&err),
                     }
                     self.deadlines
-                        .schedule_event(LifecycleAction::FlushData)
+                        .schedule_event(LifecycleAction::FlushMetricAggr)
                         .unwrap();
                     self.deadlines
-                        .schedule_event(LifecycleAction::FlushMetricAggr)
+                        .schedule_event(LifecycleAction::FlushData)
                         .unwrap();
                     self.data.started = true;
                 }
@@ -369,7 +371,7 @@ impl TelemetryWorker {
                     .unwrap();
             }
             Lifecycle(FlushData) => {
-                if !self.data.started {
+                if !(self.data.started || self.config.restartable) {
                     return CONTINUE;
                 }
                 let mut batch = self.build_app_events_batch();
@@ -459,7 +461,9 @@ impl TelemetryWorker {
                 .await;
 
                 self.data.started = false;
-                self.deadlines.clear_pending();
+                if !self.config.restartable {
+                    self.deadlines.clear_pending();
+                }
                 return BREAK;
             }
             CollectStats(stats_sender) => {
