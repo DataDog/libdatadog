@@ -1,337 +1,338 @@
 {
-    "counters": {
-        "profiler_inactive": 0,
-        "profiler_collecting_sample": 1,
-        "profiler_unwinding": 0,
-        "profiler_serializing": 0
-    },
-    "error": {
-        "is_crash": true,
-        "kind": "SigSegv",
-        "message": "SIGSEGV",
-        "stack": {
-            "format": "CrashTrackerV1",
-            "trace": [
-                {
-                    "column": 5,
-                    "file": "/Users/daniel.schwartznarbonne/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backtrace-0.3.71/src/backtrace/libunwind.rs",
-                    "function": "backtrace::backtrace::libunwind::trace::hf8c7365e31b762e6",
-                    "ip": "0x1046207e8",
-                    "line": 105,
-                    "sp": "0x105b2b2a0",
-                    "symbol_address": "0x1046207e8"
-                },
-                {
-                    "column": 5,
-                    "file": "/Users/daniel.schwartznarbonne/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backtrace-0.3.71/src/backtrace/mod.rs",
-                    "function": "backtrace::backtrace::trace_unsynchronized::h9ab8c8f7d10c580c",
-                    "ip": "0x1046207e8",
-                    "line": 66,
-                    "sp": "0x105b2b2a0",
-                    "symbol_address": "0x1046207e8"
-                },
-                {
-                    "column": 5,
-                    "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/emitters.rs",
-                    "function": "datadog_crashtracker::collector::emitters::emit_backtrace_by_frames::h2caf0ab937da4314",
-                    "ip": "0x104632358",
-                    "line": 34,
-                    "sp": "0x105b2b2f0",
-                    "symbol_address": "0x104632358"
-                },
-                {
-                    "column": 18,
-                    "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/emitters.rs",
-                    "function": "datadog_crashtracker::collector::emitters::emit_crashreport::h9f8d0f19bdd7ecdb",
-                    "ip": "0x104634f00",
-                    "line": 127,
-                    "sp": "0x105b2b450",
-                    "symbol_address": "0x104634f00"
-                },
-                {
-                    "column": 23,
-                    "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/crash_handler.rs",
-                    "function": "datadog_crashtracker::collector::crash_handler::handle_posix_signal_impl::h2ad003563330d808",
-                    "ip": "0x104618b10",
-                    "line": 333,
-                    "sp": "0x105b2b640",
-                    "symbol_address": "0x104618b10"
-                },
-                {
-                    "column": 13,
-                    "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/crash_handler.rs",
-                    "function": "datadog_crashtracker::collector::crash_handler::handle_posix_sigaction::h8e228d028f9d26da",
-                    "ip": "0x10461851c",
-                    "line": 257,
-                    "sp": "0x105b2ba20",
-                    "symbol_address": "0x10461851c"
-                },
-                {
-                    "function": "__simple_esappend",
-                    "ip": "0x186b9b584",
-                    "sp": "0x105b2bb80",
-                    "symbol_address": "0x186b9b584"
-                },
-                {
-                    "column": 5,
-                    "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/api.rs",
-                    "function": "datadog_crashtracker::collector::api::test_crash::h9e5e006b52d60956",
-                    "ip": "0x104614e68",
-                    "line": 192,
-                    "sp": "0x105b2bbb0",
-                    "symbol_address": "0x104614e68"
-                },
-                {
-                    "column": 20,
-                    "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/api.rs",
-                    "function": "datadog_crashtracker::collector::api::test_crash::{{closure}}::h750b3388d76a0682",
-                    "ip": "0x10460a164",
-                    "line": 135,
-                    "sp": "0x16ba3e7a0",
-                    "symbol_address": "0x10460a164"
-                },
-                {
-                    "column": 5,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/core/src/ops/function.rs",
-                    "function": "core::ops::function::FnOnce::call_once::hb1768cdf281be7e4",
-                    "ip": "0x10461a344",
-                    "line": 250,
-                    "sp": "0x16ba3e7c0",
-                    "symbol_address": "0x10461a344"
-                },
-                {
-                    "column": 5,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/core/src/ops/function.rs",
-                    "function": "core::ops::function::FnOnce::call_once::hdc78704e3375b6cc",
-                    "ip": "0x10470f13c",
-                    "line": 250,
-                    "sp": "0x16ba3e7f0",
-                    "symbol_address": "0x10470f13c"
-                },
-                {
-                    "column": 18,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/test/src/lib.rs",
-                    "function": "test::__rust_begin_short_backtrace::ha00c83e9361a315d",
-                    "ip": "0x10470f13c",
-                    "line": 621,
-                    "sp": "0x16ba3e7f0",
-                    "symbol_address": "0x10470f13c"
-                },
-                {
-                    "column": 60,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/test/src/lib.rs",
-                    "function": "test::run_test_in_process::{{closure}}::h049a3922169151a8",
-                    "ip": "0x10470e8b4",
-                    "line": 644,
-                    "sp": "0x16ba3e830",
-                    "symbol_address": "0x10470e8b4"
-                },
-                {
-                    "column": 9,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/core/src/panic/unwind_safe.rs",
-                    "function": "<core::panic::unwind_safe::AssertUnwindSafe<F> as core::ops::function::FnOnce<()>>::call_once::h59b471ae83578d9f",
-                    "ip": "0x10470e8b4",
-                    "line": 272,
-                    "sp": "0x16ba3e830",
-                    "symbol_address": "0x10470e8b4"
-                },
-                {
-                    "column": 40,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panicking.rs",
-                    "function": "std::panicking::try::do_call::hdcae0245e55fa0c0",
-                    "ip": "0x10470e8b4",
-                    "line": 552,
-                    "sp": "0x16ba3e830",
-                    "symbol_address": "0x10470e8b4"
-                },
-                {
-                    "column": 19,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panicking.rs",
-                    "function": "std::panicking::try::h9dc0119b564ac9cf",
-                    "ip": "0x10470e8b4",
-                    "line": 516,
-                    "sp": "0x16ba3e830",
-                    "symbol_address": "0x10470e8b4"
-                },
-                {
-                    "column": 14,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panic.rs",
-                    "function": "std::panic::catch_unwind::hab329ede8b56df3b",
-                    "ip": "0x10470e8b4",
-                    "line": 146,
-                    "sp": "0x16ba3e830",
-                    "symbol_address": "0x10470e8b4"
-                },
-                {
-                    "column": 27,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/test/src/lib.rs",
-                    "function": "test::run_test_in_process::h42ddc94bb4665859",
-                    "ip": "0x10470e8b4",
-                    "line": 644,
-                    "sp": "0x16ba3e830",
-                    "symbol_address": "0x10470e8b4"
-                },
-                {
-                    "column": 43,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/test/src/lib.rs",
-                    "function": "test::run_test::{{closure}}::h5bc06caf086790ae",
-                    "ip": "0x10470e8b4",
-                    "line": 567,
-                    "sp": "0x16ba3e830",
-                    "symbol_address": "0x10470e8b4"
-                },
-                {
-                    "column": 41,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/test/src/lib.rs",
-                    "function": "test::run_test::{{closure}}::hf12704d7fb5fe7af",
-                    "ip": "0x1046e1270",
-                    "line": 595,
-                    "sp": "0x16ba3edb0",
-                    "symbol_address": "0x1046e1270"
-                },
-                {
-                    "column": 18,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/sys_common/backtrace.rs",
-                    "function": "std::sys_common::backtrace::__rust_begin_short_backtrace::hf83ba910f7522d55",
-                    "ip": "0x1046e1270",
-                    "line": 155,
-                    "sp": "0x16ba3edb0",
-                    "symbol_address": "0x1046e1270"
-                },
-                {
-                    "column": 17,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/thread/mod.rs",
-                    "function": "std::thread::Builder::spawn_unchecked_::{{closure}}::{{closure}}::he9daeef7c6950e9b",
-                    "ip": "0x1046e57a4",
-                    "line": 528,
-                    "sp": "0x16ba3ef20",
-                    "symbol_address": "0x1046e57a4"
-                },
-                {
-                    "column": 9,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/core/src/panic/unwind_safe.rs",
-                    "function": "<core::panic::unwind_safe::AssertUnwindSafe<F> as core::ops::function::FnOnce<()>>::call_once::h0202fb4f2537b363",
-                    "ip": "0x1046e57a4",
-                    "line": 272,
-                    "sp": "0x16ba3ef20",
-                    "symbol_address": "0x1046e57a4"
-                },
-                {
-                    "column": 40,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panicking.rs",
-                    "function": "std::panicking::try::do_call::hbfefa096cde588e7",
-                    "ip": "0x1046e57a4",
-                    "line": 552,
-                    "sp": "0x16ba3ef20",
-                    "symbol_address": "0x1046e57a4"
-                },
-                {
-                    "column": 19,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panicking.rs",
-                    "function": "std::panicking::try::hebf8b6694f3819d7",
-                    "ip": "0x1046e57a4",
-                    "line": 516,
-                    "sp": "0x16ba3ef20",
-                    "symbol_address": "0x1046e57a4"
-                },
-                {
-                    "column": 14,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panic.rs",
-                    "function": "std::panic::catch_unwind::h62e366e1b226d45f",
-                    "ip": "0x1046e57a4",
-                    "line": 146,
-                    "sp": "0x16ba3ef20",
-                    "symbol_address": "0x1046e57a4"
-                },
-                {
-                    "column": 30,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/thread/mod.rs",
-                    "function": "std::thread::Builder::spawn_unchecked_::{{closure}}::h2dcb575929bd939b",
-                    "ip": "0x1046e57a4",
-                    "line": 527,
-                    "sp": "0x16ba3ef20",
-                    "symbol_address": "0x1046e57a4"
-                },
-                {
-                    "column": 5,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/core/src/ops/function.rs",
-                    "function": "core::ops::function::FnOnce::call_once{{vtable.shim}}::h28247bdc23f84175",
-                    "ip": "0x1046e57a4",
-                    "line": 250,
-                    "sp": "0x16ba3ef20",
-                    "symbol_address": "0x1046e57a4"
-                },
-                {
-                    "column": 9,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/alloc/src/boxed.rs",
-                    "function": "<alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once::heeda316fdad4f743",
-                    "ip": "0x104d98a08",
-                    "line": 2020,
-                    "sp": "0x16ba3ef80",
-                    "symbol_address": "0x104d98a08"
-                },
-                {
-                    "column": 9,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/alloc/src/boxed.rs",
-                    "function": "<alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once::h0d3160611f7295b1",
-                    "ip": "0x104d98a08",
-                    "line": 2020,
-                    "sp": "0x16ba3ef80",
-                    "symbol_address": "0x104d98a08"
-                },
-                {
-                    "column": 17,
-                    "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/sys/pal/unix/thread.rs",
-                    "function": "std::sys::pal::unix::thread::Thread::new::thread_start::h9266fbbdd0c3d8be",
-                    "ip": "0x104d98a08",
-                    "line": 108,
-                    "sp": "0x16ba3ef80",
-                    "symbol_address": "0x104d98a08"
-                },
-                {
-                    "function": "__pthread_joiner_wake",
-                    "ip": "0x186b6af94",
-                    "sp": "0x16ba3efd0",
-                    "symbol_address": "0x186b6af94"
-                }
-            ]
+  "counters": {
+    "profiler_serializing": 0,
+    "profiler_collecting_sample": 1,
+    "profiler_inactive": 0,
+    "profiler_unwinding": 0
+  },
+  "error": {
+    "is_crash": true,
+    "kind": "SigSegv",
+    "message": "SIGSEGV",
+    "source_type": "crashtracking",
+    "stack": {
+      "format": "CrashTrackerV1",
+      "trace": [
+        {
+          "column": 5,
+          "file": "/Users/daniel.schwartznarbonne/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backtrace-0.3.71/src/backtrace/libunwind.rs",
+          "function": "backtrace::backtrace::libunwind::trace::hf8c7365e31b762e6",
+          "ip": "0x100fa8790",
+          "line": 105,
+          "sp": "0x1024b32a0",
+          "symbol_address": "0x100fa8790"
         },
-        "stack_type": "CrashTrackerV1"
-    },
-    "incomplete": false,
-    "metadata": {
-        "library_name": "libname",
-        "library_version": "version",
-        "family": "family",
-        "tags": [
-            "strawberry:jam",
-            "orange:marmalade"
-        ]
-    },
-    "os_info": {
-        "architecture": "arm64",
-        "bitness": "64-bit",
-        "os_type": "Mac OS",
-        "version": {
-            "Semantic": [
-                14,
-                5,
-                0
-            ]
+        {
+          "column": 5,
+          "file": "/Users/daniel.schwartznarbonne/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backtrace-0.3.71/src/backtrace/mod.rs",
+          "function": "backtrace::backtrace::trace_unsynchronized::h9ab8c8f7d10c580c",
+          "ip": "0x100fa8790",
+          "line": 66,
+          "sp": "0x1024b32a0",
+          "symbol_address": "0x100fa8790"
+        },
+        {
+          "column": 5,
+          "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/emitters.rs",
+          "function": "datadog_crashtracker::collector::emitters::emit_backtrace_by_frames::h2caf0ab937da4314",
+          "ip": "0x100fba34c",
+          "line": 34,
+          "sp": "0x1024b32f0",
+          "symbol_address": "0x100fba34c"
+        },
+        {
+          "column": 18,
+          "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/emitters.rs",
+          "function": "datadog_crashtracker::collector::emitters::emit_crashreport::h9f8d0f19bdd7ecdb",
+          "ip": "0x100fbcef4",
+          "line": 127,
+          "sp": "0x1024b3450",
+          "symbol_address": "0x100fbcef4"
+        },
+        {
+          "column": 23,
+          "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/crash_handler.rs",
+          "function": "datadog_crashtracker::collector::crash_handler::handle_posix_signal_impl::h2ad003563330d808",
+          "ip": "0x100fa0ab8",
+          "line": 333,
+          "sp": "0x1024b3640",
+          "symbol_address": "0x100fa0ab8"
+        },
+        {
+          "column": 13,
+          "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/crash_handler.rs",
+          "function": "datadog_crashtracker::collector::crash_handler::handle_posix_sigaction::h8e228d028f9d26da",
+          "ip": "0x100fa04c4",
+          "line": 257,
+          "sp": "0x1024b3a20",
+          "symbol_address": "0x100fa04c4"
+        },
+        {
+          "function": "__simple_esappend",
+          "ip": "0x186b9b584",
+          "sp": "0x1024b3b80",
+          "symbol_address": "0x186b9b584"
+        },
+        {
+          "column": 5,
+          "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/api.rs",
+          "function": "datadog_crashtracker::collector::api::test_crash::h9e5e006b52d60956",
+          "ip": "0x100f9ce1c",
+          "line": 191,
+          "sp": "0x1024b3bb0",
+          "symbol_address": "0x100f9ce1c"
+        },
+        {
+          "column": 20,
+          "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/api.rs",
+          "function": "datadog_crashtracker::collector::api::test_crash::{{closure}}::h750b3388d76a0682",
+          "ip": "0x100f92164",
+          "line": 135,
+          "sp": "0x16f0b67a0",
+          "symbol_address": "0x100f92164"
+        },
+        {
+          "column": 5,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/core/src/ops/function.rs",
+          "function": "core::ops::function::FnOnce::call_once::hb1768cdf281be7e4",
+          "ip": "0x100fa22ec",
+          "line": 250,
+          "sp": "0x16f0b67c0",
+          "symbol_address": "0x100fa22ec"
+        },
+        {
+          "column": 5,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/core/src/ops/function.rs",
+          "function": "core::ops::function::FnOnce::call_once::hdc78704e3375b6cc",
+          "ip": "0x101097130",
+          "line": 250,
+          "sp": "0x16f0b67f0",
+          "symbol_address": "0x101097130"
+        },
+        {
+          "column": 18,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/test/src/lib.rs",
+          "function": "test::__rust_begin_short_backtrace::ha00c83e9361a315d",
+          "ip": "0x101097130",
+          "line": 621,
+          "sp": "0x16f0b67f0",
+          "symbol_address": "0x101097130"
+        },
+        {
+          "column": 60,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/test/src/lib.rs",
+          "function": "test::run_test_in_process::{{closure}}::h049a3922169151a8",
+          "ip": "0x1010968a8",
+          "line": 644,
+          "sp": "0x16f0b6830",
+          "symbol_address": "0x1010968a8"
+        },
+        {
+          "column": 9,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/core/src/panic/unwind_safe.rs",
+          "function": "<core::panic::unwind_safe::AssertUnwindSafe<F> as core::ops::function::FnOnce<()>>::call_once::h59b471ae83578d9f",
+          "ip": "0x1010968a8",
+          "line": 272,
+          "sp": "0x16f0b6830",
+          "symbol_address": "0x1010968a8"
+        },
+        {
+          "column": 40,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panicking.rs",
+          "function": "std::panicking::try::do_call::hdcae0245e55fa0c0",
+          "ip": "0x1010968a8",
+          "line": 552,
+          "sp": "0x16f0b6830",
+          "symbol_address": "0x1010968a8"
+        },
+        {
+          "column": 19,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panicking.rs",
+          "function": "std::panicking::try::h9dc0119b564ac9cf",
+          "ip": "0x1010968a8",
+          "line": 516,
+          "sp": "0x16f0b6830",
+          "symbol_address": "0x1010968a8"
+        },
+        {
+          "column": 14,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panic.rs",
+          "function": "std::panic::catch_unwind::hab329ede8b56df3b",
+          "ip": "0x1010968a8",
+          "line": 146,
+          "sp": "0x16f0b6830",
+          "symbol_address": "0x1010968a8"
+        },
+        {
+          "column": 27,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/test/src/lib.rs",
+          "function": "test::run_test_in_process::h42ddc94bb4665859",
+          "ip": "0x1010968a8",
+          "line": 644,
+          "sp": "0x16f0b6830",
+          "symbol_address": "0x1010968a8"
+        },
+        {
+          "column": 43,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/test/src/lib.rs",
+          "function": "test::run_test::{{closure}}::h5bc06caf086790ae",
+          "ip": "0x1010968a8",
+          "line": 567,
+          "sp": "0x16f0b6830",
+          "symbol_address": "0x1010968a8"
+        },
+        {
+          "column": 41,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/test/src/lib.rs",
+          "function": "test::run_test::{{closure}}::hf12704d7fb5fe7af",
+          "ip": "0x101069264",
+          "line": 595,
+          "sp": "0x16f0b6db0",
+          "symbol_address": "0x101069264"
+        },
+        {
+          "column": 18,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/sys_common/backtrace.rs",
+          "function": "std::sys_common::backtrace::__rust_begin_short_backtrace::hf83ba910f7522d55",
+          "ip": "0x101069264",
+          "line": 155,
+          "sp": "0x16f0b6db0",
+          "symbol_address": "0x101069264"
+        },
+        {
+          "column": 17,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/thread/mod.rs",
+          "function": "std::thread::Builder::spawn_unchecked_::{{closure}}::{{closure}}::he9daeef7c6950e9b",
+          "ip": "0x10106d798",
+          "line": 528,
+          "sp": "0x16f0b6f20",
+          "symbol_address": "0x10106d798"
+        },
+        {
+          "column": 9,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/core/src/panic/unwind_safe.rs",
+          "function": "<core::panic::unwind_safe::AssertUnwindSafe<F> as core::ops::function::FnOnce<()>>::call_once::h0202fb4f2537b363",
+          "ip": "0x10106d798",
+          "line": 272,
+          "sp": "0x16f0b6f20",
+          "symbol_address": "0x10106d798"
+        },
+        {
+          "column": 40,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panicking.rs",
+          "function": "std::panicking::try::do_call::hbfefa096cde588e7",
+          "ip": "0x10106d798",
+          "line": 552,
+          "sp": "0x16f0b6f20",
+          "symbol_address": "0x10106d798"
+        },
+        {
+          "column": 19,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panicking.rs",
+          "function": "std::panicking::try::hebf8b6694f3819d7",
+          "ip": "0x10106d798",
+          "line": 516,
+          "sp": "0x16f0b6f20",
+          "symbol_address": "0x10106d798"
+        },
+        {
+          "column": 14,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panic.rs",
+          "function": "std::panic::catch_unwind::h62e366e1b226d45f",
+          "ip": "0x10106d798",
+          "line": 146,
+          "sp": "0x16f0b6f20",
+          "symbol_address": "0x10106d798"
+        },
+        {
+          "column": 30,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/thread/mod.rs",
+          "function": "std::thread::Builder::spawn_unchecked_::{{closure}}::h2dcb575929bd939b",
+          "ip": "0x10106d798",
+          "line": 527,
+          "sp": "0x16f0b6f20",
+          "symbol_address": "0x10106d798"
+        },
+        {
+          "column": 5,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/core/src/ops/function.rs",
+          "function": "core::ops::function::FnOnce::call_once{{vtable.shim}}::h28247bdc23f84175",
+          "ip": "0x10106d798",
+          "line": 250,
+          "sp": "0x16f0b6f20",
+          "symbol_address": "0x10106d798"
+        },
+        {
+          "column": 9,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/alloc/src/boxed.rs",
+          "function": "<alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once::heeda316fdad4f743",
+          "ip": "0x101720a08",
+          "line": 2020,
+          "sp": "0x16f0b6f80",
+          "symbol_address": "0x101720a08"
+        },
+        {
+          "column": 9,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/alloc/src/boxed.rs",
+          "function": "<alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once::h0d3160611f7295b1",
+          "ip": "0x101720a08",
+          "line": 2020,
+          "sp": "0x16f0b6f80",
+          "symbol_address": "0x101720a08"
+        },
+        {
+          "column": 17,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/sys/pal/unix/thread.rs",
+          "function": "std::sys::pal::unix::thread::Thread::new::thread_start::h9266fbbdd0c3d8be",
+          "ip": "0x101720a08",
+          "line": 108,
+          "sp": "0x16f0b6f80",
+          "symbol_address": "0x101720a08"
+        },
+        {
+          "function": "__pthread_joiner_wake",
+          "ip": "0x186b6af94",
+          "sp": "0x16f0b6fd0",
+          "symbol_address": "0x186b6af94"
         }
+      ]
     },
-    "proc_info": {
-        "pid": 49485
-    },
-    "span_ids": [
-        "12",
-        "42"
-    ],
-    "trace_ids": [
-        "340282366920938463463374607431768211455",
-        "99399939399939393993"
-    ],
-    "timestamp": "2024-08-08 18:38:25.331015 UTC",
-    "uuid": "b3d2d540-1772-49fe-8388-1b8c7e523748",
-    "version_id": 1
+    "stack_type": "CrashTrackerV1"
+  },
+  "incomplete": false,
+  "metadata": {
+    "library_name": "libname",
+    "library_version": "version",
+    "family": "family",
+    "tags": [
+      "strawberry:jam",
+      "orange:marmalade"
+    ]
+  },
+  "os_info": {
+    "architecture": "arm64",
+    "bitness": "64-bit",
+    "os_type": "Mac OS",
+    "version": {
+      "Semantic": [
+        14,
+        5,
+        0
+      ]
+    }
+  },
+  "proc_info": {
+    "pid": 93158
+  },
+  "span_ids": [
+    "12",
+    "42"
+  ],
+  "trace_ids": [
+    "99399939399939393993",
+    "340282366920938463463374607431768211455"
+  ],
+  "timestamp": "2024-08-08 19:43:26.378320 UTC",
+  "uuid": "7a9af367-dea9-4cbf-9132-2df98db5d168",
+  "version_id": 1
 }

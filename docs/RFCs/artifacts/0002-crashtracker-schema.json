@@ -89,6 +89,7 @@
         "is_crash",
         "kind",
         "message",
+        "source_type",
         "stack",
         "stack_type"
       ],
@@ -100,6 +101,9 @@
           "$ref": "#/definitions/ErrorKind"
         },
         "message": {
+          "type": "string"
+        },
+        "source_type": {
           "type": "string"
         },
         "stack": {

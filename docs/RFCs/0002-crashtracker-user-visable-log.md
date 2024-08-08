@@ -66,8 +66,8 @@ An example is given in Appendix A, and the schema is given in Appendix B.
     This field MAY be extended to include options such at "Panic", "UnhandledException" etc.
 - `message`:
     A human readable string containing an error message associated with the stack trace.
-- `source`:
-    The string "crashtracker".
+- `source_type`:
+    The string "crashtracking".
 - `stack`:
     This represents the stack of the crashing thread.
     See below for more details on how stacktraces are formatted.
