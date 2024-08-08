@@ -1,4 +1,4 @@
-# Building process proposal
+# RFC 0002: Building process proposal
 
 ## Context
 As described in the [RFC](https://github.com/DataDog/libdatadog/blob/main/docs/RFCs/delivering-different-features.md)
