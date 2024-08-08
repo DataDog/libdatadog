@@ -146,7 +146,8 @@ fn test_crash() -> anyhow::Result<()> {
     let endpoint = Some(Endpoint::from_slice(&output_url));
 
     let path_to_receiver_binary =
-        "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
+    "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/build-ffi/bin/libdatadog-crashtracking-receiver".to_string();
+    // "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
     let create_alt_stack = true;
     let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
@@ -179,12 +180,11 @@ fn test_crash() -> anyhow::Result<()> {
     super::insert_span(12)?;
     super::insert_trace(99399939399939393993)?;
 
-    let tag = tag!("apple", "banana");
     let metadata2 = CrashtrackerMetadata::new(
         "libname".to_string(),
         "version".to_string(),
         "family".to_string(),
-        vec![tag],
+        vec![tag!("strawberry", "jam"), tag!("orange", "marmalade")],
     );
     update_metadata(metadata2).expect("metadata");
 
