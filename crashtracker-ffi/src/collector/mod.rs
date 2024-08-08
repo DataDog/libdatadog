@@ -4,8 +4,8 @@ mod counters;
 mod datatypes;
 mod spans;
 
-use super::crash_info::CrashtrackerMetadata;
-use crate::crashtracker::datatypes::*;
+use super::crash_info::Metadata;
+use crate::Result;
 use anyhow::Context;
 pub use counters::*;
 pub use datatypes::*;
@@ -20,17 +20,17 @@ pub use spans::*;
 /// exit.
 ///
 /// # Preconditions
-///     This function assumes that the crash-tracker has previously been
-///     initialized.
+///   This function assumes that the crashtracker has previously been
+///   initialized.
 /// # Safety
-///     Crash-tracking functions are not reentrant.
-///     No other crash-handler functions should be called concurrently.
+///   Crash-tracking functions are not reentrant.
+///   No other crash-handler functions should be called concurrently.
 /// # Atomicity
-///     This function is not atomic. A crash during its execution may lead to
-///     unexpected crash-handling behaviour.
-pub unsafe extern "C" fn ddog_prof_Crashtracker_shutdown() -> CrashtrackerResult {
+///   This function is not atomic. A crash during its execution may lead to
+///   unexpected crash-handling behaviour.
+pub unsafe extern "C" fn ddog_crasht_shutdown() -> Result {
     datadog_crashtracker::shutdown_crash_handler()
-        .context("ddog_prof_Crashtracker_shutdown failed")
+        .context("ddog_crasht_shutdown failed")
         .into()
 }
 
@@ -46,26 +46,26 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_shutdown() -> CrashtrackerResult
 /// advantage would be to have fewer processes in `ps -a`.
 ///
 /// # Preconditions
-///     This function assumes that the crash-tracker has previously been
-///     initialized.
+///   This function assumes that the crash-tracker has previously been
+///   initialized.
 /// # Safety
-///     Crash-tracking functions are not reentrant.
-///     No other crash-handler functions should be called concurrently.
+///   Crash-tracking functions are not reentrant.
+///   No other crash-handler functions should be called concurrently.
 /// # Atomicity
-///     This function is not atomic. A crash during its execution may lead to
-///     unexpected crash-handling behaviour.
-pub unsafe extern "C" fn ddog_prof_Crashtracker_update_on_fork(
-    config: CrashtrackerConfiguration,
-    receiver_config: CrashtrackerReceiverConfig,
-    metadata: CrashtrackerMetadata,
-) -> CrashtrackerResult {
+///   This function is not atomic. A crash during its execution may lead to
+///   unexpected crash-handling behaviour.
+pub unsafe extern "C" fn ddog_crasht_update_on_fork(
+    config: Config,
+    receiver_config: ReceiverConfig,
+    metadata: Metadata,
+) -> Result {
     (|| {
         let config = config.try_into()?;
         let receiver_config = receiver_config.try_into()?;
         let metadata = metadata.try_into()?;
         datadog_crashtracker::on_fork(config, receiver_config, metadata)
     })()
-    .context("ddog_prof_Crashtracker_update_on_fork failed")
+    .context("ddog_crasht_update_on_fork failed")
     .into()
 }
 
@@ -74,24 +74,24 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_update_on_fork(
 /// Initialize the crash-tracking infrastructure.
 ///
 /// # Preconditions
-///     None.
+///   None.
 /// # Safety
-///     Crash-tracking functions are not reentrant.
-///     No other crash-handler functions should be called concurrently.
+///   Crash-tracking functions are not reentrant.
+///   No other crash-handler functions should be called concurrently.
 /// # Atomicity
-///     This function is not atomic. A crash during its execution may lead to
-///     unexpected crash-handling behaviour.
-pub unsafe extern "C" fn ddog_prof_Crashtracker_init_with_receiver(
-    config: CrashtrackerConfiguration,
-    receiver_config: CrashtrackerReceiverConfig,
-    metadata: CrashtrackerMetadata,
-) -> CrashtrackerResult {
+///   This function is not atomic. A crash during its execution may lead to
+///   unexpected crash-handling behaviour.
+pub unsafe extern "C" fn ddog_crasht_init_with_receiver(
+    config: Config,
+    receiver_config: ReceiverConfig,
+    metadata: Metadata,
+) -> Result {
     (|| {
         let config = config.try_into()?;
         let receiver_config = receiver_config.try_into()?;
         let metadata = metadata.try_into()?;
         datadog_crashtracker::init_with_receiver(config, receiver_config, metadata)
     })()
-    .context("ddog_prof_Crashtracker_init failed")
+    .context("ddog_crasht_init_with_receiver failed")
     .into()
 }

@@ -4,13 +4,12 @@
 #![allow(renamed_and_removed_lints)]
 #![allow(clippy::box_vec)]
 
-use crate::Timespec;
 use datadog_profiling::exporter;
 use datadog_profiling::exporter::{ProfileExporter, Request};
 use datadog_profiling::internal::ProfiledEndpointsStats;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use ddcommon_ffi::{Error, MaybeError};
+use ddcommon_ffi::{Error, MaybeError, Timespec};
 use std::borrow::Cow;
 use std::ptr::NonNull;
 use std::str::FromStr;

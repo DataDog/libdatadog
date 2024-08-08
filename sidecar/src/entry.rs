@@ -166,8 +166,15 @@ pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
 
     setup_daemon_process(listener, &mut spawn_cfg)?;
 
+    let mut lib_deps = cfg.library_dependencies;
+    if cfg.appsec_config.is_some() {
+        lib_deps.push(spawn_worker::LibDependency::Path(
+            cfg.appsec_config.unwrap().shared_lib_path.into(),
+        ));
+    }
+
     spawn_cfg
-        .shared_lib_dependencies(cfg.library_dependencies)
+        .shared_lib_dependencies(lib_deps)
         .wait_spawn()
         .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
         .context("Could not spawn the sidecar daemon")?;

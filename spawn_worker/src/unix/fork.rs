@@ -64,6 +64,7 @@ mod single_threaded_tests {
     use io_lifetimes::OwnedFd;
     use std::{
         io::{Read, Write},
+        mem::forget,
         os::unix::{
             net::UnixStream,
             prelude::{AsRawFd, FromRawFd},
@@ -106,6 +107,8 @@ mod single_threaded_tests {
 
         assert_child_exit!(pid);
         assert_eq!(format!("child-{pid}"), out);
+
+        forget(sock_b); // leak to avoid debug runtime SIGABRT: "file descriptor already closed"
     }
 
     #[cfg(unix)]

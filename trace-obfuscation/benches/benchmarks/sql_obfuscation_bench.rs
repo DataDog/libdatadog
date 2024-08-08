@@ -7,11 +7,16 @@ use datadog_trace_obfuscation::sql::obfuscate_sql_string;
 fn sql_obfuscation(c: &mut Criterion) {
     let mut group = c.benchmark_group("sql");
     group.bench_function("obfuscate_sql_string", |b| {
-        b.iter(|| {
-            for (input, _) in CASES {
-                black_box(obfuscate_sql_string(input));
-            }
-        })
+        b.iter_batched_ref(
+            // Keep the String instances around to avoid measuring the deallocation cost
+            || Vec::with_capacity(CASES.len()) as Vec<String>,
+            |res: &mut Vec<String>| {
+                for (input, _) in CASES {
+                    res.push(black_box(obfuscate_sql_string(input)));
+                }
+            },
+            criterion::BatchSize::LargeInput,
+        )
     });
 }
 

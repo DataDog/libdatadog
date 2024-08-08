@@ -8,6 +8,6 @@ mod emitters;
 mod spans;
 
 pub use api::*;
-pub use counters::{begin_profiling_op, end_profiling_op, reset_counters, ProfilingOpTypes};
+pub use counters::{begin_op, end_op, reset_counters, OpTypes};
 pub use crash_handler::{update_config, update_metadata};
 pub use spans::{clear_spans, clear_traces, insert_span, insert_trace, remove_span, remove_trace};

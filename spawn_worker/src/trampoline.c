@@ -74,6 +74,9 @@ int main(int argc, char *argv[]) {
       return 10;
     }
 
+    // clear any previous errors
+    (void)dlerror();
+
     void (*fn)() = dlsym(handle, symbol_name);
     char *error = NULL;
 

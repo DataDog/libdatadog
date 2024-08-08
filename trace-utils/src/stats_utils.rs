@@ -21,8 +21,7 @@ pub async fn get_stats_from_request_body(body: Body) -> anyhow::Result<pb::Clien
     };
 
     if client_stats_payload.stats.is_empty() {
-        debug!("Empty trace stats payload received");
-        anyhow::bail!("No stats in stats payload");
+        debug!("Empty trace stats payload received, but this is okay");
     }
     Ok(client_stats_payload)
 }
@@ -185,5 +184,109 @@ mod tests {
             res.unwrap_err()
         );
         assert_eq!(res.unwrap(), client_stats_payload)
+    }
+
+    #[tokio::test]
+    async fn test_get_stats_from_request_body_without_stats() {
+        let stats_json = r#"{
+            "Hostname": "TestHost",
+            "Env": "test",
+            "Version": "1.0.0",
+            "Lang": "javascript",
+            "TracerVersion": "1.0.0",
+            "RuntimeID": "00000000-0000-0000-0000-000000000000",
+            "Sequence": 1
+        }"#;
+
+        let v: Value = match serde_json::from_str(stats_json) {
+            Ok(value) => value,
+            Err(err) => {
+                panic!("Failed to parse stats JSON: {}", err);
+            }
+        };
+
+        let bytes = rmp_serde::to_vec(&v).unwrap();
+        let request = Request::builder()
+            .body(hyper::body::Body::from(bytes))
+            .unwrap();
+
+        let res = stats_utils::get_stats_from_request_body(request.into_body()).await;
+
+        let client_stats_payload = ClientStatsPayload {
+            hostname: "TestHost".to_string(),
+            env: "test".to_string(),
+            version: "1.0.0".to_string(),
+            stats: vec![],
+            lang: "javascript".to_string(),
+            tracer_version: "1.0.0".to_string(),
+            runtime_id: "00000000-0000-0000-0000-000000000000".to_string(),
+            sequence: 1,
+            agent_aggregation: "".to_string(),
+            service: "".to_string(),
+            container_id: "".to_string(),
+            tags: vec![],
+            git_commit_sha: "".to_string(),
+            image_tag: "".to_string(),
+        };
+
+        assert!(
+            res.is_ok(),
+            "Expected Ok result, but got Err: {}",
+            res.unwrap_err()
+        );
+        assert_eq!(res.unwrap(), client_stats_payload)
+    }
+
+    #[tokio::test]
+    async fn test_serialize_client_stats_payload_without_stats() {
+        let client_stats_payload_without_stats = ClientStatsPayload {
+            hostname: "TestHost".to_string(),
+            env: "test".to_string(),
+            version: "1.0.0".to_string(),
+            stats: vec![],
+            lang: "javascript".to_string(),
+            tracer_version: "1.0.0".to_string(),
+            runtime_id: "00000000-0000-0000-0000-000000000000".to_string(),
+            sequence: 1,
+            agent_aggregation: "".to_string(),
+            service: "".to_string(),
+            container_id: "".to_string(),
+            tags: vec![],
+            git_commit_sha: "".to_string(),
+            image_tag: "".to_string(),
+        };
+
+        let client_stats_payload_without_inner_stats = ClientStatsPayload {
+            hostname: "TestHost".to_string(),
+            env: "test".to_string(),
+            version: "1.0.0".to_string(),
+            stats: vec![ClientStatsBucket {
+                start: 0,
+                duration: 10000000000,
+                stats: vec![],
+                agent_time_shift: 0,
+            }],
+            lang: "javascript".to_string(),
+            tracer_version: "1.0.0".to_string(),
+            runtime_id: "00000000-0000-0000-0000-000000000000".to_string(),
+            sequence: 1,
+            agent_aggregation: "".to_string(),
+            service: "".to_string(),
+            container_id: "".to_string(),
+            tags: vec![],
+            git_commit_sha: "".to_string(),
+            image_tag: "".to_string(),
+        };
+
+        let res = stats_utils::serialize_stats_payload(stats_utils::construct_stats_payload(vec![
+            client_stats_payload_without_stats,
+            client_stats_payload_without_inner_stats,
+        ]));
+
+        assert!(
+            res.is_ok(),
+            "Expected Ok result, but got Err: {}",
+            res.unwrap_err()
+        );
     }
 }

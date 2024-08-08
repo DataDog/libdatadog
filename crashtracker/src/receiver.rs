@@ -53,7 +53,7 @@ pub fn receiver_entry_point_stdin() -> anyhow::Result<()> {
 /// signal handler is dangerous, so we fork a sidecar to do the stuff we aren't
 /// allowed to do in the handler.
 ///
-/// See comments in [profiling/crashtracker/mod.rs] for a full architecture
+/// See comments in [crashtracker/lib.rs] for a full architecture
 /// description.
 fn receiver_entry_point(stream: impl std::io::BufRead) -> anyhow::Result<()> {
     match receive_report(stream)? {
@@ -223,6 +223,7 @@ fn process_line(
     Ok(next)
 }
 
+#[derive(Debug)]
 enum CrashReportStatus {
     NoCrash,
     CrashReport(CrashtrackerConfiguration, CrashInfo),
