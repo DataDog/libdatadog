@@ -257,7 +257,7 @@ impl CrashInfo {
                 self.to_file(&path)?;
                 let structured: crate::crash_info::structured_log_format::StructuredCrashInfo =
                     self.clone().into();
-                structured.to_file(&path.with_extension(".structured.json"))?;
+                structured.to_file(&path.with_extension("structured.json"))?;
             }
         }
         self.upload_to_telemetry(endpoint)

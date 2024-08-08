@@ -16,6 +16,7 @@ pub struct ErrorData {
     pub is_crash: bool,
     pub kind: ErrorKind,
     pub message: String,
+    pub source_type: String,
     pub stack: StackTrace,
     pub stack_type: StackType,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

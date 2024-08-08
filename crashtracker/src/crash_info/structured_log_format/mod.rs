@@ -72,6 +72,7 @@ impl From<super::internal::CrashInfo> for StructuredCrashInfo {
             is_crash: true,
             kind,
             message,
+            source_type: String::from("crashtracking"),
             stack: value.stacktrace.into(),
             stack_type: StackType::CrashTrackerV1,
             threads,
