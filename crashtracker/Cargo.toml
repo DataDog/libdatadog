@@ -11,6 +11,11 @@ license.workspace = true
 crate-type = ["lib"]
 bench = false
 
+[[bin]]
+name = "crashtracker-receiver"
+path = "src/bin/crashtracker_receiver.rs"
+bench = false
+
 [features]
 default = ["collector", "receiver"]
 # Enables the in-process collection of crash-info
