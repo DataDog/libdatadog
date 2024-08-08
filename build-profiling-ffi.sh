@@ -66,6 +66,7 @@ library_prefix="lib"
 remove_rpath=0
 fix_macos_rpath=0
 symbolizer=0
+strip_soname=0
 
 # Rust provides this note about the link libraries:
 # note: Link against the following native artifacts when linking against this
@@ -83,6 +84,7 @@ case "$target" in
         # on alpine musl, Rust adds some weird runpath to cdylibs
         remove_rpath=1
         symbolizer=1
+        strip_soname=1
         ;;
 
     "x86_64-apple-darwin"|"aarch64-apple-darwin")
@@ -98,6 +100,7 @@ case "$target" in
         expected_native_static_libs=" -ldl -lrt -lpthread -lgcc_s -lc -lm -lrt -lpthread -lutil -ldl -lutil"
         native_static_libs=" -ldl -lrt -lpthread -lc -lm -lrt -lpthread -lutil -ldl -lutil"
         symbolizer=1
+        strip_soname=1
         ;;
 
     "x86_64-pc-windows-msvc")
@@ -160,6 +163,16 @@ cp -v "$CARGO_TARGET_DIR/${target}/release/${static_library_name}" "$destdir/lib
 
 shared_library_name="${shared_library_rename}"
 static_library_name="${static_library_rename}"
+
+# Because of the rename above, if the library has a soname (which would be set to the old name with the _ffi suffix)
+# we need to remove it otherwise when dynamically loading it'll try to find a library with the _ffi suffix which won't
+# exist.
+# NOTE: Not all environments result in the library having a soname. Ivo and I weren't able to determine when able to
+#       pinpoint exactly what causes it to be there or not. But enforcing a removal here does fix identified loading
+#       issues on the cases where it does exist.
+if [[ "$strip_soname" -eq 1 ]]; then
+    patchelf --set-soname "" "$destdir/lib/${shared_library_name}"
+fi
 
 if [[ "$remove_rpath" -eq 1 ]]; then
     patchelf --remove-rpath "$destdir/lib/${shared_library_name}"
