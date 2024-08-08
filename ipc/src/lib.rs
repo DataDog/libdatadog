@@ -6,6 +6,7 @@ pub mod handles;
 pub mod transport;
 
 pub mod platform;
+pub mod rate_limiter;
 pub mod sequential;
 
 pub use tarpc;
