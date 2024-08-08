@@ -96,11 +96,16 @@ SET k v
     ];
 
     group.bench_function("obfuscate_redis_string", |b| {
-        b.iter(|| {
-            for c in cases {
-                black_box(redis::obfuscate_redis_string(c));
-            }
-        })
+        b.iter_batched_ref(
+            // Keep the String instances around to avoid measuring the deallocation cost
+            || Vec::with_capacity(cases.len()) as Vec<String>,
+            |res: &mut Vec<String>| {
+                for c in cases {
+                    res.push(black_box(redis::obfuscate_redis_string(c)));
+                }
+            },
+            criterion::BatchSize::LargeInput,
+        )
     });
 }
 
