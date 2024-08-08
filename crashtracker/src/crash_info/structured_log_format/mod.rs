@@ -11,6 +11,8 @@ mod os_info;
 pub use os_info::*;
 mod process_info;
 pub use process_info::*;
+mod thread;
+pub use thread::*;
 
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -55,19 +57,24 @@ impl From<super::internal::CrashInfo> for StructuredCrashInfo {
             ("Unknown".to_string(), ErrorKind::Unknown)
         };
 
-        let additional_stacks = value
+        let threads = value
             .additional_stacktraces
             .into_iter()
-            .map(|(k, v)| (k, v.into()))
+            .map(|(name, stack)| Thread {
+                crashed: false,
+                name,
+                stack: stack.into(),
+                state: String::new(),
+            })
             .collect();
 
         let error_data = ErrorData {
-            additional_stacks,
             is_crash: true,
             kind,
             message,
             stack: value.stacktrace.into(),
             stack_type: StackType::CrashTrackerV1,
+            threads,
         };
 
         Self {
