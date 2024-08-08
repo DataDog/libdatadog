@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![allow(clippy::too_many_arguments)]
+
 use crate::dogstatsd::DogStatsDAction;
 use crate::service::{
     InstanceId, QueueId, RequestIdentification, RequestIdentifier, RuntimeMetadata,
@@ -9,6 +11,8 @@ use crate::service::{
 use anyhow::Result;
 use datadog_ipc::platform::ShmHandle;
 use datadog_ipc::tarpc;
+use datadog_live_debugger::sender::DebuggerType;
+use ddcommon::tag::Tag;
 
 // This is a bit weird, but depending on the OS we're interested in different things...
 // and the macro expansion is not going to be happy with #[cfg()] instructions inside them.
@@ -111,6 +115,20 @@ pub trait SidecarInterface {
         headers: SerializedTracerHeaderTags,
     );
 
+    /// Transfers raw data to a live-debugger endpoint.
+    ///
+    /// # Arguments
+    /// * `instance_id` - The ID of the instance.
+    /// * `queue_id` - The unique identifier for the trace context.
+    /// * `handle` - The data to send.
+    /// * `debugger_type` - Whether it's log or diagnostic data.
+    async fn send_debugger_data_shm(
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        #[SerializedHandle] handle: ShmHandle,
+        debugger_type: DebuggerType,
+    );
+
     /// Sets contextual data for the remote config client.
     ///
     /// # Arguments
@@ -119,12 +137,14 @@ pub trait SidecarInterface {
     /// * `service_name` - The name of the service.
     /// * `env_name` - The name of the environment.
     /// * `app_version` - The application version.
+    /// * `global_tags` - Global tags which need to be propagated.
     async fn set_remote_config_data(
         instance_id: InstanceId,
         queue_id: QueueId,
         service_name: String,
         env_name: String,
         app_version: String,
+        global_tags: Vec<Tag>,
     );
 
     /// Sends DogStatsD actions.
