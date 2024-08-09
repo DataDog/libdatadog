@@ -12,12 +12,11 @@ use datadog_trace_protobuf::remoteconfig::{
     TargetFileHash, TargetFileMeta,
 };
 use ddcommon::{connector, Endpoint};
-use hyper::http::uri::{PathAndQuery, Scheme};
+use hyper::http::uri::PathAndQuery;
 use hyper::{Client, StatusCode};
 use sha2::{Digest, Sha256, Sha512};
 use std::collections::{HashMap, HashSet};
 use std::mem::transmute;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tracing::{debug, trace, warn};
@@ -151,14 +150,11 @@ impl<S> ConfigFetcherState<S> {
 pub struct ConfigFetcher<S: FileStorage> {
     pub file_storage: S,
     state: Arc<ConfigFetcherState<S::StoredFile>>,
-    /// Collected interval. May be zero if not provided by the remote config server or fetched yet.
-    /// Given in nanoseconds.
-    pub interval: AtomicU64,
 }
 
 #[derive(Default)]
-pub struct OpaqueState {
-    client_state: Vec<u8>,
+pub struct ConfigClientState {
+    opaque_backend_state: Vec<u8>,
     last_configs: Vec<String>,
     // 'static because it actually depends on last_configs, and rust doesn't like self-referencing
     last_config_paths: HashSet<RemoteConfigPathRef<'static>>,
@@ -171,7 +167,6 @@ impl<S: FileStorage> ConfigFetcher<S> {
         ConfigFetcher {
             file_storage,
             state,
-            interval: AtomicU64::new(0),
         }
     }
 
@@ -194,8 +189,8 @@ impl<S: FileStorage> ConfigFetcher<S> {
         &mut self,
         runtime_id: &str,
         target: Arc<Target>,
-        config_id: &str,
-        opaque_state: &mut OpaqueState,
+        client_id: &str,
+        opaque_state: &mut ConfigClientState,
     ) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
         if self.state.endpoint.api_key.is_some() {
             // Using remote config talking to the backend directly is not supported.
@@ -236,9 +231,9 @@ impl<S: FileStorage> ConfigFetcher<S> {
                     config_states,
                     has_error: opaque_state.last_error.is_some(),
                     error: opaque_state.last_error.take().unwrap_or_default(),
-                    backend_client_state: std::mem::take(&mut opaque_state.client_state),
+                    backend_client_state: std::mem::take(&mut opaque_state.opaque_backend_state),
                 }),
-                id: config_id.into(),
+                id: client_id.into(),
                 products: self
                     .state
                     .invariants
@@ -323,15 +318,12 @@ impl<S: FileStorage> ConfigFetcher<S> {
             ))
         })?;
 
-        opaque_state.client_state = targets_list
+        opaque_state.opaque_backend_state = targets_list
             .signed
             .custom
             .opaque_backend_state
             .as_bytes()
             .to_vec();
-        if let Some(interval) = targets_list.signed.custom.agent_refresh_interval {
-            self.interval.store(interval, Ordering::Relaxed);
-        }
 
         debug!(
             "Received remote config of length {}, containing {:?} paths for target {:?}",
@@ -408,8 +400,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(raw_file) {
                     let computed_hash = hasher(decoded.as_slice());
                     if hash != computed_hash {
-                        warn!("Computed hash of file {computed_hash} did not match remote config targets file hash {hash} for path {path}: file: {}", String::from_utf8_lossy(decoded.as_slice()));
-                        continue;
+                        anyhow::bail!("Computed hash of file {computed_hash} did not match remote config targets file hash {hash} for path {path}: file: {}", String::from_utf8_lossy(decoded.as_slice()));
                     }
                     if let Some(version) = target_file.try_parse_version() {
                         debug!(
@@ -483,21 +474,9 @@ impl<S: FileStorage> ConfigFetcher<S> {
     }
 }
 
-fn get_product_endpoint(subdomain: &str, endpoint: &Endpoint) -> Endpoint {
+fn get_product_endpoint(_subdomain: &str, endpoint: &Endpoint) -> Endpoint {
     let mut parts = endpoint.url.clone().into_parts();
-    if endpoint.api_key.is_some() {
-        if parts.scheme.is_none() {
-            parts.scheme = Some(Scheme::HTTPS);
-            parts.authority = Some(
-                format!("{}.{}", subdomain, parts.authority.unwrap())
-                    .parse()
-                    .unwrap(),
-            );
-        }
-        parts.path_and_query = Some(PathAndQuery::from_static("/api/v0.1/configurations"));
-    } else {
-        parts.path_and_query = Some(PathAndQuery::from_static("/v0.7/config"));
-    }
+    parts.path_and_query = Some(PathAndQuery::from_static("/v0.7/config"));
     Endpoint {
         url: hyper::Uri::from_parts(parts).unwrap(),
         api_key: endpoint.api_key.clone(),
@@ -608,7 +587,7 @@ pub mod tests {
             storage.clone(),
             Arc::new(ConfigFetcherState::new(server.dummy_invariants())),
         );
-        let mut opaque_state = OpaqueState::default();
+        let mut opaque_state = ConfigClientState::default();
 
         let mut response = Response::new(Body::from(""));
         *response.status_mut() = StatusCode::NOT_FOUND;
@@ -654,7 +633,7 @@ pub mod tests {
             storage.clone(),
             Arc::new(ConfigFetcherState::new(invariants)),
         );
-        let mut opaque_state = OpaqueState::default();
+        let mut opaque_state = ConfigClientState::default();
 
         {
             opaque_state.last_error = Some("test".to_string());
@@ -698,7 +677,7 @@ pub mod tests {
             assert_eq!(tracer.tracer_version, "1.2.3");
 
             assert_eq!(
-                String::from_utf8_lossy(&opaque_state.client_state),
+                String::from_utf8_lossy(&opaque_state.opaque_backend_state),
                 "some state"
             );
             assert_eq!(fetched.len(), 1);

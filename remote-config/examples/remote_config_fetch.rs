@@ -72,11 +72,10 @@ async fn main() {
             }
             Err(e) => {
                 eprintln!("Fetch failed with {e}");
-                fetcher.set_last_error(e.to_string());
             }
         }
 
-        sleep(Duration::from_nanos(fetcher.get_interval()).max(Duration::from_secs(1))).await;
+        sleep(Duration::from_secs(1)).await;
     }
 }
 

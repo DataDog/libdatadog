@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::fetch::{
-    ConfigApplyState, ConfigFetcher, ConfigFetcherState, ConfigInvariants, FileStorage, OpaqueState,
+    ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState, ConfigInvariants,
+    FileStorage,
 };
 use crate::{RemoteConfigPath, Target};
 use std::collections::HashMap;
@@ -30,8 +31,8 @@ pub struct SharedFetcher {
     /// Each fetcher must have an unique id. Defaults to a random UUID.
     pub client_id: String,
     cancellation: CancellationToken,
-    /// Interval used if the remote server does not specify a refetch interval, in nanoseconds.
-    pub default_interval: AtomicU64,
+    /// Refetch interval in nanoseconds.
+    pub interval: AtomicU64,
 }
 
 pub struct FileRefcountData {
@@ -224,7 +225,7 @@ impl SharedFetcher {
             runtime_id: Arc::new(Mutex::new(runtime_id)),
             client_id: uuid::Uuid::new_v4().to_string(),
             cancellation: CancellationToken::new(),
-            default_interval: AtomicU64::new(5_000_000_000),
+            interval: AtomicU64::new(5_000_000_000),
         }
     }
 
@@ -242,7 +243,7 @@ impl SharedFetcher {
         let state = storage.state.clone();
         let mut fetcher = ConfigFetcher::new(storage, state);
 
-        let mut opaque_state = OpaqueState::default();
+        let mut opaque_state = ConfigClientState::default();
 
         let mut last_files: Vec<Arc<S::StoredFile>> = vec![];
 
@@ -314,13 +315,7 @@ impl SharedFetcher {
 
             select! {
                 _ = self.cancellation.cancelled() => { break; }
-                _ = {
-                    let mut ns = fetcher.interval.load(Ordering::Relaxed);
-                    if ns == 0 {
-                        ns = self.default_interval.load(Ordering::Relaxed);
-                    }
-                    sleep(Duration::from_nanos(ns))
-                } => {}
+                _ = sleep(Duration::from_nanos(self.interval.load(Ordering::Relaxed))) => {}
             }
         }
 
@@ -551,8 +546,8 @@ pub mod tests {
         join_all(vec![
             fetcher_1.run(
                 rc_storage.clone(),
-                Box::new(move |fetched| {
-                    match iteration_1.fetch_add(1, Ordering::SeqCst) {
+                Box::new(
+                    move |fetched| match iteration_1.fetch_add(1, Ordering::SeqCst) {
                         i @ 0 | i @ 1 => {
                             assert_eq!(fetched.len(), 2);
 
@@ -582,13 +577,13 @@ pub mod tests {
                             inner_fetcher_1.cancel();
                         }
                         _ => panic!("Unexpected"),
-                    }
-                }),
+                    },
+                ),
             ),
             fetcher_2.run(
                 rc_storage,
-                Box::new(move |fetched| {
-                    match iteration_2.fetch_add(1, Ordering::SeqCst) {
+                Box::new(
+                    move |fetched| match iteration_2.fetch_add(1, Ordering::SeqCst) {
                         i @ 0 | i @ 1 => {
                             assert_eq!(fetched.len(), 1);
                             assert_eq!(fetched[0].store.data.lock().unwrap().contents, "v1");
@@ -614,8 +609,8 @@ pub mod tests {
                             inner_fetcher_2.cancel();
                         }
                         _ => panic!("Unexpected"),
-                    }
-                }),
+                    },
+                ),
             ),
         ])
         .await;

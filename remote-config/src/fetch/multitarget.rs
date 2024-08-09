@@ -39,7 +39,7 @@ where
     target_runtimes: Mutex<HashMap<Arc<Target>, HashSet<String>>>,
     /// Keyed by runtime_id
     runtimes: Mutex<HashMap<String, RuntimeInfo<N>>>,
-    /// Interval used if the remote server does not specify a refetch interval, in nanoseconds.
+    /// Refetch interval in nanoseconds.
     pub remote_config_interval: AtomicU64,
     /// All services by target in use
     services: Mutex<HashMap<Arc<Target>, KnownTarget>>,
@@ -340,7 +340,7 @@ where
         let this = self.clone();
         let fetcher = known_target.fetcher.clone();
         let status = known_target.status.clone();
-        fetcher.default_interval.store(
+        fetcher.interval.store(
             self.remote_config_interval.load(Ordering::Relaxed),
             Ordering::Relaxed,
         );
@@ -420,7 +420,7 @@ where
                 } // unlock mutex
 
                 select! {
-                    _ = tokio::time::sleep(Duration::from_nanos(fetcher.default_interval.load(Ordering::Relaxed))) => {},
+                    _ = tokio::time::sleep(Duration::from_nanos(fetcher.interval.load(Ordering::Relaxed))) => {},
                     _ = fetcher_fut.clone() => {
                         break;
                     }
@@ -504,11 +504,7 @@ mod tests {
     }
 
     impl MultiTargetHandlers<RcPathStore> for MultiFileStorage {
-        fn fetched(
-            &self,
-            target: &Arc<Target>,
-            files: &[Arc<RcPathStore>],
-        ) -> bool {
+        fn fetched(&self, target: &Arc<Target>, files: &[Arc<RcPathStore>]) -> bool {
             match self.recent_fetches.lock().unwrap().entry(target.clone()) {
                 Entry::Occupied(_) => panic!("Double fetch without recent_fetches clear"),
                 Entry::Vacant(e) => {

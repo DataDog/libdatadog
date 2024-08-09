@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::fetch::{
-    ConfigApplyState, ConfigFetcher, ConfigFetcherState, ConfigInvariants, FileStorage, OpaqueState,
+    ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState, ConfigInvariants,
+    FileStorage,
 };
 use crate::file_change_tracker::{Change, ChangeTracker, FilePath, UpdatedFiles};
 use crate::{RemoteConfigPath, Target};
@@ -14,8 +15,8 @@ pub struct SingleFetcher<S: FileStorage> {
     fetcher: ConfigFetcher<S>,
     target: Arc<Target>,
     runtime_id: String,
-    config_id: String,
-    opaque_state: OpaqueState,
+    client_id: String,
+    opaque_state: ConfigClientState,
 }
 
 impl<S: FileStorage> SingleFetcher<S> {
@@ -24,13 +25,13 @@ impl<S: FileStorage> SingleFetcher<S> {
             fetcher: ConfigFetcher::new(sink, Arc::new(ConfigFetcherState::new(invariants))),
             target: Arc::new(target),
             runtime_id,
-            config_id: uuid::Uuid::new_v4().to_string(),
-            opaque_state: OpaqueState::default(),
+            client_id: uuid::Uuid::new_v4().to_string(),
+            opaque_state: ConfigClientState::default(),
         }
     }
 
-    pub fn with_config_id(mut self, config_id: String) -> Self {
-        self.config_id = config_id;
+    pub fn with_client_id(mut self, client_id: String) -> Self {
+        self.client_id = client_id;
         self
     }
 
@@ -40,20 +41,14 @@ impl<S: FileStorage> SingleFetcher<S> {
             .fetch_once(
                 self.runtime_id.as_str(),
                 self.target.clone(),
-                self.config_id.as_str(),
+                self.client_id.as_str(),
                 &mut self.opaque_state,
             )
             .await
     }
 
-    /// Collected interval. May be zero if not provided by the remote config server or fetched yet.
-    /// Given in nanoseconds.
-    pub fn get_interval(&self) -> u64 {
-        self.fetcher.interval.load(Ordering::Relaxed)
-    }
-
-    pub fn get_config_id(&self) -> &String {
-        &self.config_id
+    pub fn get_client_id(&self) -> &String {
+        &self.client_id
     }
 
     /// Sets the apply state on a stored file.
@@ -81,8 +76,8 @@ where
         }
     }
 
-    pub fn with_config_id(mut self, config_id: String) -> Self {
-        self.fetcher = self.fetcher.with_config_id(config_id);
+    pub fn with_client_id(mut self, client_id: String) -> Self {
+        self.fetcher = self.fetcher.with_client_id(client_id);
         self
     }
 
@@ -99,14 +94,8 @@ where
         })
     }
 
-    /// Collected interval. May be zero if not provided by the remote config server or fetched yet.
-    /// Given in nanoseconds.
-    pub fn get_interval(&self) -> u64 {
-        self.fetcher.get_interval()
-    }
-
-    pub fn get_config_id(&self) -> &String {
-        self.fetcher.get_config_id()
+    pub fn get_client_id(&self) -> &String {
+        self.fetcher.get_client_id()
     }
 
     /// Sets the apply state on a stored file.
