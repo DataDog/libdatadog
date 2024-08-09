@@ -3,15 +3,9 @@
 
 #![cfg(unix)]
 
-use crate::configuration::CrashtrackerReceiverConfig;
-
-use super::collectors::emit_backtrace_by_frames;
-#[cfg(target_os = "linux")]
-use super::collectors::emit_proc_self_maps;
-use super::configuration::{CrashtrackerConfiguration, StacktraceCollection};
-use super::constants::*;
-use super::counters::emit_counters;
-use super::crash_info::CrashtrackerMetadata;
+use super::emitters::emit_crashreport;
+use crate::crash_info::CrashtrackerMetadata;
+use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
 use anyhow::Context;
 use libc::{
     c_void, mmap, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE, PROT_READ,
@@ -307,76 +301,6 @@ extern "C" fn handle_posix_sigaction(signum: i32, sig_info: *mut siginfo_t, ucon
         SigHandler::Handler(f) => f(signum),
         SigHandler::SigAction(f) => f(signum, sig_info, ucontext),
     };
-}
-
-fn emit_config(w: &mut impl Write, config_str: &str) -> anyhow::Result<()> {
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_CONFIG}")?;
-    writeln!(w, "{}", config_str)?;
-    writeln!(w, "{DD_CRASHTRACK_END_CONFIG}")?;
-    Ok(())
-}
-
-fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> anyhow::Result<()> {
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_METADATA}")?;
-    writeln!(w, "{}", metadata_str)?;
-    writeln!(w, "{DD_CRASHTRACK_END_METADATA}")?;
-    Ok(())
-}
-
-fn emit_procinfo(w: &mut impl Write) -> anyhow::Result<()> {
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_PROCINFO}")?;
-    let pid = nix::unistd::getpid();
-    writeln!(w, "{{\"pid\": {pid} }}")?;
-    writeln!(w, "{DD_CRASHTRACK_END_PROCINFO}")?;
-    Ok(())
-}
-
-fn emit_siginfo(w: &mut impl Write, signum: i32) -> anyhow::Result<()> {
-    let signame = if signum == libc::SIGSEGV {
-        "SIGSEGV"
-    } else if signum == libc::SIGBUS {
-        "SIGBUS"
-    } else {
-        "UNKNOWN"
-    };
-
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
-    writeln!(w, "{{\"signum\": {signum}, \"signame\": \"{signame}\"}}")?;
-    writeln!(w, "{DD_CRASHTRACK_END_SIGINFO}")?;
-    Ok(())
-}
-
-fn emit_crashreport(
-    pipe: &mut impl Write,
-    config: &CrashtrackerConfiguration,
-    config_str: &str,
-    metadata_string: &str,
-    signum: i32,
-) -> anyhow::Result<()> {
-    emit_metadata(pipe, metadata_string)?;
-    emit_config(pipe, config_str)?;
-    emit_siginfo(pipe, signum)?;
-    emit_procinfo(pipe)?;
-    pipe.flush()?;
-    emit_counters(pipe)?;
-    pipe.flush()?;
-
-    #[cfg(target_os = "linux")]
-    emit_proc_self_maps(pipe)?;
-
-    // Getting a backtrace on rust is not guaranteed to be signal safe
-    // https://github.com/rust-lang/backtrace-rs/issues/414
-    // let current_backtrace = backtrace::Backtrace::new();
-    // In fact, if we look into the code here, we see mallocs.
-    // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
-    // Do this last, so even if it crashes, we still get the other info.
-    if config.resolve_frames != StacktraceCollection::Disabled {
-        unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames)? };
-    }
-    writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
-    pipe.flush()?;
-
-    Ok(())
 }
 
 fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {

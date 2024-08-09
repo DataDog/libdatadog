@@ -46,27 +46,27 @@
 //! Handling of forks
 //! Safety issues
 
-mod api;
-mod collectors;
-mod configuration;
-mod constants;
-mod counters;
-mod crash_handler;
+#[cfg(all(unix, feature = "collector"))]
+mod collector;
 mod crash_info;
+#[cfg(all(unix, feature = "receiver"))]
 mod receiver;
-mod stacktrace;
-mod telemetry;
+#[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
+mod shared;
 
-#[cfg(unix)]
-pub use api::*;
-pub use configuration::{
+#[cfg(all(unix, feature = "collector"))]
+pub use collector::{
+    begin_op, clear_spans, clear_traces, end_op, init_with_receiver, init_with_unix_socket,
+    insert_span, insert_trace, on_fork, remove_span, remove_trace, reset_counters,
+    shutdown_crash_handler, update_config, update_metadata, OpTypes,
+};
+
+pub use crash_info::*;
+
+#[cfg(all(unix, feature = "receiver"))]
+pub use receiver::{receiver_entry_point_stdin, reciever_entry_point_unix_socket};
+
+#[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
+pub use shared::configuration::{
     CrashtrackerConfiguration, CrashtrackerReceiverConfig, StacktraceCollection,
 };
-pub use constants::*;
-pub use counters::{begin_profiling_op, end_profiling_op, reset_counters, ProfilingOpTypes};
-#[cfg(unix)]
-pub use crash_handler::{update_config, update_metadata};
-pub use crash_info::*;
-#[cfg(unix)]
-pub use receiver::{receiver_entry_point_stdin, reciever_entry_point_unix_socket};
-pub use stacktrace::{NormalizedAddress, NormalizedAddressMeta, StackFrame, StackFrameNames};

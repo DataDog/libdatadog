@@ -86,7 +86,8 @@ pub fn normalize_parent_id(parent_id: &mut u64, trace_id: u64, span_id: u64) {
 }
 
 pub fn normalize_tag(tag: &mut String) {
-    let mut bytes = std::mem::take(tag).into_bytes();
+    // Since we know that we're only going to write valid utf8 we can work with the Vec directly
+    let bytes = unsafe { tag.as_mut_vec() };
     if bytes.is_empty() {
         return;
     }
@@ -165,12 +166,13 @@ pub fn normalize_tag(tag: &mut String) {
             // returns and actual utf8 codepoint
             std::char::from_u32(crate::utf8_helpers::next_code_point(&mut it).unwrap()).unwrap()
         };
-        read_cursor += c.len_utf8();
+        let mut len_utf8 = c.len_utf8();
+        read_cursor += len_utf8;
 
         if c.is_lowercase() {
-            c.encode_utf8(&mut bytes[write_cursor..write_cursor + c.len_utf8()]);
+            c.encode_utf8(&mut bytes[write_cursor..write_cursor + len_utf8]);
             is_in_illegal_span = false;
-            write_cursor += c.len_utf8();
+            write_cursor += len_utf8;
             codepoints_written += 1;
             continue;
         }
@@ -178,8 +180,9 @@ pub fn normalize_tag(tag: &mut String) {
             // Take only first codepoint of the lowercase conversion
             // Lowercase the current character if it has the same width as it's lower
             if let Some(lower) = c.to_lowercase().next() {
-                if lower.len_utf8() <= c.len_utf8() {
+                if lower.len_utf8() <= len_utf8 {
                     c = lower;
+                    len_utf8 = c.len_utf8();
                 }
             }
         }
@@ -189,15 +192,15 @@ pub fn normalize_tag(tag: &mut String) {
         // unicode character classes https://www.unicode.org/reports/tr44/#Alphabetic , but
         // close enough
         if c.is_alphabetic() {
-            c.encode_utf8(&mut bytes[write_cursor..write_cursor + c.len_utf8()]);
+            c.encode_utf8(&mut bytes[write_cursor..write_cursor + len_utf8]);
             is_in_illegal_span = false;
-            write_cursor += c.len_utf8();
+            write_cursor += len_utf8;
             codepoints_written += 1;
         } else if c.is_numeric() {
             if write_cursor != 0 {
-                c.encode_utf8(&mut bytes[write_cursor..write_cursor + c.len_utf8()]);
+                c.encode_utf8(&mut bytes[write_cursor..write_cursor + len_utf8]);
                 is_in_illegal_span = false;
-                write_cursor += c.len_utf8();
+                write_cursor += len_utf8;
                 codepoints_written += 1;
             }
         } else if !is_in_illegal_span {
@@ -212,11 +215,14 @@ pub fn normalize_tag(tag: &mut String) {
         write_cursor -= 1;
     }
     bytes.truncate(write_cursor);
-    *tag = String::from_utf8(bytes).unwrap();
 }
 
 fn normalize_metric_name(name: &mut String) {
-    let mut bytes = std::mem::take(name).into_bytes();
+    // Since we know that we're only going to write valid utf8 we can work with the Vec directly
+    let bytes = unsafe { name.as_mut_vec() };
+    if bytes.is_empty() {
+        return;
+    }
 
     // Find first alpha character, if none is found the metric name is empty
     let Some((mut read_cursor, _)) = bytes
@@ -265,9 +271,6 @@ fn normalize_metric_name(name: &mut String) {
         write_cursor -= 1;
     }
     bytes.truncate(write_cursor);
-
-    // We only wrote ascii chars, so bytes is guaranteed to be valid utf8
-    *name = String::from_utf8(bytes).unwrap();
 }
 
 // truncate_utf8 truncates the given string to make sure it uses less than limit bytes.

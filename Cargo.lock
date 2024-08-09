@@ -777,7 +777,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -912,9 +912,9 @@ checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
 
 [[package]]
 name = "chrono"
-version = "0.4.37"
+version = "0.4.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a0d04d43504c61aa6c7531f1871dd0d418d91130162063b789da00fd7057a5e"
+checksum = "a21f936df1771bf62b77f047b726c4625ff2e8aa607c01ec06e5a05bd8463401"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
@@ -1212,6 +1212,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-queue"
+version = "0.3.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df0346b5d5e76ac2fe4e327c5fd1118d6be7c51dfb18f9b7922923f287471e35"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-utils"
 version = "0.8.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1310,7 +1319,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1327,7 +1336,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline-ffi"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "build_common",
  "bytes",
@@ -1338,7 +1347,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-alloc"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "allocator-api2",
  "bolero",
@@ -1348,7 +1357,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "anyhow",
  "backtrace",
@@ -1362,6 +1371,8 @@ dependencies = [
  "nix 0.27.1",
  "os_info",
  "page_size",
+ "portable-atomic",
+ "rand",
  "serde",
  "serde_json",
  "tempfile",
@@ -1370,8 +1381,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-crashtracker-ffi"
+version = "12.0.0"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "datadog-crashtracker",
+ "ddcommon",
+ "ddcommon-ffi",
+ "hyper 0.14.28",
+ "symbolic-common",
+ "symbolic-demangle",
+]
+
+[[package]]
 name = "datadog-ddsketch"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "prost 0.11.9",
  "prost-build",
@@ -1427,7 +1452,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -1464,13 +1489,12 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-ffi"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "anyhow",
  "build_common",
- "chrono",
  "data-pipeline-ffi",
- "datadog-crashtracker",
+ "datadog-crashtracker-ffi",
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
@@ -1487,7 +1511,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "anyhow",
  "clap 4.4.18",
@@ -1523,7 +1547,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-serverless-trace-mini-agent"
-version = "0.5.0"
+version = "0.6.1"
 dependencies = [
  "datadog-trace-mini-agent",
  "datadog-trace-protobuf",
@@ -1560,7 +1584,6 @@ dependencies = [
  "httpmock",
  "hyper 0.14.28",
  "io-lifetimes",
- "kernel32-sys",
  "lazy_static",
  "libc",
  "manual_future",
@@ -1588,7 +1611,7 @@ dependencies = [
  "tracing-log",
  "tracing-subscriber",
  "uuid",
- "winapi 0.2.8",
+ "winapi 0.3.9",
  "windows 0.51.1",
  "zwohash",
 ]
@@ -1621,7 +1644,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-mini-agent"
-version = "0.5.0"
+version = "12.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1643,7 +1666,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1654,7 +1677,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1672,7 +1695,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "prost 0.11.9",
  "prost-build",
@@ -1685,9 +1708,11 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-utils"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "anyhow",
+ "bolero",
+ "bolero-generator",
  "bytes",
  "cargo-platform",
  "cargo_metadata",
@@ -1714,7 +1739,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -1741,10 +1766,13 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-ffi"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "anyhow",
+ "bolero",
  "build_common",
+ "chrono",
+ "crossbeam-queue",
  "ddcommon",
  "hyper 0.14.28",
  "serde",
@@ -1752,7 +1780,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1778,7 +1806,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry-ffi"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "build_common",
  "ddcommon",
@@ -3637,6 +3665,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "portable-atomic"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7170ef9988bc169ba16dd36a7fa041e5c4cbeb6a35b76d4c03daded371eae7c0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "powerfmt"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4683,7 +4720,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5181,7 +5218,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "lazy_static",
  "regex",

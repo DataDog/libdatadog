@@ -24,4 +24,10 @@ libc = "0.2"
 
 [dev-dependencies]
 hyper = { version = "0.14", default-features = false }
-tempfile = {version = "3.3"}
+tempfile = { version = "3.3" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    "cfg(coverage_nightly)",
+    'cfg(feature, values("prefer_dynamic"))',
+] }

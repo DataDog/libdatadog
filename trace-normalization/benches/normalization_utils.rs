@@ -1,12 +1,19 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use criterion::measurement::WallTime;
+use criterion::Throughput::Elements;
+use criterion::{
+    criterion_group, criterion_main, BatchSize, BenchmarkGroup, BenchmarkId, Criterion,
+};
+use datadog_trace_normalization::normalize_utils::{normalize_name, normalize_service};
+use datadog_trace_normalization::normalizer::normalize_trace;
 use datadog_trace_protobuf::pb;
-use std::collections::HashMap;
+use std::hint::black_box;
+use std::{collections::HashMap, time::Duration};
 
 fn normalize_service_bench(c: &mut Criterion) {
-    let mut group = c.benchmark_group("normalization/normalize_service");
+    let group = c.benchmark_group("normalization/normalize_service");
     let cases = &[
             "",
             "test_ASCII",
@@ -15,10 +22,41 @@ fn normalize_service_bench(c: &mut Criterion) {
             "A00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 000000000000",
         ];
 
+    normalize_fnmut_string(group, cases, 1000, "normalize_service", normalize_service);
+}
+
+fn normalize_name_bench(c: &mut Criterion) {
+    let group = c.benchmark_group("normalization/normalize_name");
+    let cases = &[
+        "good",
+        "bad-name",
+        "Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.",
+    ];
+    normalize_fnmut_string(group, cases, 1000, "normalize_name", normalize_name);
+}
+
+#[inline]
+fn normalize_fnmut_string<F>(
+    mut group: BenchmarkGroup<WallTime>,
+    cases: &[&str],
+    elements: usize,
+    function_name: &str,
+    mut function: F,
+) where
+    F: FnMut(&mut String),
+{
+    // Measure over a number of calls to minimize impact of OS noise
+    group.throughput(Elements(elements as u64));
+    // We only need to measure for a small time since the function is very fast
+    group.warm_up_time(Duration::from_secs(1));
+    group.measurement_time(Duration::from_secs(2));
+    group.sample_size(200);
+    group.sampling_mode(criterion::SamplingMode::Flat);
+
     for case in cases {
         group.bench_with_input(
             BenchmarkId::new(
-                "normalize_service",
+                function_name,
                 if case.is_empty() {
                     "[empty string]"
                 } else {
@@ -28,37 +66,23 @@ fn normalize_service_bench(c: &mut Criterion) {
             *case,
             |b, case| {
                 b.iter_batched_ref(
-                    || case.to_owned(),
-                    datadog_trace_normalization::normalize_utils::normalize_service,
-                    BatchSize::NumBatches(100000),
+                    || {
+                        let mut strings = Vec::with_capacity(elements);
+                        (0..elements).for_each(|_| strings.push(case.to_owned()));
+                        strings
+                    },
+                    |strings| {
+                        #[allow(clippy::unit_arg)]
+                        strings.iter_mut().for_each(|string| {
+                            black_box(function(black_box(string)));
+                        });
+                    },
+                    BatchSize::LargeInput,
                 )
             },
         );
     }
-    group.finish()
-}
-
-fn normalize_name_bench(c: &mut Criterion) {
-    let mut group = c.benchmark_group("normalization/normalize_name");
-    let cases = &[
-        "good",
-        "bad-name",
-        "Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.",
-    ];
-    for case in cases {
-        group.bench_with_input(
-            BenchmarkId::new("normalize_name", case),
-            *case,
-            |b, case| {
-                b.iter_batched_ref(
-                    || case.to_owned(),
-                    datadog_trace_normalization::normalize_utils::normalize_name,
-                    BatchSize::NumIterations(100000),
-                )
-            },
-        );
-    }
-    group.finish()
+    group.finish();
 }
 
 fn normalize_span_bench(c: &mut Criterion) {
@@ -109,8 +133,8 @@ fn normalize_span_bench(c: &mut Criterion) {
         |b, case| {
             b.iter_batched_ref(
                 || case.to_owned(),
-                |s| datadog_trace_normalization::normalizer::normalize_trace(s),
-                BatchSize::SmallInput,
+                |t| black_box(normalize_trace(black_box(t))),
+                BatchSize::LargeInput,
             )
         },
     );

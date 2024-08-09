@@ -3,13 +3,14 @@
 #![cfg(unix)]
 
 use crate::{
-    configuration::CrashtrackerReceiverConfig,
-    counters::reset_counters,
-    crash_handler::{
+    clear_spans, clear_traces,
+    collector::crash_handler::{
         ensure_receiver, ensure_socket, register_crash_handlers, restore_old_handlers,
         shutdown_receiver, update_receiver_after_fork,
     },
     crash_info::CrashtrackerMetadata,
+    reset_counters,
+    shared::configuration::CrashtrackerReceiverConfig,
     update_config, update_metadata, CrashtrackerConfiguration,
 };
 
@@ -57,6 +58,8 @@ pub fn on_fork(
     receiver_config: CrashtrackerReceiverConfig,
     metadata: CrashtrackerMetadata,
 ) -> anyhow::Result<()> {
+    clear_spans()?;
+    clear_traces()?;
     reset_counters()?;
     // Leave the old signal handler in place: they are unaffected by fork.
     // https://man7.org/linux/man-pages/man2/sigaction.2.html
@@ -130,7 +133,7 @@ pub fn init_with_unix_socket(
 #[ignore]
 #[test]
 fn test_crash() -> anyhow::Result<()> {
-    use crate::{begin_profiling_op, StacktraceCollection};
+    use crate::{begin_op, StacktraceCollection};
     use chrono::Utc;
     use ddcommon::tag;
     use ddcommon::Endpoint;
@@ -170,7 +173,11 @@ fn test_crash() -> anyhow::Result<()> {
         vec![],
     );
     init_with_receiver(config, receiver_config, metadata)?;
-    begin_profiling_op(crate::ProfilingOpTypes::CollectingSample)?;
+    begin_op(crate::OpTypes::ProfilerCollectingSample)?;
+    super::insert_span(42)?;
+    super::insert_trace(u128::MAX)?;
+    super::insert_span(12)?;
+    super::insert_trace(99399939399939393993)?;
 
     let tag = tag!("apple", "banana");
     let metadata2 = CrashtrackerMetadata::new(

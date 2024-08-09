@@ -117,6 +117,7 @@ impl ServerlessEnvVerifier {
             gcp_region: Some(get_region_from_gcp_region_string(
                 gcp_metadata.instance.region,
             )),
+            version: trace_utils::MiniAgentMetadata::default().version,
         }
     }
 }
@@ -138,6 +139,9 @@ impl EnvVerifier for ServerlessEnvVerifier {
                 return self
                     .verify_gcp_environment_or_exit(verify_env_timeout)
                     .await;
+            }
+            trace_utils::EnvironmentType::AzureSpringApp => {
+                trace_utils::MiniAgentMetadata::default()
             }
             trace_utils::EnvironmentType::LambdaFunction => {
                 trace_utils::MiniAgentMetadata::default()
@@ -466,6 +470,7 @@ mod tests {
             trace_utils::MiniAgentMetadata {
                 gcp_project_id: Some("unknown".to_string()),
                 gcp_region: Some("unknown".to_string()),
+                version: None
             }
         );
     }

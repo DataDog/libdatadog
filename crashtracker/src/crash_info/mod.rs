@@ -1,42 +1,21 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::stacktrace::StackFrame;
-use crate::telemetry::TelemetryCrashUploader;
-use crate::CrashtrackerConfiguration;
+mod metadata;
+use ddcommon::Endpoint;
+pub use metadata::*;
+mod stacktrace;
+pub use stacktrace::*;
+mod telemetry;
+
+use self::telemetry::TelemetryCrashUploader;
 use anyhow::Context;
 use chrono::{DateTime, Utc};
-use ddcommon::tag::Tag;
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 use std::path::Path;
 use std::{collections::HashMap, fs::File, io::BufReader};
 use uuid::Uuid;
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CrashtrackerMetadata {
-    pub profiling_library_name: String,
-    pub profiling_library_version: String,
-    pub family: String,
-    // Should include "service", "environment", etc
-    pub tags: Vec<Tag>,
-}
-
-impl CrashtrackerMetadata {
-    pub fn new(
-        profiling_library_name: String,
-        profiling_library_version: String,
-        family: String,
-        tags: Vec<Tag>,
-    ) -> Self {
-        Self {
-            profiling_library_name,
-            profiling_library_version,
-            family,
-            tags,
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SigInfo {
@@ -62,6 +41,7 @@ pub struct CrashInfo {
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     #[serde(default)]
     pub files: HashMap<String, Vec<String>>,
+    pub incomplete: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub metadata: Option<CrashtrackerMetadata>,
@@ -74,8 +54,13 @@ pub struct CrashInfo {
     pub siginfo: Option<SigInfo>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     #[serde(default)]
+    pub span_ids: Vec<u128>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub stacktrace: Vec<StackFrame>,
-    pub incomplete: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
+    pub trace_ids: Vec<u128>,
     /// Any additional data goes here
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     #[serde(default)]
@@ -146,9 +131,11 @@ impl CrashInfo {
             os_info,
             proc_info: None,
             siginfo: None,
+            span_ids: vec![],
             stacktrace: vec![],
             tags: HashMap::new(),
             timestamp: None,
+            trace_ids: vec![],
             uuid,
         }
     }
@@ -210,6 +197,11 @@ impl CrashInfo {
         self.siginfo = Some(siginfo);
         Ok(())
     }
+    pub fn set_span_ids(&mut self, ids: Vec<u128>) -> anyhow::Result<()> {
+        anyhow::ensure!(self.span_ids.is_empty());
+        self.span_ids = ids;
+        Ok(())
+    }
 
     pub fn set_stacktrace(
         &mut self,
@@ -236,6 +228,12 @@ impl CrashInfo {
     pub fn set_timestamp_to_now(&mut self) -> anyhow::Result<()> {
         self.set_timestamp(Utc::now())
     }
+
+    pub fn set_trace_ids(&mut self, ids: Vec<u128>) -> anyhow::Result<()> {
+        anyhow::ensure!(self.trace_ids.is_empty());
+        self.trace_ids = ids;
+        Ok(())
+    }
 }
 
 impl CrashInfo {
@@ -250,21 +248,21 @@ impl CrashInfo {
         Ok(())
     }
 
-    pub fn upload_to_endpoint(&self, config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
+    pub fn upload_to_endpoint(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
         // If we're debugging to a file, dump the actual crashinfo into a json
-        if let Some(endpoint) = &config.endpoint {
+        if let Some(endpoint) = endpoint {
             if Some("file") == endpoint.url.scheme_str() {
                 let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
                     .context("crash output file was not correctly formatted")?;
                 self.to_file(&path)?;
             }
         }
-        self.upload_to_telemetry(config)
+        self.upload_to_telemetry(endpoint)
     }
 
-    fn upload_to_telemetry(&self, config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
+    fn upload_to_telemetry(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
         if let Some(metadata) = &self.metadata {
-            if let Ok(uploader) = TelemetryCrashUploader::new(metadata, config) {
+            if let Ok(uploader) = TelemetryCrashUploader::new(metadata, endpoint) {
                 uploader.upload_to_telemetry(self)?;
             }
         }

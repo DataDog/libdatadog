@@ -1,7 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::crashtracker::datatypes::*;
+use super::datatypes::OpTypes;
+use crate::Result;
 use anyhow::Context;
 
 /// Resets all counters to 0.
@@ -14,9 +15,9 @@ use anyhow::Context;
 /// No safety concerns.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_prof_Crashtracker_reset_counters() -> CrashtrackerResult {
+pub unsafe extern "C" fn ddog_crasht_reset_counters() -> Result {
     datadog_crashtracker::reset_counters()
-        .context("ddog_prof_Crashtracker_begin_profiling_op failed")
+        .context("ddog_crasht_reset_counters failed")
         .into()
 }
 
@@ -27,11 +28,9 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_reset_counters() -> Crashtracker
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_prof_Crashtracker_begin_profiling_op(
-    op: ProfilingOpTypes,
-) -> CrashtrackerResult {
-    datadog_crashtracker::begin_profiling_op(op)
-        .context("ddog_prof_Crashtracker_begin_profiling_op failed")
+pub unsafe extern "C" fn ddog_crasht_begin_op(op: OpTypes) -> Result {
+    datadog_crashtracker::begin_op(op)
+        .context("ddog_crasht_begin_op failed")
         .into()
 }
 
@@ -42,10 +41,8 @@ pub unsafe extern "C" fn ddog_prof_Crashtracker_begin_profiling_op(
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_prof_Crashtracker_end_profiling_op(
-    op: ProfilingOpTypes,
-) -> CrashtrackerResult {
-    datadog_crashtracker::end_profiling_op(op)
-        .context("ddog_prof_Crashtracker_end_profiling_op failed")
+pub unsafe extern "C" fn ddog_crasht_end_op(op: OpTypes) -> Result {
+    datadog_crashtracker::end_op(op)
+        .context("ddog_crasht_end_op failed")
         .into()
 }

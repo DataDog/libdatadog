@@ -1,16 +1,11 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+mod datatypes;
+pub use datatypes::*;
 
-use crate::StringWrapperResult;
 use ddcommon_ffi::{slice::AsBytes, CharSlice};
 use symbolic_common::Name;
 use symbolic_demangle::Demangle;
-
-#[repr(C)]
-pub enum DemangleOptions {
-    Complete,
-    NameOnly,
-}
 
 /// Demangles the string "name".
 /// If demangling fails, returns an empty string ""
@@ -20,7 +15,7 @@ pub enum DemangleOptions {
 /// The string is copied into the result, and does not need to outlive this call
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_demangle(
+pub unsafe extern "C" fn ddog_crasht_demangle(
     name: CharSlice,
     options: DemangleOptions,
 ) -> StringWrapperResult {
@@ -37,12 +32,12 @@ pub unsafe extern "C" fn ddog_demangle(
 fn test_demangle() {
     let test_string = "_ZNSt28__atomic_futex_unsigned_base26_M_futex_wait_until_steadyEPjjbNSt6chrono8durationIlSt5ratioILl1ELl1EEEENS2_IlS3_ILl1ELl1000000000EEEE";
     let test_slice = CharSlice::from(test_string);
-    let result: String = unsafe { ddog_demangle(test_slice, DemangleOptions::Complete) }
+    let result: String = unsafe { ddog_crasht_demangle(test_slice, DemangleOptions::Complete) }
         .unwrap()
         .into();
     assert_eq!(result, "std::__atomic_futex_unsigned_base::_M_futex_wait_until_steady(unsigned int*, unsigned int, bool, std::chrono::duration<long, std::ratio<(long)1, (long)1> >, std::chrono::duration<long, std::ratio<(long)1, (long)1000000000> >)");
 
-    let result: String = unsafe { ddog_demangle(test_slice, DemangleOptions::NameOnly) }
+    let result: String = unsafe { ddog_crasht_demangle(test_slice, DemangleOptions::NameOnly) }
         .unwrap()
         .into();
     assert_eq!(
@@ -55,12 +50,12 @@ fn test_demangle() {
 fn test_demangle_fails() {
     let test_string = "_ZNSt28__fdf";
     let test_slice = CharSlice::from(test_string);
-    let result: String = unsafe { ddog_demangle(test_slice, DemangleOptions::Complete) }
+    let result: String = unsafe { ddog_crasht_demangle(test_slice, DemangleOptions::Complete) }
         .unwrap()
         .into();
     assert_eq!(result, "");
 
-    let result: String = unsafe { ddog_demangle(test_slice, DemangleOptions::NameOnly) }
+    let result: String = unsafe { ddog_crasht_demangle(test_slice, DemangleOptions::NameOnly) }
         .unwrap()
         .into();
     assert_eq!(result, "");

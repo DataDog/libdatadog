@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod config_utils;
+pub mod msgpack_decoder;
 pub mod send_data;
 pub mod stats_utils;
 #[cfg(any(test, feature = "test-utils"))]

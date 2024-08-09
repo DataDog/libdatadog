@@ -136,9 +136,9 @@ cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
 
 datadog_profiling_ffi="datadog-profiling-ffi"
-FEATURES="--features cbindgen,datadog-profiling-ffi/ddtelemetry-ffi"
+FEATURES="--features crashtracker-collector,crashtracker-receiver,cbindgen,datadog-profiling-ffi/ddtelemetry-ffi"
 if [[ "$symbolizer" -eq 1 ]]; then
-    FEATURES="--features cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,symbolizer"
+    FEATURES="--features crashtracker-collector,crashtracker-receiver,cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,symbolizer"
 fi
 
 if [[ ! -z ${ARG_FEATURES} ]]; then
@@ -211,7 +211,7 @@ DESTDIR=$destdir cargo build --package tools --bins
 
 echo "Generating $destdir/include/libdatadog headers..."
 # ADD headers based on selected features.
-HEADERS="$destdir/include/datadog/common.h $destdir/include/datadog/profiling.h $destdir/include/datadog/telemetry.h"
+HEADERS="$destdir/include/datadog/common.h $destdir/include/datadog/profiling.h $destdir/include/datadog/telemetry.h $destdir/include/datadog/crashtracker.h"
 case $ARG_FEATURES in
     *data-pipeline-ffi*)
         HEADERS="$HEADERS $destdir/include/datadog/data-pipeline.h"

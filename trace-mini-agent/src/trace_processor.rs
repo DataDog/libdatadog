@@ -17,7 +17,7 @@ use datadog_trace_utils::tracer_payload::TraceEncoding;
 
 use crate::{
     config::Config,
-    http_utils::{self, log_and_create_http_response},
+    http_utils::{self, log_and_create_http_response, log_and_create_traces_success_http_response},
 };
 
 #[async_trait]
@@ -47,10 +47,7 @@ impl TraceChunkProcessor for ChunkProcessor {
         );
         for span in chunk.spans.iter_mut() {
             trace_utils::enrich_span_with_mini_agent_metadata(span, &self.mini_agent_metadata);
-            trace_utils::enrich_span_with_azure_metadata(
-                span,
-                self.config.mini_agent_version.as_str(),
-            );
+            trace_utils::enrich_span_with_azure_metadata(span);
             obfuscate_span(span, &self.config.obfuscation_config);
         }
     }
@@ -108,9 +105,9 @@ impl TraceProcessor for ServerlessTraceProcessor {
         // send trace payload to our trace flusher
         match tx.send(send_data).await {
             Ok(_) => {
-                return log_and_create_http_response(
+                return log_and_create_traces_success_http_response(
                     "Successfully buffered traces to be flushed.",
-                    StatusCode::ACCEPTED,
+                    StatusCode::OK,
                 );
             }
             Err(err) => {
@@ -174,7 +171,6 @@ mod tests {
             env_type: trace_utils::EnvironmentType::CloudFunction,
             os: "linux".to_string(),
             obfuscation_config: ObfuscationConfig::new().unwrap(),
-            mini_agent_version: "0.1.0".to_string(),
         }
     }
 

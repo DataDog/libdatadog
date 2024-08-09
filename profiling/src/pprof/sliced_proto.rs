@@ -40,6 +40,7 @@
 //! 1. repeatedly emitting a sliced message with a "required" field,
 //! 2. repeatedly emitting a sliced message using a "repeated" field,
 //! 3. Emitting once the message with the repeated field containing all values.
+//!
 //! In other words, we get the same bytes from "required" as "repeated", but
 //! with fewer allocations (since we don't need a `Vec` for the elements).
 //!

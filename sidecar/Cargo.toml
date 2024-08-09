@@ -48,7 +48,13 @@ spawn_worker = { path = "../spawn_worker" }
 zwohash = "0.1.2"
 sha2 = "0.10"
 sys-info = { version = "0.9.0" }
-tokio = { version = "1.35.1", features = ["fs", "sync", "io-util", "signal", "rt-multi-thread"] }
+tokio = { version = "1.35.1", features = [
+    "fs",
+    "sync",
+    "io-util",
+    "signal",
+    "rt-multi-thread",
+] }
 tokio-util = { version = "0.7", features = ["codec"] }
 
 prctl = "1.0.0"
@@ -75,7 +81,7 @@ features = [
     "Win32_Foundation",
     "Wdk_Storage_FileSystem",
     "Win32_System_IO",
-    "Win32_System_WindowsProgramming"
+    "Win32_System_WindowsProgramming",
 ]
 version = "0.51.0"
 
@@ -87,8 +93,7 @@ nix = { version = "0.26.2", features = ["socket", "mman"] }
 sendfd = { version = "0.4", features = ["tokio"] }
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "=0.2.8" }
-kernel32-sys = "0.2.2"
+winapi = { version = "0.3.9", features = ["securitybaseapi", "sddl"] }
 
 [target.'cfg(windows_seh_wrapper)'.dependencies]
 microseh = "0.1.1"
@@ -100,3 +105,9 @@ httpmock = "0.7.0"
 datadog-remote-config = { path = "../remote-config", features = ["test"] }
 datadog-trace-utils = { path = "../trace-utils", features = ["test-utils"] }
 datadog-dynamic-configuration = { path = "../dynamic-configuration", features = ["test"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(tokio_taskdump,windows_seh_wrapper)',
+    'cfg(feature, values("logging"))',
+] }
