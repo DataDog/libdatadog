@@ -24,8 +24,10 @@ pub mod header {
     pub const DATADOG_CONTAINER_ID: HeaderName = HeaderName::from_static("datadog-container-id");
     pub const DATADOG_ENTITY_ID: HeaderName = HeaderName::from_static("datadog-entity-id");
     pub const DATADOG_EXTERNAL_ENV: HeaderName = HeaderName::from_static("datadog-external-env");
+    pub const DATADOG_TRACE_COUNT: HeaderName = HeaderName::from_static("x-datadog-trace-count");
     pub const DATADOG_API_KEY: HeaderName = HeaderName::from_static("dd-api-key");
     pub const APPLICATION_JSON: HeaderValue = HeaderValue::from_static("application/json");
+    pub const APPLICATION_MSGPACK: HeaderValue = HeaderValue::from_static("application/msgpack");
     pub const X_DATADOG_TEST_SESSION_TOKEN: HeaderName =
         HeaderName::from_static("x-datadog-test-session-token");
 }

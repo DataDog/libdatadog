@@ -2,4 +2,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod span_concentrator;
+pub mod stats_exporter;
 pub mod trace_exporter;
