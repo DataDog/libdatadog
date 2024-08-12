@@ -1,7 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::config::get_product_endpoint;
 use crate::log;
 use crate::log::{TemporarilyRetainedMapStats, MULTI_LOG_FILTER, MULTI_LOG_WRITER};
 use crate::service::{
@@ -26,6 +25,7 @@ use ddtelemetry::worker::{
 use futures::future;
 use futures::future::{join_all, Ready};
 use manual_future::{ManualFuture, ManualFutureCompleter};
+use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
@@ -38,11 +38,13 @@ use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use tokio::task::{JoinError, JoinHandle};
 
+use crate::config::get_product_endpoint;
 use crate::dogstatsd::DogStatsDAction;
 use crate::service::telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats;
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
+use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
 
 type NoResponse = Ready<()>;
 
@@ -285,7 +287,7 @@ impl SidecarServer {
     }
 
     fn send_trace_v04(&self, headers: &SerializedTracerHeaderTags, data: &[u8], target: &Endpoint) {
-        let headers = match headers.try_into() {
+        let headers: TracerHeaderTags = match headers.try_into() {
             Ok(headers) => headers,
             Err(e) => {
                 error!("Failed to convert SerializedTracerHeaderTags into TracerHeaderTags with error {:?}", e);
@@ -568,6 +570,9 @@ impl SidecarInterface for SidecarServer {
     ) -> Self::SetSessionConfigFut {
         let session = self.get_session(&session_id);
         session.modify_telemetry_config(|cfg| {
+            cfg.telemetry_hearbeat_interval = config.telemetry_heartbeat_interval;
+        });
+        session.modify_telemetry_config(|cfg| {
             let endpoint =
                 get_product_endpoint(ddtelemetry::config::PROD_INTAKE_SUBDOMAIN, &config.endpoint);
             cfg.set_endpoint(endpoint).ok();
@@ -581,7 +586,9 @@ impl SidecarInterface for SidecarServer {
             cfg.set_endpoint(endpoint).ok();
         });
         session.configure_dogstatsd(|dogstatsd| {
-            dogstatsd.set_endpoint(config.dogstatsd_endpoint.clone());
+            dogstatsd
+                .set_endpoint(config.dogstatsd_endpoint.clone())
+                .ok();
         });
         self.trace_flusher
             .interval_ms
@@ -721,6 +728,43 @@ impl SidecarInterface for SidecarServer {
             }
         }
         tokio::spawn(async move { flusher.flush().await }).map(report_result)
+    }
+
+    type SetTestSessionTokenFut = NoResponse;
+
+    fn set_test_session_token(
+        self,
+        _: Context,
+        session_id: String,
+        token: String,
+    ) -> Self::SetTestSessionTokenFut {
+        let session = self.get_session(&session_id);
+        let token = if token.is_empty() {
+            None
+        } else {
+            Some(Cow::Owned(token))
+        };
+        fn update_cfg<F: FnOnce(Endpoint) -> anyhow::Result<()>>(
+            endpoint: Option<Endpoint>,
+            set: F,
+            token: &Option<Cow<'static, str>>,
+        ) {
+            if let Some(mut endpoint) = endpoint {
+                endpoint.test_token = token.clone();
+                set(endpoint).ok();
+            }
+        }
+        session.modify_telemetry_config(|cfg| {
+            update_cfg(cfg.endpoint.take(), |e| cfg.set_endpoint(e), &token);
+        });
+        session.modify_trace_config(|cfg| {
+            update_cfg(cfg.endpoint.take(), |e| cfg.set_endpoint(e), &token);
+        });
+        session.configure_dogstatsd(|cfg| {
+            update_cfg(cfg.endpoint.take(), |e| cfg.set_endpoint(e), &token);
+        });
+
+        no_response()
     }
 
     type PingFut = Ready<()>;
