@@ -238,8 +238,6 @@ impl CrashInfo {
 
 impl CrashInfo {
     /// Emit the CrashInfo as structured json in file `path`.
-    /// SIGNAL SAFETY:
-    ///     I believe but have not verified this is signal safe.
     pub fn to_file(&self, path: &Path) -> anyhow::Result<()> {
         let file =
             File::create(path).with_context(|| format!("Failed to create {}", path.display()))?;
@@ -249,20 +247,11 @@ impl CrashInfo {
     }
 
     pub fn upload_to_endpoint(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
-        // If we're debugging to a file, dump the actual crashinfo into a json
-        if let Some(endpoint) = endpoint {
-            if Some("file") == endpoint.url.scheme_str() {
-                let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
-                    .context("crash output file was not correctly formatted")?;
-                self.to_file(&path)?;
-            }
-        }
-
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
 
-        rt.block_on(async { self.upload_to_telemetry(endpoint).await })
+        rt.block_on(async { self.async_upload_to_endpoint(endpoint).await })
     }
 
     pub async fn async_upload_to_endpoint(
