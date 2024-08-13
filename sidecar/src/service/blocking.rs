@@ -326,6 +326,23 @@ pub fn send_dogstatsd_actions(
     })
 }
 
+/// Sets x-datadog-test-session-token on all requests for the given session.
+///
+/// # Arguments
+///
+/// * `session_id` - The ID of the session.
+/// * `token` - The session token.
+/// # Returns
+///
+/// An `io::Result<()>` indicating the result of the operation.
+pub fn set_test_session_token(
+    transport: &mut SidecarTransport,
+    session_id: String,
+    token: String,
+) -> io::Result<()> {
+    transport.send(SidecarInterfaceRequest::SetTestSessionToken { session_id, token })
+}
+
 /// Dumps the current state of the service.
 ///
 /// # Arguments

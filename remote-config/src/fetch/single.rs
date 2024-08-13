@@ -7,7 +7,6 @@ use crate::fetch::{
 };
 use crate::file_change_tracker::{Change, ChangeTracker, FilePath, UpdatedFiles};
 use crate::{RemoteConfigPath, Target};
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 /// Simple implementation

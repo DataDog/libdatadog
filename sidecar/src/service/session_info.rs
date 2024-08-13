@@ -7,9 +7,8 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use futures::future;
-
 use datadog_remote_config::fetch::ConfigInvariants;
+use futures::future;
 use tracing::{enabled, info, Level};
 
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
@@ -149,9 +148,9 @@ impl SessionInfo {
         cfg
     }
 
-    pub(crate) fn modify_telemetry_config<F>(&self, mut f: F)
+    pub(crate) fn modify_telemetry_config<F>(&self, f: F)
     where
-        F: FnMut(&mut ddtelemetry::config::Config),
+        F: FnOnce(&mut ddtelemetry::config::Config),
     {
         if let Some(cfg) = &mut *self.get_telemetry_config() {
             f(cfg)
@@ -162,9 +161,9 @@ impl SessionInfo {
         self.tracer_config.lock().unwrap()
     }
 
-    pub(crate) fn modify_trace_config<F>(&self, mut f: F)
+    pub(crate) fn modify_trace_config<F>(&self, f: F)
     where
-        F: FnMut(&mut tracer::Config),
+        F: FnOnce(&mut tracer::Config),
     {
         f(&mut self.get_trace_config());
     }
@@ -173,9 +172,9 @@ impl SessionInfo {
         self.dogstatsd.lock().unwrap()
     }
 
-    pub(crate) fn configure_dogstatsd<F>(&self, mut f: F)
+    pub(crate) fn configure_dogstatsd<F>(&self, f: F)
     where
-        F: FnMut(&mut dogstatsd::Flusher),
+        F: FnOnce(&mut dogstatsd::Flusher),
     {
         f(&mut self.get_dogstatsd());
     }

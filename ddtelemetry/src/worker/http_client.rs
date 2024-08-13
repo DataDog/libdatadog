@@ -5,7 +5,7 @@ use ddcommon::HttpRequestBuilder;
 use http::{Request, Response};
 use hyper::Body;
 use std::{
-    fs::File,
+    fs::OpenOptions,
     future::Future,
     io::Write,
     pin::Pin,
@@ -46,7 +46,11 @@ pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
                 .expect("file urls should always have been encoded in authority");
             return Box::new(MockClient {
                 file: Arc::new(Mutex::new(Box::new(
-                    File::create(file_path).expect("Couldn't open mock client file"),
+                    OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(file_path.as_path())
+                        .expect("Couldn't open mock client file"),
                 ))),
             });
         }
@@ -78,12 +82,12 @@ impl HttpClient for MockClient {
     fn request(&self, mut req: Request<hyper::Body>) -> ResponseFuture {
         let s = self.clone();
         Box::pin(async move {
-            let body = hyper::body::to_bytes(req.body_mut()).await?;
+            let mut body = hyper::body::to_bytes(req.body_mut()).await?.to_vec();
+            body.push(b'\n');
 
             {
                 let mut writer = s.file.lock().expect("mutex poisoned");
                 writer.write_all(body.as_ref()).unwrap();
-                writer.write_all(b"\n").unwrap();
             }
 
             Ok(Response::builder()

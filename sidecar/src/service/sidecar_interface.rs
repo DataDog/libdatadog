@@ -138,6 +138,14 @@ pub trait SidecarInterface {
     /// Flushes any outstanding traces queued for sending.
     async fn flush_traces();
 
+    /// Sets x-datadog-test-session-token on all requests for the given session.
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - The ID of the session.
+    /// * `token` - The session token.
+    async fn set_test_session_token(session_id: String, token: String);
+
     /// Sends a ping to the service.
     async fn ping();
 

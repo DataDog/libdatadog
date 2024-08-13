@@ -245,6 +245,7 @@ pub fn get_product_endpoint(subdomain: &str, endpoint: &Endpoint) -> Endpoint {
         Endpoint {
             url: hyper::Uri::from_parts(parts).unwrap(),
             api_key: Some(api_key.clone()),
+            test_token: endpoint.test_token.clone(),
             ..*endpoint
         }
     } else {

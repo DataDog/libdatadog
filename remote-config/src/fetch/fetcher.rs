@@ -182,6 +182,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
     ///  - checks if the files are already known,
     ///  - stores new files,
     ///  - returns all currently active files.
+    ///
     /// It also makes sure that old files are dropped before new files are inserted.
     ///
     /// Returns None if nothing changed. Otherwise Some(active configs).

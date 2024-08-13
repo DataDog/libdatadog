@@ -795,6 +795,23 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
     MaybeError::None
 }
 
+/// Sets x-datadog-test-session-token on all requests for the given session.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_set_test_session_token(
+    transport: &mut Box<SidecarTransport>,
+    session_id: ffi::CharSlice,
+    token: ffi::CharSlice,
+) -> MaybeError {
+    try_c!(blocking::set_test_session_token(
+        transport,
+        session_id.to_utf8_lossy().into_owned(),
+        token.to_utf8_lossy().into_owned(),
+    ));
+
+    MaybeError::None
+}
+
 /// This function creates a new transport using the provided callback function when the current
 /// transport is closed.
 ///
