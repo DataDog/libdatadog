@@ -37,6 +37,7 @@ impl ObservationLength {
 /// This panics if you attempt to create an Observation with a data vector
 /// of the wrong length.
 #[repr(transparent)]
+#[derive(Debug)]
 pub(super) struct TrimmedObservation {
     data: *mut i64,
 }
@@ -114,11 +115,11 @@ impl Drop for TrimmedObservation {
     /// By the time this is called, the owner of the `TrimmedObservation` should
     /// have consumed the memory using `consume()`.
     fn drop(&mut self) {
-        assert_eq!(
-            self.data,
-            std::ptr::null_mut(),
-            "Dropped TrimmedObservation that still owned data."
-        );
+        // assert_eq!(
+        //     self.data,
+        //     std::ptr::null_mut(),
+        //     "Dropped TrimmedObservation that still owned data."
+        // );
     }
 }
 

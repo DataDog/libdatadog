@@ -36,8 +36,11 @@ impl<'a> From<&'a Function> for api::Function<'a> {
     fn from(value: &'a Function) -> Self {
         Self {
             name: &value.name,
+            name_id: 0,
             system_name: &value.system_name,
+            system_name_id: 0,
             filename: &value.filename,
+            filename_id: 0,
             start_line: value.start_line,
         }
     }
@@ -65,9 +68,12 @@ impl<'a> From<&'a Label> for api::Label<'a> {
     fn from(value: &'a Label) -> Self {
         Self {
             key: &value.key,
+            key_id: 0,
             str: value.str.as_deref(),
+            str_id: 0,
             num: value.num,
             num_unit: value.num_unit.as_deref(),
+            num_unit_id: 0,
         }
     }
 }
@@ -173,7 +179,9 @@ impl<'a> From<&'a Mapping> for api::Mapping<'a> {
             memory_limit: value.memory_limit,
             file_offset: value.file_offset,
             filename: &value.filename,
+            filename_id: 0,
             build_id: &value.build_id,
+            build_id_id: 0,
         }
     }
 }
@@ -418,7 +426,7 @@ fn fuzz_failure_001() {
             },
         ],
     };
-    let mut expected_profile = Profile::new(SystemTime::now(), &sample_types, None);
+    let mut expected_profile = Profile::new(SystemTime::now(), &sample_types, None, None);
     let mut samples_with_timestamps = Vec::new();
     let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> = HashMap::new();
 
@@ -456,7 +464,7 @@ fn test_fuzz_add_sample() {
                 .iter()
                 .map(api::ValueType::from)
                 .collect();
-            let mut expected_profile = Profile::new(SystemTime::now(), &sample_types, None);
+            let mut expected_profile = Profile::new(SystemTime::now(), &sample_types, None, None);
             let mut samples_with_timestamps = Vec::new();
             let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
                 HashMap::new();
@@ -505,7 +513,7 @@ fn fuzz_add_sample_with_fixed_sample_length() {
         })
         .for_each(|(sample_types, samples)| {
             let api_sample_types: Vec<_> = sample_types.iter().map(api::ValueType::from).collect();
-            let mut profile = Profile::new(SystemTime::now(), &api_sample_types, None);
+            let mut profile = Profile::new(SystemTime::now(), &api_sample_types, None, None);
             let mut samples_with_timestamps = Vec::new();
             let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
                 HashMap::new();
@@ -552,7 +560,7 @@ fn fuzz_add_endpoint() {
     bolero::check!()
         .with_type::<Vec<(u64, String)>>()
         .for_each(|endpoints| {
-            let mut profile = Profile::new(SystemTime::now(), &[], None);
+            let mut profile = Profile::new(SystemTime::now(), &[], None, None);
             for (local_root_span_id, endpoint) in endpoints {
                 profile
                     .add_endpoint(*local_root_span_id, endpoint.into())
@@ -567,7 +575,7 @@ fn fuzz_add_endpoint_count() {
     bolero::check!()
         .with_type::<Vec<(String, i64)>>()
         .for_each(|endpoint_counts| {
-            let mut profile = Profile::new(SystemTime::now(), &[], None);
+            let mut profile = Profile::new(SystemTime::now(), &[], None, None);
             for (endpoint, count) in endpoint_counts {
                 profile
                     .add_endpoint_count(endpoint.into(), *count)
@@ -604,7 +612,7 @@ fn fuzz_api_function_calls() {
         })
         .for_each(|(sample_types, operations)| {
             let api_sample_types: Vec<_> = sample_types.iter().map(api::ValueType::from).collect();
-            let mut profile = Profile::new(SystemTime::now(), &api_sample_types, None);
+            let mut profile = Profile::new(SystemTime::now(), &api_sample_types, None, None);
             let mut samples_with_timestamps: Vec<&Sample> = Vec::new();
             let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
                 HashMap::new();
