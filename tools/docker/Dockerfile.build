@@ -156,12 +156,12 @@ COPY --from=ffi_build_platform_agnostic_cache /root/.cargo /root/.cargo/
 COPY --from=ffi_build_platform_agnostic_cache /build /build
 WORKDIR /build
 # cache debug dependency build
-RUN cargo build --lib --all
+RUN cargo build --lib --workspace --exclude builder
 # cache release dependency build
-RUN cargo build --release --lib --all
+RUN cargo build --release --lib --workspace --exclude builder
 
 COPY ./ ./
-RUN ./build-profiling-ffi.sh /build/output
+RUN LIBDD_OUTPUT_FOLDER=/build/output cargo build -p builder --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release 
 
 FROM scratch as ffi_build_output
 
