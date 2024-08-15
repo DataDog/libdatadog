@@ -62,6 +62,13 @@ struct SerializedUri<'a> {
     path_and_query: Option<Cow<'a, str>>,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum StringOrSerializedUri<'a> {
+    String(String),
+    SerializedUri(SerializedUri<'a>)
+}
+
 fn serialize_uri<S>(uri: &hyper::Uri, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
@@ -82,19 +89,22 @@ fn deserialize_uri<'de, D>(deserializer: D) -> Result<hyper::Uri, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let uri = SerializedUri::deserialize(deserializer)?;
-    let mut builder = hyper::Uri::builder();
-    if let Some(v) = uri.authority {
-        builder = builder.authority(v.deref());
+    match StringOrSerializedUri::deserialize(deserializer)? {
+        StringOrSerializedUri::String(str) => str.parse().map_err(Error::custom),
+        StringOrSerializedUri::SerializedUri(uri) => {
+            let mut builder = hyper::Uri::builder();
+            if let Some(v) = uri.authority {
+                builder = builder.authority(v.deref());
+            }
+            if let Some(v) = uri.scheme {
+                builder = builder.scheme(v.deref());
+            }
+            if let Some(v) = uri.path_and_query {
+                builder = builder.path_and_query(v.deref());
+            }
+            builder.build().map_err(Error::custom)
+        }
     }
-    if let Some(v) = uri.scheme {
-        builder = builder.scheme(v.deref());
-    }
-    if let Some(v) = uri.path_and_query {
-        builder = builder.path_and_query(v.deref());
-    }
-
-    builder.build().map_err(Error::custom)
 }
 
 /// TODO: we should properly handle malformed urls

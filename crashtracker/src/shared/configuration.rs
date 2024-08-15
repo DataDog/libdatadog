@@ -9,16 +9,17 @@ use serde::{Deserialize, Serialize};
 /// We recommend fully enabling stacktrace collection, but having an environment
 /// variable to allow downgrading the collector.
 #[repr(C)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StacktraceCollection {
     /// Stacktrace collection occurs in the
-    Disabled,
+    #[default] Disabled,
     WithoutSymbols,
     EnabledWithInprocessSymbols,
     EnabledWithSymbolsInReceiver,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CrashtrackerConfiguration {
     // Paths to any additional files to track, if any
     pub additional_files: Vec<String>,
@@ -28,7 +29,8 @@ pub struct CrashtrackerConfiguration {
     pub wait_for_receiver: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CrashtrackerReceiverConfig {
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
