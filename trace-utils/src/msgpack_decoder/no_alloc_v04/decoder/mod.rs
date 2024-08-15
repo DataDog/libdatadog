@@ -20,19 +20,20 @@ pub fn from_slice(data: Bytes) -> Result<Vec<Vec<Span>>, DecodeError> {
         DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
     })?;
 
-    let mut traces: Vec<Vec<Span>> = Default::default();
+    let mut traces: Vec<Vec<Span>> = Vec::with_capacity(trace_count.try_into().expect("TODO: EK"));
 
     for _ in 0..trace_count {
         let span_count = rmp::decode::read_array_len(&mut local_buf).map_err(|_| {
             DecodeError::InvalidFormat("Unable to read array len for span count".to_owned())
         })?;
 
-        let mut trace: Vec<Span> = Default::default();
+        let mut trace: Vec<Span> = Vec::with_capacity(span_count.try_into().expect("TODO: EK"));
 
         for _ in 0..span_count {
             let span = decode_span(&data, &mut local_buf)?;
             trace.push(span);
         }
+
         traces.push(trace);
     }
 
@@ -60,7 +61,7 @@ fn read_str_map_to_no_alloc_strings(
     let len = decode::read_map_len(buf)
         .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
 
-    let mut map = HashMap::new();
+    let mut map = HashMap::with_capacity(len.try_into().expect("TODO: EK"));
     for _ in 0..len {
         let (key, next) = read_string_ref(buf)?;
         *buf = next;
@@ -106,10 +107,12 @@ fn read_meta_struct(
     ) -> Result<(NoAllocString, Vec<u8>), DecodeError> {
         let (key, next) = read_string_ref(buf)?;
         *buf = next;
-        let mut v = vec![];
         let array_len = decode::read_array_len(buf).map_err(|_| {
             DecodeError::InvalidFormat("Unable to read array len for meta_struct".to_owned())
         })?;
+
+        let mut v = Vec::with_capacity(array_len as usize);
+
         for _ in 0..array_len {
             let value = read_number(buf)?.try_into()?;
             v.push(value);
@@ -159,7 +162,7 @@ where
     K: std::hash::Hash + Eq,
     F: Fn(&BufferWrapper, &mut &[u8]) -> Result<(K, V), DecodeError>,
 {
-    let mut map = HashMap::new();
+    let mut map = HashMap::with_capacity(len);
     for _ in 0..len {
         let (k, v) = read_pair(buf_wrapper, buf)?;
         map.insert(k, v);

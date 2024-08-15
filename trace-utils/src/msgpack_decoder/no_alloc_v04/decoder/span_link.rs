@@ -19,7 +19,7 @@ pub(crate) fn read_span_links(
         DecodeError::InvalidFormat("Unable to read marker for span links".to_owned())
     })? {
         Marker::FixArray(len) => {
-            let mut vec: Vec<SpanLink> = Vec::new();
+            let mut vec: Vec<SpanLink> = Vec::with_capacity(len.try_into().expect("TODO: EK"));
             for _ in 0..len {
                 vec.push(decode_span_link(buf_wrapper, buf)?);
             }
