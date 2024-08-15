@@ -6,11 +6,13 @@ use criterion::{black_box, criterion_group, Criterion};
 use datadog_trace_utils::no_alloc_span::Span;
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
 use datadog_trace_utils::tracer_payload::{
-    msgpack_to_tracer_payload_collection_no_alloc, DefaultTraceChunkProcessor, TraceEncoding,
+    msgpack_to_tracer_payload_collection_no_alloc, msgpack_to_tracer_payload_collection, TraceEncoding,
     TracerPayloadCollection, TracerPayloadParams,
 };
 use rmp_serde::to_vec;
 use serde_json::json;
+use rmp_serde::Deserializer;
+use datadog_trace_protobuf::pb;
 
 fn create_span_data() -> Vec<u8> {
     let mut spans = vec![];
@@ -93,16 +95,8 @@ pub fn deserialize_msgpack_to_internal(c: &mut Criterion) {
             b.iter_batched(
                 || &data,
                 |data| {
-                    let result: anyhow::Result<TracerPayloadCollection> = black_box(
-                        TracerPayloadParams::new(
-                            data,
-                            tracer_header_tags,
-                            &mut DefaultTraceChunkProcessor,
-                            false,
-                            TraceEncoding::V04,
-                        )
-                        .try_into(),
-                    );
+                    let result: anyhow::Result<Vec<Vec<pb::Span>>> =
+                        black_box(msgpack_to_tracer_payload_collection(data));
                     assert!(result.is_ok());
                     // Return the result to avoid measuring the deallocation time
                     result
@@ -135,8 +129,30 @@ pub fn deserialize_msgpack_to_internal_no_alloc(c: &mut Criterion) {
     );
 }
 
+pub fn deserialize_msgpack_serde_to_pb(c: &mut Criterion) {
+    let data = create_span_data();
+
+    c.bench_function(
+        "benching deserializing traces from msgpack using serde to protobuf",
+        |b| {
+            b.iter_batched(
+                || &data,
+                |data| {
+                    let result: Result<Vec<Vec<pb::Span>>, _>= black_box(rmp_serde::from_slice(data));
+                    assert!(result.is_ok());
+                    // Return the result to avoid measuring the deallocation time
+                    result
+                },
+                criterion::BatchSize::LargeInput,
+            );
+        },
+    );
+
+}
+
 criterion_group!(
     benches,
     deserialize_msgpack_to_internal,
-    deserialize_msgpack_to_internal_no_alloc
+    deserialize_msgpack_to_internal_no_alloc,
+    deserialize_msgpack_serde_to_pb
 );

@@ -22,22 +22,44 @@ pub fn from_slice(data: Bytes) -> Result<Vec<Vec<Span>>, DecodeError> {
 
     let mut traces: Vec<Vec<Span>> = Vec::with_capacity(trace_count.try_into().expect("TODO: EK"));
 
-    for _ in 0..trace_count {
-        let span_count = rmp::decode::read_array_len(&mut local_buf).map_err(|_| {
-            DecodeError::InvalidFormat("Unable to read array len for span count".to_owned())
-        })?;
+    // for _ in 0..trace_count {
+    //     let span_count = rmp::decode::read_array_len(&mut local_buf).map_err(|_| {
+    //         DecodeError::InvalidFormat("Unable to read array len for span count".to_owned())
+    //     })?;
+    //
+    //     let mut trace: Vec<Span> = Vec::with_capacity(span_count.try_into().expect("TODO: EK"));
+    //
+    //     for _ in 0..span_count {
+    //         let span = decode_span(&data, &mut local_buf)?;
+    //         trace.push(span);
+    //     }
+    //
+    //     traces.push(trace);
+    // }
+    //
+    // Ok(traces)
 
-        let mut trace: Vec<Span> = Vec::with_capacity(span_count.try_into().expect("TODO: EK"));
+    (0..trace_count).try_fold(
+        Vec::with_capacity(trace_count.try_into().expect("TODO: EK")),
+        |mut traces, _| {
+            let span_count = rmp::decode::read_array_len(&mut local_buf).map_err(|_| {
+                DecodeError::InvalidFormat("Unable to read array len for span count".to_owned())
+            })?;
 
-        for _ in 0..span_count {
-            let span = decode_span(&data, &mut local_buf)?;
-            trace.push(span);
-        }
+            let trace = (0..span_count).try_fold(
+                Vec::with_capacity(span_count.try_into().expect("TODO: EK")),
+                |mut trace, _| {
+                    let span = decode_span(&data, &mut local_buf)?;
+                    trace.push(span);
+                    Ok(trace)
+                },
+            )?;
 
-        traces.push(trace);
-    }
+            traces.push(trace);
 
-    Ok(traces)
+            Ok(traces)
+        },
+    )
 }
 
 #[inline]

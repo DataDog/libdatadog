@@ -287,6 +287,21 @@ pub fn msgpack_to_tracer_payload_collection_no_alloc(
     Ok(traces)
 }
 
+pub fn msgpack_to_tracer_payload_collection(
+    data: &[u8],
+) -> Result<Vec<TracerPayloadV04>, anyhow::Error> {
+    
+    let mut data_slice: &[u8] = data;
+    let mut_data: &mut &[u8] = &mut data_slice;
+    
+    let traces = match msgpack_decoder::v04::decoder::from_slice(mut_data) {
+        Ok(res) => res,
+        Err(e) => anyhow::bail!("Error deserializing trace from request body: {e}"),
+    };
+
+    Ok(traces)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
