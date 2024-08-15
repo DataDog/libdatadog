@@ -1,5 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-pub mod no_alloc_v04;
-pub mod v04;
+pub mod decoder;
+pub mod error;
+pub mod number;
