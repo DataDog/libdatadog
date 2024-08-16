@@ -207,6 +207,18 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
         handle.replace(mapped);
     }
 
+    pub fn as_slice(&self) -> &[u8] {
+        let handle = self.handle.lock().unwrap();
+        let mapped = handle.as_ref().unwrap();
+        let data = unsafe { &*(mapped.as_slice() as *const [u8] as *const RawData) };
+        if data.meta.size > 0 {
+            let slice = data.as_slice();
+            &slice[..slice.len() - 1] // ignore the trailing zero
+        } else {
+            b""
+        }
+    }
+
     pub fn size(&self) -> usize {
         self.handle
             .lock()

@@ -1,11 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::atomic::AtomicI32;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, MutexGuard},
 };
 
+use datadog_remote_config::fetch::ConfigInvariants;
 use futures::future;
 use tracing::{enabled, info, Level};
 
@@ -17,16 +19,38 @@ use crate::service::{InstanceId, RuntimeInfo};
 ///
 /// It contains a list of runtimes, session configuration, tracer configuration, and log guards.
 /// It also has methods to manage the runtimes and configurations.
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub(crate) struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
     pub(crate) session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
     dogstatsd: Arc<Mutex<dogstatsd::Flusher>>,
+    remote_config_invariants: Arc<Mutex<Option<ConfigInvariants>>>,
+    #[cfg(windows)]
+    pub(crate) remote_config_notify_function:
+        Arc<Mutex<crate::service::remote_configs::RemoteConfigNotifyFunction>>,
     pub(crate) log_guard:
         Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
     #[cfg(feature = "tracing")]
     pub(crate) session_id: String,
+    pub(crate) pid: Arc<AtomicI32>,
+}
+
+impl Clone for SessionInfo {
+    fn clone(&self) -> Self {
+        SessionInfo {
+            runtimes: self.runtimes.clone(),
+            session_config: self.session_config.clone(),
+            tracer_config: self.tracer_config.clone(),
+            dogstatsd: self.dogstatsd.clone(),
+            remote_config_invariants: self.remote_config_invariants.clone(),
+            #[cfg(windows)]
+            remote_config_notify_function: self.remote_config_notify_function.clone(),
+            log_guard: self.log_guard.clone(),
+            session_id: self.session_id.clone(),
+            pid: self.pid.clone(),
+        }
+    }
 }
 
 impl SessionInfo {
@@ -154,7 +178,16 @@ impl SessionInfo {
     {
         f(&mut self.get_dogstatsd());
     }
+
+    pub fn set_remote_config_invariants(&self, invariants: ConfigInvariants) {
+        *self.remote_config_invariants.lock().unwrap() = Some(invariants);
+    }
+
+    pub fn get_remote_config_invariants(&self) -> MutexGuard<Option<ConfigInvariants>> {
+        self.remote_config_invariants.lock().unwrap()
+    }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -191,6 +191,8 @@ pub fn register_service_and_flush_queued_actions(
 /// # Arguments
 ///
 /// * `transport` - The transport used for communication.
+/// * `remote_config_notify_function` (windows): a function pointer to be invoked
+/// * `pid` (unix): the pid of the remote process
 /// * `session_id` - The ID of the session.
 /// * `config` - The configuration to be set.
 ///
@@ -199,11 +201,19 @@ pub fn register_service_and_flush_queued_actions(
 /// An `io::Result<()>` indicating the result of the operation.
 pub fn set_session_config(
     transport: &mut SidecarTransport,
+    #[cfg(unix)] pid: libc::pid_t,
+    #[cfg(windows)] remote_config_notify_function: *mut libc::c_void,
     session_id: String,
     config: &SessionConfig,
 ) -> io::Result<()> {
+    #[cfg(unix)]
+    let remote_config_notify_target = pid;
+    #[cfg(windows)]
+    let remote_config_notify_target =
+        crate::service::remote_configs::RemoteConfigNotifyFunction(remote_config_notify_function);
     transport.send(SidecarInterfaceRequest::SetSessionConfig {
         session_id,
+        remote_config_notify_target,
         config: config.clone(),
     })
 }
@@ -258,6 +268,39 @@ pub fn send_trace_v04_shm(
         handle,
         len,
         headers,
+    })
+}
+
+/// Sets the state of the current remote config operation.
+/// The queue id is shared with telemetry and the associated data will be freed upon a
+/// `Lifecycle::Stop` event.
+///
+/// # Arguments
+///
+/// * `transport` - The transport used for communication.
+/// * `instance_id` - The ID of the instance.
+/// * `queue_id` - The unique identifier for the action in the queue.
+/// * `service_name` - The name of the service.
+/// * `env_name` - The name of the environment.
+/// * `app_version` - The metadata of the runtime.
+///
+/// # Returns
+///
+/// An `io::Result<()>` indicating the result of the operation.
+pub fn set_remote_config_data(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    queue_id: &QueueId,
+    service_name: String,
+    env_name: String,
+    app_version: String,
+) -> io::Result<()> {
+    transport.send(SidecarInterfaceRequest::SetRemoteConfigData {
+        instance_id: instance_id.clone(),
+        queue_id: *queue_id,
+        service_name,
+        env_name,
+        app_version,
     })
 }
 
