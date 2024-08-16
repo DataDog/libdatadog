@@ -73,12 +73,12 @@ impl NotifyTarget for RemoteConfigNotifyTarget {
     fn notify(&self) {
         unsafe {
             let dummy = 0;
-            kernel32::CreateRemoteThread(
+            winapi::um::processthreadsapi::CreateRemoteThread(
                 self.process_handle.0,
                 std::ptr::null_mut(),
                 0,
                 Some(std::mem::transmute(self.notify_function.0)),
-                &dummy as *const i32 as winapi::LPVOID,
+                &dummy as *const i32 as winapi::shared::minwindef::LPVOID,
                 0,
                 std::ptr::null_mut(),
             );

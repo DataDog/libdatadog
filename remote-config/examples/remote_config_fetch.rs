@@ -40,6 +40,7 @@ async fn main() {
                 url: hyper::Uri::from_static("http://localhost:8126"),
                 api_key: None,
                 timeout_ms: 5000, // custom timeout, defaults to 3 seconds
+                test_token: None,
             },
             products: vec![ApmTracing],
             capabilities: vec![],

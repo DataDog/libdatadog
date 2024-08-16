@@ -75,7 +75,7 @@ struct SidecarStats {
 
 #[cfg(windows)]
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub struct ProcessHandle(pub winapi::HANDLE);
+pub struct ProcessHandle(pub winapi::um::winnt::HANDLE);
 
 #[cfg(windows)]
 unsafe impl Send for ProcessHandle {}
@@ -126,7 +126,7 @@ impl SidecarServer {
                 .lock()
                 .unwrap()
                 .process_handle()
-                .map(|p| ProcessHandle(p as winapi::HANDLE));
+                .map(|p| ProcessHandle(p as winapi::um::winnt::HANDLE));
         }
         let server = tarpc::server::BaseChannel::new(
             tarpc::server::Config {

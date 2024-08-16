@@ -481,6 +481,7 @@ fn get_product_endpoint(_subdomain: &str, endpoint: &Endpoint) -> Endpoint {
     Endpoint {
         url: hyper::Uri::from_parts(parts).unwrap(),
         api_key: endpoint.api_key.clone(),
+        test_token: endpoint.test_token.clone(),
         ..*endpoint
     }
 }
