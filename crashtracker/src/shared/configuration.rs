@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StacktraceCollection {
     /// Stacktrace collection occurs in the
-    #[default] Disabled,
+    #[default]
+    Disabled,
     WithoutSymbols,
     EnabledWithInprocessSymbols,
     EnabledWithSymbolsInReceiver,

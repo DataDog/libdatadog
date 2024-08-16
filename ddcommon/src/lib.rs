@@ -66,7 +66,7 @@ struct SerializedUri<'a> {
 #[serde(untagged)]
 enum StringOrSerializedUri<'a> {
     String(String),
-    SerializedUri(SerializedUri<'a>)
+    SerializedUri(SerializedUri<'a>),
 }
 
 fn serialize_uri<S>(uri: &hyper::Uri, serializer: S) -> Result<S::Ok, S::Error>
