@@ -8,6 +8,7 @@ pub trait Limiter {
     /// Returns false if the limit is exceeded, otherwise true.
     fn inc(&self, limit: u32) -> bool;
     /// Returns the effective rate per interval.
+    /// Note: The rate is only guaranteed to be accurate immediately after a call to inc().
     fn rate(&self) -> f64;
 }
 
@@ -114,9 +115,9 @@ impl Limiter for LocalLimiter {
     }
 
     fn rate(&self) -> f64 {
-        let last_limit = self.last_limit.load(Ordering::Relaxed) as f64;
-        let hit_count = self.hit_count.load(Ordering::Relaxed) as f64;
-        (last_limit / hit_count * self.granularity as f64).clamp(0., 1.)
+        let last_limit = self.last_limit.load(Ordering::Relaxed);
+        let hit_count = self.hit_count.load(Ordering::Relaxed);
+        (hit_count as f64 / (last_limit as i64 * self.granularity) as f64).clamp(0., 1.)
     }
 }
 
@@ -133,11 +134,15 @@ mod tests {
         let limiter = LocalLimiter::default();
         // Two are allowed, then one more because a small amount of time passed since the first one
         assert!(limiter.inc(2));
+        assert_eq!(0.5, limiter.rate());
         // Add a minimal amount of time to ensure the test doesn't run faster than timer precision
         sleep(Duration::from_micros(100));
         assert!(limiter.inc(2));
+        // We're close to 1, but not quite, due to the minimal time passed
+        assert!(limiter.rate() > 0.5 && limiter.rate() < 1.);
         sleep(Duration::from_micros(100));
         assert!(limiter.inc(2));
+        assert_eq!(1., limiter.rate());
         sleep(Duration::from_micros(100));
         assert!(!limiter.inc(2));
         sleep(Duration::from_micros(100));
@@ -149,6 +154,7 @@ mod tests {
             .last_update
             .fetch_sub(3 * TIME_PER_SECOND as u64, Ordering::Relaxed);
         assert!(limiter.inc(2));
+        assert_eq!(0.5, limiter.rate()); // We're starting from scratch
         sleep(Duration::from_micros(100));
         assert!(limiter.inc(2));
         sleep(Duration::from_micros(100));
