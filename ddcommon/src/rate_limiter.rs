@@ -134,7 +134,8 @@ mod tests {
         let limiter = LocalLimiter::default();
         // Two are allowed, then one more because a small amount of time passed since the first one
         assert!(limiter.inc(2));
-        assert_eq!(0.5, limiter.rate());
+        // Work around floating point precision issues
+        assert!(limiter.rate() > 0.49999 && limiter.rate() <= 0.5);
         // Add a minimal amount of time to ensure the test doesn't run faster than timer precision
         sleep(Duration::from_micros(100));
         assert!(limiter.inc(2));
@@ -155,7 +156,8 @@ mod tests {
             .last_update
             .fetch_sub(3 * TIME_PER_SECOND as u64, Ordering::Relaxed);
         assert!(limiter.inc(2));
-        assert_eq!(0.5, limiter.rate()); // We're starting from scratch
+        // Work around floating point precision issues
+        assert!(limiter.rate() > 0.49999 && limiter.rate() <= 0.5); // We're starting from scratch
         sleep(Duration::from_micros(100));
         assert!(limiter.inc(2));
         sleep(Duration::from_micros(100));
