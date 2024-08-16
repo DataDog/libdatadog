@@ -29,7 +29,10 @@ pub unsafe extern "C" fn ddog_crasht_demangle(
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_demangle() {
+    // It appears that Miri might change the behavior of symbolic_common::Name::demangle, so we
+    // don't run this test under Miri.
     let test_string = "_ZNSt28__atomic_futex_unsigned_base26_M_futex_wait_until_steadyEPjjbNSt6chrono8durationIlSt5ratioILl1ELl1EEEENS2_IlS3_ILl1ELl1000000000EEEE";
     let test_slice = CharSlice::from(test_string);
     let result: String = unsafe { ddog_crasht_demangle(test_slice, DemangleOptions::Complete) }
