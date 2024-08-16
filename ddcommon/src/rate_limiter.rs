@@ -42,7 +42,6 @@ fn now() -> u64 {
 
         let mut perf_counter = 0;
         windows_sys::Win32::System::Performance::QueryPerformanceCounter(&mut perf_counter);
-        perf_counter as u64 * frequency / TIME_PER_SECOND as u64
     };
     #[cfg(not(windows))]
     let now = {
@@ -124,6 +123,8 @@ impl Limiter for LocalLimiter {
 mod tests {
     use crate::rate_limiter::{Limiter, LocalLimiter, TIME_PER_SECOND};
     use std::sync::atomic::Ordering;
+    use std::thread::sleep;
+    use std::time::Duration;
 
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -131,18 +132,27 @@ mod tests {
         let limiter = LocalLimiter::default();
         // Two are allowed, then one more because a small amount of time passed since the first one
         assert!(limiter.inc(2));
+        // Add a minimal amount of time to ensure the test doesn't run faster than timer precision
+        sleep(Duration::from_micros(100));
         assert!(limiter.inc(2));
+        sleep(Duration::from_micros(100));
         assert!(limiter.inc(2));
+        sleep(Duration::from_micros(100));
         assert!(!limiter.inc(2));
+        sleep(Duration::from_micros(100));
         assert!(!limiter.inc(2));
+        sleep(Duration::from_micros(100));
 
         // reduce 4 times, we're going into negative territory. Next increment will reset to zero.
         limiter
             .last_update
             .fetch_sub(3 * TIME_PER_SECOND as u64, Ordering::Relaxed);
         assert!(limiter.inc(2));
+        sleep(Duration::from_micros(100));
         assert!(limiter.inc(2));
+        sleep(Duration::from_micros(100));
         assert!(limiter.inc(2));
+        sleep(Duration::from_micros(100));
         assert!(!limiter.inc(2));
     }
 }
