@@ -142,6 +142,7 @@ mod tests {
         assert!(limiter.rate() > 0.5 && limiter.rate() < 1.);
         sleep(Duration::from_micros(100));
         assert!(limiter.inc(2));
+        // Rate capped at 1
         assert_eq!(1., limiter.rate());
         sleep(Duration::from_micros(100));
         assert!(!limiter.inc(2));
@@ -161,5 +162,23 @@ mod tests {
         assert!(limiter.inc(2));
         sleep(Duration::from_micros(100));
         assert!(!limiter.inc(2));
+        sleep(Duration::from_micros(100));
+
+        // Test change to higher value
+        assert!(limiter.inc(3));
+        sleep(Duration::from_micros(100));
+        assert!(!limiter.inc(3));
+
+        // Then change to lower value - but we have no capacity
+        assert!(!limiter.inc(1));
+
+        // The counter is around 4 (because last limit was 3)
+        // We're keeping the highest successful limit stored, thus subtracting 3 twice will reset it
+        limiter
+            .last_update
+            .fetch_sub(2 * TIME_PER_SECOND as u64, Ordering::Relaxed);
+
+        // And now 1 succeeds again.
+        assert!(limiter.inc(1));
     }
 }
