@@ -42,6 +42,7 @@ fn now() -> u64 {
 
         let mut perf_counter = 0;
         windows_sys::Win32::System::Performance::QueryPerformanceCounter(&mut perf_counter);
+        perf_counter as u64 * frequency / TIME_PER_SECOND as u64
     };
     #[cfg(not(windows))]
     let now = {

@@ -214,6 +214,8 @@ mod tests {
     use crate::rate_limiter::{ShmLimiterData, ShmLimiterMemory};
     use ddcommon::rate_limiter::Limiter;
     use std::ffi::CString;
+    use std::thread::sleep;
+    use std::time::Duration;
 
     fn path() -> CString {
         CString::new("/ddlimiters-test".to_string()).unwrap()
@@ -227,9 +229,14 @@ mod tests {
         let limiter_idx = limiter.idx;
         // Two are allowed, then one more because a small amount of time passed since the first one
         assert!(limiter.inc(2));
+        // Add a minimal amount of time to ensure the test doesn't run faster than timer precision
+        sleep(Duration::from_micros(100));
         assert!(limiter.inc(2));
+        sleep(Duration::from_micros(100));
         assert!(limiter.inc(2));
+        sleep(Duration::from_micros(100));
         assert!(!limiter.inc(2));
+        sleep(Duration::from_micros(100));
         assert!(!limiter.inc(2));
 
         // Now test the free list
