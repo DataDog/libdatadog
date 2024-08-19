@@ -4,6 +4,8 @@
 use datadog_ipc::platform::{
     FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle,
 };
+use datadog_remote_config::fetch::ConfigInvariants;
+use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use datadog_sidecar::agent_remote_config::{
     new_reader, reader_from_shm, AgentRemoteConfigEndpoint, AgentRemoteConfigWriter,
 };
@@ -15,6 +17,7 @@ use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
     InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
+use datadog_sidecar::shm_remote_config::RemoteConfigReader;
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddcommon_ffi as ffi;
@@ -33,6 +36,7 @@ use std::os::unix::prelude::FromRawFd;
 #[cfg(windows)]
 use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::slice;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[repr(C)]
@@ -188,6 +192,56 @@ pub extern "C" fn ddog_agent_remote_config_reader_drop(_: Box<AgentRemoteConfigR
 #[no_mangle]
 pub extern "C" fn ddog_agent_remote_config_writer_drop(_: Box<AgentRemoteConfigWriter<ShmHandle>>) {
 }
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
+    language: &ffi::CharSlice<'a>,
+    tracer_version: &ffi::CharSlice<'a>,
+    endpoint: &Endpoint,
+    service_name: ffi::CharSlice,
+    env_name: ffi::CharSlice,
+    app_version: ffi::CharSlice,
+    remote_config_products: *const RemoteConfigProduct,
+    remote_config_products_count: usize,
+    remote_config_capabilities: *const RemoteConfigCapabilities,
+    remote_config_capabilities_count: usize,
+) -> Box<RemoteConfigReader> {
+    Box::new(RemoteConfigReader::new(
+        &ConfigInvariants {
+            language: language.to_utf8_lossy().into(),
+            tracer_version: tracer_version.to_utf8_lossy().into(),
+            endpoint: endpoint.clone(),
+            products: slice::from_raw_parts(remote_config_products, remote_config_products_count)
+                .to_vec(),
+            capabilities: slice::from_raw_parts(
+                remote_config_capabilities,
+                remote_config_capabilities_count,
+            )
+            .to_vec(),
+        },
+        &Arc::new(Target {
+            service: service_name.to_utf8_lossy().into(),
+            env: env_name.to_utf8_lossy().into(),
+            app_version: app_version.to_utf8_lossy().into(),
+        }),
+    ))
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_remote_config_read<'a>(
+    reader: &'a mut RemoteConfigReader,
+    data: &mut ffi::CharSlice<'a>,
+) -> bool {
+    let (new, contents) = reader.read();
+    // c_char may be u8 or i8 depending on target... convert it.
+    let contents: &[c_char] = unsafe { std::mem::transmute::<&[u8], &[c_char]>(contents) };
+    *data = contents.into();
+    new
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_remote_config_reader_drop(_: Box<RemoteConfigReader>) {}
 
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_transport_drop(_: Box<SidecarTransport>) {}
@@ -375,7 +429,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
 /// Enqueues a list of actions to be performed.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_telemetry_end(
+pub unsafe extern "C" fn ddog_sidecar_lifecycle_end(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
     queue_id: &QueueId,
@@ -429,22 +483,37 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     session_id: ffi::CharSlice,
     agent_endpoint: &Endpoint,
     dogstatsd_endpoint: &Endpoint,
-    flush_interval_milliseconds: u64,
-    telemetry_heartbeat_interval_millis: u64,
+    language: ffi::CharSlice,
+    tracer_version: ffi::CharSlice,
+    flush_interval_milliseconds: u32,
+    telemetry_heartbeat_interval_millis: u32,
     force_flush_size: usize,
     force_drop_size: usize,
     log_level: ffi::CharSlice,
     log_path: ffi::CharSlice,
+    #[allow(unused)] // On FFI layer we cannot conditionally compile, so we need the arg
+    remote_config_notify_function: *mut c_void,
+    remote_config_products: *const RemoteConfigProduct,
+    remote_config_products_count: usize,
+    remote_config_capabilities: *const RemoteConfigCapabilities,
+    remote_config_capabilities_count: usize,
 ) -> MaybeError {
+    #[cfg(unix)]
+    let remote_config_notify_target = libc::getpid();
+    #[cfg(windows)]
+    let remote_config_notify_target = remote_config_notify_function;
     try_c!(blocking::set_session_config(
         transport,
+        remote_config_notify_target,
         session_id.to_utf8_lossy().into(),
         &SessionConfig {
             endpoint: agent_endpoint.clone(),
             dogstatsd_endpoint: dogstatsd_endpoint.clone(),
-            flush_interval: Duration::from_millis(flush_interval_milliseconds),
+            language: language.to_utf8_lossy().into(),
+            tracer_version: tracer_version.to_utf8_lossy().into(),
+            flush_interval: Duration::from_millis(flush_interval_milliseconds as u64),
             telemetry_heartbeat_interval: Duration::from_millis(
-                telemetry_heartbeat_interval_millis
+                telemetry_heartbeat_interval_millis as u64
             ),
             force_flush_size,
             force_drop_size,
@@ -453,7 +522,17 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
                 config::FromEnv::log_method()
             } else {
                 LogMethod::File(String::from(log_path.to_utf8_lossy()).into())
-            }
+            },
+            remote_config_products: slice::from_raw_parts(
+                remote_config_products,
+                remote_config_products_count
+            )
+            .to_vec(),
+            remote_config_capabilities: slice::from_raw_parts(
+                remote_config_capabilities,
+                remote_config_capabilities_count
+            )
+            .to_vec(),
         },
     ));
 
@@ -535,6 +614,28 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
         instance_id,
         data.as_bytes().to_vec(),
         tracer_header_tags,
+    ));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_set_remote_config_data(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    queue_id: &QueueId,
+    service_name: ffi::CharSlice,
+    env_name: ffi::CharSlice,
+    app_version: ffi::CharSlice,
+) -> MaybeError {
+    try_c!(blocking::set_remote_config_data(
+        transport,
+        instance_id,
+        queue_id,
+        service_name.to_utf8_lossy().into(),
+        env_name.to_utf8_lossy().into(),
+        app_version.to_utf8_lossy().into(),
     ));
 
     MaybeError::None
@@ -689,6 +790,23 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
             tags.map(|tags| tags.iter().cloned().collect())
                 .unwrap_or_default()
         ),],
+    ));
+
+    MaybeError::None
+}
+
+/// Sets x-datadog-test-session-token on all requests for the given session.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_set_test_session_token(
+    transport: &mut Box<SidecarTransport>,
+    session_id: ffi::CharSlice,
+    token: ffi::CharSlice,
+) -> MaybeError {
+    try_c!(blocking::set_test_session_token(
+        transport,
+        session_id.to_utf8_lossy().into_owned(),
+        token.to_utf8_lossy().into_owned(),
     ));
 
     MaybeError::None

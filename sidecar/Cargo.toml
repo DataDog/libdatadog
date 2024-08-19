@@ -24,6 +24,7 @@ ddtelemetry = { path = "../ddtelemetry", features = ["tracing"] }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-utils = { path = "../trace-utils" }
 datadog-trace-normalization = { path = "../trace-normalization" }
+datadog-remote-config = { path = "../remote-config" }
 
 futures = { version = "0.3", default-features = false }
 manual_future = "0.1.1"
@@ -37,12 +38,15 @@ datadog-ipc-macros = { path = "../ipc/macros" }
 
 rand = "0.8.3"
 regex = { version = "1" }
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_with = "3.6.0"
 bincode = { version = "1.3.3" }
+serde_json = "1.0"
 rmp-serde = "1.1.1"
+base64 = "0.21.0"
 spawn_worker = { path = "../spawn_worker" }
 zwohash = "0.1.2"
+sha2 = "0.10"
 sys-info = { version = "0.9.0" }
 tokio = { version = "1.35.1", features = [
     "fs",
@@ -98,7 +102,9 @@ microseh = "0.1.1"
 libc = { version = "0.2" }
 tempfile = { version = "3.3" }
 httpmock = "0.7.0"
+datadog-remote-config = { path = "../remote-config", features = ["test"] }
 datadog-trace-utils = { path = "../trace-utils", features = ["test-utils"] }
+datadog-dynamic-configuration = { path = "../dynamic-configuration", features = ["test"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [

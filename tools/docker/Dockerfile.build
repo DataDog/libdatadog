@@ -60,7 +60,7 @@ ENV PATH="/root/.cargo/bin:$PATH"
 ARG CARGO_BUILD_INCREMENTAL
 ARG CARGO_NET_RETRY
 ENV CARGO_NET_RETRY="${CARGO_NET_RETRY}"
-RUN cargo install cbindgen && cargo install bindgen-cli --locked && rm -rf /root/.cargo/registry /root/.cargo/git
+RUN cargo install cbindgen --version "^0.26" && cargo install bindgen-cli --locked && rm -rf /root/.cargo/registry /root/.cargo/git
 
 FROM alpine_aws_cli as alpine_builder
 COPY --from=alpine_cbindgen /root/.cargo/bin/cbindgen /usr/local/bin/cbindgen
@@ -83,9 +83,11 @@ COPY "ddcommon-ffi/Cargo.toml" "ddcommon-ffi/"
 COPY "ddtelemetry/Cargo.toml" "ddtelemetry/"
 COPY "ddtelemetry-ffi/Cargo.toml" "ddtelemetry-ffi/"
 COPY "ddsketch/Cargo.toml" "ddsketch/"
+COPY "dynamic-configuration/Cargo.toml" "dynamic-configuration/"
 COPY "profiling/Cargo.toml" "profiling/"
 COPY "profiling-ffi/Cargo.toml" "profiling-ffi/"
 COPY "profiling-replayer/Cargo.toml" "profiling-replayer/"
+COPY "remote-config/Cargo.toml" "remote-config/"
 COPY "sidecar/Cargo.toml" "sidecar/"
 COPY "sidecar/macros/Cargo.toml" "sidecar/macros/"
 COPY "sidecar-ffi/Cargo.toml" "sidecar-ffi/"

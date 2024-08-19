@@ -98,6 +98,7 @@ where
 
     // Await everything else to completion
     _ = telemetry_handle.await;
+    server.shutdown();
     _ = server.trace_flusher.join().await;
 
     Ok(())
@@ -113,9 +114,6 @@ where
     #[cfg(feature = "tokio-console")]
     console_subscriber::init();
 
-    #[cfg(unix)]
-    let mut builder = tokio::runtime::Builder::new_current_thread();
-    #[cfg(windows)]
     let mut builder = tokio::runtime::Builder::new_multi_thread();
     let runtime = builder.enable_all().build()?;
     let _g = runtime.enter();

@@ -314,9 +314,12 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
             .url
             .to_string()
             .cmp(&b.get_target().url.to_string())
+            .then(a.get_target().test_token.cmp(&b.get_target().test_token))
     });
     data.dedup_by(|a, b| {
-        if a.get_target().url == b.get_target().url {
+        if a.get_target().url == b.get_target().url
+            && a.get_target().test_token == b.get_target().test_token
+        {
             // Size is only an approximation. In practice it won't vary much, but be safe here.
             // We also don't care about the exact maximum size, like two 25 MB or one 50 MB request
             // has similar results. The primary goal here is avoiding many small requests.

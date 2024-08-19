@@ -119,6 +119,44 @@ fn generate_protobuf() {
         "#[serde(rename = \"DBType\")]",
     );
 
+    config.type_attribute(
+        "ClientGetConfigsResponse",
+        "#[derive(Deserialize, Serialize)]",
+    );
+    config.type_attribute("File", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute(
+        "ClientGetConfigsRequest",
+        "#[derive(Deserialize, Serialize)]",
+    );
+    config.type_attribute("Client", "#[derive(Deserialize, Serialize)]");
+    config.field_attribute(
+        "Client.client_agent",
+        "#[serde(skip_serializing_if = \"Option::is_none\")]",
+    );
+    config.type_attribute("ClientState", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("ClientTracer", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("ClientAgent", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("ConfigState", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("TargetFileMeta", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("TargetFileHash", "#[derive(Deserialize, Serialize)]");
+
+    config.field_attribute("File.raw", "#[serde(with = \"serde_bytes\")]");
+    config.field_attribute(
+        "ClientGetConfigsResponse.roots",
+        "#[serde(with = \"crate::serde\")]",
+    );
+    config.field_attribute(
+        "ClientGetConfigsResponse.targets",
+        "#[serde(with = \"serde_bytes\")]",
+    );
+    config.field_attribute("ClientGetConfigsResponse.targets", "#[serde(default)]");
+    config.field_attribute("ClientGetConfigsResponse.roots", "#[serde(default)]");
+    config.field_attribute("ClientGetConfigsResponse.target_files", "#[serde(default)]");
+    config.field_attribute(
+        "ClientGetConfigsResponse.client_configs",
+        "#[serde(default)]",
+    );
+
     config
         .compile_protos(
             &[
@@ -126,6 +164,7 @@ fn generate_protobuf() {
                 "src/pb/tracer_payload.proto",
                 "src/pb/span.proto",
                 "src/pb/stats.proto",
+                "src/pb/remoteconfig.proto",
             ],
             &["src/pb/"],
         )
@@ -133,10 +172,15 @@ fn generate_protobuf() {
 
     // add license, serde imports, custom deserializer code to the top of the protobuf rust structs
     // file
-    let add_to_top = "// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+    let license = "// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use serde::{Deserialize, Deserializer, Serialize};
+"
+    .as_bytes();
+
+    let null_deser = &[
+        license,
+        "use serde::{Deserialize, Deserializer, Serialize};
 
 fn deserialize_null_into_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
@@ -152,9 +196,21 @@ pub fn is_default<T: Default + PartialEq>(t: &T) -> bool {
 }
 
 "
-    .as_bytes();
+        .as_bytes(),
+    ]
+    .concat();
 
-    prepend_to_file(add_to_top, &output_path.join("pb.rs"));
+    let serde_uses = &[
+        license,
+        "use serde::{Deserialize, Serialize};
+
+"
+        .as_bytes(),
+    ]
+    .concat();
+
+    prepend_to_file(null_deser, &output_path.join("pb.rs"));
+    prepend_to_file(serde_uses, &output_path.join("remoteconfig.rs"));
 }
 
 #[cfg(feature = "generate-protobuf")]
