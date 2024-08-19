@@ -53,7 +53,6 @@ struct TelemetryCrashInfoMessage<'a> {
 }
 
 pub struct TelemetryCrashUploader {
-    rt: tokio::runtime::Runtime,
     metadata: TelemetryMetadata,
     cfg: ddtelemetry::config::Config,
 }
@@ -109,9 +108,6 @@ impl TelemetryCrashUploader {
         let host = build_host();
 
         let s = Self {
-            rt: tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?,
             metadata: TelemetryMetadata {
                 host,
                 application,
@@ -122,7 +118,7 @@ impl TelemetryCrashUploader {
         Ok(s)
     }
 
-    pub fn upload_to_telemetry(&self, crash_info: &CrashInfo) -> anyhow::Result<()> {
+    pub async fn upload_to_telemetry(&self, crash_info: &CrashInfo) -> anyhow::Result<()> {
         let metadata = &self.metadata;
 
         let message = serde_json::to_string(&TelemetryCrashInfoMessage {
@@ -170,19 +166,19 @@ impl TelemetryCrashUploader {
                 ddcommon::header::APPLICATION_JSON,
             )
             .body(serde_json::to_string(&payload)?.into())?;
-        self.rt.block_on(async {
-            tokio::time::timeout(
-                std::time::Duration::from_millis({
-                    if let Some(endp) = self.cfg.endpoint.as_ref() {
-                        endp.timeout_ms
-                    } else {
-                        Endpoint::DEFAULT_TIMEOUT
-                    }
-                }),
-                client.request(req),
-            )
-            .await
-        })??;
+
+        tokio::time::timeout(
+            std::time::Duration::from_millis({
+                if let Some(endp) = self.cfg.endpoint.as_ref() {
+                    endp.timeout_ms
+                } else {
+                    Endpoint::DEFAULT_TIMEOUT
+                }
+            }),
+            client.request(req),
+        )
+        .await??;
+
         Ok(())
     }
 }
@@ -254,9 +250,9 @@ mod tests {
         );
     }
 
-    #[test]
+    #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    fn test_crash_request_content() {
+    async fn test_crash_request_content() {
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {
             let mut p = tmp.into_path();
@@ -291,6 +287,7 @@ mod tests {
             uuid: uuid::uuid!("1d6b97cb-968c-40c9-af6e-e4b4d71e8781"),
             incomplete: true,
         })
+        .await
         .unwrap();
 
         let payload: serde_json::value::Value =

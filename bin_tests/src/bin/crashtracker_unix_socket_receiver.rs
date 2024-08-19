@@ -11,5 +11,5 @@ fn main() -> anyhow::Result<()> {
         args.len() == 2,
         "Usage: crashtracker_unix_socket_receiver path_to_unix_socket"
     );
-    datadog_crashtracker::reciever_entry_point_unix_socket(&args[1])
+    datadog_crashtracker::receiver_entry_point_unix_socket(&args[1])
 }

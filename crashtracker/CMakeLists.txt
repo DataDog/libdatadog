@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.19)
-project(datadog_profiling_crashtracking_reciever LANGUAGES C CXX)
+project(datadog_profiling_crashtracking_receiver LANGUAGES C CXX)
 
 find_package(Datadog REQUIRED)
 
