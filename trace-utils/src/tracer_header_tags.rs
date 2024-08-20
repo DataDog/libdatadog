@@ -52,6 +52,22 @@ impl<'a> From<TracerHeaderTags<'a>> for HashMap<&'static str, String> {
                 tags.tracer_version.to_string(),
             ),
             ("datadog-container-id", tags.container_id.to_string()),
+            (
+                "datadog-client-computed-stats",
+                if tags.client_computed_stats {
+                    "true".to_string()
+                } else {
+                    String::new()
+                },
+            ),
+            (
+                "datadog-client-computed-top-level",
+                if tags.client_computed_top_level {
+                    "true".to_string()
+                } else {
+                    String::new()
+                },
+            ),
         ]);
         headers.retain(|_, v| !v.is_empty());
         headers
@@ -96,8 +112,8 @@ mod tests {
             lang_vendor: "vendor",
             tracer_version: "1.0",
             container_id: "id",
-            client_computed_top_level: false,
-            client_computed_stats: false,
+            client_computed_top_level: true,
+            client_computed_stats: true,
         };
 
         let map: HashMap<&'static str, String> = header_tags.into();
@@ -112,6 +128,11 @@ mod tests {
         assert_eq!(map.get("datadog-meta-lang-vendor").unwrap(), "vendor");
         assert_eq!(map.get("datadog-meta-tracer-version").unwrap(), "1.0");
         assert_eq!(map.get("datadog-container-id").unwrap(), "id");
+        assert_eq!(
+            map.get("datadog-client-computed-top-level").unwrap(),
+            "true"
+        );
+        assert_eq!(map.get("datadog-client-computed-stats").unwrap(), "true");
     }
     #[test]
     fn tags_to_hashmap_empty_value() {
@@ -138,6 +159,8 @@ mod tests {
         assert_eq!(map.get("datadog-meta-lang-vendor").unwrap(), "vendor");
         assert_eq!(map.get("datadog-meta-tracer-version").unwrap(), "1.0");
         assert_eq!(map.get("datadog-container-id"), None);
+        assert_eq!(map.get("datadog-client-computed-top-level"), None);
+        assert_eq!(map.get("datadog-client-computed-stats"), None);
     }
 
     #[test]

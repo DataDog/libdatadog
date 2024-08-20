@@ -80,6 +80,7 @@ struct TracerTags {
     language: String,
     language_version: String,
     language_interpreter: String,
+    client_computed_stats: bool,
 }
 
 impl<'a> From<&'a TracerTags> for TracerHeaderTags<'a> {
@@ -89,6 +90,7 @@ impl<'a> From<&'a TracerTags> for TracerHeaderTags<'a> {
             lang_version: &tags.language_version,
             tracer_version: &tags.tracer_version,
             lang_interpreter: &tags.language_interpreter,
+            client_computed_stats: tags.client_computed_stats,
             ..Default::default()
         }
     }
@@ -415,9 +417,9 @@ impl TraceExporterBuilder {
             let stats_concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
                 bucket_size,
                 time::SystemTime::now(),
-                false,
-                false,
-                vec![],
+                self.peer_tags_aggregation,
+                self.compute_stats_by_span_kind,
+                self.peer_tags,
             )));
 
             let cancellation_token = CancellationToken::new();
@@ -455,10 +457,11 @@ impl TraceExporterBuilder {
         Ok(TraceExporter {
             endpoint: Endpoint::from_slice(self.url.as_deref().unwrap_or("http://127.0.0.1:8126")),
             tags: TracerTags {
-                tracer_version: std::mem::take(&mut self.tracer_version),
-                language_version: std::mem::take(&mut self.language_version),
-                language_interpreter: std::mem::take(&mut self.language_interpreter),
-                language: std::mem::take(&mut self.language),
+                tracer_version: self.tracer_version,
+                language_version: self.language_version,
+                language_interpreter: self.language_interpreter,
+                language: self.language,
+                client_computed_stats: self.stats_bucket_size.is_some(),
             },
             input_format: self.input_format,
             output_format: self.output_format,
