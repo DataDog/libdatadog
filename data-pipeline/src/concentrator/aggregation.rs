@@ -16,15 +16,15 @@ const TAG_ORIGIN: &str = "_dd.origin";
 /// This struct represent the key used to group spans together to compute stats.
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Default)]
 pub struct AggregationKey {
-    pub resource_name: String,
-    pub service_name: String,
-    pub operation_name: String,
-    pub span_type: String,
-    pub span_kind: String,
-    pub http_status_code: u32,
-    pub is_synthetics_request: bool,
-    pub peer_tags: Vec<Tag>,
-    pub is_trace_root: bool,
+    resource_name: String,
+    service_name: String,
+    operation_name: String,
+    span_type: String,
+    span_kind: String,
+    http_status_code: u32,
+    is_synthetics_request: bool,
+    peer_tags: Vec<Tag>,
+    is_trace_root: bool,
 }
 
 impl AggregationKey {
@@ -60,6 +60,26 @@ impl AggregationKey {
                 .is_some_and(|origin| origin.starts_with(TAG_SYNTHETICS)),
             is_trace_root: span.parent_id == 0,
             peer_tags,
+        }
+    }
+}
+
+impl From<pb::ClientGroupedStats> for AggregationKey {
+    fn from(value: pb::ClientGroupedStats) -> Self {
+        Self {
+            resource_name: value.resource,
+            service_name: value.service,
+            operation_name: value.name,
+            span_type: value.r#type,
+            span_kind: value.span_kind,
+            http_status_code: value.http_status_code,
+            is_synthetics_request: value.synthetics,
+            peer_tags: value
+                .peer_tags
+                .into_iter()
+                .flat_map(|t| ddcommon::tag::parse_tags(&t).0)
+                .collect(),
+            is_trace_root: value.is_trace_root == 1,
         }
     }
 }

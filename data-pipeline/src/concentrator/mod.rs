@@ -221,24 +221,6 @@ mod tests {
         span
     }
 
-    fn aggregation_key_from_grouped_stats(value: pb::ClientGroupedStats) -> AggregationKey {
-        AggregationKey {
-            resource_name: value.resource,
-            service_name: value.service,
-            operation_name: value.name,
-            span_type: value.r#type,
-            span_kind: value.span_kind,
-            http_status_code: value.http_status_code,
-            is_synthetics_request: value.synthetics,
-            peer_tags: value
-                .peer_tags
-                .into_iter()
-                .flat_map(|t| ddcommon::tag::parse_tags(&t).0)
-                .collect(),
-            is_trace_root: value.is_trace_root == 1,
-        }
-    }
-
     fn assert_counts_equal(
         expected: Vec<pb::ClientGroupedStats>,
         actual: Vec<pb::ClientGroupedStats>,
@@ -248,12 +230,12 @@ mod tests {
         expected.into_iter().for_each(|mut group| {
             group.ok_summary = vec![];
             group.error_summary = vec![];
-            expected_map.insert(aggregation_key_from_grouped_stats(group.clone()), group);
+            expected_map.insert(AggregationKey::from(group.clone()), group);
         });
         actual.into_iter().for_each(|mut group| {
             group.ok_summary = vec![];
             group.error_summary = vec![];
-            actual_map.insert(aggregation_key_from_grouped_stats(group.clone()), group);
+            actual_map.insert(AggregationKey::from(group.clone()), group);
         });
         assert_eq!(expected_map, actual_map)
     }
