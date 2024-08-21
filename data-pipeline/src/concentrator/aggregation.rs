@@ -15,7 +15,7 @@ const TAG_ORIGIN: &str = "_dd.origin";
 
 /// This struct represent the key used to group spans together to compute stats.
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Default)]
-pub struct AggregationKey {
+pub(super) struct AggregationKey {
     resource_name: String,
     service_name: String,
     operation_name: String,
@@ -32,7 +32,7 @@ impl AggregationKey {
     ///
     /// If `peer_tags_aggregation` is true then the peer tags of the span will be included in the
     /// key. The peer tags are computed based on the list of `peer_tag_keys`.
-    pub fn from_span(
+    pub(super) fn from_span(
         span: &pb::Span,
         peer_tags_aggregation: bool,
         peer_tag_keys: &[String],
@@ -111,7 +111,7 @@ fn get_peer_tags(span: &pb::Span, peer_tag_keys: &[String]) -> Vec<Tag> {
 
 /// The stats computed from a group of span with the same AggregationKey
 #[derive(Debug, Default)]
-pub struct GroupedStats {
+pub(super) struct GroupedStats {
     hits: u64,
     errors: u64,
     duration: u64,
@@ -141,14 +141,14 @@ impl GroupedStats {
 /// A time bucket used for stats aggregation. It stores a map of GroupedStats storing the stats of
 /// spans aggregated on their AggregationKey.
 #[derive(Debug)]
-pub struct StatsBucket {
-    pub data: HashMap<AggregationKey, GroupedStats>,
-    pub start: u64,
+pub(super) struct StatsBucket {
+    data: HashMap<AggregationKey, GroupedStats>,
+    start: u64,
 }
 
 impl StatsBucket {
     /// Return a new StatsBucket starting at the given timestamp
-    pub fn new(start_timestamp: u64) -> Self {
+    pub(super) fn new(start_timestamp: u64) -> Self {
         Self {
             data: HashMap::new(),
             start: start_timestamp,
@@ -157,13 +157,13 @@ impl StatsBucket {
 
     /// Insert a value as stats in the group corresponding to the aggregation key, if it does
     /// not exist it creates it.
-    pub fn insert(&mut self, key: AggregationKey, value: &pb::Span) {
+    pub(super) fn insert(&mut self, key: AggregationKey, value: &pb::Span) {
         self.data.entry(key).or_default().insert(value);
     }
 
     /// Consume the bucket and return a ClientStatsBucket containing the bucket stats.
     /// `bucket_duration` is the size of buckets for the concentrator containing the bucket.
-    pub fn flush(self, bucket_duration: u64) -> pb::ClientStatsBucket {
+    pub(super) fn flush(self, bucket_duration: u64) -> pb::ClientStatsBucket {
         pb::ClientStatsBucket {
             start: self.start,
             duration: bucket_duration,
