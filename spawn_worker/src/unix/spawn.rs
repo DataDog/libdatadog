@@ -383,7 +383,8 @@ impl SpawnWorker {
 
         // setup final spawn
 
-        let spawn_method = match &self.spawn_method {
+        #[allow(unused_mut)]
+        let mut spawn_method = match &self.spawn_method {
             Some(m) => m.clone(),
             None => self.target.detect_spawn_method()?,
         };
@@ -415,13 +416,17 @@ impl SpawnWorker {
                     };
                     #[cfg(target_os = "linux")]
                     if matches!(spawn_method, SpawnMethod::FdExec) {
-                        let memfd = linux::write_memfd("trampoline_dependencies.so", bin)?;
-                        let basefds = if fd_to_pass.is_some() { 4 } else { 3 };
-                        argv.push(CString::new(format!(
-                            "/proc/self/fd/{}",
-                            temp_memfds.len() + basefds
-                        ))?);
-                        temp_memfds.push(memfd);
+                        if let Ok(memfd) = linux::write_memfd("trampoline_dependencies.so", bin) {
+                            let basefds = if fd_to_pass.is_some() { 4 } else { 3 };
+                            argv.push(CString::new(format!(
+                                "/proc/self/fd/{}",
+                                temp_memfds.len() + basefds
+                            ))?);
+                            temp_memfds.push(memfd);
+                        } else {
+                            spawn_method = SpawnMethod::Exec;
+                            tempfile()?;
+                        }
                     } else {
                         tempfile()?;
                     }
