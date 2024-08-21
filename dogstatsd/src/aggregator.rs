@@ -18,11 +18,11 @@ pub struct Entry {
     id: u64,
     name: Ustr,
     tags: Option<Ustr>,
-    metric_value: MetricValue,
+    pub metric_value: MetricValue,
 }
 
 #[derive(Debug, Clone)]
-enum MetricValue {
+pub enum MetricValue {
     Count(f64),
     Gauge(f64),
     Distribution(DDSketch),
@@ -40,7 +40,7 @@ impl MetricValue {
         }
     }
 
-    fn get_value(&self) -> Option<f64> {
+    pub fn get_value(&self) -> Option<f64> {
         match self {
             MetricValue::Count(count) => Some(*count),
             MetricValue::Gauge(gauge) => Some(*gauge),
@@ -48,7 +48,7 @@ impl MetricValue {
         }
     }
 
-    fn get_sketch(&self) -> Option<&DDSketch> {
+    pub fn get_sketch(&self) -> Option<&DDSketch> {
         match self {
             MetricValue::Distribution(distribution) => Some(distribution),
             _ => None,
@@ -284,7 +284,6 @@ impl Aggregator {
         batched_payloads
     }
 
-    #[cfg(test)]
     pub fn get_entry_by_id(&self, name: Ustr, tags: Option<Ustr>) -> Option<&Entry> {
         let id = metric::id(name, tags);
         self.map.find(id, |m| m.id == id)
