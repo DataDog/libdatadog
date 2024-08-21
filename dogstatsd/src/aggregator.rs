@@ -362,7 +362,7 @@ fn tags_string_to_vector(tags: Option<Ustr>) -> Vec<String> {
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
-pub(crate) mod tests {
+pub mod tests {
     use crate::aggregator::Aggregator;
     use crate::metric::Metric;
     use crate::metric;
@@ -381,7 +381,7 @@ pub(crate) mod tests {
         "_dd.compute_stats:1",
     ];
 
-    pub(crate) fn assert_value(aggregator_mutex: &Mutex<Aggregator>, metric_id: &str, value: f64) {
+    pub fn assert_value(aggregator_mutex: &Mutex<Aggregator>, metric_id: &str, value: f64) {
         let aggregator = aggregator_mutex.lock().unwrap();
         if let Some(e) = aggregator.get_entry_by_id(metric_id.into(), None) {
             let metric = e.metric_value.get_value().unwrap();
@@ -391,7 +391,7 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn assert_sketch(aggregator_mutex: &Mutex<Aggregator>, metric_id: &str, value: f64) {
+    pub fn assert_sketch(aggregator_mutex: &Mutex<Aggregator>, metric_id: &str, value: f64) {
         let aggregator = aggregator_mutex.lock().unwrap();
         if let Some(e) = aggregator.get_entry_by_id(metric_id.into(), None) {
             let metric = e.metric_value.get_sketch().unwrap();
