@@ -17,7 +17,7 @@ use tracing::{error, warn};
 use ustr::Ustr;
 
 #[derive(Debug, Clone)]
-pub(crate) struct Entry {
+pub struct Entry {
     id: u64,
     name: Ustr,
     tags: Option<Ustr>,
