@@ -1,18 +1,17 @@
-use std::thread;
-use std::time::Duration;
-use dogstatsd::flusher::Flusher;
 use dogstatsd::aggregator::Aggregator;
 use dogstatsd::dogstatsd::{DogStatsD, DogStatsDConfig};
-use tokio_util::sync::CancellationToken;
+use dogstatsd::flusher::Flusher;
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() {
     let metrics_aggr = Arc::new(Mutex::new(
-        Aggregator::new(Vec::new(), 1_024)
-            .expect("failed to create aggregator"),
+        Aggregator::new(Vec::new(), 1_024).expect("failed to create aggregator"),
     ));
-    let _ = start_dogstatsd(Arc::clone(&metrics_aggr));
+    let _ = start_dogstatsd(Arc::clone(&metrics_aggr)).await;
 
     let mut metrics_flusher = Flusher::new(
         "an_api_key".to_string(),
@@ -35,7 +34,7 @@ async fn start_dogstatsd(metrics_aggr: Arc<Mutex<Aggregator>>) -> CancellationTo
         Arc::clone(&metrics_aggr),
         dogstatsd_cancel_token.clone(),
     )
-        .await;
+    .await;
 
     tokio::spawn(async move {
         dogstatsd_client.spin().await;
