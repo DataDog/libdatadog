@@ -107,7 +107,9 @@ impl DogStatsD {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use crate::aggregator::{assert_sketch, assert_value, Aggregator};
+    use crate::aggregator::tests::assert_sketch;
+    use crate::aggregator::tests::assert_value;
+    use crate::aggregator::Aggregator;
     use crate::dogstatsd::{BufferReader, DogStatsD};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::sync::{Arc, Mutex};

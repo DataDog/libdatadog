@@ -3,7 +3,6 @@
 
 //! The aggregation of metrics.
 
-use std::sync::Mutex;
 use crate::constants;
 use crate::datadog::{self, Metric as MetricToShip, Series};
 use crate::errors;
@@ -362,33 +361,6 @@ fn tags_string_to_vector(tags: Option<Ustr>) -> Vec<String> {
 }
 
 #[cfg(test)]
-pub fn assert_value(aggregator_mutex: &Mutex<Aggregator>, metric_id: &str, value: f64) {
-    let aggregator = aggregator_mutex.lock().unwrap();
-    if let Some(e) = aggregator.get_entry_by_id(metric_id.into(), None) {
-        let metric = e.metric_value.get_value().unwrap();
-        assert!((metric - value).abs() < PRECISION);
-    } else {
-        panic!("{}", format!("{metric_id} not found"));
-    }
-}
-
-#[cfg(test)]
-pub fn assert_sketch(aggregator_mutex: &Mutex<Aggregator>, metric_id: &str, value: f64) {
-    let aggregator = aggregator_mutex.lock().unwrap();
-    if let Some(e) = aggregator.get_entry_by_id(metric_id.into(), None) {
-        let metric = e.metric_value.get_sketch().unwrap();
-        assert!((metric.max().unwrap() - value).abs() < PRECISION);
-        assert!((metric.min().unwrap() - value).abs() < PRECISION);
-        assert!((metric.sum().unwrap() - value).abs() < PRECISION);
-        assert!((metric.avg().unwrap() - value).abs() < PRECISION);
-    } else {
-        panic!("{}", format!("{metric_id} not found"));
-    }
-}
-#[cfg(test)]
-const PRECISION: f64 = 0.000_000_01;
-
-#[cfg(test)]
 #[allow(clippy::unwrap_used)]
 pub mod tests {
     use crate::aggregator::Aggregator;
@@ -397,6 +369,9 @@ pub mod tests {
     use datadog_protos::metrics::SketchPayload;
     use hashbrown::hash_table;
     use protobuf::Message;
+    use std::sync::Mutex;
+
+    const PRECISION: f64 = 0.000_000_01;
 
     const SINGLE_METRIC_SIZE: usize = 187;
     const SINGLE_DISTRIBUTION_SIZE: u64 = 135;
@@ -405,6 +380,29 @@ pub mod tests {
         "architecture:x86_64",
         "_dd.compute_stats:1",
     ];
+
+    pub fn assert_value(aggregator_mutex: &Mutex<Aggregator>, metric_id: &str, value: f64) {
+        let aggregator = aggregator_mutex.lock().unwrap();
+        if let Some(e) = aggregator.get_entry_by_id(metric_id.into(), None) {
+            let metric = e.metric_value.get_value().unwrap();
+            assert!((metric - value).abs() < PRECISION);
+        } else {
+            panic!("{}", format!("{metric_id} not found"));
+        }
+    }
+
+    pub fn assert_sketch(aggregator_mutex: &Mutex<Aggregator>, metric_id: &str, value: f64) {
+        let aggregator = aggregator_mutex.lock().unwrap();
+        if let Some(e) = aggregator.get_entry_by_id(metric_id.into(), None) {
+            let metric = e.metric_value.get_sketch().unwrap();
+            assert!((metric.max().unwrap() - value).abs() < PRECISION);
+            assert!((metric.min().unwrap() - value).abs() < PRECISION);
+            assert!((metric.sum().unwrap() - value).abs() < PRECISION);
+            assert!((metric.avg().unwrap() - value).abs() < PRECISION);
+        } else {
+            panic!("{}", format!("{metric_id} not found"));
+        }
+    }
 
     #[test]
     fn insertion() {
