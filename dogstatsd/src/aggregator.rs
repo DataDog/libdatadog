@@ -364,8 +364,8 @@ fn tags_string_to_vector(tags: Option<Ustr>) -> Vec<String> {
 #[allow(clippy::unwrap_used)]
 pub mod tests {
     use crate::aggregator::Aggregator;
-    use crate::metric::Metric;
     use crate::metric;
+    use crate::metric::Metric;
     use datadog_protos::metrics::SketchPayload;
     use hashbrown::hash_table;
     use protobuf::Message;
