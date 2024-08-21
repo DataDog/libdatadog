@@ -219,7 +219,7 @@ mod tests {
     use proptest::{collection, option, strategy::Strategy, string::string_regex};
     use ustr::Ustr;
 
-    use crate::metrics::metric::id;
+    use crate::metric::id;
 
     use super::{Metric, ParseError};
 
