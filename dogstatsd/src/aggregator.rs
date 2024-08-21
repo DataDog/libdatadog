@@ -17,15 +17,15 @@ use tracing::{error, warn};
 use ustr::Ustr;
 
 #[derive(Debug, Clone)]
-pub struct Entry {
+pub(crate) struct Entry {
     id: u64,
     name: Ustr,
     tags: Option<Ustr>,
-    pub metric_value: MetricValue,
+    metric_value: MetricValue,
 }
 
 #[derive(Debug, Clone)]
-pub enum MetricValue {
+enum MetricValue {
     Count(f64),
     Gauge(f64),
     Distribution(DDSketch),
@@ -43,7 +43,7 @@ impl MetricValue {
         }
     }
 
-    pub fn get_value(&self) -> Option<f64> {
+    fn get_value(&self) -> Option<f64> {
         match self {
             MetricValue::Count(count) => Some(*count),
             MetricValue::Gauge(gauge) => Some(*gauge),
@@ -51,7 +51,7 @@ impl MetricValue {
         }
     }
 
-    pub fn get_sketch(&self) -> Option<&DDSketch> {
+    fn get_sketch(&self) -> Option<&DDSketch> {
         match self {
             MetricValue::Distribution(distribution) => Some(distribution),
             _ => None,
@@ -252,8 +252,7 @@ impl Aggregator {
             })
             .filter_map(|entry| build_metric(&entry, &self.tags))
         {
-            // TODO serialization is made twice for each point. If we return a Vec<u8> we can avoid
-            // that
+            // TODO serialization is made twice for each point. If we return a Vec<u8> we can avoid that
             let serialized_metric_size = match serde_json::to_vec(&metric) {
                 Ok(serialized_metric) => serialized_metric.len() as u64,
                 Err(e) => {
@@ -288,7 +287,8 @@ impl Aggregator {
         batched_payloads
     }
 
-    pub fn get_entry_by_id(&self, name: Ustr, tags: Option<Ustr>) -> Option<&Entry> {
+    #[cfg(test)]
+    pub(crate) fn get_entry_by_id(&self, name: Ustr, tags: Option<Ustr>) -> Option<&Entry> {
         let id = metric::id(name, tags);
         self.map.find(id, |m| m.id == id)
     }
@@ -362,10 +362,11 @@ fn tags_string_to_vector(tags: Option<Ustr>) -> Vec<String> {
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
-pub mod tests {
-    use crate::aggregator::Aggregator;
-    use crate::metric;
-    use crate::metric::Metric;
+pub(crate) mod tests {
+    use crate::metrics::aggregator::{
+        metric::{self, Metric},
+        Aggregator,
+    };
     use datadog_protos::metrics::SketchPayload;
     use hashbrown::hash_table;
     use protobuf::Message;
@@ -381,7 +382,7 @@ pub mod tests {
         "_dd.compute_stats:1",
     ];
 
-    pub fn assert_value(aggregator_mutex: &Mutex<Aggregator>, metric_id: &str, value: f64) {
+    pub(crate) fn assert_value(aggregator_mutex: &Mutex<Aggregator>, metric_id: &str, value: f64) {
         let aggregator = aggregator_mutex.lock().unwrap();
         if let Some(e) = aggregator.get_entry_by_id(metric_id.into(), None) {
             let metric = e.metric_value.get_value().unwrap();
@@ -391,7 +392,7 @@ pub mod tests {
         }
     }
 
-    pub fn assert_sketch(aggregator_mutex: &Mutex<Aggregator>, metric_id: &str, value: f64) {
+    pub(crate) fn assert_sketch(aggregator_mutex: &Mutex<Aggregator>, metric_id: &str, value: f64) {
         let aggregator = aggregator_mutex.lock().unwrap();
         if let Some(e) = aggregator.get_entry_by_id(metric_id.into(), None) {
             let metric = e.metric_value.get_sketch().unwrap();
