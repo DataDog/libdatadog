@@ -1,7 +1,7 @@
-#![feature(round_ties_even)]
-mod aggregator;
-mod constants;
-mod datadog;
-mod dogstatsd;
-mod errors;
-mod metric;
+pub mod aggregator;
+pub mod constants;
+pub mod datadog;
+pub mod dogstatsd;
+pub mod errors;
+pub mod flusher;
+pub mod metric;

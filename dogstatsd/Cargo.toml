@@ -19,3 +19,6 @@ thiserror = { version = "1.0.58", default-features = false }
 tokio = { version = "1.37.0", default-features = false, features = ["macros", "rt-multi-thread"] }
 tokio-util = { version = "0.7.11", default-features = false }
 tracing = { version = "0.1.40", default-features = false }
+
+[patch.crates-io]
+ordered-float = "4.2.0"
