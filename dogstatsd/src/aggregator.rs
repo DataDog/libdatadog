@@ -285,7 +285,7 @@ impl Aggregator {
     }
 
     #[cfg(test)]
-    pub(crate) fn get_entry_by_id(&self, name: Ustr, tags: Option<Ustr>) -> Option<&Entry> {
+    pub fn get_entry_by_id(&self, name: Ustr, tags: Option<Ustr>) -> Option<&Entry> {
         let id = metric::id(name, tags);
         self.map.find(id, |m| m.id == id)
     }
