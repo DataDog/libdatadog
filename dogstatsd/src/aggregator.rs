@@ -73,7 +73,7 @@ impl Entry {
     }
 
     /// Return an iterator over key, value pairs
-    fn tag(&self) -> impl Iterator<Item=(Ustr, Ustr)> {
+    fn tag(&self) -> impl Iterator<Item = (Ustr, Ustr)> {
         self.tags.into_iter().filter_map(|tags| {
             let mut split = tags.split(',');
             match (split.next(), split.next()) {
@@ -261,7 +261,7 @@ impl Aggregator {
             if serialized_metric_size > 0 {
                 if (series_payload.series.len() >= self.max_batch_entries_single_metric)
                     || (this_batch_size + serialized_metric_size
-                    >= self.max_batch_bytes_single_metric)
+                        >= self.max_batch_bytes_single_metric)
                 {
                     if this_batch_size == 0 {
                         warn!("Only one metric exceeds max batch size, adding it anyway: {:?} with {}", metric.metric, serialized_metric_size);
@@ -361,8 +361,8 @@ fn tags_string_to_vector(tags: Option<Ustr>) -> Vec<String> {
 #[allow(clippy::unwrap_used)]
 pub mod tests {
     use crate::aggregator::Aggregator;
-    use crate::metric::Metric;
     use crate::metric;
+    use crate::metric::Metric;
     use datadog_protos::metrics::SketchPayload;
     use hashbrown::hash_table;
     use protobuf::Message;

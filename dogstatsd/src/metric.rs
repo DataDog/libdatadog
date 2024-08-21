@@ -124,7 +124,7 @@ impl Metric {
     /// Return an iterator over values
     pub(crate) fn values(
         &self,
-    ) -> impl Iterator<Item=Result<f64, std::num::ParseFloatError>> + '_ {
+    ) -> impl Iterator<Item = Result<f64, std::num::ParseFloatError>> + '_ {
         self.values.split(':').map(|b: &str| {
             let num = b.parse::<f64>()?;
             Ok(num)
@@ -223,26 +223,26 @@ mod tests {
 
     use super::{Metric, ParseError};
 
-    fn metric_name() -> impl Strategy<Value=String> {
+    fn metric_name() -> impl Strategy<Value = String> {
         string_regex("[a-zA-Z0-9.-]{1,128}").unwrap()
     }
 
-    fn metric_values() -> impl Strategy<Value=String> {
+    fn metric_values() -> impl Strategy<Value = String> {
         string_regex("[0-9]+(:[0-9]){0,8}").unwrap()
     }
 
-    fn metric_type() -> impl Strategy<Value=String> {
+    fn metric_type() -> impl Strategy<Value = String> {
         string_regex("g|c").unwrap()
     }
 
-    fn metric_tagset() -> impl Strategy<Value=Option<String>> {
+    fn metric_tagset() -> impl Strategy<Value = Option<String>> {
         option::of(
             string_regex("[a-zA-Z]{1,64}:[a-zA-Z]{1,64}(,[a-zA-Z]{1,64}:[a-zA-Z]{1,64}){0,31}")
                 .unwrap(),
         )
     }
 
-    fn metric_tags() -> impl Strategy<Value=Vec<(String, String)>> {
+    fn metric_tags() -> impl Strategy<Value = Vec<(String, String)>> {
         collection::vec(("[a-z]{1,8}", "[A-Z]{1,8}"), 0..32)
     }
 
