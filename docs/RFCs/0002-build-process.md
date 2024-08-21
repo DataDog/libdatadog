@@ -1,7 +1,7 @@
 # RFC 0002: Building process proposal
 
 ## Context
-As described in the [RFC](https://github.com/DataDog/libdatadog/blob/main/docs/RFCs/delivering-different-features.md)
+As described in the [RFC](https://github.com/DataDog/libdatadog/blob/main/docs/RFCs/0001-delivering-different-features.md)
 about delivering different features the current build process depends heavily on shell scripts which makes it too 
 difficult in terms of managning the process itself like handling errors, dependendencies and features. Also shell
 scripts by themselves poses some disadvantages like portability and maintanibilty.
