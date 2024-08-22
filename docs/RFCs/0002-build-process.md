@@ -77,6 +77,7 @@ vX.Y.Z/
 │     ├─ data-pipeline.h
 ├─ lib/
 │  ├─ libdatadog.a
+│  ├─ libdatadog.so
 │  ├─ pkgconfig/
 │     ├─ libdatadog.pc
 ```
