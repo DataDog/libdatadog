@@ -264,5 +264,5 @@ impl fmt::Debug for Bytes {
     }
 }
 
-// #[cfg(test)]
-// mod test;
+#[cfg(test)]
+mod test;

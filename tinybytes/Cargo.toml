@@ -8,4 +8,9 @@ license.workspace = true
 
 [lib]
 bench = false
-test = false
+
+[dev-dependencies]
+once_cell = "1.8"
+pretty_assertions = "1.3"
+#proptest = "1.5"
+test-case = "2.2"
