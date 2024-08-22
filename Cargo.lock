@@ -3475,12 +3475,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "panic-message"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "384e52fd8fbd4cbe3c317e8216260c21a0f9134de108cea8a4dd4e7e152c472d"
-
-[[package]]
 name = "parking"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5025,9 +5019,7 @@ dependencies = [
 name = "tinybytes"
 version = "12.0.0"
 dependencies = [
- "num-traits",
  "once_cell",
- "panic-message",
  "pretty_assertions",
  "rand",
  "rand_chacha",
