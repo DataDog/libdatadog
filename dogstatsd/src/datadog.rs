@@ -8,7 +8,7 @@ use protobuf::Message;
 use reqwest;
 use serde::{Serialize, Serializer};
 use serde_json;
-use tracing::{debug, error};
+use tracing::debug;
 
 /// Interface for the `DogStatsD` metrics intake API.
 #[derive(Debug)]

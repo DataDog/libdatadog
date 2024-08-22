@@ -98,7 +98,7 @@ impl DogStatsD {
         if !all_valid_metrics.is_empty() {
             let mut guarded_aggregator = self.aggregator.lock().expect("lock poisoned");
             for a_valid_value in all_valid_metrics {
-                let _ = guarded_aggregator.insert(&a_valid_value);
+                let _ = guarded_aggregator.insert(a_valid_value);
             }
         }
     }
