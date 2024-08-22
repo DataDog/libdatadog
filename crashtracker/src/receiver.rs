@@ -24,15 +24,30 @@ pub fn resolve_frames(
 }
 
 pub fn get_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<UnixListener> {
-    let socket_path = socket_path.as_ref();
-    if std::fs::metadata(socket_path).is_ok() {
-        std::fs::remove_file(socket_path)
-            .with_context(|| format!("could not delete previous socket at {:?}", socket_path))?;
+    fn path_bind(socket_path: impl AsRef<str>) -> anyhow::Result<UnixListener> {
+        let socket_path = socket_path.as_ref();
+        if std::fs::metadata(socket_path).is_ok() {
+            std::fs::remove_file(socket_path).with_context(|| {
+                format!("could not delete previous socket at {:?}", socket_path)
+            })?;
+        }
+        Ok(UnixListener::bind(socket_path)?)
     }
 
-    let unix_listener =
-        UnixListener::bind(socket_path).context("Could not create the unix socket")?;
-    Ok(unix_listener)
+    #[cfg(target_os = "linux")]
+    let unix_listener = if socket_path.as_ref().starts_with(['.', '/']) {
+        path_bind(socket_path)
+    } else {
+        use std::os::linux::net::SocketAddrExt;
+        std::os::unix::net::SocketAddr::from_abstract_name(socket_path.as_ref())
+            .and_then(|addr| {
+                std::os::unix::net::UnixListener::bind_addr(&addr).and_then(UnixListener::from_std)
+            })
+            .map_err(anyhow::Error::msg)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let unix_listener = path_bind(socket_path);
+    unix_listener.context("Could not create the unix socket")
 }
 
 pub fn receiver_entry_point_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<()> {
