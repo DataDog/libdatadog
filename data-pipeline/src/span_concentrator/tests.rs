@@ -84,12 +84,12 @@ fn assert_counts_equal(expected: Vec<pb::ClientGroupedStats>, actual: Vec<pb::Cl
     assert_eq!(expected_map, actual_map)
 }
 
-/// Test that the concentrator does not create buckets older than the exporter initialization
+/// Test that the SpanConcentrator does not create buckets older than the exporter initialization
 #[test]
 fn test_concentrator_oldest_timestamp_cold() {
     let now = SystemTime::now();
     let mut concentrator =
-        Concentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, false, vec![]);
+        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, false, vec![]);
     let mut spans = vec![
         get_test_span(now, 1, 0, 50, 5, "A1", "resource1", 0),
         get_test_span(now, 1, 0, 40, 4, "A1", "resource1", 0),
@@ -100,7 +100,7 @@ fn test_concentrator_oldest_timestamp_cold() {
     ];
     compute_top_level_span(spans.as_mut_slice());
     for span in &spans {
-        concentrator.add_span(span).expect("Failed to add span");
+        concentrator.add_span(span);
     }
 
     let mut flushtime = now;
@@ -133,13 +133,13 @@ fn test_concentrator_oldest_timestamp_cold() {
     assert_counts_equal(expected, stats.first().unwrap().stats.clone());
 }
 
-/// Test that the concentrator does not create buckets older than the exporter initialization
+/// Test that the SpanConcentrator does not create buckets older than the exporter initialization
 /// with multiple active buckets
 #[test]
 fn test_concentrator_oldest_timestamp_hot() {
     let now = SystemTime::now();
     let mut concentrator =
-        Concentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, false, vec![]);
+        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, false, vec![]);
     let mut spans = vec![
         get_test_span(now, 1, 0, 50, 5, "A1", "resource1", 0),
         get_test_span(now, 1, 0, 40, 4, "A1", "resource1", 0),
@@ -158,7 +158,7 @@ fn test_concentrator_oldest_timestamp_hot() {
         * concentrator.bucket_size;
 
     for span in &spans {
-        concentrator.add_span(span).expect("Failed to add span");
+        concentrator.add_span(span);
     }
 
     for _ in 0..(concentrator.buffer_len - 1) {
@@ -206,13 +206,13 @@ fn test_concentrator_oldest_timestamp_hot() {
     assert_counts_equal(expected, stats.first().unwrap().stats.clone());
 }
 
-/// TestConcentratorStatsTotals tests that the total stats are correct, independently of the
+/// Tests that the total stats are correct, independently of the
 /// time bucket they end up.
 #[test]
 fn test_concentrator_stats_totals() {
     let now = SystemTime::now();
     let mut concentrator =
-        Concentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, false, vec![]);
+        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, false, vec![]);
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,
         concentrator.bucket_size,
@@ -239,7 +239,7 @@ fn test_concentrator_stats_totals() {
     let mut total_top_level_hits = 0;
 
     for span in &spans {
-        concentrator.add_span(span).expect("Failed to add span");
+        concentrator.add_span(span);
     }
 
     let mut flushtime = now;
@@ -272,7 +272,7 @@ fn test_concentrator_stats_totals() {
 fn test_concentrator_stats_counts() {
     let now = SystemTime::now();
     let mut concentrator =
-        Concentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, false, vec![]);
+        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, false, vec![]);
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,
         concentrator.bucket_size,
@@ -482,7 +482,7 @@ fn test_concentrator_stats_counts() {
     compute_top_level_span(spans.as_mut_slice());
 
     for span in &spans {
-        concentrator.add_span(span).expect("Failed to add span");
+        concentrator.add_span(span);
     }
 
     let mut flushtime = now;
@@ -563,9 +563,9 @@ fn test_span_should_be_included_in_stats() {
     ];
     compute_top_level_span(spans.as_mut_slice());
     let mut concentrator =
-        Concentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, true, vec![]);
+        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, true, vec![]);
     for span in &spans {
-        concentrator.add_span(span).expect("Failed to add span");
+        concentrator.add_span(span);
     }
 
     let expected = vec![
@@ -637,9 +637,9 @@ fn test_ignore_partial_spans() {
         .insert("_dd.partial_version".to_string(), 830604.0);
     compute_top_level_span(spans.as_mut_slice());
     let mut concentrator =
-        Concentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, true, vec![]);
+        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, true, vec![]);
     for span in &spans {
-        concentrator.add_span(span).expect("Failed to add span");
+        concentrator.add_span(span);
     }
 
     let stats = concentrator.flush(
@@ -656,9 +656,9 @@ fn test_force_flush() {
     let mut spans = vec![get_test_span(now, 1, 0, 50, 5, "A1", "resource1", 0)];
     compute_top_level_span(spans.as_mut_slice());
     let mut concentrator =
-        Concentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, true, vec![]);
+        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, true, vec![]);
     for span in &spans {
-        concentrator.add_span(span).expect("Failed to add span");
+        concentrator.add_span(span);
     }
 
     // flushtime is 1h before now to make sure the bucket is not old enough to be flushed
@@ -733,8 +733,8 @@ fn test_peer_tags_aggregation() {
     ];
     compute_top_level_span(spans.as_mut_slice());
     let mut concentrator_without_peer_tags =
-        Concentrator::new(Duration::from_nanos(BUCKET_SIZE), now, true, true, vec![]);
-    let mut concentrator_with_peer_tags = Concentrator::new(
+        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, true, true, vec![]);
+    let mut concentrator_with_peer_tags = SpanConcentrator::new(
         Duration::from_nanos(BUCKET_SIZE),
         now,
         true,
@@ -742,14 +742,10 @@ fn test_peer_tags_aggregation() {
         vec!["db.instance".to_string(), "db.system".to_string()],
     );
     for span in &spans {
-        concentrator_without_peer_tags
-            .add_span(span)
-            .expect("Failed to add span");
+        concentrator_without_peer_tags.add_span(span);
     }
     for span in &spans {
-        concentrator_with_peer_tags
-            .add_span(span)
-            .expect("Failed to add span");
+        concentrator_with_peer_tags.add_span(span);
     }
 
     let flushtime = now
