@@ -11,6 +11,7 @@ use datadog_sidecar::agent_remote_config::{
 };
 use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
+use datadog_sidecar::crashtracker::crashtracker_unix_socket_path;
 use datadog_sidecar::dogstatsd::DogStatsDAction;
 use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
 use datadog_sidecar::service::{
@@ -826,4 +827,19 @@ pub extern "C" fn ddog_sidecar_reconnect(
     factory: unsafe extern "C" fn() -> Option<Box<SidecarTransport>>,
 ) {
     transport.reconnect(|| unsafe { factory() });
+}
+
+/// Return the path of the crashtracker unix domain socket.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_get_crashtracker_unix_socket_path() -> ffi::CharSlice<'static>
+{
+    let socket_path = crashtracker_unix_socket_path();
+    let str = socket_path.to_str().unwrap_or_default();
+
+    let size = str.len();
+    let malloced = libc::malloc(size) as *mut u8;
+    let buf = slice::from_raw_parts_mut(malloced, size);
+    buf.copy_from_slice(str.as_bytes());
+    ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
 }
