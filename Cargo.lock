@@ -3201,18 +3201,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c9be0862c1b3f26a88803c4a49de6889c10e608b3ee9344e6ef5b45fb37ad3d1"
 
 [[package]]
-name = "monkey_test"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03fb408fa1f1ae86d35e329268d49415e22eac9afc90678b7b2982a732e0a67a"
-dependencies = [
- "num-traits",
- "panic-message",
- "rand",
- "rand_chacha",
-]
-
-[[package]]
 name = "msvc-demangler"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5037,8 +5025,8 @@ dependencies = [
 name = "tinybytes"
 version = "12.0.0"
 dependencies = [
- "monkey_test",
  "once_cell",
+ "panic-message",
  "pretty_assertions",
  "test-case",
 ]
