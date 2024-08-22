@@ -25,6 +25,8 @@ use ddcommon::azure_app_services;
 const TOP_LEVEL_KEY: &str = "_top_level";
 /// Span metric the tracer sets to denote a top level span
 const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
+const MEASURED_KEY: &str = "_dd.measured";
+const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
 const MAX_PAYLOAD_SIZE: usize = 50 * 1024 * 1024;
 const MAX_STRING_DICT_SIZE: u32 = 25_000_000;
@@ -413,6 +415,14 @@ pub fn compute_top_level_span(trace: &mut [pb::Span]) {
     }
 }
 
+/// Return true if the span has a top level key set
+pub fn has_top_level(span: &pb::Span) -> bool {
+    span.metrics
+        .get(TRACER_TOP_LEVEL_KEY)
+        .is_some_and(|v| *v == 1.0)
+        || span.metrics.get(TOP_LEVEL_KEY).is_some_and(|v| *v == 1.0)
+}
+
 fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
     if !is_top_level {
         if span.metrics.contains_key(TOP_LEVEL_KEY) {
@@ -620,6 +630,22 @@ pub fn collect_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
     }
 }
 
+// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
+pub fn is_measured(span: &pb::Span) -> bool {
+    span.metrics.get(MEASURED_KEY).is_some_and(|v| *v == 1.0)
+}
+
+/// Returns true if the span is a partial snapshot.
+/// This kind of spans are partial images of long-running spans.
+/// When incomplete, a partial snapshot has a metric _dd.partial_version which is a positive
+/// integer. The metric usually increases each time a new version of the same span is sent by the
+/// tracer
+pub fn is_partial_snapshot(span: &pb::Span) -> bool {
+    span.metrics
+        .get(PARTIAL_VERSION_KEY)
+        .is_some_and(|v| *v >= 0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use hyper::Request;
@@ -627,7 +653,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{get_root_span_index, set_serverless_root_span_tags};
-    use crate::trace_utils::{TracerHeaderTags, MAX_PAYLOAD_SIZE};
+    use crate::trace_utils::{has_top_level, TracerHeaderTags, MAX_PAYLOAD_SIZE};
     use crate::tracer_payload::TracerPayloadCollection;
     use crate::{
         test_utils::create_test_span,
@@ -926,5 +952,13 @@ mod tests {
             ]),
         );
         assert_eq!(span.r#type, "serverless".to_string())
+    }
+
+    #[test]
+    fn test_has_top_level() {
+        let top_level_span = create_test_span(123, 1234, 12, 1, true);
+        let not_top_level_span = create_test_span(123, 1234, 12, 1, false);
+        assert!(has_top_level(&top_level_span));
+        assert!(!has_top_level(&not_top_level_span));
     }
 }
