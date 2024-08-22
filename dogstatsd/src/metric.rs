@@ -5,31 +5,32 @@ use crate::constants;
 use crate::errors::ParseError;
 use fnv::FnvHasher;
 use std::hash::{Hash, Hasher};
+use ddsketch_agent::DDSketch;
 use ustr::Ustr;
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-/// Determine what kind/type of a metric has come in
-pub enum Type {
+use regex::Regex;
+use crate::constants::EMPTY_TAGS;
+
+#[derive(Clone, Debug)]
+pub enum MetricValue {
     /// Dogstatsd 'count' metric type, monotonically increasing counter
-    Count,
+    Count(f64),
     /// Dogstatsd 'gauge' metric type, point-in-time value
-    Gauge,
+    Gauge(f64),
     /// Dogstatsd 'distribution' metric type, histogram
-    Distribution,
+    Distribution(DDSketch),
 }
 
 /// Representation of a dogstatsd Metric
 ///
 /// For now this implementation covers only counters and gauges. We hope this is
 /// enough to demonstrate the impact of this program's design goals.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Metric {
     /// Name of the metric.
     ///
     /// Never more bytes than `constants::MAX_METRIC_NAME_BYTES`,
     /// enforced by construction. Note utf8 issues.
-    pub(crate) name: Ustr,
-    /// What kind/type of metric this is.
-    pub(crate) kind: Type,
+    pub name: Ustr,
     /// Values of the metric. A singular value may be either a floating point or
     /// a integer. Although undocumented we assume 64 bit. A single metric may
     /// encode multiple values a time in a message. There must be at least one
@@ -40,7 +41,7 @@ pub struct Metric {
     /// moment.
     ///
     /// Never longer than `constants::MAX_VALUE_BYTES`. Note utf8 issues.
-    values: Ustr,
+    pub value: MetricValue,
     /// Tags of the metric.
     ///
     /// The key is never longer than `constants::MAX_TAG_KEY_BYTES`, the value
@@ -48,124 +49,87 @@ pub struct Metric {
     /// the parser. We assume here that tags are not sent in random order by the
     /// clien or that, if they are, the API will tidy that up. That is `a:1,b:2`
     /// is a different tagset from `b:2,a:1`.
-    pub(crate) tags: Option<Ustr>,
+    pub tags: Vec<(Ustr, Ustr)>,
+
+    /// ID given a name and tagset.
+    pub(crate) id: u64,
 }
 
-impl Metric {
-    #[must_use]
-    pub fn new(name: Ustr, kind: Type, values: Ustr, tags: Option<Ustr>) -> Self {
-        Self {
-            name,
-            kind,
-            values,
-            tags,
-        }
-    }
-    /// Parse a metric from given input.
-    ///
-    /// This function parses a passed `&str` into a `Metric`. We assume that
-    /// `DogStatsD` metrics must be utf8 and are not ascii or some other encoding.
-    ///
-    /// # Errors
-    ///
-    /// This function will return with an error if the input violates any of the
-    /// limits in [`constants`]. Any non-viable input will be discarded.
-    /// example aj-test.increment:1|c|#user:aj-test from 127.0.0.1:50983
-    pub fn parse(input: &str) -> Result<Metric, ParseError> {
-        // TODO must enforce / exploit constraints given in `constants`.
-        let mut sections = input.split('|');
+/// Parse a metric from given input.
+///
+/// This function parses a passed `&str` into a `Metric`. We assume that
+/// `DogStatsD` metrics must be utf8 and are not ascii or some other encoding.
+///
+/// # Errors
+///
+/// This function will return with an error if the input violates any of the
+/// limits in [`constants`]. Any non-viable input will be discarded.
+/// example aj-test.increment:1|c|#user:aj-test from 127.0.0.1:50983
+pub fn parse(input: &str) -> Result<Metric, ParseError> {
+    // TODO must enforce / exploit constraints given in `constants`.
+    if let Ok(re) = Regex::new(r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[cgd])(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?$") {
+        if let Some(caps) = re.captures(input) {
+            // unused for now
+            // let sample_rate = caps.name("sample_rate").map(|m| m.as_str());
 
-        let nv_section = sections
-            .next()
-            .ok_or(ParseError::Raw("Missing metric name and value"))?;
-
-        let (name, values) = nv_section
-            .split_once(':')
-            .ok_or(ParseError::Raw("Missing name, value section"))?;
-
-        let kind_section = sections
-            .next()
-            .ok_or(ParseError::Raw("Missing metric type"))?;
-        let kind = match kind_section {
-            "c" => Type::Count,
-            "g" => Type::Gauge,
-            "d" => Type::Distribution,
-            _ => {
-                return Err(ParseError::Raw("Unsupported metric type"));
+            let tags;
+            if let Some(tags_section) = caps.name("tags") {
+                tags = parse_sort_tags(tags_section.as_str())?;
+            } else {
+                tags = EMPTY_TAGS;
             }
-        };
-
-        let mut tags = None;
-        for section in sections {
-            if section.starts_with('@') {
-                // Sample rate section, skip for now.
-                continue;
-            }
-            if let Some(tags_section) = section.strip_prefix('#') {
-                let tag_parts = tags_section.split(',');
-                // Validate that the tags have the right form.
-                for (i, part) in tag_parts.filter(|s| !s.is_empty()).enumerate() {
-                    if i >= constants::MAX_TAGS {
-                        return Err(ParseError::Raw("Too many tags"));
-                    }
-                    if !part.contains(':') {
-                        return Err(ParseError::Raw("Invalid tag format"));
-                    }
+            let val = first_value(caps.name("values").unwrap().as_str())?;
+            let metric_value = match caps.name("type").unwrap().as_str() {
+                "c" => MetricValue::Count(val),
+                "g" => MetricValue::Gauge(val),
+                "d" => {
+                    let sketch = &mut DDSketch::default();
+                    sketch.insert(val);
+                    MetricValue::Distribution(sketch.to_owned())
                 }
-                tags = Some(tags_section);
-                break;
-            }
-        }
-
-        Ok(Metric {
-            name: Ustr::from(name),
-            kind,
-            values: Ustr::from(values),
-            tags: tags.map(Ustr::from),
-        })
-    }
-    /// Return an iterator over values
-    pub(crate) fn values(
-        &self,
-    ) -> impl Iterator<Item = Result<f64, std::num::ParseFloatError>> + '_ {
-        self.values.split(':').map(|b: &str| {
-            let num = b.parse::<f64>()?;
-            Ok(num)
-        })
-    }
-
-    pub(crate) fn first_value(&self) -> Result<f64, ParseError> {
-        match self.values().next() {
-            Some(v) => match v {
-                Ok(v) => Ok(v),
-                Err(_e) => Err(ParseError::Raw("Failed to parse value as float")),
-            },
-            None => Err(ParseError::Raw("No value")),
+                _ => {
+                    return Err(ParseError::Raw("Unsupported metric type"));
+                }
+            };
+            let name = Ustr::from(caps.name("name").unwrap().as_str());
+            let id = id(name, &tags);
+            return Ok(Metric {
+                name,
+                value: metric_value,
+                tags,
+                id,
+            });
         }
     }
+    Err(ParseError::Raw(format!("Invalid metric format {input}").as_str()))
+}
 
-    #[allow(dead_code)]
-    pub(crate) fn tags(&self) -> Vec<String> {
-        self.tags
-            .unwrap_or_default()
-            .split(',')
-            .map(std::string::ToString::to_string)
-            .collect()
+fn parse_sort_tags(tags_section: &str) -> Result<Vec<(Ustr, Ustr)>, ParseError> {
+    let tag_parts = tags_section.split(',');
+    let mut parsed_tags = Vec::new();
+    // Validate that the tags have the right form.
+    for (i, part) in tag_parts.filter(|s| !s.is_empty()).enumerate() {
+        if i >= constants::MAX_TAGS {
+            return Err(ParseError::Raw("Too many tags"));
+        }
+        if !part.contains(':') {
+            return Err(ParseError::Raw("Invalid tag format"));
+        }
+        if let Some((k, v)) = part.split_once(':') {
+            parsed_tags.push((Ustr::from(k), Ustr::from(v)));
+        }
     }
+    parsed_tags.sort_unstable();
+    Ok(parsed_tags)
+}
 
-    #[cfg(test)]
-    fn raw_values(&self) -> &str {
-        self.values.as_str()
-    }
-
-    #[cfg(test)]
-    fn raw_name(&self) -> &str {
-        self.name.as_str()
-    }
-
-    #[cfg(test)]
-    fn raw_tagset(&self) -> Option<&str> {
-        self.tags.map(|t| t.as_str())
+fn first_value(values: &str) -> Result<f64, ParseError> {
+    match values.split(':').next() {
+        Some(v) => match v.parse::<f64>() {
+            Ok(v) => Ok(v),
+            Err(_) => Err(ParseError::Raw("Invalid value")),
+        },
+        None => Err(ParseError::Raw("Missing value"))
     }
 }
 
@@ -183,28 +147,16 @@ impl Metric {
 /// from the point of view of this function.
 #[inline]
 #[must_use]
-pub fn id(name: Ustr, tagset: Option<Ustr>) -> u64 {
+pub fn id(name: Ustr, tags: &Vec<(Ustr, Ustr)>) -> u64 {
     let mut hasher = FnvHasher::default();
 
     name.hash(&mut hasher);
     // We sort tags. This is in feature parity with DogStatsD and also means
     // that we avoid storing the same context multiple times because users have
     // passed tags in differeing order through time.
-    if let Some(tagset) = tagset {
-        let mut tag_count = 0;
-        let mut scratch = [None; constants::MAX_TAGS];
-        for kv in tagset.split(',') {
-            if let Some((k, v)) = kv.split_once(':') {
-                scratch[tag_count] = Some((Ustr::from(k), Ustr::from(v)));
-                tag_count += 1;
-            }
-        }
-        scratch[..tag_count].sort_unstable();
-        // With the tags sorted -- note they're Copy -- we hash the whole kit.
-        for kv in scratch[..tag_count].iter().flatten() {
-            kv.0.as_bytes().hash(&mut hasher);
-            kv.1.as_bytes().hash(&mut hasher);
-        }
+    for kv in tags {
+        kv.0.as_bytes().hash(&mut hasher);
+        kv.1.as_bytes().hash(&mut hasher);
     }
     hasher.finish()
 }
@@ -220,33 +172,34 @@ pub fn id(name: Ustr, tagset: Option<Ustr>) -> u64 {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use std::collections::HashMap;
     use proptest::{collection, option, strategy::Strategy, string::string_regex};
     use ustr::Ustr;
 
-    use crate::metric::id;
+    use crate::metric::{id, parse, parse_sort_tags, MetricValue};
 
-    use super::{Metric, ParseError};
+    use super::ParseError;
 
-    fn metric_name() -> impl Strategy<Value = String> {
+    fn metric_name() -> impl Strategy<Value=String> {
         string_regex("[a-zA-Z0-9.-]{1,128}").unwrap()
     }
 
-    fn metric_values() -> impl Strategy<Value = String> {
+    fn metric_values() -> impl Strategy<Value=String> {
         string_regex("[0-9]+(:[0-9]){0,8}").unwrap()
     }
 
-    fn metric_type() -> impl Strategy<Value = String> {
+    fn metric_type() -> impl Strategy<Value=String> {
         string_regex("g|c").unwrap()
     }
 
-    fn metric_tagset() -> impl Strategy<Value = Option<String>> {
+    fn metric_tagset() -> impl Strategy<Value=Option<String>> {
         option::of(
             string_regex("[a-zA-Z]{1,64}:[a-zA-Z]{1,64}(,[a-zA-Z]{1,64}:[a-zA-Z]{1,64}){0,31}")
                 .unwrap(),
         )
     }
 
-    fn metric_tags() -> impl Strategy<Value = Vec<(String, String)>> {
+    fn metric_tags() -> impl Strategy<Value=Vec<(String, String)>> {
         collection::vec(("[a-z]{1,8}", "[A-Z]{1,8}"), 0..32)
     }
 
@@ -265,10 +218,49 @@ mod tests {
             } else {
                 format!("{name}:{values}|{mtype}")
             };
-            let metric = Metric::parse(&input).unwrap();
-            assert_eq!(name, metric.raw_name());
-            assert_eq!(values, metric.raw_values());
-            assert_eq!(tagset, metric.raw_tagset().map(String::from));
+            let metric = parse(&input).unwrap();
+            assert_eq!(name, metric.name.as_str());
+
+            if let Some(tags) = tagset {
+                let mut count = 0;
+
+                let tag_map : HashMap<Ustr, Ustr>= metric.tags.into_iter().collect();
+                tags.split(',').for_each(|kv| {
+                    let parts = kv.split_once(':').unwrap();
+                    assert_eq!(parts.1, tag_map.get(&Ustr::from(parts.0)).unwrap().to_string());
+                    count += 1;
+                });
+                assert_eq!(count, tag_map.len());
+            } else {
+                assert!(metric.tags.is_empty());
+            }
+
+            match mtype.as_str() {
+                "c" => {
+                    if let MetricValue::Count(v) = metric.value {
+                        assert_eq!(v, values.split(':').next().unwrap().parse::<f64>().unwrap());
+                    } else {
+                        panic!("Expected count metric");
+                    }
+                }
+                "g" => {
+                    if let MetricValue::Gauge(v) = metric.value {
+                        assert_eq!(v, values.split(':').next().unwrap().parse::<f64>().unwrap());
+                    } else {
+                        panic!("Expected gauge metric");
+                    }
+                }
+                "d" => {
+                    if let MetricValue::Distribution(d) = metric.value {
+                        assert_eq!(d.min().unwrap(), values.split(':').next().unwrap().parse::<f64>().unwrap());
+                    } else {
+                        panic!("Expected distribution metric");
+                    }
+                }
+                _ => {
+                    panic!("Unsupported metric type");
+                }
+            }
         }
 
         #[test]
@@ -281,13 +273,9 @@ mod tests {
             } else {
                 format!("|{mtype}")
             };
-            let result = Metric::parse(&input);
+            let result = parse(&input);
 
-            assert!(result.is_err());
-            assert_eq!(
-                result.unwrap_err(),
-                ParseError::Raw("Missing name, value section")
-            );
+            assert_eq!(result.unwrap_err(),ParseError::Raw("Missing name, value section"));
         }
 
         #[test]
@@ -305,9 +293,8 @@ mod tests {
             } else {
                 format!("{name}{value}|{mtype}")
             };
-            let result = Metric::parse(&input);
+            let result = parse(&input);
 
-            assert!(result.is_err());
             assert_eq!(
                 result.unwrap_err(),
                 ParseError::Raw("Missing name, value section")
@@ -326,9 +313,8 @@ mod tests {
             } else {
                 format!("{name}:{values}|{mtype}")
             };
-            let result = Metric::parse(&input);
+            let result = parse(&input);
 
-            assert!(result.is_err());
             assert_eq!(
                 result.unwrap_err(),
                 ParseError::Raw("Unsupported metric type")
@@ -363,8 +349,8 @@ mod tests {
                 tagset2.pop();
             }
 
-            let id1 = id(Ustr::from(&name), Some(Ustr::from(&tagset1)));
-            let id2 = id(Ustr::from(&name), Some(Ustr::from(&tagset2)));
+            let id1 = id(Ustr::from(&name), &parse_sort_tags(&tagset1).unwrap());
+            let id2 = id(Ustr::from(&name), &parse_sort_tags(&tagset2).unwrap());
 
             assert_eq!(id1, id2);
         }
@@ -373,21 +359,21 @@ mod tests {
     #[test]
     fn parse_too_many_tags() {
         // 33
-        assert_eq!(Metric::parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3").unwrap_err(),
+        assert_eq!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3").unwrap_err(),
                    ParseError::Raw("Too many tags"));
 
         // 32
-        assert!(Metric::parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2").is_ok());
+        assert!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2").is_ok());
 
         // 31
-        assert!(Metric::parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1").is_ok());
+        assert!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1").is_ok());
 
         // 30
-        assert!(Metric::parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3").is_ok());
+        assert!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3").is_ok());
     }
 
     #[test]
     fn invalid_dogstatsd_no_panic() {
-        assert!(Metric::parse("somerandomstring|c+a;slda").is_err());
+        assert!(parse("somerandomstring|c+a;slda").is_err());
     }
 }

@@ -17,3 +17,5 @@ pub(crate) const MAX_SIZE_BYTES_SINGLE_METRIC: u64 = 5 * MB;
 pub(crate) const MAX_ENTRIES_SKETCH_METRIC: usize = 1_000;
 
 pub(crate) const MAX_SIZE_SKETCH_METRIC: u64 = 62 * MB;
+
+pub(crate) const EMPTY_TAGS: Vec<(Ustr, Ustr)> = Vec::new();
