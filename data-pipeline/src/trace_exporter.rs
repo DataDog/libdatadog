@@ -3,7 +3,7 @@
 use crate::{span_concentrator::SpanConcentrator, stats_exporter};
 use bytes::Bytes;
 use datadog_trace_protobuf::pb;
-use datadog_trace_utils::trace_utils::{self, SendData, TracerHeaderTags};
+use datadog_trace_utils::trace_utils::{self, has_top_level, SendData, TracerHeaderTags};
 use datadog_trace_utils::tracer_payload;
 use datadog_trace_utils::tracer_payload::TraceEncoding;
 use ddcommon::{connector, Endpoint};
@@ -73,6 +73,42 @@ fn add_path(url: &Uri, path: &str) -> Uri {
     let mut parts = url.clone().into_parts();
     parts.path_and_query = Some(new_p_and_q);
     Uri::from_parts(parts).unwrap()
+}
+
+/// Remove spans and chunks only keeping the ones that may be sampled by the agent
+fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) {
+    traces.retain_mut(|chunk| {
+        let mut sampled_indexes = Vec::new();
+        for (index, span) in chunk.iter().enumerate() {
+            if span.error == 1 {
+                // We send chunks containing an error
+                return true;
+            }
+            let priority = span.metrics.get("_sampling_priority_v1");
+            if priority.is_none() || priority.is_some_and(|p| *p > 0.0) {
+                if has_top_level(span) {
+                    // We send chunks with no priority or positive priority
+                    return true;
+                }
+                // We send single spans with priority
+                sampled_indexes.push(index);
+            }
+            if span.metrics.contains_key("_dd.sr.eausr") {
+                // We send analyzed spans
+                sampled_indexes.push(index);
+            }
+        }
+        if sampled_indexes.is_empty() {
+            // If no spans where sampled we can drop the whole chunk
+            return false;
+        }
+        let sampled_spans = sampled_indexes
+            .iter()
+            .map(|i| std::mem::take(&mut chunk[*i]))
+            .collect();
+        *chunk = sampled_spans;
+        true
+    })
 }
 
 struct TracerTags {
@@ -240,7 +276,7 @@ impl TraceExporter {
     fn send_deser_ser(&self, data: &[u8]) -> Result<String, String> {
         let size = data.len();
         // TODO base on input format
-        let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_slice(data) {
+        let mut traces: Vec<Vec<pb::Span>> = match rmp_serde::from_slice(data) {
             Ok(res) => res,
             Err(err) => {
                 error!("Error deserializing trace from request body: {err}");
@@ -255,6 +291,9 @@ impl TraceExporter {
 
         if let StatsComputationStatus::StatsEnabled { .. } = &self.stats {
             self.add_spans_to_stats(traces.iter().flat_map(|trace| trace.iter()));
+            // Once stats have been computed we can drop all chunks that are not going to be
+            // sampled by the agent
+            drop_chunks(&mut traces);
         }
 
         let header_tags: TracerHeaderTags<'_> = (&self.tags).into();
