@@ -5022,6 +5022,7 @@ dependencies = [
  "once_cell",
  "pretty_assertions",
  "rand",
+ "rand_chacha",
  "test-case",
 ]
 
