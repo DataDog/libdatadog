@@ -634,8 +634,8 @@ impl SpawnWorker {
                 }
                 unsafe {
                     libc::close(skip_close_fd);
+                    libc::_exit(0);
                 }
-                std::process::exit(0);
             }
         }
 
