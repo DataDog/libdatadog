@@ -136,14 +136,7 @@ impl<'a> From<&'a TracerTags> for TracerHeaderTags<'a> {
 
 impl<'a> From<&'a TracerTags> for HashMap<&'static str, String> {
     fn from(tags: &'a TracerTags) -> HashMap<&'static str, String> {
-        TracerHeaderTags::<'_> {
-            lang: &tags.language,
-            lang_version: &tags.language_version,
-            tracer_version: &tags.tracer_version,
-            lang_interpreter: &tags.language_interpreter,
-            ..Default::default()
-        }
-        .into()
+        TracerHeaderTags::from(tags).into()
     }
 }
 
@@ -447,51 +440,54 @@ impl TraceExporterBuilder {
         self
     }
 
-    pub fn build(mut self) -> anyhow::Result<TraceExporter> {
+    pub fn build(self) -> anyhow::Result<TraceExporter> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
 
         let mut stats = StatsComputationStatus::StatsDisabled;
 
-        if let Some(bucket_size) = self.stats_bucket_size {
-            let stats_concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
-                bucket_size,
-                time::SystemTime::now(),
-                self.peer_tags_aggregation,
-                self.compute_stats_by_span_kind,
-                self.peer_tags,
-            )));
+        // Proxy mode does not support stats
+        if self.input_format != TraceExporterInputFormat::Proxy {
+            if let Some(bucket_size) = self.stats_bucket_size {
+                let stats_concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
+                    bucket_size,
+                    time::SystemTime::now(),
+                    self.peer_tags_aggregation,
+                    self.compute_stats_by_span_kind,
+                    self.peer_tags,
+                )));
 
-            let cancellation_token = CancellationToken::new();
+                let cancellation_token = CancellationToken::new();
 
-            let mut stats_exporter = stats_exporter::StatsExporter::new(
-                self.stats_bucket_size.unwrap(),
-                stats_concentrator.clone(),
-                stats_exporter::LibraryMetadata {
-                    hostname: self.hostname,
-                    env: self.env,
-                    version: self.version,
-                    lang: self.language.clone(),
-                    tracer_version: self.tracer_version.clone(),
-                    runtime_id: uuid::Uuid::new_v4().to_string(),
-                    service: self.service,
-                    ..Default::default()
-                },
-                Endpoint::from_url(stats_exporter::stats_url_from_agent_url(
-                    self.url.as_deref().unwrap_or("http://127.0.0.1:8126"),
-                )?),
-                cancellation_token.clone(),
-            );
+                let mut stats_exporter = stats_exporter::StatsExporter::new(
+                    self.stats_bucket_size.unwrap(),
+                    stats_concentrator.clone(),
+                    stats_exporter::LibraryMetadata {
+                        hostname: self.hostname,
+                        env: self.env,
+                        version: self.version,
+                        lang: self.language.clone(),
+                        tracer_version: self.tracer_version.clone(),
+                        runtime_id: uuid::Uuid::new_v4().to_string(),
+                        service: self.service,
+                        ..Default::default()
+                    },
+                    Endpoint::from_url(stats_exporter::stats_url_from_agent_url(
+                        self.url.as_deref().unwrap_or("http://127.0.0.1:8126"),
+                    )?),
+                    cancellation_token.clone(),
+                );
 
-            let exporter_handle = runtime.spawn(async move {
-                stats_exporter.run().await;
-            });
+                let exporter_handle = runtime.spawn(async move {
+                    stats_exporter.run().await;
+                });
 
-            stats = StatsComputationStatus::StatsEnabled {
-                stats_concentrator,
-                cancellation_token,
-                exporter_handle,
+                stats = StatsComputationStatus::StatsEnabled {
+                    stats_concentrator,
+                    cancellation_token,
+                    exporter_handle,
+                }
             }
         }
 
@@ -551,6 +547,7 @@ mod tests {
         assert_eq!(exporter.tags.language, "nodejs");
         assert_eq!(exporter.tags.language_version, "1.0");
         assert_eq!(exporter.tags.language_interpreter, "v8");
+        assert_eq!(exporter.tags.client_computed_stats, false);
     }
 
     #[test]
@@ -561,6 +558,7 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8")
+            .enable_stats(Duration::from_secs(10))
             .build()
             .unwrap();
 
@@ -576,6 +574,7 @@ mod tests {
         assert_eq!(exporter.tags.language, "nodejs");
         assert_eq!(exporter.tags.language_version, "1.0");
         assert_eq!(exporter.tags.language_interpreter, "v8");
+        assert_eq!(exporter.tags.client_computed_stats, true);
     }
 
     #[test]
@@ -585,6 +584,7 @@ mod tests {
             language: "rust".to_string(),
             language_version: "1.52.1".to_string(),
             language_interpreter: "rustc".to_string(),
+            client_computed_stats: true,
         };
 
         let tracer_header_tags: TracerHeaderTags = (&tracer_tags).into();
@@ -593,6 +593,7 @@ mod tests {
         assert_eq!(tracer_header_tags.lang, "rust");
         assert_eq!(tracer_header_tags.lang_version, "1.52.1");
         assert_eq!(tracer_header_tags.lang_interpreter, "rustc");
+        assert_eq!(tracer_header_tags.client_computed_stats, true);
     }
 
     #[test]
@@ -602,6 +603,7 @@ mod tests {
             language: "rust".to_string(),
             language_version: "1.52.1".to_string(),
             language_interpreter: "rustc".to_string(),
+            client_computed_stats: true,
         };
 
         let hashmap: HashMap<&'static str, String> = (&tracer_tags).into();

@@ -251,7 +251,7 @@ mod tests {
         trace_utils::compute_top_level_span(trace.as_mut_slice());
 
         for span in trace.iter() {
-            concentrator.add_span(span).unwrap();
+            concentrator.add_span(span);
         }
         concentrator
     }
