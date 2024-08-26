@@ -733,6 +733,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_shutdown() {
         let server = MockServer::start();
