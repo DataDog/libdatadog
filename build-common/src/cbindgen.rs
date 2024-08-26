@@ -7,12 +7,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str;
 
+pub const HEADER_PATH: &str = "include/datadog";
+
 /// Determines the cargo target directory and deliverables directory.
 ///
 /// # Returns
 ///
 /// * `(PathBuf, PathBuf)` - The cargo target directory and deliverables directory.
-fn determine_paths() -> (PathBuf, PathBuf) {
+pub fn determine_paths() -> (PathBuf, PathBuf) {
     let cargo_target_dir = match env::var_os("CARGO_TARGET_DIR") {
         Some(dir) => PathBuf::from(dir),
         None => {
@@ -94,7 +96,7 @@ pub fn generate_header(crate_dir: PathBuf, header_name: &str, output_base_dir: P
         output_base_dir.is_absolute(),
         "output_base_dir must be an absolute path"
     );
-    let output_path = output_base_dir.join("include/datadog/").join(header_name);
+    let output_path = output_base_dir.join(HEADER_PATH).join(header_name);
 
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent).expect("Failed to create output directory");
@@ -148,7 +150,7 @@ pub fn copy_and_configure_headers() {
 /// * `destination` - The destination path
 fn copy_header(source: &Path, destination: &Path) {
     let output_path = destination
-        .join("include/datadog/")
+        .join(HEADER_PATH)
         .join(source.file_name().unwrap());
 
     if let Some(parent) = output_path.parent() {

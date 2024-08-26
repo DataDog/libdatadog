@@ -69,7 +69,7 @@ jobs:
         if: success() || failure() 
         uses: mikepenz/action-junit-report@v4
         with:
-          report_paths: "target/nextestgci/junit.xml"
+          report_paths: "target/nextest/ci/junit.xml"
           check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
           include_passed: true
 

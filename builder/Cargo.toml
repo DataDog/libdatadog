@@ -19,6 +19,7 @@ symbolizer = ["datadog-profiling-ffi?/symbolizer"]
 
 [build-dependencies]
 anyhow = { version = "1.0" }
+build_common = { path = "../build-common" }
 cmake = "0.1.50"
 tools = { path = "../tools" }
 datadog-crashtracker-ffi = { path = "../crashtracker-ffi", optional = true }
