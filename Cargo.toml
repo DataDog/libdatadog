@@ -32,6 +32,7 @@ members = [
   "data-pipeline",
   "data-pipeline-ffi",
   "ddsketch",
+  "tinybytes",
 ]
 
 default-members = [

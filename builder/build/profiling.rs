@@ -21,8 +21,11 @@ pub struct Profiling {
 
 impl Profiling {
     fn add_headers(&self) -> Result<()> {
-        // Telemetry is reexported through profiling by default.
-        let headers: [&str; 2] = ["profiling.h", "telemetry.h"];
+        // Allowing unused_mut due to the methods mutating the vector are behind a feature flag.
+        #[allow(unused_mut)]
+        let mut headers = vec!["profiling.h"];
+        #[cfg(feature = "telemetry")]
+        headers.push("telemetry.h");
 
         let mut origin_path: PathBuf = [&self.source_include, "dummy.h"].iter().collect();
         let mut target_path: PathBuf = [&self.target_include, "dummy.h"].iter().collect();

@@ -185,9 +185,10 @@ impl Builder {
         let mut ar = tar::Builder::new(artifact);
         ar.append_dir_all("lib", self.target_lib.as_ref())?;
         ar.append_dir("bin", self.target_bin.as_ref())?;
-        ar.append_dir_all("include", self.target_include.as_ref())?;
+        ar.append_dir_all("include/datadog", self.target_include.as_ref())?;
 
-        Ok(ar.finish().expect("Failed to write the tarfile"))
+        ar.finish().expect("Failed to write the tarfile");
+        Ok(())
     }
 }
 

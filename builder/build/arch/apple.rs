@@ -27,9 +27,11 @@ pub fn fix_rpath(lib_path: &str) {
 
 pub fn strip_libraries(lib_path: &str) {
     // objcopy is not available in macos image. Investigate llvm-objcopy
-    Command::new("strip")
+    let mut strip = Command::new("strip")
         .arg("-S")
         .arg(lib_path.to_owned() + "/libdatadog_profiling.dylib")
         .spawn()
-        .expect("failed to strip the library");
+        .expect("Failed to spawn strip");
+
+    strip.wait().expect("Failed to strip library");
 }

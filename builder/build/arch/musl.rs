@@ -22,29 +22,37 @@ pub fn fix_rpath(lib_path: &str) {
 }
 
 pub fn strip_libraries(lib_path: &str) {
-    Command::new("objcopy")
+    let mut rm_section = Command::new("objcopy")
         .arg("--remove-section")
         .arg(".llvmbc")
         .arg(lib_path.to_owned() + "/libdatadog_profiling.a")
         .spawn()
-        .expect("failed to remove llvm section");
+        .expect("failed to spawn objcopy");
 
-    Command::new("objcopy")
+    rm_section.wait().expect("Failed to remove llvmbc section");
+
+    let mut create_debug = Command::new("objcopy")
         .arg("--only-keep-debug")
         .arg(lib_path.to_owned() + "/libdatadog_profiling.so")
         .arg(lib_path.to_owned() + "/libdatadog_profiling.debug")
         .spawn()
-        .expect("failed to create debug file");
+        .expect("Failed to spawn objcopy");
 
-    Command::new("strip")
+    create_debug.wait().expect("Failed to extract debug info");
+
+    let mut strip = Command::new("strip")
         .arg("-s")
         .arg(lib_path.to_owned() + "/libdatadog_profiling.so")
         .spawn()
-        .expect("failed to strip the library");
+        .expect("Failed to spawn strip");
 
-    Command::new("objcopy")
+    strip.wait().expect("Failed to strip library");
+
+    let mut debug = Command::new("objcopy")
         .arg("--add-gnu-debuglink=".to_string() + lib_path + "/libdatadog_profiling.debug")
         .arg(lib_path.to_owned() + "/libdatadog_profiling.so")
         .spawn()
-        .expect("failed to create debug file");
+        .expect("Failed to spawn objcopy");
+
+    debug.wait().expect("Failed to set debuglink");
 }
