@@ -3,7 +3,9 @@
 use crate::{span_concentrator::SpanConcentrator, stats_exporter};
 use bytes::Bytes;
 use datadog_trace_protobuf::pb;
-use datadog_trace_utils::trace_utils::{self, has_top_level, SendData, TracerHeaderTags};
+use datadog_trace_utils::trace_utils::{
+    self, compute_top_level_span, has_top_level, SendData, TracerHeaderTags,
+};
 use datadog_trace_utils::tracer_payload;
 use datadog_trace_utils::tracer_payload::TraceEncoding;
 use ddcommon::{connector, Endpoint};
@@ -119,6 +121,7 @@ struct TracerTags {
     language_version: String,
     language_interpreter: String,
     client_computed_stats: bool,
+    client_computed_top_level: bool,
 }
 
 impl<'a> From<&'a TracerTags> for TracerHeaderTags<'a> {
@@ -129,6 +132,7 @@ impl<'a> From<&'a TracerTags> for TracerHeaderTags<'a> {
             tracer_version: &tags.tracer_version,
             lang_interpreter: &tags.language_interpreter,
             client_computed_stats: tags.client_computed_stats,
+            client_computed_top_level: tags.client_computed_top_level,
             ..Default::default()
         }
     }
@@ -157,6 +161,7 @@ pub struct TraceExporter {
     // TODO - do something with the response callback - https://datadoghq.atlassian.net/browse/APMSP-1019
     _response_callback: Option<Box<dyn ResponseCallback>>,
     runtime: Runtime,
+    client_computed_top_level: bool,
     stats: StatsComputationStatus,
 }
 
@@ -285,6 +290,11 @@ impl TraceExporter {
         }
 
         if let StatsComputationStatus::StatsEnabled { .. } = &self.stats {
+            if !self.client_computed_top_level {
+                for chunk in traces.iter_mut() {
+                    compute_top_level_span(chunk);
+                }
+            }
             self.add_spans_to_stats(traces.iter().flat_map(|trace| trace.iter()));
             // Once stats have been computed we can drop all chunks that are not going to be
             // sampled by the agent
@@ -355,6 +365,7 @@ pub struct TraceExporterBuilder {
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     response_callback: Option<Box<dyn ResponseCallback>>,
+    client_computed_top_level: bool,
 
     // Stats specific fields
     stats_bucket_size: Option<time::Duration>,
@@ -421,6 +432,11 @@ impl TraceExporterBuilder {
 
     pub fn set_response_callback(mut self, response_callback: Box<dyn ResponseCallback>) -> Self {
         self.response_callback = Some(response_callback);
+        self
+    }
+
+    pub fn set_client_computed_top_level(mut self, value: bool) -> Self {
+        self.client_computed_top_level = value;
         self
     }
 
@@ -499,10 +515,13 @@ impl TraceExporterBuilder {
                 language_interpreter: self.language_interpreter,
                 language: self.language,
                 client_computed_stats: self.stats_bucket_size.is_some(),
+                client_computed_top_level: self.client_computed_top_level
+                    || self.stats_bucket_size.is_some(),
             },
             input_format: self.input_format,
             output_format: self.output_format,
             _response_callback: self.response_callback,
+            client_computed_top_level: self.client_computed_top_level,
             runtime,
             stats,
         })
@@ -585,6 +604,7 @@ mod tests {
             language_version: "1.52.1".to_string(),
             language_interpreter: "rustc".to_string(),
             client_computed_stats: true,
+            client_computed_top_level: true,
         };
 
         let tracer_header_tags: TracerHeaderTags = (&tracer_tags).into();
@@ -594,6 +614,7 @@ mod tests {
         assert_eq!(tracer_header_tags.lang_version, "1.52.1");
         assert_eq!(tracer_header_tags.lang_interpreter, "rustc");
         assert!(tracer_header_tags.client_computed_stats);
+        assert!(tracer_header_tags.client_computed_top_level);
     }
 
     #[test]
@@ -604,6 +625,7 @@ mod tests {
             language_version: "1.52.1".to_string(),
             language_interpreter: "rustc".to_string(),
             client_computed_stats: true,
+            client_computed_top_level: true,
         };
 
         let hashmap: HashMap<&'static str, String> = (&tracer_tags).into();
@@ -616,6 +638,7 @@ mod tests {
             "rustc"
         );
         assert!(hashmap.contains_key("datadog-client-computed-stats"));
+        assert!(hashmap.contains_key("datadog-client-computed-top-level"));
     }
 
     #[test]
