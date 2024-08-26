@@ -68,3 +68,6 @@ inherits = "dev"
 opt-level = 3
 incremental = false
 codegen-units = 1
+
+[patch.crates-io]
+proptest = { git = 'https://github.com/bantonsson/proptest.git', branch = "ban/avoid-libm-in-std"}
