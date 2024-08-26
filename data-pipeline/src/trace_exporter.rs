@@ -85,15 +85,17 @@ fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) {
                 return true;
             }
             let priority = span.metrics.get("_sampling_priority_v1");
-            if priority.is_none() || priority.is_some_and(|p| *p > 0.0) {
+            if priority.is_some_and(|p| *p > 0.0) {
                 if has_top_level(span) {
-                    // We send chunks with no priority or positive priority
+                    // We send chunks with positive priority
                     return true;
                 }
-                // We send single spans with priority
+                // We send single spans with positive priority
                 sampled_indexes.push(index);
-            }
-            if span.metrics.contains_key("_dd.sr.eausr") {
+            } else if priority.is_none() && has_top_level(span) {
+                // We send chunks with no priority
+                return true;
+            } else if span.metrics.contains_key("_dd.sr.eausr") {
                 // We send analyzed spans
                 sampled_indexes.push(index);
             }
@@ -611,6 +613,122 @@ mod tests {
             hashmap.get("datadog-meta-lang-interpreter").unwrap(),
             "rustc"
         );
+        assert!(hashmap.get("datadog-client-computed-stats").is_some());
+    }
+
+    #[test]
+    fn test_drop_chunks() {
+        let chunk_with_priority = vec![
+            pb::Span {
+                span_id: 1,
+                metrics: HashMap::from([
+                    ("_sampling_priority_v1".to_string(), 1.0),
+                    ("_dd.top_level".to_string(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            pb::Span {
+                span_id: 2,
+                parent_id: 1,
+                ..Default::default()
+            },
+        ];
+        let chunk_with_null_priority = vec![
+            pb::Span {
+                span_id: 1,
+                metrics: HashMap::from([
+                    ("_sampling_priority_v1".to_string(), 0.0),
+                    ("_dd.top_level".to_string(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            pb::Span {
+                span_id: 2,
+                parent_id: 1,
+                ..Default::default()
+            },
+        ];
+        let chunk_without_priority = vec![
+            pb::Span {
+                span_id: 1,
+                metrics: HashMap::from([("_dd.top_level".to_string(), 1.0)]),
+                ..Default::default()
+            },
+            pb::Span {
+                span_id: 2,
+                parent_id: 1,
+                ..Default::default()
+            },
+        ];
+        let chunk_with_error = vec![
+            pb::Span {
+                span_id: 1,
+                error: 1,
+                metrics: HashMap::from([
+                    ("_sampling_priority_v1".to_string(), 0.0),
+                    ("_dd.top_level".to_string(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            pb::Span {
+                span_id: 2,
+                parent_id: 1,
+                ..Default::default()
+            },
+        ];
+        let chunk_with_a_single_span = vec![
+            pb::Span {
+                span_id: 1,
+                metrics: HashMap::from([
+                    ("_sampling_priority_v1".to_string(), 0.0),
+                    ("_dd.top_level".to_string(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            pb::Span {
+                span_id: 2,
+                parent_id: 1,
+                metrics: HashMap::from([("_sampling_priority_v1".to_string(), 1.0)]),
+                ..Default::default()
+            },
+        ];
+        let chunk_with_analyzed_span = vec![
+            pb::Span {
+                span_id: 1,
+                metrics: HashMap::from([
+                    ("_sampling_priority_v1".to_string(), 0.0),
+                    ("_dd.top_level".to_string(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            pb::Span {
+                span_id: 2,
+                parent_id: 1,
+                metrics: HashMap::from([("_dd.sr.eausr".to_string(), 1.0)]),
+                ..Default::default()
+            },
+        ];
+
+        let chunks_and_expected_sampled_spans = vec![
+            (chunk_with_priority, 2),
+            (chunk_with_null_priority, 0),
+            (chunk_without_priority, 2),
+            (chunk_with_error, 2),
+            (chunk_with_a_single_span, 1),
+            (chunk_with_analyzed_span, 1),
+        ];
+
+        for (chunk, expected_count) in chunks_and_expected_sampled_spans.into_iter() {
+            let mut traces = vec![chunk];
+            drop_chunks(&mut traces);
+            if expected_count == 0 {
+                assert!(traces.is_empty());
+            } else {
+                println!("{:?}", traces[0]);
+                assert_eq!(traces[0].len(), expected_count);
+                println!("----")
+            }
+        }
     }
 
     #[test]
