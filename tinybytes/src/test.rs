@@ -7,7 +7,7 @@ use core::str;
 use super::*;
 use once_cell::sync::OnceCell;
 use pretty_assertions::assert_eq;
-//use proptest::test_runner;
+use proptest::test_runner;
 use test_case::test_case;
 
 static HELLO_BYTES: OnceCell<Bytes> = OnceCell::new();
@@ -56,31 +56,30 @@ fn test_bytes_slice_ref(bytes: Bytes, subset: &[u8], expected: &str) {
 
 // Since we want a deterministic rng for the tests, we need to use a custom test runner
 // instead of the !proptest macro.
-// fn test_runner() -> test_runner::TestRunner {
-//     test_runner::TestRunner::new_with_rng(
-//         test_runner::Config {
-//             failure_persistence: None,
-//             ..Default::default()
-//         },
-//         test_runner::TestRng::deterministic_rng(test_runner::RngAlgorithm::ChaCha),
-//     )
-// }
+fn test_runner() -> test_runner::TestRunner {
+    test_runner::TestRunner::new_with_rng(
+        test_runner::Config {
+            failure_persistence: None,
+            ..Default::default()
+        },
+        test_runner::TestRng::deterministic_rng(test_runner::RngAlgorithm::ChaCha),
+    )
+}
 
-// #[test]
-// fn test_bytes_clone_is_shallow() {
-//     test_runner()
-//         .run(&".*", |s| {
-//             let b1: Bytes = Bytes::from(s.clone());
-//             let b2: Bytes = b1.clone();
-//             // We know the bytes come from a String, so we can compare str values for pretty
-// diffs             assert_eq!(str::from_utf8(&b2), str::from_utf8(&b1));
-//             assert_eq!(b2, b1);
-//             // The pointers should be the same as well
-//             assert_eq!(b2.as_ptr(), b1.as_ptr());
-//             Ok(())
-//         })
-//         .unwrap();
-// }
+#[test]
+fn test_bytes_clone_is_shallow() {
+    test_runner()
+        .run(&".*", |s| {
+            let b1: Bytes = Bytes::from(s.clone());
+            let b2: Bytes = b1.clone();
+            // We know the bytes come from a String, so we can compare str values for pretty diffs             assert_eq!(str::from_utf8(&b2), str::from_utf8(&b1));
+            assert_eq!(b2, b1);
+            // The pointers should be the same as well
+            assert_eq!(b2.as_ptr(), b1.as_ptr());
+            Ok(())
+        })
+        .unwrap();
+}
 
 // #[test]
 // fn test_bytes_slice_is_shallow() {
