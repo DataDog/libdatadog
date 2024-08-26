@@ -26,6 +26,7 @@ datadog-trace-utils = { path = "../trace-utils" }
 datadog-trace-normalization = { path = "../trace-normalization" }
 datadog-remote-config = { path = "../remote-config" }
 datadog-crashtracker = { path = "../crashtracker" }
+tinybytes =  { path = "../tinybytes" }
 
 futures = { version = "0.3", default-features = false }
 manual_future = "0.1.1"

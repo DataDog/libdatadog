@@ -47,6 +47,7 @@ use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
 use datadog_remote_config::fetch::ConfigInvariants;
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
+use tinybytes;
 
 type NoResponse = Ready<()>;
 
@@ -249,6 +250,8 @@ impl SidecarServer {
     }
 
     fn send_trace_v04(&self, headers: &SerializedTracerHeaderTags, data: &[u8], target: &Endpoint) {
+        let data_bytes = tinybytes::Bytes::copy_from_slice(data);
+
         let headers: TracerHeaderTags = match headers.try_into() {
             Ok(headers) => headers,
             Err(e) => {
@@ -260,7 +263,7 @@ impl SidecarServer {
         let size = data.len();
 
         match tracer_payload::TracerPayloadParams::new(
-            data,
+            data_bytes,
             &headers,
             &mut tracer_payload::DefaultTraceChunkProcessor,
             target.api_key.is_some(),

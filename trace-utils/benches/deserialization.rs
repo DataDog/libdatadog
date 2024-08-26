@@ -7,6 +7,7 @@ use datadog_trace_utils::tracer_payload::{
     DefaultTraceChunkProcessor, TraceEncoding, TracerPayloadCollection, TracerPayloadParams,
 };
 use serde_json::json;
+use tinybytes;
 
 pub fn deserialize_msgpack_to_internal(c: &mut Criterion) {
     let span_data1 = json!([{
@@ -39,17 +40,18 @@ pub fn deserialize_msgpack_to_internal(c: &mut Criterion) {
 
     let data =
         rmp_serde::to_vec(&vec![span_data1, span_data2]).expect("Failed to serialize test spans.");
+    let data_as_bytes = tinybytes::Bytes::copy_from_slice(&data);
     let tracer_header_tags = &TracerHeaderTags::default();
 
     c.bench_function(
         "benching deserializing traces from msgpack to their internal representation ",
         |b| {
             b.iter_batched(
-                || &data,
-                |data| {
+                || data_as_bytes.clone(),
+                |data_as_bytes| {
                     let result: anyhow::Result<TracerPayloadCollection> = black_box(
                         TracerPayloadParams::new(
-                            data,
+                            data_as_bytes,
                             tracer_header_tags,
                             &mut DefaultTraceChunkProcessor,
                             false,
