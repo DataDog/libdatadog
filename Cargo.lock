@@ -1642,6 +1642,7 @@ dependencies = [
  "spawn_worker",
  "sys-info",
  "tempfile",
+ "tinybytes",
  "tokio",
  "tokio-util 0.7.11",
  "tracing",
@@ -1771,6 +1772,7 @@ dependencies = [
  "serde",
  "serde_json",
  "testcontainers",
+ "tinybytes",
  "tokio",
 ]
 

@@ -39,6 +39,7 @@ testcontainers = { version = "0.17.0", optional = true }
 cargo_metadata = { version = "0.18.1", optional = true }
 # Dependency of cargo metadata, but 0.1.8 requires too new of a rust version.
 cargo-platform = { version = "=0.1.7", optional = true }
+tinybytes =  { path = "../tinybytes" }
 
 [dev-dependencies]
 bolero = "0.10.1"

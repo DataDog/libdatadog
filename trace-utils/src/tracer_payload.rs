@@ -7,6 +7,7 @@ use crate::{
 };
 use datadog_trace_protobuf::pb;
 use std::cmp::Ordering;
+use tinybytes;
 
 pub type TracerPayloadV04 = Vec<pb::Span>;
 
@@ -159,8 +160,8 @@ impl TraceChunkProcessor for DefaultTraceChunkProcessor {
 /// the conversion process, handling different encoding types and ensuring that all required
 /// data is available for the conversion.
 pub struct TracerPayloadParams<'a, T: TraceChunkProcessor + 'a> {
-    /// A byte slice containing the serialized msgpack data.
-    data: &'a [u8],
+    /// A tinybytes::Bytes slice containing the serialized msgpack data.
+    data: tinybytes::Bytes,
     /// Reference to `TracerHeaderTags` containing metadata for the trace.
     tracer_header_tags: &'a TracerHeaderTags<'a>,
     /// A mutable reference to an implementation of `TraceChunkProcessor` that processes each
@@ -177,7 +178,7 @@ pub struct TracerPayloadParams<'a, T: TraceChunkProcessor + 'a> {
 
 impl<'a, T: TraceChunkProcessor + 'a> TracerPayloadParams<'a, T> {
     pub fn new(
-        data: &'a [u8],
+        data: tinybytes::Bytes,
         tracer_header_tags: &'a TracerHeaderTags,
         chunk_processor: &'a mut T,
         is_agentless: bool,
@@ -223,12 +224,13 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
     ///     DefaultTraceChunkProcessor, TraceEncoding, TracerPayloadCollection, TracerPayloadParams,
     /// };
     /// use std::convert::TryInto;
-    ///
-    /// let data = &[/* msgpack data */];
-    ///
+    /// use tinybytes;
+    /// // This will likely be a &[u8] slice in practice.
+    /// let data: Vec<u8> = Vec::new();
+    /// let data_as_bytes = tinybytes::Bytes::from(data);
     /// let tracer_header_tags = &TracerHeaderTags::default();
     /// let result: Result<TracerPayloadCollection, _> = TracerPayloadParams::new(
-    ///     data,
+    ///     data_as_bytes,
     ///     tracer_header_tags,
     ///     &mut DefaultTraceChunkProcessor,
     ///     false,
@@ -244,9 +246,8 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
     fn try_into(self) -> Result<TracerPayloadCollection, Self::Error> {
         match self.encoding_type {
             TraceEncoding::V04 => {
-                // msgpack::decoder::from_slice requires a mutable ref to self.data, so we need to
-                // create a local copy of the ref to make the ref mutable
-                let mut data_slice: &[u8] = self.data;
+                // TODO: EK - THIS IS TEMPORARY!
+                let mut data_slice: &[u8] = self.data.as_ref();
                 let data: &mut &[u8] = &mut data_slice;
 
                 let traces: Vec<Vec<pb::Span>> =
@@ -429,11 +430,12 @@ mod tests {
 
         let data = rmp_serde::to_vec(&vec![span_data1, span_data2])
             .expect("Failed to serialize test span.");
+        let data = tinybytes::Bytes::from(data);
 
         let tracer_header_tags = &TracerHeaderTags::default();
 
         let result: anyhow::Result<TracerPayloadCollection> = TracerPayloadParams::new(
-            &data,
+            data,
             tracer_header_tags,
             &mut DefaultTraceChunkProcessor,
             false,
@@ -459,10 +461,11 @@ mod tests {
         let dummy_trace = create_trace();
         let expected = vec![dummy_trace.clone()];
         let payload = rmp_serde::to_vec_named(&expected).unwrap();
+        let payload = tinybytes::Bytes::from(payload);
         let tracer_header_tags = &TracerHeaderTags::default();
 
         let result: anyhow::Result<TracerPayloadCollection> = TracerPayloadParams::new(
-            &payload,
+            payload,
             tracer_header_tags,
             &mut DefaultTraceChunkProcessor,
             false,
