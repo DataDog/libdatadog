@@ -21,3 +21,4 @@ test-case = "2.2"
 rand = {version = "0.8", features = ["alloc", "std"], default-features = false}
 rand_chacha = {version = "0.3", default-features = false}
 rand_xorshift = {version = "0.3"}
+num-traits = {version = "0.2.15", default-features = false, features = ["libm"]}
