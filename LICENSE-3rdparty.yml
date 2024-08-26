@@ -1,4 +1,4 @@
-root_name: datadog-alloc, datadog-crashtracker, ddcommon, ddtelemetry, datadog-ddsketch, datadog-crashtracker-ffi, ddcommon-ffi, build_common, datadog-profiling, datadog-profiling-ffi, data-pipeline-ffi, data-pipeline, datadog-trace-normalization, datadog-trace-protobuf, datadog-trace-utils, ddtelemetry-ffi, symbolizer-ffi, datadog-profiling-replayer, datadog-dynamic-configuration, tools, datadog-ipc, datadog-ipc-macros, tarpc, tarpc-plugins, spawn_worker, cc_utils, datadog-remote-config, datadog-sidecar, datadog-sidecar-macros, datadog-sidecar-ffi, sidecar_mockgen, datadog-trace-obfuscation, test_spawn_from_lib, datadog-serverless-trace-mini-agent, datadog-trace-mini-agent, bin_tests
+root_name: datadog-alloc, datadog-crashtracker, ddcommon, ddtelemetry, datadog-ddsketch, datadog-crashtracker-ffi, ddcommon-ffi, build_common, datadog-profiling, datadog-profiling-ffi, data-pipeline-ffi, data-pipeline, datadog-trace-normalization, datadog-trace-protobuf, datadog-trace-obfuscation, datadog-trace-utils, ddtelemetry-ffi, symbolizer-ffi, datadog-profiling-replayer, datadog-dynamic-configuration, tools, datadog-ipc, datadog-ipc-macros, tarpc, tarpc-plugins, spawn_worker, cc_utils, datadog-remote-config, datadog-sidecar, datadog-sidecar-macros, datadog-sidecar-ffi, sidecar_mockgen, test_spawn_from_lib, datadog-serverless-trace-mini-agent, datadog-trace-mini-agent, bin_tests
 third_party_libraries:
 - package_name: addr2line
   package_version: 0.21.0
@@ -28814,7 +28814,7 @@ third_party_libraries:
       IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
       DEALINGS IN THE SOFTWARE.
 - package_name: tokio-util
-  package_version: 0.7.10
+  package_version: 0.7.11
   repository: https://github.com/tokio-rs/tokio
   license: MIT
   licenses:
@@ -29839,7 +29839,7 @@ third_party_libraries:
       IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
       DEALINGS IN THE SOFTWARE.
 - package_name: uuid
-  package_version: 1.8.0
+  package_version: 1.10.0
   repository: https://github.com/uuid-rs/uuid
   license: Apache-2.0 OR MIT
   licenses:
