@@ -263,7 +263,7 @@ impl TraceExporter {
         {
             let mut stats_concentrator = stats_concentrator.lock().unwrap();
             for span in spans {
-                let _ = stats_concentrator.add_span(span);
+                stats_concentrator.add_span(span);
             }
         }
     }
@@ -547,7 +547,7 @@ mod tests {
         assert_eq!(exporter.tags.language, "nodejs");
         assert_eq!(exporter.tags.language_version, "1.0");
         assert_eq!(exporter.tags.language_interpreter, "v8");
-        assert_eq!(exporter.tags.client_computed_stats, false);
+        assert!(!exporter.tags.client_computed_stats);
     }
 
     #[test]
@@ -574,7 +574,7 @@ mod tests {
         assert_eq!(exporter.tags.language, "nodejs");
         assert_eq!(exporter.tags.language_version, "1.0");
         assert_eq!(exporter.tags.language_interpreter, "v8");
-        assert_eq!(exporter.tags.client_computed_stats, true);
+        assert!(exporter.tags.client_computed_stats);
     }
 
     #[test]
@@ -593,7 +593,7 @@ mod tests {
         assert_eq!(tracer_header_tags.lang, "rust");
         assert_eq!(tracer_header_tags.lang_version, "1.52.1");
         assert_eq!(tracer_header_tags.lang_interpreter, "rustc");
-        assert_eq!(tracer_header_tags.client_computed_stats, true);
+        assert!(tracer_header_tags.client_computed_stats);
     }
 
     #[test]
@@ -615,7 +615,7 @@ mod tests {
             hashmap.get("datadog-meta-lang-interpreter").unwrap(),
             "rustc"
         );
-        assert!(hashmap.get("datadog-client-computed-stats").is_some());
+        assert!(hashmap.contains_key("datadog-client-computed-stats"));
     }
 
     #[test]
