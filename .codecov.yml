@@ -59,6 +59,10 @@ component_management:
       name: spawn-worker  # this is a display name, and can be changed freely
       paths:
         - spawn_worker
+    - component_id: tinybytes  # this is an identifier that should not be changed
+      name: tinybytes  # this is a display name, and can be changed freely
+      paths:
+        - tinybytes
     - component_id: trace-mini-agent  # this is an identifier that should not be changed
       name: trace-mini-agent  # this is a display name, and can be changed freely
       paths:
