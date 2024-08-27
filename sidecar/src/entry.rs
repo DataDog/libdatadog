@@ -148,6 +148,7 @@ pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
     for (env, val) in cfg.to_env().into_iter() {
         spawn_cfg.append_env(env, val);
     }
+    spawn_cfg.append_env("LSAN_OPTIONS", "detect_leaks=0");
 
     match cfg.log_method {
         config::LogMethod::File(ref path) => {
