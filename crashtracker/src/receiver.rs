@@ -41,7 +41,12 @@ pub fn get_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<UnixListe
         use std::os::linux::net::SocketAddrExt;
         std::os::unix::net::SocketAddr::from_abstract_name(socket_path.as_ref())
             .and_then(|addr| {
-                std::os::unix::net::UnixListener::bind_addr(&addr).and_then(UnixListener::from_std)
+                std::os::unix::net::UnixListener::bind_addr(&addr)
+                    .and_then(|listener| {
+                        listener.set_nonblocking(true)?;
+                        Ok(listener)
+                    })
+                    .and_then(UnixListener::from_std)
             })
             .map_err(anyhow::Error::msg)
     };
