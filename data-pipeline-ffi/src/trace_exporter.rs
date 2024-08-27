@@ -21,7 +21,7 @@ use std::{ffi::c_char, ptr::NonNull, time::Duration};
 /// * `language_version` - The version of the language of the client library.
 /// * `language_interpreter` - The interpreter of the language of the client library.
 /// * `hostname` - The hostname of the application, used for stats aggregation
-/// * `env` - The envronment of the application, used for stats aggregation
+/// * `env` - The environment of the application, used for stats aggregation
 /// * `version` - The version of the application, used for stats aggregation
 /// * `service` - The service name of the application, used for stats aggregation
 /// * `input_format` - The input format of the traces. Setting this to Proxy will send the trace

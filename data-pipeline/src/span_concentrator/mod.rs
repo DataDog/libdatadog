@@ -1,7 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 //! This module implements the SpanConcentrator used to aggregate spans into stats
-#![allow(dead_code)] // TODO: Remove once the trace exporter uses the SpanConcentrator
 use std::collections::HashMap;
 use std::time::{self, Duration, SystemTime};
 

@@ -50,10 +50,12 @@ pub struct StatsExporter {
 impl StatsExporter {
     /// Return a new StatsExporter
     ///
-    /// - `meta` is used when sending the ClientStatsPayload to the agent
-    /// - `cfg` is the configuration for the stats exporter
-    ///
-    /// Returns a result to have the same signature as the blocking implementation.
+    /// - `flush_interval` the interval on which the concentrator is flushed
+    /// - `concentrator` SpanConcentrator storing the stats to be sent to the agent
+    /// - `meta` the metadata used when sending the ClientStatsPayload to the agent
+    /// - `endpoint` the Endpoint used to send stats to the agent
+    /// - `cancellation_token` Token used to safely shutdown the exporter by force flushing the
+    ///   concentrator
     pub fn new(
         flush_interval: time::Duration,
         concentrator: Arc<Mutex<SpanConcentrator>>,
@@ -74,7 +76,7 @@ impl StatsExporter {
 
     /// Flush the stats stored in the concentrator and send them
     ///
-    /// If the stats flushed from the concentrator, contain at least one time bucket, the stats are
+    /// If the stats flushed from the concentrator contain at least one time bucket the stats are
     /// send to `self.endpoint`. The stats are serialized as msgpack.
     ///
     /// # Errors
@@ -169,11 +171,7 @@ fn encode_stats_payload(
         tracer_version: meta.tracer_version,
         service: meta.service,
         container_id: meta.container_id,
-        // TODO: According to the proto this is trace specific
-        // how can this be set on the Payload level then since it can contain multiple trace ?
         git_commit_sha: meta.git_commit_sha,
-        // TODO: Can this be dropped the proto is not clear on wether this is never used in
-        // tracers or if it is used in tracers only on rare occasions
         tags: meta.tags.into_iter().map(|t| t.to_string()).collect(),
 
         sequence,
