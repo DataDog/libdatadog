@@ -153,6 +153,24 @@ enum StatsComputationStatus {
     },
 }
 
+/// The TraceExporter ingest traces from the tracers serialized as messagepack and forward them to
+/// the agent while applying some transformation.
+///
+/// # Proxy
+/// If the input format is set as `Proxy`, the exporter will forward traces to the agent without
+/// deserializing them.
+///
+/// # Features
+/// When the input format is set to `V04` the TraceExporter will deserialize the traces and perform
+/// some operation before sending them to the agent. The available operations are described below.
+///
+/// ## V07 Serialization
+/// The Trace exporter can serialize the traces to V07 before sending them to the agent.
+///
+/// ## Stats computation
+/// The Trace Exporter can compute stats on traces. In this case the trace exporter will start
+/// another task to send stats when a time bucket expire. When this feature is enabled the
+/// TraceExporter drops all spans that may not be sampled by the agent.
 pub struct TraceExporter {
     endpoint: Endpoint,
     tags: TracerTags,
@@ -170,6 +188,7 @@ impl TraceExporter {
         TraceExporterBuilder::default()
     }
 
+    /// Send msgpack serialized traces to the agent
     pub fn send(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
         match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data, trace_count),
@@ -177,6 +196,7 @@ impl TraceExporter {
         }
     }
 
+    /// Safely shutdown the TraceExporter and all related tasks
     pub fn shutdown(self) -> Result<String, String> {
         match self.stats {
             StatsComputationStatus::StatsEnabled {
@@ -289,6 +309,7 @@ impl TraceExporter {
             return Ok(String::from("{}"));
         }
 
+        // Stats computation
         if let StatsComputationStatus::StatsEnabled { .. } = &self.stats {
             if !self.client_computed_top_level {
                 for chunk in traces.iter_mut() {
@@ -365,6 +386,7 @@ pub struct TraceExporterBuilder {
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     response_callback: Option<Box<dyn ResponseCallback>>,
+    client_computed_stats: bool,
     client_computed_top_level: bool,
 
     // Stats specific fields
@@ -435,22 +457,35 @@ impl TraceExporterBuilder {
         self
     }
 
-    pub fn set_client_computed_top_level(mut self, value: bool) -> Self {
-        self.client_computed_top_level = value;
+    /// Set the header indicating the tracer has computed the top-level tag
+    pub fn set_client_computed_top_level(mut self) -> Self {
+        self.client_computed_top_level = true;
         self
     }
 
+    /// Set the header indicating the tracer has already computed stats.
+    /// This should not be used when stats computation is enabled.
+    pub fn set_client_computed_stats(mut self) -> Self {
+        self.client_computed_stats = true;
+        self
+    }
+
+    /// Enable stats computation on traces sent through this exporter
     pub fn enable_stats(mut self, bucket_size: time::Duration) -> Self {
         self.stats_bucket_size = Some(bucket_size);
         self
     }
 
+    /// Enable peer tags aggregation for stats computation (requires stats computation to be
+    /// enabled)
     pub fn enable_stats_peer_tags_aggregation(mut self, peer_tags: Vec<String>) -> Self {
         self.peer_tags_aggregation = true;
         self.peer_tags = peer_tags;
         self
     }
 
+    /// Enable stats eligibility by span kind (requires stats computation to be
+    /// enabled)
     pub fn enable_compute_stats_by_span_kind(mut self) -> Self {
         self.compute_stats_by_span_kind = true;
         self
@@ -514,9 +549,11 @@ impl TraceExporterBuilder {
                 language_version: self.language_version,
                 language_interpreter: self.language_interpreter,
                 language: self.language,
-                client_computed_stats: self.stats_bucket_size.is_some(),
-                client_computed_top_level: self.client_computed_top_level
+                client_computed_stats: self.client_computed_stats
                     || self.stats_bucket_size.is_some(),
+                client_computed_top_level: self.client_computed_top_level
+                    || self.stats_bucket_size.is_some(), /* Client side stats enforce client
+                                                          * computed top level */
             },
             input_format: self.input_format,
             output_format: self.output_format,
