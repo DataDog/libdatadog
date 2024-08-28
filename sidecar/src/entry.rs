@@ -139,16 +139,11 @@ where
         .map_err(|e| e.into())
 }
 
-pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
+pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
     #[allow(unused_unsafe)] // the unix method is unsafe
     let mut spawn_cfg = unsafe { spawn_worker::SpawnWorker::new() };
 
     spawn_cfg.target(entrypoint!(ddog_daemon_entry_point));
-
-    for (env, val) in cfg.to_env().into_iter() {
-        spawn_cfg.append_env(env, val);
-    }
-    spawn_cfg.append_env("LSAN_OPTIONS", "detect_leaks=0");
 
     match cfg.log_method {
         config::LogMethod::File(ref path) => {
@@ -165,6 +160,7 @@ pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
                 }
                 Err(e) => {
                     tracing::warn!("Failed to open logfile for sidecar: {:?}", e);
+                    cfg.log_method = config::LogMethod::Disabled;
                     spawn_cfg.stdout(Stdio::Null);
                     spawn_cfg.stderr(Stdio::Null);
                 }
@@ -176,6 +172,11 @@ pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
         }
         _ => {}
     }
+
+    for (env, val) in cfg.to_env().into_iter() {
+        spawn_cfg.append_env(env, val);
+    }
+    spawn_cfg.append_env("LSAN_OPTIONS", "detect_leaks=0");
 
     setup_daemon_process(listener, &mut spawn_cfg)?;
 
