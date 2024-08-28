@@ -1,5 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+use criterion::criterion_main;
 
-pub mod span_concentrator;
-pub mod trace_exporter;
+mod span_concentrator;
+
+criterion_main!(span_concentrator::benches);
