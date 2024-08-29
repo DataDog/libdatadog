@@ -27,6 +27,7 @@ use std::io;
 use std::io::Write;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::time::Instant;
 use tracing::{debug, error, trace, warn};
@@ -241,6 +242,9 @@ impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
         self.remote_configs
             .0
             .delete_runtime(&self.runtime_id, &self.target);
+        if self.remote_configs.0.invariants().endpoint.test_token.is_some() && self.remote_configs.0.active_runtimes() == 0 {
+            self.remote_configs.shutdown()
+        }
     }
 }
 
@@ -257,12 +261,17 @@ pub struct ShmRemoteConfigs<N: NotifyTarget + 'static>(
 
 impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
     pub fn new(invariants: ConfigInvariants, on_dead: Box<dyn FnOnce() + Sync + Send>) -> Self {
+        let is_test = invariants.endpoint.test_token.is_some();
         let storage = ConfigFileStorage {
             invariants: invariants.clone(),
             writers: Default::default(),
             on_dead: Arc::new(Mutex::new(Some(on_dead))),
         };
-        ShmRemoteConfigs(MultiTargetFetcher::new(storage, invariants))
+        let fetcher = MultiTargetFetcher::new(storage, invariants);
+        if is_test {
+            fetcher.remote_config_interval.store(10_000_000, Ordering::Relaxed);
+        }
+        ShmRemoteConfigs(fetcher)
     }
 
     pub fn is_dead(&self) -> bool {

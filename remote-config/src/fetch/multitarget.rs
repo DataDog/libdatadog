@@ -459,6 +459,14 @@ where
             }
         }
     }
+    
+    pub fn active_runtimes(&self) -> usize {
+        self.runtimes.lock().unwrap().len()
+    }
+    
+    pub fn invariants(&self) -> &ConfigInvariants {
+        self.storage.invariants()
+    }
 }
 
 #[cfg(test)]
