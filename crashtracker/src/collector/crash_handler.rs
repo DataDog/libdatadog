@@ -346,6 +346,15 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
             res
         }
         ReceiverType::UnixSocket(path) => {
+            #[cfg(target_os = "linux")]
+            let mut unix_stream = if path.starts_with(['.', '/']) {
+                UnixStream::connect(path)
+            } else {
+                use std::os::linux::net::SocketAddrExt;
+                let addr = std::os::unix::net::SocketAddr::from_abstract_name(path)?;
+                UnixStream::connect_addr(&addr)
+            }?;
+            #[cfg(not(target_os = "linux"))]
             let mut unix_stream = UnixStream::connect(path)?;
             let res = emit_crashreport(
                 &mut unix_stream,
