@@ -367,10 +367,11 @@ where
                     this.storage.clone(),
                     Box::new(move |files| {
                         let runtime_id = Arc::new(inner_fetcher.runtime_id.lock().unwrap().clone());
-                        let notify = inner_this
-                            .storage
-                            .storage
-                            .fetched(&runtime_id, &inner_fetcher.target, files);
+                        let notify = inner_this.storage.storage.fetched(
+                            &runtime_id,
+                            &inner_fetcher.target,
+                            files,
+                        );
 
                         if notify {
                             // notify_targets is Hash + Eq + Clone, allowing us to deduplicate. Also
@@ -459,11 +460,11 @@ where
             }
         }
     }
-    
+
     pub fn active_runtimes(&self) -> usize {
         self.runtimes.lock().unwrap().len()
     }
-    
+
     pub fn invariants(&self) -> &ConfigInvariants {
         self.storage.invariants()
     }

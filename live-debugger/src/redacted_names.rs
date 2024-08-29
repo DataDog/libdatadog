@@ -129,9 +129,10 @@ pub unsafe fn add_redacted_name<I: Into<Vec<u8>>>(name: I) {
 
 /// # Safety
 /// May only be called while not running yet - concurrent access to is_redacted_type is forbidden.
-pub unsafe fn add_redacted_type(name: &[u8]) {
+pub unsafe fn add_redacted_type<I: AsRef<[u8]>>(name: I) {
     assert!(!REDACTED_TYPES_INITIALIZED.load(Ordering::Relaxed));
-    if name.ends_with(&[b'*']) {
+    let name = name.as_ref();
+    if name.ends_with(b"*") {
         let regex_str = &mut *(&*REDACTED_WILDCARD_TYPES_PATTERN as *const String).cast_mut();
         if !regex_str.is_empty() {
             regex_str.push('|')
@@ -146,11 +147,11 @@ pub unsafe fn add_redacted_type(name: &[u8]) {
     }
 }
 
-pub fn is_redacted_name<'a, I: Into<&'a [u8]>>(name: I) -> bool {
+pub fn is_redacted_name<I: AsRef<[u8]>>(name: I) -> bool {
     fn invalid_char(c: u8) -> bool {
         c == b'_' || c == b'-' || c == b'$' || c == b'@'
     }
-    let name = name.into();
+    let name = name.as_ref();
     if name.len() > *ASSUMED_SAFE_NAME_LEN {
         return true; // short circuit for long names, assume them safe
     }
@@ -169,8 +170,8 @@ pub fn is_redacted_name<'a, I: Into<&'a [u8]>>(name: I) -> bool {
     REDACTED_NAMES.contains(&copy[0..copy.len()])
 }
 
-pub fn is_redacted_type<'a, I: Into<&'a [u8]>>(name: I) -> bool {
-    let name = name.into();
+pub fn is_redacted_type<I: AsRef<[u8]>>(name: I) -> bool {
+    let name = name.as_ref();
     if REDACTED_TYPES.contains(name) {
         true
     } else if !REDACTED_WILDCARD_TYPES_PATTERN.is_empty() {
@@ -178,4 +179,31 @@ pub fn is_redacted_type<'a, I: Into<&'a [u8]>>(name: I) -> bool {
     } else {
         false
     }
+}
+
+#[test]
+fn test_redacted_name() {
+    unsafe {
+        add_redacted_name("test")
+    }
+
+    assert!(is_redacted_name("test"));
+    assert!(is_redacted_name("te-st"));
+    assert!(is_redacted_name("CSRF"));
+    assert!(is_redacted_name("$XSRF"));
+    assert!(!is_redacted_name("foo"));
+    assert!(!is_redacted_name("@"));
+}
+
+#[test]
+fn test_redacted_type() {
+    unsafe {
+        add_redacted_type("other");
+        add_redacted_type("type*");
+    }
+    
+    assert!(is_redacted_type("other"));
+    assert!(is_redacted_type("type"));
+    assert!(is_redacted_type("type.foo"));
+    assert!(!is_redacted_type("typ"));
 }

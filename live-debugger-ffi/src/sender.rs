@@ -134,10 +134,10 @@ pub extern "C" fn ddog_live_debugger_send_raw_data(
     debugger_type: DebuggerType,
     data: OwnedCharSlice,
 ) -> bool {
-    !handle
+    handle
         .channel
         .try_send(SendData::Wrapped(data, debugger_type))
-        .is_err()
+        .is_ok()
 }
 
 #[no_mangle]

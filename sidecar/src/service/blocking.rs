@@ -320,7 +320,7 @@ pub fn send_debugger_data_shm_vec(
     queue_id: QueueId,
     payloads: Vec<datadog_live_debugger::debugger_defs::DebuggerPayload>,
 ) -> anyhow::Result<()> {
-    if payloads.len() == 0 {
+    if payloads.is_empty() {
         return Ok(());
     }
     let debugger_type = DebuggerType::of_payload(&payloads[0]);

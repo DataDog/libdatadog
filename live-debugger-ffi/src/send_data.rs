@@ -52,7 +52,7 @@ impl<'a> From<CaptureValue<'a>> for DebuggerValueAlias<'a> {
             } else {
                 Fields::default()
             },
-            elements: unsafe { transmute(val.elements) }, // SAFETY: is transparent
+            elements: unsafe { transmute::<Vec<DebuggerValue<'_>>, Vec<DebuggerValueAlias<'_>>>(val.elements) }, // SAFETY: is transparent
             entries: val.entries,
             is_null: val.is_null,
             truncated: val.truncated,

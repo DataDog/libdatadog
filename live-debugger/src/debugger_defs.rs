@@ -16,6 +16,7 @@ pub struct DebuggerPayload<'a> {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::large_enum_variant)]
 pub enum DebuggerData<'a> {
     Snapshot(Snapshot<'a>),
     Diagnostics(Diagnostics<'a>),

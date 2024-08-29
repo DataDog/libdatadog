@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource};
-use datadog_live_debugger::LiveDebuggingData;
 use datadog_dynamic_configuration::data::DynamicConfigFile;
+use datadog_live_debugger::LiveDebuggingData;
 
 #[derive(Debug)]
 pub enum RemoteConfigData {

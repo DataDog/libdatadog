@@ -24,10 +24,11 @@ use std::default::Default;
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::io;
+#[cfg(windows)]
 use std::io::Write;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::Instant;
 use tracing::{debug, error, trace, warn};
@@ -242,7 +243,15 @@ impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
         self.remote_configs
             .0
             .delete_runtime(&self.runtime_id, &self.target);
-        if self.remote_configs.0.invariants().endpoint.test_token.is_some() && self.remote_configs.0.active_runtimes() == 0 {
+        if self
+            .remote_configs
+            .0
+            .invariants()
+            .endpoint
+            .test_token
+            .is_some()
+            && self.remote_configs.0.active_runtimes() == 0
+        {
             self.remote_configs.shutdown()
         }
     }
@@ -269,7 +278,9 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         };
         let fetcher = MultiTargetFetcher::new(storage, invariants);
         if is_test {
-            fetcher.remote_config_interval.store(10_000_000, Ordering::Relaxed);
+            fetcher
+                .remote_config_interval
+                .store(10_000_000, Ordering::Relaxed);
         }
         ShmRemoteConfigs(fetcher)
     }

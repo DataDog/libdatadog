@@ -44,7 +44,7 @@ use crate::service::telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats;
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
-use datadog_live_debugger::sender::{Config as DebuggerConfig, DebuggerType};
+use datadog_live_debugger::sender::DebuggerType;
 use datadog_remote_config::fetch::ConfigInvariants;
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
 use ddcommon::tag::Tag;
@@ -119,6 +119,7 @@ impl SidecarServer {
     /// # Arguments
     ///
     /// * `async_channel`: An `AsyncChannel` that represents the connection to the client.
+    #[cfg_attr(not(windows), allow(unused_mut))]
     pub async fn accept_connection(mut self, async_channel: AsyncChannel) {
         #[cfg(windows)]
         {
