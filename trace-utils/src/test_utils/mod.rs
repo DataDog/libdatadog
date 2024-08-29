@@ -6,7 +6,9 @@ pub mod datadog_test_agent;
 use std::collections::HashMap;
 use std::time::Duration;
 
+use crate::no_alloc_string::NoAllocString;
 use crate::send_data::SendData;
+use crate::span_v04::Span;
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use datadog_trace_protobuf::pb;
@@ -14,8 +16,6 @@ use ddcommon::Endpoint;
 use httpmock::Mock;
 use serde_json::json;
 use tokio::time::sleep;
-use crate::no_alloc_string::NoAllocString;
-use crate::span_v04::{Span, SpanLink};
 
 pub fn create_test_no_alloc_span(
     trace_id: u64,
@@ -35,8 +35,14 @@ pub fn create_test_no_alloc_span(
         duration: 5,
         error: 0,
         meta: HashMap::from([
-            (NoAllocString::from_slice("service".as_ref()), NoAllocString::from_slice("test-service".as_ref())),
-            (NoAllocString::from_slice("env".as_ref()), NoAllocString::from_slice("test-env".as_ref())),
+            (
+                NoAllocString::from_slice("service".as_ref()),
+                NoAllocString::from_slice("test-service".as_ref()),
+            ),
+            (
+                NoAllocString::from_slice("env".as_ref()),
+                NoAllocString::from_slice("test-env".as_ref()),
+            ),
             (
                 NoAllocString::from_slice("runtime-id".as_ref()),
                 NoAllocString::from_slice("test-runtime-id-value".as_ref()),
@@ -48,11 +54,16 @@ pub fn create_test_no_alloc_span(
         span_links: vec![],
     };
     if is_top_level {
-        span.metrics.insert(NoAllocString::from_slice("_top_level".as_ref()), 1.0);
-        span.meta
-            .insert(NoAllocString::from_slice("_dd.origin".as_ref()), NoAllocString::from_slice("cloudfunction".as_ref()));
-        span.meta
-            .insert(NoAllocString::from_slice("origin".as_ref()), NoAllocString::from_slice("cloudfunction".as_ref()));
+        span.metrics
+            .insert(NoAllocString::from_slice("_top_level".as_ref()), 1.0);
+        span.meta.insert(
+            NoAllocString::from_slice("_dd.origin".as_ref()),
+            NoAllocString::from_slice("cloudfunction".as_ref()),
+        );
+        span.meta.insert(
+            NoAllocString::from_slice("origin".as_ref()),
+            NoAllocString::from_slice("cloudfunction".as_ref()),
+        );
         span.meta.insert(
             NoAllocString::from_slice("functionname".as_ref()),
             NoAllocString::from_slice("dummy_function_name".as_ref()),

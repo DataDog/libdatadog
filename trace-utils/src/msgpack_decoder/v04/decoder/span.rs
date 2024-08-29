@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{
-    read_str_map_to_no_alloc_strings, read_meta_struct, read_metrics, read_string_ref,
+    read_meta_struct, read_metrics, read_str_map_to_no_alloc_strings, read_string_ref,
     span_link::read_span_links,
 };
 use crate::msgpack_decoder::v04::error::DecodeError;
 use crate::msgpack_decoder::v04::number::read_number;
-use std::str::FromStr;
 use crate::no_alloc_string::BufferWrapper;
 use crate::span_v04::{Span, SpanKey};
 
@@ -27,7 +26,10 @@ use crate::span_v04::{Span, SpanKey};
 /// This function will return an error if:
 /// - The map length cannot be read.
 /// - Any key or value cannot be decoded.
-pub fn decode_span<'a>(buffer: &'a tinybytes::Bytes, buf: &mut &'a [u8]) -> Result<Span, DecodeError> {
+pub fn decode_span<'a>(
+    buffer: &'a tinybytes::Bytes,
+    buf: &mut &'a [u8],
+) -> Result<Span, DecodeError> {
     let mut span = Span::default();
     let wrapper = BufferWrapper::new(buffer.clone()); // Use the Bytes instance directly
 
@@ -92,8 +94,8 @@ fn fill_span(
 #[cfg(test)]
 mod tests {
     use super::SpanKey;
-    use std::str::FromStr;
     use crate::span_v04::SpanKeyParseError;
+    use std::str::FromStr;
 
     #[test]
     fn test_span_key_from_str() {
@@ -115,9 +117,9 @@ mod tests {
         );
         assert_eq!(SpanKey::from_str("span_links").unwrap(), SpanKey::SpanLinks);
 
-        assert!(matches!(
-            SpanKey::from_str("invalid_key"),
-            Err(SpanKeyParseError)
-        ));
+        let invalid_result = SpanKey::from_str("invalid_key");
+        let msg = format!("SpanKeyParseError: Invalid span key: {}", "invalid_key");
+        assert!(matches!(invalid_result, Err(SpanKeyParseError { .. })));
+        assert_eq!(invalid_result.unwrap_err().to_string(), msg);
     }
 }
