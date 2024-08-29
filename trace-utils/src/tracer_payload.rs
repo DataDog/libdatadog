@@ -21,7 +21,7 @@ pub enum TraceEncoding {
     V07,
 }
 
-// TODO: EK - Is this a good idea?
+/// A collection of traces before they are turned into TraceChunks.
 pub enum TraceCollection {
     V07(Vec<Vec<pb::Span>>),
     V04(Vec<Vec<Span>>),
@@ -383,9 +383,9 @@ mod tests {
         }]);
 
         let expected_serialized_span_data1 = vec![Span {
-            service: NoAllocString::from_slice("test-service".as_ref()),
-            name: NoAllocString::from_slice("test-service-name".as_ref()),
-            resource: NoAllocString::from_slice("test-service-resource".as_ref()),
+            service: NoAllocString::from_slice("test-service".as_ref()).unwrap(),
+            name: NoAllocString::from_slice("test-service-name".as_ref()).unwrap(),
+            resource: NoAllocString::from_slice("test-service-resource".as_ref()).unwrap(),
             trace_id: 111,
             span_id: 222,
             parent_id: 100,
@@ -395,7 +395,7 @@ mod tests {
             meta: HashMap::new(),
             metrics: HashMap::new(),
             meta_struct: HashMap::new(),
-            r#type: NoAllocString::from_slice("serverless".as_ref()),
+            r#type: NoAllocString::from_slice("serverless".as_ref()).unwrap(),
             span_links: vec![],
         }];
 
@@ -415,9 +415,9 @@ mod tests {
         }]);
 
         let expected_serialized_span_data2 = vec![Span {
-            service: NoAllocString::from_slice("test-service".as_ref()),
-            name: NoAllocString::from_slice("test-service-name".as_ref()),
-            resource: NoAllocString::from_slice("test-service-resource".as_ref()),
+            service: NoAllocString::from_slice("test-service".as_ref()).unwrap(),
+            name: NoAllocString::from_slice("test-service-name".as_ref()).unwrap(),
+            resource: NoAllocString::from_slice("test-service-resource".as_ref()).unwrap(),
             trace_id: 111,
             span_id: 333,
             parent_id: 100,

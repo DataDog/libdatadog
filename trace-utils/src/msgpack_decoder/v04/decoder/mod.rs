@@ -105,6 +105,8 @@ fn read_string_ref(buf: &[u8]) -> Result<(&str, &[u8]), DecodeError> {
 }
 
 #[inline]
+// Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
+// NoAllocStrings.
 fn read_str_map_to_no_alloc_strings(
     buf_wrapper: &BufferWrapper,
     buf: &mut &[u8],
@@ -112,7 +114,7 @@ fn read_str_map_to_no_alloc_strings(
     let len = decode::read_map_len(buf)
         .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
 
-    let mut map = HashMap::with_capacity(len.try_into().expect("TODO: EK"));
+    let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to usize"));
     for _ in 0..len {
         let (key, next) = read_string_ref(buf)?;
         *buf = next;
@@ -120,15 +122,16 @@ fn read_str_map_to_no_alloc_strings(
         let (val, next) = read_string_ref(buf)?;
         *buf = next;
 
-        map.insert(
-            buf_wrapper.create_no_alloc_string(key.as_bytes()),
-            buf_wrapper.create_no_alloc_string(val.as_bytes()),
-        );
+        let key = buf_wrapper.create_no_alloc_string_unchecked(key.as_bytes());
+        let value = buf_wrapper.create_no_alloc_string_unchecked(val.as_bytes());
+        map.insert(key, value);
     }
     Ok(map)
 }
 
 #[inline]
+// Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
+// NoAllocStrings.
 fn read_metric_pair(
     buffer_wrapper: &BufferWrapper,
     buf: &mut &[u8],
@@ -137,8 +140,9 @@ fn read_metric_pair(
     *buf = next;
 
     let v = read_number(buf)?.try_into()?;
+    let key = buffer_wrapper.create_no_alloc_string_unchecked(key.as_bytes());
 
-    Ok((buffer_wrapper.create_no_alloc_string(key.as_bytes()), v))
+    Ok((key, v))
 }
 fn read_metrics(
     buf_wrapper: &BufferWrapper,
@@ -148,6 +152,8 @@ fn read_metrics(
     read_map(len, buf_wrapper, buf, read_metric_pair)
 }
 
+// Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
+// NoAllocStrings.
 fn read_meta_struct(
     buf_wrapper: &BufferWrapper,
     buf: &mut &[u8],
@@ -168,7 +174,8 @@ fn read_meta_struct(
             let value = read_number(buf)?.try_into()?;
             v.push(value);
         }
-        Ok((buf_wrapper.create_no_alloc_string(key.as_bytes()), v))
+        let key = buf_wrapper.create_no_alloc_string_unchecked(key.as_bytes());
+        Ok((key, v))
     }
 
     let len = read_map_len(buf)?;
@@ -183,6 +190,7 @@ fn read_meta_struct(
 /// # Arguments
 ///
 /// * `len` - The number of key-value pairs to read from the buffer.
+/// * `buf_wrapper` - A reference to the BufferWrapper containing the encoded map data.
 /// * `buf` - A mutable reference to the buffer containing the encoded map data.
 /// * `read_pair` - A function that reads a key-value pair from the buffer and returns it as a
 ///   `Result<(K, V), DecodeError>`.
@@ -253,7 +261,7 @@ mod tests {
     fn decoder_read_string_success() {
         let expected_string = "test-service-name";
         let span = Span {
-            name: NoAllocString::from_slice(expected_string.as_ref()),
+            name: NoAllocString::from_slice(expected_string.as_ref()).unwrap(),
             ..Default::default()
         };
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -269,8 +277,14 @@ mod tests {
     #[test]
     fn test_decoder_meta_struct_fixed_map_success() {
         let expected_meta_struct = HashMap::from([
-            (NoAllocString::from_slice("key1".as_ref()), vec![1, 2, 3]),
-            (NoAllocString::from_slice("key2".as_ref()), vec![4, 5, 6]),
+            (
+                NoAllocString::from_slice("key1".as_ref()).unwrap(),
+                vec![1, 2, 3],
+            ),
+            (
+                NoAllocString::from_slice("key2".as_ref()).unwrap(),
+                vec![4, 5, 6],
+            ),
         ]);
 
         let span = Span {
@@ -292,7 +306,7 @@ mod tests {
         let expected_meta_struct: HashMap<NoAllocString, Vec<u8>> = (0..20)
             .map(|i| {
                 (
-                    NoAllocString::from_slice(format!("key {}", i).as_ref()),
+                    NoAllocString::from_slice(format!("key {}", i).as_ref()).unwrap(),
                     vec![1 + i, 2 + i, 3 + i],
                 )
             })
@@ -317,12 +331,12 @@ mod tests {
     fn test_decoder_meta_fixed_map_success() {
         let expected_meta = HashMap::from([
             (
-                NoAllocString::from_slice("key1".as_ref()),
-                NoAllocString::from_slice("value1".as_ref()),
+                NoAllocString::from_slice("key1".as_ref()).unwrap(),
+                NoAllocString::from_slice("value1".as_ref()).unwrap(),
             ),
             (
-                NoAllocString::from_slice("key2".as_ref()),
-                NoAllocString::from_slice("value2".as_ref()),
+                NoAllocString::from_slice("key2".as_ref()).unwrap(),
+                NoAllocString::from_slice("value2".as_ref()).unwrap(),
             ),
         ]);
         let span = Span {
@@ -344,8 +358,8 @@ mod tests {
         let expected_meta: HashMap<NoAllocString, NoAllocString> = (0..20)
             .map(|i| {
                 (
-                    NoAllocString::from_slice(format!("key {}", i).as_ref()),
-                    NoAllocString::from_slice(format!("value {}", i).as_ref()),
+                    NoAllocString::from_slice(format!("key {}", i).as_ref()).unwrap(),
+                    NoAllocString::from_slice(format!("value {}", i).as_ref()).unwrap(),
                 )
             })
             .collect();
@@ -369,8 +383,8 @@ mod tests {
     fn test_decoder_metrics_fixed_map_success() {
         let mut span = Span::default();
         let expected_metrics = HashMap::from([
-            (NoAllocString::from_slice("metric1".as_ref()), 1.23),
-            (NoAllocString::from_slice("metric2".as_ref()), 4.56),
+            (NoAllocString::from_slice("metric1".as_ref()).unwrap(), 1.23),
+            (NoAllocString::from_slice("metric2".as_ref()).unwrap(), 4.56),
         ]);
         span.metrics = expected_metrics.clone();
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -389,7 +403,7 @@ mod tests {
         let expected_metrics: HashMap<NoAllocString, f64> = (0..20)
             .map(|i| {
                 (
-                    NoAllocString::from_slice(format!("metric{}", i).as_ref()),
+                    NoAllocString::from_slice(format!("metric{}", i).as_ref()).unwrap(),
                     i as f64,
                 )
             })
@@ -414,15 +428,15 @@ mod tests {
             span_id: 1,
             attributes: HashMap::from([
                 (
-                    NoAllocString::from_slice("attr1".as_ref()),
-                    NoAllocString::from_slice("test_value".as_ref()),
+                    NoAllocString::from_slice("attr1".as_ref()).unwrap(),
+                    NoAllocString::from_slice("test_value".as_ref()).unwrap(),
                 ),
                 (
-                    NoAllocString::from_slice("attr2".as_ref()),
-                    NoAllocString::from_slice("test_value2".as_ref()),
+                    NoAllocString::from_slice("attr2".as_ref()).unwrap(),
+                    NoAllocString::from_slice("test_value2".as_ref()).unwrap(),
                 ),
             ]),
-            tracestate: NoAllocString::from_slice("state_test".as_ref()),
+            tracestate: NoAllocString::from_slice("state_test".as_ref()).unwrap(),
             flags: 0b101,
         }];
 
@@ -443,12 +457,12 @@ mod tests {
     #[test]
     fn test_decoder_read_string_wrong_format() {
         let span = Span {
-            service: NoAllocString::from_slice("my_service".as_ref()),
+            service: NoAllocString::from_slice("my_service".as_ref()).unwrap(),
             ..Default::default()
         };
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         // This changes the map size from 11 to 12 to trigger an InvalidMarkerRead error.
-        encoded_data[125] = 0x8c;
+        encoded_data[2] = 0x8c;
 
         let result = from_slice(tinybytes::Bytes::from(encoded_data));
         assert_eq!(
@@ -463,8 +477,9 @@ mod tests {
     fn test_decoder_read_string_utf8_error() {
         let invalid_seq = vec![0, 159, 146, 150];
         let invalid_str = unsafe { String::from_utf8_unchecked(invalid_seq) };
+        let invalid_str_as_bytes = tinybytes::Bytes::from(invalid_str);
         let span = Span {
-            name: NoAllocString::from_slice(invalid_str.as_ref()),
+            name: NoAllocString::from_bytes_unchecked(invalid_str_as_bytes),
             ..Default::default()
         };
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -563,16 +578,16 @@ mod tests {
                     start,
                 )| {
                     let span = Span {
-                        name: NoAllocString::from_slice(name.as_ref()),
-                        service: NoAllocString::from_slice(service.as_ref()),
-                        resource: NoAllocString::from_slice(resource.as_ref()),
-                        r#type: NoAllocString::from_slice(span_type.as_ref()),
+                        name: NoAllocString::from_slice(name.as_ref()).unwrap(),
+                        service: NoAllocString::from_slice(service.as_ref()).unwrap(),
+                        resource: NoAllocString::from_slice(resource.as_ref()).unwrap(),
+                        r#type: NoAllocString::from_slice(span_type.as_ref()).unwrap(),
                         meta: HashMap::from([(
-                            NoAllocString::from_slice(meta_key.as_ref()),
-                            NoAllocString::from_slice(meta_value.as_ref()),
+                            NoAllocString::from_slice(meta_key.as_ref()).unwrap(),
+                            NoAllocString::from_slice(meta_value.as_ref()).unwrap(),
                         )]),
                         metrics: HashMap::from([(
-                            NoAllocString::from_slice(metric_key.as_ref()),
+                            NoAllocString::from_slice(metric_key.as_ref()).unwrap(),
                             metric_value.parse::<f64>().unwrap_or_default(),
                         )]),
                         trace_id,
