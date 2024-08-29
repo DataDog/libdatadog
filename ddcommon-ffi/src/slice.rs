@@ -269,4 +269,15 @@ mod tests {
         };
         assert_eq!(null_len0.as_slice(), &[]);
     }
+
+    #[should_panic]
+    #[test]
+    fn test_null_panic() {
+        let null_len0: Slice<u8> = Slice {
+            ptr: ptr::null(),
+            len: 1,
+            _marker: PhantomData,
+        };
+        _ = null_len0.as_slice();
+    }
 }
