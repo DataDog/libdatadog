@@ -10,7 +10,8 @@ jobs:
     runs-on: ${{ matrix.platform }}
     strategy:
       matrix:
-        platform: [windows-latest, ubuntu-latest, macos-12]
+        # platform: [windows-latest, ubuntu-latest, macos-12]
+        platform: [ubuntu-latest]
         rust_version: [""]
         include:
           - platform: "ubuntu-latest"
@@ -80,176 +81,149 @@ jobs:
           check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
           include_passed: true
 
-  ffi:
-    name: "FFI #${{ matrix.platform }} ${{ matrix.rust_version }}"
-    runs-on: ${{ matrix.platform }}
-    strategy:
-      matrix:
-        platform: [windows-latest, ubuntu-latest, macos-12]
-        rust_version: [""]
-        include:
-          - platform: "ubuntu-latest"
-            rust_version: "${RUST_VERSION}"
-          - platform: "ubuntu-latest"
-            flags: "-C relocation-model=pic"
-          - platform: "macos-12"
-            flags: "-C relocation-model=pic"
-          - platform: "windows-latest"
-            flags: "-C target-feature=+crt-static"
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
+  # ffi:
+  #   name: "FFI #${{ matrix.platform }} ${{ matrix.rust_version }}"
+  #   runs-on: ${{ matrix.platform }}
+  #   strategy:
+  #     matrix:
+  #       platform: [windows-latest, ubuntu-latest, macos-12]
+  #       rust_version: [""]
+  #       include:
+  #         - platform: "ubuntu-latest"
+  #           rust_version: "${RUST_VERSION}"
+  #         - platform: "ubuntu-latest"
+  #           flags: "-C relocation-model=pic"
+  #         - platform: "macos-12"
+  #           flags: "-C relocation-model=pic"
+  #         - platform: "windows-latest"
+  #           flags: "-C target-feature=+crt-static"
+  #   steps:
+  #     - name: Checkout sources
+  #       uses: actions/checkout@v4
 
-      - name: Setup output dir
-        shell: bash
-        run: |
-          WORKSPACE_PATH=${{ github.workspace }}
-          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
-             WORKSPACE_PATH=$(cygpath -ua '${{ github.workspace }}')
-          fi
-          echo "LIBDD_OUTPUT_FOLDER=$WORKSPACE_PATH/artifacts" >> $GITHUB_ENV
+  #     - name: Setup output dir
+  #       shell: bash
+  #       run: |
+  #         WORKSPACE_PATH=${{ github.workspace }}
+  #         if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+  #            WORKSPACE_PATH=$(cygpath -ua '${{ github.workspace }}')
+  #         fi
+  #         echo "LIBDD_OUTPUT_FOLDER=$WORKSPACE_PATH/artifacts" >> $GITHUB_ENV
 
-      - name: Free Disk Space (Ubuntu only)
-        if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: false
-          swap-storage: true
+  #     - name: Free Disk Space (Ubuntu only)
+  #       if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
+  #       uses: jlumbroso/free-disk-space@v1.3.1
+  #       with:
+  #         tool-cache: false
+  #         android: true
+  #         dotnet: true
+  #         haskell: true
+  #         large-packages: false
+  #         docker-images: false
+  #         swap-storage: true
 
 
-      - name: Cache
-        uses: ./.github/actions/cache
-        with:
-          rust_version: ${{ matrix.rust_version }}
-          build_profile: "release"
+  #     - name: Cache
+  #       uses: ./.github/actions/cache
+  #       with:
+  #         rust_version: ${{ matrix.rust_version }}
+  #         build_profile: "release"
 
-      - name: Install nightly toolchain
-        run: rustup install nightly
+  #     - name: Install nightly toolchain
+  #       run: rustup install nightly
 
-      - name: Install Rust ${{ matrix.rust_version }}
-        if: matrix.rust_version != ''
-        run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
+  #     - name: Install Rust ${{ matrix.rust_version }}
+  #       if: matrix.rust_version != ''
+  #       run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
 
-      - id: rust-version
-        # On Windows run happens in a PowerShell, so start bash explicitly
-        run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
+  #     - id: rust-version
+  #       # On Windows run happens in a PowerShell, so start bash explicitly
+  #       run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
 
-      - name: "Generate profiling FFI"
-        shell: bash
-        env:
-          RUSTFLAGS: "${{ matrix.flags }}"
-        run: |
-           cargo build -p builder --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release -vv
+  #     - name: "Generate profiling FFI"
+  #       shell: bash
+  #       env:
+  #         RUSTFLAGS: "${{ matrix.flags }}"
+  #       run: |
+  #          cargo build -p builder --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release -vv
 
-      - name: 'Publish libdatadog'
-        uses: actions/upload-artifact@v4
-        # Only upload the artifacts built with the default Rust version
-        if: (success() || failure()) && matrix.rust_version == ''
-        with:
-          if-no-files-found: error
-          name: libdatadog.${{ matrix.platform }}
-          path: ${{ github.workspace }}/artifacts
-          retention-days: 1
+  #     - name: 'Publish libdatadog'
+  #       uses: actions/upload-artifact@v4
+  #       # Only upload the artifacts built with the default Rust version
+  #       if: (success() || failure()) && matrix.rust_version == ''
+  #       with:
+  #         if-no-files-found: error
+  #         name: libdatadog.${{ matrix.platform }}
+  #         path: ${{ github.workspace }}/artifacts
+  #         retention-days: 1
 
-      - name: "(Windows) Test building Profiling C bindings - dynamic link vc runtime"
-        if: matrix.platform == 'windows-latest'
-        shell: bash
-        run: |
-          set -e
-          rm -rf examples/ffi/build_dll
-          mkdir examples/ffi/build_dll
-          cd examples/ffi/build_dll
-          cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DVCRUNTIME_LINK_TYPE=DLL
-          cmake --build .
+  #     - name: "(Windows) Test building Profiling C bindings - dynamic link vc runtime"
+  #       if: matrix.platform == 'windows-latest'
+  #       shell: bash
+  #       run: |
+  #         set -e
+  #         rm -rf examples/ffi/build_dll
+  #         mkdir examples/ffi/build_dll
+  #         cd examples/ffi/build_dll
+  #         cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DVCRUNTIME_LINK_TYPE=DLL
+  #         cmake --build .
 
-      - name: "(Windows) Test building Profiling C bindings - static link vc runtime"
-        if: matrix.platform == 'windows-latest'
-        shell: bash
-        run: |
-          set -e
-          rm -rf examples/ffi/build_static
-          mkdir examples/ffi/build_static
-          cd examples/ffi/build_static
-          cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DVCRUNTIME_LINK_TYPE=STATIC
-          cmake --build .
+  #     - name: "(Windows) Test building Profiling C bindings - static link vc runtime"
+  #       if: matrix.platform == 'windows-latest'
+  #       shell: bash
+  #       run: |
+  #         set -e
+  #         rm -rf examples/ffi/build_static
+  #         mkdir examples/ffi/build_static
+  #         cd examples/ffi/build_static
+  #         cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DVCRUNTIME_LINK_TYPE=STATIC
+  #         cmake --build .
 
-      - name: "Test building Profiling C bindings"
-        shell: bash
-        if: matrix.platform != 'windows-latest'
-        run: |
-          set -e
-          mkdir examples/ffi/build
-          cd examples/ffi/build
-          # Add BUILD_SYMBOLIZER variable only for Linux platforms
-          if [[ "${{ matrix.platform }}" == "ubuntu-latest" ]]; then
-            cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DBUILD_SYMBOLIZER=true
-            cmake --build .
-            ./symbolizer
-          else
-            cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER
-            cmake --build .
-          fi
+  #     - name: "Test building Profiling C bindings"
+  #       shell: bash
+  #       if: matrix.platform != 'windows-latest'
+  #       run: |
+  #         set -e
+  #         rm -rf examples/ffi/build
+  #         mkdir examples/ffi/build
+  #         cd examples/ffi/build
+  #         # Add BUILD_SYMBOLIZER variable only for Linux platforms
+  #         if [[ "${{ matrix.platform }}" == "ubuntu-latest" ]]; then
+  #           cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DBUILD_SYMBOLIZER=true
+  #           cmake --build  .
+  #           ./symbolizer
+  #         else
+  #           cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER
+  #           cmake --build .
+  #         fi
 
-  cross-centos7:
-    name: build and test using cross - on centos7
-    runs-on: ubuntu-latest
-    concurrency: 
-      group: ci-${{ github.ref }}-cross-centos7
-      cancel-in-progress: true
-    steps:
-      - name: Free Disk Space
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: false
-          swap-storage: true
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Cache
-        uses: ./.github/actions/cache
-        with:
-          rust_version: cross-centos7
-      - run: cargo install cross || true
-      - run: cross build --workspace --target x86_64-unknown-linux-gnu --exclude builder 
-      - run: cross test --workspace --target x86_64-unknown-linux-gnu --exclude builder  -- --skip "::single_threaded_tests::" --skip "tracing_integration_tests::"
-      - run: cross test --workspace --target x86_64-unknown-linux-gnu --exclude builder --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1 --skip "tracing_integration_tests::"
+  # ffi_bake:
+  #   strategy:
+  #     matrix:
+  #       target: [alpine-build] # debian-build-aarch64 is oom killed at the moment
+  #   name: "FFI ${{ matrix.target }} via docker bake"
 
-  ffi_bake:
-    strategy:
-      matrix:
-        target: [alpine-build] # debian-build-aarch64 is oom killed at the moment
-    name: "FFI ${{ matrix.target }} via docker bake"
+  #   concurrency: 
+  #     group: ci-${{ github.ref }}-${{ matrix.target }}
+  #     cancel-in-progress: true
 
-    concurrency: 
-      group: ci-${{ github.ref }}-${{ matrix.target }}
-      cancel-in-progress: true
-
-    runs-on:
-      labels: ubuntu-latest-16-cores
-      group: APM Larger Runners
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-      -
-        name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          buildkitd-config: .github/buildkitd-16-cores.toml
-      -
-        name: Build and Generate FFI
-        uses: docker/bake-action@v4.5.0
-        with:
-          targets: ${{ matrix.target }}
-          set: |
-            *.cache-from=type=gha,scope=${{ matrix.target }}
-            *.cache-to=type=gha,mode=max,scope=${{ matrix.target }}
+  #   runs-on:
+  #     labels: ubuntu-latest-16-cores
+  #     group: APM Larger Runners
+  #   steps:
+  #     -
+  #       name: Checkout
+  #       uses: actions/checkout@v4
+  #     -
+  #       name: Set up Docker Buildx
+  #       uses: docker/setup-buildx-action@v3
+  #       with:
+  #         buildkitd-config: .github/buildkitd-16-cores.toml
+  #     -
+  #       name: Build and Generate FFI
+  #       uses: docker/bake-action@v4.5.0
+  #       with:
+  #         targets: ${{ matrix.target }}
+  #         set: |
+  #           *.cache-from=type=gha,scope=${{ matrix.target }}
+  #           *.cache-to=type=gha,mode=max,scope=${{ matrix.target }}

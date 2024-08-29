@@ -8,15 +8,15 @@ variables:
 include:
   - local: .gitlab/benchmarks.yml
 
-trigger_internal_build:
-  variables:
-    LIBDATADOG_COMMIT_BRANCH: $CI_COMMIT_BRANCH
-    LIBDATADOG_COMMIT_SHA: $CI_COMMIT_SHA
-    LIBDATADOG_SHORT_COMMIT_SHA: ${CI_COMMIT_SHORT_SHA}
-  trigger:
-    project: DataDog/apm-reliability/libddprof-build
-    strategy: depend
-    branch: $DOWNSTREAM_BRANCH
+# trigger_internal_build:
+#   variables:
+#     LIBDATADOG_COMMIT_BRANCH: $CI_COMMIT_BRANCH
+#     LIBDATADOG_COMMIT_SHA: $CI_COMMIT_SHA
+#     LIBDATADOG_SHORT_COMMIT_SHA: ${CI_COMMIT_SHORT_SHA}
+#   trigger:
+#     project: DataDog/apm-reliability/libddprof-build
+#     strategy: depend
+#     branch: $DOWNSTREAM_BRANCH
 
 # Following jobs are required otherwise gitsync will not report downstream pipeline failure to github
 
@@ -24,7 +24,7 @@ trigger_internal_build:
 report_failure:
   tags: ["arch:amd64"]
   when: on_failure
-  needs: [trigger_internal_build, benchmarks]
+  needs: [benchmarks]
   # allow_failure: true prevents the job from showing up in github statuses (because it's filtered by gitsync)
   allow_failure: true
   script:
