@@ -14,6 +14,53 @@ use ddcommon::Endpoint;
 use httpmock::Mock;
 use serde_json::json;
 use tokio::time::sleep;
+use crate::no_alloc_string::NoAllocString;
+use crate::span_v04::{Span, SpanLink};
+
+pub fn create_test_no_alloc_span(
+    trace_id: u64,
+    span_id: u64,
+    parent_id: u64,
+    start: i64,
+    is_top_level: bool,
+) -> Span {
+    let mut span = Span {
+        trace_id,
+        span_id,
+        service: NoAllocString::from_slice("test-service".as_ref()),
+        name: NoAllocString::from_slice("test_name".as_ref()),
+        resource: NoAllocString::from_slice("test-resource".as_ref()),
+        parent_id,
+        start,
+        duration: 5,
+        error: 0,
+        meta: HashMap::from([
+            (NoAllocString::from_slice("service".as_ref()), NoAllocString::from_slice("test-service".as_ref())),
+            (NoAllocString::from_slice("env".as_ref()), NoAllocString::from_slice("test-env".as_ref())),
+            (
+                NoAllocString::from_slice("runtime-id".as_ref()),
+                NoAllocString::from_slice("test-runtime-id-value".as_ref()),
+            ),
+        ]),
+        metrics: HashMap::new(),
+        r#type: NoAllocString::default(),
+        meta_struct: HashMap::new(),
+        span_links: vec![],
+    };
+    if is_top_level {
+        span.metrics.insert(NoAllocString::from_slice("_top_level".as_ref()), 1.0);
+        span.meta
+            .insert(NoAllocString::from_slice("_dd.origin".as_ref()), NoAllocString::from_slice("cloudfunction".as_ref()));
+        span.meta
+            .insert(NoAllocString::from_slice("origin".as_ref()), NoAllocString::from_slice("cloudfunction".as_ref()));
+        span.meta.insert(
+            NoAllocString::from_slice("functionname".as_ref()),
+            NoAllocString::from_slice("dummy_function_name".as_ref()),
+        );
+        span.r#type = NoAllocString::from_slice("serverless".as_ref());
+    }
+    span
+}
 
 pub fn create_test_span(
     trace_id: u64,

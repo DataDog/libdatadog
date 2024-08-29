@@ -7,8 +7,7 @@ mod span_link;
 use self::span::decode_span;
 use super::error::DecodeError;
 use super::number::read_number;
-use crate::tracer_payload::TracerPayloadV04;
-use datadog_trace_protobuf::pb::Span;
+use crate::tracer_payload::{TraceCollection, TracerPayloadV04};
 use rmp::decode::DecodeStringError;
 use rmp::{
     decode,
@@ -16,6 +15,9 @@ use rmp::{
     Marker,
 };
 use std::{collections::HashMap, f64};
+use crate::no_alloc_string::{BufferWrapper, NoAllocString};
+use crate::span_v04::Span;
+
 
 /// Decodes a slice of bytes into a vector of `TracerPayloadV04` objects.
 ///
@@ -56,33 +58,36 @@ use std::{collections::HashMap, f64};
 /// let decoded_span = &decoded_traces[0][0];
 /// assert_eq!("test-span", decoded_span.name);
 /// ```
-pub fn from_slice(data: &mut &[u8]) -> Result<Vec<TracerPayloadV04>, DecodeError> {
-    let trace_count = read_array_len(data).map_err(|_| {
+pub fn from_slice(data: tinybytes::Bytes) -> Result<Vec<Vec<Span>>, DecodeError> {
+    let mut local_buf = data.as_ref();
+    let trace_count = rmp::decode::read_array_len(&mut local_buf).map_err(|_| {
         DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
     })?;
 
-    let mut traces: Vec<TracerPayloadV04> = Default::default();
+    let mut traces: Vec<Vec<Span>> = Vec::with_capacity(trace_count.try_into().expect("TODO: EK"));
 
-    for _ in 0..trace_count {
-        let span_count = match read_array_len(data) {
-            Ok(count) => count,
-            Err(_) => {
-                return Err(DecodeError::InvalidFormat(
-                    "Unable to read array len for span count".to_owned(),
-                ))
-            }
-        };
 
-        let mut trace: Vec<Span> = Default::default();
+    (0..trace_count).try_fold(
+        Vec::with_capacity(trace_count.try_into().expect("TODO: EK")),
+        |mut traces, _| {
+            let span_count = rmp::decode::read_array_len(&mut local_buf).map_err(|_| {
+                DecodeError::InvalidFormat("Unable to read array len for span count".to_owned())
+            })?;
 
-        for _ in 0..span_count {
-            let span = decode_span(data)?;
-            trace.push(span);
-        }
-        traces.push(trace);
-    }
+            let trace = (0..span_count).try_fold(
+                Vec::with_capacity(span_count.try_into().expect("TODO: EK")),
+                |mut trace, _| {
+                    let span = decode_span(&data, &mut local_buf)?;
+                    trace.push(span);
+                    Ok(trace)
+                },
+            )?;
 
-    Ok(traces)
+            traces.push(trace);
+
+            Ok(traces)
+        },
+    )
 }
 
 #[inline]
@@ -99,54 +104,74 @@ fn read_string_ref(buf: &[u8]) -> Result<(&str, &[u8]), DecodeError> {
 }
 
 #[inline]
-fn read_string(buf: &mut &[u8]) -> Result<String, DecodeError> {
-    let (str_ref, remaining_buf) = read_string_ref(buf)?;
-    *buf = remaining_buf;
-    Ok(str_ref.to_string())
+fn read_str_map_to_no_alloc_strings(
+    buf_wrapper: &BufferWrapper,
+    buf: &mut &[u8],
+) -> Result<HashMap<NoAllocString, NoAllocString>, DecodeError> {
+    let len = decode::read_map_len(buf)
+        .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
+
+    let mut map = HashMap::with_capacity(len.try_into().expect("TODO: EK"));
+    for _ in 0..len {
+        let (key, next) = read_string_ref(buf)?;
+        *buf = next;
+
+        let (val, next) = read_string_ref(buf)?;
+        *buf = next;
+
+        map.insert(
+            buf_wrapper.create_no_alloc_string(key.as_bytes()),
+            buf_wrapper.create_no_alloc_string(val.as_bytes()),
+        );
+    }
+    Ok(map)
 }
 
 #[inline]
-fn read_str_pair(buf: &mut &[u8]) -> Result<(String, String), DecodeError> {
-    let k = read_string(buf)?;
-    let v = read_string(buf)?;
+fn read_metric_pair(
+    buffer_wrapper: &BufferWrapper,
+    buf: &mut &[u8],
+) -> Result<(NoAllocString, f64), DecodeError> {
+    let (key, next) = read_string_ref(buf)?;
+    *buf = next;
 
-    Ok((k, v))
-}
-
-#[inline]
-fn read_metric_pair(buf: &mut &[u8]) -> Result<(String, f64), DecodeError> {
-    let k = read_string(buf)?;
     let v = read_number(buf)?.try_into()?;
 
-    Ok((k, v))
+    Ok((buffer_wrapper.create_no_alloc_string(key.as_bytes()), v))
 }
-
-fn read_map_strs(buf: &mut &[u8]) -> Result<HashMap<String, String>, DecodeError> {
+fn read_metrics(
+    buf_wrapper: &BufferWrapper,
+    buf: &mut &[u8],
+) -> Result<HashMap<NoAllocString, f64>, DecodeError> {
     let len = read_map_len(buf)?;
-    read_map(len, buf, read_str_pair)
+    read_map(len, buf_wrapper, buf, read_metric_pair)
 }
 
-fn read_metrics(buf: &mut &[u8]) -> Result<HashMap<String, f64>, DecodeError> {
-    let len = read_map_len(buf)?;
-    read_map(len, buf, read_metric_pair)
-}
-
-fn read_meta_struct(buf: &mut &[u8]) -> Result<HashMap<String, Vec<u8>>, DecodeError> {
-    fn read_meta_struct_pair(buf: &mut &[u8]) -> Result<(String, Vec<u8>), DecodeError> {
-        let k = read_string(buf)?;
-        let mut v = vec![];
+fn read_meta_struct(
+    buf_wrapper: &BufferWrapper,
+    buf: &mut &[u8],
+) -> Result<HashMap<NoAllocString, Vec<u8>>, DecodeError> {
+    fn read_meta_struct_pair(
+        buf_wrapper: &BufferWrapper,
+        buf: &mut &[u8],
+    ) -> Result<(NoAllocString, Vec<u8>), DecodeError> {
+        let (key, next) = read_string_ref(buf)?;
+        *buf = next;
         let array_len = decode::read_array_len(buf).map_err(|_| {
             DecodeError::InvalidFormat("Unable to read array len for meta_struct".to_owned())
         })?;
+
+        let mut v = Vec::with_capacity(array_len as usize);
+
         for _ in 0..array_len {
             let value = read_number(buf)?.try_into()?;
             v.push(value);
         }
-        Ok((k, v))
+        Ok((buf_wrapper.create_no_alloc_string(key.as_bytes()), v))
     }
 
     let len = read_map_len(buf)?;
-    read_map(len, buf, read_meta_struct_pair)
+    read_map(len, buf_wrapper, buf, read_meta_struct_pair)
 }
 
 /// Reads a map from the buffer and returns it as a `HashMap`.
@@ -176,18 +201,20 @@ fn read_meta_struct(buf: &mut &[u8]) -> Result<HashMap<String, Vec<u8>>, DecodeE
 /// * `K` - The type of the keys in the map. Must implement `std::hash::Hash` and `Eq`.
 /// * `V` - The type of the values in the map.
 /// * `F` - The type of the function used to read key-value pairs from the buffer.
+// TODO: EK - Fix the documentation for this function
 fn read_map<K, V, F>(
     len: usize,
+    buf_wrapper: &BufferWrapper,
     buf: &mut &[u8],
     read_pair: F,
 ) -> Result<HashMap<K, V>, DecodeError>
 where
     K: std::hash::Hash + Eq,
-    F: Fn(&mut &[u8]) -> Result<(K, V), DecodeError>,
+    F: Fn(&BufferWrapper, &mut &[u8]) -> Result<(K, V), DecodeError>,
 {
-    let mut map = HashMap::new();
+    let mut map = HashMap::with_capacity(len);
     for _ in 0..len {
-        let (k, v) = read_pair(buf)?;
+        let (k, v) = read_pair(buf_wrapper, buf)?;
         map.insert(k, v);
     }
     Ok(map)
@@ -215,36 +242,44 @@ fn read_map_len(buf: &mut &[u8]) -> Result<usize, DecodeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_trace_protobuf::pb::SpanLink;
+    use crate::no_alloc_string::NoAllocString;
+    use bolero::check;
+    use log::warn;
+    use rmp_serde;
+    use crate::span_v04::SpanLink;
+    use bolero::generator::{TypeGenerator};
+    use std::ops::Range;
+    use rmp_serde::to_vec_named;
 
     #[test]
     fn decoder_read_string_success() {
         let expected_string = "test-service-name";
         let span = Span {
-            name: expected_string.to_owned(),
+            name: NoAllocString::from_slice(expected_string.as_ref()),
             ..Default::default()
         };
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let decoded_traces = from_slice(&mut encoded_data.as_slice()).expect("Decoding failed");
+        let decoded_traces = from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
-        assert_eq!(expected_string, decoded_span.name);
+        assert_eq!(expected_string, decoded_span.name.as_str());
     }
 
     #[test]
     fn test_decoder_meta_struct_fixed_map_success() {
         let expected_meta_struct = HashMap::from([
-            ("key1".to_string(), vec![1, 2, 3]),
-            ("key2".to_string(), vec![4, 5, 6]),
+            (NoAllocString::from_slice("key1".as_ref()), vec![1, 2, 3]),
+            (NoAllocString::from_slice("key2".as_ref()), vec![4, 5, 6]),
         ]);
+
         let span = Span {
             meta_struct: expected_meta_struct.clone(),
             ..Default::default()
         };
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let decoded_traces = from_slice(&mut encoded_data.as_slice()).expect("Decoding failed");
+        let decoded_traces = from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -254,8 +289,13 @@ mod tests {
 
     #[test]
     fn test_decoder_meta_struct_map_16_success() {
-        let expected_meta_struct: HashMap<String, Vec<u8>> = (0..20)
-            .map(|i| (format!("key {}", i), vec![1 + i, 2 + i, 3 + i]))
+        let expected_meta_struct: HashMap<NoAllocString, Vec<u8>> = (0..20)
+            .map(|i| {
+                (
+                    NoAllocString::from_slice(format!("key {}", i).as_ref()),
+                    vec![1 + i, 2 + i, 3 + i],
+                )
+            })
             .collect();
 
         let span = Span {
@@ -263,26 +303,33 @@ mod tests {
             ..Default::default()
         };
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let decoded_traces = from_slice(&mut encoded_data.as_slice()).expect("Decoding failed");
+        let decoded_traces = from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
+
         assert_eq!(expected_meta_struct, decoded_span.meta_struct);
     }
 
     #[test]
     fn test_decoder_meta_fixed_map_success() {
         let expected_meta = HashMap::from([
-            ("key1".to_string(), "value1".to_string()),
-            ("key2".to_string(), "value2".to_string()),
+            (
+                NoAllocString::from_slice("key1".as_ref()),
+                NoAllocString::from_slice("value1".as_ref()),
+            ),
+            (
+                NoAllocString::from_slice("key2".as_ref()),
+                NoAllocString::from_slice("value2".as_ref()),
+            ),
         ]);
         let span = Span {
             meta: expected_meta.clone(),
             ..Default::default()
         };
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let decoded_traces = from_slice(&mut encoded_data.as_slice()).expect("Decoding failed");
+        let decoded_traces = from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -292,8 +339,13 @@ mod tests {
 
     #[test]
     fn test_decoder_meta_map_16_success() {
-        let expected_meta: HashMap<String, String> = (0..20)
-            .map(|i| (format!("key {}", i), format!("value {}", i)))
+        let expected_meta: HashMap<NoAllocString, NoAllocString> = (0..20)
+            .map(|i| {
+                (
+                    NoAllocString::from_slice(format!("key {}", i).as_ref()),
+                    NoAllocString::from_slice(format!("value {}", i).as_ref()),
+                )
+            })
             .collect();
 
         let span = Span {
@@ -301,22 +353,25 @@ mod tests {
             ..Default::default()
         };
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let decoded_traces = from_slice(&mut encoded_data.as_slice()).expect("Decoding failed");
+        let decoded_traces = from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
+
         assert_eq!(expected_meta, decoded_span.meta);
     }
 
     #[test]
     fn test_decoder_metrics_fixed_map_success() {
         let mut span = Span::default();
-        let expected_metrics =
-            HashMap::from([("metric1".to_string(), 1.23), ("metric2".to_string(), 4.56)]);
+        let expected_metrics = HashMap::from([
+            (NoAllocString::from_slice("metric1".as_ref()), 1.23),
+            (NoAllocString::from_slice("metric2".as_ref()), 4.56),
+        ]);
         span.metrics = expected_metrics.clone();
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let decoded_traces = from_slice(&mut encoded_data.as_slice()).expect("Decoding failed");
+        let decoded_traces = from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -327,13 +382,18 @@ mod tests {
     #[test]
     fn test_decoder_metrics_map16_success() {
         let mut span = Span::default();
-        let expected_metrics: HashMap<String, f64> = (0..20)
-            .map(|i| (format!("metric{}", i), i as f64))
+        let expected_metrics: HashMap<NoAllocString, f64> = (0..20)
+            .map(|i| {
+                (
+                    NoAllocString::from_slice(format!("metric{}", i).as_ref()),
+                    i as f64,
+                )
+            })
             .collect();
 
         span.metrics = expected_metrics.clone();
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let decoded_traces = from_slice(&mut encoded_data.as_slice()).expect("Decoding failed");
+        let decoded_traces = from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -348,10 +408,16 @@ mod tests {
             trace_id_high: 0,
             span_id: 1,
             attributes: HashMap::from([
-                ("attr1".to_string(), "test_value".to_string()),
-                ("attr2".to_string(), "test_value".to_string()),
+                (
+                    NoAllocString::from_slice("attr1".as_ref()),
+                    NoAllocString::from_slice("test_value".as_ref()),
+                ),
+                (
+                    NoAllocString::from_slice("attr2".as_ref()),
+                    NoAllocString::from_slice("test_value2".as_ref()),
+                ),
             ]),
-            tracestate: "state_test".to_string(),
+            tracestate: NoAllocString::from_slice("state_test".as_ref()),
             flags: 0b101,
         }];
 
@@ -360,8 +426,7 @@ mod tests {
             ..Default::default()
         };
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let decoded_traces =
-            from_slice(&mut encoded_data.as_slice()).expect("unable to decode span");
+        let decoded_traces = from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -372,14 +437,14 @@ mod tests {
     #[test]
     fn test_decoder_read_string_wrong_format() {
         let span = Span {
-            service: "my_service".to_owned(),
+            service: NoAllocString::from_slice("my_service".as_ref()),
             ..Default::default()
         };
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         // This changes the map size from 11 to 12 to trigger an InvalidMarkerRead error.
-        encoded_data[2] = 0x8c;
+        encoded_data[125] = 0x8c;
 
-        let result = from_slice(&mut encoded_data.as_slice());
+        let result = from_slice(tinybytes::Bytes::from(encoded_data));
         assert_eq!(
             Err(DecodeError::InvalidFormat(
                 "Expected at least bytes 1, but only got 0 (pos 0)".to_owned()
@@ -393,12 +458,12 @@ mod tests {
         let invalid_seq = vec![0, 159, 146, 150];
         let invalid_str = unsafe { String::from_utf8_unchecked(invalid_seq) };
         let span = Span {
-            name: invalid_str.to_owned(),
+            name: NoAllocString::from_slice(invalid_str.as_ref()),
             ..Default::default()
         };
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
 
-        let result = from_slice(&mut encoded_data.as_slice());
+        let result = from_slice(tinybytes::Bytes::from(encoded_data));
         assert_eq!(
             Err(DecodeError::Utf8Error(
                 "invalid utf-8 sequence of 1 bytes from index 1".to_owned()
@@ -415,7 +480,7 @@ mod tests {
         // reading the array len of traces
         encoded_data[0] = 0x8c;
 
-        let result = from_slice(&mut encoded_data.as_ref());
+        let result = from_slice(tinybytes::Bytes::from(encoded_data));
         assert_eq!(
             Err(DecodeError::InvalidFormat(
                 "Unable to read array len for trace count".to_string()
@@ -432,29 +497,10 @@ mod tests {
         // reading the array len of spans
         encoded_data[1] = 0x8c;
 
-        let result = from_slice(&mut encoded_data.as_ref());
+        let result = from_slice(tinybytes::Bytes::from(encoded_data));
         assert_eq!(
             Err(DecodeError::InvalidFormat(
                 "Unable to read array len for span count".to_owned()
-            )),
-            result
-        );
-    }
-
-    #[test]
-    fn test_decoder_read_string_invalid_data_read() {
-        let span = Span {
-            name: "test-span".to_owned(),
-            ..Default::default()
-        };
-        let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        // This changes the marker for the empty metrics map to a str8 marker
-        encoded_data[104] = 0xD9;
-
-        let result = from_slice(&mut encoded_data.as_slice());
-        assert_eq!(
-            Err(DecodeError::InvalidConversion(
-                "Expected at least bytes 1, but only got 0 (pos 1)".to_owned()
             )),
             result
         );
@@ -468,7 +514,7 @@ mod tests {
         // field to an integer marker
         encoded_data[3] = 0x01;
 
-        let result = from_slice(&mut encoded_data.as_slice());
+        let result = from_slice(tinybytes::Bytes::from(encoded_data));
         assert_eq!(
             Err(DecodeError::InvalidType(
                 "Type mismatch at marker FixPos(1)".to_owned()
@@ -476,10 +522,6 @@ mod tests {
             result
         );
     }
-
-    use bolero::check;
-    use datadog_trace_protobuf::pb::Span;
-    use rmp_serde::to_vec_named;
 
     #[test]
     fn fuzz_from_slice() {
@@ -515,13 +557,13 @@ mod tests {
                     start,
                 )| {
                     let span = Span {
-                        name,
-                        service,
-                        resource,
-                        r#type: span_type,
-                        meta: HashMap::from([(meta_key, meta_value)]),
+                        name: NoAllocString::from_slice(name.as_ref()),
+                        service: NoAllocString::from_slice(service.as_ref()),
+                        resource: NoAllocString::from_slice(resource.as_ref()),
+                        r#type: NoAllocString::from_slice(span_type.as_ref()),
+                        meta: HashMap::from([(NoAllocString::from_slice(meta_key.as_ref()), NoAllocString::from_slice(meta_value.as_ref()))]),
                         metrics: HashMap::from([(
-                            metric_key,
+                            NoAllocString::from_slice(metric_key.as_ref()),
                             metric_value.parse::<f64>().unwrap_or_default(),
                         )]),
                         trace_id,
@@ -531,8 +573,7 @@ mod tests {
                         ..Default::default()
                     };
                     let encoded_data = to_vec_named(&vec![vec![span]]).unwrap();
-                    let result = from_slice(&mut encoded_data.as_slice());
-                    println!("result: {:?}", result);
+                    let result = from_slice(tinybytes::Bytes::from(encoded_data));
 
                     assert!(result.is_ok());
                 },

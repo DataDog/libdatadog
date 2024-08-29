@@ -465,7 +465,7 @@ mod tests {
     use super::*;
     use crate::send_data::retry_strategy::RetryBackoffType;
     use crate::send_data::retry_strategy::RetryStrategy;
-    use crate::test_utils::{create_send_data, create_test_span, poll_for_mock_hit};
+    use crate::test_utils::{create_send_data, create_test_no_alloc_span, create_test_span, poll_for_mock_hit};
     use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, RootSpanTags};
     use crate::tracer_header_tags::TracerHeaderTags;
     use datadog_trace_protobuf::pb::Span;
@@ -775,7 +775,7 @@ mod tests {
 
         let header_tags = HEADER_TAGS;
 
-        let trace = vec![create_test_span(1234, 12342, 12341, 1, false)];
+        let trace = vec![create_test_no_alloc_span(1234, 12342, 12341, 1, false)];
         let data = SendData::new(
             100,
             TracerPayloadCollection::V04(vec![trace.clone()]),
@@ -956,7 +956,7 @@ mod tests {
 
         let header_tags = HEADER_TAGS;
 
-        let trace = vec![create_test_span(1234, 12342, 12341, 1, false)];
+        let trace = vec![create_test_no_alloc_span(1234, 12342, 12341, 1, false)];
         let data = SendData::new(
             100,
             TracerPayloadCollection::V04(vec![trace.clone(), trace.clone()]),
