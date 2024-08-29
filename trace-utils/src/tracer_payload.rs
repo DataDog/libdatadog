@@ -8,8 +8,9 @@ use crate::{
 use datadog_trace_protobuf::pb;
 use std::cmp::Ordering;
 use tinybytes;
+use crate::span_v04::Span;
 
-pub type TracerPayloadV04 = Vec<pb::Span>;
+pub type TracerPayloadV04 = Vec<Span>;
 
 #[derive(Debug, Clone)]
 /// Enumerates the different encoding types.
@@ -18,6 +19,12 @@ pub enum TraceEncoding {
     V04,
     /// v0.7 encoding (TracerPayload).
     V07,
+}
+
+// TODO: EK - Is this a good idea?
+pub enum TraceCollection {
+    V07(Vec<Vec<pb::Span>>),
+    V04(Vec<Vec<Span>>),
 }
 
 #[derive(Debug, Clone)]
@@ -246,12 +253,8 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
     fn try_into(self) -> Result<TracerPayloadCollection, Self::Error> {
         match self.encoding_type {
             TraceEncoding::V04 => {
-                // TODO: EK - THIS IS TEMPORARY!
-                let mut data_slice: &[u8] = self.data.as_ref();
-                let data: &mut &[u8] = &mut data_slice;
-
-                let traces: Vec<Vec<pb::Span>> =
-                    match msgpack_decoder::v04::decoder::from_slice(data) {
+                let traces: Vec<Vec<Span>> =
+                    match msgpack_decoder::v04::decoder::from_slice(self.data) {
                         Ok(res) => res,
                         Err(e) => {
                             anyhow::bail!("Error deserializing trace from request body: {e}")
@@ -263,11 +266,10 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
                 }
 
                 Ok(collect_trace_chunks(
-                    traces,
+                    TraceCollection::V04(traces),
                     self.tracer_header_tags,
                     self.chunk_processor,
-                    self.is_agentless,
-                    TraceEncoding::V04,
+                    self.is_agentless
                 ))
             }
             _ => todo!("Encodings other than TraceEncoding::V04 not implemented yet."),
@@ -278,10 +280,11 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::create_test_span;
+    use crate::test_utils::{create_test_no_alloc_span, create_test_span};
     use datadog_trace_protobuf::pb;
     use serde_json::json;
     use std::collections::HashMap;
+    use crate::no_alloc_string::NoAllocString;
 
     fn create_dummy_collection_v07() -> TracerPayloadCollection {
         TracerPayloadCollection::V07(vec![pb::TracerPayload {
@@ -304,12 +307,12 @@ mod tests {
         }])
     }
 
-    fn create_trace() -> Vec<pb::Span> {
+    fn create_trace() -> Vec<Span> {
         vec![
             // create a root span with metrics
-            create_test_span(1234, 12341, 0, 1, true),
-            create_test_span(1234, 12342, 12341, 1, false),
-            create_test_span(1234, 12343, 12342, 1, false),
+            create_test_no_alloc_span(1234, 12341, 0, 1, true),
+            create_test_no_alloc_span(1234, 12342, 12341, 1, false),
+            create_test_no_alloc_span(1234, 12343, 12342, 1, false),
         ]
     }
 
@@ -332,7 +335,7 @@ mod tests {
     #[test]
     fn test_append_traces_v04() {
         let mut trace =
-            TracerPayloadCollection::V04(vec![vec![create_test_span(0, 1, 0, 2, true)]]);
+            TracerPayloadCollection::V04(vec![vec![create_test_no_alloc_span(0, 1, 0, 2, true)]]);
 
         let empty = TracerPayloadCollection::V04(vec![]);
 
@@ -379,10 +382,10 @@ mod tests {
             "type": "serverless",
         }]);
 
-        let expected_serialized_span_data1 = vec![pb::Span {
-            service: "test-service".to_string(),
-            name: "test-service-name".to_string(),
-            resource: "test-service-resource".to_string(),
+        let expected_serialized_span_data1 = vec![Span {
+            service: NoAllocString::from_slice("test-service".as_ref()),
+            name: NoAllocString::from_slice("test-service-name".as_ref()),
+            resource: NoAllocString::from_slice("test-service-resource".as_ref()),
             trace_id: 111,
             span_id: 222,
             parent_id: 100,
@@ -392,7 +395,7 @@ mod tests {
             meta: HashMap::new(),
             metrics: HashMap::new(),
             meta_struct: HashMap::new(),
-            r#type: "serverless".to_string(),
+            r#type: NoAllocString::from_slice("serverless".as_ref()),
             span_links: vec![],
         }];
 
@@ -411,10 +414,10 @@ mod tests {
             "type": "",
         }]);
 
-        let expected_serialized_span_data2 = vec![pb::Span {
-            service: "test-service".to_string(),
-            name: "test-service-name".to_string(),
-            resource: "test-service-resource".to_string(),
+        let expected_serialized_span_data2 = vec![Span {
+            service: NoAllocString::from_slice("test-service".as_ref()),
+            name: NoAllocString::from_slice("test-service-name".as_ref()),
+            resource: NoAllocString::from_slice("test-service-resource".as_ref()),
             trace_id: 111,
             span_id: 333,
             parent_id: 100,
@@ -424,7 +427,7 @@ mod tests {
             meta: HashMap::new(),
             metrics: HashMap::new(),
             meta_struct: HashMap::new(),
-            r#type: "".to_string(),
+            r#type: NoAllocString::default(),
             span_links: vec![],
         }];
 

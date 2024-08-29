@@ -16,7 +16,7 @@ pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::send_data::SendData;
 pub use crate::tracer_header_tags::TracerHeaderTags;
 use crate::tracer_payload;
-use crate::tracer_payload::{TraceEncoding, TracerPayloadCollection};
+use crate::tracer_payload::{TraceEncoding, TraceCollection, TracerPayloadCollection};
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
 use ddcommon::azure_app_services;
@@ -555,15 +555,14 @@ macro_rules! parse_root_span_tags {
 }
 
 pub fn collect_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
-    mut traces: Vec<Vec<pb::Span>>,
+    mut traces: TraceCollection,
     tracer_header_tags: &TracerHeaderTags,
     process_chunk: &mut T,
     is_agentless: bool,
-    encoding_type: TraceEncoding,
 ) -> TracerPayloadCollection {
-    match encoding_type {
-        TraceEncoding::V04 => TracerPayloadCollection::V04(traces),
-        TraceEncoding::V07 => {
+    match traces {
+        TraceCollection::V04(traces) => TracerPayloadCollection::V04(traces),
+        TraceCollection::V07(mut traces) => {
             let mut trace_chunks: Vec<pb::TraceChunk> = Vec::new();
 
             // We'll skip setting the global metadata and rely on the agent to unpack these

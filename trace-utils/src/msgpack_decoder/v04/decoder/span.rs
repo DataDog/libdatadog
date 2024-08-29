@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{
-    read_map_strs, read_meta_struct, read_metrics, read_string, read_string_ref,
+    read_str_map_to_no_alloc_strings, read_meta_struct, read_metrics, read_string_ref,
     span_link::read_span_links,
 };
 use crate::msgpack_decoder::v04::error::DecodeError;
 use crate::msgpack_decoder::v04::number::read_number;
-use datadog_trace_protobuf::pb::Span;
 use std::str::FromStr;
+use crate::no_alloc_string::BufferWrapper;
+use crate::span_v04::{Span, SpanKey};
 
 /// Decodes a slice of bytes into a `Span` object.
 ///
@@ -26,81 +27,48 @@ use std::str::FromStr;
 /// This function will return an error if:
 /// - The map length cannot be read.
 /// - Any key or value cannot be decoded.
-#[inline]
-pub(crate) fn decode_span(buf: &mut &[u8]) -> Result<Span, DecodeError> {
+pub fn decode_span<'a>(buffer: &'a tinybytes::Bytes, buf: &mut &'a [u8]) -> Result<Span, DecodeError> {
     let mut span = Span::default();
+    let wrapper = BufferWrapper::new(buffer.clone()); // Use the Bytes instance directly
+
     let span_size = rmp::decode::read_map_len(buf).map_err(|_| {
         DecodeError::InvalidFormat("Unable to get map len for span size".to_owned())
     })?;
 
     for _ in 0..span_size {
-        fill_span(&mut span, buf)?;
+        fill_span(&mut span, &wrapper, buf)?;
     }
+
     Ok(span)
 }
 
-#[derive(Debug, PartialEq)]
-enum SpanKey {
-    Service,
-    Name,
-    Resource,
-    TraceId,
-    SpanId,
-    ParentId,
-    Start,
-    Duration,
-    Error,
-    Meta,
-    Metrics,
-    Type,
-    MetaStruct,
-    SpanLinks,
-}
-
-impl FromStr for SpanKey {
-    type Err = DecodeError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "service" => Ok(SpanKey::Service),
-            "name" => Ok(SpanKey::Name),
-            "resource" => Ok(SpanKey::Resource),
-            "trace_id" => Ok(SpanKey::TraceId),
-            "span_id" => Ok(SpanKey::SpanId),
-            "parent_id" => Ok(SpanKey::ParentId),
-            "start" => Ok(SpanKey::Start),
-            "duration" => Ok(SpanKey::Duration),
-            "error" => Ok(SpanKey::Error),
-            "meta" => Ok(SpanKey::Meta),
-            "metrics" => Ok(SpanKey::Metrics),
-            "type" => Ok(SpanKey::Type),
-            "meta_struct" => Ok(SpanKey::MetaStruct),
-            "span_links" => Ok(SpanKey::SpanLinks),
-            _ => Err(DecodeError::InvalidFormat(
-                format!("Invalid span key: {}", s).to_owned(),
-            )),
-        }
-    }
-}
-
-fn fill_span(span: &mut Span, buf: &mut &[u8]) -> Result<(), DecodeError> {
+fn fill_span(
+    span: &mut Span,
+    buf_wrapper: &BufferWrapper,
+    buf: &mut &[u8],
+) -> Result<(), DecodeError> {
     let (key, value) = read_string_ref(buf)?;
-    let key = key.parse::<SpanKey>()?;
+    let key = key
+        .parse::<SpanKey>()
+        .map_err(|_| DecodeError::InvalidFormat("Invalid span key".to_owned()))?;
 
     *buf = value;
 
     match key {
         SpanKey::Service => {
-            let value = read_string(buf)?;
-            span.service = value;
+            let (value, next) = read_string_ref(buf)?;
+            span.service = buf_wrapper.create_no_alloc_string(value.as_bytes());
+            *buf = next;
         }
         SpanKey::Name => {
-            let value = read_string(buf)?;
-            span.name = value;
+            let (value, next) = read_string_ref(buf)?;
+            span.name = buf_wrapper.create_no_alloc_string(value.as_bytes());
+            *buf = next;
         }
         SpanKey::Resource => {
-            let value = read_string(buf)?;
-            span.resource = value;
+            let (value, next) = read_string_ref(buf)?;
+            span.resource = buf_wrapper.create_no_alloc_string(value.as_bytes());
+            *buf = next;
         }
         SpanKey::TraceId => span.trace_id = read_number(buf)?.try_into()?,
         SpanKey::SpanId => span.span_id = read_number(buf)?.try_into()?,
@@ -108,22 +76,24 @@ fn fill_span(span: &mut Span, buf: &mut &[u8]) -> Result<(), DecodeError> {
         SpanKey::Start => span.start = read_number(buf)?.try_into()?,
         SpanKey::Duration => span.duration = read_number(buf)?.try_into()?,
         SpanKey::Error => span.error = read_number(buf)?.try_into()?,
-        SpanKey::Meta => span.meta = read_map_strs(buf)?,
-        SpanKey::Metrics => span.metrics = read_metrics(buf)?,
         SpanKey::Type => {
-            let value = read_string(buf)?;
-            span.r#type = value;
+            let (value, next) = read_string_ref(buf)?;
+            span.r#type = buf_wrapper.create_no_alloc_string(value.as_bytes());
+            *buf = next;
         }
-        SpanKey::MetaStruct => span.meta_struct = read_meta_struct(buf)?,
-        SpanKey::SpanLinks => span.span_links = read_span_links(buf)?,
+        SpanKey::Meta => span.meta = read_str_map_to_no_alloc_strings(buf_wrapper, buf)?,
+        SpanKey::Metrics => span.metrics = read_metrics(buf_wrapper, buf)?,
+        SpanKey::MetaStruct => span.meta_struct = read_meta_struct(buf_wrapper, buf)?,
+        SpanKey::SpanLinks => span.span_links = read_span_links(buf_wrapper, buf)?,
     }
     Ok(())
 }
+
 #[cfg(test)]
 mod tests {
     use super::SpanKey;
-    use crate::msgpack_decoder::v04::error::DecodeError;
     use std::str::FromStr;
+    use crate::span_v04::SpanKeyParseError;
 
     #[test]
     fn test_span_key_from_str() {
@@ -147,7 +117,7 @@ mod tests {
 
         assert!(matches!(
             SpanKey::from_str("invalid_key"),
-            Err(DecodeError::InvalidFormat(_))
+            Err(SpanKeyParseError)
         ));
     }
 }
