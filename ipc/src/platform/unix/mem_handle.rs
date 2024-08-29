@@ -16,7 +16,6 @@ use std::io;
 use std::num::NonZeroUsize;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
-#[cfg(not(target_os = "linux"))]
 use std::sync::atomic::{AtomicI32, Ordering};
 
 pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMem<T>> {
@@ -42,19 +41,19 @@ pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
 static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
 
 impl ShmHandle {
     #[cfg(target_os = "linux")]
     fn open_anon_shm() -> anyhow::Result<RawFd> {
-        Ok(memfd::MemfdOptions::default()
-            .create("anon-shm-handle")?
-            .into_raw_fd())
+        if let Ok(memfd) = memfd::MemfdOptions::default().create("anon-shm-handle") {
+            Ok(memfd.into_raw_fd())
+        } else {
+            Self::open_anon_shm_generic()
+        }
     }
 
-    #[cfg(not(target_os = "linux"))]
-    fn open_anon_shm() -> anyhow::Result<RawFd> {
+    fn open_anon_shm_generic() -> anyhow::Result<RawFd> {
         let path = format!(
             "/libdatadog-shm-anon-{}-{}",
             unsafe { libc::getpid() },
@@ -67,6 +66,11 @@ impl ShmHandle {
         );
         _ = shm_unlink(path.as_bytes());
         Ok(result?)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn open_anon_shm() -> anyhow::Result<RawFd> {
+        Self::open_anon_shm_generic()
     }
 
     pub fn new(size: usize) -> anyhow::Result<ShmHandle> {
