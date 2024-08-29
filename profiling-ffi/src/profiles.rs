@@ -242,8 +242,8 @@ impl<'a> TryFrom<&'a Mapping<'a>> for api::Mapping<'a> {
     type Error = Utf8Error;
 
     fn try_from(mapping: &'a Mapping<'a>) -> Result<Self, Self::Error> {
-        let filename = mapping.filename.try_to_utf8()?;
-        let build_id = mapping.build_id.try_to_utf8()?;
+        let filename = mapping.filename.try_to_utf8().expect("boom1");
+        let build_id = mapping.build_id.try_to_utf8().expect("boom2");
         return Ok(Self {
             memory_start: mapping.memory_start,
             memory_limit: mapping.memory_limit,
