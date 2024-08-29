@@ -44,6 +44,8 @@ pub fn decode_span<'a>(
     Ok(span)
 }
 
+// Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
+// NoAllocStrings
 fn fill_span(
     span: &mut Span,
     buf_wrapper: &BufferWrapper,
@@ -59,17 +61,17 @@ fn fill_span(
     match key {
         SpanKey::Service => {
             let (value, next) = read_string_ref(buf)?;
-            span.service = buf_wrapper.create_no_alloc_string(value.as_bytes());
+            span.service = buf_wrapper.create_no_alloc_string_unchecked(value.as_bytes());
             *buf = next;
         }
         SpanKey::Name => {
             let (value, next) = read_string_ref(buf)?;
-            span.name = buf_wrapper.create_no_alloc_string(value.as_bytes());
+            span.name = buf_wrapper.create_no_alloc_string_unchecked(value.as_bytes());
             *buf = next;
         }
         SpanKey::Resource => {
             let (value, next) = read_string_ref(buf)?;
-            span.resource = buf_wrapper.create_no_alloc_string(value.as_bytes());
+            span.resource = buf_wrapper.create_no_alloc_string_unchecked(value.as_bytes());
             *buf = next;
         }
         SpanKey::TraceId => span.trace_id = read_number(buf)?.try_into()?,
@@ -80,7 +82,7 @@ fn fill_span(
         SpanKey::Error => span.error = read_number(buf)?.try_into()?,
         SpanKey::Type => {
             let (value, next) = read_string_ref(buf)?;
-            span.r#type = buf_wrapper.create_no_alloc_string(value.as_bytes());
+            span.r#type = buf_wrapper.create_no_alloc_string_unchecked(value.as_bytes());
             *buf = next;
         }
         SpanKey::Meta => span.meta = read_str_map_to_no_alloc_strings(buf_wrapper, buf)?,

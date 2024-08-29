@@ -34,7 +34,10 @@ pub(crate) fn read_span_links(
         DecodeError::InvalidFormat("Unable to read marker for span links".to_owned())
     })? {
         Marker::FixArray(len) => {
-            let mut vec: Vec<SpanLink> = Vec::with_capacity(len.try_into().expect("TODO: EK"));
+            let mut vec: Vec<SpanLink> = Vec::with_capacity(
+                len.try_into()
+                    .expect("Unable to cast FixArray len to usize"),
+            );
             for _ in 0..len {
                 vec.push(decode_span_link(buf_wrapper, buf)?);
             }
@@ -73,6 +76,8 @@ impl FromStr for SpanLinkKey {
     }
 }
 
+// Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
+// NoAllocStrings
 fn decode_span_link(buf_wrapper: &BufferWrapper, buf: &mut &[u8]) -> Result<SpanLink, DecodeError> {
     let mut span = SpanLink::default();
     let span_size = rmp::decode::read_map_len(buf)
@@ -92,7 +97,7 @@ fn decode_span_link(buf_wrapper: &BufferWrapper, buf: &mut &[u8]) -> Result<Span
             }
             SpanLinkKey::Tracestate => {
                 let (val, next) = read_string_ref(buf)?;
-                span.tracestate = buf_wrapper.create_no_alloc_string(val.as_bytes());
+                span.tracestate = buf_wrapper.create_no_alloc_string_unchecked(val.as_bytes());
                 *buf = next;
             }
             SpanLinkKey::Flags => span.flags = read_number(buf)?.try_into()?,

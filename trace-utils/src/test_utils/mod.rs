@@ -27,25 +27,25 @@ pub fn create_test_no_alloc_span(
     let mut span = Span {
         trace_id,
         span_id,
-        service: NoAllocString::from_slice("test-service".as_ref()),
-        name: NoAllocString::from_slice("test_name".as_ref()),
-        resource: NoAllocString::from_slice("test-resource".as_ref()),
+        service: NoAllocString::from_slice("test-service".as_ref()).unwrap(),
+        name: NoAllocString::from_slice("test_name".as_ref()).unwrap(),
+        resource: NoAllocString::from_slice("test-resource".as_ref()).unwrap(),
         parent_id,
         start,
         duration: 5,
         error: 0,
         meta: HashMap::from([
             (
-                NoAllocString::from_slice("service".as_ref()),
-                NoAllocString::from_slice("test-service".as_ref()),
+                NoAllocString::from_slice("service".as_ref()).unwrap(),
+                NoAllocString::from_slice("test-service".as_ref()).unwrap(),
             ),
             (
-                NoAllocString::from_slice("env".as_ref()),
-                NoAllocString::from_slice("test-env".as_ref()),
+                NoAllocString::from_slice("env".as_ref()).unwrap(),
+                NoAllocString::from_slice("test-env".as_ref()).unwrap(),
             ),
             (
-                NoAllocString::from_slice("runtime-id".as_ref()),
-                NoAllocString::from_slice("test-runtime-id-value".as_ref()),
+                NoAllocString::from_slice("runtime-id".as_ref()).unwrap(),
+                NoAllocString::from_slice("test-runtime-id-value".as_ref()).unwrap(),
             ),
         ]),
         metrics: HashMap::new(),
@@ -54,21 +54,23 @@ pub fn create_test_no_alloc_span(
         span_links: vec![],
     };
     if is_top_level {
-        span.metrics
-            .insert(NoAllocString::from_slice("_top_level".as_ref()), 1.0);
-        span.meta.insert(
-            NoAllocString::from_slice("_dd.origin".as_ref()),
-            NoAllocString::from_slice("cloudfunction".as_ref()),
+        span.metrics.insert(
+            NoAllocString::from_slice("_top_level".as_ref()).unwrap(),
+            1.0,
         );
         span.meta.insert(
-            NoAllocString::from_slice("origin".as_ref()),
-            NoAllocString::from_slice("cloudfunction".as_ref()),
+            NoAllocString::from_slice("_dd.origin".as_ref()).unwrap(),
+            NoAllocString::from_slice("cloudfunction".as_ref()).unwrap(),
         );
         span.meta.insert(
-            NoAllocString::from_slice("functionname".as_ref()),
-            NoAllocString::from_slice("dummy_function_name".as_ref()),
+            NoAllocString::from_slice("origin".as_ref()).unwrap(),
+            NoAllocString::from_slice("cloudfunction".as_ref()).unwrap(),
         );
-        span.r#type = NoAllocString::from_slice("serverless".as_ref());
+        span.meta.insert(
+            NoAllocString::from_slice("functionname".as_ref()).unwrap(),
+            NoAllocString::from_slice("dummy_function_name".as_ref()).unwrap(),
+        );
+        span.r#type = NoAllocString::from_slice("serverless".as_ref()).unwrap();
     }
     span
 }

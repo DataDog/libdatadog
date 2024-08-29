@@ -36,17 +36,19 @@ mod tracing_integration_tests {
         );
 
         let mut span_1 = create_test_no_alloc_span(1234, 12342, 12341, 1, false);
-        span_1
-            .metrics
-            .insert(NoAllocString::from_slice("_dd_metric1".as_ref()), 1.0);
-        span_1
-            .metrics
-            .insert(NoAllocString::from_slice("_dd_metric2".as_ref()), 2.0);
+        span_1.metrics.insert(
+            NoAllocString::from_slice("_dd_metric1".as_ref()).unwrap(),
+            1.0,
+        );
+        span_1.metrics.insert(
+            NoAllocString::from_slice("_dd_metric2".as_ref()).unwrap(),
+            2.0,
+        );
 
         let span_2 = create_test_no_alloc_span(1234, 12343, 12341, 1, false);
 
         let mut root_span = create_test_no_alloc_span(1234, 12341, 0, 0, true);
-        root_span.r#type = NoAllocString::from_slice("web".as_ref());
+        root_span.r#type = NoAllocString::from_slice("web".as_ref()).unwrap();
 
         let trace = vec![span_1, span_2, root_span];
 
