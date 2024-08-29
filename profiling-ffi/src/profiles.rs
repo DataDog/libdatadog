@@ -256,9 +256,8 @@ impl<'a> TryFrom<&'a Mapping<'a>> for api::Mapping<'a> {
             build_id,
             build_id_id: mapping.build_id_id,
         };
-        println!("Mapping: {:?}", mapping);
         let result = Ok(mapping);
-        println!("Result: {:?}", result);
+        println!("Result: {}", result.is_ok());
         return result;
     }
 }
