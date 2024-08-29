@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::span_v04::Span;
 use crate::{
     msgpack_decoder,
     trace_utils::{cmp_send_data_payloads, collect_trace_chunks, TracerHeaderTags},
@@ -8,7 +9,6 @@ use crate::{
 use datadog_trace_protobuf::pb;
 use std::cmp::Ordering;
 use tinybytes;
-use crate::span_v04::Span;
 
 pub type TracerPayloadV04 = Vec<Span>;
 
@@ -269,7 +269,7 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
                     TraceCollection::V04(traces),
                     self.tracer_header_tags,
                     self.chunk_processor,
-                    self.is_agentless
+                    self.is_agentless,
                 ))
             }
             _ => todo!("Encodings other than TraceEncoding::V04 not implemented yet."),
@@ -280,11 +280,11 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{create_test_no_alloc_span, create_test_span};
+    use crate::no_alloc_string::NoAllocString;
+    use crate::test_utils::create_test_no_alloc_span;
     use datadog_trace_protobuf::pb;
     use serde_json::json;
     use std::collections::HashMap;
-    use crate::no_alloc_string::NoAllocString;
 
     fn create_dummy_collection_v07() -> TracerPayloadCollection {
         TracerPayloadCollection::V07(vec![pb::TracerPayload {

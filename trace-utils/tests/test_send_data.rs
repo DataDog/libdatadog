@@ -6,7 +6,7 @@
 mod tracing_integration_tests {
     use datadog_trace_utils::no_alloc_string::NoAllocString;
     use datadog_trace_utils::send_data::SendData;
-    use datadog_trace_utils::test_utils::{create_test_no_alloc_span, create_test_span};
+    use datadog_trace_utils::test_utils::create_test_no_alloc_span;
     use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use datadog_trace_utils::trace_utils::TracerHeaderTags;
     use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
@@ -36,8 +36,12 @@ mod tracing_integration_tests {
         );
 
         let mut span_1 = create_test_no_alloc_span(1234, 12342, 12341, 1, false);
-        span_1.metrics.insert(NoAllocString::from_slice("_dd_metric1".as_ref()), 1.0);
-        span_1.metrics.insert(NoAllocString::from_slice("_dd_metric2".as_ref()), 2.0);
+        span_1
+            .metrics
+            .insert(NoAllocString::from_slice("_dd_metric1".as_ref()), 1.0);
+        span_1
+            .metrics
+            .insert(NoAllocString::from_slice("_dd_metric2".as_ref()), 2.0);
 
         let span_2 = create_test_no_alloc_span(1234, 12343, 12341, 1, false);
 

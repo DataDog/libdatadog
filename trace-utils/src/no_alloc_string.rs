@@ -1,6 +1,6 @@
-use tinybytes;
 use serde::ser::{Serialize, Serializer};
 use std::borrow::Borrow;
+use tinybytes;
 
 pub struct BufferWrapper {
     buffer: tinybytes::Bytes,

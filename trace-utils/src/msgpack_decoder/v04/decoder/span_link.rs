@@ -4,10 +4,10 @@
 use crate::msgpack_decoder::v04::decoder::{read_str_map_to_no_alloc_strings, read_string_ref};
 use crate::msgpack_decoder::v04::error::DecodeError;
 use crate::msgpack_decoder::v04::number::read_number;
-use rmp::Marker;
-use std::str::FromStr;
 use crate::no_alloc_string::BufferWrapper;
 use crate::span_v04::SpanLink;
+use rmp::Marker;
+use std::str::FromStr;
 
 /// Reads a slice of bytes and decodes it into a vector of `SpanLink` objects.
 ///

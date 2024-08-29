@@ -41,7 +41,7 @@ impl FromStr for SpanKey {
             "type" => Ok(SpanKey::Type),
             "meta_struct" => Ok(SpanKey::MetaStruct),
             "span_links" => Ok(SpanKey::SpanLinks),
-            _ => Err(SpanKeyParseError::from(format!("Invalid span key: {}", s))),
+            _ => Err(SpanKeyParseError::new(format!("Invalid span key: {}", s))),
         }
     }
 }
@@ -57,6 +57,7 @@ pub struct Span {
     pub parent_id: u64,
     pub start: i64,
     pub duration: i64,
+    #[serde(skip_serializing_if = "is_default")]
     pub error: i32,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub meta: HashMap<NoAllocString, NoAllocString>,
@@ -80,27 +81,23 @@ pub struct SpanLink {
 
 #[derive(Debug)]
 pub struct SpanKeyParseError {
-    details: String,
+    pub message: String,
 }
 
-impl fmt::Display for SpanKeyParseError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "SpanKeyParseError: {}", self.details)
-    }
-}
-
-impl std::error::Error for SpanKeyParseError {}
-
-impl From<&str> for SpanKeyParseError {
-    fn from(msg: &str) -> Self {
+impl SpanKeyParseError {
+    pub fn new(message: impl Into<String>) -> Self {
         SpanKeyParseError {
-            details: msg.to_string(),
+            message: message.into(),
         }
     }
 }
-
-impl From<String> for SpanKeyParseError {
-    fn from(msg: String) -> Self {
-        SpanKeyParseError { details: msg }
+impl fmt::Display for SpanKeyParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SpanKeyParseError: {}", self.message)
     }
+}
+impl std::error::Error for SpanKeyParseError {}
+
+fn is_default<T: Default + PartialEq>(t: &T) -> bool {
+    t == &T::default()
 }
