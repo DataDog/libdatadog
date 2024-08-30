@@ -6,8 +6,8 @@ version.workspace = true
 license.workspace = true
 
 [dependencies]
-datadog-protos = { version = "0.1.0", default-features = false, git = "https://github.com/DataDog/saluki/" }
-ddsketch-agent = { version = "0.1.0", default-features = false, git = "https://github.com/DataDog/saluki/" }
+datadog-protos = { version = "0.1.0", default-features = false, git = "https://github.com/DataDog/saluki-backport/" }
+ddsketch-agent = { version = "0.1.0", default-features = false, git = "https://github.com/DataDog/saluki-backport/" }
 hashbrown = { version = "0.14.3", default-features = false, features = ["inline-more"] }
 protobuf = { version = "3.5.0", default-features = false }
 ustr = { version = "1.0.0", default-features = false }

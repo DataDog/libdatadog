@@ -29,7 +29,7 @@ bash build-profiling-ffi.sh /opt/libdatadog
 
 #### Build Dependencies
 
-- Rust 1.77.2 or newer with cargo
+- Rust 1.76.0 or newer with cargo
 - `cbindgen` 0.26
 - `cmake` and `protoc`
 
@@ -57,6 +57,6 @@ Tracing integration tests require docker to be installed and running. If you don
 cargo nextest run -E '!test(tracing_integration_tests::)'
 ```
 
-Please note that the locked version is to make sure that it can be built using rust `1.77.2`, and if you are using a newer rust version, then it's enough to limit the version to `0.9.*`.
+Please note that the locked version is to make sure that it can be built using rust `1.76.0`, and if you are using a newer rust version, then it's enough to limit the version to `0.9.*`.
 
 [nt]: https://nexte.st/

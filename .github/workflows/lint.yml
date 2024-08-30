@@ -31,7 +31,7 @@ jobs:
       fail-fast: false
       matrix:
         # Ignore nightly for now, it fails too often
-        rust_version: ["1.77.2", "stable"]
+        rust_version: ["1.76.0", "stable"]
         platform: [windows-latest, ubuntu-latest]
     steps:
       - name: Checkout sources
@@ -47,7 +47,7 @@ jobs:
         run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh
       - name: Run clippy on ${{ matrix.platform }} ${{ matrix.rust_version }} 
         shell: bash
-        run: cargo clippy --all-targets --all-features -- -D warnings "$([ ${{ matrix.rust_version }} = 1.77.2 ] && echo -Aunknown-lints)"
+        run: cargo clippy --all-targets --all-features -- -D warnings "$([ ${{ matrix.rust_version }} = 1.76.0 ] && echo -Aunknown-lints)"
   licensecheck:
     runs-on: ubuntu-latest
     name: "Presence of licence headers"
