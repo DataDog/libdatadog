@@ -1,3 +1,6 @@
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 //! Error types for `metrics` module
 
 /// Errors for the function [`crate::metric::Metric::parse`]

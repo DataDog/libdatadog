@@ -1,3 +1,6 @@
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 /// The maximum tags that a `Metric` may hold.
 pub const MAX_TAGS: usize = 32;
 
