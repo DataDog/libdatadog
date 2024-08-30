@@ -16,8 +16,8 @@ pub trait Limiter {
 /// It's base unit is in seconds, i.e. the minimum allowed rate is 1 per second.
 /// Internally the limiter works with the system time granularity, i.e. nanoseconds on unix and
 /// milliseconds on windows.
-/// The implementation is a sliding window: every time the limiter is increased, the as much time as
-/// has passed is also refilled.
+/// The implementation is a sliding window: every time the limiter is increased, the amount of time
+/// that has passed is also refilled.
 #[repr(C)]
 pub struct LocalLimiter {
     hit_count: AtomicI64,
