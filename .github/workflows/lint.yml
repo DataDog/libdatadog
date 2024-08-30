@@ -42,6 +42,9 @@ jobs:
           rust_version: ${{ matrix.rust_version }}
       - name: Install ${{ matrix.rust_version }} toolchain and clippy
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }} && rustup component add clippy
+      - name: Install Protoc Binary
+        shell: bash
+        run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh
       - name: Run clippy on ${{ matrix.platform }} ${{ matrix.rust_version }} 
         shell: bash
         run: cargo clippy --all-targets --all-features -- -D warnings "$([ ${{ matrix.rust_version }} = 1.77.2 ] && echo -Aunknown-lints)"
