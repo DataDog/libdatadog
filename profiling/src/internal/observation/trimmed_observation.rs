@@ -115,11 +115,11 @@ impl Drop for TrimmedObservation {
     /// By the time this is called, the owner of the `TrimmedObservation` should
     /// have consumed the memory using `consume()`.
     fn drop(&mut self) {
-        // assert_eq!(
-        //     self.data,
-        //     std::ptr::null_mut(),
-        //     "Dropped TrimmedObservation that still owned data."
-        // );
+        assert_eq!(
+            self.data,
+            std::ptr::null_mut(),
+            "Dropped TrimmedObservation that still owned data."
+        );
     }
 }
 
