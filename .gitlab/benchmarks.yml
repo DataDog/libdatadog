@@ -11,6 +11,8 @@ benchmarks:
   interruptible: true
   timeout: 1h
   script:
+    - apt update && apt install -y unzip
+    - chmod +x ./scripts/install-protoc.sh && . ./scripts/install-protoc.sh $HOME/usr/local
     - export ARTIFACTS_DIR="$(pwd)/reports" && (mkdir "${ARTIFACTS_DIR}" || :)
     - git clone --branch libdatadog/benchmarks https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ddbuild.io/DataDog/benchmarking-platform /platform && cd /platform
     - ./steps/capture-hardware-software-info.sh

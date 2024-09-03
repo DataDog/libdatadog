@@ -5,6 +5,9 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 
+[lib]
+bench = false
+
 [dependencies]
 datadog-protos = { version = "0.1.0", default-features = false, git = "https://github.com/DataDog/saluki-backport/" }
 ddsketch-agent = { version = "0.1.0", default-features = false, git = "https://github.com/DataDog/saluki-backport/" }
