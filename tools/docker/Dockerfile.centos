@@ -12,4 +12,4 @@ RUN yum update -y \
     && yum install -y unzip
 
 COPY ./scripts/install-protoc.sh .
-RUN chmod +x ./install-protoc.sh && ./install-protoc.sh
+RUN chmod +x ./install-protoc.sh && ./install-protoc.sh usr/local

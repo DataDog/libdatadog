@@ -43,7 +43,7 @@ jobs:
         run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
       - name: Install Protoc Binary
         shell: bash
-        run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh
+        run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh $HOME
       - name: Install cargo nextest
         uses: taiki-e/install-action@v2
         with: 

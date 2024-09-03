@@ -27,7 +27,7 @@ jobs:
         run: rustup install nightly && rustup default nightly
       - name: Install Protoc Binary
         shell: bash
-        run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh
+        run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh $HOME
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@v2
         with:

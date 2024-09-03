@@ -49,15 +49,8 @@ get_arch() {
 }
 
 install_protoc() {
-  local version=$1
-
-  # For Github Actions, install_path is set to the HOME environment variable
-  # For the Linux based Dockerfile, install_path is set to usr/local
-  if [ -n "$GITHUB_PATH" ]; then
-    install_path=$HOME
-  else
-    install_path="usr/local"
-  fi
+  local install_path=$1
+  local version=$2
 
   mkdir -p "${install_path}"
 
@@ -79,4 +72,4 @@ install_protoc() {
   fi
 }
 
-install_protoc "28.0"
+install_protoc "$1" "28.0"
