@@ -52,7 +52,7 @@ use std::{collections::HashMap, f64};
 /// assert_eq!(1, decoded_traces.len());
 /// assert_eq!(1, decoded_traces[0].len());
 /// let decoded_span = &decoded_traces[0][0];
-/// assert_eq!("test-span", decoded_span.name.as_str());
+/// assert_eq!("test-span", decoded_span.name.as_str().unwrap());
 /// ```
 pub fn from_slice(data: tinybytes::Bytes) -> Result<Vec<Vec<Span>>, DecodeError> {
     let mut local_buf = data.as_ref();
@@ -122,16 +122,14 @@ fn read_str_map_to_no_alloc_strings(
         let (val, next) = read_string_ref(buf)?;
         *buf = next;
 
-        let key = buf_wrapper.create_no_alloc_string_unchecked(key.as_bytes());
-        let value = buf_wrapper.create_no_alloc_string_unchecked(val.as_bytes());
+        let key = unsafe { buf_wrapper.create_no_alloc_string_unchecked(key.as_bytes()) };
+        let value = unsafe { buf_wrapper.create_no_alloc_string_unchecked(val.as_bytes()) };
         map.insert(key, value);
     }
     Ok(map)
 }
 
 #[inline]
-// Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
-// NoAllocStrings.
 fn read_metric_pair(
     buffer_wrapper: &BufferWrapper,
     buf: &mut &[u8],
@@ -140,7 +138,7 @@ fn read_metric_pair(
     *buf = next;
 
     let v = read_number(buf)?.try_into()?;
-    let key = buffer_wrapper.create_no_alloc_string_unchecked(key.as_bytes());
+    let key = unsafe { buffer_wrapper.create_no_alloc_string_unchecked(key.as_bytes()) };
 
     Ok((key, v))
 }
@@ -152,8 +150,6 @@ fn read_metrics(
     read_map(len, buf_wrapper, buf, read_metric_pair)
 }
 
-// Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
-// NoAllocStrings.
 fn read_meta_struct(
     buf_wrapper: &BufferWrapper,
     buf: &mut &[u8],
@@ -174,7 +170,7 @@ fn read_meta_struct(
             let value = read_number(buf)?.try_into()?;
             v.push(value);
         }
-        let key = buf_wrapper.create_no_alloc_string_unchecked(key.as_bytes());
+        let key = unsafe { buf_wrapper.create_no_alloc_string_unchecked(key.as_bytes()) };
         Ok((key, v))
     }
 
@@ -271,7 +267,7 @@ mod tests {
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
-        assert_eq!(expected_string, decoded_span.name.as_str());
+        assert_eq!(expected_string, decoded_span.name.as_str().unwrap());
     }
 
     #[test]

@@ -61,17 +61,19 @@ fn fill_span(
     match key {
         SpanKey::Service => {
             let (value, next) = read_string_ref(buf)?;
-            span.service = buf_wrapper.create_no_alloc_string_unchecked(value.as_bytes());
+            span.service =
+                unsafe { buf_wrapper.create_no_alloc_string_unchecked(value.as_bytes()) };
             *buf = next;
         }
         SpanKey::Name => {
             let (value, next) = read_string_ref(buf)?;
-            span.name = buf_wrapper.create_no_alloc_string_unchecked(value.as_bytes());
+            span.name = unsafe { buf_wrapper.create_no_alloc_string_unchecked(value.as_bytes()) };
             *buf = next;
         }
         SpanKey::Resource => {
             let (value, next) = read_string_ref(buf)?;
-            span.resource = buf_wrapper.create_no_alloc_string_unchecked(value.as_bytes());
+            span.resource =
+                unsafe { buf_wrapper.create_no_alloc_string_unchecked(value.as_bytes()) };
             *buf = next;
         }
         SpanKey::TraceId => span.trace_id = read_number(buf)?.try_into()?,
@@ -82,7 +84,7 @@ fn fill_span(
         SpanKey::Error => span.error = read_number(buf)?.try_into()?,
         SpanKey::Type => {
             let (value, next) = read_string_ref(buf)?;
-            span.r#type = buf_wrapper.create_no_alloc_string_unchecked(value.as_bytes());
+            span.r#type = unsafe { buf_wrapper.create_no_alloc_string_unchecked(value.as_bytes()) };
             *buf = next;
         }
         SpanKey::Meta => span.meta = read_str_map_to_no_alloc_strings(buf_wrapper, buf)?,
