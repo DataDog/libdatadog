@@ -34,10 +34,7 @@ pub(crate) fn read_span_links(
         DecodeError::InvalidFormat("Unable to read marker for span links".to_owned())
     })? {
         Marker::FixArray(len) => {
-            let mut vec: Vec<SpanLink> = Vec::with_capacity(
-                len.try_into()
-                    .expect("Unable to cast FixArray len to usize"),
-            );
+            let mut vec: Vec<SpanLink> = Vec::with_capacity(len.into());
             for _ in 0..len {
                 vec.push(decode_span_link(buf_wrapper, buf)?);
             }
@@ -97,7 +94,8 @@ fn decode_span_link(buf_wrapper: &BufferWrapper, buf: &mut &[u8]) -> Result<Span
             }
             SpanLinkKey::Tracestate => {
                 let (val, next) = read_string_ref(buf)?;
-                span.tracestate = buf_wrapper.create_no_alloc_string_unchecked(val.as_bytes());
+                span.tracestate =
+                    unsafe { buf_wrapper.create_no_alloc_string_unchecked(val.as_bytes()) };
                 *buf = next;
             }
             SpanLinkKey::Flags => span.flags = read_number(buf)?.try_into()?,
