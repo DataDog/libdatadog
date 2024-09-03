@@ -7,24 +7,20 @@ version.workspace = true
 license.workspace = true
 
 [features]
-default = ["profiling"]
-crashtracker = ["dep:datadog-crashtracker-ffi",
-    "datadog-profiling-ffi?/crashtracker-receiver",
-    "datadog-profiling-ffi?/crashtracker-collector"
-]
+default = []
+crashtracker = ["datadog-profiling-ffi?/crashtracker-receiver", "datadog-profiling-ffi?/crashtracker-collector"]
 profiling = ["dep:datadog-profiling-ffi"]
-telemetry = ["datadog-profiling-ffi?/ddtelemetry-ffi"]
-data-pipeline = ["dep:ddtelemetry-ffi", "datadog-profiling-ffi?/data-pipeline-ffi"]
-symbolizer = ["datadog-profiling-ffi?/symbolizer"]
+telemetry = ["profiling", "datadog-profiling-ffi?/ddtelemetry-ffi"]
+data-pipeline = ["telemetry", "datadog-profiling-ffi?/data-pipeline-ffi"]
+symbolizer = ["profiling", "datadog-profiling-ffi?/symbolizer"]
 
 [build-dependencies]
 anyhow = { version = "1.0" }
-build_common = { path = "../build-common" }
+build_common = { path = "../build-common", features = ["cbindgen"] }
 cmake = "0.1.50"
 tools = { path = "../tools" }
-datadog-crashtracker-ffi = { path = "../crashtracker-ffi", optional = true }
+ddcommon-ffi = { path = "../ddcommon-ffi" }
 datadog-profiling-ffi = { path = "../profiling-ffi", optional = true, features = ["cbindgen"] }
-ddtelemetry-ffi = { path = "../ddtelemetry-ffi", optional = true }
 tar = "0.4.41"
 
 [[bin]]

@@ -791,9 +791,8 @@ dependencies = [
  "anyhow",
  "build_common",
  "cmake",
- "datadog-crashtracker-ffi",
  "datadog-profiling-ffi",
- "ddtelemetry-ffi",
+ "ddcommon-ffi",
  "tar",
  "tools",
 ]
