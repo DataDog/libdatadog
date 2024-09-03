@@ -19,6 +19,7 @@ use std::collections::{HashMap, HashSet};
 use std::mem::transmute;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
+use http::uri::Scheme;
 use tracing::{debug, trace, warn};
 
 const PROD_INTAKE_SUBDOMAIN: &str = "config";
@@ -475,8 +476,16 @@ impl<S: FileStorage> ConfigFetcher<S> {
     }
 }
 
-fn get_product_endpoint(_subdomain: &str, endpoint: &Endpoint) -> Endpoint {
+fn get_product_endpoint(subdomain: &str, endpoint: &Endpoint) -> Endpoint {
     let mut parts = endpoint.url.clone().into_parts();
+    if parts.authority.is_some() && parts.scheme.is_none() {
+        parts.scheme = Some(Scheme::HTTPS);
+        parts.authority = Some(
+            format!("{}.{}", subdomain, parts.authority.unwrap())
+                .parse()
+                .unwrap(),
+        );
+    }
     parts.path_and_query = Some(PathAndQuery::from_static("/v0.7/config"));
     Endpoint {
         url: hyper::Uri::from_parts(parts).unwrap(),

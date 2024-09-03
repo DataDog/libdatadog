@@ -134,7 +134,7 @@ where
                     known_service.runtimes.remove(runtime_id);
                     let mut status = known_service.status.lock().unwrap();
                     *status = match *status {
-                        KnownTargetStatus::Pending => break 'drop_service,
+                        KnownTargetStatus::Pending => KnownTargetStatus::Alive /* not really */,
                         KnownTargetStatus::Alive => {
                             KnownTargetStatus::RemoveAt(Instant::now() + Duration::from_secs(3666))
                         }
@@ -142,6 +142,10 @@ where
                             unreachable!()
                         }
                     };
+                    // We've marked it Alive so that the Pending check in start_fetcher() will fail
+                    if matches!(*status, KnownTargetStatus::Alive) {
+                        break 'drop_service;
+                    }
                     0
                 } else {
                     if *known_service.fetcher.runtime_id.lock().unwrap() == runtime_id {
@@ -164,6 +168,7 @@ where
                 };
                 break 'service_handling;
             }
+            trace!("Remove {target:?} from services map while in pending state");
             services.remove(target);
         }
 
@@ -433,6 +438,7 @@ where
 
             {
                 // scope lock before await
+                trace!("Remove {:?} from services map at fetcher end", fetcher.target);
                 let mut services = this.services.lock().unwrap();
                 services.remove(&fetcher.target);
                 if services.is_empty() && this.pending_async_insertions.load(Ordering::Relaxed) == 0
