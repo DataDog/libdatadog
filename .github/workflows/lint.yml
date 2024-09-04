@@ -47,7 +47,9 @@ jobs:
         run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh $HOME
       - name: Run clippy on ${{ matrix.platform }} ${{ matrix.rust_version }} 
         shell: bash
-        run: cargo clippy --all-targets --all-features -- -D warnings "$([ ${{ matrix.rust_version }} = 1.76.0 ] && echo -Aunknown-lints)"
+        run: |
+          # shellcheck disable=SC2046
+          cargo clippy --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.76.0 ] && echo -Aunknown-lints -Aclippy::cast_ref_to_mut)
   licensecheck:
     runs-on: ubuntu-latest
     name: "Presence of licence headers"

@@ -110,7 +110,7 @@ fn get_peer_tags(span: &pb::Span, peer_tag_keys: &[String]) -> Vec<Tag> {
 }
 
 /// The stats computed from a group of span with the same AggregationKey
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(super) struct GroupedStats {
     hits: u64,
     errors: u64,
@@ -140,7 +140,7 @@ impl GroupedStats {
 
 /// A time bucket used for stats aggregation. It stores a map of GroupedStats storing the stats of
 /// spans aggregated on their AggregationKey.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct StatsBucket {
     data: HashMap<AggregationKey, GroupedStats>,
     start: u64,
