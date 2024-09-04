@@ -40,7 +40,7 @@ async fn dogstatsd_server_ships_series() {
         mock_server.url(),
     );
 
-    let server_address = "0.0.0.0:8125";
+    let server_address = "127.0.0.1:8125";
     let socket = UdpSocket::bind("0.0.0.0:0")
         .await
         .expect("unable to bind UDP socket");
