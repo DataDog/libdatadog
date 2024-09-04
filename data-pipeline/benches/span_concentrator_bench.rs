@@ -39,7 +39,8 @@ fn get_span(now: SystemTime, trace_id: u64, span_id: u64) -> pb::Span {
     }
 }
 
-pub fn add_span_to_concentrator(c: &mut Criterion) {
+pub fn criterion_benchmark(c: &mut Criterion) {
+    let mut group = c.benchmark_group("concentrator");
     let now = SystemTime::now() - Duration::from_secs(10 * 100);
     let concentrator = SpanConcentrator::new(
         Duration::from_secs(10),
@@ -54,7 +55,7 @@ pub fn add_span_to_concentrator(c: &mut Criterion) {
             spans.push(get_span(now, trace_id, span_id));
         }
     }
-    c.bench_function("benching adding span to the SpanConcentrator", |b| {
+    group.bench_function("add_spans_to_concentrator", |b| {
         b.iter_batched_ref(
             || (concentrator.clone(), spans.clone()),
             |data| {
@@ -68,4 +69,4 @@ pub fn add_span_to_concentrator(c: &mut Criterion) {
         );
     });
 }
-criterion_group!(benches, add_span_to_concentrator);
+criterion_group!(benches, criterion_benchmark);
