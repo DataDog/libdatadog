@@ -6,7 +6,6 @@ pub mod datadog_test_agent;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::no_alloc_string::NoAllocString;
 use crate::send_data::SendData;
 use crate::span_v04::Span;
 use crate::trace_utils::TracerHeaderTags;
@@ -15,6 +14,7 @@ use datadog_trace_protobuf::pb;
 use ddcommon::Endpoint;
 use httpmock::Mock;
 use serde_json::json;
+use tinybytes::bytes_string::BytesString;
 use tokio::time::sleep;
 
 pub fn create_test_no_alloc_span(
@@ -27,50 +27,48 @@ pub fn create_test_no_alloc_span(
     let mut span = Span {
         trace_id,
         span_id,
-        service: NoAllocString::from_slice("test-service".as_ref()).unwrap(),
-        name: NoAllocString::from_slice("test_name".as_ref()).unwrap(),
-        resource: NoAllocString::from_slice("test-resource".as_ref()).unwrap(),
+        service: BytesString::from_slice("test-service".as_ref()).unwrap(),
+        name: BytesString::from_slice("test_name".as_ref()).unwrap(),
+        resource: BytesString::from_slice("test-resource".as_ref()).unwrap(),
         parent_id,
         start,
         duration: 5,
         error: 0,
         meta: HashMap::from([
             (
-                NoAllocString::from_slice("service".as_ref()).unwrap(),
-                NoAllocString::from_slice("test-service".as_ref()).unwrap(),
+                BytesString::from_slice("service".as_ref()).unwrap(),
+                BytesString::from_slice("test-service".as_ref()).unwrap(),
             ),
             (
-                NoAllocString::from_slice("env".as_ref()).unwrap(),
-                NoAllocString::from_slice("test-env".as_ref()).unwrap(),
+                BytesString::from_slice("env".as_ref()).unwrap(),
+                BytesString::from_slice("test-env".as_ref()).unwrap(),
             ),
             (
-                NoAllocString::from_slice("runtime-id".as_ref()).unwrap(),
-                NoAllocString::from_slice("test-runtime-id-value".as_ref()).unwrap(),
+                BytesString::from_slice("runtime-id".as_ref()).unwrap(),
+                BytesString::from_slice("test-runtime-id-value".as_ref()).unwrap(),
             ),
         ]),
         metrics: HashMap::new(),
-        r#type: NoAllocString::default(),
+        r#type: BytesString::default(),
         meta_struct: HashMap::new(),
         span_links: vec![],
     };
     if is_top_level {
-        span.metrics.insert(
-            NoAllocString::from_slice("_top_level".as_ref()).unwrap(),
-            1.0,
+        span.metrics
+            .insert(BytesString::from_slice("_top_level".as_ref()).unwrap(), 1.0);
+        span.meta.insert(
+            BytesString::from_slice("_dd.origin".as_ref()).unwrap(),
+            BytesString::from_slice("cloudfunction".as_ref()).unwrap(),
         );
         span.meta.insert(
-            NoAllocString::from_slice("_dd.origin".as_ref()).unwrap(),
-            NoAllocString::from_slice("cloudfunction".as_ref()).unwrap(),
+            BytesString::from_slice("origin".as_ref()).unwrap(),
+            BytesString::from_slice("cloudfunction".as_ref()).unwrap(),
         );
         span.meta.insert(
-            NoAllocString::from_slice("origin".as_ref()).unwrap(),
-            NoAllocString::from_slice("cloudfunction".as_ref()).unwrap(),
+            BytesString::from_slice("functionname".as_ref()).unwrap(),
+            BytesString::from_slice("dummy_function_name".as_ref()).unwrap(),
         );
-        span.meta.insert(
-            NoAllocString::from_slice("functionname".as_ref()).unwrap(),
-            NoAllocString::from_slice("dummy_function_name".as_ref()).unwrap(),
-        );
-        span.r#type = NoAllocString::from_slice("serverless".as_ref()).unwrap();
+        span.r#type = BytesString::from_slice("serverless".as_ref()).unwrap();
     }
     span
 }

@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{
-    read_meta_struct, read_metrics, read_str_map_to_no_alloc_strings, read_string_ref,
+    read_meta_struct, read_metrics, read_str_map_to_bytes_strings, read_string_ref,
     span_link::read_span_links,
 };
 use crate::msgpack_decoder::v04::error::DecodeError;
 use crate::msgpack_decoder::v04::number::read_number;
-use crate::no_alloc_string::BufferWrapper;
 use crate::span_v04::{Span, SpanKey};
+use tinybytes::bytes_string::BufferWrapper;
 
 /// Decodes a slice of bytes into a `Span` object.
 ///
@@ -45,7 +45,7 @@ pub fn decode_span<'a>(
 }
 
 // Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
-// NoAllocStrings
+// BytesStrings
 fn fill_span(
     span: &mut Span,
     buf_wrapper: &BufferWrapper,
@@ -61,19 +61,17 @@ fn fill_span(
     match key {
         SpanKey::Service => {
             let (value, next) = read_string_ref(buf)?;
-            span.service =
-                unsafe { buf_wrapper.create_no_alloc_string_unchecked(value.as_bytes()) };
+            span.service = unsafe { buf_wrapper.create_bytes_string_unchecked(value.as_bytes()) };
             *buf = next;
         }
         SpanKey::Name => {
             let (value, next) = read_string_ref(buf)?;
-            span.name = unsafe { buf_wrapper.create_no_alloc_string_unchecked(value.as_bytes()) };
+            span.name = unsafe { buf_wrapper.create_bytes_string_unchecked(value.as_bytes()) };
             *buf = next;
         }
         SpanKey::Resource => {
             let (value, next) = read_string_ref(buf)?;
-            span.resource =
-                unsafe { buf_wrapper.create_no_alloc_string_unchecked(value.as_bytes()) };
+            span.resource = unsafe { buf_wrapper.create_bytes_string_unchecked(value.as_bytes()) };
             *buf = next;
         }
         SpanKey::TraceId => span.trace_id = read_number(buf)?.try_into()?,
@@ -84,10 +82,10 @@ fn fill_span(
         SpanKey::Error => span.error = read_number(buf)?.try_into()?,
         SpanKey::Type => {
             let (value, next) = read_string_ref(buf)?;
-            span.r#type = unsafe { buf_wrapper.create_no_alloc_string_unchecked(value.as_bytes()) };
+            span.r#type = unsafe { buf_wrapper.create_bytes_string_unchecked(value.as_bytes()) };
             *buf = next;
         }
-        SpanKey::Meta => span.meta = read_str_map_to_no_alloc_strings(buf_wrapper, buf)?,
+        SpanKey::Meta => span.meta = read_str_map_to_bytes_strings(buf_wrapper, buf)?,
         SpanKey::Metrics => span.metrics = read_metrics(buf_wrapper, buf)?,
         SpanKey::MetaStruct => span.meta_struct = read_meta_struct(buf_wrapper, buf)?,
         SpanKey::SpanLinks => span.span_links = read_span_links(buf_wrapper, buf)?,

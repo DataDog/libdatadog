@@ -280,11 +280,11 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::no_alloc_string::NoAllocString;
     use crate::test_utils::create_test_no_alloc_span;
     use datadog_trace_protobuf::pb;
     use serde_json::json;
     use std::collections::HashMap;
+    use tinybytes::bytes_string::BytesString;
 
     fn create_dummy_collection_v07() -> TracerPayloadCollection {
         TracerPayloadCollection::V07(vec![pb::TracerPayload {
@@ -383,9 +383,9 @@ mod tests {
         }]);
 
         let expected_serialized_span_data1 = vec![Span {
-            service: NoAllocString::from_slice("test-service".as_ref()).unwrap(),
-            name: NoAllocString::from_slice("test-service-name".as_ref()).unwrap(),
-            resource: NoAllocString::from_slice("test-service-resource".as_ref()).unwrap(),
+            service: BytesString::from_slice("test-service".as_ref()).unwrap(),
+            name: BytesString::from_slice("test-service-name".as_ref()).unwrap(),
+            resource: BytesString::from_slice("test-service-resource".as_ref()).unwrap(),
             trace_id: 111,
             span_id: 222,
             parent_id: 100,
@@ -395,7 +395,7 @@ mod tests {
             meta: HashMap::new(),
             metrics: HashMap::new(),
             meta_struct: HashMap::new(),
-            r#type: NoAllocString::from_slice("serverless".as_ref()).unwrap(),
+            r#type: BytesString::from_slice("serverless".as_ref()).unwrap(),
             span_links: vec![],
         }];
 
@@ -415,9 +415,9 @@ mod tests {
         }]);
 
         let expected_serialized_span_data2 = vec![Span {
-            service: NoAllocString::from_slice("test-service".as_ref()).unwrap(),
-            name: NoAllocString::from_slice("test-service-name".as_ref()).unwrap(),
-            resource: NoAllocString::from_slice("test-service-resource".as_ref()).unwrap(),
+            service: BytesString::from_slice("test-service".as_ref()).unwrap(),
+            name: BytesString::from_slice("test-service-name".as_ref()).unwrap(),
+            resource: BytesString::from_slice("test-service-resource".as_ref()).unwrap(),
             trace_id: 111,
             span_id: 333,
             parent_id: 100,
@@ -427,7 +427,7 @@ mod tests {
             meta: HashMap::new(),
             metrics: HashMap::new(),
             meta_struct: HashMap::new(),
-            r#type: NoAllocString::default(),
+            r#type: BytesString::default(),
             span_links: vec![],
         }];
 

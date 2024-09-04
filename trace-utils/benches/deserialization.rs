@@ -7,7 +7,6 @@ use datadog_trace_utils::tracer_payload::{
     DefaultTraceChunkProcessor, TraceEncoding, TracerPayloadCollection, TracerPayloadParams,
 };
 use serde_json::json;
-use tinybytes;
 
 pub fn deserialize_msgpack_to_internal(c: &mut Criterion) {
     let span_data1 = json!([{
