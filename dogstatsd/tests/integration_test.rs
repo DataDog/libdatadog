@@ -40,7 +40,7 @@ async fn dogstatsd_server_ships_series() {
         mock_server.url(),
     );
 
-    let server_address = "127.0.0.1:8125";
+    let server_address = "127.0.0.1:18125";
     let socket = UdpSocket::bind("0.0.0.0:0")
         .await
         .expect("unable to bind UDP socket");
@@ -69,7 +69,7 @@ async fn dogstatsd_server_ships_series() {
 async fn start_dogstatsd(metrics_aggr: &Arc<Mutex<MetricsAggregator>>) -> CancellationToken {
     let dogstatsd_config = DogStatsDConfig {
         host: "0.0.0.0".to_string(),
-        port: 8125,
+        port: 18125,
     };
     let dogstatsd_cancel_token = tokio_util::sync::CancellationToken::new();
     let dogstatsd_client = DogStatsD::new(
