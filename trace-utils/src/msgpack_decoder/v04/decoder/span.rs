@@ -31,14 +31,14 @@ pub fn decode_span<'a>(
     buf: &mut &'a [u8],
 ) -> Result<Span, DecodeError> {
     let mut span = Span::default();
-    let wrapper = BufferWrapper::new(buffer.clone()); // Use the Bytes instance directly
+    let mut wrapper = BufferWrapper::new(buffer.clone(), buf); // Use the Bytes instance directly
 
-    let span_size = rmp::decode::read_map_len(buf).map_err(|_| {
+    let span_size = rmp::decode::read_map_len(wrapper.underlying).map_err(|_| {
         DecodeError::InvalidFormat("Unable to get map len for span size".to_owned())
     })?;
 
     for _ in 0..span_size {
-        fill_span(&mut span, &wrapper, buf)?;
+        fill_span(&mut span, &mut wrapper)?;
     }
 
     Ok(span)
@@ -46,49 +46,45 @@ pub fn decode_span<'a>(
 
 // Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
 // BytesStrings
-fn fill_span(
-    span: &mut Span,
-    buf_wrapper: &BufferWrapper,
-    buf: &mut &[u8],
-) -> Result<(), DecodeError> {
-    let (key, value) = read_string_ref(buf)?;
+fn fill_span(span: &mut Span, buf_wrapper: &mut BufferWrapper) -> Result<(), DecodeError> {
+    let (key, value) = read_string_ref(buf_wrapper.underlying)?;
     let key = key
         .parse::<SpanKey>()
         .map_err(|_| DecodeError::InvalidFormat("Invalid span key".to_owned()))?;
 
-    *buf = value;
+    *buf_wrapper.underlying = value;
 
     match key {
         SpanKey::Service => {
-            let (value, next) = read_string_ref(buf)?;
+            let (value, next) = read_string_ref(buf_wrapper.underlying)?;
             span.service = unsafe { buf_wrapper.create_bytes_string_unchecked(value.as_bytes()) };
-            *buf = next;
+            *buf_wrapper.underlying = next;
         }
         SpanKey::Name => {
-            let (value, next) = read_string_ref(buf)?;
+            let (value, next) = read_string_ref(buf_wrapper.underlying)?;
             span.name = unsafe { buf_wrapper.create_bytes_string_unchecked(value.as_bytes()) };
-            *buf = next;
+            *buf_wrapper.underlying = next;
         }
         SpanKey::Resource => {
-            let (value, next) = read_string_ref(buf)?;
+            let (value, next) = read_string_ref(buf_wrapper.underlying)?;
             span.resource = unsafe { buf_wrapper.create_bytes_string_unchecked(value.as_bytes()) };
-            *buf = next;
+            *buf_wrapper.underlying = next;
         }
-        SpanKey::TraceId => span.trace_id = read_number(buf)?.try_into()?,
-        SpanKey::SpanId => span.span_id = read_number(buf)?.try_into()?,
-        SpanKey::ParentId => span.parent_id = read_number(buf)?.try_into()?,
-        SpanKey::Start => span.start = read_number(buf)?.try_into()?,
-        SpanKey::Duration => span.duration = read_number(buf)?.try_into()?,
-        SpanKey::Error => span.error = read_number(buf)?.try_into()?,
+        SpanKey::TraceId => span.trace_id = read_number(buf_wrapper.underlying)?.try_into()?,
+        SpanKey::SpanId => span.span_id = read_number(buf_wrapper.underlying)?.try_into()?,
+        SpanKey::ParentId => span.parent_id = read_number(buf_wrapper.underlying)?.try_into()?,
+        SpanKey::Start => span.start = read_number(buf_wrapper.underlying)?.try_into()?,
+        SpanKey::Duration => span.duration = read_number(buf_wrapper.underlying)?.try_into()?,
+        SpanKey::Error => span.error = read_number(buf_wrapper.underlying)?.try_into()?,
         SpanKey::Type => {
-            let (value, next) = read_string_ref(buf)?;
+            let (value, next) = read_string_ref(buf_wrapper.underlying)?;
             span.r#type = unsafe { buf_wrapper.create_bytes_string_unchecked(value.as_bytes()) };
-            *buf = next;
+            *buf_wrapper.underlying = next;
         }
-        SpanKey::Meta => span.meta = read_str_map_to_bytes_strings(buf_wrapper, buf)?,
-        SpanKey::Metrics => span.metrics = read_metrics(buf_wrapper, buf)?,
-        SpanKey::MetaStruct => span.meta_struct = read_meta_struct(buf_wrapper, buf)?,
-        SpanKey::SpanLinks => span.span_links = read_span_links(buf_wrapper, buf)?,
+        SpanKey::Meta => span.meta = read_str_map_to_bytes_strings(buf_wrapper)?,
+        SpanKey::Metrics => span.metrics = read_metrics(buf_wrapper)?,
+        SpanKey::MetaStruct => span.meta_struct = read_meta_struct(buf_wrapper)?,
+        SpanKey::SpanLinks => span.span_links = read_span_links(buf_wrapper)?,
     }
     Ok(())
 }

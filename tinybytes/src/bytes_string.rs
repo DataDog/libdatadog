@@ -8,12 +8,13 @@ use std::borrow::Borrow;
 use std::str::Utf8Error;
 
 #[cfg(feature = "bytes_string")]
-pub struct BufferWrapper {
+pub struct BufferWrapper<'a, 'b> {
     buffer: Bytes,
+    pub underlying: &'a mut &'b [u8],
 }
 
 #[cfg(feature = "bytes_string")]
-impl BufferWrapper {
+impl<'a, 'b> BufferWrapper<'a, 'b> {
     /// Creates a new `BufferWrapper` from a `tinybytes::Bytes` instance.
     ///
     /// # Arguments
@@ -23,8 +24,8 @@ impl BufferWrapper {
     /// # Returns
     ///
     /// A new `BufferWrapper` instance containing the provided buffer.
-    pub fn new(buffer: Bytes) -> Self {
-        BufferWrapper { buffer }
+    pub fn new(buffer: Bytes, underlying: &'a mut &'b [u8]) -> Self {
+        BufferWrapper { buffer, underlying }
     }
 
     /// Creates a `BytesString` from a slice of bytes within the wrapped buffer.

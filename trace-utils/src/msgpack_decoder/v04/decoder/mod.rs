@@ -108,19 +108,18 @@ fn read_string_ref(buf: &[u8]) -> Result<(&str, &[u8]), DecodeError> {
 // Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
 // BytesStrings.
 fn read_str_map_to_bytes_strings(
-    buf_wrapper: &BufferWrapper,
-    buf: &mut &[u8],
+    buf_wrapper: &mut BufferWrapper,
 ) -> Result<HashMap<BytesString, BytesString>, DecodeError> {
-    let len = decode::read_map_len(buf)
+    let len = decode::read_map_len(buf_wrapper.underlying)
         .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
 
     let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to usize"));
     for _ in 0..len {
-        let (key, next) = read_string_ref(buf)?;
-        *buf = next;
+        let (key, next) = read_string_ref(buf_wrapper.underlying)?;
+        *buf_wrapper.underlying = next;
 
-        let (val, next) = read_string_ref(buf)?;
-        *buf = next;
+        let (val, next) = read_string_ref(buf_wrapper.underlying)?;
+        *buf_wrapper.underlying = next;
 
         let key = unsafe { buf_wrapper.create_bytes_string_unchecked(key.as_bytes()) };
         let value = unsafe { buf_wrapper.create_bytes_string_unchecked(val.as_bytes()) };
@@ -130,52 +129,44 @@ fn read_str_map_to_bytes_strings(
 }
 
 #[inline]
-fn read_metric_pair(
-    buffer_wrapper: &BufferWrapper,
-    buf: &mut &[u8],
-) -> Result<(BytesString, f64), DecodeError> {
-    let (key, next) = read_string_ref(buf)?;
-    *buf = next;
+fn read_metric_pair(buf_wrapper: &mut BufferWrapper) -> Result<(BytesString, f64), DecodeError> {
+    let (key, next) = read_string_ref(buf_wrapper.underlying)?;
+    *buf_wrapper.underlying = next;
 
-    let v = read_number(buf)?.try_into()?;
-    let key = unsafe { buffer_wrapper.create_bytes_string_unchecked(key.as_bytes()) };
+    let v = read_number(buf_wrapper.underlying)?.try_into()?;
+    let key = unsafe { buf_wrapper.create_bytes_string_unchecked(key.as_bytes()) };
 
     Ok((key, v))
 }
-fn read_metrics(
-    buf_wrapper: &BufferWrapper,
-    buf: &mut &[u8],
-) -> Result<HashMap<BytesString, f64>, DecodeError> {
-    let len = read_map_len(buf)?;
-    read_map(len, buf_wrapper, buf, read_metric_pair)
+fn read_metrics(buf_wrapper: &mut BufferWrapper) -> Result<HashMap<BytesString, f64>, DecodeError> {
+    let len = read_map_len(buf_wrapper.underlying)?;
+    read_map(len, buf_wrapper, read_metric_pair)
 }
 
 fn read_meta_struct(
-    buf_wrapper: &BufferWrapper,
-    buf: &mut &[u8],
+    buf_wrapper: &mut BufferWrapper,
 ) -> Result<HashMap<BytesString, Vec<u8>>, DecodeError> {
     fn read_meta_struct_pair(
-        buf_wrapper: &BufferWrapper,
-        buf: &mut &[u8],
+        buf_wrapper: &mut BufferWrapper,
     ) -> Result<(BytesString, Vec<u8>), DecodeError> {
-        let (key, next) = read_string_ref(buf)?;
-        *buf = next;
-        let array_len = decode::read_array_len(buf).map_err(|_| {
+        let (key, next) = read_string_ref(buf_wrapper.underlying)?;
+        *buf_wrapper.underlying = next;
+        let array_len = decode::read_array_len(buf_wrapper.underlying).map_err(|_| {
             DecodeError::InvalidFormat("Unable to read array len for meta_struct".to_owned())
         })?;
 
         let mut v = Vec::with_capacity(array_len as usize);
 
         for _ in 0..array_len {
-            let value = read_number(buf)?.try_into()?;
+            let value = read_number(buf_wrapper.underlying)?.try_into()?;
             v.push(value);
         }
         let key = unsafe { buf_wrapper.create_bytes_string_unchecked(key.as_bytes()) };
         Ok((key, v))
     }
 
-    let len = read_map_len(buf)?;
-    read_map(len, buf_wrapper, buf, read_meta_struct_pair)
+    let len = read_map_len(buf_wrapper.underlying)?;
+    read_map(len, buf_wrapper, read_meta_struct_pair)
 }
 
 /// Reads a map from the buffer and returns it as a `HashMap`.
@@ -209,17 +200,16 @@ fn read_meta_struct(
 // TODO: EK - Fix the documentation for this function
 fn read_map<K, V, F>(
     len: usize,
-    buf_wrapper: &BufferWrapper,
-    buf: &mut &[u8],
+    buf_wrapper: &mut BufferWrapper,
     read_pair: F,
 ) -> Result<HashMap<K, V>, DecodeError>
 where
     K: std::hash::Hash + Eq,
-    F: Fn(&BufferWrapper, &mut &[u8]) -> Result<(K, V), DecodeError>,
+    F: Fn(&mut BufferWrapper) -> Result<(K, V), DecodeError>,
 {
     let mut map = HashMap::with_capacity(len);
     for _ in 0..len {
-        let (k, v) = read_pair(buf_wrapper, buf)?;
+        let (k, v) = read_pair(buf_wrapper)?;
         map.insert(k, v);
     }
     Ok(map)
