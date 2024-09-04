@@ -124,8 +124,9 @@ impl<'a, T: 'a> Slice<'a, T> {
 
     pub fn as_slice(&self) -> &'a [T] {
         if !self.ptr.is_null() {
-            // Crashing immediately is likely better than ignoring this.
+            // Crashing immediately is likely better than ignoring these.
             assert!(is_aligned(self.ptr));
+            assert!(self.len <= isize::MAX as usize);
             unsafe { slice::from_raw_parts(self.ptr, self.len) }
         } else {
             // Crashing immediately is likely better than ignoring this.
@@ -279,5 +280,16 @@ mod tests {
             _marker: PhantomData,
         };
         _ = null_len0.as_slice();
+    }
+
+    #[should_panic]
+    #[test]
+    fn test_long_panic() {
+        let dangerous: Slice<u8> = Slice {
+            ptr: ptr::NonNull::dangling().as_ptr(),
+            len: isize::MAX as usize + 1,
+            _marker: PhantomData,
+        };
+        _ = dangerous.as_slice();
     }
 }
