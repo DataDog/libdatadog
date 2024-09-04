@@ -31,7 +31,7 @@ use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
@@ -646,7 +646,7 @@ impl SidecarInterface for SidecarServer {
         config: SessionConfig,
     ) -> Self::SetSessionConfigFut {
         debug!("Set session config for {session_id} to {config:?}");
-        
+
         let session = self.get_session(&session_id);
         #[cfg(unix)]
         {

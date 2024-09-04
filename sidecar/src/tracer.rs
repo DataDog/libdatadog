@@ -1,11 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::shm_limiters::ShmLimiterMemory;
+use crate::primary_sidecar_identifier;
+use datadog_ipc::rate_limiter::ShmLimiterMemory;
 use datadog_trace_utils::config_utils::trace_intake_url_prefixed;
 use ddcommon::Endpoint;
 use http::uri::PathAndQuery;
 use lazy_static::lazy_static;
+use std::ffi::CString;
 use std::str::FromStr;
 use std::sync::Mutex;
 
@@ -31,7 +33,11 @@ impl Config {
     }
 }
 
+pub fn shm_limiter_path() -> CString {
+    CString::new(format!("/ddlimiters-{}", primary_sidecar_identifier())).unwrap()
+}
+
 lazy_static! {
     pub static ref SHM_LIMITER: Mutex<ShmLimiterMemory> =
-        Mutex::new(ShmLimiterMemory::create().unwrap());
+        Mutex::new(ShmLimiterMemory::create(shm_limiter_path()).unwrap());
 }

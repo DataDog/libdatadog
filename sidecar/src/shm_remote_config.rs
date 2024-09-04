@@ -5,11 +5,11 @@ use crate::one_way_shared_memory::{
     open_named_shm, OneWayShmReader, OneWayShmWriter, ReaderOpener,
 };
 use crate::primary_sidecar_identifier;
-use crate::shm_limiters::ShmLimiter;
 use crate::tracer::SHM_LIMITER;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
+use datadog_ipc::rate_limiter::ShmLimiter;
 use datadog_remote_config::fetch::{
     ConfigInvariants, FileRefcountData, FileStorage, MultiTargetFetcher, MultiTargetHandlers,
     NotifyTarget, RefcountedFile,
@@ -150,6 +150,7 @@ fn store_shm(
     let len = len + 4;
     let mut handle = NamedShmHandle::create(CString::new(name)?, len)?.map()?;
 
+    #[allow(unused_mut)]
     let mut target_slice = handle.as_slice_mut();
     #[cfg(windows)]
     {

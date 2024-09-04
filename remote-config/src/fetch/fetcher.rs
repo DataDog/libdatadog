@@ -12,6 +12,7 @@ use datadog_trace_protobuf::remoteconfig::{
     TargetFileHash, TargetFileMeta,
 };
 use ddcommon::{connector, Endpoint};
+use http::uri::Scheme;
 use hyper::http::uri::PathAndQuery;
 use hyper::{Client, StatusCode};
 use sha2::{Digest, Sha256, Sha512};
@@ -19,7 +20,6 @@ use std::collections::{HashMap, HashSet};
 use std::mem::transmute;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
-use http::uri::Scheme;
 use tracing::{debug, trace, warn};
 
 const PROD_INTAKE_SUBDOMAIN: &str = "config";

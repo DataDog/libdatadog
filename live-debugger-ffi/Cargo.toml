@@ -12,7 +12,7 @@ crate-type = ["lib", "staticlib", "cdylib"]
 [dependencies]
 datadog-live-debugger = { path = "../live-debugger" }
 ddcommon = { path = "../ddcommon" }
-ddcommon-ffi = { path = "../ddcommon-ffi" }
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 percent-encoding = "2.1"
 uuid = { version = "1.7.0", features = ["v4"] }
 serde_json = "1.0"

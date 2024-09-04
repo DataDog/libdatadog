@@ -183,9 +183,7 @@ pub fn is_redacted_type<I: AsRef<[u8]>>(name: I) -> bool {
 
 #[test]
 fn test_redacted_name() {
-    unsafe {
-        add_redacted_name("test")
-    }
+    unsafe { add_redacted_name("test") }
 
     assert!(is_redacted_name("test"));
     assert!(is_redacted_name("te-st"));
@@ -201,7 +199,7 @@ fn test_redacted_type() {
         add_redacted_type("other");
         add_redacted_type("type*");
     }
-    
+
     assert!(is_redacted_type("other"));
     assert!(is_redacted_type("type"));
     assert!(is_redacted_type("type.foo"));

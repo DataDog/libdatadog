@@ -134,7 +134,7 @@ where
                     known_service.runtimes.remove(runtime_id);
                     let mut status = known_service.status.lock().unwrap();
                     *status = match *status {
-                        KnownTargetStatus::Pending => KnownTargetStatus::Alive /* not really */,
+                        KnownTargetStatus::Pending => KnownTargetStatus::Alive, // not really
                         KnownTargetStatus::Alive => {
                             KnownTargetStatus::RemoveAt(Instant::now() + Duration::from_secs(3666))
                         }
@@ -438,7 +438,10 @@ where
 
             {
                 // scope lock before await
-                trace!("Remove {:?} from services map at fetcher end", fetcher.target);
+                trace!(
+                    "Remove {:?} from services map at fetcher end",
+                    fetcher.target
+                );
                 let mut services = this.services.lock().unwrap();
                 services.remove(&fetcher.target);
                 if services.is_empty() && this.pending_async_insertions.load(Ordering::Relaxed) == 0
