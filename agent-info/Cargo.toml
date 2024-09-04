@@ -1,0 +1,16 @@
+[package]
+name = "agent-info"
+description = "Provides utilities to get config from the /info endpoint of an agent"
+rust-version.workspace = true
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = "1.0.86"
+arc-swap = "1.7.1"
+ddcommon = { version = "12.0.0", path = "../ddcommon" }
+hyper = { version = "0.14", features = ["client"] }
+serde = "1.0.209"
+serde_json = "1.0.127"
+tokio = "1.40.0"
