@@ -1,13 +1,13 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::msgpack_decoder::v04::decoder::{read_str_map_to_no_alloc_strings, read_string_ref};
+use crate::msgpack_decoder::v04::decoder::{read_str_map_to_bytes_strings, read_string_ref};
 use crate::msgpack_decoder::v04::error::DecodeError;
 use crate::msgpack_decoder::v04::number::read_number;
-use crate::no_alloc_string::BufferWrapper;
 use crate::span_v04::SpanLink;
 use rmp::Marker;
 use std::str::FromStr;
+use tinybytes::bytes_string::BufferWrapper;
 
 /// Reads a slice of bytes and decodes it into a vector of `SpanLink` objects.
 ///
@@ -73,8 +73,6 @@ impl FromStr for SpanLinkKey {
     }
 }
 
-// Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
-// NoAllocStrings
 fn decode_span_link(buf_wrapper: &BufferWrapper, buf: &mut &[u8]) -> Result<SpanLink, DecodeError> {
     let mut span = SpanLink::default();
     let span_size = rmp::decode::read_map_len(buf)
@@ -90,12 +88,12 @@ fn decode_span_link(buf_wrapper: &BufferWrapper, buf: &mut &[u8]) -> Result<Span
             SpanLinkKey::TraceIdHigh => span.trace_id_high = read_number(buf)?.try_into()?,
             SpanLinkKey::SpanId => span.span_id = read_number(buf)?.try_into()?,
             SpanLinkKey::Attributes => {
-                span.attributes = read_str_map_to_no_alloc_strings(buf_wrapper, buf)?
+                span.attributes = read_str_map_to_bytes_strings(buf_wrapper, buf)?
             }
             SpanLinkKey::Tracestate => {
                 let (val, next) = read_string_ref(buf)?;
                 span.tracestate =
-                    unsafe { buf_wrapper.create_no_alloc_string_unchecked(val.as_bytes()) };
+                    unsafe { buf_wrapper.create_bytes_string_unchecked(val.as_bytes()) };
                 *buf = next;
             }
             SpanLinkKey::Flags => span.flags = read_number(buf)?.try_into()?,

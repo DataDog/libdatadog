@@ -1,8 +1,11 @@
-use crate::no_alloc_string::NoAllocString;
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
+use tinybytes::bytes_string::BytesString;
 
 #[derive(Debug, PartialEq)]
 pub enum SpanKey {
@@ -48,10 +51,10 @@ impl FromStr for SpanKey {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Span {
-    pub service: NoAllocString,
-    pub name: NoAllocString,
-    pub resource: NoAllocString,
-    pub r#type: NoAllocString,
+    pub service: BytesString,
+    pub name: BytesString,
+    pub resource: BytesString,
+    pub r#type: BytesString,
     pub trace_id: u64,
     pub span_id: u64,
     pub parent_id: u64,
@@ -60,11 +63,11 @@ pub struct Span {
     #[serde(skip_serializing_if = "is_default")]
     pub error: i32,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub meta: HashMap<NoAllocString, NoAllocString>,
+    pub meta: HashMap<BytesString, BytesString>,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub metrics: HashMap<NoAllocString, f64>,
+    pub metrics: HashMap<BytesString, f64>,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub meta_struct: HashMap<NoAllocString, Vec<u8>>,
+    pub meta_struct: HashMap<BytesString, Vec<u8>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub span_links: Vec<SpanLink>,
 }
@@ -74,8 +77,8 @@ pub struct SpanLink {
     pub trace_id: u64,
     pub trace_id_high: u64,
     pub span_id: u64,
-    pub attributes: HashMap<NoAllocString, NoAllocString>,
-    pub tracestate: NoAllocString,
+    pub attributes: HashMap<BytesString, BytesString>,
+    pub tracestate: BytesString,
     pub flags: u64,
 }
 

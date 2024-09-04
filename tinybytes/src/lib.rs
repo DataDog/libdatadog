@@ -264,5 +264,6 @@ impl fmt::Debug for Bytes {
     }
 }
 
+pub mod bytes_string;
 #[cfg(test)]
 mod test;

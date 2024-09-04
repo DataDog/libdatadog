@@ -2,15 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(test)]
-
 mod tracing_integration_tests {
-    use datadog_trace_utils::no_alloc_string::NoAllocString;
     use datadog_trace_utils::send_data::SendData;
     use datadog_trace_utils::test_utils::create_test_no_alloc_span;
     use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use datadog_trace_utils::trace_utils::TracerHeaderTags;
     use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
     use ddcommon::Endpoint;
+    use tinybytes::bytes_string::BytesString;
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
@@ -37,18 +36,18 @@ mod tracing_integration_tests {
 
         let mut span_1 = create_test_no_alloc_span(1234, 12342, 12341, 1, false);
         span_1.metrics.insert(
-            NoAllocString::from_slice("_dd_metric1".as_ref()).unwrap(),
+            BytesString::from_slice("_dd_metric1".as_ref()).unwrap(),
             1.0,
         );
         span_1.metrics.insert(
-            NoAllocString::from_slice("_dd_metric2".as_ref()).unwrap(),
+            BytesString::from_slice("_dd_metric2".as_ref()).unwrap(),
             2.0,
         );
 
         let span_2 = create_test_no_alloc_span(1234, 12343, 12341, 1, false);
 
         let mut root_span = create_test_no_alloc_span(1234, 12341, 0, 0, true);
-        root_span.r#type = NoAllocString::from_slice("web".as_ref()).unwrap();
+        root_span.r#type = BytesString::from_slice("web".as_ref()).unwrap();
 
         let trace = vec![span_1, span_2, root_span];
 
