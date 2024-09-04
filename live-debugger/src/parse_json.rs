@@ -800,7 +800,7 @@ mod tests {
             assert_eq!(max_length, 255);
             assert_eq!(max_field_count, 20);
             assert_eq!(sampling_snapshots_per_second, 10);
-            assert_eq!(capture_snapshot, true);
+            assert!(capture_snapshot);
         } else {
             unreachable!();
         }

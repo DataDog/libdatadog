@@ -8,6 +8,7 @@ edition = "2021"
 
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]
+bench = false
 
 [dependencies]
 datadog-live-debugger = { path = "../live-debugger" }

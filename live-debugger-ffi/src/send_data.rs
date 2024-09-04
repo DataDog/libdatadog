@@ -295,6 +295,7 @@ pub extern "C" fn ddog_snapshot_format_new_uuid(buf: &mut [u8; 36]) {
 }
 
 #[no_mangle]
+#[allow(clippy::ptr_arg)]
 pub extern "C" fn ddog_evaluation_error_first_msg(vec: &Vec<SnapshotEvaluationError>) -> CharSlice {
     CharSlice::from(vec[0].message.as_str())
 }

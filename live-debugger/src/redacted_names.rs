@@ -182,6 +182,7 @@ pub fn is_redacted_type<I: AsRef<[u8]>>(name: I) -> bool {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_redacted_name() {
     unsafe { add_redacted_name("test") }
 
@@ -194,6 +195,7 @@ fn test_redacted_name() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_redacted_type() {
     unsafe {
         add_redacted_type("other");
