@@ -60,7 +60,7 @@ fn should_ignore_span(span: &pb::Span, compute_stats_by_span_kind: bool) -> bool
 /// When the SpanConcentrator is flushed it keeps the `buffer_len` most recent buckets and remove
 /// all older buckets returning their content. When using force flush all buckets are flushed
 /// regardless of their age.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SpanConcentrator {
     /// Size of the time buckets used for aggregation in nanos
     bucket_size: u64,
