@@ -53,10 +53,9 @@ impl RemoteConfigServer {
                         let this = this.clone();
                         async move {
                             let body_bytes = hyper::body::to_bytes(req.into_body()).await.unwrap();
-                            let request: ClientGetConfigsRequest = serde_json::from_str(
-                                &String::from_utf8(body_bytes.to_vec()).unwrap(),
-                            )
-                            .unwrap();
+                            let request: ClientGetConfigsRequest =
+                                serde_json::from_str(core::str::from_utf8(&body_bytes).unwrap())
+                                    .unwrap();
                             let response =
                                 if let Some(response) = this.next_response.lock().unwrap().take() {
                                     response
