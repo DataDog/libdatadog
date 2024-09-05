@@ -92,6 +92,8 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
     language: CharSlice<'a>,
     id: CharSlice<'a>,
     exception_id: CharSlice<'a>,
+    exception_hash: CharSlice<'a>,
+    frame_index: u32,
     timestamp: u64,
 ) -> *mut DebuggerCapture<'a> {
     let snapshot = DebuggerPayload {
@@ -106,7 +108,9 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
             }),
             language: language.to_utf8_lossy(),
             id: id.to_utf8_lossy(),
-            exception_id: Some(exception_id.to_utf8_lossy()),
+            exception_capture_id: Some(exception_id.to_utf8_lossy()),
+            exception_hash: Some(exception_hash.to_utf8_lossy()),
+            frame_index: Some(frame_index),
             timestamp,
             ..Default::default()
         }),

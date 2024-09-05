@@ -54,8 +54,11 @@ pub struct Snapshot<'a> {
     pub id: Cow<'a, str>,
     pub timestamp: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "exception-id")]
-    pub exception_id: Option<Cow<'a, str>>,
+    pub exception_capture_id: Option<Cow<'a, str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exception_hash: Option<Cow<'a, str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_index: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub captures: Option<Captures<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
