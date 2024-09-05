@@ -4,6 +4,39 @@
 [workspace]
 members = [
   "alloc",
+  "builder",
+  "crashtracker",
+  "crashtracker-ffi",
+  "profiling",
+  "profiling-ffi",
+  "profiling-replayer",
+  "ddcommon",
+  "ddcommon-ffi",
+  "ddtelemetry",
+  "ddtelemetry-ffi",
+  "tools",
+  "ipc",
+  "ipc/macros",
+  "sidecar",
+  "sidecar/macros",
+  "sidecar-ffi",
+  "tools/cc_utils",
+  "tools/sidecar_mockgen",
+  "trace-normalization",
+  "trace-obfuscation",
+  "trace-utils",
+  "spawn_worker",
+  "tests/spawn_from_lib",
+  "serverless",
+  "bin_tests",
+  "data-pipeline",
+  "data-pipeline-ffi",
+  "ddsketch",
+  "tinybytes",
+]
+
+default-members = [
+  "alloc",
   "crashtracker",
   "crashtracker-ffi",
   "profiling",
@@ -35,6 +68,7 @@ members = [
   "ddsketch",
   "tinybytes",
 ]
+
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"
 
