@@ -10,8 +10,7 @@ use std::{
 /// Immutable bytes type with zero copy cloning and slicing.
 #[derive(Clone)]
 pub struct Bytes {
-    ptr: *const u8,
-    len: usize,
+    slice: &'static [u8],
     // The `bytes`` field is used to ensure that the underlying bytes are freed when there are no
     // more references to the `Bytes` object. For static buffers the field is `None`.
     bytes: Option<Arc<dyn UnderlyingBytes>>,
@@ -36,11 +35,7 @@ impl Bytes {
     #[inline]
     pub fn from_static(value: &'static [u8]) -> Self {
         let slice: &[u8] = value;
-        Self {
-            ptr: slice.as_ptr(),
-            len: slice.len(),
-            bytes: None,
-        }
+        Self { slice, bytes: None }
     }
 
     /// Creates `Bytes` from a slice, by copying.
@@ -51,13 +46,13 @@ impl Bytes {
     /// Returns the length of the `Bytes`.
     #[inline]
     pub const fn len(&self) -> usize {
-        self.len
+        self.slice.len()
     }
 
     /// Returns `true` if the `Bytes` is empty.
     #[inline]
     pub const fn is_empty(&self) -> bool {
-        self.len == 0
+        self.slice.is_empty()
     }
 
     /// Returns a slice of self for the provided range.
@@ -154,8 +149,8 @@ impl Bytes {
 
         let subset_start = subset.as_ptr() as usize;
         let subset_end = subset_start + subset.len();
-        let self_start = self.ptr as usize;
-        let self_end = self_start + self.len;
+        let self_start = self.slice.as_ptr() as usize;
+        let self_end = self_start + self.slice.len();
         if subset_start >= self_start && subset_end <= self_end {
             Some(self.safe_slice_ref(subset_start - self_start, subset_end - self_start))
         } else {
@@ -163,13 +158,25 @@ impl Bytes {
         }
     }
 
+    /// Returns a mutable reference to the slice of self.
+    /// Allows for fast unchecked shrinking of the slice.
+    ///
+    /// # Safety
+    ///
+    /// Callers of that function must make sure that they only put subslices of the slice into the
+    /// returned reference.
+    /// They also need to make sure to not persist the slice reference for longer than the struct
+    /// lives.
+    #[inline]
+    pub unsafe fn as_mut_slice(&mut self) -> &mut &'static [u8] {
+        &mut self.slice
+    }
+
     // private
 
     fn from_underlying(value: impl UnderlyingBytes) -> Self {
-        let slice: &[u8] = value.as_ref();
         Self {
-            ptr: slice.as_ptr(),
-            len: slice.len(),
+            slice: unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(value.as_ref()) },
             bytes: Some(Arc::new(value)),
         }
     }
@@ -177,15 +184,14 @@ impl Bytes {
     #[inline]
     fn safe_slice_ref(&self, start: usize, end: usize) -> Self {
         Self {
-            ptr: unsafe { self.ptr.add(start) },
-            len: end - start,
+            slice: &self.slice[start..end],
             bytes: self.bytes.clone(),
         }
     }
 
     #[inline]
     fn as_slice(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+        self.slice
     }
 }
 
@@ -264,6 +270,10 @@ impl fmt::Debug for Bytes {
     }
 }
 
-pub mod bytes_string;
+#[cfg(feature = "bytes_string")]
+mod bytes_string;
+#[cfg(feature = "bytes_string")]
+pub use bytes_string::BytesString;
+
 #[cfg(test)]
 mod test;

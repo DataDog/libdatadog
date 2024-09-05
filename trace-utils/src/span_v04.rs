@@ -5,7 +5,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
-use tinybytes::bytes_string::BytesString;
+use tinybytes::BytesString;
 
 #[derive(Debug, PartialEq)]
 pub enum SpanKey {

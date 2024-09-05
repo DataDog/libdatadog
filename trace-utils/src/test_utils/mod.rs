@@ -14,7 +14,7 @@ use datadog_trace_protobuf::pb;
 use ddcommon::Endpoint;
 use httpmock::Mock;
 use serde_json::json;
-use tinybytes::bytes_string::BytesString;
+use tinybytes::BytesString;
 use tokio::time::sleep;
 
 pub fn create_test_no_alloc_span(

@@ -1757,6 +1757,7 @@ dependencies = [
  "criterion",
  "datadog-trace-normalization",
  "datadog-trace-protobuf",
+ "datadog-trace-utils",
  "ddcommon",
  "flate2",
  "futures",
@@ -5377,6 +5378,7 @@ dependencies = [
  "serde",
  "serde_json",
  "test-case",
+ "tinybytes",
 ]
 
 [[package]]

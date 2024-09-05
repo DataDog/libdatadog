@@ -284,7 +284,7 @@ mod tests {
     use datadog_trace_protobuf::pb;
     use serde_json::json;
     use std::collections::HashMap;
-    use tinybytes::bytes_string::BytesString;
+    use tinybytes::BytesString;
 
     fn create_dummy_collection_v07() -> TracerPayloadCollection {
         TracerPayloadCollection::V07(vec![pb::TracerPayload {

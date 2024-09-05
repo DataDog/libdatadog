@@ -9,7 +9,7 @@ mod tracing_integration_tests {
     use datadog_trace_utils::trace_utils::TracerHeaderTags;
     use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
     use ddcommon::Endpoint;
-    use tinybytes::bytes_string::BytesString;
+    use tinybytes::BytesString;
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
