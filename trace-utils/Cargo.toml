@@ -48,6 +48,7 @@ criterion = "0.5.1"
 httpmock = { version = "0.7.0"}
 serde_json = "1.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+datadog-trace-utils = { path = ".", features = ["test-utils"] }
 
 [features]
 test-utils = ["httpmock", "testcontainers", "cargo_metadata", "cargo-platform"]

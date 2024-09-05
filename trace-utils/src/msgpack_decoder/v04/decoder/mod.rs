@@ -6,12 +6,12 @@ mod span_link;
 
 use self::span::decode_span;
 use super::error::DecodeError;
-use super::number::read_number;
+use super::number::read_number_bytes;
 use crate::span_v04::Span;
 use rmp::decode::DecodeStringError;
 use rmp::{decode, decode::RmpRead, Marker};
 use std::{collections::HashMap, f64};
-use tinybytes::bytes_string::{BufferWrapper, BytesString};
+use tinybytes::{Bytes, BytesString};
 
 /// Decodes a slice of bytes into a vector of `TracerPayloadV04` objects.
 ///
@@ -52,13 +52,14 @@ use tinybytes::bytes_string::{BufferWrapper, BytesString};
 /// assert_eq!(1, decoded_traces.len());
 /// assert_eq!(1, decoded_traces[0].len());
 /// let decoded_span = &decoded_traces[0][0];
-/// assert_eq!("test-span", decoded_span.name.as_str().unwrap());
+/// assert_eq!("test-span", decoded_span.name.as_str());
 /// ```
 pub fn from_slice(data: tinybytes::Bytes) -> Result<Vec<Vec<Span>>, DecodeError> {
-    let mut local_buf = data.as_ref();
-    let trace_count = rmp::decode::read_array_len(&mut local_buf).map_err(|_| {
-        DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
-    })?;
+    let mut data = data.clone(); // Use a Bytes instance which we can directly shrink
+    let trace_count =
+        rmp::decode::read_array_len(unsafe { data.as_mut_slice() }).map_err(|_| {
+            DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
+        })?;
 
     (0..trace_count).try_fold(
         Vec::with_capacity(
@@ -67,9 +68,10 @@ pub fn from_slice(data: tinybytes::Bytes) -> Result<Vec<Vec<Span>>, DecodeError>
                 .expect("Unable to cast trace_count to usize"),
         ),
         |mut traces, _| {
-            let span_count = rmp::decode::read_array_len(&mut local_buf).map_err(|_| {
-                DecodeError::InvalidFormat("Unable to read array len for span count".to_owned())
-            })?;
+            let span_count =
+                rmp::decode::read_array_len(unsafe { data.as_mut_slice() }).map_err(|_| {
+                    DecodeError::InvalidFormat("Unable to read array len for span count".to_owned())
+                })?;
 
             let trace = (0..span_count).try_fold(
                 Vec::with_capacity(
@@ -78,7 +80,7 @@ pub fn from_slice(data: tinybytes::Bytes) -> Result<Vec<Vec<Span>>, DecodeError>
                         .expect("Unable to cast span_count to usize"),
                 ),
                 |mut trace, _| {
-                    let span = decode_span(&data, &mut local_buf)?;
+                    let span = decode_span(&mut data)?;
                     trace.push(span);
                     Ok(trace)
                 },
@@ -92,7 +94,7 @@ pub fn from_slice(data: tinybytes::Bytes) -> Result<Vec<Vec<Span>>, DecodeError>
 }
 
 #[inline]
-fn read_string_ref(buf: &[u8]) -> Result<(&str, &[u8]), DecodeError> {
+fn read_string_ref_nomut(buf: &[u8]) -> Result<(&str, &[u8]), DecodeError> {
     decode::read_str_from_slice(buf).map_err(|e| match e {
         DecodeStringError::InvalidMarkerRead(e) => DecodeError::InvalidFormat(e.to_string()),
         DecodeStringError::InvalidDataRead(e) => DecodeError::InvalidConversion(e.to_string()),
@@ -105,68 +107,71 @@ fn read_string_ref(buf: &[u8]) -> Result<(&str, &[u8]), DecodeError> {
 }
 
 #[inline]
+fn read_string_ref<'a>(buf: &mut &'a [u8]) -> Result<&'a str, DecodeError> {
+    read_string_ref_nomut(buf).map(|(str, newbuf)| {
+        *buf = newbuf;
+        str
+    })
+}
+
+#[inline]
+fn read_string_bytes(buf: &mut Bytes) -> Result<BytesString, DecodeError> {
+    // Note: we need to pass a &'static lifetime here, otherwise it'll complain
+    read_string_ref_nomut(unsafe { buf.as_mut_slice() }).map(|(str, newbuf)| {
+        let string = BytesString::from_bytes_slice(buf, str);
+        *unsafe { buf.as_mut_slice() } = newbuf;
+        string
+    })
+}
+
+#[inline]
 // Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
 // BytesStrings.
 fn read_str_map_to_bytes_strings(
-    buf_wrapper: &mut BufferWrapper,
+    buf_wrapper: &mut Bytes,
 ) -> Result<HashMap<BytesString, BytesString>, DecodeError> {
-    let len = decode::read_map_len(buf_wrapper.underlying)
+    let len = decode::read_map_len(unsafe { buf_wrapper.as_mut_slice() })
         .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
 
     let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to usize"));
     for _ in 0..len {
-        let (key, next) = read_string_ref(buf_wrapper.underlying)?;
-        *buf_wrapper.underlying = next;
-
-        let (val, next) = read_string_ref(buf_wrapper.underlying)?;
-        *buf_wrapper.underlying = next;
-
-        let key = unsafe { buf_wrapper.create_bytes_string_unchecked(key.as_bytes()) };
-        let value = unsafe { buf_wrapper.create_bytes_string_unchecked(val.as_bytes()) };
+        let key = read_string_bytes(buf_wrapper)?;
+        let value = read_string_bytes(buf_wrapper)?;
         map.insert(key, value);
     }
     Ok(map)
 }
 
 #[inline]
-fn read_metric_pair(buf_wrapper: &mut BufferWrapper) -> Result<(BytesString, f64), DecodeError> {
-    let (key, next) = read_string_ref(buf_wrapper.underlying)?;
-    *buf_wrapper.underlying = next;
-
-    let v = read_number(buf_wrapper.underlying)?.try_into()?;
-    let key = unsafe { buf_wrapper.create_bytes_string_unchecked(key.as_bytes()) };
+fn read_metric_pair(buf: &mut Bytes) -> Result<(BytesString, f64), DecodeError> {
+    let key = read_string_bytes(buf)?;
+    let v = read_number_bytes(buf)?;
 
     Ok((key, v))
 }
-fn read_metrics(buf_wrapper: &mut BufferWrapper) -> Result<HashMap<BytesString, f64>, DecodeError> {
-    let len = read_map_len(buf_wrapper.underlying)?;
-    read_map(len, buf_wrapper, read_metric_pair)
+fn read_metrics(buf: &mut Bytes) -> Result<HashMap<BytesString, f64>, DecodeError> {
+    let len = read_map_len(unsafe { buf.as_mut_slice() })?;
+    read_map(len, buf, read_metric_pair)
 }
 
-fn read_meta_struct(
-    buf_wrapper: &mut BufferWrapper,
-) -> Result<HashMap<BytesString, Vec<u8>>, DecodeError> {
-    fn read_meta_struct_pair(
-        buf_wrapper: &mut BufferWrapper,
-    ) -> Result<(BytesString, Vec<u8>), DecodeError> {
-        let (key, next) = read_string_ref(buf_wrapper.underlying)?;
-        *buf_wrapper.underlying = next;
-        let array_len = decode::read_array_len(buf_wrapper.underlying).map_err(|_| {
+fn read_meta_struct(buf: &mut Bytes) -> Result<HashMap<BytesString, Vec<u8>>, DecodeError> {
+    fn read_meta_struct_pair(buf: &mut Bytes) -> Result<(BytesString, Vec<u8>), DecodeError> {
+        let key = read_string_bytes(buf)?;
+        let array_len = decode::read_array_len(unsafe { buf.as_mut_slice() }).map_err(|_| {
             DecodeError::InvalidFormat("Unable to read array len for meta_struct".to_owned())
         })?;
 
         let mut v = Vec::with_capacity(array_len as usize);
 
         for _ in 0..array_len {
-            let value = read_number(buf_wrapper.underlying)?.try_into()?;
+            let value = read_number_bytes(buf)?;
             v.push(value);
         }
-        let key = unsafe { buf_wrapper.create_bytes_string_unchecked(key.as_bytes()) };
         Ok((key, v))
     }
 
-    let len = read_map_len(buf_wrapper.underlying)?;
-    read_map(len, buf_wrapper, read_meta_struct_pair)
+    let len = read_map_len(unsafe { buf.as_mut_slice() })?;
+    read_map(len, buf, read_meta_struct_pair)
 }
 
 /// Reads a map from the buffer and returns it as a `HashMap`.
@@ -177,7 +182,7 @@ fn read_meta_struct(
 /// # Arguments
 ///
 /// * `len` - The number of key-value pairs to read from the buffer.
-/// * `buf_wrapper` - A reference to the BufferWrapper containing the encoded map data.
+/// * `buf` - A reference to the Bytes containing the encoded map data.
 /// * `read_pair` - A function that reads a key-value pair from the buffer and returns it as a
 ///   `Result<(K, V), DecodeError>`.
 ///
@@ -198,16 +203,16 @@ fn read_meta_struct(
 /// * `F` - The type of the function used to read key-value pairs from the buffer.
 fn read_map<K, V, F>(
     len: usize,
-    buf_wrapper: &mut BufferWrapper,
+    buf: &mut Bytes,
     read_pair: F,
 ) -> Result<HashMap<K, V>, DecodeError>
 where
     K: std::hash::Hash + Eq,
-    F: Fn(&mut BufferWrapper) -> Result<(K, V), DecodeError>,
+    F: Fn(&mut Bytes) -> Result<(K, V), DecodeError>,
 {
     let mut map = HashMap::with_capacity(len);
     for _ in 0..len {
-        let (k, v) = read_pair(buf_wrapper)?;
+        let (k, v) = read_pair(buf)?;
         map.insert(k, v);
     }
     Ok(map)
@@ -240,7 +245,7 @@ mod tests {
     use rmp_serde;
     use rmp_serde::to_vec_named;
     use serde_json::json;
-    use tinybytes::bytes_string::BytesString;
+    use tinybytes::BytesString;
 
     fn generate_meta_struct_element(i: u8) -> (String, Vec<u8>) {
         let map = HashMap::from([
@@ -272,7 +277,7 @@ mod tests {
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
-        assert_eq!(expected_string, decoded_span.name.as_str().unwrap());
+        assert_eq!(expected_string, decoded_span.name.as_str());
     }
 
     #[test]
@@ -346,9 +351,7 @@ mod tests {
         for (key, value) in expected_meta.iter() {
             assert_eq!(
                 value,
-                &decoded_span.meta[&BytesString::from_slice(key.as_ref()).unwrap()]
-                    .as_str()
-                    .unwrap()
+                &decoded_span.meta[&BytesString::from_slice(key.as_ref()).unwrap()].as_str()
             );
         }
     }
@@ -378,9 +381,7 @@ mod tests {
         for (key, value) in expected_meta.iter() {
             assert_eq!(
                 value,
-                &decoded_span.meta[&BytesString::from_slice(key.as_ref()).unwrap()]
-                    .as_str()
-                    .unwrap()
+                &decoded_span.meta[&BytesString::from_slice(key.as_ref()).unwrap()].as_str()
             );
         }
     }
@@ -470,7 +471,7 @@ mod tests {
         );
         assert_eq!(
             expected_span_link["tracestate"],
-            decoded_span.span_links[0].tracestate.as_str().unwrap()
+            decoded_span.span_links[0].tracestate.as_str()
         );
         assert_eq!(
             expected_span_link["flags"],
@@ -481,14 +482,12 @@ mod tests {
             decoded_span.span_links[0].attributes
                 [&BytesString::from_slice("attr1".as_ref()).unwrap()]
                 .as_str()
-                .unwrap()
         );
         assert_eq!(
             expected_span_link["attributes"]["attr2"],
             decoded_span.span_links[0].attributes
                 [&BytesString::from_slice("attr2".as_ref()).unwrap()]
                 .as_str()
-                .unwrap()
         );
     }
 
@@ -517,7 +516,7 @@ mod tests {
         let invalid_str = unsafe { String::from_utf8_unchecked(invalid_seq) };
         let invalid_str_as_bytes = tinybytes::Bytes::from(invalid_str);
         let span = Span {
-            name: BytesString::from_bytes_unchecked(invalid_str_as_bytes),
+            name: unsafe { BytesString::from_bytes_unchecked(invalid_str_as_bytes) },
             ..Default::default()
         };
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
