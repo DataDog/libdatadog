@@ -14,6 +14,7 @@ members = [
   "ddcommon-ffi",
   "ddtelemetry",
   "ddtelemetry-ffi",
+  "dogstatsd",
   "tools",
   "ipc",
   "ipc/macros",
