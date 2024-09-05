@@ -16,6 +16,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 #[cfg(test)]
+#[cfg(not(miri))]
 #[tokio::test]
 async fn dogstatsd_server_ships_series() {
     let mut mock_server = Server::new_async().await;
