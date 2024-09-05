@@ -178,7 +178,6 @@ fn read_meta_struct(
 ///
 /// * `len` - The number of key-value pairs to read from the buffer.
 /// * `buf_wrapper` - A reference to the BufferWrapper containing the encoded map data.
-/// * `buf` - A mutable reference to the buffer containing the encoded map data.
 /// * `read_pair` - A function that reads a key-value pair from the buffer and returns it as a
 ///   `Result<(K, V), DecodeError>`.
 ///
@@ -197,7 +196,6 @@ fn read_meta_struct(
 /// * `K` - The type of the keys in the map. Must implement `std::hash::Hash` and `Eq`.
 /// * `V` - The type of the values in the map.
 /// * `F` - The type of the function used to read key-value pairs from the buffer.
-// TODO: EK - Fix the documentation for this function
 fn read_map<K, V, F>(
     len: usize,
     buf_wrapper: &mut BufferWrapper,
@@ -237,11 +235,28 @@ fn read_map_len(buf: &mut &[u8]) -> Result<usize, DecodeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span_v04::SpanLink;
+    use crate::test_utils::create_test_json_span;
     use bolero::check;
     use rmp_serde;
     use rmp_serde::to_vec_named;
+    use serde_json::json;
     use tinybytes::bytes_string::BytesString;
+
+    fn generate_meta_struct_element(i: u8) -> (String, Vec<u8>) {
+        let map = HashMap::from([
+            (
+                format!("meta_struct_map_key {}", i + 1),
+                format!("meta_struct_map_val {}", i + 1),
+            ),
+            (
+                format!("meta_struct_map_key {}", i + 2),
+                format!("meta_struct_map_val {}", i + 2),
+            ),
+        ]);
+        let key = format!("key {}", i).to_owned();
+
+        (key, rmp_serde::to_vec_named(&map).unwrap())
+    }
 
     #[test]
     fn decoder_read_string_success() {
@@ -263,20 +278,13 @@ mod tests {
     #[test]
     fn test_decoder_meta_struct_fixed_map_success() {
         let expected_meta_struct = HashMap::from([
-            (
-                BytesString::from_slice("key1".as_ref()).unwrap(),
-                vec![1, 2, 3],
-            ),
-            (
-                BytesString::from_slice("key2".as_ref()).unwrap(),
-                vec![4, 5, 6],
-            ),
+            generate_meta_struct_element(0),
+            generate_meta_struct_element(1),
         ]);
 
-        let span = Span {
-            meta_struct: expected_meta_struct.clone(),
-            ..Default::default()
-        };
+        let mut span = create_test_json_span(1, 2, 0, 0);
+        span["meta_struct"] = json!(expected_meta_struct.clone());
+
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let decoded_traces =
             from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
@@ -284,24 +292,23 @@ mod tests {
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
-        assert_eq!(expected_meta_struct, decoded_span.meta_struct);
+
+        for (key, value) in expected_meta_struct.iter() {
+            assert_eq!(
+                value,
+                &decoded_span.meta_struct[&BytesString::from_slice(key.as_ref()).unwrap()]
+            );
+        }
     }
 
     #[test]
     fn test_decoder_meta_struct_map_16_success() {
-        let expected_meta_struct: HashMap<BytesString, Vec<u8>> = (0..20)
-            .map(|i| {
-                (
-                    BytesString::from_slice(format!("key {}", i).as_ref()).unwrap(),
-                    vec![1 + i, 2 + i, 3 + i],
-                )
-            })
-            .collect();
+        let expected_meta_struct: HashMap<String, Vec<u8>> =
+            (0..20).map(generate_meta_struct_element).collect();
 
-        let span = Span {
-            meta_struct: expected_meta_struct.clone(),
-            ..Default::default()
-        };
+        let mut span = create_test_json_span(1, 2, 0, 0);
+        span["meta_struct"] = json!(expected_meta_struct.clone());
+
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let decoded_traces =
             from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
@@ -310,25 +317,24 @@ mod tests {
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
 
-        assert_eq!(expected_meta_struct, decoded_span.meta_struct);
+        for (key, value) in expected_meta_struct.iter() {
+            assert_eq!(
+                value,
+                &decoded_span.meta_struct[&BytesString::from_slice(key.as_ref()).unwrap()]
+            );
+        }
     }
 
     #[test]
     fn test_decoder_meta_fixed_map_success() {
         let expected_meta = HashMap::from([
-            (
-                BytesString::from_slice("key1".as_ref()).unwrap(),
-                BytesString::from_slice("value1".as_ref()).unwrap(),
-            ),
-            (
-                BytesString::from_slice("key2".as_ref()).unwrap(),
-                BytesString::from_slice("value2".as_ref()).unwrap(),
-            ),
+            ("key1".to_string(), "value1".to_string()),
+            ("key2".to_string(), "value2".to_string()),
         ]);
-        let span = Span {
-            meta: expected_meta.clone(),
-            ..Default::default()
-        };
+
+        let mut span = create_test_json_span(1, 2, 0, 0);
+        span["meta"] = json!(expected_meta.clone());
+
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let decoded_traces =
             from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
@@ -336,24 +342,31 @@ mod tests {
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
-        assert_eq!(expected_meta, decoded_span.meta);
+
+        for (key, value) in expected_meta.iter() {
+            assert_eq!(
+                value,
+                &decoded_span.meta[&BytesString::from_slice(key.as_ref()).unwrap()]
+                    .as_str()
+                    .unwrap()
+            );
+        }
     }
 
     #[test]
     fn test_decoder_meta_map_16_success() {
-        let expected_meta: HashMap<BytesString, BytesString> = (0..20)
+        let expected_meta: HashMap<String, String> = (0..20)
             .map(|i| {
                 (
-                    BytesString::from_slice(format!("key {}", i).as_ref()).unwrap(),
-                    BytesString::from_slice(format!("value {}", i).as_ref()).unwrap(),
+                    format!("key {}", i).to_owned(),
+                    format!("value {}", i).to_owned(),
                 )
             })
             .collect();
 
-        let span = Span {
-            meta: expected_meta.clone(),
-            ..Default::default()
-        };
+        let mut span = create_test_json_span(1, 2, 0, 0);
+        span["meta"] = json!(expected_meta.clone());
+
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let decoded_traces =
             from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
@@ -362,17 +375,22 @@ mod tests {
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
 
-        assert_eq!(expected_meta, decoded_span.meta);
+        for (key, value) in expected_meta.iter() {
+            assert_eq!(
+                value,
+                &decoded_span.meta[&BytesString::from_slice(key.as_ref()).unwrap()]
+                    .as_str()
+                    .unwrap()
+            );
+        }
     }
 
     #[test]
     fn test_decoder_metrics_fixed_map_success() {
-        let mut span = Span::default();
-        let expected_metrics = HashMap::from([
-            (BytesString::from_slice("metric1".as_ref()).unwrap(), 1.23),
-            (BytesString::from_slice("metric2".as_ref()).unwrap(), 4.56),
-        ]);
-        span.metrics = expected_metrics.clone();
+        let expected_metrics = HashMap::from([("metric1", 1.23), ("metric2", 4.56)]);
+
+        let mut span = create_test_json_span(1, 2, 0, 0);
+        span["metrics"] = json!(expected_metrics.clone());
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let decoded_traces =
             from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
@@ -380,22 +398,23 @@ mod tests {
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
-        assert_eq!(expected_metrics, decoded_span.metrics);
+
+        for (key, value) in expected_metrics.iter() {
+            assert_eq!(
+                value,
+                &decoded_span.metrics[&BytesString::from_slice(key.as_ref()).unwrap()]
+            );
+        }
     }
 
     #[test]
     fn test_decoder_metrics_map16_success() {
-        let mut span = Span::default();
-        let expected_metrics: HashMap<BytesString, f64> = (0..20)
-            .map(|i| {
-                (
-                    BytesString::from_slice(format!("metric{}", i).as_ref()).unwrap(),
-                    i as f64,
-                )
-            })
+        let expected_metrics: HashMap<String, f64> = (0..20)
+            .map(|i| (format!("metric{}", i), i as f64))
             .collect();
 
-        span.metrics = expected_metrics.clone();
+        let mut span = create_test_json_span(1, 2, 0, 0);
+        span["metrics"] = json!(expected_metrics.clone());
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let decoded_traces =
             from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
@@ -403,33 +422,32 @@ mod tests {
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
-        assert_eq!(expected_metrics, decoded_span.metrics);
+
+        for (key, value) in expected_metrics.iter() {
+            assert_eq!(
+                value,
+                &decoded_span.metrics[&BytesString::from_slice(key.as_ref()).unwrap()]
+            );
+        }
     }
 
     #[test]
     fn test_decoder_span_link_success() {
-        let expected_span_links = vec![SpanLink {
-            trace_id: 1,
-            trace_id_high: 0,
-            span_id: 1,
-            attributes: HashMap::from([
-                (
-                    BytesString::from_slice("attr1".as_ref()).unwrap(),
-                    BytesString::from_slice("test_value".as_ref()).unwrap(),
-                ),
-                (
-                    BytesString::from_slice("attr2".as_ref()).unwrap(),
-                    BytesString::from_slice("test_value2".as_ref()).unwrap(),
-                ),
-            ]),
-            tracestate: BytesString::from_slice("state_test".as_ref()).unwrap(),
-            flags: 0b101,
-        }];
+        let expected_span_link = json!({
+            "trace_id": 1,
+            "trace_id_high": 0,
+            "span_id": 1,
+            "attributes": {
+                "attr1": "test_value",
+                "attr2": "test_value2"
+            },
+            "tracestate": "state_test",
+            "flags": 0b101
+        });
 
-        let span = Span {
-            span_links: expected_span_links.clone(),
-            ..Default::default()
-        };
+        let mut span = create_test_json_span(1, 2, 0, 0);
+        span["span_links"] = json!([expected_span_link]);
+
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let decoded_traces =
             from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
@@ -437,7 +455,41 @@ mod tests {
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
-        assert_eq!(expected_span_links, decoded_span.span_links);
+
+        assert_eq!(
+            expected_span_link["trace_id"],
+            decoded_span.span_links[0].trace_id
+        );
+        assert_eq!(
+            expected_span_link["trace_id_high"],
+            decoded_span.span_links[0].trace_id_high
+        );
+        assert_eq!(
+            expected_span_link["span_id"],
+            decoded_span.span_links[0].span_id
+        );
+        assert_eq!(
+            expected_span_link["tracestate"],
+            decoded_span.span_links[0].tracestate.as_str().unwrap()
+        );
+        assert_eq!(
+            expected_span_link["flags"],
+            decoded_span.span_links[0].flags
+        );
+        assert_eq!(
+            expected_span_link["attributes"]["attr1"],
+            decoded_span.span_links[0].attributes
+                [&BytesString::from_slice("attr1".as_ref()).unwrap()]
+                .as_str()
+                .unwrap()
+        );
+        assert_eq!(
+            expected_span_link["attributes"]["attr2"],
+            decoded_span.span_links[0].attributes
+                [&BytesString::from_slice("attr2".as_ref()).unwrap()]
+                .as_str()
+                .unwrap()
+        );
     }
 
     #[test]
