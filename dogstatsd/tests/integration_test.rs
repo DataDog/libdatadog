@@ -69,7 +69,7 @@ async fn dogstatsd_server_ships_series() {
 
 async fn start_dogstatsd(metrics_aggr: &Arc<Mutex<MetricsAggregator>>) -> CancellationToken {
     let dogstatsd_config = DogStatsDConfig {
-        host: "0.0.0.0".to_string(),
+        host: "127.0.0.1".to_string(),
         port: 18125,
     };
     let dogstatsd_cancel_token = tokio_util::sync::CancellationToken::new();
