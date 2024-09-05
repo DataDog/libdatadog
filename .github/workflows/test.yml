@@ -51,19 +51,19 @@ jobs:
       - name: "Remove nextest CI report"
         shell: bash
         run: rm -rf target/nextest/ci/junit.xml
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --verbose"
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --exclude builder --verbose"
         shell: bash
-        run: cargo build --workspace --verbose
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --profile ci --verbose -E '!test(tracing_integration_tests::)'"
+        run: cargo build --workspace --exclude builder --verbose
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'"
         shell: bash
         # Run doc tests with cargo test and run tests with nextest and generate junit.xml
-        run: cargo test --workspace --doc --verbose && cargo nextest run --workspace --profile ci --verbose -E '!test(tracing_integration_tests::)'
+        run: cargo test --workspace --exclude builder --doc --verbose && cargo nextest run --workspace --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'
         env:
           RUST_BACKTRACE: 1
-      - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests: cargo nextest run --workspace --profile ci --verbose -E 'test(tracing_integration_tests::)'"
+      - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests: cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(tracing_integration_tests::)'"
         if: runner.os == 'Linux'
         shell: bash
-        run: cargo nextest run --workspace --profile ci --verbose -E 'test(tracing_integration_tests::)'
+        run: cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(tracing_integration_tests::)'
         env:
           RUST_BACKTRACE: 1
       - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'"
@@ -90,6 +90,12 @@ jobs:
         include:
           - platform: "ubuntu-latest"
             rust_version: "${RUST_VERSION}"
+          - platform: "ubuntu-latest"
+            flags: "-C relocation-model=pic"
+          - platform: "macos-12"
+            flags: "-C relocation-model=pic"
+          - platform: "windows-latest"
+            flags: "-C target-feature=+crt-static"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -101,7 +107,7 @@ jobs:
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
              WORKSPACE_PATH=$(cygpath -ua '${{ github.workspace }}')
           fi
-          echo "OUTPUT_FOLDER=$WORKSPACE_PATH/artifacts" >> $GITHUB_ENV
+          echo "LIBDD_OUTPUT_FOLDER=$WORKSPACE_PATH/artifacts" >> $GITHUB_ENV
 
       - name: Free Disk Space (Ubuntu only)
         if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
@@ -135,13 +141,10 @@ jobs:
 
       - name: "Generate profiling FFI"
         shell: bash
+        env:
+          RUSTFLAGS: "${{ matrix.flags }}"
         run: |
-           ./build-profiling-ffi.sh -f data-pipeline-ffi ${OUTPUT_FOLDER}/profiling
-
-      - name: "Generate Telemetry FFI"
-        shell: bash
-        run: |
-           ./build-telemetry-ffi.sh ${OUTPUT_FOLDER}/telemetry
+           cargo build -p builder --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release -vv
 
       - name: 'Publish libdatadog'
         uses: actions/upload-artifact@v4
@@ -160,7 +163,7 @@ jobs:
           set -e
           mkdir examples/ffi/build_dll
           cd examples/ffi/build_dll
-          cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DVCRUNTIME_LINK_TYPE=DLL
+          cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DVCRUNTIME_LINK_TYPE=DLL
           cmake --build .
 
       - name: "(Windows) Test building Profiling C bindings - static link vc runtime"
@@ -170,7 +173,7 @@ jobs:
           set -e
           mkdir examples/ffi/build_static
           cd examples/ffi/build_static
-          cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DVCRUNTIME_LINK_TYPE=STATIC
+          cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DVCRUNTIME_LINK_TYPE=STATIC
           cmake --build .
 
       - name: "Test building Profiling C bindings"
@@ -182,11 +185,11 @@ jobs:
           cd examples/ffi/build
           # Add BUILD_SYMBOLIZER variable only for Linux platforms
           if [[ "${{ matrix.platform }}" == "ubuntu-latest" ]]; then
-            cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DBUILD_SYMBOLIZER=true
+            cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DBUILD_SYMBOLIZER=true
             cmake --build  .
             ./symbolizer
           else
-            cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling
+            cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER
             cmake --build .
           fi
 
@@ -214,9 +217,9 @@ jobs:
         with:
           rust_version: cross-centos7
       - run: cargo install cross || true
-      - run: cross build --workspace --target x86_64-unknown-linux-gnu
-      - run: cross test --workspace --target x86_64-unknown-linux-gnu -- --skip "::single_threaded_tests::" --skip "tracing_integration_tests::"
-      - run: cross test --workspace --target x86_64-unknown-linux-gnu --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1 --skip "tracing_integration_tests::"
+      - run: cross build --workspace --target x86_64-unknown-linux-gnu --exclude builder 
+      - run: cross test --workspace --target x86_64-unknown-linux-gnu --exclude builder  -- --skip "::single_threaded_tests::" --skip "tracing_integration_tests::"
+      - run: cross test --workspace --target x86_64-unknown-linux-gnu --exclude builder --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1 --skip "tracing_integration_tests::"
 
   ffi_bake:
     strategy:
