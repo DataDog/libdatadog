@@ -1,4 +1,4 @@
-ARG ALPINE_BASE_IMAGE="alpine:3.18"
+ARG ALPINE_BASE_IMAGE="alpine:3.19.3"
 ARG CARGO_BUILD_INCREMENTAL="true"
 ARG CARGO_NET_RETRY="2"
 ARG BUILDER_IMAGE=debian_builder
@@ -44,13 +44,7 @@ SHELL ["/bin/bash", "-c"]
 #RUN rustup-init -y --no-modify-path --default-toolchain stable
 
 FROM alpine_base as alpine_aws_cli
-RUN apk add --no-cache \
-    python3 \
-    py3-pip \
-    groff \
-  && pip3 install --upgrade pip \
-  && pip3 install --no-cache-dir \
-    awscli \
+RUN apk add --no-cache aws-cli \
   && rm -rf /var/cache/apk/*
 
 RUN aws --version   # Just to make sure its installed alright
