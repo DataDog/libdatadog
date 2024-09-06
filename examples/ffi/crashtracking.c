@@ -75,7 +75,6 @@ int main(int argc, char **argv) {
   handle_uintptr_t_result(ddog_crasht_insert_span_id(0, 42));
   handle_uintptr_t_result(ddog_crasht_insert_trace_id(1, 1));
 
-  ddog_crasht_demangle(DDOG_CHARSLICE_C("nopp"), DDOG_CRASHT_DEMANGLE_OPTIONS_COMPLETE);
 #ifdef EXPLICIT_RAISE_SEGV
   // Test raising SEGV explicitly, to ensure chaining works
   // properly in this case
