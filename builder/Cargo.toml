@@ -8,7 +8,7 @@ license.workspace = true
 
 [features]
 default = []
-crashtracker = ["datadog-profiling-ffi?/crashtracker-receiver", "datadog-profiling-ffi?/crashtracker-collector"]
+crashtracker = ["datadog-profiling-ffi?/crashtracker-receiver", "datadog-profiling-ffi?/crashtracker-collector", "datadog-profiling-ffi?/demangler"]
 profiling = ["dep:datadog-profiling-ffi"]
 telemetry = ["profiling", "datadog-profiling-ffi?/ddtelemetry-ffi"]
 data-pipeline = ["telemetry", "datadog-profiling-ffi?/data-pipeline-ffi"]
