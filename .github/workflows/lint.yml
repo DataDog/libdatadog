@@ -46,7 +46,7 @@ jobs:
         shell: bash
         run: |
           # shellcheck disable=SC2046
-          cargo clippy --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.71.1 ] && echo -Aunknown-lints -Aclippy::cast_ref_to_mut)
+          cargo clippy --workspace --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.71.1 ] && echo -Aunknown-lints -Aclippy::cast_ref_to_mut)
   licensecheck:
     runs-on: ubuntu-latest
     name: "Presence of licence headers"
