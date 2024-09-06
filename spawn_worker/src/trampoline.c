@@ -45,9 +45,18 @@ int main(int argc, char *argv[]) {
 
 #ifndef _WIN32
     void **handles = NULL;
+#ifdef __GLIBC__
+    void *librt_handle = NULL;
+#endif
 
     if (additional_shared_libraries_args > 0) {
       handles = calloc(additional_shared_libraries_args, sizeof(void *));
+
+#ifdef __GLIBC__
+      // appsec needs librt for shm_open, but doesn't declare needing it for compat with musl.
+      // RTDL_LAZY has no effect because of the elf flag BIND_NOW
+      librt_handle = dlopen("librt.so.1", RTLD_LAZY | RTLD_GLOBAL);
+#endif
     }
 
     int additional_shared_libraries_count = 0;
@@ -68,7 +77,7 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    void *handle = dlopen(library_path, RTLD_LAZY);
+    void *handle = dlopen(library_path, RTLD_LAZY | RTLD_GLOBAL);
     if (!handle) {
       fputs(dlerror(), error_fd());
       return 10;
@@ -93,6 +102,11 @@ int main(int argc, char *argv[]) {
       }
       free(handles);
     }
+#ifdef __GLIBC__
+    if (librt_handle) {
+      dlclose(librt_handle);
+    }
+#endif
 #else
     for (int i = 0; i < additional_shared_libraries_args; i++) {
         const char *lib_path = argv[3 + i];
