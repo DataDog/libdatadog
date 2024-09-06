@@ -135,7 +135,8 @@ mod tests {
                 && elapsed
                     <= retry_strategy.delay_ms
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
+            "Elapsed time of {} ms was not within expected range",
+            elapsed.as_millis().to_string()
         );
 
         let start = Instant::now();
@@ -147,7 +148,8 @@ mod tests {
                 && elapsed
                     <= retry_strategy.delay_ms
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
+            "Elapsed time of {} ms was not within expected range",
+            elapsed.as_millis().to_string()
         );
     }
 
@@ -170,7 +172,8 @@ mod tests {
                 && elapsed
                     <= retry_strategy.delay_ms
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
+            "Elapsed time of {} ms was not within expected range",
+            elapsed.as_millis().to_string()
         );
 
         let start = Instant::now();
@@ -185,7 +188,8 @@ mod tests {
                     <= retry_strategy.delay_ms
                         + (retry_strategy.delay_ms * 2)
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
+            "Elapsed time of {} ms was not within expected range",
+            elapsed.as_millis().to_string()
         );
     }
 
@@ -208,7 +212,8 @@ mod tests {
                 && elapsed
                     <= retry_strategy.delay_ms
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
+            "Elapsed time of {} ms was not within expected range",
+            elapsed.as_millis().to_string()
         );
 
         let start = Instant::now();
@@ -221,7 +226,8 @@ mod tests {
                 && elapsed
                     <= retry_strategy.delay_ms * 4
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
+            "Elapsed time of {} ms was not within expected range",
+            elapsed.as_millis().to_string()
         );
     }
 
@@ -246,7 +252,8 @@ mod tests {
                     <= retry_strategy.delay_ms
                         + retry_strategy.jitter.unwrap()
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
+            "Elapsed time of {} ms was not within expected range",
+            elapsed.as_millis().to_string()
         );
     }
 
