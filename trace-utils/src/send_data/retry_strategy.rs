@@ -114,7 +114,10 @@ mod tests {
     use super::*;
     use tokio::time::Instant;
 
-    const RETRY_STRATEGY_TIME_TOLERANCE_MS: u64 = 01;
+    // This tolerance is on the higher side to account for github's runners not having consistent
+    // performance. It shouldn't impact the quality of the tests since the most important aspect
+    // of the retry logic is we wait a minimum amount of time.
+    const RETRY_STRATEGY_TIME_TOLERANCE_MS: u64 = 100;
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
