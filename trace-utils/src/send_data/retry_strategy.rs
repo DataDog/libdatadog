@@ -114,7 +114,7 @@ mod tests {
     use super::*;
     use tokio::time::Instant;
 
-    const RETRY_STRATEGY_TIME_TOLERANCE_MS: u64 = 25;
+    const RETRY_STRATEGY_TIME_TOLERANCE_MS: u64 = 01;
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
