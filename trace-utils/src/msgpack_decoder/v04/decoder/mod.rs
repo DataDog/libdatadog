@@ -54,8 +54,7 @@ use tinybytes::{Bytes, BytesString};
 /// let decoded_span = &decoded_traces[0][0];
 /// assert_eq!("test-span", decoded_span.name.as_str());
 /// ```
-pub fn from_slice(data: tinybytes::Bytes) -> Result<Vec<Vec<Span>>, DecodeError> {
-    let mut data = data.clone(); // Use a Bytes instance which we can directly shrink
+pub fn from_slice(mut data: tinybytes::Bytes) -> Result<Vec<Vec<Span>>, DecodeError> {
     let trace_count =
         rmp::decode::read_array_len(unsafe { data.as_mut_slice() }).map_err(|_| {
             DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
