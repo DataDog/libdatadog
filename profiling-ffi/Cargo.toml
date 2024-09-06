@@ -25,6 +25,7 @@ crashtracker-ffi = ["dep:datadog-crashtracker-ffi"]
 crashtracker-collector = ["crashtracker-ffi", "datadog-crashtracker-ffi/collector"]
 # Enables the use of this library to receiver crash-info from a suitable collector
 crashtracker-receiver = ["crashtracker-ffi", "datadog-crashtracker-ffi/receiver"]
+demangler = ["crashtracker-ffi", "datadog-crashtracker-ffi/demangler"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
