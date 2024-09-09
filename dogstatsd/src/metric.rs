@@ -1,14 +1,18 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::constants;
+use std::collections::HashMap;
+use crate::{constants, datadog};
 use crate::errors::ParseError;
 use fnv::FnvHasher;
 use std::hash::{Hash, Hasher};
 use ddsketch_agent::DDSketch;
+use protobuf::Chars;
 use ustr::Ustr;
 use regex::Regex;
-use crate::constants::EMPTY_TAGS;
+
+
+pub(crate) const EMPTY_TAGS: SortedTags = SortedTags { values: Vec::new() };
 
 #[derive(Clone, Debug)]
 pub enum MetricValue {
@@ -18,6 +22,83 @@ pub enum MetricValue {
     Gauge(f64),
     /// Dogstatsd 'distribution' metric type, histogram
     Distribution(DDSketch),
+}
+
+#[derive(Clone, Debug)]
+pub struct SortedTags {
+    // We sort tags. This is in feature parity with DogStatsD and also means
+    // that we avoid storing the same context multiple times because users have
+    // passed tags in different order through time.
+    values: Vec<(Ustr, Ustr)>,
+}
+
+impl SortedTags {
+    pub fn extend(&mut self, other: &SortedTags) {
+        self.values.extend_from_slice(&other.values);
+        self.values.dedup();
+        self.values.sort_unstable();
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    pub fn parse(tags_section: &str) -> Result<SortedTags, ParseError> {
+        let tag_parts = tags_section.split(',');
+        let mut parsed_tags = Vec::new();
+        // Validate that the tags have the right form.
+        for (i, part) in tag_parts.filter(|s| !s.is_empty()).enumerate() {
+            if i >= constants::MAX_TAGS {
+                return Err(ParseError::Raw("Too many tags"));
+            }
+            if !part.contains(':') {
+                return Err(ParseError::Raw("Invalid tag format"));
+            }
+            if let Some((k, v)) = part.split_once(':') {
+                parsed_tags.push((Ustr::from(k), Ustr::from(v)));
+            }
+        }
+        parsed_tags.dedup();
+        parsed_tags.sort_unstable();
+        Ok(SortedTags { values: parsed_tags })
+    }
+
+    pub fn to_chars(&self) -> Vec<Chars> {
+        let mut tags_as_chars = Vec::new();
+        for (k, v) in &self.values {
+            tags_as_chars.push(format!("{}:{}", k, v).into());
+        }
+        tags_as_chars
+    }
+
+    pub fn to_strings(&self) -> Vec<String> {
+        let mut tags_as_vec = Vec::new();
+        for (k, v) in &self.values {
+            tags_as_vec.push(format!("{}:{}", k, v).into());
+        }
+        tags_as_vec
+    }
+
+
+    pub fn to_map(&self) -> HashMap<Ustr, Ustr> {
+        let mut tags_as_map = HashMap::new();
+        for (k, v) in &self.values {
+            tags_as_map.insert(k.clone(), v.clone());
+        }
+        tags_as_map
+    }
+
+    pub (crate) fn to_resources(&self) -> Vec<datadog::Resource> {
+        let mut resources = Vec::with_capacity(constants::MAX_TAGS);
+        for (name, kind) in &self.values {
+            let resource = datadog::Resource {
+                name: name.as_str(),
+                kind: kind.as_str(),
+            };
+            resources.push(resource);
+        }
+        resources
+    }
 }
 
 /// Representation of a dogstatsd Metric
@@ -49,7 +130,7 @@ pub struct Metric {
     /// the parser. We assume here that tags are not sent in random order by the
     /// clien or that, if they are, the API will tidy that up. That is `a:1,b:2`
     /// is a different tagset from `b:2,a:1`.
-    pub tags: Vec<(Ustr, Ustr)>,
+    pub tags: SortedTags,
 
     /// ID given a name and tagset.
     pub(crate) id: u64,
@@ -74,7 +155,7 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
 
             let tags;
             if let Some(tags_section) = caps.name("tags") {
-                tags = parse_sort_tags(tags_section.as_str())?;
+                tags = SortedTags::parse(tags_section.as_str())?;
             } else {
                 tags = EMPTY_TAGS;
             }
@@ -101,26 +182,7 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
             });
         }
     }
-    Err(ParseError::Raw(format!("Invalid metric format {input}").as_str()))
-}
-
-fn parse_sort_tags(tags_section: &str) -> Result<Vec<(Ustr, Ustr)>, ParseError> {
-    let tag_parts = tags_section.split(',');
-    let mut parsed_tags = Vec::new();
-    // Validate that the tags have the right form.
-    for (i, part) in tag_parts.filter(|s| !s.is_empty()).enumerate() {
-        if i >= constants::MAX_TAGS {
-            return Err(ParseError::Raw("Too many tags"));
-        }
-        if !part.contains(':') {
-            return Err(ParseError::Raw("Invalid tag format"));
-        }
-        if let Some((k, v)) = part.split_once(':') {
-            parsed_tags.push((Ustr::from(k), Ustr::from(v)));
-        }
-    }
-    parsed_tags.sort_unstable();
-    Ok(parsed_tags)
+    Err(ParseError::Raw("Invalid metric format"))
 }
 
 fn first_value(values: &str) -> Result<f64, ParseError> {
@@ -147,14 +209,11 @@ fn first_value(values: &str) -> Result<f64, ParseError> {
 /// from the point of view of this function.
 #[inline]
 #[must_use]
-pub fn id(name: Ustr, tags: &Vec<(Ustr, Ustr)>) -> u64 {
+pub fn id(name: Ustr, tags: &SortedTags) -> u64 {
     let mut hasher = FnvHasher::default();
 
     name.hash(&mut hasher);
-    // We sort tags. This is in feature parity with DogStatsD and also means
-    // that we avoid storing the same context multiple times because users have
-    // passed tags in differeing order through time.
-    for kv in tags {
+    for kv in tags.values.iter() {
         kv.0.as_bytes().hash(&mut hasher);
         kv.1.as_bytes().hash(&mut hasher);
     }
@@ -176,7 +235,7 @@ mod tests {
     use proptest::{collection, option, strategy::Strategy, string::string_regex};
     use ustr::Ustr;
 
-    use crate::metric::{id, parse, parse_sort_tags, MetricValue};
+    use crate::metric::{id, parse, MetricValue, SortedTags};
 
     use super::ParseError;
 
@@ -224,7 +283,7 @@ mod tests {
             if let Some(tags) = tagset {
                 let mut count = 0;
 
-                let tag_map : HashMap<Ustr, Ustr>= metric.tags.into_iter().collect();
+                let tag_map : HashMap<Ustr, Ustr>= metric.tags.to_map();
                 tags.split(',').for_each(|kv| {
                     let parts = kv.split_once(':').unwrap();
                     assert_eq!(parts.1, tag_map.get(&Ustr::from(parts.0)).unwrap().to_string());
@@ -258,7 +317,7 @@ mod tests {
                     }
                 }
                 _ => {
-                    panic!("Unsupported metric type");
+                    panic!("Invalid metric format");
                 }
             }
         }
@@ -275,7 +334,7 @@ mod tests {
             };
             let result = parse(&input);
 
-            assert_eq!(result.unwrap_err(),ParseError::Raw("Missing name, value section"));
+            assert_eq!(result.unwrap_err(),ParseError::Raw("Invalid metric format"));
         }
 
         #[test]
@@ -297,7 +356,7 @@ mod tests {
 
             assert_eq!(
                 result.unwrap_err(),
-                ParseError::Raw("Missing name, value section")
+                ParseError::Raw("Invalid metric format")
             );
         }
 
@@ -317,7 +376,7 @@ mod tests {
 
             assert_eq!(
                 result.unwrap_err(),
-                ParseError::Raw("Unsupported metric type")
+                ParseError::Raw("Invalid metric format")
             );
         }
 
@@ -349,8 +408,8 @@ mod tests {
                 tagset2.pop();
             }
 
-            let id1 = id(Ustr::from(&name), &parse_sort_tags(&tagset1).unwrap());
-            let id2 = id(Ustr::from(&name), &parse_sort_tags(&tagset2).unwrap());
+            let id1 = id(Ustr::from(&name), &SortedTags::parse(&tagset1).unwrap());
+            let id2 = id(Ustr::from(&name), &SortedTags::parse(&tagset2).unwrap());
 
             assert_eq!(id1, id2);
         }
