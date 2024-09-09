@@ -21,6 +21,7 @@ ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false }
 datadog-remote-config = { path = "../remote-config" }
 paste = "1"
 libc = "0.2"
+dogstatsd-client = { path = "../dogstatsd-client" }
 
 [dev-dependencies]
 hyper = { version = "0.14", default-features = false }

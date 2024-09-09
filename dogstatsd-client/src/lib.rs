@@ -1,4 +1,4 @@
-// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
 use ddcommon::tag::Tag;
@@ -122,7 +122,7 @@ fn create_client(endpoint: Option<Endpoint>) -> anyhow::Result<StatsdClient> {
         None => return Err(anyhow!("no endpoint set")),
     };
 
-    return match endpoint.url.scheme_str() {
+    match endpoint.url.scheme_str() {
         #[cfg(unix)]
         Some("unix") => {
             let socket = UnixDatagram::unbound()?;
@@ -157,7 +157,7 @@ fn create_client(endpoint: Option<Endpoint>) -> anyhow::Result<StatsdClient> {
 
             Ok(StatsdClient::from_sink("", sink))
         }
-    };
+    }
 }
 
 #[cfg(test)]
@@ -245,4 +245,6 @@ mod test {
         )));
         assert!(res.is_ok());
     }
+
+
 }

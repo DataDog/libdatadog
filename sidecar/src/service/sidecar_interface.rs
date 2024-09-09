@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::dogstatsd::DogStatsDAction;
+use dogstatsd_client::DogStatsDAction;
 use crate::service::{
     InstanceId, QueueId, RequestIdentification, RequestIdentifier, RuntimeMetadata,
     SerializedTracerHeaderTags, SessionConfig, SidecarAction,

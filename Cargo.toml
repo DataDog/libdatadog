@@ -33,7 +33,7 @@ members = [
   "data-pipeline",
   "data-pipeline-ffi",
   "ddsketch",
-  "tinybytes",
+  "tinybytes", "dogstatsd-client",
 ]
 
 default-members = [

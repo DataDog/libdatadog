@@ -12,7 +12,7 @@ use futures::future;
 use tracing::{enabled, info, Level};
 
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
-use crate::{dogstatsd, tracer};
+use crate::tracer;
 
 use crate::service::{InstanceId, RuntimeInfo};
 /// `SessionInfo` holds information about a session.
@@ -24,7 +24,7 @@ pub(crate) struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
     pub(crate) session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
-    dogstatsd: Arc<Mutex<dogstatsd::Flusher>>,
+    dogstatsd: Arc<Mutex<dogstatsd_client::Flusher>>,
     remote_config_invariants: Arc<Mutex<Option<ConfigInvariants>>>,
     #[cfg(windows)]
     pub(crate) remote_config_notify_function:
@@ -168,13 +168,13 @@ impl SessionInfo {
         f(&mut self.get_trace_config());
     }
 
-    pub(crate) fn get_dogstatsd(&self) -> MutexGuard<dogstatsd::Flusher> {
+    pub(crate) fn get_dogstatsd(&self) -> MutexGuard<dogstatsd_client::Flusher> {
         self.dogstatsd.lock().unwrap()
     }
 
     pub(crate) fn configure_dogstatsd<F>(&self, f: F)
     where
-        F: FnOnce(&mut dogstatsd::Flusher),
+        F: FnOnce(&mut dogstatsd_client::Flusher),
     {
         f(&mut self.get_dogstatsd());
     }

@@ -1612,6 +1612,7 @@ dependencies = [
  "datadog-trace-utils",
  "ddcommon",
  "ddtelemetry",
+ "dogstatsd-client",
  "futures",
  "hashbrown 0.12.3",
  "http 0.2.12",
@@ -1662,6 +1663,7 @@ dependencies = [
  "ddcommon-ffi",
  "ddtelemetry",
  "ddtelemetry-ffi",
+ "dogstatsd-client",
  "hyper 0.14.28",
  "libc",
  "paste",
@@ -1982,6 +1984,23 @@ dependencies = [
  "tokio-util 0.7.11",
  "tracing",
  "ustr",
+]
+
+[[package]]
+name = "dogstatsd-client"
+version = "12.0.0"
+dependencies = [
+ "anyhow",
+ "cadence",
+ "datadog-ddsketch",
+ "datadog-trace-normalization",
+ "datadog-trace-protobuf",
+ "datadog-trace-utils",
+ "ddcommon",
+ "http 0.2.12",
+ "hyper 0.14.28",
+ "serde",
+ "tracing",
 ]
 
 [[package]]

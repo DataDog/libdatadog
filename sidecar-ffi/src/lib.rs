@@ -12,7 +12,7 @@ use datadog_sidecar::agent_remote_config::{
 use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
 use datadog_sidecar::crashtracker::crashtracker_unix_socket_path;
-use datadog_sidecar::dogstatsd::DogStatsDAction;
+use dogstatsd_client::DogStatsDAction;
 use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
 use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},

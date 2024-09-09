@@ -39,7 +39,7 @@ use serde::{Deserialize, Serialize};
 use tokio::task::{JoinError, JoinHandle};
 
 use crate::config::get_product_endpoint;
-use crate::dogstatsd::DogStatsDAction;
+use dogstatsd_client::DogStatsDAction;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::runtime_info::ActiveApplication;
 use crate::service::telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats;
