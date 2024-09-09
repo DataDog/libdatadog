@@ -2,17 +2,40 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use env_logger::{Builder, Env, Target};
-use log::{error, info};
-use std::{env, sync::Arc};
+use log::{debug, error, info};
+use std::{env, sync::Arc, sync::Mutex};
+use tokio::time::{sleep, Duration};
 
 use datadog_trace_mini_agent::{
     config, env_verifier, mini_agent, stats_flusher, stats_processor, trace_flusher,
     trace_processor,
 };
 
-pub fn main() {
+use dogstatsd::{
+    aggregator::Aggregator as MetricsAggregator,
+    constants::CONTEXTS,
+    dogstatsd::{DogStatsD, DogStatsDConfig},
+    flusher::{build_fqdn_metrics, Flusher},
+};
+
+use tokio_util::sync::CancellationToken;
+
+const DOGSTATSD_FLUSH_INTERVAL: u64 = 10;
+
+#[tokio::main]
+pub async fn main() {
     let env = Env::new().filter_or("DD_LOG_LEVEL", "info");
     Builder::from_env(env).target(Target::Stdout).init();
+
+    let dd_api_key: Option<String> = env::var("DD_API_KEY").ok();
+    let dd_dogstatsd_port: u16 = env::var("DD_DOGSTATSD_PORT")
+        .ok()
+        .and_then(|port| port.parse::<u16>().ok())
+        .unwrap_or(8125);
+    let dd_site = env::var("DD_SITE").unwrap_or_else(|_| "datadoghq.com".to_string());
+    let dd_use_dogstatsd = env::var("DD_USE_DOGSTATSD")
+        .map(|val| val != "false")
+        .unwrap_or(true);
 
     info!("Starting serverless trace mini agent");
 
@@ -44,7 +67,61 @@ pub fn main() {
         stats_flusher,
     });
 
-    if let Err(e) = mini_agent.start_mini_agent() {
-        error!("Error when starting serverless trace mini agent: {e}");
+    tokio::spawn(async move {
+        let res = mini_agent.start_mini_agent().await;
+        if let Err(e) = res {
+            error!("Error when starting serverless trace mini agent: {e:?}");
+        }
+    });
+
+    if !dd_use_dogstatsd {
+        return;
     }
+
+    let metrics_aggr = Arc::new(Mutex::new(
+        MetricsAggregator::new(Vec::new(), CONTEXTS).expect("Failed to create metrics aggregator"),
+    ));
+
+    info!("Starting DogStatsD");
+    let _ = start_dogstatsd(dd_dogstatsd_port, &metrics_aggr).await;
+    info!("dogstatsd-udp: starting to listen on port {dd_dogstatsd_port}");
+
+    match dd_api_key {
+        Some(dd_api_key) => {
+            let mut metrics_flusher = Flusher::new(
+                dd_api_key,
+                Arc::clone(&metrics_aggr),
+                build_fqdn_metrics(dd_site),
+            );
+            loop {
+                sleep(Duration::from_secs(DOGSTATSD_FLUSH_INTERVAL)).await;
+                debug!("Flushing dogstatsd metrics");
+                metrics_flusher.flush().await;
+            }
+        }
+        None => error!("DD_API_KEY not set, won't flush metrics"),
+    }
+}
+
+async fn start_dogstatsd(
+    port: u16,
+    metrics_aggr: &Arc<Mutex<MetricsAggregator>>,
+) -> CancellationToken {
+    let dogstatsd_config = DogStatsDConfig {
+        host: "0.0.0.0".to_string(),
+        port,
+    };
+    let dogstatsd_cancel_token = tokio_util::sync::CancellationToken::new();
+    let dogstatsd_client = DogStatsD::new(
+        &dogstatsd_config,
+        Arc::clone(metrics_aggr),
+        dogstatsd_cancel_token.clone(),
+    )
+    .await;
+
+    tokio::spawn(async move {
+        dogstatsd_client.spin().await;
+    });
+
+    dogstatsd_cancel_token
 }
