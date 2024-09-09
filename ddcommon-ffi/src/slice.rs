@@ -14,7 +14,9 @@ use std::str::Utf8Error;
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Slice<'a, T: 'a> {
-    /// Must be non-null and suitably aligned for the underlying type.
+    /// Should be non-null and suitably aligned for the underlying type. It is
+    /// allowed but not recommended for the pointer to be null when the len is
+    /// zero.
     ptr: *const T,
 
     /// The number of elements (not bytes) that `.ptr` points to. Must be less
@@ -53,7 +55,13 @@ pub type ByteSlice<'a> = Slice<'a, u8>;
 
 /// This exists as an intrinsic, but it is private.
 pub fn is_aligned_and_not_null<T>(ptr: *const T) -> bool {
-    !ptr.is_null() && ptr as usize % std::mem::align_of::<T>() == 0
+    !ptr.is_null() && is_aligned(ptr)
+}
+
+#[inline]
+fn is_aligned<T>(ptr: *const T) -> bool {
+    debug_assert!(!ptr.is_null());
+    ptr as usize % std::mem::align_of::<T>() == 0
 }
 
 pub trait AsBytes<'a> {
@@ -78,7 +86,8 @@ impl<'a> AsBytes<'a> for Slice<'a, u8> {
 
 impl<'a> AsBytes<'a> for Slice<'a, i8> {
     fn as_bytes(&self) -> &'a [u8] {
-        unsafe { slice::from_raw_parts(self.ptr.cast(), self.len) }
+        // SAFETY: safe to convert *i8 to *u8 and then read it... I think.
+        unsafe { Slice::from_raw_parts(self.ptr.cast(), self.len) }.as_slice()
     }
 }
 
@@ -95,6 +104,8 @@ impl<'a, T: 'a> Slice<'a, T> {
 
     /// # Safety
     /// Uphold the same safety requirements as [std::str::from_raw_parts].
+    /// However, it is allowed but not recommended to provide a null pointer
+    /// when the len is 0.
     pub const unsafe fn from_raw_parts(ptr: *const T, len: usize) -> Self {
         Self {
             ptr,
@@ -111,12 +122,21 @@ impl<'a, T: 'a> Slice<'a, T> {
         }
     }
 
-    pub const fn as_slice(&self) -> &'a [T] {
-        unsafe { slice::from_raw_parts(self.ptr, self.len) }
+    pub fn as_slice(&self) -> &'a [T] {
+        if !self.ptr.is_null() {
+            // Crashing immediately is likely better than ignoring these.
+            assert!(is_aligned(self.ptr));
+            assert!(self.len <= isize::MAX as usize);
+            unsafe { slice::from_raw_parts(self.ptr, self.len) }
+        } else {
+            // Crashing immediately is likely better than ignoring this.
+            assert_eq!(self.len, 0);
+            &[]
+        }
     }
 
-    pub const fn into_slice(self) -> &'a [T] {
-        unsafe { slice::from_raw_parts(self.ptr, self.len) }
+    pub fn into_slice(self) -> &'a [T] {
+        self.as_slice()
     }
 }
 
@@ -177,9 +197,9 @@ impl<'a> From<&'a str> for Slice<'a, c_char> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::os::raw::c_char;
-
-    use crate::slice::*;
+    use std::ptr;
 
     #[test]
     fn slice_from_into_slice() {
@@ -239,5 +259,37 @@ mod tests {
         assert_eq!(Some(&1), iter.next());
         assert_eq!(Some(&2), iter.next());
         assert_eq!(Some(&3), iter.next());
+    }
+
+    #[test]
+    fn test_null_len0() {
+        let null_len0: Slice<u8> = Slice {
+            ptr: ptr::null(),
+            len: 0,
+            _marker: PhantomData,
+        };
+        assert_eq!(null_len0.as_slice(), &[]);
+    }
+
+    #[should_panic]
+    #[test]
+    fn test_null_panic() {
+        let null_len0: Slice<u8> = Slice {
+            ptr: ptr::null(),
+            len: 1,
+            _marker: PhantomData,
+        };
+        _ = null_len0.as_slice();
+    }
+
+    #[should_panic]
+    #[test]
+    fn test_long_panic() {
+        let dangerous: Slice<u8> = Slice {
+            ptr: ptr::NonNull::dangling().as_ptr(),
+            len: isize::MAX as usize + 1,
+            _marker: PhantomData,
+        };
+        _ = dangerous.as_slice();
     }
 }
