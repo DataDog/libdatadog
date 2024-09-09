@@ -17,8 +17,8 @@ pub mod schema {
 
     #[derive(Clone, Deserialize, Default, Debug, PartialEq)]
     pub struct AgentInfoStruct {
-        pub version: String,
-        pub git_commit: String,
+        pub version: Option<String>,
+        pub git_commit: Option<String>,
         pub endpoints: Option<Vec<String>>,
         pub feature_flags: Option<Vec<String>>,
         pub client_drop_p0s: Option<bool>,
@@ -77,15 +77,11 @@ pub mod schema {
 }
 
 mod fetcher {
-    use crate::{
-        schema::{AgentInfo, AgentInfoStruct},
-        AgentInfoArc,
-    };
+    use crate::{schema::AgentInfo, AgentInfoArc};
     use anyhow::{anyhow, Result};
-    use arc_swap::{access::Access, ArcSwapOption};
+    use arc_swap::ArcSwapOption;
     use ddcommon::{connector::Connector, Endpoint};
     use hyper::{self, body::Buf, header::HeaderName};
-    use serde_json;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::time::sleep;
@@ -95,7 +91,7 @@ mod fetcher {
     #[derive(Debug)]
     enum FetchInfoStatus {
         SameState,
-        NewState(AgentInfo),
+        NewState(Box<AgentInfo>),
     }
 
     async fn fetch_info(
@@ -119,20 +115,25 @@ mod fetcher {
         }
         let state_hash = new_state_hash.to_string();
         let body_bytes = hyper::body::aggregate(res.into_body()).await?;
-        let info: AgentInfoStruct = serde_json::from_reader(body_bytes.reader())?;
-        Ok(FetchInfoStatus::NewState(AgentInfo { state_hash, info }))
+        let info = Box::new(AgentInfo {
+            state_hash,
+            info: serde_json::from_reader(body_bytes.reader())?,
+        });
+        Ok(FetchInfoStatus::NewState(info))
     }
 
     pub struct AgentInfoFetcher {
         agent_endpoint: Endpoint,
         info: AgentInfoArc,
+        fetch_interval: Duration,
     }
 
     impl AgentInfoFetcher {
-        pub fn new(agent_endpoint: Endpoint) -> Self {
+        pub fn new(agent_endpoint: Endpoint, fetch_interval: Duration) -> Self {
             Self {
                 agent_endpoint,
                 info: Arc::new(ArcSwapOption::new(None)),
+                fetch_interval,
             }
         }
 
@@ -140,12 +141,11 @@ mod fetcher {
             loop {
                 let current_info = self.info.load();
                 let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
-                if let Ok(FetchInfoStatus::NewState(new_info)) =
-                    fetch_info(&self.agent_endpoint, current_hash).await
-                {
-                    self.info.store(Some(Arc::new(new_info)));
+                let res = fetch_info(&self.agent_endpoint, current_hash).await;
+                if let Ok(FetchInfoStatus::NewState(new_info)) = res {
+                    self.info.store(Some(Arc::new(*new_info)));
                 }
-                sleep(Duration::from_secs(60 * 5)).await; // Wait 5 min between each call to /info
+                sleep(self.fetch_interval).await; // Wait 5 min between each call to /info
             }
         }
 
