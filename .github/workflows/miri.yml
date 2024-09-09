@@ -16,6 +16,9 @@ jobs:
         rustup set profile minimal
         rustup toolchain install nightly --component miri 
         rustup default nightly
+    - name: Install Protoc Binary
+      shell: bash
+      run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh $HOME
     - uses: taiki-e/install-action@v2
       with: 
         tool: nextest@0.9.68
