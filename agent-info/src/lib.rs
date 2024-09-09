@@ -157,14 +157,161 @@ mod fetcher {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use httpmock::prelude::*;
+        use std::time::SystemTime;
+
+        const TEST_INFO: &str = r#"{
+        "version": "0.0.0",
+        "git_commit": "0101010",
+        "endpoints": [
+                "/v0.4/traces",
+                "/v0.6/stats"
+        ],
+        "client_drop_p0s": true,
+        "span_meta_structs": true,
+        "long_running_spans": true,
+        "evp_proxy_allowed_headers": [
+                "Content-Type",
+                "Accept-Encoding"
+        ],
+        "config": {
+                "default_env": "none",
+                "target_tps": 10,
+                "max_eps": 200,
+                "receiver_port": 8126,
+                "receiver_socket": "",
+                "connection_limit": 0,
+                "receiver_timeout": 0,
+                "max_request_bytes": 26214400,
+                "statsd_port": 8125,
+                "max_memory": 0,
+                "max_cpu": 0,
+                "analyzed_spans_by_service": {},
+                "obfuscation": {
+                        "elastic_search": true,
+                        "mongo": true,
+                        "sql_exec_plan": false,
+                        "sql_exec_plan_normalize": false,
+                        "http": {
+                                "remove_query_string": false,
+                                "remove_path_digits": false
+                        },
+                        "remove_stack_traces": false,
+                        "redis": {
+                                "Enabled": true,
+                                "RemoveAllArgs": false
+                        },
+                        "memcached": {
+                                "Enabled": true,
+                                "KeepCommand": false
+                        }
+                }
+        },
+        "peer_tags": ["db.hostname","http.host","aws.s3.bucket"]
+        }"#;
+
+        const TEST_INFO_HASH: &str =
+            "8c732aba385d605b010cd5bd12c03fef402eaefce989f0055aa4c7e92fe30077";
+
         #[tokio::test]
-        async fn test_info() {
-            let endpoint = Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
-            let info = fetch_info(&endpoint, None).await.unwrap();
-            assert!(match info {
-                FetchInfoStatus::NewState(_) => true,
-                FetchInfoStatus::SameState => false,
+        async fn test_fetch_info_without_state() {
+            let server = MockServer::start();
+            let mock = server
+                .mock_async(|when, then| {
+                    when.path("/info");
+                    then.status(200)
+                        .header("content-type", "application/json")
+                        .header(DATADOG_AGENT_STATE.to_string(), TEST_INFO_HASH)
+                        .body(TEST_INFO);
+                })
+                .await;
+            let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
+
+            let info_status = fetch_info(&endpoint, None).await.unwrap();
+            mock.assert();
+            assert!(
+                matches!(info_status, FetchInfoStatus::NewState(info) if *info == AgentInfo {
+                            state_hash: TEST_INFO_HASH.to_string(),
+                            info: serde_json::from_str(TEST_INFO).unwrap(),
+                        }
+                )
+            );
+        }
+
+        #[tokio::test]
+        async fn test_fetch_info_with_state() {
+            let server = MockServer::start();
+            let mock = server
+                .mock_async(|when, then| {
+                    when.path("/info");
+                    then.status(200)
+                        .header("content-type", "application/json")
+                        .header(DATADOG_AGENT_STATE.to_string(), TEST_INFO_HASH)
+                        .body(TEST_INFO);
+                })
+                .await;
+            let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
+
+            let new_state_info_status = fetch_info(&endpoint, Some("abbaabbaabbaabbaa"))
+                .await
+                .unwrap();
+            let same_state_info_status = fetch_info(&endpoint, Some(TEST_INFO_HASH)).await.unwrap();
+
+            mock.assert_hits(2);
+            assert!(
+                matches!(new_state_info_status, FetchInfoStatus::NewState(info) if *info == AgentInfo {
+                            state_hash: TEST_INFO_HASH.to_string(),
+                            info: serde_json::from_str(TEST_INFO).unwrap(),
+                        }
+                )
+            );
+            assert!(matches!(same_state_info_status, FetchInfoStatus::SameState));
+        }
+
+        #[tokio::test]
+        async fn test_agent_info_fetcher_run() {
+            let server = MockServer::start();
+            let mock_v1 = server
+                .mock_async(|when, then| {
+                    when.path("/info");
+                    then.status(200)
+                        .header("content-type", "application/json")
+                        .header(DATADOG_AGENT_STATE.to_string(), "1")
+                        .body(r#"{"version":"1"}"#);
+                })
+                .await;
+            let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
+            let fetcher = AgentInfoFetcher::new(endpoint.clone(), Duration::from_millis(100));
+            let info = fetcher.get_info();
+            assert!(info.load().is_none());
+            tokio::spawn(async move {
+                fetcher.run().await;
             });
+            // Wait for first fetch
+            while mock_v1.hits_async().await == 0 {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            let version_1 = info.load().as_ref().unwrap().info.version.clone().unwrap();
+            assert_eq!(version_1, "1");
+
+            // Update the info endpoint
+            mock_v1.delete_async().await;
+            let mock_v2 = server
+                .mock_async(|when, then| {
+                    when.path("/info");
+                    then.status(200)
+                        .header("content-type", "application/json")
+                        .header(DATADOG_AGENT_STATE.to_string(), "2")
+                        .body(r#"{"version":"2"}"#);
+                })
+                .await;
+            // Wait for second fetch
+            while mock_v2.hits_async().await == 0 {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+
+            let version_2 = info.load().as_ref().unwrap().info.version.clone().unwrap();
+            assert_eq!(version_2, "2");
         }
     }
 }

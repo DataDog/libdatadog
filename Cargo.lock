@@ -24,6 +24,7 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "ddcommon",
+ "httpmock",
  "hyper 0.14.28",
  "serde",
  "serde_json",
