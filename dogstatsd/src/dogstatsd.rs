@@ -111,9 +111,9 @@ mod tests {
     use crate::aggregator::tests::assert_value;
     use crate::aggregator::Aggregator;
     use crate::dogstatsd::{BufferReader, DogStatsD};
+    use crate::metric::EMPTY_TAGS;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::sync::{Arc, Mutex};
-    use crate::metric::EMPTY_TAGS;
 
     #[tokio::test]
     async fn test_dogstatsd_multi_distribution() {
@@ -123,7 +123,7 @@ single_machine_performance.rouster.metrics_min_timestamp_latency:1426.90870216|d
 single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
 ",
         )
-            .await;
+        .await;
         let aggregator = locked_aggregator.lock().expect("lock poisoned");
 
         let parsed_metrics = aggregator.distributions_to_protobuf();
@@ -154,7 +154,7 @@ single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
         let locked_aggregator = setup_dogstatsd(
             "metric3:3|c|#tag3:val3,tag4:val4\nmetric1:1|c\nmetric2:2|c|#tag2:val2\n",
         )
-            .await;
+        .await;
         let aggregator = locked_aggregator.lock().expect("lock poisoned");
 
         let parsed_metrics = aggregator.to_series();
