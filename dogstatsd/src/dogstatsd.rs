@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use tracing::{debug, error};
 
 use crate::aggregator::Aggregator;
-use crate::metric::Metric;
+use crate::metric::{parse, Metric};
 
 pub struct DogStatsD {
     cancel_token: tokio_util::sync::CancellationToken,
@@ -87,7 +87,7 @@ impl DogStatsD {
         let all_valid_metrics: Vec<Metric> = msg
             .filter(|m| !m.is_empty())
             .map(|m| m.replace('\n', ""))
-            .filter_map(|m| match Metric::parse(m.as_str()) {
+            .filter_map(|m| match parse(m.as_str()) {
                 Ok(metric) => Some(metric),
                 Err(e) => {
                     error!("Failed to parse metric {}: {}", m, e);
@@ -113,6 +113,7 @@ mod tests {
     use crate::dogstatsd::{BufferReader, DogStatsD};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::sync::{Arc, Mutex};
+    use crate::metric::EMPTY_TAGS;
 
     #[tokio::test]
     async fn test_dogstatsd_multi_distribution() {
@@ -122,7 +123,7 @@ single_machine_performance.rouster.metrics_min_timestamp_latency:1426.90870216|d
 single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
 ",
         )
-        .await;
+            .await;
         let aggregator = locked_aggregator.lock().expect("lock poisoned");
 
         let parsed_metrics = aggregator.distributions_to_protobuf();
@@ -153,7 +154,7 @@ single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
         let locked_aggregator = setup_dogstatsd(
             "metric1:1|c\nmetric2:2|c|tag2:val2\nmetric3:3|c||tag3:val3,tag4:val4\n",
         )
-        .await;
+            .await;
         let aggregator = locked_aggregator.lock().expect("lock poisoned");
 
         let parsed_metrics = aggregator.to_series();
@@ -182,7 +183,7 @@ single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
 
     async fn setup_dogstatsd(statsd_string: &str) -> Arc<Mutex<Aggregator>> {
         let aggregator_arc = Arc::new(Mutex::new(
-            Aggregator::new(Vec::new(), 1_024).expect("aggregator creation failed"),
+            Aggregator::new(EMPTY_TAGS, 1_024).expect("aggregator creation failed"),
         ));
         let cancel_token = tokio_util::sync::CancellationToken::new();
 
