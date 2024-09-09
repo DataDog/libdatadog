@@ -5,8 +5,7 @@
 //! TraceExporter provides a minimum viable product (MVP) to send traces to agents. The aim of the project at this
 //! state is to provide a basic API in order to test its viability and integration in different languages.
 
-/// Span Concentrator provides a method to "concentrate" span stats together.
+#[allow(missing_docs)]
 pub mod span_concentrator;
-/// Trace Exporter allows accepts trace payloads and exports them to the datadog agent.
+#[allow(missing_docs)]
 pub mod trace_exporter;
-
