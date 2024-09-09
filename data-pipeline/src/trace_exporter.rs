@@ -21,6 +21,7 @@ pub enum TraceExporterInputFormat {
     /// Proxy format is used when the traces are to be sent to the agent without processing them.
     /// The whole payload is sent as is to the agent.
     Proxy,
+    /// V04 is the v0.4 payload format defined in the datadog agent, this format is just a list of spans.
     #[default]
     V04,
 }
@@ -30,8 +31,10 @@ pub enum TraceExporterInputFormat {
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[repr(C)]
 pub enum TraceExporterOutputFormat {
+    /// V04 is the v0.4 payload format defined in the datadog agent, this format is just a list of spans.
     #[default]
     V04,
+    /// V07 is the v0.7 payload format defined in the datadog agent. See (trace-protobuf/src/pb/tracer_payload.proto).
     V07,
 }
 
@@ -105,6 +108,7 @@ impl<'a> From<&'a TracerTags> for HashMap<&'static str, String> {
     }
 }
 
+/// TraceExporter accepts traces as input and outputs them to a configured endpoint.
 pub struct TraceExporter {
     endpoint: Endpoint,
     tags: TracerTags,
@@ -116,10 +120,13 @@ pub struct TraceExporter {
 }
 
 impl TraceExporter {
+    /// Get a TraceExporterBuilder to configure a TraceExporter using a builder pattern
     pub fn builder() -> TraceExporterBuilder {
         TraceExporterBuilder::default()
     }
 
+    /// Send the data to a configured endpoint, trace_count is the number of traces within data.
+    /// Returns the resulting body or an error.
     pub fn send(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
         match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data, trace_count),
@@ -257,6 +264,7 @@ impl TraceExporter {
     }
 }
 
+/// TraceExporterBuilder allows configuring a TraceExporter with the Builder pattern.
 #[derive(Default)]
 pub struct TraceExporterBuilder {
     url: Option<String>,
@@ -270,46 +278,55 @@ pub struct TraceExporterBuilder {
 }
 
 impl TraceExporterBuilder {
+    /// Sets the url to export traces to.
     pub fn set_url(mut self, url: &str) -> Self {
         self.url = Some(url.to_owned());
         self
     }
 
+    /// Set the tracer version receiving traces from.
     pub fn set_tracer_version(mut self, tracer_version: &str) -> Self {
         tracer_version.clone_into(&mut self.tracer_version);
         self
     }
 
+    /// Set the language of incoming traces.
     pub fn set_language(mut self, lang: &str) -> Self {
         lang.clone_into(&mut self.language);
         self
     }
 
+    /// Set the language version of incoming traces.
     pub fn set_language_version(mut self, lang_version: &str) -> Self {
         lang_version.clone_into(&mut self.language_version);
         self
     }
 
+    /// Set the language interprester of incoming traces.
     pub fn set_language_interpreter(mut self, lang_interpreter: &str) -> Self {
         lang_interpreter.clone_into(&mut self.language_interpreter);
         self
     }
 
+    /// Set the input format for incoming traces.
     pub fn set_input_format(mut self, input_format: TraceExporterInputFormat) -> Self {
         self.input_format = input_format;
         self
     }
 
+    /// Set the output format for outgoing traces.
     pub fn set_output_format(mut self, output_format: TraceExporterOutputFormat) -> Self {
         self.output_format = output_format;
         self
     }
 
+    /// Set a response callback to process responses from sending traces.
     pub fn set_response_callback(mut self, response_callback: Box<dyn ResponseCallback>) -> Self {
         self.response_callback = Some(response_callback);
         self
     }
 
+    /// Build a TraceExporter instance using the built configuration options.
     pub fn build(mut self) -> anyhow::Result<TraceExporter> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -331,7 +348,9 @@ impl TraceExporterBuilder {
     }
 }
 
+/// A callback to process some response body.
 pub trait ResponseCallback {
+    /// A callback handling a response body
     fn call(&self, response: &str);
 }
 
