@@ -312,9 +312,9 @@ pub mod tests {
     const SINGLE_DISTRIBUTION_SIZE: u64 = 135;
     const DEFAULT_TAGS: &str = "dd_extension_version:63-next,architecture:x86_64,_dd.compute_stats:1";
 
-    pub fn assert_value(aggregator_mutex: &Mutex<Aggregator>, metric_id: &str, value: f64) {
+    pub fn assert_value(aggregator_mutex: &Mutex<Aggregator>, metric_id: &str, value: f64, tags: &str) {
         let aggregator = aggregator_mutex.lock().unwrap();
-        if let Some(e) = aggregator.get_entry_by_id(metric_id.into(), &EMPTY_TAGS) {
+        if let Some(e) = aggregator.get_entry_by_id(metric_id.into(), &SortedTags::parse(tags).unwrap()) {
             let metric = e.value.get_value().unwrap();
             assert!((metric - value).abs() < PRECISION);
         } else {

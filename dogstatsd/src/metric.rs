@@ -201,8 +201,8 @@ fn first_value(values: &str) -> Result<f64, ParseError> {
 /// identical no matter the internal order of the tagset. That is, we consider a
 /// tagset like "a:1,b:2,c:3" to be idential to "b:2,c:3,a:1" to "c:3,a:1,b:2"
 /// etc. This implies that we must sort the tagset after parsing it, which we
-/// do. Note however that we _do not_ handle duplicate tags, so "a:1,a:1" will
-/// hash to a distinct ID than "a:1".
+/// do. Duplicate tags are removed, so "a:1,a:1" will
+/// hash to the same ID of "a:1".
 ///
 /// Note also that because we take `Ustr` arguments its possible that we've
 /// interned many possible combinations of a tagset, even if they are identical
