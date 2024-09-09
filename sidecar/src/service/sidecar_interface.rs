@@ -130,6 +130,12 @@ pub trait SidecarInterface {
         debugger_type: DebuggerType,
     );
 
+    /// Acquire an exception hash rate limiter
+    ///
+    /// # Arguments
+    /// * `exception_hash` - the ID
+    async fn acquire_exception_hash_rate_limiter(exception_hash: u64);
+
     /// Sets contextual data for the remote config client.
     ///
     /// # Arguments

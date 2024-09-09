@@ -149,11 +149,8 @@ impl PayloadSender {
         parts.path_and_query = Some(PathAndQuery::from_str(&query)?);
         url = Uri::from_parts(parts)?;
 
-        let mut req = hyper::Request::builder()
-            .header(
-                hyper::header::USER_AGENT,
-                concat!("Tracer/", env!("CARGO_PKG_VERSION")),
-            )
+        let mut req = endpoint
+            .into_request_builder(concat!("Tracer/", env!("CARGO_PKG_VERSION")))?
             .method(Method::POST)
             .uri(url);
 

@@ -38,6 +38,7 @@ use serde::{Deserialize, Serialize};
 use tokio::task::{JoinError, JoinHandle};
 
 use crate::config::get_product_endpoint;
+use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::runtime_info::ActiveApplication;
 use crate::service::telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats;
@@ -827,6 +828,18 @@ impl SidecarInterface for SidecarServer {
             }
             Err(e) => error!("Failed mapping shared debugger data memory: {}", e),
         }
+
+        no_response()
+    }
+
+    type AcquireExceptionHashRateLimiterFut = NoResponse;
+
+    fn acquire_exception_hash_rate_limiter(
+        self,
+        _: Context,
+        exception_hash: u64,
+    ) -> Self::AcquireExceptionHashRateLimiterFut {
+        EXCEPTION_HASH_LIMITER.lock().unwrap().add(exception_hash);
 
         no_response()
     }

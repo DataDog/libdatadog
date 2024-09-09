@@ -3,6 +3,7 @@
 
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 use ddcommon::rate_limiter::{Limiter, LocalLimiter};
+use std::cell::UnsafeCell;
 use std::ffi::CString;
 use std::fmt::{Debug, Formatter};
 use std::io;
@@ -12,18 +13,30 @@ use std::sync::{Arc, RwLock};
 
 #[repr(C)]
 #[derive(Default)]
-struct ShmLimiterData<'a> {
+struct ShmLimiterData<'a, Inner> {
     next_free: AtomicU32, // free list
     rc: AtomicI32,
     limiter: LocalLimiter,
-    _phantom: PhantomData<&'a ShmLimiterMemory>,
+    inner: UnsafeCell<Inner>,
+    _phantom: PhantomData<&'a ShmLimiterMemory<Inner>>,
 }
 
-#[derive(Clone)]
-pub struct ShmLimiterMemory(Arc<RwLock<MappedMem<NamedShmHandle>>>);
+pub struct ShmLimiterMemory<Inner = ()> {
+    mem: Arc<RwLock<MappedMem<NamedShmHandle>>>,
+    _phantom: PhantomData<Inner>,
+}
 
-impl ShmLimiterMemory {
-    const START_OFFSET: u32 = std::mem::align_of::<ShmLimiterData>() as u32;
+impl<Inner> Clone for ShmLimiterMemory<Inner> {
+    fn clone(&self) -> Self {
+        ShmLimiterMemory {
+            mem: self.mem.clone(),
+            _phantom: Default::default(),
+        }
+    }
+}
+
+impl<Inner> ShmLimiterMemory<Inner> {
+    const START_OFFSET: u32 = std::mem::align_of::<ShmLimiterData<Inner>>() as u32;
 
     pub fn create(path: CString) -> io::Result<Self> {
         // Clean leftover shm
@@ -41,13 +54,16 @@ impl ShmLimiterMemory {
     }
 
     fn new(handle: MappedMem<NamedShmHandle>) -> Self {
-        Self(Arc::new(RwLock::new(handle)))
+        Self {
+            mem: Arc::new(RwLock::new(handle)),
+            _phantom: Default::default(),
+        }
     }
 
     /// The start of the ShmLimiter memory has 4 bytes indicating an offset to the first free
     /// element in the free list. It is zero if there is no element on the free list.
     fn first_free_ref(&self) -> &AtomicU32 {
-        unsafe { &*self.0.read().unwrap().as_slice().as_ptr().cast() }
+        unsafe { &*self.mem.read().unwrap().as_slice().as_ptr().cast() }
     }
 
     fn next_free(&mut self) -> u32 {
@@ -62,10 +78,10 @@ impl ShmLimiterMemory {
             .load(Ordering::Relaxed);
             // Not yet used memory will always be 0. The next free entry will then be just above.
             if target_next_free == 0 {
-                target_next_free = first_free + std::mem::size_of::<ShmLimiterData>() as u32;
+                target_next_free = first_free + std::mem::size_of::<ShmLimiterData<Inner>>() as u32;
                 // target_next_free is the end of the current entry - but we need one more
-                self.0.write().unwrap().ensure_space(
-                    target_next_free as usize + std::mem::size_of::<ShmLimiterData>(),
+                self.mem.write().unwrap().ensure_space(
+                    target_next_free as usize + std::mem::size_of::<ShmLimiterData<Inner>>(),
                 );
             }
             match self.first_free_ref().compare_exchange(
@@ -80,7 +96,11 @@ impl ShmLimiterMemory {
         }
     }
 
-    pub fn alloc(&mut self) -> ShmLimiter {
+    pub fn alloc(&mut self) -> ShmLimiter<Inner> {
+        self.alloc_with_granularity(1)
+    }
+
+    pub fn alloc_with_granularity(&mut self, seconds: u32) -> ShmLimiter<Inner> {
         let reference = ShmLimiter {
             idx: self.next_free(),
             memory: self.clone(),
@@ -89,16 +109,16 @@ impl ShmLimiterMemory {
         limiter.rc.store(1, Ordering::Relaxed);
         // SAFETY: we initialize the struct here
         unsafe {
-            (*(limiter as *const _ as *mut ShmLimiterData))
+            (*(limiter as *const _ as *mut ShmLimiterData<Inner>))
                 .limiter
-                .reset(1)
+                .reset(seconds)
         };
         reference
     }
 
-    pub fn get(&self, idx: u32) -> Option<ShmLimiter> {
+    pub fn get(&self, idx: u32) -> Option<ShmLimiter<Inner>> {
         assert_eq!(
-            idx % std::mem::size_of::<ShmLimiterData>() as u32,
+            idx % std::mem::size_of::<ShmLimiterData<Inner>>() as u32,
             Self::START_OFFSET
         );
         let reference = ShmLimiter {
@@ -120,25 +140,48 @@ impl ShmLimiterMemory {
             }
         }
     }
+
+    pub fn find<F>(&self, cond: F) -> Option<ShmLimiter<Inner>>
+    where
+        F: Fn(&Inner) -> bool,
+    {
+        let mut cur = Self::START_OFFSET;
+        let mem = self.mem.read().unwrap();
+        loop {
+            let data: &ShmLimiterData<Inner> =
+                unsafe { &*mem.as_slice().as_ptr().add(cur as usize).cast() };
+            if data.next_free.load(Ordering::Relaxed) == 0 {
+                return None;
+            }
+            if data.rc.load(Ordering::Relaxed) > 0 && cond(unsafe { &*data.inner.get() }) {
+                if let Some(limiter) = self.get(cur) {
+                    if cond(limiter.data()) {
+                        return Some(limiter);
+                    }
+                }
+            }
+            cur += std::mem::size_of::<ShmLimiterData<Inner>>() as u32;
+        }
+    }
 }
 
-pub struct ShmLimiter {
+pub struct ShmLimiter<Inner = ()> {
     idx: u32,
-    memory: ShmLimiterMemory,
+    memory: ShmLimiterMemory<Inner>,
 }
 
-impl Debug for ShmLimiter {
+impl<Inner> Debug for ShmLimiter<Inner> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.idx.fmt(f)
     }
 }
 
-impl ShmLimiter {
-    fn limiter(&self) -> &ShmLimiterData {
+impl<Inner> ShmLimiter<Inner> {
+    fn limiter(&self) -> &ShmLimiterData<Inner> {
         unsafe {
             &*self
                 .memory
-                .0
+                .mem
                 .read()
                 .unwrap()
                 .as_slice()
@@ -148,12 +191,51 @@ impl ShmLimiter {
         }
     }
 
+    pub fn data(&self) -> &Inner {
+        unsafe { &*self.limiter().inner.get() }
+    }
+
     pub fn index(&self) -> u32 {
         self.idx
     }
+
+    /// # Safety
+    /// Callers MUST NOT do any other operations on this instance if dropping was successful.
+    pub unsafe fn drop_if_rc_1(&mut self) -> bool {
+        let limiter = self.limiter();
+
+        if limiter
+            .rc
+            .compare_exchange(1, 0, Ordering::SeqCst, Ordering::Relaxed)
+            .is_ok()
+        {
+            self.actual_free(limiter);
+            self.idx = 0;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn actual_free(&self, limiter: &ShmLimiterData<Inner>) {
+        let next_free_ref = self.memory.first_free_ref();
+        let mut next_free = next_free_ref.load(Ordering::Relaxed);
+        loop {
+            limiter.next_free.store(next_free, Ordering::Relaxed);
+            match next_free_ref.compare_exchange(
+                next_free,
+                self.idx,
+                Ordering::SeqCst,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return,
+                Err(found) => next_free = found,
+            }
+        }
+    }
 }
 
-impl Limiter for ShmLimiter {
+impl<Inner> Limiter for ShmLimiter<Inner> {
     fn inc(&self, limit: u32) -> bool {
         self.limiter().limiter.inc(limit)
     }
@@ -161,26 +243,21 @@ impl Limiter for ShmLimiter {
     fn rate(&self) -> f64 {
         self.limiter().limiter.rate()
     }
+
+    fn update_rate(&self) -> f64 {
+        self.limiter().limiter.update_rate()
+    }
 }
 
-impl Drop for ShmLimiter {
+impl<Inner> Drop for ShmLimiter<Inner> {
     fn drop(&mut self) {
+        if self.idx == 0 {
+            return;
+        }
+
         let limiter = self.limiter();
         if limiter.rc.fetch_sub(1, Ordering::SeqCst) == 1 {
-            let next_free_ref = self.memory.first_free_ref();
-            let mut next_free = next_free_ref.load(Ordering::Relaxed);
-            loop {
-                limiter.next_free.store(next_free, Ordering::Relaxed);
-                match next_free_ref.compare_exchange(
-                    next_free,
-                    self.idx,
-                    Ordering::SeqCst,
-                    Ordering::Relaxed,
-                ) {
-                    Ok(_) => return,
-                    Err(found) => next_free = found,
-                }
-            }
+            self.actual_free(limiter);
         }
     }
 }
@@ -207,6 +284,10 @@ impl Limiter for AnyLimiter {
     fn rate(&self) -> f64 {
         self.limiter().rate()
     }
+
+    fn update_rate(&self) -> f64 {
+        self.limiter().update_rate()
+    }
 }
 
 #[cfg(test)]
@@ -224,7 +305,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_limiters() {
-        let mut limiters = ShmLimiterMemory::create(path()).unwrap();
+        let mut limiters = ShmLimiterMemory::<()>::create(path()).unwrap();
         let limiter = limiters.alloc();
         let limiter_idx = limiter.idx;
         // Two are allowed, then one more because a small amount of time passed since the first one
@@ -243,7 +324,7 @@ mod tests {
         let limiter2 = limiters.alloc();
         assert_eq!(
             limiter2.idx,
-            limiter_idx + std::mem::size_of::<ShmLimiterData>() as u32
+            limiter_idx + std::mem::size_of::<ShmLimiterData<()>>() as u32
         );
         drop(limiter);
 
@@ -253,7 +334,7 @@ mod tests {
         let limiter3 = limiters.alloc();
         assert_eq!(
             limiter3.idx,
-            limiter2.idx + std::mem::size_of::<ShmLimiterData>() as u32
+            limiter2.idx + std::mem::size_of::<ShmLimiterData<()>>() as u32
         );
     }
 }
