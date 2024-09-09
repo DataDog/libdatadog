@@ -222,7 +222,7 @@ impl Aggregator {
             if serialized_metric_size > 0 {
                 if (series_payload.series.len() >= self.max_batch_entries_single_metric)
                     || (this_batch_size + serialized_metric_size
-                    >= self.max_batch_bytes_single_metric)
+                        >= self.max_batch_bytes_single_metric)
                 {
                     if this_batch_size == 0 {
                         warn!("Only one metric exceeds max batch size, adding it anyway: {:?} with {}", metric.metric, serialized_metric_size);
@@ -308,13 +308,21 @@ pub mod tests {
 
     const PRECISION: f64 = 0.000_000_01;
 
-    const SINGLE_METRIC_SIZE: usize = 187;
-    const SINGLE_DISTRIBUTION_SIZE: u64 = 135;
-    const DEFAULT_TAGS: &str = "dd_extension_version:63-next,architecture:x86_64,_dd.compute_stats:1";
+    const SINGLE_METRIC_SIZE: usize = 216; // taken from the test, size of a serialized metric with one tag and 1 digit counter value
+    const SINGLE_DISTRIBUTION_SIZE: u64 = 140;
+    const DEFAULT_TAGS: &str =
+        "dd_extension_version:63-next,architecture:x86_64,_dd.compute_stats:1";
 
-    pub fn assert_value(aggregator_mutex: &Mutex<Aggregator>, metric_id: &str, value: f64, tags: &str) {
+    pub fn assert_value(
+        aggregator_mutex: &Mutex<Aggregator>,
+        metric_id: &str,
+        value: f64,
+        tags: &str,
+    ) {
         let aggregator = aggregator_mutex.lock().unwrap();
-        if let Some(e) = aggregator.get_entry_by_id(metric_id.into(), &SortedTags::parse(tags).unwrap()) {
+        if let Some(e) =
+            aggregator.get_entry_by_id(metric_id.into(), &SortedTags::parse(tags).unwrap())
+        {
             let metric = e.value.get_value().unwrap();
             assert!((metric - value).abs() < PRECISION);
         } else {
@@ -339,8 +347,8 @@ pub mod tests {
     fn insertion() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
-        let metric1 = parse("test:1|c|k:v").expect("metric parse failed");
-        let metric2 = parse("foo:1|c|k:v").expect("metric parse failed");
+        let metric1 = parse("test:1|c|#k:v").expect("metric parse failed");
+        let metric2 = parse("foo:1|c|#k:v").expect("metric parse failed");
 
         assert!(aggregator.insert(metric1).is_ok());
         assert!(aggregator.insert(metric2).is_ok());
@@ -353,8 +361,8 @@ pub mod tests {
     fn distribution_insertion() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
-        let metric1 = parse("test:1|d|k:v").expect("metric parse failed");
-        let metric2 = parse("foo:1|d|k:v").expect("metric parse failed");
+        let metric1 = parse("test:1|d|#k:v").expect("metric parse failed");
+        let metric2 = parse("foo:1|d|#k:v").expect("metric parse failed");
 
         assert!(aggregator.insert(metric1).is_ok());
         assert!(aggregator.insert(metric2).is_ok());
@@ -367,9 +375,9 @@ pub mod tests {
     fn overflow() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
-        let metric1 = parse("test:1|c|k:v").expect("metric parse failed");
-        let metric2 = parse("foo:1|c|k:v").expect("metric parse failed");
-        let metric3 = parse("bar:1|c|k:v").expect("metric parse failed");
+        let metric1 = parse("test:1|c|#k:v").expect("metric parse failed");
+        let metric2 = parse("foo:1|c|#k:v").expect("metric parse failed");
+        let metric3 = parse("bar:1|c|#k:v").expect("metric parse failed");
 
         let id1 = metric::id(metric1.name, &metric1.tags);
         let id2 = metric::id(metric2.name, &metric2.tags);
@@ -396,20 +404,24 @@ pub mod tests {
     fn clear() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
-        let metric1 = parse("test:3|c|k:v").expect("metric parse failed");
-        let metric2 = parse("foo:5|c|k:v").expect("metric parse failed");
+        let metric1 = parse("test:3|c|#k1:v1").expect("metric parse failed");
+        let metric2 = parse("foo:5|c|#k2:v2").expect("metric parse failed");
 
         assert!(aggregator.insert(metric1).is_ok());
         assert!(aggregator.insert(metric2).is_ok());
 
         assert_eq!(aggregator.map.len(), 2);
-        if let Some(v) = aggregator.get_entry_by_id("foo".into(), &EMPTY_TAGS) {
+        if let Some(v) =
+            aggregator.get_entry_by_id("foo".into(), &SortedTags::parse("k2:v2").unwrap())
+        {
             assert_eq!(v.value.get_value().unwrap(), 5f64);
         } else {
             panic!("failed to get value by id");
         }
 
-        if let Some(v) = aggregator.get_entry_by_id("test".into(), &EMPTY_TAGS) {
+        if let Some(v) =
+            aggregator.get_entry_by_id("test".into(), &SortedTags::parse("k1:v1").unwrap())
+        {
             assert_eq!(v.value.get_value().unwrap(), 3f64);
         } else {
             panic!("failed to get value by id");
@@ -423,9 +435,9 @@ pub mod tests {
     fn to_series() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
-        let metric1 = parse("test:1|c|k:v").expect("metric parse failed");
-        let metric2 = parse("foo:1|c|k:v").expect("metric parse failed");
-        let metric3 = parse("bar:1|c|k:v").expect("metric parse failed");
+        let metric1 = parse("test:1|c|#k:v").expect("metric parse failed");
+        let metric2 = parse("foo:1|c|#k:v").expect("metric parse failed");
+        let metric3 = parse("bar:1|c|#k:v").expect("metric parse failed");
 
         assert!(aggregator.insert(metric1).is_ok());
         assert!(aggregator.insert(metric2).is_ok());
@@ -444,8 +456,8 @@ pub mod tests {
     fn distributions_to_protobuf() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
-        let metric1 = parse("test:1|d|k:v").expect("metric parse failed");
-        let metric2 = parse("foo:1|d|k:v").expect("metric parse failed");
+        let metric1 = parse("test:1|d|#k:v").expect("metric parse failed");
+        let metric2 = parse("foo:1|d|#k:v").expect("metric parse failed");
 
         assert!(aggregator.insert(metric1).is_ok());
         assert!(aggregator.insert(metric2).is_ok());
@@ -463,14 +475,12 @@ pub mod tests {
         assert_eq!(aggregator.distributions_to_protobuf().sketches.len(), 0);
 
         assert!(aggregator
-            .insert(
-                parse("test1:1|d|k:v".to_string().as_str()).expect("metric parse failed")
-            )
+            .insert(parse("test1:1|d|#k:v".to_string().as_str()).expect("metric parse failed"))
             .is_ok());
         assert_eq!(aggregator.distributions_to_protobuf().sketches.len(), 1);
 
         assert!(aggregator
-            .insert(parse("foo:1|c|k:v").expect("metric parse failed"))
+            .insert(parse("foo:1|c|#k:v").expect("metric parse failed"))
             .is_ok());
         assert_eq!(aggregator.distributions_to_protobuf().sketches.len(), 1);
     }
@@ -503,7 +513,7 @@ pub mod tests {
     fn consume_distributions_batch_bytes() {
         let expected_distribution_per_batch = 2;
         let total_number_of_distributions = 5;
-        let max_bytes = SINGLE_METRIC_SIZE * expected_distribution_per_batch + 11;
+        let max_bytes = SINGLE_DISTRIBUTION_SIZE * expected_distribution_per_batch as u64;
         let mut aggregator = Aggregator {
             tags: to_sorted_tags(),
             map: hash_table::HashTable::new(),
@@ -570,7 +580,7 @@ pub mod tests {
         for i in 1..=tot {
             assert!(aggregator
                 .insert(
-                    parse(format!("test{i}:{i}|{counter_or_distro}|k:v").as_str())
+                    parse(format!("test{i}:{i}|{counter_or_distro}|#k:v").as_str())
                         .expect("metric parse failed")
                 )
                 .is_ok());
@@ -584,21 +594,17 @@ pub mod tests {
         assert_eq!(aggregator.consume_metrics().len(), 0);
 
         assert!(aggregator
-            .insert(
-                parse("test1:1|c|k:v".to_string().as_str()).expect("metric parse failed")
-            )
+            .insert(parse("test1:1|c|#k:v".to_string().as_str()).expect("metric parse failed"))
             .is_ok());
         assert_eq!(aggregator.consume_distributions().len(), 0);
         assert_eq!(aggregator.consume_metrics().len(), 1);
         assert_eq!(aggregator.consume_metrics().len(), 0);
 
         assert!(aggregator
-            .insert(
-                parse("test1:1|c|k:v".to_string().as_str()).expect("metric parse failed")
-            )
+            .insert(parse("test1:1|c|#k:v".to_string().as_str()).expect("metric parse failed"))
             .is_ok());
         assert!(aggregator
-            .insert(parse("foo:1|d|k:v").expect("metric parse failed"))
+            .insert(parse("foo:1|d|#k:v").expect("metric parse failed"))
             .is_ok());
         assert_eq!(aggregator.consume_metrics().len(), 1);
         assert_eq!(aggregator.consume_distributions().len(), 1);
@@ -634,7 +640,7 @@ pub mod tests {
     fn consume_metrics_batch_bytes() {
         let expected_metrics_per_batch = 2;
         let total_number_of_metrics = 5;
-        let two_metrics_size = 362;
+        let two_metrics_size = 420;
         let max_bytes = SINGLE_METRIC_SIZE * expected_metrics_per_batch + 13;
         let mut aggregator = Aggregator {
             tags: to_sorted_tags(),

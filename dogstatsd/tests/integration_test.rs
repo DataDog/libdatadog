@@ -1,6 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use dogstatsd::metric::SortedTags;
 use dogstatsd::{
     aggregator::Aggregator as MetricsAggregator,
     constants::CONTEXTS,
@@ -14,7 +15,6 @@ use tokio::{
     time::{sleep, timeout, Duration},
 };
 use tokio_util::sync::CancellationToken;
-use dogstatsd::metric::SortedTags;
 
 #[cfg(test)]
 #[cfg(not(miri))]
@@ -31,8 +31,8 @@ async fn dogstatsd_server_ships_series() {
         .await;
 
     let metrics_aggr = Arc::new(Mutex::new(
-        MetricsAggregator::new(SortedTags::parse("sometkey:somevalue").unwrap(),
-                               CONTEXTS).expect("failed to create aggregator"),
+        MetricsAggregator::new(SortedTags::parse("sometkey:somevalue").unwrap(), CONTEXTS)
+            .expect("failed to create aggregator"),
     ));
 
     let _ = start_dogstatsd(&metrics_aggr).await;
@@ -82,7 +82,7 @@ async fn start_dogstatsd(metrics_aggr: &Arc<Mutex<MetricsAggregator>>) -> Cancel
         Arc::clone(metrics_aggr),
         dogstatsd_cancel_token.clone(),
     )
-        .await;
+    .await;
 
     tokio::spawn(async move {
         dogstatsd_client.spin().await;

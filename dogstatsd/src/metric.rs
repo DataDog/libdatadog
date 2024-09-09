@@ -1,16 +1,15 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
-use crate::{constants, datadog};
 use crate::errors::ParseError;
-use fnv::FnvHasher;
-use std::hash::{Hash, Hasher};
+use crate::{constants, datadog};
 use ddsketch_agent::DDSketch;
+use fnv::FnvHasher;
 use protobuf::Chars;
-use ustr::Ustr;
 use regex::Regex;
-
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use ustr::Ustr;
 
 pub(crate) const EMPTY_TAGS: SortedTags = SortedTags { values: Vec::new() };
 
@@ -60,7 +59,9 @@ impl SortedTags {
         }
         parsed_tags.dedup();
         parsed_tags.sort_unstable();
-        Ok(SortedTags { values: parsed_tags })
+        Ok(SortedTags {
+            values: parsed_tags,
+        })
     }
 
     pub fn to_chars(&self) -> Vec<Chars> {
@@ -74,21 +75,20 @@ impl SortedTags {
     pub fn to_strings(&self) -> Vec<String> {
         let mut tags_as_vec = Vec::new();
         for (k, v) in &self.values {
-            tags_as_vec.push(format!("{}:{}", k, v).into());
+            tags_as_vec.push(format!("{}:{}", k, v));
         }
         tags_as_vec
     }
 
-
     pub fn to_map(&self) -> HashMap<Ustr, Ustr> {
         let mut tags_as_map = HashMap::new();
         for (k, v) in &self.values {
-            tags_as_map.insert(k.clone(), v.clone());
+            tags_as_map.insert(*k, *v);
         }
         tags_as_map
     }
 
-    pub (crate) fn to_resources(&self) -> Vec<datadog::Resource> {
+    pub(crate) fn to_resources(&self) -> Vec<datadog::Resource> {
         let mut resources = Vec::with_capacity(constants::MAX_TAGS);
         for (name, kind) in &self.values {
             let resource = datadog::Resource {
@@ -148,7 +148,9 @@ pub struct Metric {
 /// example aj-test.increment:1|c|#user:aj-test from 127.0.0.1:50983
 pub fn parse(input: &str) -> Result<Metric, ParseError> {
     // TODO must enforce / exploit constraints given in `constants`.
-    if let Ok(re) = Regex::new(r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[cgd])(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?$") {
+    if let Ok(re) = Regex::new(
+        r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[cgd])(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?$",
+    ) {
         if let Some(caps) = re.captures(input) {
             // unused for now
             // let sample_rate = caps.name("sample_rate").map(|m| m.as_str());
@@ -191,7 +193,7 @@ fn first_value(values: &str) -> Result<f64, ParseError> {
             Ok(v) => Ok(v),
             Err(_) => Err(ParseError::Raw("Invalid value")),
         },
-        None => Err(ParseError::Raw("Missing value"))
+        None => Err(ParseError::Raw("Missing value")),
     }
 }
 
@@ -231,34 +233,34 @@ pub fn id(name: Ustr, tags: &SortedTags) -> u64 {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use std::collections::HashMap;
     use proptest::{collection, option, strategy::Strategy, string::string_regex};
+    use std::collections::HashMap;
     use ustr::Ustr;
 
     use crate::metric::{id, parse, MetricValue, SortedTags};
 
     use super::ParseError;
 
-    fn metric_name() -> impl Strategy<Value=String> {
+    fn metric_name() -> impl Strategy<Value = String> {
         string_regex("[a-zA-Z0-9.-]{1,128}").unwrap()
     }
 
-    fn metric_values() -> impl Strategy<Value=String> {
+    fn metric_values() -> impl Strategy<Value = String> {
         string_regex("[0-9]+(:[0-9]){0,8}").unwrap()
     }
 
-    fn metric_type() -> impl Strategy<Value=String> {
+    fn metric_type() -> impl Strategy<Value = String> {
         string_regex("g|c").unwrap()
     }
 
-    fn metric_tagset() -> impl Strategy<Value=Option<String>> {
+    fn metric_tagset() -> impl Strategy<Value = Option<String>> {
         option::of(
             string_regex("[a-zA-Z]{1,64}:[a-zA-Z]{1,64}(,[a-zA-Z]{1,64}:[a-zA-Z]{1,64}){0,31}")
                 .unwrap(),
         )
     }
 
-    fn metric_tags() -> impl Strategy<Value=Vec<(String, String)>> {
+    fn metric_tags() -> impl Strategy<Value = Vec<(String, String)>> {
         collection::vec(("[a-z]{1,8}", "[A-Z]{1,8}"), 0..32)
     }
 
