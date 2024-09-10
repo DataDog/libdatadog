@@ -10,67 +10,148 @@ use ddcommon_ffi::{
 };
 use std::{ffi::c_char, ptr::NonNull, time::Duration};
 
+#[allow(dead_code)]
+#[repr(C)]
+pub enum TraceExporterConfigOption<'a> {
+    Url(CharSlice<'a>),
+    TracerVersion(CharSlice<'a>),
+    Language(CharSlice<'a>),
+    LanguageVersion(CharSlice<'a>),
+    LanguageInterpreter(CharSlice<'a>),
+    InputFormat(TraceExporterInputFormat),
+    OutputFormat(TraceExporterOutputFormat),
+    ResponseCallback(extern "C" fn(*const c_char)),
+    Hostname(CharSlice<'a>),
+    Env(CharSlice<'a>),
+    Version(CharSlice<'a>),
+    Service(CharSlice<'a>),
+    ComputeStats(bool),
+}
+
+#[derive(Default)]
+pub struct TraceExporterConfig<'a> {
+    url: Option<CharSlice<'a>>,
+    tracer_version: Option<CharSlice<'a>>,
+    language: Option<CharSlice<'a>>,
+    language_version: Option<CharSlice<'a>>,
+    language_interpreter: Option<CharSlice<'a>>,
+    input_format: TraceExporterInputFormat,
+    output_format: TraceExporterOutputFormat,
+    agent_response_callback: Option<extern "C" fn(*const c_char)>,
+    compute_stats: bool,
+    service: Option<CharSlice<'a>>,
+    env: Option<CharSlice<'a>>,
+    hostname: Option<CharSlice<'a>>,
+    version: Option<CharSlice<'a>>,
+}
+
+/// Create a new TraceExporterConfig instance.
+///
+/// # Arguments
+///
+/// * `out_handle` - The handle to write the TraceExporterConfig instance in.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_new(
+    out_handle: NonNull<Box<TraceExporterConfig>>,
+) -> MaybeError {
+    out_handle
+        .as_ptr()
+        .write(Box::<TraceExporterConfig<'_>>::default());
+    MaybeError::None
+}
+
+/// Set properties on a TraceExporterConfig instance.
+///
+/// # Arguments
+///
+/// * `option` - [TraceExporterConfig] enum member.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_option<'a>(
+    handle: &mut TraceExporterConfig<'a>,
+    option: TraceExporterConfigOption<'a>,
+) -> MaybeError {
+    match option {
+        TraceExporterConfigOption::Url(url) => handle.url = Some(url),
+        TraceExporterConfigOption::TracerVersion(version) => handle.tracer_version = Some(version),
+        TraceExporterConfigOption::Language(lang) => handle.language = Some(lang),
+        TraceExporterConfigOption::LanguageVersion(lang_version) => {
+            handle.language_version = Some(lang_version)
+        }
+        TraceExporterConfigOption::LanguageInterpreter(interp) => {
+            handle.language_interpreter = Some(interp)
+        }
+        TraceExporterConfigOption::InputFormat(input) => handle.input_format = input,
+        TraceExporterConfigOption::OutputFormat(output) => handle.output_format = output,
+        TraceExporterConfigOption::ResponseCallback(cback) => {
+            handle.agent_response_callback = Some(cback)
+        }
+        TraceExporterConfigOption::Env(env) => handle.env = Some(env),
+        TraceExporterConfigOption::Service(service) => handle.service = Some(service),
+        TraceExporterConfigOption::Hostname(hostname) => handle.hostname = Some(hostname),
+        TraceExporterConfigOption::Version(version) => handle.version = Some(version),
+        TraceExporterConfigOption::ComputeStats(compute) => handle.compute_stats = compute,
+    }
+    MaybeError::None
+}
+
+
 /// Create a new TraceExporter instance.
 ///
 /// # Arguments
 ///
 /// * `out_handle` - The handle to write the TraceExporter instance in.
-/// * `url` - The URL of the Datadog Agent to communicate with.
-/// * `tracer_version` - The version of the client library.
-/// * `language` - The language of the client library.
-/// * `language_version` - The version of the language of the client library.
-/// * `language_interpreter` - The interpreter of the language of the client library.
-/// * `hostname` - The hostname of the application, used for stats aggregation
-/// * `env` - The environment of the application, used for stats aggregation
-/// * `version` - The version of the application, used for stats aggregation
-/// * `service` - The service name of the application, used for stats aggregation
-/// * `input_format` - The input format of the traces. Setting this to Proxy will send the trace
-///   data to the Datadog Agent as is.
-/// * `output_format` - The output format of the traces to send to the Datadog Agent. If using the
-///   Proxy input format, this should be set to format if the trace data that will be passed through
-///   as is.
-/// * `agent_response_callback` - The callback into the client library that the TraceExporter uses
-///   for updated Agent JSON responses.
+/// * `config` - Configuration handle to set TraceExporter properties. The handle will be owned by
+///   the function and will be properly freed after creating the exporter instance.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_new(
     out_handle: NonNull<Box<TraceExporter>>,
-    url: CharSlice,
-    tracer_version: CharSlice,
-    language: CharSlice,
-    language_version: CharSlice,
-    language_interpreter: CharSlice,
-    hostname: CharSlice,
-    env: CharSlice,
-    version: CharSlice,
-    service: CharSlice,
-    input_format: TraceExporterInputFormat,
-    output_format: TraceExporterOutputFormat,
-    compute_stats: bool,
-    agent_response_callback: extern "C" fn(*const c_char),
+    config: Box<TraceExporterConfig>,
 ) -> MaybeError {
-    let callback_wrapper = ResponseCallbackWrapper {
-        response_callback: agent_response_callback,
-    };
     // TODO - handle errors - https://datadoghq.atlassian.net/browse/APMSP-1095
-    let mut builder = TraceExporter::builder()
-        .set_url(url.to_utf8_lossy().as_ref())
-        .set_tracer_version(tracer_version.to_utf8_lossy().as_ref())
-        .set_language(language.to_utf8_lossy().as_ref())
-        .set_language_version(language_version.to_utf8_lossy().as_ref())
-        .set_language_interpreter(language_interpreter.to_utf8_lossy().as_ref())
-        .set_hostname(hostname.to_utf8_lossy().as_ref())
-        .set_env(env.to_utf8_lossy().as_ref())
-        .set_version(version.to_utf8_lossy().as_ref())
-        .set_service(service.to_utf8_lossy().as_ref())
-        .set_input_format(input_format)
-        .set_output_format(output_format)
-        .set_response_callback(Box::new(callback_wrapper));
-    if compute_stats {
-        builder = builder.enable_stats(Duration::from_secs(10))
+    let mut builder = TraceExporter::builder();
+    if let Some(url) = config.url {
+        builder = builder.set_url(url.to_utf8_lossy().as_ref());
+    }
+    if let Some(tracer_version) = config.tracer_version {
+        builder = builder.set_tracer_version(tracer_version.to_utf8_lossy().as_ref());
+    }
+    if let Some(language) = config.language {
+        builder = builder.set_language(language.to_utf8_lossy().as_ref());
+    }
+    if let Some(lang_version) = config.language_version {
+        builder = builder.set_language_version(lang_version.to_utf8_lossy().as_ref());
+    }
+    if let Some(interpreter) = config.language_interpreter {
+        builder = builder.set_language_interpreter(interpreter.to_utf8_lossy().as_ref());
+    }
+    if let Some(callback) = config.agent_response_callback {
+        let wrapper = ResponseCallbackWrapper {
+            response_callback: callback,
+        };
+        builder = builder.set_response_callback(Box::new(wrapper));
+    }
+    if let Some(hostname) = config.hostname {
+        builder = builder.set_hostname(hostname.to_utf8_lossy().as_ref());
+    }
+    if let Some(env) = config.env {
+        builder = builder.set_env(env.to_utf8_lossy().as_ref());
+    }
+    if let Some(service) = config.service {
+        builder = builder.set_service(service.to_utf8_lossy().as_ref());
+    }
+    if config.compute_stats {
+        builder = builder.enable_stats(Duration::from_secs(10));
         // TODO: APMSP-1317 Enable peer tags aggregation and stats by span_kind based on agent
         // configuration
     }
-    let exporter = builder.build().unwrap();
+
+
+    let exporter = builder
+        .set_input_format(config.input_format)
+        .set_output_format(config.output_format)
+        .build()
+        .unwrap();
+
     out_handle.as_ptr().write(Box::new(exporter));
     MaybeError::None
 }
@@ -115,4 +196,125 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
         .send(trace.as_bytes(), trace_count)
         .unwrap_or(String::from(""));
     MaybeError::None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::mem::MaybeUninit;
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn config_constructor_test() {
+        let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
+
+        unsafe {
+            let ret = ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
+            assert_eq!(MaybeError::None, ret);
+
+            let config = config.assume_init();
+            assert_eq!(config.url, None);
+            assert_eq!(config.input_format, TraceExporterInputFormat::V04);
+            assert_eq!(config.language, None);
+            assert_eq!(config.output_format, TraceExporterOutputFormat::V04);
+            assert_eq!(config.tracer_version, None);
+            assert_eq!(config.language_version, None);
+            assert_eq!(config.language_interpreter, None);
+            assert_eq!(config.agent_response_callback, None);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn config_set_option_test() {
+        let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
+
+        unsafe {
+            let ret = ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
+            assert_eq!(MaybeError::None, ret);
+
+            let mut config = config.assume_init();
+            ddog_trace_exporter_config_set_option(
+                config.as_mut(),
+                TraceExporterConfigOption::Url(CharSlice::from("http://localhost")),
+            );
+            ddog_trace_exporter_config_set_option(
+                config.as_mut(),
+                TraceExporterConfigOption::InputFormat(TraceExporterInputFormat::V04),
+            );
+            ddog_trace_exporter_config_set_option(
+                config.as_mut(),
+                TraceExporterConfigOption::OutputFormat(TraceExporterOutputFormat::V04),
+            );
+            ddog_trace_exporter_config_set_option(
+                config.as_mut(),
+                TraceExporterConfigOption::Language(CharSlice::from("foo")),
+            );
+            ddog_trace_exporter_config_set_option(
+                config.as_mut(),
+                TraceExporterConfigOption::LanguageVersion(CharSlice::from("foo")),
+            );
+            ddog_trace_exporter_config_set_option(
+                config.as_mut(),
+                TraceExporterConfigOption::TracerVersion(CharSlice::from("foo")),
+            );
+            ddog_trace_exporter_config_set_option(
+                config.as_mut(),
+                TraceExporterConfigOption::LanguageInterpreter(CharSlice::from("foo")),
+            );
+
+            assert_eq!(config.url, Some(CharSlice::from("http://localhost")));
+            assert_eq!(config.language, Some(CharSlice::from("foo")));
+            assert_eq!(config.language_version, Some(CharSlice::from("foo")));
+            assert_eq!(config.language_interpreter, Some(CharSlice::from("foo")));
+            assert_eq!(config.tracer_version, Some(CharSlice::from("foo")));
+            assert_eq!(config.input_format, TraceExporterInputFormat::V04);
+            assert_eq!(config.output_format, TraceExporterOutputFormat::V04);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn exporter_constructor_test() {
+        let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
+        let mut exporter: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
+
+        unsafe {
+            let _ = ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
+            let mut config = config.assume_init();
+
+            ddog_trace_exporter_config_set_option(
+                config.as_mut(),
+                TraceExporterConfigOption::Url(CharSlice::from("http://localhost")),
+            );
+            ddog_trace_exporter_config_set_option(
+                config.as_mut(),
+                TraceExporterConfigOption::InputFormat(TraceExporterInputFormat::V04),
+            );
+            ddog_trace_exporter_config_set_option(
+                config.as_mut(),
+                TraceExporterConfigOption::OutputFormat(TraceExporterOutputFormat::V04),
+            );
+            ddog_trace_exporter_config_set_option(
+                config.as_mut(),
+                TraceExporterConfigOption::Language(CharSlice::from("foo")),
+            );
+            ddog_trace_exporter_config_set_option(
+                config.as_mut(),
+                TraceExporterConfigOption::LanguageVersion(CharSlice::from("foo")),
+            );
+            ddog_trace_exporter_config_set_option(
+                config.as_mut(),
+                TraceExporterConfigOption::TracerVersion(CharSlice::from("foo")),
+            );
+            ddog_trace_exporter_config_set_option(
+                config.as_mut(),
+                TraceExporterConfigOption::LanguageInterpreter(CharSlice::from("foo")),
+            );
+
+            let ret = ddog_trace_exporter_new(NonNull::new_unchecked(&mut exporter).cast(), config);
+            println!("After new");
+            assert_eq!(ret, MaybeError::None);
+        }
+    }
 }
