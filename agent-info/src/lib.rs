@@ -1,34 +1,49 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+//! Provides utilities to get config from the /info endpoint of an agent
+#![deny(missing_docs)]
 
 use std::sync::Arc;
 
 use arc_swap::ArcSwapOption;
 
 pub mod schema {
+    //! This module provides struct representing the info endpoint response
     use serde::Deserialize;
     use std::collections::HashMap;
 
+    /// Wrapper for an agent info response storing the state hash from the agent
     #[derive(Clone, Deserialize, Default, Debug, PartialEq)]
     pub struct AgentInfo {
+        /// Hash of the info
         pub state_hash: String,
+        /// Info response from the agent
         pub info: AgentInfoStruct,
     }
 
+    /// Schema of an agent info response
+    #[allow(missing_docs)]
     #[derive(Clone, Deserialize, Default, Debug, PartialEq)]
     pub struct AgentInfoStruct {
+        /// Version of the agent
         pub version: Option<String>,
+        /// Commit of the version of the agent
         pub git_commit: Option<String>,
+        /// List of available endpoints
         pub endpoints: Option<Vec<String>>,
+        /// List of feature flags
         pub feature_flags: Option<Vec<String>>,
         pub client_drop_p0s: Option<bool>,
         pub span_meta_structs: Option<bool>,
         pub long_running_spans: Option<bool>,
         pub evp_proxy_allowed_headers: Option<Vec<String>>,
+        /// Configuration of the agent
         pub config: Option<Config>,
+        /// List of keys mapped to peer tags
         pub peer_tags: Option<Vec<String>>,
     }
 
+    #[allow(missing_docs)]
     #[derive(Clone, Deserialize, Default, Debug, PartialEq)]
     pub struct Config {
         pub default_env: Option<String>,
@@ -45,6 +60,7 @@ pub mod schema {
         pub analyzed_spans_by_service: Option<HashMap<String, HashMap<String, f64>>>,
     }
 
+    #[allow(missing_docs)]
     #[derive(Clone, Deserialize, Default, Debug, PartialEq)]
     pub struct ObfuscationConfig {
         pub elastic_search: bool,
@@ -57,18 +73,21 @@ pub mod schema {
         pub memcached: MemcachedObfuscationConfig,
     }
 
+    #[allow(missing_docs)]
     #[derive(Clone, Deserialize, Default, Debug, PartialEq)]
     pub struct HttpObfuscationConfig {
         pub remove_query_string: bool,
         pub remove_path_digits: bool,
     }
 
+    #[allow(missing_docs)]
     #[derive(Clone, Deserialize, Default, Debug, PartialEq)]
     pub struct RedisObfuscationConfig {
         pub enabled: bool,
         pub remove_all_args: bool,
     }
 
+    #[allow(missing_docs)]
     #[derive(Clone, Deserialize, Default, Debug, PartialEq)]
     pub struct MemcachedObfuscationConfig {
         pub enabled: bool,
@@ -94,12 +113,16 @@ mod fetcher {
         NewState(Box<AgentInfo>),
     }
 
-    async fn fetch_info(
-        agent_endpoint: &Endpoint,
+    /// Fetch info from the given info_endpoint and compare its state to the current state hash.
+    ///
+    /// If the state hash is different from the current one:
+    /// - Return a `FetchInfoStatus::NewState` of the info struct
+    /// - Else return `FetchInfoStatus::SameState`
+    async fn fetch_info_with_state(
+        info_endpoint: &Endpoint,
         current_state_hash: Option<&str>,
     ) -> Result<FetchInfoStatus> {
-        // TODO: Do we need all the headers from Endpoint this may slow the request
-        let req = agent_endpoint
+        let req = info_endpoint
             .into_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
             .method(hyper::Method::GET)
             .body(hyper::Body::empty());
@@ -122,33 +145,99 @@ mod fetcher {
         Ok(FetchInfoStatus::NewState(info))
     }
 
+    /// Fetch the info endpoint once and return the info
+    ///
+    /// Can be used for one-time access to the agent's info. If you need to access the info over
+    /// long period use `AgentInfoFetcher` to keep the info up-to-date.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use anyhow::Result;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<()> {
+    /// // Define the endpoint
+    /// let endpoint = ddcommon::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
+    /// // Fetch the info
+    /// let agent_info = agent_info::fetch_info(&endpoint).await.unwrap();
+    /// println!("Agent version is {}", agent_info.info.version.unwrap());
+    /// # Ok(())
+    /// # }
+    /// ``
+    pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
+        match fetch_info_with_state(info_endpoint, None).await? {
+            FetchInfoStatus::NewState(info) => Ok(info),
+            FetchInfoStatus::SameState => Err(anyhow!("Invalid state header")),
+        }
+    }
+
+    /// Fetch the info endpoint and update an ArcSwap based on a given time interval
+    ///
+    /// Once the fetcher has been created you can get an Arc of the config by calling `get_info`.
+    /// You can then start the run method, the fetcher will update the AgentInfoArc based on the
+    /// given refresh interval
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use anyhow::Result;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<()> {
+    /// // Define the endpoint
+    /// let endpoint = ddcommon::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
+    /// // Create the fetcher
+    /// let fetcher =
+    ///     agent_info::AgentInfoFetcher::new(endpoint, std::time::Duration::from_secs(5 * 60));
+    /// // Get the Arc to access the info
+    /// let agent_info_arc = fetcher.get_info();
+    /// // Start the runner
+    /// tokio::spawn(async move {
+    ///     fetcher.run().await;
+    /// });
+    ///
+    /// // Access the info
+    /// if let Some(agent_info) = agent_info_arc.load().as_ref() {
+    ///     println!(
+    ///         "Agent version is {}",
+    ///         agent_info.info.version.as_ref().unwrap()
+    ///     );
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub struct AgentInfoFetcher {
-        agent_endpoint: Endpoint,
+        info_endpoint: Endpoint,
         info: AgentInfoArc,
-        fetch_interval: Duration,
+        refresh_interval: Duration,
     }
 
     impl AgentInfoFetcher {
-        pub fn new(agent_endpoint: Endpoint, fetch_interval: Duration) -> Self {
+        /// Return a new `AgentInfoFetcher` fetching the `info_endpoint` on each `refresh_interval`
+        /// and updating the stored info
+        pub fn new(info_endpoint: Endpoint, fetch_interval: Duration) -> Self {
             Self {
-                agent_endpoint,
+                info_endpoint,
                 info: Arc::new(ArcSwapOption::new(None)),
-                fetch_interval,
+                refresh_interval: fetch_interval,
             }
         }
 
+        /// Start fetching the info endpoint with the given interval
+        ///
+        /// Warning: This method does not return and should be called within a dedicated task.
         pub async fn run(&self) {
             loop {
                 let current_info = self.info.load();
                 let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
-                let res = fetch_info(&self.agent_endpoint, current_hash).await;
+                let res = fetch_info_with_state(&self.info_endpoint, current_hash).await;
                 if let Ok(FetchInfoStatus::NewState(new_info)) = res {
                     self.info.store(Some(Arc::new(*new_info)));
                 }
-                sleep(self.fetch_interval).await; // Wait 5 min between each call to /info
+                sleep(self.refresh_interval).await; // Wait 5 min between each call to /info
             }
         }
 
+        /// Return an AgentInfoArc storing the info received by the agent.
+        ///
+        /// When the fetcher is running it updates the AgentInfoArc when the agent's info changes.
         pub fn get_info(&self) -> AgentInfoArc {
             self.info.clone()
         }
@@ -158,7 +247,6 @@ mod fetcher {
     mod tests {
         use super::*;
         use httpmock::prelude::*;
-        use std::time::SystemTime;
 
         const TEST_INFO: &str = r#"{
         "version": "0.0.0",
@@ -227,7 +315,7 @@ mod fetcher {
                 .await;
             let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
 
-            let info_status = fetch_info(&endpoint, None).await.unwrap();
+            let info_status = fetch_info_with_state(&endpoint, None).await.unwrap();
             mock.assert();
             assert!(
                 matches!(info_status, FetchInfoStatus::NewState(info) if *info == AgentInfo {
@@ -252,10 +340,12 @@ mod fetcher {
                 .await;
             let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
 
-            let new_state_info_status = fetch_info(&endpoint, Some("abbaabbaabbaabbaa"))
+            let new_state_info_status = fetch_info_with_state(&endpoint, Some("abbaabbaabbaabbaa"))
                 .await
                 .unwrap();
-            let same_state_info_status = fetch_info(&endpoint, Some(TEST_INFO_HASH)).await.unwrap();
+            let same_state_info_status = fetch_info_with_state(&endpoint, Some(TEST_INFO_HASH))
+                .await
+                .unwrap();
 
             mock.assert_hits(2);
             assert!(
@@ -287,6 +377,7 @@ mod fetcher {
             tokio::spawn(async move {
                 fetcher.run().await;
             });
+
             // Wait for first fetch
             while mock_v1.hits_async().await == 0 {
                 tokio::time::sleep(Duration::from_secs(1)).await;
@@ -305,6 +396,7 @@ mod fetcher {
                         .body(r#"{"version":"2"}"#);
                 })
                 .await;
+
             // Wait for second fetch
             while mock_v2.hits_async().await == 0 {
                 tokio::time::sleep(Duration::from_secs(1)).await;
@@ -316,9 +408,7 @@ mod fetcher {
     }
 }
 
+/// Stores an AgentInfo in an ArcSwap to be updated by an AgentInfoFetcher
 pub type AgentInfoArc = Arc<ArcSwapOption<schema::AgentInfo>>;
 
-pub use fetcher::AgentInfoFetcher;
-
-#[cfg(test)]
-mod tests {}
+pub use fetcher::{fetch_info, AgentInfoFetcher};
