@@ -12,6 +12,7 @@ use hyper::{Body, Client, Method, Uri};
 use log::error;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
 use tokio::runtime::Runtime;
+use dogstatsd_client::{Flusher, DogStatsDAction};
 
 /// TraceExporterInputFormat represents the format of the input traces.
 /// The input format can be either Proxy or V0.4, where V0.4 is the default.
@@ -113,6 +114,8 @@ pub struct TraceExporter {
     // TODO - do something with the response callback - https://datadoghq.atlassian.net/browse/APMSP-1019
     _response_callback: Option<Box<dyn ResponseCallback>>,
     runtime: Runtime,
+    // None if dogstatsd is disabled
+    dogstatsd: Option<Flusher>,
 }
 
 impl TraceExporter {
@@ -120,14 +123,14 @@ impl TraceExporter {
         TraceExporterBuilder::default()
     }
 
-    pub fn send(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
+    pub fn send(&mut self, data: &[u8], trace_count: usize) -> Result<String, String> {
         match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data, trace_count),
             TraceExporterInputFormat::V04 => self.send_deser_ser(data),
         }
     }
 
-    fn send_proxy(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
+    fn send_proxy(&mut self, data: &[u8], trace_count: usize) -> Result<String, String> {
         self.send_data_to_url(
             data,
             trace_count,
@@ -136,7 +139,7 @@ impl TraceExporter {
     }
 
     fn send_data_to_url(
-        &self,
+        &mut self,
         data: &[u8],
         trace_count: usize,
         uri: Uri,
@@ -187,17 +190,32 @@ impl TraceExporter {
             })
             .or_else(|err| {
                 error!("Error sending traces: {err}");
+                if let Some(ref mut flusher) = self.dogstatsd {
+                    flusher.send(vec![
+                        DogStatsDAction::Count(String::from("datadog.libdatadog.send.errors"),
+                                               1,
+                                               vec![])]);
+                }
                 Ok(String::from("{}"))
             })
     }
 
-    fn send_deser_ser(&self, data: &[u8]) -> Result<String, String> {
+    fn emit_stat(&mut self, action: DogStatsDAction) {
+        if let Some(ref mut flusher) = self.dogstatsd {
+            flusher.send(vec![action]);
+        }
+    }
+
+    fn send_deser_ser(&mut self, data: &[u8]) -> Result<String, String> {
         let size = data.len();
         // TODO base on input format
         let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_slice(data) {
             Ok(res) => res,
             Err(err) => {
                 error!("Error deserializing trace from request body: {err}");
+                self.emit_stat(DogStatsDAction::Count(String::from("datadog.libdatadog.deser_traces.errors"),
+                                                      1,
+                                                      vec![]));
                 return Ok(String::from("{}"));
             }
         };
@@ -207,23 +225,36 @@ impl TraceExporter {
             return Ok(String::from("{}"));
         }
 
+        // todo: do we need to modify the client to allow for &str to avoid allocating a String?
+        // todo: what tags to attach
+        self.emit_stat(DogStatsDAction::Count(String::from("datadog.libdatadog.deser_traces"),
+                                       traces.len() as i64,
+                                       vec![]));
+
         let header_tags: TracerHeaderTags<'_> = (&self.tags).into();
 
         match self.output_format {
-            TraceExporterOutputFormat::V04 => rmp_serde::to_vec_named(&traces).map_or_else(
-                |err| {
-                    error!("Error serializing traces: {err}");
-                    Ok(String::from("{}"))
-                },
-                |res| {
-                    self.send_data_to_url(
-                        &res,
-                        traces.len(),
-                        self.output_format.add_path(&self.endpoint.url),
+            TraceExporterOutputFormat::V04 =>
+                {
+                    rmp_serde::to_vec_named(&traces).map_err(
+                        |err| {
+                            error!("Error serializing traces: {err}");
+                            self.emit_stat(DogStatsDAction::Count(String::from("datadog.libdatadog.ser_traces.errors"),
+                                                                  1,
+                                                                  vec![]));
+                            String::from("{}")
+                        }).and_then(
+                        |res| {
+                            self.send_data_to_url(
+                                &res,
+                                traces.len(),
+                                self.output_format.add_path(&self.endpoint.url),
+                            )
+                        },
                     )
-                },
-            ),
-            TraceExporterOutputFormat::V07 => {
+                }
+
+        TraceExporterOutputFormat::V07 => {
                 let tracer_payload = trace_utils::collect_trace_chunks(
                     traces,
                     &header_tags,
@@ -243,11 +274,21 @@ impl TraceExporter {
                             Ok(body) => Ok(String::from_utf8_lossy(&body).to_string()),
                             Err(err) => {
                                 error!("Error reading agent response body: {err}");
+                                if let Some(ref mut flusher) = self.dogstatsd {
+                                    flusher.send(vec![DogStatsDAction::Count(String::from("datadog.libdatadog.send.errors"),
+                                                                             1,
+                                                                             vec![])]);
+                                }
                                 Ok(String::from("{}"))
                             }
                         },
                         Err(err) => {
                             error!("Error sending traces: {err}");
+                            if let Some(ref mut flusher) = self.dogstatsd {
+                                flusher.send(vec![DogStatsDAction::Count(String::from("datadog.libdatadog.send.errors"),
+                                                                         1,
+                                                                         vec![])]);
+                            }
                             Ok(String::from("{}"))
                         }
                     }
@@ -267,11 +308,17 @@ pub struct TraceExporterBuilder {
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     response_callback: Option<Box<dyn ResponseCallback>>,
+    dogstatsd_url: Option<String>,
 }
 
 impl TraceExporterBuilder {
     pub fn set_url(mut self, url: &str) -> Self {
         self.url = Some(url.to_owned());
+        self
+    }
+
+    pub fn set_dogstatsd_url(mut self, url: &str) -> Self {
+        self.dogstatsd_url = Some(url.to_owned());
         self
     }
 
@@ -315,6 +362,13 @@ impl TraceExporterBuilder {
             .enable_all()
             .build()?;
 
+        let dogstatsd = self.dogstatsd_url.and_then(
+            |u| {
+                let mut flusher = Flusher::default();
+                flusher.set_endpoint(Endpoint::from_slice(&u)).map(|_| flusher).ok() // If we couldn't set the endpoint return None
+            }
+        );
+
         Ok(TraceExporter {
             endpoint: Endpoint::from_slice(self.url.as_deref().unwrap_or("http://127.0.0.1:8126")),
             tags: TracerTags {
@@ -327,6 +381,7 @@ impl TraceExporterBuilder {
             output_format: self.output_format,
             _response_callback: self.response_callback,
             runtime,
+            dogstatsd,
         })
     }
 }
@@ -339,6 +394,9 @@ pub trait ResponseCallback {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::net;
+    use std::time::Duration;
+    use httpmock::prelude::*;
 
     #[test]
     fn new() {
@@ -428,5 +486,49 @@ mod tests {
             hashmap.get("datadog-meta-lang-interpreter").unwrap(),
             "rustc"
         );
+    }
+
+    #[test]
+    fn health_metrics() {
+        let stats_socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
+        let _ = stats_socket.set_read_timeout(Some(Duration::from_millis(500)));
+
+        let fake_agent = MockServer::start();
+        let _mock_traces = fake_agent.mock(|when, then| {
+            when.method(GET)
+                .path("/v0.4/traces");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("{}");
+        });
+
+        let builder = TraceExporterBuilder::default();
+        let mut exporter = builder
+            .set_url(&fake_agent.url("/v0.4/traces"))
+            .set_dogstatsd_url(&stats_socket.local_addr().unwrap().to_string())
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .build()
+            .unwrap();
+
+        let traces: Vec<Vec<pb::Span>> = vec![vec![pb::Span{name: "test".to_string(), ..Default::default()}], vec![pb::Span{name: "test2".to_string(), ..Default::default()}]];
+        let bytes = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
+        let result = exporter.send(&*bytes, 1).expect("failed to send trace");
+
+        // flush so we don't have to wait
+        //todo: why does this test take so long still
+        exporter.dogstatsd.map(|mut d| d.flush());
+
+        fn read(socket: &net::UdpSocket) -> String {
+            let mut buf = [0; 1_000];
+            socket.recv(&mut buf).expect("No data");
+            let datagram = String::from_utf8_lossy(buf.as_ref());
+            datagram.trim_matches(char::from(0)).to_string()
+        }
+
+        assert_eq!("datadog.libdatadog.deser_traces:2|c", read(&stats_socket));
+        assert_eq!("datadog.libdatadog.send.errors:1|c", read(&stats_socket));
     }
 }

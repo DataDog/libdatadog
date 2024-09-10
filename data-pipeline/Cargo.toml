@@ -23,6 +23,7 @@ datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-utils = { path = "../trace-utils" }
 datadog-trace-normalization = { path = "../trace-normalization" }
 datadog-ddsketch = { path = "../ddsketch"}
+dogstatsd-client = { path = "../dogstatsd-client"}
 
 [lib]
 bench = false
@@ -35,3 +36,4 @@ path = "benches/main.rs"
 [dev-dependencies]
 criterion = "0.5.1"
 rand = "0.8.5"
+httpmock = "0.7.0"

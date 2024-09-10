@@ -11,7 +11,7 @@ use anyhow::anyhow;
 use cadence::prelude::*;
 #[cfg(unix)]
 use cadence::UnixMetricSink;
-use cadence::{Metric, MetricBuilder, QueuingMetricSink, StatsdClient, UdpMetricSink};
+use cadence::{Metric, MetricBuilder, MetricResult, QueuingMetricSink, StatsdClient, UdpMetricSink};
 #[cfg(unix)]
 use ddcommon::connector::uds::socket_path_from_uri;
 use std::net::{ToSocketAddrs, UdpSocket};
@@ -55,6 +55,14 @@ impl Flusher {
             }
         };
         Ok(())
+    }
+
+    pub fn flush(&mut self) -> MetricResult<()> {
+        if let Ok(client) = self.get_client() {
+            client.flush()
+        } else {
+            Ok(())
+        }
     }
 
     pub fn send(&mut self, actions: Vec<DogStatsDAction>) {
@@ -162,8 +170,8 @@ fn create_client(endpoint: Option<Endpoint>) -> anyhow::Result<StatsdClient> {
 
 #[cfg(test)]
 mod test {
-    use crate::dogstatsd::DogStatsDAction::{Count, Distribution, Gauge, Histogram, Set};
-    use crate::dogstatsd::{create_client, Flusher};
+    use crate::DogStatsDAction::{Count, Distribution, Gauge, Histogram, Set};
+    use crate::{create_client, Flusher};
     #[cfg(unix)]
     use ddcommon::connector::uds::socket_path_to_uri;
     use ddcommon::{tag, Endpoint};
