@@ -34,7 +34,7 @@ pub async fn main() {
         .unwrap_or(8125);
     let dd_site = env::var("DD_SITE").unwrap_or_else(|_| "datadoghq.com".to_string());
     let dd_use_dogstatsd = env::var("DD_USE_DOGSTATSD")
-        .map(|val| val != "false")
+        .map(|val| val.to_lowercase() != "false")
         .unwrap_or(true);
 
     info!("Starting serverless trace mini agent");
@@ -74,32 +74,31 @@ pub async fn main() {
         }
     });
 
-    if !dd_use_dogstatsd {
-        return;
-    }
+    if dd_use_dogstatsd {
+        let metrics_aggr = Arc::new(Mutex::new(
+            MetricsAggregator::new(Vec::new(), CONTEXTS)
+                .expect("Failed to create metrics aggregator"),
+        ));
 
-    let metrics_aggr = Arc::new(Mutex::new(
-        MetricsAggregator::new(Vec::new(), CONTEXTS).expect("Failed to create metrics aggregator"),
-    ));
+        info!("Starting DogStatsD");
+        let _ = start_dogstatsd(dd_dogstatsd_port, &metrics_aggr).await;
+        info!("dogstatsd-udp: starting to listen on port {dd_dogstatsd_port}");
 
-    info!("Starting DogStatsD");
-    let _ = start_dogstatsd(dd_dogstatsd_port, &metrics_aggr).await;
-    info!("dogstatsd-udp: starting to listen on port {dd_dogstatsd_port}");
-
-    match dd_api_key {
-        Some(dd_api_key) => {
-            let mut metrics_flusher = Flusher::new(
-                dd_api_key,
-                Arc::clone(&metrics_aggr),
-                build_fqdn_metrics(dd_site),
-            );
-            loop {
-                sleep(Duration::from_secs(DOGSTATSD_FLUSH_INTERVAL)).await;
-                debug!("Flushing dogstatsd metrics");
-                metrics_flusher.flush().await;
+        match dd_api_key {
+            Some(dd_api_key) => {
+                let mut metrics_flusher = Flusher::new(
+                    dd_api_key,
+                    Arc::clone(&metrics_aggr),
+                    build_fqdn_metrics(dd_site),
+                );
+                loop {
+                    sleep(Duration::from_secs(DOGSTATSD_FLUSH_INTERVAL)).await;
+                    debug!("Flushing dogstatsd metrics");
+                    metrics_flusher.flush().await;
+                }
             }
+            None => error!("DD_API_KEY not set, won't flush metrics"),
         }
-        None => error!("DD_API_KEY not set, won't flush metrics"),
     }
 }
 
