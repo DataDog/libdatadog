@@ -340,7 +340,7 @@ mod fetcher {
                 .await;
             let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
 
-            let new_state_info_status = fetch_info_with_state(&endpoint, Some("abbaabbaabbaabbaa"))
+            let new_state_info_status = fetch_info_with_state(&endpoint, Some("state"))
                 .await
                 .unwrap();
             let same_state_info_status = fetch_info_with_state(&endpoint, Some(TEST_INFO_HASH))
@@ -356,6 +356,31 @@ mod fetcher {
                 )
             );
             assert!(matches!(same_state_info_status, FetchInfoStatus::SameState));
+        }
+
+        #[tokio::test]
+        async fn test_fetch_info() {
+            let server = MockServer::start();
+            let mock = server
+                .mock_async(|when, then| {
+                    when.path("/info");
+                    then.status(200)
+                        .header("content-type", "application/json")
+                        .header(DATADOG_AGENT_STATE.to_string(), TEST_INFO_HASH)
+                        .body(TEST_INFO);
+                })
+                .await;
+            let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
+
+            let agent_info = fetch_info(&endpoint).await.unwrap();
+            mock.assert();
+            assert_eq!(
+                *agent_info,
+                AgentInfo {
+                    state_hash: TEST_INFO_HASH.to_string(),
+                    info: serde_json::from_str(TEST_INFO).unwrap(),
+                }
+            );
         }
 
         #[tokio::test]
