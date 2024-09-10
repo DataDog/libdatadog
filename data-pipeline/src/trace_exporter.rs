@@ -21,6 +21,7 @@ pub enum TraceExporterInputFormat {
     /// Proxy format is used when the traces are to be sent to the agent without processing them.
     /// The whole payload is sent as is to the agent.
     Proxy,
+    #[allow(missing_docs)]
     #[default]
     V04,
 }
@@ -30,8 +31,10 @@ pub enum TraceExporterInputFormat {
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[repr(C)]
 pub enum TraceExporterOutputFormat {
+    #[allow(missing_docs)]
     #[default]
     V04,
+    #[allow(missing_docs)]
     V07,
 }
 
@@ -105,6 +108,7 @@ impl<'a> From<&'a TracerTags> for HashMap<&'static str, String> {
     }
 }
 
+#[allow(missing_docs)]
 pub struct TraceExporter {
     endpoint: Endpoint,
     tags: TracerTags,
@@ -116,10 +120,12 @@ pub struct TraceExporter {
 }
 
 impl TraceExporter {
+    #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder {
         TraceExporterBuilder::default()
     }
 
+    #[allow(missing_docs)]
     pub fn send(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
         match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data, trace_count),
@@ -257,6 +263,7 @@ impl TraceExporter {
     }
 }
 
+#[allow(missing_docs)]
 #[derive(Default)]
 pub struct TraceExporterBuilder {
     url: Option<String>,
@@ -270,46 +277,55 @@ pub struct TraceExporterBuilder {
 }
 
 impl TraceExporterBuilder {
+    #[allow(missing_docs)]
     pub fn set_url(mut self, url: &str) -> Self {
         self.url = Some(url.to_owned());
         self
     }
 
+    #[allow(missing_docs)]
     pub fn set_tracer_version(mut self, tracer_version: &str) -> Self {
         tracer_version.clone_into(&mut self.tracer_version);
         self
     }
 
+    #[allow(missing_docs)]
     pub fn set_language(mut self, lang: &str) -> Self {
         lang.clone_into(&mut self.language);
         self
     }
 
+    #[allow(missing_docs)]
     pub fn set_language_version(mut self, lang_version: &str) -> Self {
         lang_version.clone_into(&mut self.language_version);
         self
     }
 
+    #[allow(missing_docs)]
     pub fn set_language_interpreter(mut self, lang_interpreter: &str) -> Self {
         lang_interpreter.clone_into(&mut self.language_interpreter);
         self
     }
 
+    #[allow(missing_docs)]
     pub fn set_input_format(mut self, input_format: TraceExporterInputFormat) -> Self {
         self.input_format = input_format;
         self
     }
 
+    #[allow(missing_docs)]
     pub fn set_output_format(mut self, output_format: TraceExporterOutputFormat) -> Self {
         self.output_format = output_format;
         self
     }
 
+    #[allow(missing_docs)]
     pub fn set_response_callback(mut self, response_callback: Box<dyn ResponseCallback>) -> Self {
         self.response_callback = Some(response_callback);
         self
     }
 
+    #[allow(missing_docs)]
     pub fn build(mut self) -> anyhow::Result<TraceExporter> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -331,7 +347,9 @@ impl TraceExporterBuilder {
     }
 }
 
+#[allow(missing_docs)]
 pub trait ResponseCallback {
+    #[allow(missing_docs)]
     fn call(&self, response: &str);
 }
 
