@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 
+#[allow(clippy::declare_interior_mutable_const)]
 const DATADOG_AGENT_STATE: HeaderName = HeaderName::from_static("datadog-agent-state");
 
 #[derive(Debug)]
@@ -54,8 +55,8 @@ async fn fetch_info_with_state(
 
 /// Fetch the info endpoint once and return the info.
 ///
-/// Can be used for one-time access to the agent's info. If you need to access the info over
-/// long period use `AgentInfoFetcher` to keep the info up-to-date.
+/// Can be used for one-time access to the agent's info. If you need to access the info several
+/// times use `AgentInfoFetcher` to keep the info up-to-date.
 ///
 /// # Example
 /// ```no_run
@@ -69,7 +70,7 @@ async fn fetch_info_with_state(
 /// println!("Agent version is {}", agent_info.info.version.unwrap());
 /// # Ok(())
 /// # }
-/// ``
+/// ```
 pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
     match fetch_info_with_state(info_endpoint, None).await? {
         FetchInfoStatus::NewState(info) => Ok(info),
@@ -77,7 +78,7 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
     }
 }
 
-/// Fetch the info endpoint and update an ArcSwap based on a given time interval.
+/// Fetch the info endpoint and update an ArcSwap keeping it up-to-date.
 ///
 /// Once the fetcher has been created you can get an Arc of the config by calling `get_info`.
 /// You can then start the run method, the fetcher will update the AgentInfoArc based on the
@@ -119,17 +120,18 @@ pub struct AgentInfoFetcher {
 impl AgentInfoFetcher {
     /// Return a new `AgentInfoFetcher` fetching the `info_endpoint` on each `refresh_interval`
     /// and updating the stored info.
-    pub fn new(info_endpoint: Endpoint, fetch_interval: Duration) -> Self {
+    pub fn new(info_endpoint: Endpoint, refresh_interval: Duration) -> Self {
         Self {
             info_endpoint,
             info: Arc::new(ArcSwapOption::new(None)),
-            refresh_interval: fetch_interval,
+            refresh_interval,
         }
     }
 
     /// Start fetching the info endpoint with the given interval.
     ///
-    /// Warning: This method does not return and should be called within a dedicated task.
+    /// # Warning
+    /// This method does not return and should be called within a dedicated task.
     pub async fn run(&self) {
         loop {
             let current_info = self.info.load();
@@ -207,6 +209,7 @@ mod tests {
 
     const TEST_INFO_HASH: &str = "8c732aba385d605b010cd5bd12c03fef402eaefce989f0055aa4c7e92fe30077";
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_fetch_info_without_state() {
         let server = MockServer::start();
@@ -215,7 +218,7 @@ mod tests {
                 when.path("/info");
                 then.status(200)
                     .header("content-type", "application/json")
-                    .header(DATADOG_AGENT_STATE.to_string(), TEST_INFO_HASH)
+                    .header("datadog-agent-state", TEST_INFO_HASH)
                     .body(TEST_INFO);
             })
             .await;
@@ -232,6 +235,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_fetch_info_with_state() {
         let server = MockServer::start();
@@ -240,7 +244,7 @@ mod tests {
                 when.path("/info");
                 then.status(200)
                     .header("content-type", "application/json")
-                    .header(DATADOG_AGENT_STATE.to_string(), TEST_INFO_HASH)
+                    .header("datadog-agent-state", TEST_INFO_HASH)
                     .body(TEST_INFO);
             })
             .await;
@@ -264,6 +268,7 @@ mod tests {
         assert!(matches!(same_state_info_status, FetchInfoStatus::SameState));
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_fetch_info() {
         let server = MockServer::start();
@@ -272,7 +277,7 @@ mod tests {
                 when.path("/info");
                 then.status(200)
                     .header("content-type", "application/json")
-                    .header(DATADOG_AGENT_STATE.to_string(), TEST_INFO_HASH)
+                    .header("datadog-agent-state", TEST_INFO_HASH)
                     .body(TEST_INFO);
             })
             .await;
@@ -289,6 +294,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_agent_info_fetcher_run() {
         let server = MockServer::start();
@@ -297,7 +303,7 @@ mod tests {
                 when.path("/info");
                 then.status(200)
                     .header("content-type", "application/json")
-                    .header(DATADOG_AGENT_STATE.to_string(), "1")
+                    .header("datadog-agent-state", "1")
                     .body(r#"{"version":"1"}"#);
             })
             .await;
@@ -323,7 +329,7 @@ mod tests {
                 when.path("/info");
                 then.status(200)
                     .header("content-type", "application/json")
-                    .header(DATADOG_AGENT_STATE.to_string(), "2")
+                    .header("datadog-agent-state", "2")
                     .body(r#"{"version":"2"}"#);
             })
             .await;
