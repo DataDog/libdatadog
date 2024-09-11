@@ -21,6 +21,8 @@ use dogstatsd::{
 use tokio_util::sync::CancellationToken;
 
 const DOGSTATSD_FLUSH_INTERVAL: u64 = 10;
+const DEFAULT_DOGSTATSD_PORT: u16 = 8125;
+const AGENT_HOST: &str = "0.0.0.0";
 
 #[tokio::main]
 pub async fn main() {
@@ -31,13 +33,13 @@ pub async fn main() {
     let dd_dogstatsd_port: u16 = env::var("DD_DOGSTATSD_PORT")
         .ok()
         .and_then(|port| port.parse::<u16>().ok())
-        .unwrap_or(8125);
+        .unwrap_or(DEFAULT_DOGSTATSD_PORT);
     let dd_site = env::var("DD_SITE").unwrap_or_else(|_| "datadoghq.com".to_string());
     let dd_use_dogstatsd = env::var("DD_USE_DOGSTATSD")
         .map(|val| val.to_lowercase() != "false")
         .unwrap_or(true);
 
-    info!("Starting serverless trace mini agent");
+    debug!("Starting serverless trace mini agent");
 
     let mini_agent_version = env!("CARGO_PKG_VERSION").to_string();
     env::set_var("DD_MINI_AGENT_VERSION", mini_agent_version);
@@ -75,29 +77,10 @@ pub async fn main() {
     });
 
     let mut metrics_flusher = if dd_use_dogstatsd {
-        let metrics_aggr = Arc::new(Mutex::new(
-            MetricsAggregator::new(Vec::new(), CONTEXTS)
-                .expect("Failed to create metrics aggregator"),
-        ));
-
-        info!("Starting dogstatsd");
-        let _ = start_dogstatsd(dd_dogstatsd_port, &metrics_aggr).await;
+        debug!("Starting dogstatsd");
+        let (_, metrics_flusher) = start_dogstatsd(dd_dogstatsd_port, dd_api_key, dd_site).await;
         info!("dogstatsd-udp: starting to listen on port {dd_dogstatsd_port}");
-
-        match dd_api_key {
-            Some(dd_api_key) => {
-                let metrics_flusher = Flusher::new(
-                    dd_api_key,
-                    Arc::clone(&metrics_aggr),
-                    build_fqdn_metrics(dd_site),
-                );
-                Some(metrics_flusher)
-            }
-            None => {
-                error!("DD_API_KEY not set, won't flush metrics");
-                None
-            }
-        }
+        metrics_flusher
     } else {
         info!("dogstatsd disabled");
         None
@@ -112,24 +95,27 @@ pub async fn main() {
         if let Some(metrics_flusher) = metrics_flusher.as_mut() {
             debug!("Flushing dogstatsd metrics");
             metrics_flusher.flush().await;
-        } else {
-            debug!("dogstatsd disabled, not flushing metrics");
         }
     }
 }
 
 async fn start_dogstatsd(
     port: u16,
-    metrics_aggr: &Arc<Mutex<MetricsAggregator>>,
-) -> CancellationToken {
+    dd_api_key: Option<String>,
+    dd_site: String,
+) -> (CancellationToken, Option<Flusher>) {
+    let metrics_aggr = Arc::new(Mutex::new(
+        MetricsAggregator::new(Vec::new(), CONTEXTS).expect("Failed to create metrics aggregator"),
+    ));
+
     let dogstatsd_config = DogStatsDConfig {
-        host: "0.0.0.0".to_string(),
+        host: AGENT_HOST.to_string(),
         port,
     };
     let dogstatsd_cancel_token = tokio_util::sync::CancellationToken::new();
     let dogstatsd_client = DogStatsD::new(
         &dogstatsd_config,
-        Arc::clone(metrics_aggr),
+        Arc::clone(&metrics_aggr),
         dogstatsd_cancel_token.clone(),
     )
     .await;
@@ -138,5 +124,20 @@ async fn start_dogstatsd(
         dogstatsd_client.spin().await;
     });
 
-    dogstatsd_cancel_token
+    let metrics_flusher = match dd_api_key {
+        Some(dd_api_key) => {
+            let metrics_flusher = Flusher::new(
+                dd_api_key,
+                Arc::clone(&metrics_aggr),
+                build_fqdn_metrics(dd_site),
+            );
+            Some(metrics_flusher)
+        }
+        None => {
+            error!("DD_API_KEY not set, won't flush metrics");
+            None
+        }
+    };
+
+    (dogstatsd_cancel_token, metrics_flusher)
 }
