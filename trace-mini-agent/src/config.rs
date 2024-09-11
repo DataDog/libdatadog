@@ -13,6 +13,8 @@ use datadog_trace_utils::config_utils::{
 };
 use datadog_trace_utils::trace_utils;
 
+const DEFAULT_DOGSTATSD_PORT: u16 = 8125;
+
 #[derive(Debug)]
 pub struct Config {
     pub dd_site: String,
@@ -45,7 +47,7 @@ impl Config {
         let dd_dogstatsd_port: u16 = env::var("DD_DOGSTATSD_PORT")
             .ok()
             .and_then(|port| port.parse::<u16>().ok())
-            .unwrap_or(8125);
+            .unwrap_or(DEFAULT_DOGSTATSD_PORT);
         let dd_site = env::var("DD_SITE").unwrap_or_else(|_| "datadoghq.com".to_string());
 
         // construct the trace & trace stats intake urls based on DD_SITE env var (to flush traces &
