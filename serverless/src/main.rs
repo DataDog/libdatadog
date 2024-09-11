@@ -4,7 +4,7 @@
 use env_logger::{Builder, Env, Target};
 use log::{debug, error, info};
 use std::{env, sync::Arc, sync::Mutex};
-use tokio::time::{sleep, Duration};
+use tokio::time::{interval, Duration};
 
 use datadog_trace_mini_agent::{
     config, env_verifier, mini_agent, stats_flusher, stats_processor, trace_flusher,
@@ -74,30 +74,46 @@ pub async fn main() {
         }
     });
 
-    if dd_use_dogstatsd {
+    let mut metrics_flusher = if dd_use_dogstatsd {
         let metrics_aggr = Arc::new(Mutex::new(
             MetricsAggregator::new(Vec::new(), CONTEXTS)
                 .expect("Failed to create metrics aggregator"),
         ));
 
-        info!("Starting DogStatsD");
+        info!("Starting dogstatsd");
         let _ = start_dogstatsd(dd_dogstatsd_port, &metrics_aggr).await;
         info!("dogstatsd-udp: starting to listen on port {dd_dogstatsd_port}");
 
         match dd_api_key {
             Some(dd_api_key) => {
-                let mut metrics_flusher = Flusher::new(
+                let metrics_flusher = Flusher::new(
                     dd_api_key,
                     Arc::clone(&metrics_aggr),
                     build_fqdn_metrics(dd_site),
                 );
-                loop {
-                    sleep(Duration::from_secs(DOGSTATSD_FLUSH_INTERVAL)).await;
-                    debug!("Flushing dogstatsd metrics");
-                    metrics_flusher.flush().await;
-                }
+                Some(metrics_flusher)
             }
-            None => error!("DD_API_KEY not set, won't flush metrics"),
+            None => {
+                error!("DD_API_KEY not set, won't flush metrics");
+                None
+            }
+        }
+    } else {
+        info!("dogstatsd disabled");
+        None
+    };
+
+    let mut flush_interval = interval(Duration::from_secs(DOGSTATSD_FLUSH_INTERVAL));
+    flush_interval.tick().await; // discard first tick, which is instantaneous
+
+    loop {
+        flush_interval.tick().await;
+
+        if let Some(metrics_flusher) = metrics_flusher.as_mut() {
+            debug!("Flushing dogstatsd metrics");
+            metrics_flusher.flush().await;
+        } else {
+            debug!("dogstatsd disabled, not flushing metrics");
         }
     }
 }
