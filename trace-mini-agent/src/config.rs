@@ -217,28 +217,29 @@ mod tests {
     #[test]
     #[serial]
     fn test_default_dogstatsd_port() {
-        env::set_var("ASCSVCRT_SPRING__APPLICATION__NAME", "test-spring-app");
         env::set_var("DD_API_KEY", "_not_a_real_key_");
+        env::set_var("ASCSVCRT_SPRING__APPLICATION__NAME", "test-spring-app");
         let config_res = config::Config::new();
         assert!(config_res.is_ok());
         let config = config_res.unwrap();
         assert_eq!(config.dd_dogstatsd_port, 8125);
-        env::remove_var("DD_DOGSTATSD_PORT");
+        env::remove_var("DD_API_KEY");
         env::remove_var("ASCSVCRT_SPRING__APPLICATION__NAME");
     }
 
     #[test]
     #[serial]
     fn test_custom_dogstatsd_port() {
-        env::set_var("DD_DOGSTATSD_PORT", "18125");
         env::set_var("DD_API_KEY", "_not_a_real_key_");
         env::set_var("ASCSVCRT_SPRING__APPLICATION__NAME", "test-spring-app");
+        env::set_var("DD_DOGSTATSD_PORT", "18125");
         let config_res = config::Config::new();
         println!("{:?}", config_res);
         assert!(config_res.is_ok());
         let config = config_res.unwrap();
         assert_eq!(config.dd_dogstatsd_port, 18125);
-        env::remove_var("DD_DOGSTATSD_PORT");
+        env::remove_var("DD_API_KEY");
         env::remove_var("ASCSVCRT_SPRING__APPLICATION__NAME");
+        env::remove_var("DD_DOGSTATSD_PORT");
     }
 }
