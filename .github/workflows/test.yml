@@ -161,6 +161,7 @@ jobs:
         shell: bash
         run: |
           set -e
+          rm -rf examples/ffi/build_dll
           mkdir examples/ffi/build_dll
           cd examples/ffi/build_dll
           cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DVCRUNTIME_LINK_TYPE=DLL
@@ -171,6 +172,7 @@ jobs:
         shell: bash
         run: |
           set -e
+          rm -rf examples/ffi/build_static
           mkdir examples/ffi/build_static
           cd examples/ffi/build_static
           cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DVCRUNTIME_LINK_TYPE=STATIC
@@ -181,6 +183,7 @@ jobs:
         if: matrix.platform != 'windows-latest'
         run: |
           set -e
+          rm -rf examples/ffi/build
           mkdir examples/ffi/build
           cd examples/ffi/build
           # Add BUILD_SYMBOLIZER variable only for Linux platforms
