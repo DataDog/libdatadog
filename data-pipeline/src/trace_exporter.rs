@@ -11,6 +11,7 @@ use hyper::http::uri::PathAndQuery;
 use hyper::{Body, Client, Method, Uri};
 use log::error;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
+use std::cell::RefCell;
 use tokio::runtime::Runtime;
 use dogstatsd_client::{Flusher, DogStatsDAction};
 
@@ -119,7 +120,7 @@ pub struct TraceExporter {
     _response_callback: Option<Box<dyn ResponseCallback>>,
     runtime: Runtime,
     // None if dogstatsd is disabled
-    dogstatsd: Option<Flusher>,
+    dogstatsd: Option<RefCell<Flusher>>,
 }
 
 impl TraceExporter {
@@ -129,14 +130,14 @@ impl TraceExporter {
     }
 
     #[allow(missing_docs)]
-    pub fn send(&mut self, data: &[u8], trace_count: usize) -> Result<String, String> {
+    pub fn send(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
         match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data, trace_count),
             TraceExporterInputFormat::V04 => self.send_deser_ser(data),
         }
     }
 
-    fn send_proxy(&mut self, data: &[u8], trace_count: usize) -> Result<String, String> {
+    fn send_proxy(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
         self.send_data_to_url(
             data,
             trace_count,
@@ -145,7 +146,7 @@ impl TraceExporter {
     }
 
     fn send_data_to_url(
-        &mut self,
+        &self,
         data: &[u8],
         trace_count: usize,
         uri: Uri,
@@ -196,8 +197,8 @@ impl TraceExporter {
             })
             .or_else(|err| {
                 error!("Error sending traces: {err}");
-                if let Some(ref mut flusher) = self.dogstatsd {
-                    flusher.send(vec![
+                if let Some(ref flusher) = self.dogstatsd {
+                    flusher.borrow_mut().send(vec![
                         DogStatsDAction::Count(String::from("datadog.libdatadog.send.errors"),
                                                1,
                                                vec![])]);
@@ -206,13 +207,13 @@ impl TraceExporter {
             })
     }
 
-    fn emit_stat(&mut self, action: DogStatsDAction) {
-        if let Some(ref mut flusher) = self.dogstatsd {
-            flusher.send(vec![action]);
+    fn emit_stat(&self, action: DogStatsDAction) {
+        if let Some(ref flusher) = self.dogstatsd {
+            flusher.borrow_mut().send(vec![action]);
         }
     }
 
-    fn send_deser_ser(&mut self, data: &[u8]) -> Result<String, String> {
+    fn send_deser_ser(&self, data: &[u8]) -> Result<String, String> {
         let size = data.len();
         // TODO base on input format
         let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_slice(data) {
@@ -280,20 +281,20 @@ impl TraceExporter {
                             Ok(body) => Ok(String::from_utf8_lossy(&body).to_string()),
                             Err(err) => {
                                 error!("Error reading agent response body: {err}");
-                                if let Some(ref mut flusher) = self.dogstatsd {
-                                    flusher.send(vec![DogStatsDAction::Count(String::from("datadog.libdatadog.send.errors"),
-                                                                             1,
-                                                                             vec![])]);
+                                if let Some(ref flusher) = self.dogstatsd {
+                                    let _ = flusher.borrow_mut().send(vec![DogStatsDAction::Count(String::from("datadog.libdatadog.send.errors"),
+                                                                                     1,
+                                                                                     vec![])]);
                                 }
                                 Ok(String::from("{}"))
                             }
                         },
                         Err(err) => {
                             error!("Error sending traces: {err}");
-                            if let Some(ref mut flusher) = self.dogstatsd {
-                                flusher.send(vec![DogStatsDAction::Count(String::from("datadog.libdatadog.send.errors"),
-                                                                         1,
-                                                                         vec![])]);
+                            if let Some(ref flusher) = self.dogstatsd {
+                                let _ = flusher.borrow_mut().send(vec![DogStatsDAction::Count(String::from("datadog.libdatadog.send.errors"),
+                                                                                 1,
+                                                                                 vec![])]);
                             }
                             Ok(String::from("{}"))
                         }
@@ -382,7 +383,7 @@ impl TraceExporterBuilder {
         let dogstatsd = self.dogstatsd_url.and_then(
             |u| {
                 let mut flusher = Flusher::default();
-                flusher.set_endpoint(Endpoint::from_slice(&u)).map(|_| flusher).ok() // If we couldn't set the endpoint return None
+                flusher.set_endpoint(Endpoint::from_slice(&u)).map(|_| RefCell::new(flusher)).ok() // If we couldn't set the endpoint return None
             }
         );
 
