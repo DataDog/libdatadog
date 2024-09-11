@@ -508,6 +508,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn health_metrics() {
         let stats_socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
         let _ = stats_socket.set_read_timeout(Some(Duration::from_millis(500)));
