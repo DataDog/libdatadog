@@ -1997,7 +1997,6 @@ dependencies = [
  "datadog-ddsketch",
  "datadog-trace-normalization",
  "datadog-trace-protobuf",
- "datadog-trace-utils",
  "ddcommon",
  "http 0.2.12",
  "hyper 0.14.28",
