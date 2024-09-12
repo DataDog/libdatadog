@@ -200,7 +200,7 @@ impl TraceExporter {
                     flusher.send(vec![
                         DogStatsDAction::Count(String::from("datadog.libdatadog.send.errors"),
                                                1,
-                                               vec![])]);
+                                               Vec::default())]);
                 }
                 Ok(String::from("{}"))
             })
@@ -221,7 +221,7 @@ impl TraceExporter {
                 error!("Error deserializing trace from request body: {err}");
                 self.emit_stat(DogStatsDAction::Count(String::from("datadog.libdatadog.deser_traces.errors"),
                                                       1,
-                                                      vec![]));
+                                                      Vec::default()));
                 return Ok(String::from("{}"));
             }
         };
@@ -235,7 +235,7 @@ impl TraceExporter {
         // todo: what tags to attach
         self.emit_stat(DogStatsDAction::Count(String::from("datadog.libdatadog.deser_traces"),
                                        traces.len() as i64,
-                                       vec![]));
+                                       Vec::default()));
 
         let header_tags: TracerHeaderTags<'_> = (&self.tags).into();
 
@@ -247,7 +247,7 @@ impl TraceExporter {
                             error!("Error serializing traces: {err}");
                             self.emit_stat(DogStatsDAction::Count(String::from("datadog.libdatadog.ser_traces.errors"),
                                                                   1,
-                                                                  vec![]));
+                                                                  Vec::default()));
                             String::from("{}")
                         }).and_then(
                         |res| {
@@ -283,7 +283,7 @@ impl TraceExporter {
                                 if let Some(flusher) = &self.dogstatsd {
                                     flusher.send(vec![DogStatsDAction::Count(String::from("datadog.libdatadog.send.errors"),
                                                                              1,
-                                                                             vec![])]);
+                                                                             Vec::default())]);
                                 }
                                 Ok(String::from("{}"))
                             }
@@ -293,7 +293,7 @@ impl TraceExporter {
                             if let Some(flusher) = &self.dogstatsd {
                                 flusher.send(vec![DogStatsDAction::Count(String::from("datadog.libdatadog.send.errors"),
                                                                          1,
-                                                                         vec![])]);
+                                                                         Vec::default())]);
                             }
                             Ok(String::from("{}"))
                         }
