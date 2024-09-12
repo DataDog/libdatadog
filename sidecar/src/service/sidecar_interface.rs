@@ -133,7 +133,7 @@ pub trait SidecarInterface {
     ///
     /// * `instance_id` - The ID of the instance.
     /// * `actions` - The DogStatsD actions to send.
-    async fn send_dogstatsd_actions(instance_id: InstanceId, actions: Vec<DogStatsDAction>);
+    async fn send_dogstatsd_actions(instance_id: InstanceId, actions: Vec<DogStatsDAction<String>>);
 
     /// Flushes any outstanding traces queued for sending.
     async fn flush_traces();

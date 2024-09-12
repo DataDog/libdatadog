@@ -318,7 +318,7 @@ pub fn set_remote_config_data(
 pub fn send_dogstatsd_actions(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
-    actions: Vec<DogStatsDAction>,
+    actions: Vec<DogStatsDAction<String>>,
 ) -> io::Result<()> {
     transport.send(SidecarInterfaceRequest::SendDogstatsdActions {
         instance_id: instance_id.clone(),

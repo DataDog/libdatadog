@@ -39,6 +39,12 @@ pub enum TraceExporterOutputFormat {
     V07,
 }
 
+// internal health metrics
+const STAT_SEND_ERRORS: &str = "datadog.libdatadog.send.errors";
+const STAT_DESER_TRACES: &str = "datadog.libdatadog.deser_traces";
+const STAT_DESER_TRACES_ERRORS: &str = "datadog.libdatadog.deser_traces.errors";
+const STAT_SER_TRACES_ERRORS: &str = "datadog.libdatadog.ser_traces.errors";
+
 impl TraceExporterOutputFormat {
     /// Add the agent trace endpoint path to the URL.
     fn add_path(&self, url: &Uri) -> Uri {
@@ -198,7 +204,7 @@ impl TraceExporter {
                 error!("Error sending traces: {err}");
                 if let Some(flusher) = &self.dogstatsd {
                     flusher.send(vec![DogStatsDAction::Count(
-                        String::from("datadog.libdatadog.send.errors"),
+                        STAT_SEND_ERRORS,
                         1,
                         Vec::default(),
                     )]);
@@ -207,7 +213,7 @@ impl TraceExporter {
             })
     }
 
-    fn emit_stat(&self, action: DogStatsDAction) {
+    fn emit_stat(&self, action: DogStatsDAction<&'static str>) {
         if let Some(flusher) = &self.dogstatsd {
             flusher.send(vec![action]);
         }
@@ -221,7 +227,7 @@ impl TraceExporter {
             Err(err) => {
                 error!("Error deserializing trace from request body: {err}");
                 self.emit_stat(DogStatsDAction::Count(
-                    String::from("datadog.libdatadog.deser_traces.errors"),
+                    STAT_DESER_TRACES_ERRORS,
                     1,
                     Vec::default(),
                 ));
@@ -234,10 +240,9 @@ impl TraceExporter {
             return Ok(String::from("{}"));
         }
 
-        // todo: do we need to modify the client to allow for &str to avoid allocating a String?
         // todo: what tags to attach
         self.emit_stat(DogStatsDAction::Count(
-            String::from("datadog.libdatadog.deser_traces"),
+            STAT_DESER_TRACES,
             traces.len() as i64,
             Vec::default(),
         ));
@@ -249,7 +254,7 @@ impl TraceExporter {
                 .map_err(|err| {
                     error!("Error serializing traces: {err}");
                     self.emit_stat(DogStatsDAction::Count(
-                        String::from("datadog.libdatadog.ser_traces.errors"),
+                        STAT_SER_TRACES_ERRORS,
                         1,
                         Vec::default(),
                     ));
@@ -285,7 +290,7 @@ impl TraceExporter {
                                 error!("Error reading agent response body: {err}");
                                 if let Some(flusher) = &self.dogstatsd {
                                     flusher.send(vec![DogStatsDAction::Count(
-                                        String::from("datadog.libdatadog.send.errors"),
+                                        STAT_SEND_ERRORS,
                                         1,
                                         Vec::default(),
                                     )]);
@@ -297,7 +302,7 @@ impl TraceExporter {
                             error!("Error sending traces: {err}");
                             if let Some(flusher) = &self.dogstatsd {
                                 flusher.send(vec![DogStatsDAction::Count(
-                                    String::from("datadog.libdatadog.send.errors"),
+                                    STAT_SEND_ERRORS,
                                     1,
                                     Vec::default(),
                                 )]);
@@ -527,7 +532,7 @@ mod tests {
         });
 
         let builder = TraceExporterBuilder::default();
-        let mut exporter = builder
+        let exporter = builder
             .set_url(&fake_agent.url("/v0.4/traces"))
             .set_dogstatsd_url(&stats_socket.local_addr().unwrap().to_string())
             .set_tracer_version("v0.1")
@@ -548,7 +553,7 @@ mod tests {
             }],
         ];
         let bytes = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
-        let result = exporter.send(&*bytes, 1).expect("failed to send trace");
+        let _result = exporter.send(&*bytes, 1).expect("failed to send trace");
 
         fn read(socket: &net::UdpSocket) -> String {
             let mut buf = [0; 1_000];

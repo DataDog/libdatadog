@@ -844,7 +844,7 @@ impl SidecarInterface for SidecarServer {
         self,
         _: Context,
         instance_id: InstanceId,
-        actions: Vec<DogStatsDAction>,
+        actions: Vec<DogStatsDAction<String>>,
     ) -> Self::SendDogstatsdActionsFut {
         tokio::spawn(async move {
             self.get_session(&instance_id.session_id)

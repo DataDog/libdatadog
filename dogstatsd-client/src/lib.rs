@@ -22,17 +22,18 @@ use std::os::unix::net::UnixDatagram;
 // Queue with a maximum capacity of 32K elements
 const QUEUE_SIZE: usize = 32 * 1024;
 
-/// The `DogStatsDAction` enum gathers the metric types that can be sent to the DogStatsD server.
+/// The `DogStatsDActionRef` enum gathers the metric types that can be sent to the DogStatsD server.
 #[derive(Debug, Serialize, Deserialize)]
-pub enum DogStatsDAction {
-    Count(String, i64, Vec<Tag>),
-    Distribution(String, f64, Vec<Tag>),
-    Gauge(String, f64, Vec<Tag>),
-    Histogram(String, f64, Vec<Tag>),
+pub enum DogStatsDAction<T: AsRef<str>> {
+    // TODO: instead of AsRef<str> we can accept a marker Trait that users of this crate implement
+    Count(T, i64, Vec<Tag>),
+    Distribution(T, f64, Vec<Tag>),
+    Gauge(T, f64, Vec<Tag>),
+    Histogram(T, f64, Vec<Tag>),
     // Cadence only support i64 type as value
     // but Golang implementation uses string (https://github.com/DataDog/datadog-go/blob/331d24832f7eac97b091efd696278fe2c4192b29/statsd/statsd.go#L230)
     // and PHP implementation uses float or string (https://github.com/DataDog/php-datadogstatsd/blob/0efdd1c38f6d3dd407efbb899ad1fd2e5cd18085/src/DogStatsd.php#L251)
-    Set(String, i64, Vec<Tag>),
+    Set(T, i64, Vec<Tag>),
 }
 
 /// A dogstatsd-client that flushes stats to a given endpoint.
@@ -66,7 +67,7 @@ impl Flusher {
         Ok(())
     }
 
-    pub fn send(&self, actions: Vec<DogStatsDAction>) {
+    pub fn send<T: AsRef<str>>(&self, actions: Vec<DogStatsDAction<T>>) {
         if self.client.is_none() {
             return;
         }
@@ -75,19 +76,19 @@ impl Flusher {
         for action in actions {
             if let Err(err) = match action {
                 DogStatsDAction::Count(metric, value, tags) => {
-                    do_send(client.count_with_tags(metric.as_str(), value), &tags)
+                    do_send(client.count_with_tags(metric.as_ref(), value), &tags)
                 }
                 DogStatsDAction::Distribution(metric, value, tags) => {
-                    do_send(client.distribution_with_tags(metric.as_str(), value), &tags)
+                    do_send(client.distribution_with_tags(metric.as_ref(), value), &tags)
                 }
                 DogStatsDAction::Gauge(metric, value, tags) => {
-                    do_send(client.gauge_with_tags(metric.as_str(), value), &tags)
+                    do_send(client.gauge_with_tags(metric.as_ref(), value), &tags)
                 }
                 DogStatsDAction::Histogram(metric, value, tags) => {
-                    do_send(client.histogram_with_tags(metric.as_str(), value), &tags)
+                    do_send(client.histogram_with_tags(metric.as_ref(), value), &tags)
                 }
                 DogStatsDAction::Set(metric, value, tags) => {
-                    do_send(client.set_with_tags(metric.as_str(), value), &tags)
+                    do_send(client.set_with_tags(metric.as_ref(), value), &tags)
                 }
             } {
                 error!("Error while sending metric: {}", err);
@@ -169,13 +170,13 @@ mod test {
             socket.local_addr().unwrap().to_string().as_str(),
         ));
         flusher.send(vec![
-            Count("test_count".to_string(), 3, vec![tag!("foo", "bar")]),
-            Count("test_neg_count".to_string(), -2, vec![]),
-            Distribution("test_distribution".to_string(), 4.2, vec![]),
-            Gauge("test_gauge".to_string(), 7.6, vec![]),
-            Histogram("test_histogram".to_string(), 8.0, vec![]),
-            Set("test_set".to_string(), 9, vec![tag!("the", "end")]),
-            Set("test_neg_set".to_string(), -1, vec![]),
+            Count("test_count", 3, vec![tag!("foo", "bar")]),
+            Count("test_neg_count", -2, vec![]),
+            Distribution("test_distribution", 4.2, vec![]),
+            Gauge("test_gauge", 7.6, vec![]),
+            Histogram("test_histogram", 8.0, vec![]),
+            Set("test_set", 9, vec![tag!("the", "end")]),
+            Set("test_neg_set", -1, vec![]),
         ]);
 
         fn read(socket: &net::UdpSocket) -> String {
