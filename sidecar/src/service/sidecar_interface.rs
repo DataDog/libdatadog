@@ -1,7 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use dogstatsd_client::DogStatsDAction;
 use crate::service::{
     InstanceId, QueueId, RequestIdentification, RequestIdentifier, RuntimeMetadata,
     SerializedTracerHeaderTags, SessionConfig, SidecarAction,
@@ -9,6 +8,7 @@ use crate::service::{
 use anyhow::Result;
 use datadog_ipc::platform::ShmHandle;
 use datadog_ipc::tarpc;
+use dogstatsd_client::DogStatsDAction;
 
 // This is a bit weird, but depending on the OS we're interested in different things...
 // and the macro expansion is not going to be happy with #[cfg()] instructions inside them.

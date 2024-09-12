@@ -5,9 +5,9 @@ use super::{
     InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
     SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
-use dogstatsd_client::DogStatsDAction;
 use datadog_ipc::platform::{Channel, ShmHandle};
 use datadog_ipc::transport::blocking::BlockingTransport;
+use dogstatsd_client::DogStatsDAction;
 use std::sync::Mutex;
 use std::{
     borrow::Cow,

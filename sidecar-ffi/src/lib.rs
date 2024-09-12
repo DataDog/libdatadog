@@ -12,7 +12,6 @@ use datadog_sidecar::agent_remote_config::{
 use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
 use datadog_sidecar::crashtracker::crashtracker_unix_socket_path;
-use dogstatsd_client::DogStatsDAction;
 use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
 use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
@@ -28,6 +27,7 @@ use ddtelemetry::{
     worker::{LifecycleAction, TelemetryActions},
 };
 use ddtelemetry_ffi::try_c;
+use dogstatsd_client::DogStatsDAction;
 use ffi::slice::AsBytes;
 use libc::c_char;
 use std::ffi::c_void;
