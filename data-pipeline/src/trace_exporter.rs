@@ -197,7 +197,7 @@ impl TraceExporter {
     }
 
     /// Safely shutdown the TraceExporter and all related tasks
-    pub fn shutdown(self) -> Result<String, String> {
+    pub fn shutdown(self) -> Result<(), String> {
         match self.stats {
             StatsComputationStatus::StatsEnabled {
                 stats_concentrator: _,
@@ -209,7 +209,7 @@ impl TraceExporter {
             }),
             StatsComputationStatus::StatsDisabled => {}
         };
-        Ok("Ok".to_string())
+        Ok(())
     }
 
     fn send_proxy(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
