@@ -5,13 +5,13 @@ use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use anyhow::anyhow;
 use cadence::prelude::*;
 #[cfg(unix)]
 use cadence::UnixMetricSink;
-use cadence::{Metric, MetricBuilder, MetricResult, QueuingMetricSink, StatsdClient, UdpMetricSink};
+use cadence::{Metric, MetricBuilder, QueuingMetricSink, StatsdClient, UdpMetricSink};
 #[cfg(unix)]
 use ddcommon::connector::uds::socket_path_from_uri;
 use std::net::{ToSocketAddrs, UdpSocket};
@@ -35,49 +35,42 @@ pub enum DogStatsDAction {
     Set(String, i64, Vec<Tag>),
 }
 
+/// A dogstatsd-client that flushes stats to a given endpoint.
+/// The default value has no address, use `new_flusher` or `set_endpoint` to configure an endpoint.
 #[derive(Default)]
 pub struct Flusher {
-    pub endpoint: Option<Endpoint>,
     client: Option<StatsdClient>,
 }
 
+pub fn new_flusher(endpoint: Endpoint) -> anyhow::Result<Flusher> {
+    let mut f = Flusher::default();
+    f.set_endpoint(endpoint)?;
+    Ok(f)
+}
+
 impl Flusher {
+    /// Set the destination for dogstatsd metrics, if an API Key is provided the client is disabled
+    /// as dogstatsd is not allowed in agentless mode. Returns an error if the provided endpoint
+    /// is invalid.
     pub fn set_endpoint(&mut self, endpoint: Endpoint) -> anyhow::Result<()> {
-        self.client = None;
-        self.endpoint = match endpoint.api_key {
+        self.client = match endpoint.api_key {
             Some(_) => {
                 info!("DogStatsD is not available in agentless mode");
                 None
             }
             None => {
                 debug!("Updating DogStatsD endpoint to {}", endpoint.url);
-                Some(endpoint)
+                Some(create_client(&endpoint)?)
             }
         };
         Ok(())
     }
 
-    pub fn flush(&mut self) -> MetricResult<()> {
-        if let Ok(client) = self.get_client() {
-            client.flush()
-        } else {
-            Ok(())
-        }
-    }
-
-    pub fn send(&mut self, actions: Vec<DogStatsDAction>) {
-        if self.endpoint.is_none() {
+    pub fn send(&self, actions: Vec<DogStatsDAction>) {
+        if self.client.is_none() {
             return;
         }
-
-        let client = match self.get_client() {
-            Ok(client) => client,
-            Err(msg) => {
-                self.endpoint = None;
-                warn!("Cannot send DogStatsD metrics: {}", msg);
-                return;
-            }
-        };
+        let client = self.client.as_ref().unwrap();
 
         for action in actions {
             if let Err(err) = match action {
@@ -101,16 +94,6 @@ impl Flusher {
             }
         }
     }
-
-    fn get_client(&mut self) -> anyhow::Result<&StatsdClient> {
-        let opt = &mut self.client;
-        let client = match opt {
-            Some(client) => client,
-            None => opt.get_or_insert(create_client(self.endpoint.clone())?),
-        };
-
-        Ok(client)
-    }
 }
 
 fn do_send<'a, T>(mut builder: MetricBuilder<'a, '_, T>, tags: &'a Vec<Tag>) -> anyhow::Result<()>
@@ -124,12 +107,7 @@ where
     Ok(())
 }
 
-fn create_client(endpoint: Option<Endpoint>) -> anyhow::Result<StatsdClient> {
-    let endpoint = match endpoint {
-        Some(endpoint) => endpoint,
-        None => return Err(anyhow!("no endpoint set")),
-    };
-
+fn create_client(endpoint: &Endpoint) -> anyhow::Result<StatsdClient> {
     match endpoint.url.scheme_str() {
         #[cfg(unix)]
         Some("unix") => {
@@ -219,22 +197,18 @@ mod test {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_create_client_udp() {
-        let res = create_client(None);
-        assert!(res.is_err());
-        assert_eq!("no endpoint set", res.unwrap_err().to_string().as_str());
-
-        let res = create_client(Some(Endpoint::default()));
+        let res = create_client(&Endpoint::default());
         assert!(res.is_err());
         assert_eq!("invalid host", res.unwrap_err().to_string().as_str());
 
-        let res = create_client(Some(Endpoint::from_slice("localhost:99999")));
+        let res = create_client(&Endpoint::from_slice("localhost:99999"));
         assert!(res.is_err());
         assert_eq!("invalid port", res.unwrap_err().to_string().as_str());
 
-        let res = create_client(Some(Endpoint::from_slice("localhost:80")));
+        let res = create_client(&Endpoint::from_slice("localhost:80"));
         assert!(res.is_ok());
 
-        let res = create_client(Some(Endpoint::from_slice("http://localhost:80")));
+        let res = create_client(&Endpoint::from_slice("http://localhost:80"));
         assert!(res.is_ok());
     }
 
@@ -242,15 +216,15 @@ mod test {
     #[cfg(unix)]
     #[cfg_attr(miri, ignore)]
     fn test_create_client_unix_domain_socket() {
-        let res = create_client(Some(Endpoint::from_url(
+        let res = create_client(&Endpoint::from_url(
             "unix://localhost:80".parse::<Uri>().unwrap(),
-        )));
+        ));
         assert!(res.is_err());
         assert_eq!("invalid url", res.unwrap_err().to_string().as_str());
 
-        let res = create_client(Some(Endpoint::from_url(
+        let res = create_client(&Endpoint::from_url(
             socket_path_to_uri("/path/to/a/socket.sock".as_ref()).unwrap(),
-        )));
+        ));
         assert!(res.is_ok());
     }
 
