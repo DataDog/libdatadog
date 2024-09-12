@@ -23,6 +23,7 @@ version = "12.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "datadog-trace-utils",
  "ddcommon",
  "httpmock",
  "hyper 0.14.28",
