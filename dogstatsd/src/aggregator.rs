@@ -210,7 +210,8 @@ impl Aggregator {
             })
             .filter_map(|entry| build_metric(&entry, &self.tags))
         {
-            // TODO serialization is made twice for each point. If we return a Vec<u8> we can avoid that
+            // TODO serialization is made twice for each point. If we return a Vec<u8> we can avoid
+            // that
             let serialized_metric_size = match serde_json::to_vec(&metric) {
                 Ok(serialized_metric) => serialized_metric.len() as u64,
                 Err(e) => {
