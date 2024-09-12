@@ -288,25 +288,21 @@ impl TraceExporter {
                             Ok(body) => Ok(String::from_utf8_lossy(&body).to_string()),
                             Err(err) => {
                                 error!("Error reading agent response body: {err}");
-                                if let Some(flusher) = &self.dogstatsd {
-                                    flusher.send(vec![DogStatsDAction::Count(
-                                        STAT_SEND_ERRORS,
-                                        1,
-                                        Vec::default(),
-                                    )]);
-                                }
+                                self.emit_stat(DogStatsDAction::Count(
+                                    STAT_SEND_ERRORS,
+                                    1,
+                                    Vec::default(),
+                                ));
                                 Ok(String::from("{}"))
                             }
                         },
                         Err(err) => {
                             error!("Error sending traces: {err}");
-                            if let Some(flusher) = &self.dogstatsd {
-                                flusher.send(vec![DogStatsDAction::Count(
-                                    STAT_SEND_ERRORS,
-                                    1,
-                                    Vec::default(),
-                                )]);
-                            }
+                            self.emit_stat(DogStatsDAction::Count(
+                                STAT_SEND_ERRORS,
+                                1,
+                                Vec::default(),
+                            ));
                             Ok(String::from("{}"))
                         }
                     }
