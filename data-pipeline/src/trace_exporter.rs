@@ -549,7 +549,7 @@ mod tests {
             }],
         ];
         let bytes = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
-        let _result = exporter.send(&*bytes, 1).expect("failed to send trace");
+        let _result = exporter.send(&bytes, 1).expect("failed to send trace");
 
         fn read(socket: &net::UdpSocket) -> String {
             let mut buf = [0; 1_000];
