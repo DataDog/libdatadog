@@ -35,7 +35,7 @@ pub struct LibraryMetadata {
     pub tags: Vec<Tag>,
 }
 
-/// An exporter sending flushing a SpanConcentrator based on a timer and sending stats to the agent
+/// An exporter that concentrates and sends stats to the agent
 #[derive(Debug)]
 pub struct StatsExporter {
     flush_interval: time::Duration,
@@ -77,7 +77,7 @@ impl StatsExporter {
     /// Flush the stats stored in the concentrator and send them
     ///
     /// If the stats flushed from the concentrator contain at least one time bucket the stats are
-    /// send to `self.endpoint`. The stats are serialized as msgpack.
+    /// sent to `self.endpoint`. The stats are serialized as msgpack.
     ///
     /// # Errors
     /// The function will return an error in the following case:

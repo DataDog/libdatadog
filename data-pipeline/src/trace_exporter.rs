@@ -103,7 +103,7 @@ fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) {
             }
         }
         if sampled_indexes.is_empty() {
-            // If no spans where sampled we can drop the whole chunk
+            // If no spans were sampled we can drop the whole chunk
             return false;
         }
         let sampled_spans = sampled_indexes
