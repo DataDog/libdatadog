@@ -824,8 +824,7 @@ impl SidecarInterface for SidecarServer {
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
-                        let mapped_arc = tinybytes::ArcMappedMem(Arc::new(mapped));
-                        let bytes = tinybytes::Bytes::from(mapped_arc);
+                        let bytes = tinybytes::Bytes::from(mapped);
                         self.send_trace_v04(&headers, bytes, &endpoint);
                     }
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
