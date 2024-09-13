@@ -5372,6 +5372,7 @@ dependencies = [
 name = "tinybytes"
 version = "13.0.0"
 dependencies = [
+ "datadog-ipc",
  "once_cell",
  "pretty_assertions",
  "proptest",

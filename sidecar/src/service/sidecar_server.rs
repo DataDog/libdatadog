@@ -249,9 +249,77 @@ impl SidecarServer {
             .expect("Unable to acquire lock on sessions")
     }
 
-    fn send_trace_v04(&self, headers: &SerializedTracerHeaderTags, data: &[u8], target: &Endpoint) {
-        let data_bytes = tinybytes::Bytes::copy_from_slice(data);
+    async fn get_app(
+        &self,
+        instance_id: &InstanceId,
+        runtime_meta: &RuntimeMetadata,
+        service_name: &str,
+        env_name: &str,
+        initial_actions: Vec<TelemetryActions>,
+    ) -> Option<AppInstance> {
+        let rt_info = self.get_runtime(instance_id);
 
+        let manual_app_future = rt_info.get_app(service_name, env_name);
+
+        if manual_app_future.completer.is_none() {
+            return manual_app_future.app_future.await;
+        }
+
+        let mut builder = TelemetryWorkerBuilder::new_fetch_host(
+            service_name.to_owned(),
+            runtime_meta.language_name.to_owned(),
+            runtime_meta.language_version.to_owned(),
+            runtime_meta.tracer_version.to_owned(),
+        );
+        builder.runtime_id = Some(instance_id.runtime_id.to_owned());
+        builder.application.env = Some(env_name.to_owned());
+        let session_info = self.get_session(&instance_id.session_id);
+        let mut config = session_info
+            .session_config
+            .lock()
+            .expect("Unable to acquire lock on session_config")
+            .clone()
+            .unwrap_or_else(ddtelemetry::config::Config::from_env);
+        config.restartable = true;
+
+        let instance_option = match builder.spawn_with_config(config.clone()).await {
+            Ok((handle, worker_join)) => {
+                info!("spawning telemetry worker {config:?}");
+
+                let instance = AppInstance {
+                    telemetry: handle,
+                    telemetry_worker_shutdown: worker_join.map(Result::ok).boxed().shared(),
+                    telemetry_metrics: Default::default(),
+                };
+
+                instance.telemetry.send_msgs(initial_actions).await.ok();
+
+                instance
+                    .telemetry
+                    .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
+                    .await
+                    .ok();
+                Some(instance)
+            }
+            Err(e) => {
+                error!("could not spawn telemetry worker {:?}", e);
+                None
+            }
+        };
+        manual_app_future
+            .completer
+            .expect("Completed expected Some ManualFuture for application instance, but found none")
+            .complete(instance_option)
+            .await;
+        manual_app_future.app_future.await
+    }
+
+    fn send_trace_v04(
+        &self,
+        headers: &SerializedTracerHeaderTags,
+        data: tinybytes::Bytes,
+        target: &Endpoint,
+    ) {
         let headers: TracerHeaderTags = match headers.try_into() {
             Ok(headers) => headers,
             Err(e) => {
@@ -263,7 +331,7 @@ impl SidecarServer {
         let size = data.len();
 
         match tracer_payload::TracerPayloadParams::new(
-            data_bytes,
+            data,
             &headers,
             &mut tracer_payload::DefaultTraceChunkProcessor,
             target.api_key.is_some(),
@@ -744,7 +812,7 @@ impl SidecarInterface for SidecarServer {
         _: Context,
         instance_id: InstanceId,
         handle: ShmHandle,
-        len: usize,
+        _len: usize,
         headers: SerializedTracerHeaderTags,
     ) -> Self::SendTraceV04ShmFut {
         if let Some(endpoint) = self
@@ -756,7 +824,9 @@ impl SidecarInterface for SidecarServer {
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
-                        self.send_trace_v04(&headers, &mapped.as_slice()[..len], &endpoint);
+                        let mapped_arc = tinybytes::ArcMappedMem(Arc::new(mapped));
+                        let bytes = tinybytes::Bytes::from(mapped_arc);
+                        self.send_trace_v04(&headers, bytes, &endpoint);
                     }
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                 }
@@ -782,7 +852,8 @@ impl SidecarInterface for SidecarServer {
             .clone()
         {
             tokio::spawn(async move {
-                self.send_trace_v04(&headers, data.as_slice(), &endpoint);
+                let bytes = tinybytes::Bytes::from(data);
+                self.send_trace_v04(&headers, bytes, &endpoint);
             });
         }
 

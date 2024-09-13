@@ -1,6 +1,11 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "ipc")]
+use datadog_ipc::platform::{MappedMem, ShmHandle};
+#[cfg(feature = "ipc")]
+use std::ops::Deref;
+
 use std::{
     borrow, cmp, fmt, hash,
     ops::{self, RangeBounds},
@@ -23,6 +28,26 @@ pub trait UnderlyingBytes: AsRef<[u8]> + Send + Sync + 'static {}
 /// `Bytes` across threads.
 unsafe impl Send for Bytes {}
 unsafe impl Sync for Bytes {}
+
+#[cfg(feature = "ipc")]
+pub struct ArcMappedMem(pub Arc<MappedMem<ShmHandle>>);
+#[cfg(feature = "ipc")]
+impl UnderlyingBytes for ArcMappedMem {}
+#[cfg(feature = "ipc")]
+impl AsRef<[u8]> for ArcMappedMem {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+
+#[cfg(feature = "ipc")]
+impl Deref for ArcMappedMem {
+    type Target = Arc<MappedMem<ShmHandle>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl Bytes {
     /// Creates empty `Bytes`.
