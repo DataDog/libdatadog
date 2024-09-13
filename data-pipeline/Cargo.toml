@@ -27,11 +27,5 @@ datadog-ddsketch = { path = "../ddsketch"}
 [lib]
 bench = false
 
-[[bench]]
-name = "main"
-harness = false
-path = "benches/main.rs"
-
 [dev-dependencies]
-criterion = "0.5.1"
 rand = "0.8.5"

@@ -1,0 +1,22 @@
+[package]
+name = "trace-obfuscation-benches"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+autobenches = false
+
+[dependencies]
+datadog-trace-obfuscation = { path = "../../trace-obfuscation" }
+datadog-trace-protobuf = { path = "../../trace-protobuf" }
+
+[dev-dependencies]
+clap = { workspace = true }
+criterion = { workspace = true }
+
+[lib]
+bench = false
+
+[[bench]]
+name = "trace_obfuscation"
+harness = false

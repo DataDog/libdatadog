@@ -1,0 +1,22 @@
+[package]
+name = "trace-normalization-benches"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+autobenches = false
+
+[dependencies]
+datadog-trace-normalization = { path = "../../trace-normalization" }
+datadog-trace-protobuf = { path = "../../trace-protobuf" }
+
+[dev-dependencies]
+clap = { workspace = true }
+criterion = { workspace = true }
+
+[lib]
+bench = false
+
+[[bench]]
+name = "normalization_utils"
+harness = false
