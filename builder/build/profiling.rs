@@ -61,6 +61,8 @@ impl Profiling {
             .collect();
         fs::copy(from_static, to_static).expect("unable to copy static lib");
 
+        arch::fix_soname(&self.target_lib);
+
         // Generate debug information
         arch::strip_libraries(&self.target_lib);
         Ok(())
