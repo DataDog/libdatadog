@@ -24,7 +24,7 @@ const QUEUE_SIZE: usize = 32 * 1024;
 
 /// The `DogStatsDActionRef` enum gathers the metric types that can be sent to the DogStatsD server.
 #[derive(Debug, Serialize, Deserialize)]
-pub enum DogStatsDAction<T: AsRef<str>, V: AsRef<[Tag]>> {
+pub enum DogStatsDAction<'a, T: AsRef<str>, V: IntoIterator<Item = &'a Tag>> {
     // TODO: instead of AsRef<str> we can accept a marker Trait that users of this crate implement
     Count(T, i64, V),
     Distribution(T, f64, V),
@@ -37,7 +37,8 @@ pub enum DogStatsDAction<T: AsRef<str>, V: AsRef<[Tag]>> {
 }
 
 /// A dogstatsd-client that flushes stats to a given endpoint.
-/// The default value has no address and is thus disabled, use `new_flusher` or `set_endpoint` to configure an endpoint.
+/// The default value has no address and is thus disabled, use `new_flusher` or `set_endpoint` to
+/// configure an endpoint.
 #[derive(Default)]
 pub struct Flusher {
     client: Option<StatsdClient>,
@@ -67,7 +68,10 @@ impl Flusher {
         Ok(())
     }
 
-    pub fn send<T: AsRef<str>, V: AsRef<[Tag]>>(&self, actions: Vec<DogStatsDAction<T, V>>) {
+    pub fn send<'a, T: AsRef<str> + 'a, V: IntoIterator<Item = &'a Tag>>(
+        &self,
+        actions: Vec<DogStatsDAction<'a, T, V>>,
+    ) {
         if self.client.is_none() {
             return;
         }
@@ -75,24 +79,21 @@ impl Flusher {
 
         for action in actions {
             if let Err(err) = match action {
-                DogStatsDAction::Count(metric, value, tags) => do_send(
-                    client.count_with_tags(metric.as_ref(), value),
-                    tags.as_ref(),
-                ),
-                DogStatsDAction::Distribution(metric, value, tags) => do_send(
-                    client.distribution_with_tags(metric.as_ref(), value),
-                    tags.as_ref(),
-                ),
-                DogStatsDAction::Gauge(metric, value, tags) => do_send(
-                    client.gauge_with_tags(metric.as_ref(), value),
-                    tags.as_ref(),
-                ),
-                DogStatsDAction::Histogram(metric, value, tags) => do_send(
-                    client.histogram_with_tags(metric.as_ref(), value),
-                    tags.as_ref(),
-                ),
+                DogStatsDAction::Count(metric, value, tags) => {
+                    let metric_builder = client.count_with_tags(metric.as_ref(), value);
+                    do_send(metric_builder, tags)
+                }
+                DogStatsDAction::Distribution(metric, value, tags) => {
+                    do_send(client.distribution_with_tags(metric.as_ref(), value), tags)
+                }
+                DogStatsDAction::Gauge(metric, value, tags) => {
+                    do_send(client.gauge_with_tags(metric.as_ref(), value), tags)
+                }
+                DogStatsDAction::Histogram(metric, value, tags) => {
+                    do_send(client.histogram_with_tags(metric.as_ref(), value), tags)
+                }
                 DogStatsDAction::Set(metric, value, tags) => {
-                    do_send(client.set_with_tags(metric.as_ref(), value), tags.as_ref())
+                    do_send(client.set_with_tags(metric.as_ref(), value), tags)
                 }
             } {
                 error!("Error while sending metric: {}", err);
@@ -101,12 +102,19 @@ impl Flusher {
     }
 }
 
-fn do_send<'a, T>(mut builder: MetricBuilder<'a, '_, T>, tags: &'a [Tag]) -> anyhow::Result<()>
+fn do_send<'m, 't, T, V: IntoIterator<Item = &'t Tag>>(
+    mut builder: MetricBuilder<'m, '_, T>,
+    tags: V,
+) -> anyhow::Result<()>
 where
     T: Metric + From<String>,
+    't: 'm,
 {
-    for tag in tags {
-        builder = builder.with_tag_value(tag.as_ref());
+    let mut tags_iter = tags.into_iter();
+    let mut tag_opt = tags_iter.next();
+    while tag_opt.is_some() {
+        builder = builder.with_tag_value(tag_opt.unwrap().as_ref());
+        tag_opt = tags_iter.next();
     }
     builder.try_send()?;
     Ok(())
@@ -174,12 +182,12 @@ mod test {
             socket.local_addr().unwrap().to_string().as_str(),
         ));
         flusher.send(vec![
-            Count("test_count", 3, vec![tag!("foo", "bar")]),
+            Count("test_count", 3, vec![&tag!("foo", "bar")]),
             Count("test_neg_count", -2, vec![]),
             Distribution("test_distribution", 4.2, vec![]),
             Gauge("test_gauge", 7.6, vec![]),
             Histogram("test_histogram", 8.0, vec![]),
-            Set("test_set", 9, vec![tag!("the", "end")]),
+            Set("test_set", 9, vec![&tag!("the", "end")]),
             Set("test_neg_set", -1, vec![]),
         ]);
 
