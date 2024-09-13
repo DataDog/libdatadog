@@ -9,6 +9,9 @@ env_logger = "0.10.0"
 datadog-trace-mini-agent = { path = "../trace-mini-agent" }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-utils = { path = "../trace-utils" }
+dogstatsd = { path = "../dogstatsd" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"]}
+tokio-util = { version = "0.7", default-features = false }
 
 [[bin]]
 name = "datadog-serverless-trace-mini-agent"
