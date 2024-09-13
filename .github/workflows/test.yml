@@ -183,13 +183,12 @@ jobs:
         if: matrix.platform != 'windows-latest'
         run: |
           set -e
-          rm -rf examples/ffi/build
           mkdir examples/ffi/build
           cd examples/ffi/build
           # Add BUILD_SYMBOLIZER variable only for Linux platforms
           if [[ "${{ matrix.platform }}" == "ubuntu-latest" ]]; then
             cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DBUILD_SYMBOLIZER=true
-            cmake --build  .
+            cmake --build .
             ./symbolizer
           else
             cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER
