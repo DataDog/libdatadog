@@ -315,9 +315,12 @@ impl SidecarServer {
         manual_app_future.app_future.await
     }
 
-    fn send_trace_v04(&self, headers: &SerializedTracerHeaderTags, data: &[u8], target: &Endpoint) {
-        let data_bytes = tinybytes::Bytes::copy_from_slice(data);
-
+    fn send_trace_v04(
+        &self,
+        headers: &SerializedTracerHeaderTags,
+        data: tinybytes::Bytes,
+        target: &Endpoint,
+    ) {
         let headers: TracerHeaderTags = match headers.try_into() {
             Ok(headers) => headers,
             Err(e) => {
@@ -329,7 +332,7 @@ impl SidecarServer {
         let size = data.len();
 
         match tracer_payload::TracerPayloadParams::new(
-            data_bytes,
+            data,
             &headers,
             &mut tracer_payload::DefaultTraceChunkProcessor,
             target.api_key.is_some(),
@@ -748,7 +751,7 @@ impl SidecarInterface for SidecarServer {
         _: Context,
         instance_id: InstanceId,
         handle: ShmHandle,
-        len: usize,
+        _len: usize,
         headers: SerializedTracerHeaderTags,
     ) -> Self::SendTraceV04ShmFut {
         if let Some(endpoint) = self
@@ -760,7 +763,9 @@ impl SidecarInterface for SidecarServer {
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
-                        self.send_trace_v04(&headers, &mapped.as_slice()[..len], &endpoint);
+                        let mapped_arc = tinybytes::ArcMappedMem(Arc::new(mapped));
+                        let bytes = tinybytes::Bytes::from(mapped_arc);
+                        self.send_trace_v04(&headers, bytes, &endpoint);
                     }
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                 }
@@ -786,7 +791,8 @@ impl SidecarInterface for SidecarServer {
             .clone()
         {
             tokio::spawn(async move {
-                self.send_trace_v04(&headers, data.as_slice(), &endpoint);
+                let bytes = tinybytes::Bytes::from(data);
+                self.send_trace_v04(&headers, bytes, &endpoint);
             });
         }
 
