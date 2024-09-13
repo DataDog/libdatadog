@@ -37,7 +37,7 @@ pub enum DogStatsDAction<T: AsRef<str>, V: AsRef<[Tag]>> {
 }
 
 /// A dogstatsd-client that flushes stats to a given endpoint.
-/// The default value has no address, use `new_flusher` or `set_endpoint` to configure an endpoint.
+/// The default value has no address and is thus disabled, use `new_flusher` or `set_endpoint` to configure an endpoint.
 #[derive(Default)]
 pub struct Flusher {
     client: Option<StatsdClient>,

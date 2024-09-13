@@ -214,6 +214,7 @@ impl TraceExporter {
             })
     }
 
+    /// Emit a health metric to dogstatsd
     fn emit_metric(&self, metric: HealthMetric) {
         if let Some(flusher) = &self.dogstatsd {
             match metric {
