@@ -61,7 +61,7 @@ pub fn deserialize_msgpack_to_internal(c: &mut Criterion) {
                     // Return the result to avoid measuring the deallocation time
                     result
                 },
-                criterion::BatchSize::LargeInput,
+                criterion::BatchSize::PerIteration,
             );
         },
     );

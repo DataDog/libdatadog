@@ -45,7 +45,7 @@ fn bench_is_card_number(c: &mut Criterion, function_name: &str, validate_luhn: b
                         black_box(is_card_number(black_box(i), black_box(validate_luhn)));
                     })
                 },
-                BatchSize::SmallInput,
+                BatchSize::PerIteration,
             )
         });
     }

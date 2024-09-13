@@ -77,7 +77,7 @@ fn normalize_fnmut_string<F>(
                             black_box(function(black_box(string)));
                         });
                     },
-                    BatchSize::LargeInput,
+                    BatchSize::PerIteration,
                 )
             },
         );
@@ -134,7 +134,7 @@ fn normalize_span_bench(c: &mut Criterion) {
             b.iter_batched_ref(
                 || case.to_owned(),
                 |t| black_box(normalize_trace(black_box(t))),
-                BatchSize::LargeInput,
+                BatchSize::PerIteration,
             )
         },
     );

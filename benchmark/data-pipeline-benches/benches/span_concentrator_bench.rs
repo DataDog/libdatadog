@@ -65,7 +65,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                     concentrator.add_span(span);
                 }
             },
-            criterion::BatchSize::LargeInput,
+            criterion::BatchSize::PerIteration,
         );
     });
 }

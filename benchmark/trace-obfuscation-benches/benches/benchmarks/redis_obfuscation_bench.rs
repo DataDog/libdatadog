@@ -104,7 +104,7 @@ SET k v
                     res.push(black_box(redis::obfuscate_redis_string(c)));
                 }
             },
-            criterion::BatchSize::LargeInput,
+            criterion::BatchSize::PerIteration,
         )
     });
 }

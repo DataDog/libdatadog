@@ -15,7 +15,7 @@ fn sql_obfuscation(c: &mut Criterion) {
                     res.push(black_box(obfuscate_sql_string(input)));
                 }
             },
-            criterion::BatchSize::LargeInput,
+            criterion::BatchSize::PerIteration,
         )
     });
 }
