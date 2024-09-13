@@ -18,6 +18,7 @@ use datadog_ipc::transport::Transport;
 use datadog_trace_utils::trace_utils::SendData;
 use datadog_trace_utils::tracer_payload;
 use datadog_trace_utils::tracer_payload::TraceEncoding;
+use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddtelemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerStats,
@@ -844,7 +845,7 @@ impl SidecarInterface for SidecarServer {
         self,
         _: Context,
         instance_id: InstanceId,
-        actions: Vec<DogStatsDAction<String>>,
+        actions: Vec<DogStatsDAction<String, Vec<Tag>>>,
     ) -> Self::SendDogstatsdActionsFut {
         tokio::spawn(async move {
             self.get_session(&instance_id.session_id)

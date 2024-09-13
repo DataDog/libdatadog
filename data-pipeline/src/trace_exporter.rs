@@ -6,7 +6,8 @@ use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils::{self, SendData, TracerHeaderTags};
 use datadog_trace_utils::tracer_payload;
 use datadog_trace_utils::tracer_payload::TraceEncoding;
-use ddcommon::{connector, Endpoint};
+use ddcommon::tag::Tag;
+use ddcommon::{connector, tag, Endpoint};
 use dogstatsd_client::{new_flusher, DogStatsDAction, Flusher};
 use hyper::http::uri::PathAndQuery;
 use hyper::{Body, Client, Method, Uri};
@@ -115,6 +116,11 @@ impl<'a> From<&'a TracerTags> for HashMap<&'static str, String> {
     }
 }
 
+enum HealthMetric {
+    Count(&'static str, i64),
+    //TODO: Add more DogStatsDAction as we need them
+}
+
 #[allow(missing_docs)]
 pub struct TraceExporter {
     endpoint: Endpoint,
@@ -126,6 +132,7 @@ pub struct TraceExporter {
     runtime: Runtime,
     // None if dogstatsd is disabled
     dogstatsd: Option<Flusher>,
+    common_stats_tags: Vec<Tag>,
 }
 
 impl TraceExporter {
@@ -202,20 +209,20 @@ impl TraceExporter {
             })
             .or_else(|err| {
                 error!("Error sending traces: {err}");
-                if let Some(flusher) = &self.dogstatsd {
-                    flusher.send(vec![DogStatsDAction::Count(
-                        STAT_SEND_ERRORS,
-                        1,
-                        Vec::default(),
-                    )]);
-                }
+                self.emit_metric(HealthMetric::Count(STAT_SEND_ERRORS, 1));
                 Ok(String::from("{}"))
             })
     }
 
-    fn emit_stat(&self, action: DogStatsDAction<&'static str>) {
+    fn emit_metric(&self, metric: HealthMetric) {
         if let Some(flusher) = &self.dogstatsd {
-            flusher.send(vec![action]);
+            match metric {
+                HealthMetric::Count(name, c) => flusher.send(vec![DogStatsDAction::Count(
+                    name,
+                    c,
+                    &self.common_stats_tags,
+                )]),
+            }
         }
     }
 
@@ -226,11 +233,7 @@ impl TraceExporter {
             Ok(res) => res,
             Err(err) => {
                 error!("Error deserializing trace from request body: {err}");
-                self.emit_stat(DogStatsDAction::Count(
-                    STAT_DESER_TRACES_ERRORS,
-                    1,
-                    Vec::default(),
-                ));
+                self.emit_metric(HealthMetric::Count(STAT_DESER_TRACES_ERRORS, 1));
                 return Ok(String::from("{}"));
             }
         };
@@ -240,12 +243,7 @@ impl TraceExporter {
             return Ok(String::from("{}"));
         }
 
-        // todo: what tags to attach
-        self.emit_stat(DogStatsDAction::Count(
-            STAT_DESER_TRACES,
-            traces.len() as i64,
-            Vec::default(),
-        ));
+        self.emit_metric(HealthMetric::Count(STAT_DESER_TRACES, traces.len() as i64));
 
         let header_tags: TracerHeaderTags<'_> = (&self.tags).into();
 
@@ -253,11 +251,7 @@ impl TraceExporter {
             TraceExporterOutputFormat::V04 => rmp_serde::to_vec_named(&traces)
                 .map_err(|err| {
                     error!("Error serializing traces: {err}");
-                    self.emit_stat(DogStatsDAction::Count(
-                        STAT_SER_TRACES_ERRORS,
-                        1,
-                        Vec::default(),
-                    ));
+                    self.emit_metric(HealthMetric::Count(STAT_SER_TRACES_ERRORS, 1));
                     String::from("{}")
                 })
                 .and_then(|res| {
@@ -288,21 +282,13 @@ impl TraceExporter {
                             Ok(body) => Ok(String::from_utf8_lossy(&body).to_string()),
                             Err(err) => {
                                 error!("Error reading agent response body: {err}");
-                                self.emit_stat(DogStatsDAction::Count(
-                                    STAT_SEND_ERRORS,
-                                    1,
-                                    Vec::default(),
-                                ));
+                                self.emit_metric(HealthMetric::Count(STAT_SEND_ERRORS, 1));
                                 Ok(String::from("{}"))
                             }
                         },
                         Err(err) => {
                             error!("Error sending traces: {err}");
-                            self.emit_stat(DogStatsDAction::Count(
-                                STAT_SEND_ERRORS,
-                                1,
-                                Vec::default(),
-                            ));
+                            self.emit_metric(HealthMetric::Count(STAT_SEND_ERRORS, 1));
                             Ok(String::from("{}"))
                         }
                     }
@@ -392,6 +378,8 @@ impl TraceExporterBuilder {
                                                        // None
         });
 
+        let libdatadog_version = tag!("libdatadog_version", env!("CARGO_PKG_VERSION"));
+
         Ok(TraceExporter {
             endpoint: Endpoint::from_slice(self.url.as_deref().unwrap_or("http://127.0.0.1:8126")),
             tags: TracerTags {
@@ -405,6 +393,7 @@ impl TraceExporterBuilder {
             _response_callback: self.response_callback,
             runtime,
             dogstatsd,
+            common_stats_tags: vec![libdatadog_version],
         })
     }
 }
@@ -557,8 +546,10 @@ mod tests {
             let datagram = String::from_utf8_lossy(buf.as_ref());
             datagram.trim_matches(char::from(0)).to_string()
         }
-
-        assert_eq!("datadog.libdatadog.deser_traces:2|c", read(&stats_socket));
-        assert_eq!("datadog.libdatadog.send.errors:1|c", read(&stats_socket));
+        // Compare with the start of the metric to avoid breaking this test when the version changes
+        assert!(&read(&stats_socket)
+            .starts_with("datadog.libdatadog.deser_traces:2|c|#libdatadog_version:"));
+        assert!(&read(&stats_socket)
+            .starts_with("datadog.libdatadog.send.errors:1|c|#libdatadog_version:"));
     }
 }

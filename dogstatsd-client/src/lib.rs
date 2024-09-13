@@ -24,16 +24,16 @@ const QUEUE_SIZE: usize = 32 * 1024;
 
 /// The `DogStatsDActionRef` enum gathers the metric types that can be sent to the DogStatsD server.
 #[derive(Debug, Serialize, Deserialize)]
-pub enum DogStatsDAction<T: AsRef<str>> {
+pub enum DogStatsDAction<T: AsRef<str>, V: AsRef<[Tag]>> {
     // TODO: instead of AsRef<str> we can accept a marker Trait that users of this crate implement
-    Count(T, i64, Vec<Tag>),
-    Distribution(T, f64, Vec<Tag>),
-    Gauge(T, f64, Vec<Tag>),
-    Histogram(T, f64, Vec<Tag>),
+    Count(T, i64, V),
+    Distribution(T, f64, V),
+    Gauge(T, f64, V),
+    Histogram(T, f64, V),
     // Cadence only support i64 type as value
     // but Golang implementation uses string (https://github.com/DataDog/datadog-go/blob/331d24832f7eac97b091efd696278fe2c4192b29/statsd/statsd.go#L230)
     // and PHP implementation uses float or string (https://github.com/DataDog/php-datadogstatsd/blob/0efdd1c38f6d3dd407efbb899ad1fd2e5cd18085/src/DogStatsd.php#L251)
-    Set(T, i64, Vec<Tag>),
+    Set(T, i64, V),
 }
 
 /// A dogstatsd-client that flushes stats to a given endpoint.
@@ -67,7 +67,7 @@ impl Flusher {
         Ok(())
     }
 
-    pub fn send<T: AsRef<str>>(&self, actions: Vec<DogStatsDAction<T>>) {
+    pub fn send<T: AsRef<str>, V: AsRef<[Tag]>>(&self, actions: Vec<DogStatsDAction<T, V>>) {
         if self.client.is_none() {
             return;
         }
@@ -75,20 +75,24 @@ impl Flusher {
 
         for action in actions {
             if let Err(err) = match action {
-                DogStatsDAction::Count(metric, value, tags) => {
-                    do_send(client.count_with_tags(metric.as_ref(), value), &tags)
-                }
-                DogStatsDAction::Distribution(metric, value, tags) => {
-                    do_send(client.distribution_with_tags(metric.as_ref(), value), &tags)
-                }
-                DogStatsDAction::Gauge(metric, value, tags) => {
-                    do_send(client.gauge_with_tags(metric.as_ref(), value), &tags)
-                }
-                DogStatsDAction::Histogram(metric, value, tags) => {
-                    do_send(client.histogram_with_tags(metric.as_ref(), value), &tags)
-                }
+                DogStatsDAction::Count(metric, value, tags) => do_send(
+                    client.count_with_tags(metric.as_ref(), value),
+                    tags.as_ref(),
+                ),
+                DogStatsDAction::Distribution(metric, value, tags) => do_send(
+                    client.distribution_with_tags(metric.as_ref(), value),
+                    tags.as_ref(),
+                ),
+                DogStatsDAction::Gauge(metric, value, tags) => do_send(
+                    client.gauge_with_tags(metric.as_ref(), value),
+                    tags.as_ref(),
+                ),
+                DogStatsDAction::Histogram(metric, value, tags) => do_send(
+                    client.histogram_with_tags(metric.as_ref(), value),
+                    tags.as_ref(),
+                ),
                 DogStatsDAction::Set(metric, value, tags) => {
-                    do_send(client.set_with_tags(metric.as_ref(), value), &tags)
+                    do_send(client.set_with_tags(metric.as_ref(), value), tags.as_ref())
                 }
             } {
                 error!("Error while sending metric: {}", err);
@@ -97,7 +101,7 @@ impl Flusher {
     }
 }
 
-fn do_send<'a, T>(mut builder: MetricBuilder<'a, '_, T>, tags: &'a Vec<Tag>) -> anyhow::Result<()>
+fn do_send<'a, T>(mut builder: MetricBuilder<'a, '_, T>, tags: &'a [Tag]) -> anyhow::Result<()>
 where
     T: Metric + From<String>,
 {
