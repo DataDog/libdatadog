@@ -1,0 +1,21 @@
+[package]
+name = "profiling-benches"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+autobenches = false
+
+[dependencies]
+datadog-profiling = { path = "../../profiling" }
+
+[dev-dependencies]
+clap = { workspace = true }
+criterion = { workspace = true }
+
+[lib]
+bench = false
+
+[[bench]]
+name = "main"
+harness = false

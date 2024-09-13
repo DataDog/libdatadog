@@ -1,0 +1,36 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[workspace]
+members = [
+  "data-pipeline-benches",
+  "ipc-benches",
+  "profiling-benches",
+  "trace-normalization-benches",
+  "trace-obfuscation-benches",
+  "trace-utils-benches",
+]
+# https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
+resolver = "2"
+
+# These are used by many packages, but not all. For instance, the sidecar and
+# serverless packages wanted to maintain their own version numbers. Some of
+# their depenencies also remain under their own versioning.
+[workspace.package]
+rust-version = "1.76.0"
+edition = "2021"
+version = "0.0.1"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+clap = { version = "~4.4.18" } # lock this down for rust 1.76.0
+criterion = { version = "~0.5.1"}
+
+[profile.dev]
+debug = 2 # full debug info
+
+[profile.release]
+codegen-units = 1
+debug = "line-tables-only"
+lto = true
+opt-level = "s" # optimize for size

@@ -1,0 +1,22 @@
+[package]
+name = "ipc-benches"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+autobenches = false
+
+[dependencies]
+datadog-ipc = { path = "../../ipc" }
+
+[dev-dependencies]
+clap = { workspace = true }
+criterion = { workspace = true }
+tokio = { version = "~1.37"} # the parent project isn't really using tokio 1.23 even if it thinks so
+
+[lib]
+bench = false
+
+[[bench]]
+name = "ipc"
+harness = false
