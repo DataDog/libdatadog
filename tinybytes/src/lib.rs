@@ -3,8 +3,6 @@
 
 #[cfg(feature = "ipc")]
 use datadog_ipc::platform::{MappedMem, ShmHandle};
-#[cfg(feature = "ipc")]
-use std::ops::Deref;
 
 use std::{
     borrow, cmp, fmt, hash,
@@ -28,26 +26,6 @@ pub trait UnderlyingBytes: AsRef<[u8]> + Send + Sync + 'static {}
 /// `Bytes` across threads.
 unsafe impl Send for Bytes {}
 unsafe impl Sync for Bytes {}
-
-#[cfg(feature = "ipc")]
-pub struct ArcMappedMem(pub Arc<MappedMem<ShmHandle>>);
-#[cfg(feature = "ipc")]
-impl UnderlyingBytes for ArcMappedMem {}
-#[cfg(feature = "ipc")]
-impl AsRef<[u8]> for ArcMappedMem {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_slice()
-    }
-}
-
-#[cfg(feature = "ipc")]
-impl Deref for ArcMappedMem {
-    type Target = Arc<MappedMem<ShmHandle>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
 
 impl Bytes {
     /// Creates empty `Bytes`.
@@ -224,6 +202,9 @@ impl Bytes {
 impl UnderlyingBytes for Vec<u8> {}
 impl UnderlyingBytes for Box<[u8]> {}
 impl UnderlyingBytes for String {}
+
+#[cfg(feature = "ipc")]
+impl UnderlyingBytes for MappedMem<ShmHandle> {}
 
 // Implementations of common traits for `Bytes`.
 impl Default for Bytes {
