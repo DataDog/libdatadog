@@ -169,6 +169,10 @@ if [[ "$fix_macos_rpath" -eq 1 ]]; then
     install_name_tool -id @rpath/${shared_library_name} "$destdir/lib/${shared_library_name}"
 fi
 
+if command -v patchelf > /dev/null && [[ "$target" != "x86_64-pc-windows-msvc" ]]; then
+    patchelf --set-soname ${shared_library_name}  "$destdir/lib/${shared_library_rename}"
+fi
+
 # objcopy might not be available on macOS
 if command -v objcopy > /dev/null && [[ "$target" != "x86_64-pc-windows-msvc" ]]; then
     # Remove .llvmbc section which is not useful for clients
