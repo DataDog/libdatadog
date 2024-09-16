@@ -30,6 +30,8 @@ pub async fn main() {
     Builder::from_env(env).target(Target::Stdout).init();
 
     let dd_api_key: Option<String> = env::var("DD_API_KEY").ok();
+    let dd_http_proxy: Option<String> = env::var("DD_HTTP_PROXY").ok();
+    let dd_https_proxy: Option<String> = env::var("DD_HTTPS_PROXY").ok();
     let dd_dogstatsd_port: u16 = env::var("DD_DOGSTATSD_PORT")
         .ok()
         .and_then(|port| port.parse::<u16>().ok())
@@ -78,7 +80,14 @@ pub async fn main() {
 
     let mut metrics_flusher = if dd_use_dogstatsd {
         debug!("Starting dogstatsd");
-        let (_, metrics_flusher) = start_dogstatsd(dd_dogstatsd_port, dd_api_key, dd_site).await;
+        let (_, metrics_flusher) = start_dogstatsd(
+            dd_dogstatsd_port,
+            dd_api_key,
+            dd_site,
+            dd_http_proxy,
+            dd_https_proxy,
+        )
+        .await;
         info!("dogstatsd-udp: starting to listen on port {dd_dogstatsd_port}");
         metrics_flusher
     } else {
@@ -103,6 +112,8 @@ async fn start_dogstatsd(
     port: u16,
     dd_api_key: Option<String>,
     dd_site: String,
+    dd_http_proxy: Option<String>,
+    dd_https_proxy: Option<String>,
 ) -> (CancellationToken, Option<Flusher>) {
     let metrics_aggr = Arc::new(Mutex::new(
         MetricsAggregator::new(Vec::new(), CONTEXTS).expect("Failed to create metrics aggregator"),
@@ -130,6 +141,8 @@ async fn start_dogstatsd(
                 dd_api_key,
                 Arc::clone(&metrics_aggr),
                 build_fqdn_metrics(dd_site),
+                dd_http_proxy,
+                dd_https_proxy,
             );
             Some(metrics_flusher)
         }
