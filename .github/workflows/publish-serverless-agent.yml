@@ -59,11 +59,8 @@ jobs:
             chmod +x "$file"
             upx "$file" --lzma
           done
-      - name: Zip binaries
-        run: zip -r datadog-serverless-agent.zip ./*
-        working-directory: target/release/binaries
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
           name: datadog-serverless-agent
-          path: target/release/binaries/datadog-serverless-agent.zip
+          path: target/release/binaries/*/*
