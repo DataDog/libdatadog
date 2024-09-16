@@ -1,9 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(feature = "ipc")]
-use datadog_ipc::platform::{MappedMem, ShmHandle};
-
 use std::{
     borrow, cmp, fmt, hash,
     ops::{self, RangeBounds},
@@ -202,9 +199,6 @@ impl Bytes {
 impl UnderlyingBytes for Vec<u8> {}
 impl UnderlyingBytes for Box<[u8]> {}
 impl UnderlyingBytes for String {}
-
-#[cfg(feature = "ipc")]
-impl UnderlyingBytes for MappedMem<ShmHandle> {}
 
 // Implementations of common traits for `Bytes`.
 impl Default for Bytes {
