@@ -1580,7 +1580,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-serverless-trace-mini-agent"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "datadog-trace-mini-agent",
  "datadog-trace-protobuf",
