@@ -20,7 +20,7 @@ jobs:
         shell: bash
         run: cargo build --release -p datadog-serverless-trace-mini-agent --target x86_64-unknown-linux-musl
       - name: Upload artifacts for release step
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: datadog-serverless-agent-linux-amd64
           path: target/x86_64-unknown-linux-musl/release/datadog-serverless-trace-mini-agent
@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: cargo build --release -p datadog-serverless-trace-mini-agent
       - name: Upload artifacts for release step
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: datadog-serverless-agent-windows-amd64
           path: target/release/datadog-serverless-trace-mini-agent.exe
@@ -49,7 +49,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Download artifacts from build step
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           path: target/release/binaries
       - name: UPX compress binaries
@@ -59,12 +59,8 @@ jobs:
             chmod +x "$file"
             upx "$file" --lzma
           done
-      - name: Zip binaries
-        run: zip -r datadog-serverless-agent.zip ./*
-        working-directory: target/release/binaries
-      - name: Release
-        uses: softprops/action-gh-release@v1
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
         with:
-          draft: true
-          generate_release_notes: true
-          files: target/release/binaries/datadog-serverless-agent.zip
+          name: datadog-serverless-agent
+          path: target/release/binaries/*/*
