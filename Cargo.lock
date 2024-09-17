@@ -801,7 +801,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -810,7 +810,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1356,7 +1356,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1376,7 +1376,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline-ffi"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "build_common",
  "bytes",
@@ -1387,7 +1387,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-alloc"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "allocator-api2",
  "bolero",
@@ -1397,7 +1397,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "backtrace",
@@ -1422,7 +1422,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker-ffi"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1436,7 +1436,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ddsketch"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "prost 0.11.9",
  "prost-build 0.11.9",
@@ -1493,7 +1493,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -1530,7 +1530,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-ffi"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1552,7 +1552,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "clap 4.4.18",
@@ -1601,13 +1601,16 @@ dependencies = [
 
 [[package]]
 name = "datadog-serverless-trace-mini-agent"
-version = "0.6.1"
+version = "0.7.1"
 dependencies = [
  "datadog-trace-mini-agent",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
+ "dogstatsd",
  "env_logger",
  "log",
+ "tokio",
+ "tokio-util 0.7.11",
 ]
 
 [[package]]
@@ -1699,7 +1702,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-mini-agent"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1721,7 +1724,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1732,7 +1735,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1750,7 +1753,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "prost 0.11.9",
  "prost-build 0.11.9",
@@ -1763,7 +1766,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-utils"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1794,7 +1797,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -1823,7 +1826,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-ffi"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1848,7 +1851,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1874,7 +1877,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry-ffi"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "build_common",
  "ddcommon",
@@ -1986,7 +1989,7 @@ dependencies = [
 
 [[package]]
 name = "dogstatsd"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "datadog-protos",
  "ddsketch-agent",
@@ -5080,7 +5083,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5385,7 +5388,7 @@ dependencies = [
 
 [[package]]
 name = "tinybytes"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "once_cell",
  "pretty_assertions",
@@ -5654,7 +5657,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "lazy_static",
  "regex",
