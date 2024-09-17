@@ -24,7 +24,10 @@ const QUEUE_SIZE: usize = 32 * 1024;
 
 /// The `DogStatsDActionRef` enum gathers the metric types that can be sent to the DogStatsD server.
 #[derive(Debug, Serialize, Deserialize)]
-pub enum DogStatsDAction<'a, T: AsRef<str>, V: IntoIterator<Item = &'a Tag>> {
+pub enum DogStatsDAction<T: AsRef<str>, V>
+where
+    for<'a> &'a V: IntoIterator<Item = &'a Tag>,
+{
     // TODO: instead of AsRef<str> we can accept a marker Trait that users of this crate implement
     Count(T, i64, V),
     Distribution(T, f64, V),
@@ -68,10 +71,10 @@ impl Flusher {
         Ok(())
     }
 
-    pub fn send<'a, T: AsRef<str> + 'a, V: IntoIterator<Item = &'a Tag>>(
-        &self,
-        actions: Vec<DogStatsDAction<'a, T, V>>,
-    ) {
+    pub fn send<T: AsRef<str>, V>(&self, actions: Vec<DogStatsDAction<T, V>>)
+    where
+        for<'a> &'a V: IntoIterator<Item = &'a Tag>,
+    {
         if self.client.is_none() {
             return;
         }
@@ -79,20 +82,20 @@ impl Flusher {
 
         for action in actions {
             if let Err(err) = match action {
-                DogStatsDAction::Count(metric, value, tags) => {
+                DogStatsDAction::Count(metric, value, ref tags) => {
                     let metric_builder = client.count_with_tags(metric.as_ref(), value);
                     do_send(metric_builder, tags)
                 }
-                DogStatsDAction::Distribution(metric, value, tags) => {
+                DogStatsDAction::Distribution(metric, value, ref tags) => {
                     do_send(client.distribution_with_tags(metric.as_ref(), value), tags)
                 }
-                DogStatsDAction::Gauge(metric, value, tags) => {
+                DogStatsDAction::Gauge(metric, value, ref tags) => {
                     do_send(client.gauge_with_tags(metric.as_ref(), value), tags)
                 }
-                DogStatsDAction::Histogram(metric, value, tags) => {
+                DogStatsDAction::Histogram(metric, value, ref tags) => {
                     do_send(client.histogram_with_tags(metric.as_ref(), value), tags)
                 }
-                DogStatsDAction::Set(metric, value, tags) => {
+                DogStatsDAction::Set(metric, value, ref tags) => {
                     do_send(client.set_with_tags(metric.as_ref(), value), tags)
                 }
             } {
