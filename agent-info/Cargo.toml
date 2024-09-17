@@ -12,7 +12,7 @@ bench = false
 [dependencies]
 anyhow = "1.0.86"
 arc-swap = "1.7.1"
-ddcommon = { version = "12.0.0", path = "../ddcommon" }
+ddcommon = { path = "../ddcommon" }
 hyper = { version = "0.14", features = ["client"] }
 serde = "1.0.209"
 serde_json = "1.0.127"
