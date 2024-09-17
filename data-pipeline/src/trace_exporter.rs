@@ -195,35 +195,49 @@ impl TraceExporter {
                             let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
                             let response_body =
                                 String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
+                            self.emit_metric(HealthMetric::Count(STAT_SEND_ERRORS, 1), None);
                             anyhow::bail!("Agent did not accept traces: {response_body}");
                         }
                         match hyper::body::to_bytes(response.into_body()).await {
                             Ok(body) => Ok(String::from_utf8_lossy(&body).to_string()),
                             Err(err) => {
+                                self.emit_metric(HealthMetric::Count(STAT_SEND_ERRORS, 1), None);
                                 anyhow::bail!("Error reading agent response body: {err}");
                             }
                         }
                     }
-                    Err(err) => anyhow::bail!("Failed to send traces: {err}"),
+                    Err(err) => {
+                        self.emit_metric(HealthMetric::Count(STAT_SEND_ERRORS, 1), None);
+                        anyhow::bail!("Failed to send traces: {err}")
+                    },
                 }
             })
             .or_else(|err| {
                 error!("Error sending traces: {err}");
-                self.emit_metric(HealthMetric::Count(STAT_SEND_ERRORS, 1));
                 Ok(String::from("{}"))
             })
     }
 
     /// Emit a health metric to dogstatsd
-    fn emit_metric(&self, metric: HealthMetric) {
+    fn emit_metric(&self, metric: HealthMetric, custom_tags: Option<Vec<Tag>>) {
         if let Some(flusher) = &self.dogstatsd {
-            match metric {
-                HealthMetric::Count(name, c) => flusher.send(vec![DogStatsDAction::Count(
-                    name,
-                    c,
-                    &self.common_stats_tags,
-                )]),
-            }
+            if custom_tags.is_some() {
+                match metric {
+                    HealthMetric::Count(name, c) => flusher.send(vec![DogStatsDAction::Count(
+                        name,
+                        c,
+                        &self.common_stats_tags.iter().chain(&custom_tags.unwrap()),
+                    )]),
+                }
+            } else {
+                match metric {
+                    HealthMetric::Count(name, c) => flusher.send(vec![DogStatsDAction::Count(
+                        name,
+                        c,
+                        &self.common_stats_tags,
+                    )]),
+                }
+            };
         }
     }
 
@@ -234,7 +248,7 @@ impl TraceExporter {
             Ok(res) => res,
             Err(err) => {
                 error!("Error deserializing trace from request body: {err}");
-                self.emit_metric(HealthMetric::Count(STAT_DESER_TRACES_ERRORS, 1));
+                self.emit_metric(HealthMetric::Count(STAT_DESER_TRACES_ERRORS, 1), None);
                 return Ok(String::from("{}"));
             }
         };
@@ -244,7 +258,7 @@ impl TraceExporter {
             return Ok(String::from("{}"));
         }
 
-        self.emit_metric(HealthMetric::Count(STAT_DESER_TRACES, traces.len() as i64));
+        self.emit_metric(HealthMetric::Count(STAT_DESER_TRACES, traces.len() as i64), None);
 
         let header_tags: TracerHeaderTags<'_> = (&self.tags).into();
 
@@ -252,7 +266,7 @@ impl TraceExporter {
             TraceExporterOutputFormat::V04 => rmp_serde::to_vec_named(&traces)
                 .map_err(|err| {
                     error!("Error serializing traces: {err}");
-                    self.emit_metric(HealthMetric::Count(STAT_SER_TRACES_ERRORS, 1));
+                    self.emit_metric(HealthMetric::Count(STAT_SER_TRACES_ERRORS, 1), None);
                     String::from("{}")
                 })
                 .and_then(|res| {
@@ -283,13 +297,13 @@ impl TraceExporter {
                             Ok(body) => Ok(String::from_utf8_lossy(&body).to_string()),
                             Err(err) => {
                                 error!("Error reading agent response body: {err}");
-                                self.emit_metric(HealthMetric::Count(STAT_SEND_ERRORS, 1));
+                                self.emit_metric(HealthMetric::Count(STAT_SEND_ERRORS, 1), None);
                                 Ok(String::from("{}"))
                             }
                         },
                         Err(err) => {
                             error!("Error sending traces: {err}");
-                            self.emit_metric(HealthMetric::Count(STAT_SEND_ERRORS, 1));
+                            self.emit_metric(HealthMetric::Count(STAT_SEND_ERRORS, 1), None);
                             Ok(String::from("{}"))
                         }
                     }
