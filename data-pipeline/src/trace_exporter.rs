@@ -13,6 +13,7 @@ use hyper::http::uri::PathAndQuery;
 use hyper::{Body, Client, Method, Uri};
 use log::error;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr, time};
 use tokio::{runtime::Runtime, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
@@ -197,19 +198,34 @@ impl TraceExporter {
     }
 
     /// Safely shutdown the TraceExporter and all related tasks
-    pub fn shutdown(self) -> Result<(), String> {
+    pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), String> {
         match self.stats {
             StatsComputationStatus::StatsEnabled {
                 stats_concentrator: _,
                 cancellation_token: cancelation_token,
                 exporter_handle,
-            } => self.runtime.block_on(async {
-                cancelation_token.cancel();
-                let _ = exporter_handle.await;
-            }),
-            StatsComputationStatus::StatsDisabled => {}
-        };
-        Ok(())
+            } => {
+                if let Some(timeout) = timeout {
+                    match self.runtime.block_on(async {
+                        tokio::time::timeout(timeout, async {
+                            cancelation_token.cancel();
+                            let _ = exporter_handle.await;
+                        })
+                        .await
+                    }) {
+                        Ok(_) => Ok(()),
+                        Err(_) => Err("Shutdown timed out".to_string()),
+                    }
+                } else {
+                    self.runtime.block_on(async {
+                        cancelation_token.cancel();
+                        let _ = exporter_handle.await;
+                    });
+                    Ok(())
+                }
+            }
+            StatsComputationStatus::StatsDisabled => Ok(()),
+        }
     }
 
     fn send_proxy(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
@@ -372,6 +388,8 @@ impl TraceExporter {
     }
 }
 
+const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
+
 #[derive(Default)]
 pub struct TraceExporterBuilder {
     url: Option<String>,
@@ -525,7 +543,7 @@ impl TraceExporterBuilder {
                         ..Default::default()
                     },
                     Endpoint::from_url(stats_exporter::stats_url_from_agent_url(
-                        self.url.as_deref().unwrap_or("http://127.0.0.1:8126"),
+                        self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL),
                     )?),
                     cancellation_token.clone(),
                 );
@@ -543,7 +561,7 @@ impl TraceExporterBuilder {
         }
 
         Ok(TraceExporter {
-            endpoint: Endpoint::from_slice(self.url.as_deref().unwrap_or("http://127.0.0.1:8126")),
+            endpoint: Endpoint::from_slice(self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL)),
             tags: TracerTags {
                 tracer_version: self.tracer_version,
                 language_version: self.language_version,
@@ -834,9 +852,57 @@ mod tests {
         let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
 
         exporter.send(data.as_slice(), 1).unwrap();
-        exporter.shutdown().unwrap();
+        exporter.shutdown(None).unwrap();
 
         mock_traces.assert();
         mock_stats.assert();
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_shutdown_with_timeout() {
+        let server = MockServer::start();
+
+        let mock_traces = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.7/traces");
+            then.status(200).body("");
+        });
+
+        let _mock_stats = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.6/stats");
+            then.delay(Duration::from_secs(10)).status(200).body("");
+        });
+        let builder = TraceExporterBuilder::default();
+        let exporter = builder
+            .set_url(&server.url("/"))
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V07)
+            .enable_stats(Duration::from_secs(10))
+            .build()
+            .unwrap();
+
+        let mut trace_chunk = vec![pb::Span {
+            duration: 10,
+            ..Default::default()
+        }];
+
+        trace_utils::compute_top_level_span(&mut trace_chunk);
+
+        let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
+
+        exporter.send(data.as_slice(), 1).unwrap();
+        exporter
+            .shutdown(Some(Duration::from_millis(500)))
+            .unwrap_err(); // The shutdown should timeout
+
+        mock_traces.assert();
     }
 }
