@@ -15,7 +15,6 @@ use cadence::{Metric, MetricBuilder, QueuingMetricSink, StatsdClient, UdpMetricS
 #[cfg(unix)]
 use ddcommon::connector::uds::socket_path_from_uri;
 use std::net::{ToSocketAddrs, UdpSocket};
-
 #[cfg(unix)]
 use std::os::unix::net::UnixDatagram;
 
@@ -24,9 +23,9 @@ const QUEUE_SIZE: usize = 32 * 1024;
 
 /// The `DogStatsDActionRef` enum gathers the metric types that can be sent to the DogStatsD server.
 #[derive(Debug, Serialize, Deserialize)]
-pub enum DogStatsDAction<T: AsRef<str>, V>
+pub enum DogStatsDAction<T: AsRef<str>, V: std::ops::Deref>
 where
-    for<'a> &'a V: IntoIterator<Item = &'a Tag>,
+    for<'a> &'a <V as std::ops::Deref>::Target: IntoIterator<Item = &'a Tag>,
 {
     // TODO: instead of AsRef<str> we can accept a marker Trait that users of this crate implement
     Count(T, i64, V),
@@ -71,9 +70,9 @@ impl Flusher {
         Ok(())
     }
 
-    pub fn send<T: AsRef<str>, V>(&self, actions: Vec<DogStatsDAction<T, V>>)
+    pub fn send<T: AsRef<str>, V: std::ops::Deref>(&self, actions: Vec<DogStatsDAction<T, V>>)
     where
-        for<'a> &'a V: IntoIterator<Item = &'a Tag>,
+        for<'a> &'a <V as std::ops::Deref>::Target: IntoIterator<Item = &'a Tag>,
     {
         if self.client.is_none() {
             return;
@@ -84,19 +83,19 @@ impl Flusher {
             if let Err(err) = match action {
                 DogStatsDAction::Count(metric, value, ref tags) => {
                     let metric_builder = client.count_with_tags(metric.as_ref(), value);
-                    do_send(metric_builder, tags)
+                    do_send(metric_builder, tags.deref())
                 }
                 DogStatsDAction::Distribution(metric, value, ref tags) => {
-                    do_send(client.distribution_with_tags(metric.as_ref(), value), tags)
+                    do_send(client.distribution_with_tags(metric.as_ref(), value), tags.deref())
                 }
                 DogStatsDAction::Gauge(metric, value, ref tags) => {
-                    do_send(client.gauge_with_tags(metric.as_ref(), value), tags)
+                    do_send(client.gauge_with_tags(metric.as_ref(), value), tags.deref())
                 }
                 DogStatsDAction::Histogram(metric, value, ref tags) => {
-                    do_send(client.histogram_with_tags(metric.as_ref(), value), tags)
+                    do_send(client.histogram_with_tags(metric.as_ref(), value), tags.deref())
                 }
                 DogStatsDAction::Set(metric, value, ref tags) => {
-                    do_send(client.set_with_tags(metric.as_ref(), value), tags)
+                    do_send(client.set_with_tags(metric.as_ref(), value), tags.deref())
                 }
             } {
                 error!("Error while sending metric: {}", err);
@@ -185,12 +184,12 @@ mod test {
             socket.local_addr().unwrap().to_string().as_str(),
         ));
         flusher.send(vec![
-            Count("test_count", 3, vec![&tag!("foo", "bar")]),
+            Count("test_count", 3, vec![tag!("foo", "bar")]),
             Count("test_neg_count", -2, vec![]),
             Distribution("test_distribution", 4.2, vec![]),
             Gauge("test_gauge", 7.6, vec![]),
             Histogram("test_histogram", 8.0, vec![]),
-            Set("test_set", 9, vec![&tag!("the", "end")]),
+            Set("test_set", 9, vec![tag!("the", "end")]),
             Set("test_neg_set", -1, vec![]),
         ]);
 
