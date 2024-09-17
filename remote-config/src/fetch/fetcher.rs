@@ -15,9 +15,11 @@ use ddcommon::{connector, Endpoint};
 use http::uri::Scheme;
 use hyper::http::uri::PathAndQuery;
 use hyper::{Client, StatusCode};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use std::collections::{HashMap, HashSet};
 use std::mem::transmute;
+use std::ops::Add;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tracing::{debug, trace, warn};
@@ -77,6 +79,21 @@ pub struct ConfigFetcherState<S> {
     pub invariants: ConfigInvariants,
     endpoint: Endpoint,
     pub expire_unused_files: bool,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct ConfigFetcherStateStats {
+    pub active_files: u32,
+}
+
+impl Add for ConfigFetcherStateStats {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        ConfigFetcherStateStats {
+            active_files: self.active_files + rhs.active_files,
+        }
+    }
 }
 
 pub struct ConfigFetcherFilesLock<'a, S> {
@@ -144,6 +161,12 @@ impl<S> ConfigFetcherState<S> {
                     target_file.state.apply_error = error;
                 }
             }
+        }
+    }
+
+    pub fn stats(&self) -> ConfigFetcherStateStats {
+        ConfigFetcherStateStats {
+            active_files: self.target_files_by_path.lock().unwrap().len() as u32,
         }
     }
 }

@@ -12,7 +12,7 @@ use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 use datadog_ipc::rate_limiter::ShmLimiter;
 use datadog_remote_config::fetch::{
     ConfigInvariants, FileRefcountData, FileStorage, MultiTargetFetcher, MultiTargetHandlers,
-    NotifyTarget, RefcountedFile,
+    MultiTargetStats, NotifyTarget, RefcountedFile,
 };
 use datadog_remote_config::{RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue, Target};
 use priority_queue::PriorityQueue;
@@ -270,19 +270,20 @@ pub struct ShmRemoteConfigs<N: NotifyTarget + 'static>(
 // pertaining to that env refcounting RemoteConfigIdentifier tuples by their unique runtime_id
 
 impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
-    pub fn new(invariants: ConfigInvariants, on_dead: Box<dyn FnOnce() + Sync + Send>) -> Self {
-        let is_test = invariants.endpoint.test_token.is_some();
+    pub fn new(
+        invariants: ConfigInvariants,
+        on_dead: Box<dyn FnOnce() + Sync + Send>,
+        interval: Duration,
+    ) -> Self {
         let storage = ConfigFileStorage {
             invariants: invariants.clone(),
             writers: Default::default(),
             on_dead: Arc::new(Mutex::new(Some(on_dead))),
         };
         let fetcher = MultiTargetFetcher::new(storage, invariants);
-        if is_test {
-            fetcher
-                .remote_config_interval
-                .store(10_000_000, Ordering::Relaxed);
-        }
+        fetcher
+            .remote_config_interval
+            .store(interval.as_nanos() as u64, Ordering::Relaxed);
         ShmRemoteConfigs(fetcher)
     }
 
@@ -314,6 +315,10 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
 
     pub fn shutdown(&self) {
         self.0.shutdown();
+    }
+
+    pub fn stats(&self) -> MultiTargetStats {
+        self.0.stats()
     }
 }
 
@@ -586,6 +591,7 @@ mod tests {
             Box::new(|| {
                 tokio::spawn(on_dead_completer.complete(()));
             }),
+            Duration::from_millis(10),
         );
 
         let mut manager = RemoteConfigManager::new(server.dummy_invariants());

@@ -46,7 +46,7 @@ use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
 use datadog_live_debugger::sender::DebuggerType;
-use datadog_remote_config::fetch::ConfigInvariants;
+use datadog_remote_config::fetch::{ConfigInvariants, MultiTargetStats};
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
 use ddcommon::tag::Tag;
 use dogstatsd_client::{new_flusher, DogStatsDActionOwned};
@@ -69,6 +69,7 @@ struct SidecarStats {
     enqueued_apps: u32,
     enqueued_telemetry_data: EnqueuedTelemetryStats,
     remote_config_clients: u32,
+    remote_configs: MultiTargetStats,
     telemetry_metrics_contexts: u32,
     telemetry_worker: TelemetryWorkerStats,
     telemetry_worker_errors: u32,
@@ -385,6 +386,7 @@ impl SidecarServer {
                         .sum::<u32>()
                 })
                 .sum(),
+            remote_configs: self.remote_configs.stats(),
             telemetry_metrics_contexts: sessions
                 .values()
                 .map(|s| {
@@ -693,6 +695,7 @@ impl SidecarInterface for SidecarServer {
             products: config.remote_config_products,
             capabilities: config.remote_config_capabilities,
         });
+        *session.remote_config_interval.lock().unwrap() = config.remote_config_poll_interval;
         self.trace_flusher
             .interval_ms
             .store(config.flush_interval.as_millis() as u64, Ordering::Relaxed);
@@ -880,6 +883,7 @@ impl SidecarInterface for SidecarServer {
                     .as_ref()
                     .expect("Expecting remote config invariants to be set early")
                     .clone(),
+                *session.remote_config_interval.lock().unwrap(),
                 instance_id.runtime_id,
                 notify_target,
                 env_name.clone(),

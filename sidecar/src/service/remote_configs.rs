@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::shm_remote_config::{ShmRemoteConfigs, ShmRemoteConfigsGuard};
-use datadog_remote_config::fetch::{ConfigInvariants, NotifyTarget};
+use datadog_remote_config::fetch::{ConfigInvariants, MultiTargetStats, NotifyTarget};
 use std::collections::hash_map::Entry;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use zwohash::HashMap;
 
 #[cfg(windows)]
@@ -96,6 +97,7 @@ impl RemoteConfigs {
     pub fn add_runtime(
         &self,
         invariants: ConfigInvariants,
+        poll_interval: Duration,
         runtime_id: String,
         notify_target: RemoteConfigNotifyTarget,
         env: String,
@@ -112,6 +114,7 @@ impl RemoteConfigs {
                     Box::new(move || {
                         this.lock().unwrap().remove(&invariants);
                     }),
+                    poll_interval,
                 ))
             }
         }
@@ -122,5 +125,14 @@ impl RemoteConfigs {
         for (_, rc) in self.0.lock().unwrap().drain() {
             rc.shutdown();
         }
+    }
+
+    pub fn stats(&self) -> MultiTargetStats {
+        self.0
+            .lock()
+            .unwrap()
+            .values()
+            .map(|rc| rc.stats())
+            .fold(MultiTargetStats::default(), |a, b| a + b)
     }
 }

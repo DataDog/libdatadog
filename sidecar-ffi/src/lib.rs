@@ -488,6 +488,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     language: ffi::CharSlice,
     tracer_version: ffi::CharSlice,
     flush_interval_milliseconds: u32,
+    remote_config_poll_interval_millis: u32,
     telemetry_heartbeat_interval_millis: u32,
     exception_hash_rate_limiter_seconds: u32,
     force_flush_size: usize,
@@ -515,6 +516,9 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             language: language.to_utf8_lossy().into(),
             tracer_version: tracer_version.to_utf8_lossy().into(),
             flush_interval: Duration::from_millis(flush_interval_milliseconds as u64),
+            remote_config_poll_interval: Duration::from_millis(
+                remote_config_poll_interval_millis as u64
+            ),
             telemetry_heartbeat_interval: Duration::from_millis(
                 telemetry_heartbeat_interval_millis as u64
             ),
