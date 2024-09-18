@@ -208,10 +208,9 @@ fn create_client(endpoint: &Endpoint) -> anyhow::Result<StatsdClient> {
 #[cfg(test)]
 mod test {
     use crate::DogStatsDAction::{Count, Distribution, Gauge, Histogram, Set};
-    use crate::{create_client, DogStatsDAction, DogStatsDActionOwned, Flusher};
+    use crate::{create_client, DogStatsDActionOwned, Flusher};
     #[cfg(unix)]
     use ddcommon::connector::uds::socket_path_to_uri;
-    use ddcommon::tag::Tag;
     use ddcommon::{tag, Endpoint};
     #[cfg(unix)]
     use http::Uri;
@@ -290,10 +289,32 @@ mod test {
 
     #[test]
     fn test_owned_sync() {
-        assert_eq!(
-            std::mem::variant_count::<DogStatsDActionOwned>(),
-            std::mem::variant_count::<DogStatsDAction<String, Vec<&Tag>>>(),
-            "DogStatsDActionOwned and DogStatsDAction should have the same number of variants, did you forget to update one?",
-        );
+        // This test ensures that if a new variant is added to either `DogStatsDActionOwned` or
+        // `DogStatsDAction` this test will NOT COMPILE to act as a reminder that BOTH locations
+        // must be updated.
+        let owned_act = DogStatsDActionOwned::Count("test".to_string(), 1, vec![]);
+        match owned_act {
+            DogStatsDActionOwned::Count(_, _, _) => {}
+            DogStatsDActionOwned::Distribution(_, _, _) => {}
+            DogStatsDActionOwned::Gauge(_, _, _) => {}
+            DogStatsDActionOwned::Histogram(_, _, _) => {}
+            DogStatsDActionOwned::Set(_, _, _) => {}
+        }
+
+        let act = Count("test".to_string(), 1, vec![]);
+        match act {
+            Count(_, _, _) => {}
+            Distribution(_, _, _) => {}
+            Gauge(_, _, _) => {}
+            Histogram(_, _, _) => {}
+            Set(_, _, _) => {}
+        }
+
+        // TODO: when std::mem::variant_count is in stable we can do this instead
+        // assert_eq!(
+        //     std::mem::variant_count::<DogStatsDActionOwned>(),
+        //     std::mem::variant_count::<DogStatsDAction<String, Vec<&Tag>>>(),
+        //     "DogStatsDActionOwned and DogStatsDAction should have the same number of variants,
+        // did you forget to update one?", );
     }
 }
