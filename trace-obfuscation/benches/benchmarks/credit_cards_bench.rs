@@ -20,7 +20,7 @@ fn is_card_number_no_luhn_bench(c: &mut Criterion) {
 fn bench_is_card_number(c: &mut Criterion, function_name: &str, validate_luhn: bool) {
     let mut group = c.benchmark_group("credit_card");
     // Measure over a number of calls to minimize impact of OS noise
-    let elements = 100000;
+    let elements = 1000;
     group.throughput(Elements(elements));
     // We only need to measure for a small time since the function is very fast
     group.warm_up_time(Duration::from_secs(1));

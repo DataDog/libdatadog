@@ -22,7 +22,7 @@ fn normalize_service_bench(c: &mut Criterion) {
             "A00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 000000000000",
         ];
 
-    normalize_fnmut_string(group, cases, 100000, "normalize_service", normalize_service);
+    normalize_fnmut_string(group, cases, 1000, "normalize_service", normalize_service);
 }
 
 fn normalize_name_bench(c: &mut Criterion) {
@@ -32,7 +32,7 @@ fn normalize_name_bench(c: &mut Criterion) {
         "bad-name",
         "Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.",
     ];
-    normalize_fnmut_string(group, cases, 100000, "normalize_name", normalize_name);
+    normalize_fnmut_string(group, cases, 1000, "normalize_name", normalize_name);
 }
 
 #[inline]
