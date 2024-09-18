@@ -7,7 +7,6 @@ use super::{
 };
 use datadog_ipc::platform::{Channel, ShmHandle};
 use datadog_ipc::transport::blocking::BlockingTransport;
-use ddcommon::tag::Tag;
 use dogstatsd_client::DogStatsDActionOwned;
 use std::sync::Mutex;
 use std::{
