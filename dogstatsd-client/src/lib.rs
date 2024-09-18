@@ -85,17 +85,15 @@ impl Flusher {
                     let metric_builder = client.count_with_tags(metric.as_ref(), value);
                     do_send(metric_builder, tags.deref())
                 }
-                DogStatsDAction::Distribution(metric, value, ref tags) => do_send(
-                    client.distribution_with_tags(metric.as_ref(), value),
-                    tags.deref(),
-                ),
+                DogStatsDAction::Distribution(metric, value, ref tags) => {
+                    do_send(client.distribution_with_tags(metric.as_ref(), value), tags.deref())
+                }
                 DogStatsDAction::Gauge(metric, value, ref tags) => {
                     do_send(client.gauge_with_tags(metric.as_ref(), value), tags.deref())
                 }
-                DogStatsDAction::Histogram(metric, value, ref tags) => do_send(
-                    client.histogram_with_tags(metric.as_ref(), value),
-                    tags.deref(),
-                ),
+                DogStatsDAction::Histogram(metric, value, ref tags) => {
+                    do_send(client.histogram_with_tags(metric.as_ref(), value), tags.deref())
+                }
                 DogStatsDAction::Set(metric, value, ref tags) => {
                     do_send(client.set_with_tags(metric.as_ref(), value), tags.deref())
                 }

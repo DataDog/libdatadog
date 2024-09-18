@@ -10,7 +10,7 @@ use ddcommon::tag::Tag;
 use ddcommon::{connector, tag, Endpoint};
 use dogstatsd_client::{new_flusher, DogStatsDAction, Flusher};
 use hyper::http::uri::PathAndQuery;
-use hyper::{Body, Client, Method, Uri};
+use hyper::{http, Body, Client, Method, Uri};
 use log::error;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
 use tokio::runtime::Runtime;
@@ -41,7 +41,8 @@ pub enum TraceExporterOutputFormat {
 }
 
 // internal health metrics
-const STAT_SEND_ERRORS: &str = "datadog.libdatadog.send.errors";
+const STAT_SEND_TRACES: &str = "datadog.libdatadog.send.traces";
+const STAT_SEND_TRACES_ERRORS: &str = "datadog.libdatadog.send.traces.errors";
 const STAT_DESER_TRACES: &str = "datadog.libdatadog.deser_traces";
 const STAT_DESER_TRACES_ERRORS: &str = "datadog.libdatadog.deser_traces.errors";
 const STAT_SER_TRACES_ERRORS: &str = "datadog.libdatadog.ser_traces.errors";
@@ -191,25 +192,40 @@ impl TraceExporter {
                     .await
                 {
                     Ok(response) => {
-                        if response.status() != 200 {
+                        let response_status = response.status();
+                        if response_status != http::StatusCode::OK {
                             let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
                             let response_body =
                                 String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                            self.emit_metric(HealthMetric::Count(STAT_SEND_ERRORS, 1), None);
+                            self.emit_metric(
+                                HealthMetric::Count(STAT_SEND_TRACES_ERRORS, 1),
+                                Some(vec![
+                                    Tag::new("response_code", response_status.as_str()).unwrap()
+                                ]),
+                            );
                             anyhow::bail!("Agent did not accept traces: {response_body}");
                         }
                         match hyper::body::to_bytes(response.into_body()).await {
-                            Ok(body) => Ok(String::from_utf8_lossy(&body).to_string()),
+                            Ok(body) => {
+                                self.emit_metric(
+                                    HealthMetric::Count(STAT_SEND_TRACES, trace_count as i64),
+                                    None,
+                                );
+                                Ok(String::from_utf8_lossy(&body).to_string())
+                            }
                             Err(err) => {
-                                self.emit_metric(HealthMetric::Count(STAT_SEND_ERRORS, 1), None);
+                                self.emit_metric(
+                                    HealthMetric::Count(STAT_SEND_TRACES_ERRORS, 1),
+                                    None,
+                                );
                                 anyhow::bail!("Error reading agent response body: {err}");
                             }
                         }
                     }
                     Err(err) => {
-                        self.emit_metric(HealthMetric::Count(STAT_SEND_ERRORS, 1), None);
+                        self.emit_metric(HealthMetric::Count(STAT_SEND_TRACES_ERRORS, 1), None);
                         anyhow::bail!("Failed to send traces: {err}")
-                    },
+                    }
                 }
             })
             .or_else(|err| {
@@ -223,11 +239,15 @@ impl TraceExporter {
         if let Some(flusher) = &self.dogstatsd {
             if custom_tags.is_some() {
                 match metric {
-                    HealthMetric::Count(name, c) => flusher.send(vec![DogStatsDAction::Count(
-                        name,
-                        c,
-                        &self.common_stats_tags.iter().chain(&custom_tags.unwrap()),
-                    )]),
+                    HealthMetric::Count(name, c) => {
+                        let tags = self
+                            .common_stats_tags
+                            .clone() // TODO: how the heck do we get around needing a clone here... :(
+                            .into_iter()
+                            .chain(custom_tags.unwrap())
+                            .collect::<Vec<Tag>>();
+                        flusher.send(vec![DogStatsDAction::Count(name, c, &tags)])
+                    }
                 }
             } else {
                 match metric {
@@ -258,7 +278,10 @@ impl TraceExporter {
             return Ok(String::from("{}"));
         }
 
-        self.emit_metric(HealthMetric::Count(STAT_DESER_TRACES, traces.len() as i64), None);
+        self.emit_metric(
+            HealthMetric::Count(STAT_DESER_TRACES, traces.len() as i64),
+            None,
+        );
 
         let header_tags: TracerHeaderTags<'_> = (&self.tags).into();
 
@@ -297,13 +320,16 @@ impl TraceExporter {
                             Ok(body) => Ok(String::from_utf8_lossy(&body).to_string()),
                             Err(err) => {
                                 error!("Error reading agent response body: {err}");
-                                self.emit_metric(HealthMetric::Count(STAT_SEND_ERRORS, 1), None);
+                                self.emit_metric(
+                                    HealthMetric::Count(STAT_SEND_TRACES_ERRORS, 1),
+                                    None,
+                                );
                                 Ok(String::from("{}"))
                             }
                         },
                         Err(err) => {
                             error!("Error sending traces: {err}");
-                            self.emit_metric(HealthMetric::Count(STAT_SEND_ERRORS, 1), None);
+                            self.emit_metric(HealthMetric::Count(STAT_SEND_TRACES_ERRORS, 1), None);
                             Ok(String::from("{}"))
                         }
                     }
@@ -423,7 +449,6 @@ pub trait ResponseCallback {
 mod tests {
     use super::*;
     use httpmock::prelude::*;
-    use std::collections::HashMap;
     use std::net;
     use std::time::Duration;
 
@@ -517,6 +542,25 @@ mod tests {
         );
     }
 
+    fn read(socket: &net::UdpSocket) -> String {
+        let mut buf = [0; 1_000];
+        socket.recv(&mut buf).expect("No data");
+        let datagram = String::from_utf8_lossy(buf.as_ref());
+        datagram.trim_matches(char::from(0)).to_string()
+    }
+
+    fn build_test_exporter(url: String, dogstatsd_url: String) -> TraceExporter {
+        TraceExporterBuilder::default()
+            .set_url(&url)
+            .set_dogstatsd_url(&dogstatsd_url)
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .build()
+            .unwrap()
+    }
+
     #[test]
     #[cfg_attr(miri, ignore)]
     fn health_metrics() {
@@ -524,23 +568,16 @@ mod tests {
         let _ = stats_socket.set_read_timeout(Some(Duration::from_millis(500)));
 
         let fake_agent = MockServer::start();
-        let _mock_traces = fake_agent.mock(|when, then| {
-            when.method(GET).path("/v0.4/traces");
+        let _mock_traces = fake_agent.mock(|_, then| {
             then.status(200)
                 .header("content-type", "application/json")
                 .body("{}");
         });
 
-        let builder = TraceExporterBuilder::default();
-        let exporter = builder
-            .set_url(&fake_agent.url("/v0.4/traces"))
-            .set_dogstatsd_url(&stats_socket.local_addr().unwrap().to_string())
-            .set_tracer_version("v0.1")
-            .set_language("nodejs")
-            .set_language_version("1.0")
-            .set_language_interpreter("v8")
-            .build()
-            .unwrap();
+        let exporter = build_test_exporter(
+            fake_agent.url("/v0.4/traces"),
+            stats_socket.local_addr().unwrap().to_string(),
+        );
 
         let traces: Vec<Vec<pb::Span>> = vec![
             vec![pb::Span {
@@ -555,16 +592,54 @@ mod tests {
         let bytes = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
         let _result = exporter.send(&bytes, 1).expect("failed to send trace");
 
-        fn read(socket: &net::UdpSocket) -> String {
-            let mut buf = [0; 1_000];
-            socket.recv(&mut buf).expect("No data");
-            let datagram = String::from_utf8_lossy(buf.as_ref());
-            datagram.trim_matches(char::from(0)).to_string()
-        }
-        // Compare with the start of the metric to avoid breaking this test when the version changes
-        assert!(&read(&stats_socket)
-            .starts_with("datadog.libdatadog.deser_traces:2|c|#libdatadog_version:"));
-        assert!(&read(&stats_socket)
-            .starts_with("datadog.libdatadog.send.errors:1|c|#libdatadog_version:"));
+        assert_eq!(
+            &format!(
+                "datadog.libdatadog.deser_traces:2|c|#libdatadog_version:{}",
+                env!("CARGO_PKG_VERSION")
+            ),
+            &read(&stats_socket)
+        );
+        assert_eq!(
+            &format!(
+                "datadog.libdatadog.send.traces:2|c|#libdatadog_version:{}",
+                env!("CARGO_PKG_VERSION")
+            ),
+            &read(&stats_socket)
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn health_metrics_error() {
+        let stats_socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
+        let _ = stats_socket.set_read_timeout(Some(Duration::from_millis(500)));
+
+        let fake_agent = MockServer::start();
+        let _mock_traces = fake_agent.mock(|_, then| {
+            then.status(400)
+                .header("content-type", "application/json")
+                .body("{}");
+        });
+
+        let exporter = build_test_exporter(
+            fake_agent.url("/v0.4/traces"),
+            stats_socket.local_addr().unwrap().to_string(),
+        );
+
+        let traces: Vec<Vec<pb::Span>> = vec![vec![pb::Span {
+            name: "test".to_string(),
+            ..Default::default()
+        }]];
+        let bytes = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
+        let _result = exporter.send(&bytes, 1).expect("failed to send trace");
+
+        assert_eq!(
+            &format!(
+                "datadog.libdatadog.deser_traces:1|c|#libdatadog_version:{}",
+                env!("CARGO_PKG_VERSION")
+            ),
+            &read(&stats_socket)
+        );
+        assert_eq!(&format!("datadog.libdatadog.send.traces.errors:1|c|#libdatadog_version:{},response_code:400", env!("CARGO_PKG_VERSION")), &read(&stats_socket));
     }
 }
