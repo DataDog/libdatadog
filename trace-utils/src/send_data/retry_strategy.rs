@@ -114,7 +114,10 @@ mod tests {
     use super::*;
     use tokio::time::Instant;
 
-    const RETRY_STRATEGY_TIME_TOLERANCE_MS: u64 = 25;
+    // This tolerance is on the higher side to account for github's runners not having consistent
+    // performance. It shouldn't impact the quality of the tests since the most important aspect
+    // of the retry logic is we wait a minimum amount of time.
+    const RETRY_STRATEGY_TIME_TOLERANCE_MS: u64 = 100;
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
@@ -135,7 +138,8 @@ mod tests {
                 && elapsed
                     <= retry_strategy.delay_ms
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
+            "Elapsed time of {} ms was not within expected range",
+            elapsed.as_millis()
         );
 
         let start = Instant::now();
@@ -147,7 +151,8 @@ mod tests {
                 && elapsed
                     <= retry_strategy.delay_ms
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
+            "Elapsed time of {} ms was not within expected range",
+            elapsed.as_millis()
         );
     }
 
@@ -170,7 +175,8 @@ mod tests {
                 && elapsed
                     <= retry_strategy.delay_ms
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
+            "Elapsed time of {} ms was not within expected range",
+            elapsed.as_millis()
         );
 
         let start = Instant::now();
@@ -185,7 +191,8 @@ mod tests {
                     <= retry_strategy.delay_ms
                         + (retry_strategy.delay_ms * 2)
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
+            "Elapsed time of {} ms was not within expected range",
+            elapsed.as_millis()
         );
     }
 
@@ -208,7 +215,8 @@ mod tests {
                 && elapsed
                     <= retry_strategy.delay_ms
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
+            "Elapsed time of {} ms was not within expected range",
+            elapsed.as_millis()
         );
 
         let start = Instant::now();
@@ -221,7 +229,8 @@ mod tests {
                 && elapsed
                     <= retry_strategy.delay_ms * 4
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
+            "Elapsed time of {} ms was not within expected range",
+            elapsed.as_millis()
         );
     }
 
@@ -246,7 +255,8 @@ mod tests {
                     <= retry_strategy.delay_ms
                         + retry_strategy.jitter.unwrap()
                         + Duration::from_millis(RETRY_STRATEGY_TIME_TOLERANCE_MS),
-            "Elapsed time was not within expected range"
+            "Elapsed time of {} ms was not within expected range",
+            elapsed.as_millis()
         );
     }
 

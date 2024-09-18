@@ -136,9 +136,9 @@ cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
 
 datadog_profiling_ffi="datadog-profiling-ffi"
-FEATURES="--features crashtracker-collector,crashtracker-receiver,cbindgen,datadog-profiling-ffi/ddtelemetry-ffi"
+FEATURES="--features crashtracker-collector,crashtracker-receiver,cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/demangler"
 if [[ "$symbolizer" -eq 1 ]]; then
-    FEATURES="--features crashtracker-collector,crashtracker-receiver,cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,symbolizer"
+    FEATURES="--features crashtracker-collector,crashtracker-receiver,cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/demangler,symbolizer"
 fi
 
 if [[ ! -z ${ARG_FEATURES} ]]; then
@@ -167,6 +167,10 @@ fi
 
 if [[ "$fix_macos_rpath" -eq 1 ]]; then
     install_name_tool -id @rpath/${shared_library_name} "$destdir/lib/${shared_library_name}"
+fi
+
+if command -v patchelf > /dev/null && [[ "$target" != "x86_64-pc-windows-msvc" ]]; then
+    patchelf --set-soname ${shared_library_name}  "$destdir/lib/${shared_library_rename}"
 fi
 
 # objcopy might not be available on macOS

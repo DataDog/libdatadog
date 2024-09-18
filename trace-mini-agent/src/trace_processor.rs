@@ -168,6 +168,7 @@ mod tests {
                 ..Default::default()
             },
             dd_site: "datadoghq.com".to_string(),
+            dd_dogstatsd_port: 8125,
             env_type: trace_utils::EnvironmentType::CloudFunction,
             os: "linux".to_string(),
             obfuscation_config: ObfuscationConfig::new().unwrap(),

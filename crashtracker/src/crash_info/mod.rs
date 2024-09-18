@@ -239,8 +239,11 @@ impl CrashInfo {
 impl CrashInfo {
     /// Emit the CrashInfo as structured json in file `path`.
     pub fn to_file(&self, path: &Path) -> anyhow::Result<()> {
-        let file =
-            File::create(path).with_context(|| format!("Failed to create {}", path.display()))?;
+        let file = File::options()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("Failed to create {}", path.display()))?;
         serde_json::to_writer_pretty(file, self)
             .with_context(|| format!("Failed to write json to {}", path.display()))?;
         Ok(())

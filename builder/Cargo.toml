@@ -1,0 +1,29 @@
+[package]
+name = "builder"
+build = "build/main.rs"
+rust-version.workspace = true
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[features]
+default = []
+crashtracker = ["datadog-profiling-ffi?/crashtracker-receiver", "datadog-profiling-ffi?/crashtracker-collector", "datadog-profiling-ffi?/demangler"]
+profiling = ["dep:datadog-profiling-ffi"]
+telemetry = ["profiling", "datadog-profiling-ffi?/ddtelemetry-ffi"]
+data-pipeline = ["telemetry", "datadog-profiling-ffi?/data-pipeline-ffi"]
+symbolizer = ["profiling", "datadog-profiling-ffi?/symbolizer"]
+
+[build-dependencies]
+anyhow = { version = "1.0" }
+build_common = { path = "../build-common", features = ["cbindgen"] }
+cmake = "0.1.50"
+tools = { path = "../tools" }
+ddcommon-ffi = { path = "../ddcommon-ffi" }
+datadog-profiling-ffi = { path = "../profiling-ffi", optional = true, features = ["cbindgen"] }
+tar = "0.4.41"
+
+[[bin]]
+name = "dummy"
+test = false
+bench = false

@@ -13,9 +13,12 @@ use datadog_trace_utils::config_utils::{
 };
 use datadog_trace_utils::trace_utils;
 
+const DEFAULT_DOGSTATSD_PORT: u16 = 8125;
+
 #[derive(Debug)]
 pub struct Config {
     pub dd_site: String,
+    pub dd_dogstatsd_port: u16,
     pub env_type: trace_utils::EnvironmentType,
     pub function_name: Option<String>,
     pub max_request_content_length: usize,
@@ -41,6 +44,10 @@ impl Config {
             anyhow::anyhow!("Unable to identify environment. Shutting down Mini Agent.")
         })?;
 
+        let dd_dogstatsd_port: u16 = env::var("DD_DOGSTATSD_PORT")
+            .ok()
+            .and_then(|port| port.parse::<u16>().ok())
+            .unwrap_or(DEFAULT_DOGSTATSD_PORT);
         let dd_site = env::var("DD_SITE").unwrap_or_else(|_| "datadoghq.com".to_string());
 
         // construct the trace & trace stats intake urls based on DD_SITE env var (to flush traces &
@@ -69,6 +76,7 @@ impl Config {
             trace_flush_interval: 3,
             stats_flush_interval: 3,
             verify_env_timeout: 100,
+            dd_dogstatsd_port,
             dd_site,
             trace_intake: Endpoint {
                 url: hyper::Uri::from_str(&trace_intake_url).unwrap(),
@@ -206,5 +214,34 @@ mod tests {
         env::remove_var("DD_API_KEY");
         env::remove_var("DD_APM_DD_URL");
         env::remove_var("K_SERVICE");
+    }
+
+    #[test]
+    #[serial]
+    fn test_default_dogstatsd_port() {
+        env::set_var("DD_API_KEY", "_not_a_real_key_");
+        env::set_var("ASCSVCRT_SPRING__APPLICATION__NAME", "test-spring-app");
+        let config_res = config::Config::new();
+        assert!(config_res.is_ok());
+        let config = config_res.unwrap();
+        assert_eq!(config.dd_dogstatsd_port, 8125);
+        env::remove_var("DD_API_KEY");
+        env::remove_var("ASCSVCRT_SPRING__APPLICATION__NAME");
+    }
+
+    #[test]
+    #[serial]
+    fn test_custom_dogstatsd_port() {
+        env::set_var("DD_API_KEY", "_not_a_real_key_");
+        env::set_var("ASCSVCRT_SPRING__APPLICATION__NAME", "test-spring-app");
+        env::set_var("DD_DOGSTATSD_PORT", "18125");
+        let config_res = config::Config::new();
+        println!("{:?}", config_res);
+        assert!(config_res.is_ok());
+        let config = config_res.unwrap();
+        assert_eq!(config.dd_dogstatsd_port, 18125);
+        env::remove_var("DD_API_KEY");
+        env::remove_var("ASCSVCRT_SPRING__APPLICATION__NAME");
+        env::remove_var("DD_DOGSTATSD_PORT");
     }
 }
