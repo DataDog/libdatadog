@@ -18,8 +18,8 @@ use dogstatsd::{
     flusher::{build_fqdn_metrics, Flusher},
 };
 
-use tokio_util::sync::CancellationToken;
 use dogstatsd::metric::EMPTY_TAGS;
+use tokio_util::sync::CancellationToken;
 
 const DOGSTATSD_FLUSH_INTERVAL: u64 = 10;
 const DEFAULT_DOGSTATSD_PORT: u16 = 8125;
