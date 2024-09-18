@@ -9,12 +9,12 @@ use datadog_trace_utils::tracer_payload::TraceEncoding;
 use ddcommon::tag::Tag;
 use ddcommon::{connector, tag, Endpoint};
 use dogstatsd_client::{new_flusher, DogStatsDAction, Flusher};
+use either::Either;
 use hyper::http::uri::PathAndQuery;
 use hyper::{http, Body, Client, Method, Uri};
 use log::error;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
 use tokio::runtime::Runtime;
-use either::Either;
 
 /// TraceExporterInputFormat represents the format of the input traces.
 /// The input format can be either Proxy or V0.4, where V0.4 is the default.

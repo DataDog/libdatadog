@@ -22,8 +22,12 @@ use std::os::unix::net::UnixDatagram;
 const QUEUE_SIZE: usize = 32 * 1024;
 
 /// The `DogStatsDActionOwned` enum gathers the metric types that can be sent to the DogStatsD
-/// server. This type takes ownership of the relevant data to support the sidecar better
-/// TODO: writeup why combining these types is FRAUGHT
+/// server. This type takes ownership of the relevant data to support the sidecar better.
+///
+/// Originally I attempted to combine this type with `DogStatsDAction` but this GREATLY complicates
+/// the types to the point of insanity. I was unable to come up with a satisfactory approach that
+/// allows both the data-pipeline and sidecar crates to use the same type. If a future rustacean
+/// wants to take a stab and open a PR please do so!
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DogStatsDActionOwned {
     Count(String, i64, Vec<Tag>),
@@ -35,8 +39,6 @@ pub enum DogStatsDActionOwned {
     // and PHP implementation uses float or string (https://github.com/DataDog/php-datadogstatsd/blob/0efdd1c38f6d3dd407efbb899ad1fd2e5cd18085/src/DogStatsd.php#L251)
     Set(String, i64, Vec<Tag>),
 }
-
-// TODO: is there a way to make sure both of these stay in sync easily?
 
 /// The `DogStatsDAction` enum gathers the metric types that can be sent to the DogStatsD server.
 #[derive(Debug, Serialize, Deserialize)]
