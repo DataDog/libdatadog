@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use ustr::Ustr;
 
-pub(crate) const EMPTY_TAGS: SortedTags = SortedTags { values: Vec::new() };
+pub const EMPTY_TAGS: SortedTags = SortedTags { values: Vec::new() };
 
 #[derive(Clone, Debug)]
 pub enum MetricValue {

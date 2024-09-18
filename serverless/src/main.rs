@@ -19,6 +19,7 @@ use dogstatsd::{
 };
 
 use tokio_util::sync::CancellationToken;
+use dogstatsd::metric::EMPTY_TAGS;
 
 const DOGSTATSD_FLUSH_INTERVAL: u64 = 10;
 const DEFAULT_DOGSTATSD_PORT: u16 = 8125;
@@ -116,7 +117,7 @@ async fn start_dogstatsd(
     dd_https_proxy: Option<String>,
 ) -> (CancellationToken, Option<Flusher>) {
     let metrics_aggr = Arc::new(Mutex::new(
-        MetricsAggregator::new(Vec::new(), CONTEXTS).expect("Failed to create metrics aggregator"),
+        MetricsAggregator::new(EMPTY_TAGS, CONTEXTS).expect("Failed to create metrics aggregator"),
     ));
 
     let dogstatsd_config = DogStatsDConfig {
