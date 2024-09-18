@@ -1,6 +1,5 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-#![feature(variant_count)]
 
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;

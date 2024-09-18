@@ -200,7 +200,7 @@ impl TraceExporter {
                             self.emit_metric(
                                 HealthMetric::Count(STAT_SEND_TRACES_ERRORS, 1),
                                 Some(vec![
-                                    Tag::new("response_code", response_status.as_str()).unwrap()
+                                    &Tag::new("response_code", response_status.as_str()).unwrap()
                                 ]),
                             );
                             anyhow::bail!("Agent did not accept traces: {response_body}");
@@ -235,18 +235,13 @@ impl TraceExporter {
     }
 
     /// Emit a health metric to dogstatsd
-    fn emit_metric(&self, metric: HealthMetric, custom_tags: Option<Vec<Tag>>) {
+    fn emit_metric(&self, metric: HealthMetric, custom_tags: Option<Vec<&Tag>>) {
         if let Some(flusher) = &self.dogstatsd {
             if custom_tags.is_some() {
                 match metric {
                     HealthMetric::Count(name, c) => {
-                        let tags = self
-                            .common_stats_tags
-                            .clone() // TODO: how the heck do we get around needing a clone here... :(
-                            .into_iter()
-                            .chain(custom_tags.unwrap())
-                            .collect::<Vec<Tag>>();
-                        flusher.send(vec![DogStatsDAction::Count(name, c, &tags)])
+                        let tags = self.common_stats_tags.iter().chain(custom_tags.unwrap());
+                        flusher.send(vec![DogStatsDAction::Count(name, c, tags)])
                     }
                 }
             } else {
