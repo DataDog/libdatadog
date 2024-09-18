@@ -1,5 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![feature(variant_count)]
 
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
@@ -207,9 +208,10 @@ fn create_client(endpoint: &Endpoint) -> anyhow::Result<StatsdClient> {
 #[cfg(test)]
 mod test {
     use crate::DogStatsDAction::{Count, Distribution, Gauge, Histogram, Set};
-    use crate::{create_client, DogStatsDActionOwned, Flusher};
+    use crate::{create_client, DogStatsDAction, DogStatsDActionOwned, Flusher};
     #[cfg(unix)]
     use ddcommon::connector::uds::socket_path_to_uri;
+    use ddcommon::tag::Tag;
     use ddcommon::{tag, Endpoint};
     #[cfg(unix)]
     use http::Uri;
@@ -284,5 +286,14 @@ mod test {
             socket_path_to_uri("/path/to/a/socket.sock".as_ref()).unwrap(),
         ));
         assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_owned_sync() {
+        assert_eq!(
+            std::mem::variant_count::<DogStatsDActionOwned>(),
+            std::mem::variant_count::<DogStatsDAction<String, Vec<&Tag>>>(),
+            "DogStatsDActionOwned and DogStatsDAction should have the same number of variants, did you forget to update one?",
+        );
     }
 }
