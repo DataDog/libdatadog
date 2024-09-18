@@ -1,0 +1,22 @@
+[package]
+name = "data-pipeline-benches"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+autobenches = false
+
+[dependencies]
+data-pipeline = { path = "../../data-pipeline" }
+datadog-trace-protobuf = { path = "../../trace-protobuf" }
+
+[dev-dependencies]
+clap = { workspace = true }
+criterion = { workspace = true }
+
+[lib]
+bench = false
+
+[[bench]]
+name = "main"
+harness = false

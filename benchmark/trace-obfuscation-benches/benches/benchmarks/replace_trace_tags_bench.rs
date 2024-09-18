@@ -53,7 +53,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter_batched_ref(
             || trace.to_owned(),
             |t| replacer::replace_trace_tags(black_box(t), black_box(rules)),
-            criterion::BatchSize::LargeInput,
+            criterion::BatchSize::PerIteration,
         )
     });
 }
