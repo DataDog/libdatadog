@@ -14,6 +14,7 @@ use hyper::{http, Body, Client, Method, Uri};
 use log::error;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
 use tokio::runtime::Runtime;
+use either::Either;
 
 /// TraceExporterInputFormat represents the format of the input traces.
 /// The input format can be either Proxy or V0.4, where V0.4 is the default.
@@ -236,23 +237,16 @@ impl TraceExporter {
 
     /// Emit a health metric to dogstatsd
     fn emit_metric(&self, metric: HealthMetric, custom_tags: Option<Vec<&Tag>>) {
+        let tags = match custom_tags {
+            None => Either::Left(&self.common_stats_tags),
+            Some(custom) => Either::Right(self.common_stats_tags.iter().chain(custom)),
+        };
         if let Some(flusher) = &self.dogstatsd {
-            if custom_tags.is_some() {
-                match metric {
-                    HealthMetric::Count(name, c) => {
-                        let tags = self.common_stats_tags.iter().chain(custom_tags.unwrap());
-                        flusher.send(vec![DogStatsDAction::Count(name, c, tags)])
-                    }
+            match metric {
+                HealthMetric::Count(name, c) => {
+                    flusher.send(vec![DogStatsDAction::Count(name, c, tags.into_iter())])
                 }
-            } else {
-                match metric {
-                    HealthMetric::Count(name, c) => flusher.send(vec![DogStatsDAction::Count(
-                        name,
-                        c,
-                        &self.common_stats_tags,
-                    )]),
-                }
-            };
+            }
         }
     }
 

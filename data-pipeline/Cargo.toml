@@ -17,6 +17,7 @@ log = "0.4"
 rmp-serde = "1.1.1"
 bytes = "1.4"
 tokio = {version = "1.23", features = ["rt"], default-features = false}
+either = "1.13.0"
 
 ddcommon = { path = "../ddcommon" }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
