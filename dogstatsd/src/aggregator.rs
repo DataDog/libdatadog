@@ -521,7 +521,7 @@ pub mod tests {
             max_batch_entries_single_metric: 1_000,
             max_batch_bytes_single_metric: 1_000,
             max_batch_entries_sketch_metric: 1_000,
-            max_batch_bytes_sketch_metric: max_bytes as u64,
+            max_batch_bytes_sketch_metric: max_bytes,
             max_context: 1_000,
         };
 
