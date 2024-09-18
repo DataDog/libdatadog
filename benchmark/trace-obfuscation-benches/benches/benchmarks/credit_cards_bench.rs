@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::hint::black_box;
-use std::time::Duration;
 
 use criterion::Throughput::Elements;
 use criterion::{criterion_group, BatchSize, BenchmarkId, Criterion};
@@ -20,13 +19,9 @@ fn is_card_number_no_luhn_bench(c: &mut Criterion) {
 fn bench_is_card_number(c: &mut Criterion, function_name: &str, validate_luhn: bool) {
     let mut group = c.benchmark_group("credit_card");
     // Measure over a number of calls to minimize impact of OS noise
-    let elements = 1000;
+    let elements = 5000;
     group.throughput(Elements(elements));
-    // We only need to measure for a small time since the function is very fast
-    group.warm_up_time(Duration::from_secs(1));
-    group.measurement_time(Duration::from_secs(2));
     group.sampling_mode(criterion::SamplingMode::Flat);
-    group.sample_size(200);
     let ccs = [
         "378282246310005",
         "  378282246310005",

@@ -22,7 +22,7 @@ pushd "${PROJECT_DIR}" > /dev/null
 
 # Run benchmarks
 message "Running benchmarks in project"
-cargo bench --workspace -- --warm-up-time 1 --measurement-time 5 --sample-size=200
+cargo bench --workspace -- --warm-up-time 2 --measurement-time 4 --sample-size=250
 message "Finished running benchmarks in project"
 
 # Copy the benchmark results to the output directory
@@ -43,7 +43,7 @@ fi
 pushd "${SCRIPT_DIR}" > /dev/null
 # Run benchmarks
 message "Running benchmarks in benchmark"
-cargo bench --workspace -- --warm-up-time 1 --measurement-time 5 --sample-size=200
+cargo bench --workspace -- --warm-up-time 2 --measurement-time 4 --sample-size=250
 message "Finished running benchmarks in benchmark"
 
 # Copy the benchmark results to the output directory

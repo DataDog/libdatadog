@@ -476,7 +476,7 @@ checksum = "7a81dae078cea95a014a339291cec439d2f232ebe854a9d672b796c6afafa9b7"
 
 [[package]]
 name = "data-pipeline"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -504,7 +504,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-alloc"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "allocator-api2",
  "libc",
@@ -513,7 +513,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ddsketch"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "prost 0.11.9",
 ]
@@ -554,7 +554,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -588,7 +588,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "datadog-trace-protobuf",
@@ -596,7 +596,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "datadog-trace-protobuf",
@@ -612,7 +612,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "prost 0.11.9",
  "serde",
@@ -621,7 +621,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-utils"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -645,7 +645,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "futures",

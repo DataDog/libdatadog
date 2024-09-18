@@ -9,8 +9,8 @@ use criterion::{
 use datadog_trace_normalization::normalize_utils::{normalize_name, normalize_service};
 use datadog_trace_normalization::normalizer::normalize_trace;
 use datadog_trace_protobuf::pb;
+use std::collections::HashMap;
 use std::hint::black_box;
-use std::{collections::HashMap, time::Duration};
 
 fn normalize_service_bench(c: &mut Criterion) {
     let group = c.benchmark_group("normalization/normalize_service");
@@ -22,7 +22,7 @@ fn normalize_service_bench(c: &mut Criterion) {
             "A00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 000000000000",
         ];
 
-    normalize_fnmut_string(group, cases, 1000, "normalize_service", normalize_service);
+    normalize_fnmut_string(group, cases, 5000, "normalize_service", normalize_service);
 }
 
 fn normalize_name_bench(c: &mut Criterion) {
@@ -32,7 +32,7 @@ fn normalize_name_bench(c: &mut Criterion) {
         "bad-name",
         "Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.",
     ];
-    normalize_fnmut_string(group, cases, 1000, "normalize_name", normalize_name);
+    normalize_fnmut_string(group, cases, 5000, "normalize_name", normalize_name);
 }
 
 #[inline]
@@ -47,10 +47,6 @@ fn normalize_fnmut_string<F>(
 {
     // Measure over a number of calls to minimize impact of OS noise
     group.throughput(Elements(elements as u64));
-    // We only need to measure for a small time since the function is very fast
-    group.warm_up_time(Duration::from_secs(1));
-    group.measurement_time(Duration::from_secs(2));
-    group.sample_size(200);
     group.sampling_mode(criterion::SamplingMode::Flat);
 
     for case in cases {
@@ -68,7 +64,7 @@ fn normalize_fnmut_string<F>(
                 b.iter_batched_ref(
                     || {
                         let mut strings = Vec::with_capacity(elements);
-                        (0..elements).for_each(|_| strings.push(case.to_owned()));
+                        (0..elements).for_each(|_| strings.push(black_box(case.to_owned())));
                         strings
                     },
                     |strings| {
