@@ -48,7 +48,7 @@ use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
 use datadog_remote_config::fetch::ConfigInvariants;
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
-use dogstatsd_client::DogStatsDAction;
+use dogstatsd_client::DogStatsDActionOwned;
 
 type NoResponse = Ready<()>;
 
@@ -845,12 +845,12 @@ impl SidecarInterface for SidecarServer {
         self,
         _: Context,
         instance_id: InstanceId,
-        actions: Vec<DogStatsDAction<String, Vec<Tag>>>,
+        actions: Vec<DogStatsDActionOwned>,
     ) -> Self::SendDogstatsdActionsFut {
         tokio::spawn(async move {
             self.get_session(&instance_id.session_id)
                 .get_dogstatsd()
-                .send(actions);
+                .send_owned(actions);
         });
 
         no_response()

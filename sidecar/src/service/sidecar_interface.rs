@@ -8,8 +8,7 @@ use crate::service::{
 use anyhow::Result;
 use datadog_ipc::platform::ShmHandle;
 use datadog_ipc::tarpc;
-use ddcommon::tag::Tag;
-use dogstatsd_client::DogStatsDAction;
+use dogstatsd_client::DogStatsDActionOwned;
 
 // This is a bit weird, but depending on the OS we're interested in different things...
 // and the macro expansion is not going to be happy with #[cfg()] instructions inside them.
@@ -134,10 +133,7 @@ pub trait SidecarInterface {
     ///
     /// * `instance_id` - The ID of the instance.
     /// * `actions` - The DogStatsD actions to send.
-    async fn send_dogstatsd_actions(
-        instance_id: InstanceId,
-        actions: Vec<DogStatsDAction<String, Vec<Tag>>>,
-    );
+    async fn send_dogstatsd_actions(instance_id: InstanceId, actions: Vec<DogStatsDActionOwned>);
 
     /// Flushes any outstanding traces queued for sending.
     async fn flush_traces();

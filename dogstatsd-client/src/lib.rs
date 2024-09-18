@@ -21,12 +21,26 @@ use std::os::unix::net::UnixDatagram;
 // Queue with a maximum capacity of 32K elements
 const QUEUE_SIZE: usize = 32 * 1024;
 
-/// The `DogStatsDActionRef` enum gathers the metric types that can be sent to the DogStatsD server.
+/// The `DogStatsDActionOwned` enum gathers the metric types that can be sent to the DogStatsD
+/// server. This type takes ownership of the relevant data to support the sidecar better
+/// TODO: writeup why combining these types is FRAUGHT
 #[derive(Debug, Serialize, Deserialize)]
-pub enum DogStatsDAction<T: AsRef<str>, V: std::ops::Deref>
-where
-    for<'a> &'a <V as std::ops::Deref>::Target: IntoIterator<Item = &'a Tag>,
-{
+pub enum DogStatsDActionOwned {
+    Count(String, i64, Vec<Tag>),
+    Distribution(String, f64, Vec<Tag>),
+    Gauge(String, f64, Vec<Tag>),
+    Histogram(String, f64, Vec<Tag>),
+    // Cadence only support i64 type as value
+    // but Golang implementation uses string (https://github.com/DataDog/datadog-go/blob/331d24832f7eac97b091efd696278fe2c4192b29/statsd/statsd.go#L230)
+    // and PHP implementation uses float or string (https://github.com/DataDog/php-datadogstatsd/blob/0efdd1c38f6d3dd407efbb899ad1fd2e5cd18085/src/DogStatsd.php#L251)
+    Set(String, i64, Vec<Tag>),
+}
+
+// TODO: is there a way to make sure both of these stay in sync easily?
+
+/// The `DogStatsDAction` enum gathers the metric types that can be sent to the DogStatsD server.
+#[derive(Debug, Serialize, Deserialize)]
+pub enum DogStatsDAction<'a, T: AsRef<str>, V: IntoIterator<Item = &'a Tag>> {
     // TODO: instead of AsRef<str> we can accept a marker Trait that users of this crate implement
     Count(T, i64, V),
     Distribution(T, f64, V),
@@ -70,10 +84,7 @@ impl Flusher {
         Ok(())
     }
 
-    pub fn send<T: AsRef<str>, V: std::ops::Deref>(&self, actions: Vec<DogStatsDAction<T, V>>)
-    where
-        for<'a> &'a <V as std::ops::Deref>::Target: IntoIterator<Item = &'a Tag>,
-    {
+    pub fn send_owned(&self, actions: Vec<DogStatsDActionOwned>) {
         if self.client.is_none() {
             return;
         }
@@ -81,21 +92,53 @@ impl Flusher {
 
         for action in actions {
             if let Err(err) = match action {
-                DogStatsDAction::Count(metric, value, ref tags) => {
+                DogStatsDActionOwned::Count(metric, value, tags) => {
+                    do_send(client.count_with_tags(metric.as_ref(), value), &tags)
+                }
+                DogStatsDActionOwned::Distribution(metric, value, tags) => {
+                    do_send(client.distribution_with_tags(metric.as_ref(), value), &tags)
+                }
+                DogStatsDActionOwned::Gauge(metric, value, tags) => {
+                    do_send(client.gauge_with_tags(metric.as_ref(), value), &tags)
+                }
+                DogStatsDActionOwned::Histogram(metric, value, tags) => {
+                    do_send(client.histogram_with_tags(metric.as_ref(), value), &tags)
+                }
+                DogStatsDActionOwned::Set(metric, value, tags) => {
+                    do_send(client.set_with_tags(metric.as_ref(), value), &tags)
+                }
+            } {
+                error!("Error while sending metric: {}", err);
+            }
+        }
+    }
+
+    pub fn send<'a, T: AsRef<str>, V: IntoIterator<Item = &'a Tag>>(
+        &self,
+        actions: Vec<DogStatsDAction<'a, T, V>>,
+    ) {
+        if self.client.is_none() {
+            return;
+        }
+        let client = self.client.as_ref().unwrap();
+
+        for action in actions {
+            if let Err(err) = match action {
+                DogStatsDAction::Count(metric, value, tags) => {
                     let metric_builder = client.count_with_tags(metric.as_ref(), value);
-                    do_send(metric_builder, tags.deref())
+                    do_send(metric_builder, tags)
                 }
-                DogStatsDAction::Distribution(metric, value, ref tags) => {
-                    do_send(client.distribution_with_tags(metric.as_ref(), value), tags.deref())
+                DogStatsDAction::Distribution(metric, value, tags) => {
+                    do_send(client.distribution_with_tags(metric.as_ref(), value), tags)
                 }
-                DogStatsDAction::Gauge(metric, value, ref tags) => {
-                    do_send(client.gauge_with_tags(metric.as_ref(), value), tags.deref())
+                DogStatsDAction::Gauge(metric, value, tags) => {
+                    do_send(client.gauge_with_tags(metric.as_ref(), value), tags)
                 }
-                DogStatsDAction::Histogram(metric, value, ref tags) => {
-                    do_send(client.histogram_with_tags(metric.as_ref(), value), tags.deref())
+                DogStatsDAction::Histogram(metric, value, tags) => {
+                    do_send(client.histogram_with_tags(metric.as_ref(), value), tags)
                 }
-                DogStatsDAction::Set(metric, value, ref tags) => {
-                    do_send(client.set_with_tags(metric.as_ref(), value), tags.deref())
+                DogStatsDAction::Set(metric, value, tags) => {
+                    do_send(client.set_with_tags(metric.as_ref(), value), tags)
                 }
             } {
                 error!("Error while sending metric: {}", err);
@@ -164,7 +207,7 @@ fn create_client(endpoint: &Endpoint) -> anyhow::Result<StatsdClient> {
 #[cfg(test)]
 mod test {
     use crate::DogStatsDAction::{Count, Distribution, Gauge, Histogram, Set};
-    use crate::{create_client, Flusher};
+    use crate::{create_client, DogStatsDActionOwned, Flusher};
     #[cfg(unix)]
     use ddcommon::connector::uds::socket_path_to_uri;
     use ddcommon::{tag, Endpoint};
@@ -184,13 +227,13 @@ mod test {
             socket.local_addr().unwrap().to_string().as_str(),
         ));
         flusher.send(vec![
-            Count("test_count", 3, vec![tag!("foo", "bar")]),
-            Count("test_neg_count", -2, vec![]),
-            Distribution("test_distribution", 4.2, vec![]),
-            Gauge("test_gauge", 7.6, vec![]),
-            Histogram("test_histogram", 8.0, vec![]),
-            Set("test_set", 9, vec![tag!("the", "end")]),
-            Set("test_neg_set", -1, vec![]),
+            Count("test_count", 3, &vec![tag!("foo", "bar")]),
+            Count("test_neg_count", -2, &vec![]),
+            Distribution("test_distribution", 4.2, &vec![]),
+            Gauge("test_gauge", 7.6, &vec![]),
+            Histogram("test_histogram", 8.0, &vec![]),
+            Set("test_set", 9, &vec![tag!("the", "end")]),
+            Set("test_neg_set", -1, &vec![]),
         ]);
 
         fn read(socket: &net::UdpSocket) -> String {
