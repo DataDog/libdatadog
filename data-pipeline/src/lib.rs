@@ -6,6 +6,7 @@
 //! project at this state is to provide a basic API in order to test its viability and integration
 //! in different languages.
 
+pub mod agent_info;
 #[allow(missing_docs)]
 pub mod span_concentrator;
 #[allow(missing_docs)]

@@ -34,7 +34,6 @@ members = [
   "data-pipeline-ffi",
   "ddsketch",
   "tinybytes",
-  "agent-info",
 ]
 
 default-members = [
@@ -70,7 +69,6 @@ default-members = [
   "data-pipeline-ffi",
   "ddsketch",
   "tinybytes",
-  "agent-info",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2

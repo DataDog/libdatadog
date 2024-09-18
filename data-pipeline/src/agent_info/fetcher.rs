@@ -3,7 +3,7 @@
 //! Provides utilities to fetch the agent /info endpoint and an automatic fetcher to keep info
 //! up-to-date
 
-use crate::{schema::AgentInfo, AgentInfoArc};
+use super::{schema::AgentInfo, AgentInfoArc};
 use anyhow::{anyhow, Result};
 use arc_swap::ArcSwapOption;
 use ddcommon::{connector::Connector, Endpoint};
@@ -66,7 +66,9 @@ async fn fetch_info_with_state(
 /// // Define the endpoint
 /// let endpoint = ddcommon::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
 /// // Fetch the info
-/// let agent_info = agent_info::fetch_info(&endpoint).await.unwrap();
+/// let agent_info = data_pipeline::agent_info::fetch_info(&endpoint)
+///     .await
+///     .unwrap();
 /// println!("Agent version is {}", agent_info.info.version.unwrap());
 /// # Ok(())
 /// # }
@@ -92,8 +94,10 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
 /// // Define the endpoint
 /// let endpoint = ddcommon::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
 /// // Create the fetcher
-/// let fetcher =
-///     agent_info::AgentInfoFetcher::new(endpoint, std::time::Duration::from_secs(5 * 60));
+/// let fetcher = data_pipeline::agent_info::AgentInfoFetcher::new(
+///     endpoint,
+///     std::time::Duration::from_secs(5 * 60),
+/// );
 /// // Get the Arc to access the info
 /// let agent_info_arc = fetcher.get_info();
 /// // Start the runner

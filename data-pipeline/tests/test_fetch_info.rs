@@ -4,7 +4,7 @@
 #[cfg(test)]
 mod require_test_agent {
     mod fetch_info_test {
-        use agent_info::fetch_info;
+        use data_pipeline::agent_info::fetch_info;
         use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
         use ddcommon::Endpoint;
 
@@ -26,8 +26,8 @@ mod require_test_agent {
     }
 
     mod agent_info_fetcher_test {
-        use agent_info::AgentInfoFetcher;
         use arc_swap::access::Access;
+        use data_pipeline::agent_info::AgentInfoFetcher;
         use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
         use ddcommon::Endpoint;
         use std::time::Duration;
