@@ -299,9 +299,9 @@ impl TraceExporter {
     }
 
     /// Add all spans from the given iterator into the stats concentrator
+    /// # Panic
+    /// Will panic if another thread panicked will holding the lock on `stats_concentrator`
     fn add_spans_to_stats<'a>(&self, spans: impl Iterator<Item = &'a pb::Span>) {
-        // TODO: How do we want to react if we have an error i.e. another thread panicked with
-        // the lock
         if let StatsComputationStatus::StatsEnabled {
             stats_concentrator,
             cancellation_token: _,
@@ -415,6 +415,7 @@ pub struct TraceExporterBuilder {
     client_computed_top_level: bool,
 
     // Stats specific fields
+    /// A Some value enables stats-computation, None if it is disabled
     stats_bucket_size: Option<time::Duration>,
     peer_tags_aggregation: bool,
     compute_stats_by_span_kind: bool,
