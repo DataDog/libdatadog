@@ -237,11 +237,11 @@ impl TraceExporter {
 
     /// Emit a health metric to dogstatsd
     fn emit_metric(&self, metric: HealthMetric, custom_tags: Option<Vec<&Tag>>) {
-        let tags = match custom_tags {
-            None => Either::Left(&self.common_stats_tags),
-            Some(custom) => Either::Right(self.common_stats_tags.iter().chain(custom)),
-        };
         if let Some(flusher) = &self.dogstatsd {
+            let tags = match custom_tags {
+                None => Either::Left(&self.common_stats_tags),
+                Some(custom) => Either::Right(self.common_stats_tags.iter().chain(custom)),
+            };
             match metric {
                 HealthMetric::Count(name, c) => {
                     flusher.send(vec![DogStatsDAction::Count(name, c, tags.into_iter())])
