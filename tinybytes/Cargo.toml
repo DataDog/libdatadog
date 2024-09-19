@@ -19,9 +19,7 @@ tinybytes = { path = ".", features = ["bytes_string", "serialization"] }
 
 [dependencies]
 serde = { version = "1.0.209", optional = true }
-#datadog-ipc = { path = "../ipc", optional = true }
 
 [features]
 bytes_string = []
 serialization = ["serde"]
-#ipc = ["datadog-ipc"]
