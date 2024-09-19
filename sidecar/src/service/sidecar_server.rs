@@ -901,7 +901,7 @@ impl SidecarInterface for SidecarServer {
         session.modify_trace_config(|cfg| {
             update_cfg(cfg.endpoint.take(), |e| cfg.set_endpoint(e), &token);
         });
-        // TODO: the dogstatsd-client doesn't support test_session tokens yet
+        // TODO(APMSP-1377): the dogstatsd-client doesn't support test_session tokens yet
         // session.configure_dogstatsd(|cfg| {
         //     update_cfg(cfg.endpoint.take(), |e| cfg.set_endpoint(e), &token);
         // });
