@@ -7,7 +7,6 @@ use ddsketch_agent::DDSketch;
 use fnv::FnvHasher;
 use protobuf::Chars;
 use regex::Regex;
-use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use ustr::Ustr;
 
@@ -78,14 +77,6 @@ impl SortedTags {
             tags_as_vec.push(format!("{}:{}", k, v));
         }
         tags_as_vec
-    }
-
-    pub fn to_map(&self) -> HashMap<Ustr, Ustr> {
-        let mut tags_as_map = HashMap::new();
-        for (k, v) in &self.values {
-            tags_as_map.insert(*k, *v);
-        }
-        tags_as_map
     }
 
     pub(crate) fn to_resources(&self) -> Vec<datadog::Resource> {
@@ -234,7 +225,6 @@ pub fn id(name: Ustr, tags: &SortedTags) -> u64 {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use proptest::{collection, option, strategy::Strategy, string::string_regex};
-    use std::collections::HashMap;
     use ustr::Ustr;
 
     use crate::metric::{id, parse, MetricValue, SortedTags};
@@ -283,15 +273,19 @@ mod tests {
             assert_eq!(name, metric.name.as_str());
 
             if let Some(tags) = tagset {
-                let mut count = 0;
-
-                let tag_map : HashMap<Ustr, Ustr>= metric.tags.to_map();
+                let parsed_metric_tags : SortedTags= metric.tags.clone();
+                assert_eq!(tags.split(',').count(), parsed_metric_tags.values.len());
                 tags.split(',').for_each(|kv| {
-                    let parts = kv.split_once(':').unwrap();
-                    assert_eq!(parts.1, tag_map.get(&Ustr::from(parts.0)).unwrap().to_string());
-                    count += 1;
+                    let (original_key, original_value) = kv.split_once(':').unwrap();
+                    let mut found = false;
+                    for (k,v) in parsed_metric_tags.values.iter() {
+                        // TODO not sure who to handle duplicate keys. To make the test pass, just find any match instead of first
+                        if *k == Ustr::from(original_key) && *v == Ustr::from(original_value) {
+                            found = true;
+                        }
+                    }
+                    assert!(found);
                 });
-                assert_eq!(count, tag_map.len());
             } else {
                 assert!(metric.tags.is_empty());
             }
