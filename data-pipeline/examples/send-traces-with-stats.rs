@@ -1,14 +1,14 @@
-use std::{
-    collections::HashMap,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
-
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+
 use data_pipeline::trace_exporter::{
     TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
 use datadog_trace_protobuf::pb;
+use std::{
+    collections::HashMap,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 fn get_span(now: i64, trace_id: u64, span_id: u64) -> pb::Span {
     pb::Span {

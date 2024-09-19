@@ -173,11 +173,8 @@ fn encode_stats_payload(
         container_id: meta.container_id,
         git_commit_sha: meta.git_commit_sha,
         tags: meta.tags.into_iter().map(|t| t.to_string()).collect(),
-
         sequence,
-
         stats: buckets,
-
         // Agent-only field
         agent_aggregation: String::new(),
         image_tag: String::new(),

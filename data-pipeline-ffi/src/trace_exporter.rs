@@ -67,8 +67,8 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
         .set_response_callback(Box::new(callback_wrapper));
     if compute_stats {
         builder = builder.enable_stats(Duration::from_secs(10))
-        // TODO: Enable peer tags aggregation and stats by span_kind based on agent
-        // configuration APMSP-1317
+        // TODO: APMSP-1317 Enable peer tags aggregation and stats by span_kind based on agent
+        // configuration
     }
     let exporter = builder.build().unwrap();
     out_handle.as_ptr().write(Box::new(exporter));
