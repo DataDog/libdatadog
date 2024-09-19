@@ -1453,6 +1453,7 @@ dependencies = [
  "spawn_worker",
  "tarpc",
  "tempfile",
+ "tinybytes",
  "tokio",
  "tokio-serde",
  "tokio-util 0.6.10",
@@ -1642,6 +1643,7 @@ dependencies = [
  "spawn_worker",
  "sys-info",
  "tempfile",
+ "tinybytes",
  "tokio",
  "tokio-util 0.7.11",
  "tracing",
@@ -1756,6 +1758,7 @@ dependencies = [
  "criterion",
  "datadog-trace-normalization",
  "datadog-trace-protobuf",
+ "datadog-trace-utils",
  "ddcommon",
  "flate2",
  "futures",
@@ -1771,6 +1774,7 @@ dependencies = [
  "serde",
  "serde_json",
  "testcontainers",
+ "tinybytes",
  "tokio",
 ]
 
@@ -4679,9 +4683,9 @@ dependencies = [
 
 [[package]]
 name = "serde"
-version = "1.0.197"
+version = "1.0.209"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fb1c873e1b9b056a4dc4c0c198b24c3ffa059243875552b2bd0933b1aee4ce2"
+checksum = "99fce0ffe7310761ca6bf9faf5115afbc19688edd00171d81b1bb1b116c63e09"
 dependencies = [
  "serde_derive",
 ]
@@ -4697,9 +4701,9 @@ dependencies = [
 
 [[package]]
 name = "serde_derive"
-version = "1.0.197"
+version = "1.0.209"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7eb0b34b42edc17f6b7cac84a52a1c5f0e1bb2227e997ca9011ea3dd34e8610b"
+checksum = "a5831b979fd7b5439637af1752d535ff49f4860c0f341d1baeb6faf0f4242170"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4708,11 +4712,12 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.120"
+version = "1.0.127"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e0d21c9a8cae1235ad58a00c11cb40d4b1e5c784f1ef2c537876ed6ffd8b7c5"
+checksum = "8043c06d9f82bd7271361ed64f415fe5e12a77fdb52e573e7f06a516dea329ad"
 dependencies = [
  "itoa",
+ "memchr",
  "ryu",
  "serde",
 ]
@@ -5372,7 +5377,10 @@ dependencies = [
  "once_cell",
  "pretty_assertions",
  "proptest",
+ "serde",
+ "serde_json",
  "test-case",
+ "tinybytes",
 ]
 
 [[package]]
