@@ -5,7 +5,7 @@ use bytes::Bytes;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils::{self, SendData, TracerHeaderTags};
 use datadog_trace_utils::tracer_payload;
-use datadog_trace_utils::tracer_payload::TraceEncoding;
+use datadog_trace_utils::tracer_payload::TraceCollection;
 use ddcommon::tag::Tag;
 use ddcommon::{connector, tag, Endpoint};
 use dogstatsd_client::{new_flusher, DogStatsDAction, Flusher};
@@ -291,11 +291,10 @@ impl TraceExporter {
 
             TraceExporterOutputFormat::V07 => {
                 let tracer_payload = trace_utils::collect_trace_chunks(
-                    traces,
+                    TraceCollection::V07(traces),
                     &header_tags,
                     &mut tracer_payload::DefaultTraceChunkProcessor,
                     self.endpoint.api_key.is_some(),
-                    TraceEncoding::V07,
                 );
 
                 let endpoint = Endpoint {

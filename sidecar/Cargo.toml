@@ -27,6 +27,7 @@ datadog-trace-normalization = { path = "../trace-normalization" }
 datadog-remote-config = { path = "../remote-config" }
 datadog-crashtracker = { path = "../crashtracker" }
 dogstatsd-client = { path = "../dogstatsd-client" }
+tinybytes = { path = "../tinybytes" }
 
 futures = { version = "0.3", default-features = false }
 manual_future = "0.1.1"
@@ -35,7 +36,7 @@ hyper = { version = "0.14", features = ["client"], default-features = false }
 lazy_static = "1.4"
 pin-project = "1"
 
-datadog-ipc = { path = "../ipc" }
+datadog-ipc = { path = "../ipc", features = ["tiny-bytes"] }
 datadog-ipc-macros = { path = "../ipc/macros" }
 
 rand = "0.8.3"

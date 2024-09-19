@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(all(unix, not(target_os = "macos")))]
 use std::os::unix::prelude::AsRawFd;
 use std::{ffi::CString, io};
+#[cfg(feature = "tiny-bytes")]
+use tinybytes::UnderlyingBytes;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ShmHandle {
@@ -202,6 +204,15 @@ impl From<ShmHandle> for PlatformHandle<OwnedFileHandle> {
 
 unsafe impl<T> Sync for MappedMem<T> where T: FileBackedHandle {}
 unsafe impl<T> Send for MappedMem<T> where T: FileBackedHandle {}
+
+impl AsRef<[u8]> for MappedMem<ShmHandle> {
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+#[cfg(feature = "tiny-bytes")]
+impl UnderlyingBytes for MappedMem<ShmHandle> {}
 
 #[cfg(test)]
 mod tests {
