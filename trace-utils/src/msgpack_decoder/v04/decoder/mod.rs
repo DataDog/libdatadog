@@ -491,6 +491,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_decoder_read_string_wrong_format() {
         let span = Span {
             service: BytesString::from_slice("my_service".as_ref()).unwrap(),
@@ -510,6 +511,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_decoder_read_string_utf8_error() {
         let invalid_seq = vec![0, 159, 146, 150];
         let invalid_str = unsafe { String::from_utf8_unchecked(invalid_seq) };
@@ -530,6 +532,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_decoder_invalid_marker_for_trace_count_read() {
         let span = Span::default();
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -547,6 +550,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_decoder_invalid_marker_for_span_count_read() {
         let span = Span::default();
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -564,6 +568,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_decoder_read_string_type_mismatch() {
         let span = Span::default();
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -581,6 +586,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn fuzz_from_slice() {
         check!()
             .with_type::<(
