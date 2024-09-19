@@ -26,7 +26,7 @@ fn bench_is_card_number(c: &mut Criterion, function_name: &str, validate_luhn: b
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(2));
     group.sampling_mode(criterion::SamplingMode::Flat);
-    group.sample_size(2000);
+    group.sample_size(200);
     let ccs = [
         "378282246310005",
         "  378282246310005",
