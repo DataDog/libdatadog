@@ -1,10 +1,12 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::no_alloc_span::Span;
 use crate::{
     msgpack_decoder,
     trace_utils::{cmp_send_data_payloads, collect_trace_chunks, TracerHeaderTags},
 };
+use bytes::Bytes;
 use datadog_trace_protobuf::pb;
 use std::cmp::Ordering;
 
@@ -272,6 +274,32 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
             _ => todo!("Encodings other than TraceEncoding::V04 not implemented yet."),
         }
     }
+}
+// TODO: EK - Integrate into TracerPayloadCollection
+pub fn msgpack_to_tracer_payload_collection_no_alloc(
+    data: Bytes,
+) -> Result<Vec<Vec<Span>>, anyhow::Error> {
+    let traces = match msgpack_decoder::no_alloc_v04::decoder::from_slice(data) {
+        Ok(res) => res,
+        Err(e) => anyhow::bail!("Error deserializing trace from request body: {e}"),
+    };
+
+    Ok(traces)
+}
+
+pub fn msgpack_to_tracer_payload_collection(
+    data: &[u8],
+) -> Result<Vec<TracerPayloadV04>, anyhow::Error> {
+    
+    let mut data_slice: &[u8] = data;
+    let mut_data: &mut &[u8] = &mut data_slice;
+    
+    let traces = match msgpack_decoder::v04::decoder::from_slice(mut_data) {
+        Ok(res) => res,
+        Err(e) => anyhow::bail!("Error deserializing trace from request body: {e}"),
+    };
+
+    Ok(traces)
 }
 
 #[cfg(test)]

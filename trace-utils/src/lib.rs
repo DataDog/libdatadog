@@ -3,6 +3,8 @@
 
 pub mod config_utils;
 pub mod msgpack_decoder;
+pub mod no_alloc_span;
+mod no_alloc_string;
 pub mod send_data;
 pub mod stats_utils;
 #[cfg(any(test, feature = "test-utils"))]
