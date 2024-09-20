@@ -47,6 +47,7 @@ use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
 use datadog_remote_config::fetch::ConfigInvariants;
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
+use tinybytes;
 
 type NoResponse = Ready<()>;
 
@@ -248,7 +249,12 @@ impl SidecarServer {
             .expect("Unable to acquire lock on sessions")
     }
 
-    fn send_trace_v04(&self, headers: &SerializedTracerHeaderTags, data: &[u8], target: &Endpoint) {
+    fn send_trace_v04(
+        &self,
+        headers: &SerializedTracerHeaderTags,
+        data: tinybytes::Bytes,
+        target: &Endpoint,
+    ) {
         let headers: TracerHeaderTags = match headers.try_into() {
             Ok(headers) => headers,
             Err(e) => {
@@ -741,7 +747,7 @@ impl SidecarInterface for SidecarServer {
         _: Context,
         instance_id: InstanceId,
         handle: ShmHandle,
-        len: usize,
+        _len: usize,
         headers: SerializedTracerHeaderTags,
     ) -> Self::SendTraceV04ShmFut {
         if let Some(endpoint) = self
@@ -753,7 +759,8 @@ impl SidecarInterface for SidecarServer {
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
-                        self.send_trace_v04(&headers, &mapped.as_slice()[..len], &endpoint);
+                        let bytes = tinybytes::Bytes::from(mapped);
+                        self.send_trace_v04(&headers, bytes, &endpoint);
                     }
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                 }
@@ -779,7 +786,8 @@ impl SidecarInterface for SidecarServer {
             .clone()
         {
             tokio::spawn(async move {
-                self.send_trace_v04(&headers, data.as_slice(), &endpoint);
+                let bytes = tinybytes::Bytes::from(data);
+                self.send_trace_v04(&headers, bytes, &endpoint);
             });
         }
 

@@ -7,7 +7,7 @@ use datadog_trace_utils::trace_utils::{
     self, compute_top_level_span, has_top_level, SendData, TracerHeaderTags,
 };
 use datadog_trace_utils::tracer_payload;
-use datadog_trace_utils::tracer_payload::TraceEncoding;
+use datadog_trace_utils::tracer_payload::TraceCollection;
 use ddcommon::{connector, Endpoint};
 use hyper::http::uri::PathAndQuery;
 use hyper::{Body, Client, Method, Uri};
@@ -362,11 +362,10 @@ impl TraceExporter {
             ),
             TraceExporterOutputFormat::V07 => {
                 let tracer_payload = trace_utils::collect_trace_chunks(
-                    traces,
+                    TraceCollection::V07(traces),
                     &header_tags,
                     &mut tracer_payload::DefaultTraceChunkProcessor,
                     self.endpoint.api_key.is_some(),
-                    TraceEncoding::V07,
                 );
 
                 let endpoint = Endpoint {

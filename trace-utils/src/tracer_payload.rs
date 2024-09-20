@@ -1,14 +1,16 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::span_v04::Span;
 use crate::{
     msgpack_decoder,
     trace_utils::{cmp_send_data_payloads, collect_trace_chunks, TracerHeaderTags},
 };
 use datadog_trace_protobuf::pb;
 use std::cmp::Ordering;
+use tinybytes;
 
-pub type TracerPayloadV04 = Vec<pb::Span>;
+pub type TracerPayloadV04 = Vec<Span>;
 
 #[derive(Debug, Clone)]
 /// Enumerates the different encoding types.
@@ -17,6 +19,12 @@ pub enum TraceEncoding {
     V04,
     /// v0.7 encoding (TracerPayload).
     V07,
+}
+
+/// A collection of traces before they are turned into TraceChunks.
+pub enum TraceCollection {
+    V07(Vec<Vec<pb::Span>>),
+    V04(Vec<Vec<Span>>),
 }
 
 #[derive(Debug, Clone)]
@@ -159,8 +167,8 @@ impl TraceChunkProcessor for DefaultTraceChunkProcessor {
 /// the conversion process, handling different encoding types and ensuring that all required
 /// data is available for the conversion.
 pub struct TracerPayloadParams<'a, T: TraceChunkProcessor + 'a> {
-    /// A byte slice containing the serialized msgpack data.
-    data: &'a [u8],
+    /// A tinybytes::Bytes slice containing the serialized msgpack data.
+    data: tinybytes::Bytes,
     /// Reference to `TracerHeaderTags` containing metadata for the trace.
     tracer_header_tags: &'a TracerHeaderTags<'a>,
     /// A mutable reference to an implementation of `TraceChunkProcessor` that processes each
@@ -177,7 +185,7 @@ pub struct TracerPayloadParams<'a, T: TraceChunkProcessor + 'a> {
 
 impl<'a, T: TraceChunkProcessor + 'a> TracerPayloadParams<'a, T> {
     pub fn new(
-        data: &'a [u8],
+        data: tinybytes::Bytes,
         tracer_header_tags: &'a TracerHeaderTags,
         chunk_processor: &'a mut T,
         is_agentless: bool,
@@ -223,12 +231,13 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
     ///     DefaultTraceChunkProcessor, TraceEncoding, TracerPayloadCollection, TracerPayloadParams,
     /// };
     /// use std::convert::TryInto;
-    ///
-    /// let data = &[/* msgpack data */];
-    ///
+    /// use tinybytes;
+    /// // This will likely be a &[u8] slice in practice.
+    /// let data: Vec<u8> = Vec::new();
+    /// let data_as_bytes = tinybytes::Bytes::from(data);
     /// let tracer_header_tags = &TracerHeaderTags::default();
     /// let result: Result<TracerPayloadCollection, _> = TracerPayloadParams::new(
-    ///     data,
+    ///     data_as_bytes,
     ///     tracer_header_tags,
     ///     &mut DefaultTraceChunkProcessor,
     ///     false,
@@ -244,13 +253,8 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
     fn try_into(self) -> Result<TracerPayloadCollection, Self::Error> {
         match self.encoding_type {
             TraceEncoding::V04 => {
-                // msgpack::decoder::from_slice requires a mutable ref to self.data, so we need to
-                // create a local copy of the ref to make the ref mutable
-                let mut data_slice: &[u8] = self.data;
-                let data: &mut &[u8] = &mut data_slice;
-
-                let traces: Vec<Vec<pb::Span>> =
-                    match msgpack_decoder::v04::decoder::from_slice(data) {
+                let traces: Vec<Vec<Span>> =
+                    match msgpack_decoder::v04::decoder::from_slice(self.data) {
                         Ok(res) => res,
                         Err(e) => {
                             anyhow::bail!("Error deserializing trace from request body: {e}")
@@ -262,11 +266,10 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
                 }
 
                 Ok(collect_trace_chunks(
-                    traces,
+                    TraceCollection::V04(traces),
                     self.tracer_header_tags,
                     self.chunk_processor,
                     self.is_agentless,
-                    TraceEncoding::V04,
                 ))
             }
             _ => todo!("Encodings other than TraceEncoding::V04 not implemented yet."),
@@ -277,10 +280,11 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::create_test_span;
+    use crate::test_utils::create_test_no_alloc_span;
     use datadog_trace_protobuf::pb;
     use serde_json::json;
     use std::collections::HashMap;
+    use tinybytes::BytesString;
 
     fn create_dummy_collection_v07() -> TracerPayloadCollection {
         TracerPayloadCollection::V07(vec![pb::TracerPayload {
@@ -303,12 +307,12 @@ mod tests {
         }])
     }
 
-    fn create_trace() -> Vec<pb::Span> {
+    fn create_trace() -> Vec<Span> {
         vec![
             // create a root span with metrics
-            create_test_span(1234, 12341, 0, 1, true),
-            create_test_span(1234, 12342, 12341, 1, false),
-            create_test_span(1234, 12343, 12342, 1, false),
+            create_test_no_alloc_span(1234, 12341, 0, 1, true),
+            create_test_no_alloc_span(1234, 12342, 12341, 1, false),
+            create_test_no_alloc_span(1234, 12343, 12342, 1, false),
         ]
     }
 
@@ -331,7 +335,7 @@ mod tests {
     #[test]
     fn test_append_traces_v04() {
         let mut trace =
-            TracerPayloadCollection::V04(vec![vec![create_test_span(0, 1, 0, 2, true)]]);
+            TracerPayloadCollection::V04(vec![vec![create_test_no_alloc_span(0, 1, 0, 2, true)]]);
 
         let empty = TracerPayloadCollection::V04(vec![]);
 
@@ -378,10 +382,10 @@ mod tests {
             "type": "serverless",
         }]);
 
-        let expected_serialized_span_data1 = vec![pb::Span {
-            service: "test-service".to_string(),
-            name: "test-service-name".to_string(),
-            resource: "test-service-resource".to_string(),
+        let expected_serialized_span_data1 = vec![Span {
+            service: BytesString::from_slice("test-service".as_ref()).unwrap(),
+            name: BytesString::from_slice("test-service-name".as_ref()).unwrap(),
+            resource: BytesString::from_slice("test-service-resource".as_ref()).unwrap(),
             trace_id: 111,
             span_id: 222,
             parent_id: 100,
@@ -391,7 +395,7 @@ mod tests {
             meta: HashMap::new(),
             metrics: HashMap::new(),
             meta_struct: HashMap::new(),
-            r#type: "serverless".to_string(),
+            r#type: BytesString::from_slice("serverless".as_ref()).unwrap(),
             span_links: vec![],
         }];
 
@@ -410,10 +414,10 @@ mod tests {
             "type": "",
         }]);
 
-        let expected_serialized_span_data2 = vec![pb::Span {
-            service: "test-service".to_string(),
-            name: "test-service-name".to_string(),
-            resource: "test-service-resource".to_string(),
+        let expected_serialized_span_data2 = vec![Span {
+            service: BytesString::from_slice("test-service".as_ref()).unwrap(),
+            name: BytesString::from_slice("test-service-name".as_ref()).unwrap(),
+            resource: BytesString::from_slice("test-service-resource".as_ref()).unwrap(),
             trace_id: 111,
             span_id: 333,
             parent_id: 100,
@@ -423,17 +427,18 @@ mod tests {
             meta: HashMap::new(),
             metrics: HashMap::new(),
             meta_struct: HashMap::new(),
-            r#type: "".to_string(),
+            r#type: BytesString::default(),
             span_links: vec![],
         }];
 
         let data = rmp_serde::to_vec(&vec![span_data1, span_data2])
             .expect("Failed to serialize test span.");
+        let data = tinybytes::Bytes::from(data);
 
         let tracer_header_tags = &TracerHeaderTags::default();
 
         let result: anyhow::Result<TracerPayloadCollection> = TracerPayloadParams::new(
-            &data,
+            data,
             tracer_header_tags,
             &mut DefaultTraceChunkProcessor,
             false,
@@ -459,10 +464,11 @@ mod tests {
         let dummy_trace = create_trace();
         let expected = vec![dummy_trace.clone()];
         let payload = rmp_serde::to_vec_named(&expected).unwrap();
+        let payload = tinybytes::Bytes::from(payload);
         let tracer_header_tags = &TracerHeaderTags::default();
 
         let result: anyhow::Result<TracerPayloadCollection> = TracerPayloadParams::new(
-            &payload,
+            payload,
             tracer_header_tags,
             &mut DefaultTraceChunkProcessor,
             false,
