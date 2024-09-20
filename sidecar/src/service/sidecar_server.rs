@@ -864,6 +864,8 @@ impl SidecarInterface for SidecarServer {
         app_version: String,
         global_tags: Vec<Tag>,
     ) -> Self::SetRemoteConfigDataFut {
+        debug!("Registered remote config metadata: instance {instance_id:?}, queue_id: {queue_id:?}, service: {service_name}, env: {env_name}, version: {app_version}");
+
         let session = self.get_session(&instance_id.session_id);
         #[cfg(windows)]
         let notify_target = if let Some(handle) = self.process_handle {

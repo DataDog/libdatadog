@@ -12,6 +12,7 @@ use futures::future;
 
 use datadog_live_debugger::sender::{DebuggerType, PayloadSender};
 use datadog_remote_config::fetch::ConfigInvariants;
+use tracing::log::warn;
 use tracing::{debug, error, info, trace};
 
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
@@ -286,7 +287,14 @@ impl SessionInfo {
                         error!("Error sending to live debugger {debugger_type:?} endpoint: {e:?}");
                     }
                 );
+            } else {
+                warn!("Did not find queue_id {queue_id:?} for runtime id {runtime_id} od session id {} - skipping live debugger data", self.session_id);
             }
+        } else {
+            warn!(
+                "Did not find runtime {runtime_id} for session id {} - skipping live debugger data",
+                self.session_id
+            );
         }
     }
 }
