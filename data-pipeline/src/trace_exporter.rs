@@ -1,6 +1,9 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-use crate::{span_concentrator::SpanConcentrator, stats_exporter};
+use crate::{
+    health_metrics, health_metrics::HealthMetric, span_concentrator::SpanConcentrator,
+    stats_exporter,
+};
 use bytes::Bytes;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils::{
@@ -45,13 +48,6 @@ pub enum TraceExporterOutputFormat {
     #[allow(missing_docs)]
     V07,
 }
-
-// internal health metrics
-const STAT_SEND_TRACES: &str = "datadog.libdatadog.send.traces";
-const STAT_SEND_TRACES_ERRORS: &str = "datadog.libdatadog.send.traces.errors";
-const STAT_DESER_TRACES: &str = "datadog.libdatadog.deser_traces";
-const STAT_DESER_TRACES_ERRORS: &str = "datadog.libdatadog.deser_traces.errors";
-const STAT_SER_TRACES_ERRORS: &str = "datadog.libdatadog.ser_traces.errors";
 
 impl TraceExporterOutputFormat {
     /// Add the agent trace endpoint path to the URL.
@@ -158,11 +154,6 @@ impl<'a> From<&'a TracerTags> for HashMap<&'static str, String> {
     }
 }
 
-enum HealthMetric {
-    Count(&'static str, i64),
-    //TODO: Add more DogStatsDAction as we need them
-}
-
 enum StatsComputationStatus {
     StatsDisabled,
     StatsEnabled {
@@ -199,7 +190,7 @@ pub struct TraceExporter {
     // TODO - do something with the response callback - https://datadoghq.atlassian.net/browse/APMSP-1019
     _response_callback: Option<Box<dyn ResponseCallback>>,
     runtime: Runtime,
-    // None if dogstatsd is disabled
+    /// None if dogstatsd is disabled
     dogstatsd: Option<Flusher>,
     common_stats_tags: Vec<Tag>,
     client_computed_top_level: bool,
@@ -295,29 +286,44 @@ impl TraceExporter {
                 {
                     Ok(response) => {
                         let response_status = response.status();
-                        if response_status != http::StatusCode::OK {
+                        if !response_status.is_success() {
                             let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
                             let response_body =
                                 String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                            self.emit_metric(
-                                HealthMetric::Count(STAT_SEND_TRACES_ERRORS, 1),
-                                Some(vec![
-                                    &Tag::new("response_code", response_status.as_str()).unwrap()
-                                ]),
-                            );
+                            let resp_tag_res = &Tag::new("response_code", response_status.as_str());
+                            match resp_tag_res {
+                                Ok(resp_tag) => {
+                                    self.emit_metric(
+                                        HealthMetric::Count(
+                                            health_metrics::STAT_SEND_TRACES_ERRORS,
+                                            1,
+                                        ),
+                                        Some(vec![&resp_tag]),
+                                    );
+                                }
+                                Err(tag_err) => {
+                                    // This should really never happen as response_status is a
+                                    // `NonZeroU16`, but if the response status or tag requirements
+                                    // ever change in the future we still don't want to panic.
+                                    error!("Failed to serialize response_code to tag {}", tag_err)
+                                }
+                            }
                             anyhow::bail!("Agent did not accept traces: {response_body}");
                         }
                         match hyper::body::to_bytes(response.into_body()).await {
                             Ok(body) => {
                                 self.emit_metric(
-                                    HealthMetric::Count(STAT_SEND_TRACES, trace_count as i64),
+                                    HealthMetric::Count(
+                                        health_metrics::STAT_SEND_TRACES,
+                                        trace_count as i64,
+                                    ),
                                     None,
                                 );
                                 Ok(String::from_utf8_lossy(&body).to_string())
                             }
                             Err(err) => {
                                 self.emit_metric(
-                                    HealthMetric::Count(STAT_SEND_TRACES_ERRORS, 1),
+                                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
                                     None,
                                 );
                                 anyhow::bail!("Error reading agent response body: {err}");
@@ -325,7 +331,10 @@ impl TraceExporter {
                         }
                     }
                     Err(err) => {
-                        self.emit_metric(HealthMetric::Count(STAT_SEND_TRACES_ERRORS, 1), None);
+                        self.emit_metric(
+                            HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                            None,
+                        );
                         anyhow::bail!("Failed to send traces: {err}")
                     }
                 }
@@ -375,7 +384,10 @@ impl TraceExporter {
             Ok(res) => res,
             Err(err) => {
                 error!("Error deserializing trace from request body: {err}");
-                self.emit_metric(HealthMetric::Count(STAT_DESER_TRACES_ERRORS, 1), None);
+                self.emit_metric(
+                    HealthMetric::Count(health_metrics::STAT_DESER_TRACES_ERRORS, 1),
+                    None,
+                );
                 return Ok(String::from("{}"));
             }
         };
@@ -386,7 +398,7 @@ impl TraceExporter {
         }
 
         self.emit_metric(
-            HealthMetric::Count(STAT_DESER_TRACES, traces.len() as i64),
+            HealthMetric::Count(health_metrics::STAT_DESER_TRACES, traces.len() as i64),
             None,
         );
 
@@ -409,7 +421,10 @@ impl TraceExporter {
             TraceExporterOutputFormat::V04 => rmp_serde::to_vec_named(&traces)
                 .map_err(|err| {
                     error!("Error serializing traces: {err}");
-                    self.emit_metric(HealthMetric::Count(STAT_SER_TRACES_ERRORS, 1), None);
+                    self.emit_metric(
+                        HealthMetric::Count(health_metrics::STAT_SER_TRACES_ERRORS, 1),
+                        None,
+                    );
                     String::from("{}")
                 })
                 .and_then(|res| {
@@ -440,7 +455,7 @@ impl TraceExporter {
                             Err(err) => {
                                 error!("Error reading agent response body: {err}");
                                 self.emit_metric(
-                                    HealthMetric::Count(STAT_SEND_TRACES_ERRORS, 1),
+                                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
                                     None,
                                 );
                                 Ok(String::from("{}"))
@@ -448,7 +463,10 @@ impl TraceExporter {
                         },
                         Err(err) => {
                             error!("Error sending traces: {err}");
-                            self.emit_metric(HealthMetric::Count(STAT_SEND_TRACES_ERRORS, 1), None);
+                            self.emit_metric(
+                                HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                                None,
+                            );
                             Ok(String::from("{}"))
                         }
                     }

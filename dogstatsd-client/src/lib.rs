@@ -67,20 +67,17 @@ pub enum DogStatsDAction<'a, T: AsRef<str>, V: IntoIterator<Item = &'a Tag>> {
     Set(T, i64, V),
 }
 
-/// A dogstatsd-client that flushes stats to a given endpoint.
-/// The default value has no address and is thus disabled, use `new_flusher` or `set_endpoint` to
-/// configure an endpoint.
-#[derive(Default)]
+/// A dogstatsd-client that flushes stats to a given endpoint. Use `new_flusher` to build one.
 pub struct Flusher {
-    client: Option<StatsdClient>,
+    client: StatsdClient,
 }
 
 /// Build a new flusher instance pointed at the provided endpoint.
 /// Returns error if the provided endpoint is not valid.
 pub fn new_flusher(endpoint: Endpoint) -> anyhow::Result<Flusher> {
-    let mut f = Flusher::default();
-    f.set_endpoint(endpoint)?;
-    Ok(f)
+    Ok(Flusher {
+        client: create_client(&endpoint)?,
+    })
 }
 
 impl Flusher {
@@ -91,11 +88,11 @@ impl Flusher {
         self.client = match endpoint.api_key {
             Some(_) => {
                 info!("DogStatsD is not available in agentless mode");
-                None
+                anyhow::bail!("DogStatsD is not available in agentless mode");
             }
             None => {
                 debug!("Updating DogStatsD endpoint to {}", endpoint.url);
-                Some(create_client(&endpoint)?)
+                create_client(&endpoint)?
             }
         };
         Ok(())
@@ -104,10 +101,7 @@ impl Flusher {
     /// Send a vector of DogStatsDActionOwned, this is the same as `send` except it uses the "owned"
     /// version of DogStatsDAction. See the docs for DogStatsDActionOwned for details.
     pub fn send_owned(&self, actions: Vec<DogStatsDActionOwned>) {
-        if self.client.is_none() {
-            return;
-        }
-        let client = self.client.as_ref().unwrap();
+        let client = &self.client;
 
         for action in actions {
             if let Err(err) = match action {
@@ -138,10 +132,7 @@ impl Flusher {
         &self,
         actions: Vec<DogStatsDAction<'a, T, V>>,
     ) {
-        if self.client.is_none() {
-            return;
-        }
-        let client = self.client.as_ref().unwrap();
+        let client = &self.client;
 
         for action in actions {
             if let Err(err) = match action {
@@ -228,7 +219,7 @@ fn create_client(endpoint: &Endpoint) -> anyhow::Result<StatsdClient> {
 #[cfg(test)]
 mod test {
     use crate::DogStatsDAction::{Count, Distribution, Gauge, Histogram, Set};
-    use crate::{create_client, DogStatsDActionOwned, Flusher};
+    use crate::{create_client, new_flusher, DogStatsDActionOwned};
     #[cfg(unix)]
     use ddcommon::connector::uds::socket_path_to_uri;
     use ddcommon::{tag, Endpoint};
@@ -243,10 +234,10 @@ mod test {
         let socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
         let _ = socket.set_read_timeout(Some(Duration::from_millis(500)));
 
-        let mut flusher = Flusher::default();
-        _ = flusher.set_endpoint(Endpoint::from_slice(
+        let flusher = new_flusher(Endpoint::from_slice(
             socket.local_addr().unwrap().to_string().as_str(),
-        ));
+        ))
+        .unwrap();
         flusher.send(vec![
             Count("test_count", 3, &vec![tag!("foo", "bar")]),
             Count("test_neg_count", -2, &vec![]),

@@ -46,7 +46,7 @@ use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
 use datadog_remote_config::fetch::ConfigInvariants;
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
-use dogstatsd_client::DogStatsDActionOwned;
+use dogstatsd_client::{new_flusher, DogStatsDActionOwned};
 use tinybytes;
 
 type NoResponse = Ready<()>;
@@ -670,9 +670,8 @@ impl SidecarInterface for SidecarServer {
             cfg.set_endpoint(endpoint).ok();
         });
         session.configure_dogstatsd(|dogstatsd| {
-            dogstatsd
-                .set_endpoint(config.dogstatsd_endpoint.clone())
-                .ok();
+            let d = new_flusher(config.dogstatsd_endpoint.clone()).ok();
+            *dogstatsd = d;
         });
         session.set_remote_config_invariants(ConfigInvariants {
             language: config.language,
@@ -853,7 +852,8 @@ impl SidecarInterface for SidecarServer {
         tokio::spawn(async move {
             self.get_session(&instance_id.session_id)
                 .get_dogstatsd()
-                .send_owned(actions);
+                .as_ref()
+                .inspect(|f| f.send_owned(actions));
         });
 
         no_response()
