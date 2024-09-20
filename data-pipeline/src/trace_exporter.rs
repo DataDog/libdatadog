@@ -16,7 +16,7 @@ use ddcommon::{connector, tag, Endpoint};
 use dogstatsd_client::{new_flusher, DogStatsDAction, Flusher};
 use either::Either;
 use hyper::http::uri::PathAndQuery;
-use hyper::{http, Body, Client, Method, Uri};
+use hyper::{Body, Client, Method, Uri};
 use log::error;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
