@@ -20,7 +20,7 @@ ENV CARGO_HOME="/root/.cargo"
 WORKDIR /build
 
 RUN apk update \
-    && apk add --no-cache \
+  && apk add --no-cache \
     build-base \
     cargo \
     cmake \
@@ -33,7 +33,7 @@ RUN apk update \
     unzip \
     bash \
     clang16-libclang \
-    && mkdir /usr/local/src
+  && mkdir /usr/local/src
 
 # Tell docker to use bash as the default
 SHELL ["/bin/bash", "-c"]
@@ -45,7 +45,7 @@ SHELL ["/bin/bash", "-c"]
 
 FROM alpine_base as alpine_aws_cli
 RUN apk add --no-cache aws-cli \
-    && rm -rf /var/cache/apk/*
+  && rm -rf /var/cache/apk/*
 
 RUN aws --version   # Just to make sure its installed alright
 

@@ -54,21 +54,21 @@ jobs:
       - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --exclude builder --verbose"
         shell: bash
         run: cargo build --workspace --exclude builder --verbose
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --exclude builder --profile ci --verbose -E '!test(::require_test_agent::)'"
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --exclude builder --profile ci --verbose -E '!test(require_test_agent::)'"
         shell: bash
         # Run doc tests with cargo test and run tests with nextest and generate junit.xml
-        run: cargo test --workspace --exclude builder --doc --verbose && cargo nextest run --workspace --exclude builder --profile ci --verbose -E '!test(::require_test_agent::)'
+        run: cargo test --workspace --exclude builder --doc --verbose && cargo nextest run --workspace --exclude builder --profile ci --verbose -E '!test(require_test_agent::)'
         env:
           RUST_BACKTRACE: 1
-      - name: "[${{ steps.rust-version.outputs.version}}] Test agent tests: cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(::require_test_agent::)'"
+      - name: "[${{ steps.rust-version.outputs.version}}] Test agent tests: cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(require_test_agent::)'"
         if: runner.os == 'Linux'
         shell: bash
-        run: cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(::require_test_agent::)'
+        run: cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(require_test_agent::)'
         env:
           RUST_BACKTRACE: 1
-      - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(::require_test_agent::)'"
+      - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(require_test_agent::)'"
         shell: bash
-        run: cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(::require_test_agent::)'
+        run: cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(require_test_agent::)'
         env:
           RUSTFLAGS: "-C prefer-dynamic"
           RUST_BACKTRACE: 1
@@ -220,8 +220,8 @@ jobs:
           rust_version: cross-centos7
       - run: cargo install cross || true
       - run: cross build --workspace --target x86_64-unknown-linux-gnu --exclude builder 
-      - run: cross test --workspace --target x86_64-unknown-linux-gnu --exclude builder  -- --skip "::single_threaded_tests::" --skip "::require_test_agent::"
-      - run: cross test --workspace --target x86_64-unknown-linux-gnu --exclude builder --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1 --skip "::require_test_agent::"
+      - run: cross test --workspace --target x86_64-unknown-linux-gnu --exclude builder  -- --skip "::single_threaded_tests::" --skip "require_test_agent::"
+      - run: cross test --workspace --target x86_64-unknown-linux-gnu --exclude builder --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1 --skip "require_test_agent::"
 
   ffi_bake:
     strategy:

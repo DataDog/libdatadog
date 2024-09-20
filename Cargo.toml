@@ -34,7 +34,6 @@ members = [
   "data-pipeline-ffi",
   "ddsketch",
   "tinybytes",
-  "agent-info",
 ]
 
 default-members = [
