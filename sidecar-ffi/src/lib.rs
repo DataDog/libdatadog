@@ -490,7 +490,6 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     flush_interval_milliseconds: u32,
     remote_config_poll_interval_millis: u32,
     telemetry_heartbeat_interval_millis: u32,
-    exception_hash_rate_limiter_seconds: u32,
     force_flush_size: usize,
     force_drop_size: usize,
     log_level: ffi::CharSlice,
@@ -522,7 +521,6 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             telemetry_heartbeat_interval: Duration::from_millis(
                 telemetry_heartbeat_interval_millis as u64
             ),
-            exception_hash_rate_limiter_seconds,
             force_flush_size,
             force_drop_size,
             log_level: log_level.to_utf8_lossy().into(),

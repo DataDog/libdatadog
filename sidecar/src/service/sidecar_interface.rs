@@ -14,6 +14,7 @@ use datadog_ipc::tarpc;
 use datadog_live_debugger::sender::DebuggerType;
 use ddcommon::tag::Tag;
 use dogstatsd_client::DogStatsDActionOwned;
+use std::time::Duration;
 
 // This is a bit weird, but depending on the OS we're interested in different things...
 // and the macro expansion is not going to be happy with #[cfg()] instructions inside them.
@@ -134,7 +135,8 @@ pub trait SidecarInterface {
     ///
     /// # Arguments
     /// * `exception_hash` - the ID
-    async fn acquire_exception_hash_rate_limiter(exception_hash: u64);
+    /// * `granularity` - how much time needs to pass between two exceptions
+    async fn acquire_exception_hash_rate_limiter(exception_hash: u64, granularity: Duration);
 
     /// Sets contextual data for the remote config client.
     ///

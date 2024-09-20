@@ -94,6 +94,7 @@ pub struct RemoteConfigs(
 pub type RemoteConfigsGuard = ShmRemoteConfigsGuard<RemoteConfigNotifyTarget>;
 
 impl RemoteConfigs {
+    #[allow(clippy::too_many_arguments)]
     pub fn add_runtime(
         &self,
         invariants: ConfigInvariants,

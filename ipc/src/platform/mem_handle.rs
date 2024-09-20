@@ -211,12 +211,6 @@ impl From<ShmHandle> for PlatformHandle<OwnedFileHandle> {
 unsafe impl<T> Sync for MappedMem<T> where T: FileBackedHandle {}
 unsafe impl<T> Send for MappedMem<T> where T: FileBackedHandle {}
 
-impl AsRef<[u8]> for MappedMem<ShmHandle> {
-    fn as_ref(&self) -> &[u8] {
-        self.as_slice()
-    }
-}
-
 #[cfg(feature = "tiny-bytes")]
 impl UnderlyingBytes for MappedMem<ShmHandle> {}
 

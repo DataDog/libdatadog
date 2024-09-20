@@ -356,11 +356,16 @@ pub fn send_debugger_data_shm_vec(
 ///
 /// # Arguments
 /// * `exception_hash` - the ID
+/// * `granularity` - how much time needs to pass between two exceptions
 pub fn acquire_exception_hash_rate_limiter(
     transport: &mut SidecarTransport,
     exception_hash: u64,
+    granularity: Duration,
 ) -> io::Result<()> {
-    transport.send(SidecarInterfaceRequest::AcquireExceptionHashRateLimiter { exception_hash })
+    transport.send(SidecarInterfaceRequest::AcquireExceptionHashRateLimiter {
+        exception_hash,
+        granularity,
+    })
 }
 
 /// Sets the state of the current remote config operation.

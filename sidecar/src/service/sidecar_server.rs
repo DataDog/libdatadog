@@ -31,6 +31,7 @@ use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use futures::FutureExt;
@@ -841,8 +842,12 @@ impl SidecarInterface for SidecarServer {
         self,
         _: Context,
         exception_hash: u64,
+        granularity: Duration,
     ) -> Self::AcquireExceptionHashRateLimiterFut {
-        EXCEPTION_HASH_LIMITER.lock().unwrap().add(exception_hash);
+        EXCEPTION_HASH_LIMITER
+            .lock()
+            .unwrap()
+            .add(exception_hash, granularity);
 
         no_response()
     }

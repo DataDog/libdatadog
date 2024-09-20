@@ -7,7 +7,7 @@ use ddcommon::rate_limiter::Limiter;
 use lazy_static::lazy_static;
 use std::ffi::CString;
 use std::io;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -15,8 +15,6 @@ lazy_static! {
     pub(crate) static ref EXCEPTION_HASH_LIMITER: Mutex<ManagedExceptionHashRateLimiter> =
         Mutex::new(ManagedExceptionHashRateLimiter::create().unwrap());
 }
-
-pub(crate) static EXCEPTION_HASH_GRANULARITY: AtomicU32 = AtomicU32::new(3600);
 
 pub(crate) struct ManagedExceptionHashRateLimiter {
     limiter: ExceptionHashRateLimiter,
@@ -54,8 +52,8 @@ impl ManagedExceptionHashRateLimiter {
         })
     }
 
-    pub fn add(&mut self, hash: u64) {
-        let limiter = self.limiter.add(hash);
+    pub fn add(&mut self, hash: u64, granularity: Duration) {
+        let limiter = self.limiter.add(hash, granularity);
         self.active.push(limiter);
     }
 }
@@ -95,9 +93,10 @@ impl ExceptionHashRateLimiter {
         })
     }
 
-    fn add(&mut self, hash: u64) -> HashLimiter {
-        let seconds = EXCEPTION_HASH_GRANULARITY.load(Ordering::Relaxed);
-        let allocated = self.mem.alloc_with_granularity(seconds);
+    fn add(&mut self, hash: u64, granularity: Duration) -> HashLimiter {
+        let allocated = self
+            .mem
+            .alloc_with_granularity(granularity.as_secs() as u32);
         let data = allocated.data();
         data.hash.store(hash, Ordering::Relaxed);
         allocated.inc(1);
