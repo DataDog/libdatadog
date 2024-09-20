@@ -128,6 +128,7 @@ fn test_bytes_slice_ref_is_shallow() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_bytes_drop_frees_underlying() {
     let underlying = CountingU8::new(vec![1, 2, 3, 4, 5].into());
     let counter = underlying.counter();
