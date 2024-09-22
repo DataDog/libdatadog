@@ -8,7 +8,7 @@ use std::collections::HashMap;
 #[derive(Serialize, Deserialize)]
 pub struct DebuggerPayload<'a> {
     pub service: Cow<'a, str>,
-    pub source: &'static str,
+    pub ddsource: &'static str,
     pub timestamp: u64,
     pub debugger: DebuggerData<'a>,
     pub message: Option<Cow<'a, str>>,
@@ -126,7 +126,7 @@ pub struct Diagnostics<'a> {
     pub runtime_id: Cow<'a, str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<Cow<'a, str>>,
-    pub version: u64,
+    pub probe_version: u64,
     pub status: ProbeStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exception: Option<DiagnosticsError<'a>>,
