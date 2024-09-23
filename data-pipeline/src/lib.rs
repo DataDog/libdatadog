@@ -10,4 +10,6 @@ pub mod agent_info;
 #[allow(missing_docs)]
 pub mod span_concentrator;
 #[allow(missing_docs)]
+pub mod stats_exporter;
+#[allow(missing_docs)]
 pub mod trace_exporter;
