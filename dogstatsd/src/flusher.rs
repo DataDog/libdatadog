@@ -22,10 +22,9 @@ impl Flusher {
         api_key: String,
         aggregator: Arc<Mutex<Aggregator>>,
         site: String,
-        http_proxy: Option<String>,
         https_proxy: Option<String>,
     ) -> Self {
-        let dd_api = datadog::DdApi::new(api_key, site, http_proxy, https_proxy);
+        let dd_api = datadog::DdApi::new(api_key, site, https_proxy);
         Flusher { dd_api, aggregator }
     }
 

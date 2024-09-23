@@ -34,15 +34,9 @@ pub enum ShipError {
     Json(#[from] serde_json::Error),
 }
 
-fn build_http_client(
-    http_proxy: Option<String>,
-    https_proxy: Option<String>,
-) -> Result<reqwest::Client, reqwest::Error> {
+fn build_http_client(https_proxy: Option<String>) -> Result<reqwest::Client, reqwest::Error> {
     let client = reqwest::Client::builder();
-    if let Some(proxy_uri) = http_proxy {
-        let proxy = reqwest::Proxy::http(proxy_uri)?;
-        client.proxy(proxy).build()
-    } else if let Some(proxy_uri) = https_proxy {
+    if let Some(proxy_uri) = https_proxy {
         let proxy = reqwest::Proxy::https(proxy_uri)?;
         client.proxy(proxy).build()
     } else {
@@ -52,13 +46,8 @@ fn build_http_client(
 
 impl DdApi {
     #[must_use]
-    pub fn new(
-        api_key: String,
-        site: String,
-        http_proxy: Option<String>,
-        https_proxy: Option<String>,
-    ) -> Self {
-        let client = match build_http_client(http_proxy, https_proxy) {
+    pub fn new(api_key: String, site: String, https_proxy: Option<String>) -> Self {
+        let client = match build_http_client(https_proxy) {
             Ok(client) => client,
             Err(e) => {
                 error!(

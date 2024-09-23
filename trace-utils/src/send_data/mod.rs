@@ -17,7 +17,7 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hyper::header::HeaderValue;
 use hyper::{Body, Client, HeaderMap, Method, Response};
-use hyper_proxy::{Proxy, ProxyConnector, Intercept};
+use hyper_proxy::{Intercept, Proxy, ProxyConnector};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -123,7 +123,8 @@ pub fn build_client(http_proxy: Option<String>) -> ClientWrapper {
     let builder = Client::builder();
     if let Some(proxy) = http_proxy {
         let proxy = Proxy::new(Intercept::All, proxy.parse().unwrap());
-        let proxy_connector = ProxyConnector::from_proxy(connector::Connector::default(), proxy).unwrap();
+        let proxy_connector =
+            ProxyConnector::from_proxy(connector::Connector::default(), proxy).unwrap();
         ClientWrapper::Proxy(builder.build(proxy_connector))
     } else {
         ClientWrapper::Direct(builder.build(connector::Connector::default()))
@@ -167,7 +168,7 @@ impl SendData {
             target: target.clone(),
             headers,
             retry_strategy: RetryStrategy::default(),
-            client
+            client,
         }
     }
 
@@ -1044,7 +1045,7 @@ mod tests {
                 timeout_ms: 200,
                 ..Endpoint::default()
             },
-            None
+            None,
         );
 
         let res = data.send().await;

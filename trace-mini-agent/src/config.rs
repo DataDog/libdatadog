@@ -90,7 +90,7 @@ impl Config {
                 ..Default::default()
             },
             obfuscation_config,
-            proxy_url: env::var("HTTPS_PROXY").ok()
+            proxy_url: env::var("HTTPS_PROXY").ok(),
         })
     }
 }
