@@ -34,7 +34,6 @@ pub struct MiniAgent {
 }
 
 impl MiniAgent {
-    #[tokio::main]
     pub async fn start_mini_agent(&self) -> Result<(), Box<dyn std::error::Error>> {
         let now = Instant::now();
 
@@ -168,7 +167,7 @@ impl MiniAgent {
                     ),
                 }
             }
-            (_, INFO_ENDPOINT_PATH) => match Self::info_handler() {
+            (_, INFO_ENDPOINT_PATH) => match Self::info_handler(config.dd_dogstatsd_port) {
                 Ok(res) => Ok(res),
                 Err(err) => log_and_create_http_response(
                     &format!("Info endpoint error: {err}"),
@@ -183,7 +182,7 @@ impl MiniAgent {
         }
     }
 
-    fn info_handler() -> http::Result<Response<Body>> {
+    fn info_handler(dd_dogstatsd_port: u16) -> http::Result<Response<Body>> {
         let response_json = json!(
             {
                 "endpoints": [
@@ -193,7 +192,7 @@ impl MiniAgent {
                 ],
                 "client_drop_p0s": true,
                 "config": {
-                    "statsd_port": MINI_AGENT_PORT
+                    "statsd_port": dd_dogstatsd_port
                 }
             }
         );

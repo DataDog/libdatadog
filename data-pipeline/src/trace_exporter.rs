@@ -1,17 +1,22 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-
+use crate::{span_concentrator::SpanConcentrator, stats_exporter};
 use bytes::Bytes;
 use datadog_trace_protobuf::pb;
-use datadog_trace_utils::trace_utils::{self, SendData, TracerHeaderTags};
+use datadog_trace_utils::trace_utils::{
+    self, compute_top_level_span, has_top_level, SendData, TracerHeaderTags,
+};
 use datadog_trace_utils::tracer_payload;
-use datadog_trace_utils::tracer_payload::TraceEncoding;
+use datadog_trace_utils::tracer_payload::TraceCollection;
 use ddcommon::{connector, Endpoint};
 use hyper::http::uri::PathAndQuery;
 use hyper::{Body, Client, Method, Uri};
 use log::error;
-use std::{borrow::Borrow, collections::HashMap, str::FromStr};
-use tokio::runtime::Runtime;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use std::{borrow::Borrow, collections::HashMap, str::FromStr, time};
+use tokio::{runtime::Runtime, task::JoinHandle};
+use tokio_util::sync::CancellationToken;
 
 /// TraceExporterInputFormat represents the format of the input traces.
 /// The input format can be either Proxy or V0.4, where V0.4 is the default.
@@ -21,6 +26,7 @@ pub enum TraceExporterInputFormat {
     /// Proxy format is used when the traces are to be sent to the agent without processing them.
     /// The whole payload is sent as is to the agent.
     Proxy,
+    #[allow(missing_docs)]
     #[default]
     V04,
 }
@@ -30,8 +36,10 @@ pub enum TraceExporterInputFormat {
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[repr(C)]
 pub enum TraceExporterOutputFormat {
+    #[allow(missing_docs)]
     #[default]
     V04,
+    #[allow(missing_docs)]
     V07,
 }
 
@@ -73,11 +81,51 @@ fn add_path(url: &Uri, path: &str) -> Uri {
     Uri::from_parts(parts).unwrap()
 }
 
+/// Remove spans and chunks only keeping the ones that may be sampled by the agent
+fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) {
+    traces.retain_mut(|chunk| {
+        let mut sampled_indexes = Vec::new();
+        for (index, span) in chunk.iter().enumerate() {
+            if span.error == 1 {
+                // We send chunks containing an error
+                return true;
+            }
+            let priority = span.metrics.get("_sampling_priority_v1");
+            if priority.is_some_and(|p| *p > 0.0) {
+                if has_top_level(span) {
+                    // We send chunks with positive priority
+                    return true;
+                }
+                // We send single spans with positive priority
+                sampled_indexes.push(index);
+            } else if priority.is_none() && has_top_level(span) {
+                // We send chunks with no priority
+                return true;
+            } else if span.metrics.contains_key("_dd.sr.eausr") {
+                // We send analyzed spans
+                sampled_indexes.push(index);
+            }
+        }
+        if sampled_indexes.is_empty() {
+            // If no spans were sampled we can drop the whole chunk
+            return false;
+        }
+        let sampled_spans = sampled_indexes
+            .iter()
+            .map(|i| std::mem::take(&mut chunk[*i]))
+            .collect();
+        *chunk = sampled_spans;
+        true
+    })
+}
+
 struct TracerTags {
     tracer_version: String,
     language: String,
     language_version: String,
     language_interpreter: String,
+    client_computed_stats: bool,
+    client_computed_top_level: bool,
 }
 
 impl<'a> From<&'a TracerTags> for TracerHeaderTags<'a> {
@@ -87,6 +135,8 @@ impl<'a> From<&'a TracerTags> for TracerHeaderTags<'a> {
             lang_version: &tags.language_version,
             tracer_version: &tags.tracer_version,
             lang_interpreter: &tags.language_interpreter,
+            client_computed_stats: tags.client_computed_stats,
+            client_computed_top_level: tags.client_computed_top_level,
             ..Default::default()
         }
     }
@@ -94,17 +144,38 @@ impl<'a> From<&'a TracerTags> for TracerHeaderTags<'a> {
 
 impl<'a> From<&'a TracerTags> for HashMap<&'static str, String> {
     fn from(tags: &'a TracerTags) -> HashMap<&'static str, String> {
-        TracerHeaderTags::<'_> {
-            lang: &tags.language,
-            lang_version: &tags.language_version,
-            tracer_version: &tags.tracer_version,
-            lang_interpreter: &tags.language_interpreter,
-            ..Default::default()
-        }
-        .into()
+        TracerHeaderTags::from(tags).into()
     }
 }
 
+enum StatsComputationStatus {
+    StatsDisabled,
+    StatsEnabled {
+        stats_concentrator: Arc<Mutex<SpanConcentrator>>,
+        cancellation_token: CancellationToken,
+        exporter_handle: JoinHandle<()>,
+    },
+}
+
+/// The TraceExporter ingest traces from the tracers serialized as messagepack and forward them to
+/// the agent while applying some transformation.
+///
+/// # Proxy
+/// If the input format is set as `Proxy`, the exporter will forward traces to the agent without
+/// deserializing them.
+///
+/// # Features
+/// When the input format is set to `V04` the TraceExporter will deserialize the traces and perform
+/// some operation before sending them to the agent. The available operations are described below.
+///
+/// ## V07 Serialization
+/// The Trace exporter can serialize the traces to V07 before sending them to the agent.
+///
+/// ## Stats computation
+/// The Trace Exporter can compute stats on traces. In this case the trace exporter will start
+/// another task to send stats when a time bucket expire. When this feature is enabled the
+/// TraceExporter drops all spans that may not be sampled by the agent.
+#[allow(missing_docs)]
 pub struct TraceExporter {
     endpoint: Endpoint,
     tags: TracerTags,
@@ -113,17 +184,53 @@ pub struct TraceExporter {
     // TODO - do something with the response callback - https://datadoghq.atlassian.net/browse/APMSP-1019
     _response_callback: Option<Box<dyn ResponseCallback>>,
     runtime: Runtime,
+    client_computed_top_level: bool,
+    stats: StatsComputationStatus,
 }
 
 impl TraceExporter {
+    #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder {
         TraceExporterBuilder::default()
     }
 
+    /// Send msgpack serialized traces to the agent
+    #[allow(missing_docs)]
     pub fn send(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
         match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data, trace_count),
             TraceExporterInputFormat::V04 => self.send_deser_ser(data),
+        }
+    }
+
+    /// Safely shutdown the TraceExporter and all related tasks
+    pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), String> {
+        match self.stats {
+            StatsComputationStatus::StatsEnabled {
+                stats_concentrator: _,
+                cancellation_token: cancelation_token,
+                exporter_handle,
+            } => {
+                if let Some(timeout) = timeout {
+                    match self.runtime.block_on(async {
+                        tokio::time::timeout(timeout, async {
+                            cancelation_token.cancel();
+                            let _ = exporter_handle.await;
+                        })
+                        .await
+                    }) {
+                        Ok(_) => Ok(()),
+                        Err(_) => Err("Shutdown timed out".to_string()),
+                    }
+                } else {
+                    self.runtime.block_on(async {
+                        cancelation_token.cancel();
+                        let _ = exporter_handle.await;
+                    });
+                    Ok(())
+                }
+            }
+            StatsComputationStatus::StatsDisabled => Ok(()),
         }
     }
 
@@ -191,10 +298,27 @@ impl TraceExporter {
             })
     }
 
+    /// Add all spans from the given iterator into the stats concentrator
+    /// # Panic
+    /// Will panic if another thread panicked will holding the lock on `stats_concentrator`
+    fn add_spans_to_stats<'a>(&self, spans: impl Iterator<Item = &'a pb::Span>) {
+        if let StatsComputationStatus::StatsEnabled {
+            stats_concentrator,
+            cancellation_token: _,
+            exporter_handle: _,
+        } = &self.stats
+        {
+            let mut stats_concentrator = stats_concentrator.lock().unwrap();
+            for span in spans {
+                stats_concentrator.add_span(span);
+            }
+        }
+    }
+
     fn send_deser_ser(&self, data: &[u8]) -> Result<String, String> {
         let size = data.len();
         // TODO base on input format
-        let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_slice(data) {
+        let mut traces: Vec<Vec<pb::Span>> = match rmp_serde::from_slice(data) {
             Ok(res) => res,
             Err(err) => {
                 error!("Error deserializing trace from request body: {err}");
@@ -205,6 +329,19 @@ impl TraceExporter {
         if traces.is_empty() {
             error!("No traces deserialized from the request body.");
             return Ok(String::from("{}"));
+        }
+
+        // Stats computation
+        if let StatsComputationStatus::StatsEnabled { .. } = &self.stats {
+            if !self.client_computed_top_level {
+                for chunk in traces.iter_mut() {
+                    compute_top_level_span(chunk);
+                }
+            }
+            self.add_spans_to_stats(traces.iter().flat_map(|trace| trace.iter()));
+            // Once stats have been computed we can drop all chunks that are not going to be
+            // sampled by the agent
+            drop_chunks(&mut traces);
         }
 
         let header_tags: TracerHeaderTags<'_> = (&self.tags).into();
@@ -225,11 +362,10 @@ impl TraceExporter {
             ),
             TraceExporterOutputFormat::V07 => {
                 let tracer_payload = trace_utils::collect_trace_chunks(
-                    traces,
+                    TraceCollection::V07(traces),
                     &header_tags,
                     &mut tracer_payload::DefaultTraceChunkProcessor,
                     self.endpoint.api_key.is_some(),
-                    TraceEncoding::V07,
                 );
 
                 let endpoint = Endpoint {
@@ -257,88 +393,225 @@ impl TraceExporter {
     }
 }
 
+const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
+
+#[allow(missing_docs)]
 #[derive(Default)]
 pub struct TraceExporterBuilder {
     url: Option<String>,
     tracer_version: String,
+    hostname: String,
+    env: String,
+    version: String,
+    service: String,
     language: String,
     language_version: String,
     language_interpreter: String,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     response_callback: Option<Box<dyn ResponseCallback>>,
+    client_computed_stats: bool,
+    client_computed_top_level: bool,
+
+    // Stats specific fields
+    /// A Some value enables stats-computation, None if it is disabled
+    stats_bucket_size: Option<time::Duration>,
+    peer_tags_aggregation: bool,
+    compute_stats_by_span_kind: bool,
+    peer_tags: Vec<String>,
 }
 
 impl TraceExporterBuilder {
+    #[allow(missing_docs)]
     pub fn set_url(mut self, url: &str) -> Self {
         self.url = Some(url.to_owned());
         self
     }
 
+    pub fn set_hostname(mut self, hostname: &str) -> Self {
+        hostname.clone_into(&mut self.hostname);
+        self
+    }
+
+    pub fn set_env(mut self, env: &str) -> Self {
+        env.clone_into(&mut self.env);
+        self
+    }
+
+    pub fn set_version(mut self, version: &str) -> Self {
+        version.clone_into(&mut self.version);
+        self
+    }
+
+    pub fn set_service(mut self, service: &str) -> Self {
+        service.clone_into(&mut self.service);
+        self
+    }
+
+    #[allow(missing_docs)]
     pub fn set_tracer_version(mut self, tracer_version: &str) -> Self {
         tracer_version.clone_into(&mut self.tracer_version);
         self
     }
 
+    #[allow(missing_docs)]
     pub fn set_language(mut self, lang: &str) -> Self {
         lang.clone_into(&mut self.language);
         self
     }
 
+    #[allow(missing_docs)]
     pub fn set_language_version(mut self, lang_version: &str) -> Self {
         lang_version.clone_into(&mut self.language_version);
         self
     }
 
+    #[allow(missing_docs)]
     pub fn set_language_interpreter(mut self, lang_interpreter: &str) -> Self {
         lang_interpreter.clone_into(&mut self.language_interpreter);
         self
     }
 
+    #[allow(missing_docs)]
     pub fn set_input_format(mut self, input_format: TraceExporterInputFormat) -> Self {
         self.input_format = input_format;
         self
     }
 
+    #[allow(missing_docs)]
     pub fn set_output_format(mut self, output_format: TraceExporterOutputFormat) -> Self {
         self.output_format = output_format;
         self
     }
 
+    #[allow(missing_docs)]
     pub fn set_response_callback(mut self, response_callback: Box<dyn ResponseCallback>) -> Self {
         self.response_callback = Some(response_callback);
         self
     }
 
-    pub fn build(mut self) -> anyhow::Result<TraceExporter> {
+    /// Set the header indicating the tracer has computed the top-level tag
+    pub fn set_client_computed_top_level(mut self) -> Self {
+        self.client_computed_top_level = true;
+        self
+    }
+
+    /// Set the header indicating the tracer has already computed stats.
+    /// This should not be used when stats computation is enabled.
+    pub fn set_client_computed_stats(mut self) -> Self {
+        self.client_computed_stats = true;
+        self
+    }
+
+    /// Enable stats computation on traces sent through this exporter
+    pub fn enable_stats(mut self, bucket_size: time::Duration) -> Self {
+        self.stats_bucket_size = Some(bucket_size);
+        self
+    }
+
+    /// Enable peer tags aggregation for stats computation (requires stats computation to be
+    /// enabled)
+    pub fn enable_stats_peer_tags_aggregation(mut self, peer_tags: Vec<String>) -> Self {
+        self.peer_tags_aggregation = true;
+        self.peer_tags = peer_tags;
+        self
+    }
+
+    /// Enable stats eligibility by span kind (requires stats computation to be
+    /// enabled)
+    pub fn enable_compute_stats_by_span_kind(mut self) -> Self {
+        self.compute_stats_by_span_kind = true;
+        self
+    }
+
+    #[allow(missing_docs)]
+    pub fn build(self) -> anyhow::Result<TraceExporter> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
 
+        let mut stats = StatsComputationStatus::StatsDisabled;
+
+        // Proxy mode does not support stats
+        if self.input_format != TraceExporterInputFormat::Proxy {
+            if let Some(bucket_size) = self.stats_bucket_size {
+                let stats_concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
+                    bucket_size,
+                    time::SystemTime::now(),
+                    self.peer_tags_aggregation,
+                    self.compute_stats_by_span_kind,
+                    self.peer_tags,
+                )));
+
+                let cancellation_token = CancellationToken::new();
+
+                let mut stats_exporter = stats_exporter::StatsExporter::new(
+                    self.stats_bucket_size.unwrap(),
+                    stats_concentrator.clone(),
+                    stats_exporter::LibraryMetadata {
+                        hostname: self.hostname,
+                        env: self.env,
+                        version: self.version,
+                        lang: self.language.clone(),
+                        tracer_version: self.tracer_version.clone(),
+                        runtime_id: uuid::Uuid::new_v4().to_string(),
+                        service: self.service,
+                        ..Default::default()
+                    },
+                    Endpoint::from_url(stats_exporter::stats_url_from_agent_url(
+                        self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL),
+                    )?),
+                    cancellation_token.clone(),
+                );
+
+                let exporter_handle = runtime.spawn(async move {
+                    stats_exporter.run().await;
+                });
+
+                stats = StatsComputationStatus::StatsEnabled {
+                    stats_concentrator,
+                    cancellation_token,
+                    exporter_handle,
+                }
+            }
+        }
+
         Ok(TraceExporter {
-            endpoint: Endpoint::from_slice(self.url.as_deref().unwrap_or("http://127.0.0.1:8126")),
+            endpoint: Endpoint::from_slice(self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL)),
             tags: TracerTags {
-                tracer_version: std::mem::take(&mut self.tracer_version),
-                language_version: std::mem::take(&mut self.language_version),
-                language_interpreter: std::mem::take(&mut self.language_interpreter),
-                language: std::mem::take(&mut self.language),
+                tracer_version: self.tracer_version,
+                language_version: self.language_version,
+                language_interpreter: self.language_interpreter,
+                language: self.language,
+                client_computed_stats: self.client_computed_stats
+                    || self.stats_bucket_size.is_some(),
+                client_computed_top_level: self.client_computed_top_level
+                    || self.stats_bucket_size.is_some(), /* Client side stats enforce client
+                                                          * computed top level */
             },
             input_format: self.input_format,
             output_format: self.output_format,
             _response_callback: self.response_callback,
+            client_computed_top_level: self.client_computed_top_level,
             runtime,
+            stats,
         })
     }
 }
 
+#[allow(missing_docs)]
 pub trait ResponseCallback {
+    #[allow(missing_docs)]
     fn call(&self, response: &str);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use httpmock::prelude::*;
+    use httpmock::MockServer;
     use std::collections::HashMap;
+    use time::Duration;
 
     #[test]
     fn new() {
@@ -366,6 +639,7 @@ mod tests {
         assert_eq!(exporter.tags.language, "nodejs");
         assert_eq!(exporter.tags.language_version, "1.0");
         assert_eq!(exporter.tags.language_interpreter, "v8");
+        assert!(!exporter.tags.client_computed_stats);
     }
 
     #[test]
@@ -376,6 +650,7 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8")
+            .enable_stats(Duration::from_secs(10))
             .build()
             .unwrap();
 
@@ -391,6 +666,7 @@ mod tests {
         assert_eq!(exporter.tags.language, "nodejs");
         assert_eq!(exporter.tags.language_version, "1.0");
         assert_eq!(exporter.tags.language_interpreter, "v8");
+        assert!(exporter.tags.client_computed_stats);
     }
 
     #[test]
@@ -400,6 +676,8 @@ mod tests {
             language: "rust".to_string(),
             language_version: "1.52.1".to_string(),
             language_interpreter: "rustc".to_string(),
+            client_computed_stats: true,
+            client_computed_top_level: true,
         };
 
         let tracer_header_tags: TracerHeaderTags = (&tracer_tags).into();
@@ -408,6 +686,8 @@ mod tests {
         assert_eq!(tracer_header_tags.lang, "rust");
         assert_eq!(tracer_header_tags.lang_version, "1.52.1");
         assert_eq!(tracer_header_tags.lang_interpreter, "rustc");
+        assert!(tracer_header_tags.client_computed_stats);
+        assert!(tracer_header_tags.client_computed_top_level);
     }
 
     #[test]
@@ -417,6 +697,8 @@ mod tests {
             language: "rust".to_string(),
             language_version: "1.52.1".to_string(),
             language_interpreter: "rustc".to_string(),
+            client_computed_stats: true,
+            client_computed_top_level: true,
         };
 
         let hashmap: HashMap<&'static str, String> = (&tracer_tags).into();
@@ -428,5 +710,217 @@ mod tests {
             hashmap.get("datadog-meta-lang-interpreter").unwrap(),
             "rustc"
         );
+        assert!(hashmap.contains_key("datadog-client-computed-stats"));
+        assert!(hashmap.contains_key("datadog-client-computed-top-level"));
+    }
+
+    #[test]
+    fn test_drop_chunks() {
+        let chunk_with_priority = vec![
+            pb::Span {
+                span_id: 1,
+                metrics: HashMap::from([
+                    ("_sampling_priority_v1".to_string(), 1.0),
+                    ("_dd.top_level".to_string(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            pb::Span {
+                span_id: 2,
+                parent_id: 1,
+                ..Default::default()
+            },
+        ];
+        let chunk_with_null_priority = vec![
+            pb::Span {
+                span_id: 1,
+                metrics: HashMap::from([
+                    ("_sampling_priority_v1".to_string(), 0.0),
+                    ("_dd.top_level".to_string(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            pb::Span {
+                span_id: 2,
+                parent_id: 1,
+                ..Default::default()
+            },
+        ];
+        let chunk_without_priority = vec![
+            pb::Span {
+                span_id: 1,
+                metrics: HashMap::from([("_dd.top_level".to_string(), 1.0)]),
+                ..Default::default()
+            },
+            pb::Span {
+                span_id: 2,
+                parent_id: 1,
+                ..Default::default()
+            },
+        ];
+        let chunk_with_error = vec![
+            pb::Span {
+                span_id: 1,
+                error: 1,
+                metrics: HashMap::from([
+                    ("_sampling_priority_v1".to_string(), 0.0),
+                    ("_dd.top_level".to_string(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            pb::Span {
+                span_id: 2,
+                parent_id: 1,
+                ..Default::default()
+            },
+        ];
+        let chunk_with_a_single_span = vec![
+            pb::Span {
+                span_id: 1,
+                metrics: HashMap::from([
+                    ("_sampling_priority_v1".to_string(), 0.0),
+                    ("_dd.top_level".to_string(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            pb::Span {
+                span_id: 2,
+                parent_id: 1,
+                metrics: HashMap::from([("_sampling_priority_v1".to_string(), 1.0)]),
+                ..Default::default()
+            },
+        ];
+        let chunk_with_analyzed_span = vec![
+            pb::Span {
+                span_id: 1,
+                metrics: HashMap::from([
+                    ("_sampling_priority_v1".to_string(), 0.0),
+                    ("_dd.top_level".to_string(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            pb::Span {
+                span_id: 2,
+                parent_id: 1,
+                metrics: HashMap::from([("_dd.sr.eausr".to_string(), 1.0)]),
+                ..Default::default()
+            },
+        ];
+
+        let chunks_and_expected_sampled_spans = vec![
+            (chunk_with_priority, 2),
+            (chunk_with_null_priority, 0),
+            (chunk_without_priority, 2),
+            (chunk_with_error, 2),
+            (chunk_with_a_single_span, 1),
+            (chunk_with_analyzed_span, 1),
+        ];
+
+        for (chunk, expected_count) in chunks_and_expected_sampled_spans.into_iter() {
+            let mut traces = vec![chunk];
+            drop_chunks(&mut traces);
+            if expected_count == 0 {
+                assert!(traces.is_empty());
+            } else {
+                println!("{:?}", traces[0]);
+                assert_eq!(traces[0].len(), expected_count);
+                println!("----")
+            }
+        }
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_shutdown() {
+        let server = MockServer::start();
+
+        let mock_traces = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.7/traces");
+            then.status(200).body("");
+        });
+
+        let mock_stats = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.6/stats");
+            then.status(200).body("");
+        });
+        let builder = TraceExporterBuilder::default();
+        let exporter = builder
+            .set_url(&server.url("/"))
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V07)
+            .enable_stats(Duration::from_secs(10))
+            .build()
+            .unwrap();
+
+        let mut trace_chunk = vec![pb::Span {
+            duration: 10,
+            ..Default::default()
+        }];
+
+        trace_utils::compute_top_level_span(&mut trace_chunk);
+
+        let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
+
+        exporter.send(data.as_slice(), 1).unwrap();
+        exporter.shutdown(None).unwrap();
+
+        mock_traces.assert();
+        mock_stats.assert();
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_shutdown_with_timeout() {
+        let server = MockServer::start();
+
+        let mock_traces = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.7/traces");
+            then.status(200).body("");
+        });
+
+        let _mock_stats = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.6/stats");
+            then.delay(Duration::from_secs(10)).status(200).body("");
+        });
+        let builder = TraceExporterBuilder::default();
+        let exporter = builder
+            .set_url(&server.url("/"))
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V07)
+            .enable_stats(Duration::from_secs(10))
+            .build()
+            .unwrap();
+
+        let mut trace_chunk = vec![pb::Span {
+            duration: 10,
+            ..Default::default()
+        }];
+
+        trace_utils::compute_top_level_span(&mut trace_chunk);
+
+        let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
+
+        exporter.send(data.as_slice(), 1).unwrap();
+        exporter
+            .shutdown(Some(Duration::from_millis(500)))
+            .unwrap_err(); // The shutdown should timeout
+
+        mock_traces.assert();
     }
 }

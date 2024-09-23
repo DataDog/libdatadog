@@ -35,3 +35,5 @@ pub fn strip_libraries(lib_path: &str) {
 
     strip.wait().expect("Failed to strip library");
 }
+
+pub fn fix_soname(_lib_path: &str) {}

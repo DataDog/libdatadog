@@ -11,3 +11,4 @@ pub const BUILD_CRASHTRACKER: bool = false;
 
 pub fn fix_rpath(_lib_path: &str) {}
 pub fn strip_libraries(_lib_path: &str) {}
+pub fn fix_soname(_lib_path: &str) {}

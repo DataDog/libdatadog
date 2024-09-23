@@ -36,41 +36,6 @@ members = [
   "tinybytes",
 ]
 
-default-members = [
-  "alloc",
-  "crashtracker",
-  "crashtracker-ffi",
-  "profiling",
-  "profiling-ffi",
-  "profiling-replayer",
-  "ddcommon",
-  "ddcommon-ffi",
-  "ddtelemetry",
-  "ddtelemetry-ffi",
-  "dynamic-configuration",
-  "dogstatsd",
-  "tools",
-  "ipc",
-  "ipc/macros",
-  "remote-config",
-  "sidecar",
-  "sidecar/macros",
-  "sidecar-ffi",
-  "tools/cc_utils",
-  "tools/sidecar_mockgen",
-  "trace-normalization",
-  "trace-obfuscation",
-  "trace-utils",
-  "spawn_worker",
-  "tests/spawn_from_lib",
-  "serverless",
-  "bin_tests",
-  "data-pipeline",
-  "data-pipeline-ffi",
-  "ddsketch",
-  "tinybytes",
-]
-
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"
 
@@ -80,7 +45,7 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.76.0"
 edition = "2021"
-version = "12.0.0"
+version = "13.0.0"
 license = "Apache-2.0"
 
 [profile.dev]
