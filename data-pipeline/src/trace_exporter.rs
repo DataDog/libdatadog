@@ -13,10 +13,10 @@ use datadog_trace_utils::tracer_payload;
 use datadog_trace_utils::tracer_payload::TraceCollection;
 use ddcommon::tag::Tag;
 use ddcommon::{connector, tag, Endpoint};
-use dogstatsd_client::{new_flusher, DogStatsDAction, Client};
+use dogstatsd_client::{new_flusher, Client, DogStatsDAction};
 use either::Either;
 use hyper::http::uri::PathAndQuery;
-use hyper::{Body, Client, Method, Uri};
+use hyper::{Body, Method, Uri};
 use log::error;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -279,7 +279,7 @@ impl TraceExporter {
                     .body(Body::from(Bytes::copy_from_slice(data)))
                     .unwrap();
 
-                match Client::builder()
+                match hyper::Client::builder()
                     .build(connector::Connector::default())
                     .request(req)
                     .await
