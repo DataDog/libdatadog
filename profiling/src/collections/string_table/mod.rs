@@ -184,7 +184,10 @@ impl StringTableIter {
 }
 
 impl LendingIterator for StringTableIter {
-    type Item<'a> = &'a str where Self: 'a;
+    type Item<'a>
+        = &'a str
+    where
+        Self: 'a;
 
     fn next(&mut self) -> Option<Self::Item<'_>> {
         self.iter.next()
