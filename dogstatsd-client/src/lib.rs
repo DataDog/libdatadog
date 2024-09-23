@@ -68,19 +68,19 @@ pub enum DogStatsDAction<'a, T: AsRef<str>, V: IntoIterator<Item = &'a Tag>> {
 }
 
 /// A dogstatsd-client that flushes stats to a given endpoint. Use `new_flusher` to build one.
-pub struct Flusher {
+pub struct Client {
     client: StatsdClient,
 }
 
 /// Build a new flusher instance pointed at the provided endpoint.
 /// Returns error if the provided endpoint is not valid.
-pub fn new_flusher(endpoint: Endpoint) -> anyhow::Result<Flusher> {
-    Ok(Flusher {
+pub fn new_flusher(endpoint: Endpoint) -> anyhow::Result<Client> {
+    Ok(Client {
         client: create_client(&endpoint)?,
     })
 }
 
-impl Flusher {
+impl Client {
     /// Set the destination for dogstatsd metrics, if an API Key is provided the client is disabled
     /// as dogstatsd is not allowed in agentless mode. Returns an error if the provided endpoint
     /// is invalid.

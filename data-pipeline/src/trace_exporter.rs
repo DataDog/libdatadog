@@ -13,7 +13,7 @@ use datadog_trace_utils::tracer_payload;
 use datadog_trace_utils::tracer_payload::TraceCollection;
 use ddcommon::tag::Tag;
 use ddcommon::{connector, tag, Endpoint};
-use dogstatsd_client::{new_flusher, DogStatsDAction, Flusher};
+use dogstatsd_client::{new_flusher, DogStatsDAction, Client};
 use either::Either;
 use hyper::http::uri::PathAndQuery;
 use hyper::{Body, Client, Method, Uri};
@@ -191,7 +191,7 @@ pub struct TraceExporter {
     _response_callback: Option<Box<dyn ResponseCallback>>,
     runtime: Runtime,
     /// None if dogstatsd is disabled
-    dogstatsd: Option<Flusher>,
+    dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
     client_computed_top_level: bool,
     stats: StatsComputationStatus,
