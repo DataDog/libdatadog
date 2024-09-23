@@ -8,6 +8,7 @@ use anyhow::{anyhow, Result};
 use arc_swap::ArcSwapOption;
 use ddcommon::{connector::Connector, Endpoint};
 use hyper::{self, body::Buf, header::HeaderName};
+use log::{error, info};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -76,6 +77,7 @@ async fn fetch_info_with_state(
 pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
     match fetch_info_with_state(info_endpoint, None).await? {
         FetchInfoStatus::NewState(info) => Ok(info),
+        // Should never be reached since there is no previous state.
         FetchInfoStatus::SameState => Err(anyhow!("Invalid state header")),
     }
 }
@@ -141,10 +143,19 @@ impl AgentInfoFetcher {
             let current_info = self.info.load();
             let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
             let res = fetch_info_with_state(&self.info_endpoint, current_hash).await;
-            if let Ok(FetchInfoStatus::NewState(new_info)) = res {
-                self.info.store(Some(Arc::new(*new_info)));
+            match res {
+                Ok(FetchInfoStatus::NewState(new_info)) => {
+                    info!("New /info state received");
+                    self.info.store(Some(Arc::new(*new_info)));
+                }
+                Ok(FetchInfoStatus::SameState) => {
+                    info!("Agent info is up-to-date")
+                }
+                Err(err) => {
+                    error!("Error while fetching /info: {}", err);
+                }
             }
-            sleep(self.refresh_interval).await; // Wait 5 min between each call to /info
+            sleep(self.refresh_interval).await;
         }
     }
 
