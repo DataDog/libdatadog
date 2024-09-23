@@ -1,6 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use dogstatsd::metric::SortedTags;
 use dogstatsd::{
     aggregator::Aggregator as MetricsAggregator,
     constants::CONTEXTS,
@@ -30,7 +31,8 @@ async fn dogstatsd_server_ships_series() {
         .await;
 
     let metrics_aggr = Arc::new(Mutex::new(
-        MetricsAggregator::new(Vec::new(), CONTEXTS).expect("failed to create aggregator"),
+        MetricsAggregator::new(SortedTags::parse("sometkey:somevalue").unwrap(), CONTEXTS)
+            .expect("failed to create aggregator"),
     ));
 
     let _ = start_dogstatsd(&metrics_aggr).await;

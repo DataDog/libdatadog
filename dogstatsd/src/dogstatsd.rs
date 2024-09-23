@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use tracing::{debug, error};
 
 use crate::aggregator::Aggregator;
-use crate::metric::Metric;
+use crate::metric::{parse, Metric};
 
 pub struct DogStatsD {
     cancel_token: tokio_util::sync::CancellationToken,
@@ -87,7 +87,7 @@ impl DogStatsD {
         let all_valid_metrics: Vec<Metric> = msg
             .filter(|m| !m.is_empty())
             .map(|m| m.replace('\n', ""))
-            .filter_map(|m| match Metric::parse(m.as_str()) {
+            .filter_map(|m| match parse(m.as_str()) {
                 Ok(metric) => Some(metric),
                 Err(e) => {
                     error!("Failed to parse metric {}: {}", m, e);
@@ -98,7 +98,7 @@ impl DogStatsD {
         if !all_valid_metrics.is_empty() {
             let mut guarded_aggregator = self.aggregator.lock().expect("lock poisoned");
             for a_valid_value in all_valid_metrics {
-                let _ = guarded_aggregator.insert(&a_valid_value);
+                let _ = guarded_aggregator.insert(a_valid_value);
             }
         }
     }
@@ -111,6 +111,7 @@ mod tests {
     use crate::aggregator::tests::assert_value;
     use crate::aggregator::Aggregator;
     use crate::dogstatsd::{BufferReader, DogStatsD};
+    use crate::metric::EMPTY_TAGS;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::sync::{Arc, Mutex};
 
@@ -151,7 +152,7 @@ single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
     #[tokio::test]
     async fn test_dogstatsd_multi_metric() {
         let locked_aggregator = setup_dogstatsd(
-            "metric1:1|c\nmetric2:2|c|tag2:val2\nmetric3:3|c||tag3:val3,tag4:val4\n",
+            "metric3:3|c|#tag3:val3,tag4:val4\nmetric1:1|c\nmetric2:2|c|#tag2:val2\n",
         )
         .await;
         let aggregator = locked_aggregator.lock().expect("lock poisoned");
@@ -162,9 +163,9 @@ single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
         assert_eq!(aggregator.distributions_to_protobuf().sketches.len(), 0);
         drop(aggregator);
 
-        assert_value(&locked_aggregator, "metric1", 1.0);
-        assert_value(&locked_aggregator, "metric2", 2.0);
-        assert_value(&locked_aggregator, "metric3", 3.0);
+        assert_value(&locked_aggregator, "metric1", 1.0, "");
+        assert_value(&locked_aggregator, "metric2", 2.0, "tag2:val2");
+        assert_value(&locked_aggregator, "metric3", 3.0, "tag3:val3,tag4:val4");
     }
 
     #[tokio::test]
@@ -177,12 +178,12 @@ single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
         assert_eq!(aggregator.distributions_to_protobuf().sketches.len(), 0);
         drop(aggregator);
 
-        assert_value(&locked_aggregator, "metric123", 99_123.0);
+        assert_value(&locked_aggregator, "metric123", 99_123.0, "");
     }
 
     async fn setup_dogstatsd(statsd_string: &str) -> Arc<Mutex<Aggregator>> {
         let aggregator_arc = Arc::new(Mutex::new(
-            Aggregator::new(Vec::new(), 1_024).expect("aggregator creation failed"),
+            Aggregator::new(EMPTY_TAGS, 1_024).expect("aggregator creation failed"),
         ));
         let cancel_token = tokio_util::sync::CancellationToken::new();
 
