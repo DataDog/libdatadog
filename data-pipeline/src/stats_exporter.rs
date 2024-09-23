@@ -342,15 +342,12 @@ mod tests {
             cancellation_token.clone(),
         );
 
-        tokio::time::pause();
         tokio::spawn(async move {
             stats_exporter.run().await;
         });
         // Cancel token to trigger force flush
         cancellation_token.cancel();
-        // Resume time to sleep while the stats are being sent
-        tokio::time::resume();
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
         mock.assert_async().await;
     }
