@@ -421,6 +421,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
             } else {
                 None
             };
+            // If the file isn't there, it's not meant for us.
             if let Some(raw_file) = incoming_files.get(path) {
                 if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(raw_file) {
                     let computed_hash = hasher(decoded.as_slice());
@@ -474,11 +475,6 @@ impl<S: FileStorage> ConfigFetcher<S> {
                         String::from_utf8_lossy(raw_file)
                     )
                 }
-            } else {
-                anyhow::bail!(
-                    "Found changed config data for path {path}, but no file; existing files: {:?}",
-                    incoming_files.keys().collect::<Vec<_>>()
-                )
             }
         }
 
