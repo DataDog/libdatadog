@@ -69,7 +69,6 @@ RUN cargo search nothing --limit 1
 # create stubs to cache compilation of dependendencies
 COPY [ "Cargo.lock", "Cargo.toml", "./"]
 COPY "alloc/Cargo.toml" "alloc/"
-COPY "agent-info/Cargo.toml" "agent-info/"
 COPY "build-common/Cargo.toml" "build-common/"
 COPY "crashtracker/Cargo.toml" "crashtracker/"
 COPY "crashtracker-ffi/Cargo.toml" "crashtracker-ffi/"
