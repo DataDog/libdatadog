@@ -100,7 +100,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
             TraceEncoding::V07,
         );
 
-        let send_data = SendData::new(body_size, payload, tracer_header_tags, &config.trace_intake);
+        let send_data = SendData::new(body_size, payload, tracer_header_tags, &config.trace_intake, config.proxy_url.clone());
 
         // send trace payload to our trace flusher
         match tx.send(send_data).await {
