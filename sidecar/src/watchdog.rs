@@ -49,21 +49,23 @@ impl Watchdog {
         let still_alive = Arc::new(AtomicU32::new(0));
         let still_alive_thread = still_alive.clone();
 
+        const SHUTDOWN: u32 = u32::MAX;
+
         let interval = self.interval.period();
         std::thread::spawn(move || {
-            let mut repeats = false;
+            let mut maybe_stuck = false;
             let mut last = 0;
             loop {
                 std::thread::sleep(interval);
                 let current = still_alive_thread.load(Ordering::Relaxed);
                 if last != current {
-                    if current == u32::MAX {
+                    if current == SHUTDOWN {
                         return;
                     }
                     last = current;
-                    repeats = false;
+                    maybe_stuck = false;
                 } else {
-                    if repeats {
+                    if maybe_stuck {
                         std::thread::spawn(move || {
                             error!("Watchdog timeout: Sidecar stuck for at least {} seconds. Sending SIGABRT, possibly dumping core.", interval.as_secs());
                         });
@@ -71,7 +73,7 @@ impl Watchdog {
                         std::thread::sleep(Duration::from_secs(1));
                         unsafe { libc::abort() };
                     }
-                    repeats = true;
+                    maybe_stuck = true;
                 }
             }
         });
@@ -101,7 +103,7 @@ impl Watchdog {
 
                     },
                     _ = self.shutdown_receiver.recv() => {
-                        still_alive.store(u32::MAX, Ordering::Relaxed);
+                        still_alive.store(SHUTDOWN, Ordering::Relaxed);
                         return
                     },
                 }
