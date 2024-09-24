@@ -181,10 +181,17 @@ fn create_client(endpoint: &Endpoint) -> anyhow::Result<StatsdClient> {
     match endpoint.url.scheme_str() {
         #[cfg(unix)]
         Some("unix") => {
-            let socket = UnixDatagram::unbound()?;
-            socket.set_nonblocking(true)?;
+            let socket = UnixDatagram::unbound()
+                .map_err(|e| anyhow!("failed to make unbound unix port: {}", e))?;
+            socket
+                .set_nonblocking(true)
+                .map_err(|e| anyhow!("failed to set socket to nonblocking: {}", e))?;
             let sink = QueuingMetricSink::with_capacity(
-                UnixMetricSink::from(socket_path_from_uri(&endpoint.url)?, socket),
+                UnixMetricSink::from(
+                    socket_path_from_uri(&endpoint.url)
+                        .map_err(|e| anyhow!("failed to build socket path from uri: {}", e))?,
+                    socket,
+                ),
                 QUEUE_SIZE,
             );
 
@@ -200,14 +207,16 @@ fn create_client(endpoint: &Endpoint) -> anyhow::Result<StatsdClient> {
                 .ok_or(anyhow!("invalid address"))?;
 
             let socket = if server_address.is_ipv4() {
-                UdpSocket::bind("0.0.0.0:0")?
+                UdpSocket::bind("0.0.0.0:0")
+                    .map_err(|e| anyhow!("failed to bind to 0.0.0.0:0: {}", e))?
             } else {
-                UdpSocket::bind("[::]:0")?
+                UdpSocket::bind("[::]:0").map_err(|e| anyhow!("failed to bind to [::]:0: {}", e))?
             };
             socket.set_nonblocking(true)?;
 
             let sink = QueuingMetricSink::with_capacity(
-                UdpMetricSink::from((host, port), socket)?,
+                UdpMetricSink::from((host, port), socket)
+                    .map_err(|e| anyhow!("failed to build UdpMetricSink: {}", e))?,
                 QUEUE_SIZE,
             );
 
@@ -290,7 +299,10 @@ mod test {
             "unix://localhost:80".parse::<Uri>().unwrap(),
         ));
         assert!(res.is_err());
-        assert_eq!("invalid url", res.unwrap_err().to_string().as_str());
+        assert_eq!(
+            "failed to build socket path from uri: invalid url",
+            res.unwrap_err().to_string().as_str()
+        );
 
         let res = create_client(&Endpoint::from_url(
             socket_path_to_uri("/path/to/a/socket.sock".as_ref()).unwrap(),
