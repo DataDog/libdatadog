@@ -24,6 +24,14 @@ use std::{borrow::Borrow, collections::HashMap, str::FromStr, time};
 use tokio::{runtime::Runtime, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
+macro_rules! emit_metric {
+    ($self:ident, $name:expr, $tags:expr) => {
+            if $self.dogstatsd.is_some() {
+                $self.emit_metric($name, $tags);
+            }
+    };
+}
+
 /// TraceExporterInputFormat represents the format of the input traces.
 /// The input format can be either Proxy or V0.4, where V0.4 is the default.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
@@ -293,13 +301,11 @@ impl TraceExporter {
                             let resp_tag_res = &Tag::new("response_code", response_status.as_str());
                             match resp_tag_res {
                                 Ok(resp_tag) => {
-                                    self.emit_metric(
-                                        HealthMetric::Count(
+                                    emit_metric!(self, HealthMetric::Count(
                                             health_metrics::STAT_SEND_TRACES_ERRORS,
                                             1,
                                         ),
-                                        Some(vec![&resp_tag]),
-                                    );
+                                        Some(vec![&resp_tag]));
                                 }
                                 Err(tag_err) => {
                                     // This should really never happen as response_status is a
@@ -331,10 +337,8 @@ impl TraceExporter {
                         }
                     }
                     Err(err) => {
-                        self.emit_metric(
-                            HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                            None,
-                        );
+                        emit_metric!(self, HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                            None);
                         anyhow::bail!("Failed to send traces: {err}")
                     }
                 }
