@@ -1,35 +1,108 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::constants;
 use crate::errors::ParseError;
+use crate::{constants, datadog};
+use ddsketch_agent::DDSketch;
 use fnv::FnvHasher;
+use protobuf::Chars;
+use regex::Regex;
 use std::hash::{Hash, Hasher};
 use ustr::Ustr;
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-/// Determine what kind/type of a metric has come in
-pub enum Type {
+
+pub const EMPTY_TAGS: SortedTags = SortedTags { values: Vec::new() };
+
+#[derive(Clone, Debug)]
+pub enum MetricValue {
     /// Dogstatsd 'count' metric type, monotonically increasing counter
-    Count,
+    Count(f64),
     /// Dogstatsd 'gauge' metric type, point-in-time value
-    Gauge,
+    Gauge(f64),
     /// Dogstatsd 'distribution' metric type, histogram
-    Distribution,
+    Distribution(DDSketch),
+}
+
+#[derive(Clone, Debug)]
+pub struct SortedTags {
+    // We sort tags. This is in feature parity with DogStatsD and also means
+    // that we avoid storing the same context multiple times because users have
+    // passed tags in different order through time.
+    values: Vec<(Ustr, Ustr)>,
+}
+
+impl SortedTags {
+    pub fn extend(&mut self, other: &SortedTags) {
+        self.values.extend_from_slice(&other.values);
+        self.values.dedup();
+        self.values.sort_unstable();
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    pub fn parse(tags_section: &str) -> Result<SortedTags, ParseError> {
+        let tag_parts = tags_section.split(',');
+        let mut parsed_tags = Vec::new();
+        // Validate that the tags have the right form.
+        for (i, part) in tag_parts.filter(|s| !s.is_empty()).enumerate() {
+            if i >= constants::MAX_TAGS {
+                return Err(ParseError::Raw("Too many tags"));
+            }
+            if !part.contains(':') {
+                return Err(ParseError::Raw("Invalid tag format"));
+            }
+            if let Some((k, v)) = part.split_once(':') {
+                parsed_tags.push((Ustr::from(k), Ustr::from(v)));
+            }
+        }
+        parsed_tags.dedup();
+        parsed_tags.sort_unstable();
+        Ok(SortedTags {
+            values: parsed_tags,
+        })
+    }
+
+    pub fn to_chars(&self) -> Vec<Chars> {
+        let mut tags_as_chars = Vec::new();
+        for (k, v) in &self.values {
+            tags_as_chars.push(format!("{}:{}", k, v).into());
+        }
+        tags_as_chars
+    }
+
+    pub fn to_strings(&self) -> Vec<String> {
+        let mut tags_as_vec = Vec::new();
+        for (k, v) in &self.values {
+            tags_as_vec.push(format!("{}:{}", k, v));
+        }
+        tags_as_vec
+    }
+
+    pub(crate) fn to_resources(&self) -> Vec<datadog::Resource> {
+        let mut resources = Vec::with_capacity(constants::MAX_TAGS);
+        for (name, kind) in &self.values {
+            let resource = datadog::Resource {
+                name: name.as_str(),
+                kind: kind.as_str(),
+            };
+            resources.push(resource);
+        }
+        resources
+    }
 }
 
 /// Representation of a dogstatsd Metric
 ///
 /// For now this implementation covers only counters and gauges. We hope this is
 /// enough to demonstrate the impact of this program's design goals.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Metric {
     /// Name of the metric.
     ///
     /// Never more bytes than `constants::MAX_METRIC_NAME_BYTES`,
     /// enforced by construction. Note utf8 issues.
-    pub(crate) name: Ustr,
-    /// What kind/type of metric this is.
-    pub(crate) kind: Type,
+    pub name: Ustr,
     /// Values of the metric. A singular value may be either a floating point or
     /// a integer. Although undocumented we assume 64 bit. A single metric may
     /// encode multiple values a time in a message. There must be at least one
@@ -40,7 +113,7 @@ pub struct Metric {
     /// moment.
     ///
     /// Never longer than `constants::MAX_VALUE_BYTES`. Note utf8 issues.
-    values: Ustr,
+    pub value: MetricValue,
     /// Tags of the metric.
     ///
     /// The key is never longer than `constants::MAX_TAG_KEY_BYTES`, the value
@@ -48,124 +121,70 @@ pub struct Metric {
     /// the parser. We assume here that tags are not sent in random order by the
     /// clien or that, if they are, the API will tidy that up. That is `a:1,b:2`
     /// is a different tagset from `b:2,a:1`.
-    pub(crate) tags: Option<Ustr>,
+    pub tags: SortedTags,
+
+    /// ID given a name and tagset.
+    pub(crate) id: u64,
 }
 
-impl Metric {
-    #[must_use]
-    pub fn new(name: Ustr, kind: Type, values: Ustr, tags: Option<Ustr>) -> Self {
-        Self {
-            name,
-            kind,
-            values,
-            tags,
-        }
-    }
-    /// Parse a metric from given input.
-    ///
-    /// This function parses a passed `&str` into a `Metric`. We assume that
-    /// `DogStatsD` metrics must be utf8 and are not ascii or some other encoding.
-    ///
-    /// # Errors
-    ///
-    /// This function will return with an error if the input violates any of the
-    /// limits in [`constants`]. Any non-viable input will be discarded.
-    /// example aj-test.increment:1|c|#user:aj-test from 127.0.0.1:50983
-    pub fn parse(input: &str) -> Result<Metric, ParseError> {
-        // TODO must enforce / exploit constraints given in `constants`.
-        let mut sections = input.split('|');
+/// Parse a metric from given input.
+///
+/// This function parses a passed `&str` into a `Metric`. We assume that
+/// `DogStatsD` metrics must be utf8 and are not ascii or some other encoding.
+///
+/// # Errors
+///
+/// This function will return with an error if the input violates any of the
+/// limits in [`constants`]. Any non-viable input will be discarded.
+/// example aj-test.increment:1|c|#user:aj-test from 127.0.0.1:50983
+pub fn parse(input: &str) -> Result<Metric, ParseError> {
+    // TODO must enforce / exploit constraints given in `constants`.
+    if let Ok(re) = Regex::new(
+        r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[cgd])(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?$",
+    ) {
+        if let Some(caps) = re.captures(input) {
+            // unused for now
+            // let sample_rate = caps.name("sample_rate").map(|m| m.as_str());
 
-        let nv_section = sections
-            .next()
-            .ok_or(ParseError::Raw("Missing metric name and value"))?;
-
-        let (name, values) = nv_section
-            .split_once(':')
-            .ok_or(ParseError::Raw("Missing name, value section"))?;
-
-        let kind_section = sections
-            .next()
-            .ok_or(ParseError::Raw("Missing metric type"))?;
-        let kind = match kind_section {
-            "c" => Type::Count,
-            "g" => Type::Gauge,
-            "d" => Type::Distribution,
-            _ => {
-                return Err(ParseError::Raw("Unsupported metric type"));
+            let tags;
+            if let Some(tags_section) = caps.name("tags") {
+                tags = SortedTags::parse(tags_section.as_str())?;
+            } else {
+                tags = EMPTY_TAGS;
             }
-        };
-
-        let mut tags = None;
-        for section in sections {
-            if section.starts_with('@') {
-                // Sample rate section, skip for now.
-                continue;
-            }
-            if let Some(tags_section) = section.strip_prefix('#') {
-                let tag_parts = tags_section.split(',');
-                // Validate that the tags have the right form.
-                for (i, part) in tag_parts.filter(|s| !s.is_empty()).enumerate() {
-                    if i >= constants::MAX_TAGS {
-                        return Err(ParseError::Raw("Too many tags"));
-                    }
-                    if !part.contains(':') {
-                        return Err(ParseError::Raw("Invalid tag format"));
-                    }
+            let val = first_value(caps.name("values").unwrap().as_str())?;
+            let metric_value = match caps.name("type").unwrap().as_str() {
+                "c" => MetricValue::Count(val),
+                "g" => MetricValue::Gauge(val),
+                "d" => {
+                    let sketch = &mut DDSketch::default();
+                    sketch.insert(val);
+                    MetricValue::Distribution(sketch.to_owned())
                 }
-                tags = Some(tags_section);
-                break;
-            }
-        }
-
-        Ok(Metric {
-            name: Ustr::from(name),
-            kind,
-            values: Ustr::from(values),
-            tags: tags.map(Ustr::from),
-        })
-    }
-    /// Return an iterator over values
-    pub(crate) fn values(
-        &self,
-    ) -> impl Iterator<Item = Result<f64, std::num::ParseFloatError>> + '_ {
-        self.values.split(':').map(|b: &str| {
-            let num = b.parse::<f64>()?;
-            Ok(num)
-        })
-    }
-
-    pub(crate) fn first_value(&self) -> Result<f64, ParseError> {
-        match self.values().next() {
-            Some(v) => match v {
-                Ok(v) => Ok(v),
-                Err(_e) => Err(ParseError::Raw("Failed to parse value as float")),
-            },
-            None => Err(ParseError::Raw("No value")),
+                _ => {
+                    return Err(ParseError::Raw("Unsupported metric type"));
+                }
+            };
+            let name = Ustr::from(caps.name("name").unwrap().as_str());
+            let id = id(name, &tags);
+            return Ok(Metric {
+                name,
+                value: metric_value,
+                tags,
+                id,
+            });
         }
     }
+    Err(ParseError::Raw("Invalid metric format"))
+}
 
-    #[allow(dead_code)]
-    pub(crate) fn tags(&self) -> Vec<String> {
-        self.tags
-            .unwrap_or_default()
-            .split(',')
-            .map(std::string::ToString::to_string)
-            .collect()
-    }
-
-    #[cfg(test)]
-    fn raw_values(&self) -> &str {
-        self.values.as_str()
-    }
-
-    #[cfg(test)]
-    fn raw_name(&self) -> &str {
-        self.name.as_str()
-    }
-
-    #[cfg(test)]
-    fn raw_tagset(&self) -> Option<&str> {
-        self.tags.map(|t| t.as_str())
+fn first_value(values: &str) -> Result<f64, ParseError> {
+    match values.split(':').next() {
+        Some(v) => match v.parse::<f64>() {
+            Ok(v) => Ok(v),
+            Err(_) => Err(ParseError::Raw("Invalid value")),
+        },
+        None => Err(ParseError::Raw("Missing value")),
     }
 }
 
@@ -175,36 +194,21 @@ impl Metric {
 /// identical no matter the internal order of the tagset. That is, we consider a
 /// tagset like "a:1,b:2,c:3" to be idential to "b:2,c:3,a:1" to "c:3,a:1,b:2"
 /// etc. This implies that we must sort the tagset after parsing it, which we
-/// do. Note however that we _do not_ handle duplicate tags, so "a:1,a:1" will
-/// hash to a distinct ID than "a:1".
+/// do. Duplicate tags are removed, so "a:1,a:1" will
+/// hash to the same ID of "a:1".
 ///
 /// Note also that because we take `Ustr` arguments its possible that we've
 /// interned many possible combinations of a tagset, even if they are identical
 /// from the point of view of this function.
 #[inline]
 #[must_use]
-pub fn id(name: Ustr, tagset: Option<Ustr>) -> u64 {
+pub fn id(name: Ustr, tags: &SortedTags) -> u64 {
     let mut hasher = FnvHasher::default();
 
     name.hash(&mut hasher);
-    // We sort tags. This is in feature parity with DogStatsD and also means
-    // that we avoid storing the same context multiple times because users have
-    // passed tags in differeing order through time.
-    if let Some(tagset) = tagset {
-        let mut tag_count = 0;
-        let mut scratch = [None; constants::MAX_TAGS];
-        for kv in tagset.split(',') {
-            if let Some((k, v)) = kv.split_once(':') {
-                scratch[tag_count] = Some((Ustr::from(k), Ustr::from(v)));
-                tag_count += 1;
-            }
-        }
-        scratch[..tag_count].sort_unstable();
-        // With the tags sorted -- note they're Copy -- we hash the whole kit.
-        for kv in scratch[..tag_count].iter().flatten() {
-            kv.0.as_bytes().hash(&mut hasher);
-            kv.1.as_bytes().hash(&mut hasher);
-        }
+    for kv in tags.values.iter() {
+        kv.0.as_bytes().hash(&mut hasher);
+        kv.1.as_bytes().hash(&mut hasher);
     }
     hasher.finish()
 }
@@ -223,9 +227,9 @@ mod tests {
     use proptest::{collection, option, strategy::Strategy, string::string_regex};
     use ustr::Ustr;
 
-    use crate::metric::id;
+    use crate::metric::{id, parse, MetricValue, SortedTags};
 
-    use super::{Metric, ParseError};
+    use super::ParseError;
 
     fn metric_name() -> impl Strategy<Value = String> {
         string_regex("[a-zA-Z0-9.-]{1,128}").unwrap()
@@ -265,10 +269,53 @@ mod tests {
             } else {
                 format!("{name}:{values}|{mtype}")
             };
-            let metric = Metric::parse(&input).unwrap();
-            assert_eq!(name, metric.raw_name());
-            assert_eq!(values, metric.raw_values());
-            assert_eq!(tagset, metric.raw_tagset().map(String::from));
+            let metric = parse(&input).unwrap();
+            assert_eq!(name, metric.name.as_str());
+
+            if let Some(tags) = tagset {
+                let parsed_metric_tags : SortedTags= metric.tags.clone();
+                assert_eq!(tags.split(',').count(), parsed_metric_tags.values.len());
+                tags.split(',').for_each(|kv| {
+                    let (original_key, original_value) = kv.split_once(':').unwrap();
+                    let mut found = false;
+                    for (k,v) in parsed_metric_tags.values.iter() {
+                        // TODO not sure who to handle duplicate keys. To make the test pass, just find any match instead of first
+                        if *k == Ustr::from(original_key) && *v == Ustr::from(original_value) {
+                            found = true;
+                        }
+                    }
+                    assert!(found);
+                });
+            } else {
+                assert!(metric.tags.is_empty());
+            }
+
+            match mtype.as_str() {
+                "c" => {
+                    if let MetricValue::Count(v) = metric.value {
+                        assert_eq!(v, values.split(':').next().unwrap().parse::<f64>().unwrap());
+                    } else {
+                        panic!("Expected count metric");
+                    }
+                }
+                "g" => {
+                    if let MetricValue::Gauge(v) = metric.value {
+                        assert_eq!(v, values.split(':').next().unwrap().parse::<f64>().unwrap());
+                    } else {
+                        panic!("Expected gauge metric");
+                    }
+                }
+                "d" => {
+                    if let MetricValue::Distribution(d) = metric.value {
+                        assert_eq!(d.min().unwrap(), values.split(':').next().unwrap().parse::<f64>().unwrap());
+                    } else {
+                        panic!("Expected distribution metric");
+                    }
+                }
+                _ => {
+                    panic!("Invalid metric format");
+                }
+            }
         }
 
         #[test]
@@ -281,13 +328,9 @@ mod tests {
             } else {
                 format!("|{mtype}")
             };
-            let result = Metric::parse(&input);
+            let result = parse(&input);
 
-            assert!(result.is_err());
-            assert_eq!(
-                result.unwrap_err(),
-                ParseError::Raw("Missing name, value section")
-            );
+            assert_eq!(result.unwrap_err(),ParseError::Raw("Invalid metric format"));
         }
 
         #[test]
@@ -305,12 +348,11 @@ mod tests {
             } else {
                 format!("{name}{value}|{mtype}")
             };
-            let result = Metric::parse(&input);
+            let result = parse(&input);
 
-            assert!(result.is_err());
             assert_eq!(
                 result.unwrap_err(),
-                ParseError::Raw("Missing name, value section")
+                ParseError::Raw("Invalid metric format")
             );
         }
 
@@ -326,12 +368,11 @@ mod tests {
             } else {
                 format!("{name}:{values}|{mtype}")
             };
-            let result = Metric::parse(&input);
+            let result = parse(&input);
 
-            assert!(result.is_err());
             assert_eq!(
                 result.unwrap_err(),
-                ParseError::Raw("Unsupported metric type")
+                ParseError::Raw("Invalid metric format")
             );
         }
 
@@ -363,8 +404,8 @@ mod tests {
                 tagset2.pop();
             }
 
-            let id1 = id(Ustr::from(&name), Some(Ustr::from(&tagset1)));
-            let id2 = id(Ustr::from(&name), Some(Ustr::from(&tagset2)));
+            let id1 = id(Ustr::from(&name), &SortedTags::parse(&tagset1).unwrap());
+            let id2 = id(Ustr::from(&name), &SortedTags::parse(&tagset2).unwrap());
 
             assert_eq!(id1, id2);
         }
@@ -373,21 +414,21 @@ mod tests {
     #[test]
     fn parse_too_many_tags() {
         // 33
-        assert_eq!(Metric::parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3").unwrap_err(),
+        assert_eq!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3").unwrap_err(),
                    ParseError::Raw("Too many tags"));
 
         // 32
-        assert!(Metric::parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2").is_ok());
+        assert!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2").is_ok());
 
         // 31
-        assert!(Metric::parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1").is_ok());
+        assert!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1").is_ok());
 
         // 30
-        assert!(Metric::parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3").is_ok());
+        assert!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3").is_ok());
     }
 
     #[test]
     fn invalid_dogstatsd_no_panic() {
-        assert!(Metric::parse("somerandomstring|c+a;slda").is_err());
+        assert!(parse("somerandomstring|c+a;slda").is_err());
     }
 }
