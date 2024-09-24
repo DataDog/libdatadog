@@ -5,9 +5,9 @@ use super::{
     InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
     SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
-use crate::dogstatsd::DogStatsDAction;
 use datadog_ipc::platform::{Channel, ShmHandle};
 use datadog_ipc::transport::blocking::BlockingTransport;
+use dogstatsd_client::DogStatsDActionOwned;
 use std::sync::Mutex;
 use std::{
     borrow::Cow,
@@ -318,7 +318,7 @@ pub fn set_remote_config_data(
 pub fn send_dogstatsd_actions(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
-    actions: Vec<DogStatsDAction>,
+    actions: Vec<DogStatsDActionOwned>,
 ) -> io::Result<()> {
     transport.send(SidecarInterfaceRequest::SendDogstatsdActions {
         instance_id: instance_id.clone(),

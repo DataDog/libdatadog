@@ -3,7 +3,6 @@
 pub mod agent_remote_config;
 pub mod config;
 pub mod crashtracker;
-pub mod dogstatsd;
 mod dump;
 pub mod entry;
 #[cfg(feature = "tracing")]
