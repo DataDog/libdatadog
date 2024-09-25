@@ -106,7 +106,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter>) {
 /// * `trace_count` - The number of traces to send to the Datadog Agent.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_send(
-    handle: &TraceExporter,
+    handle: &mut TraceExporter,
     trace: ByteSlice,
     trace_count: usize,
 ) -> MaybeError {

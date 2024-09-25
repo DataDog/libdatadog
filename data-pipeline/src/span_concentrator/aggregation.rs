@@ -30,19 +30,15 @@ pub(super) struct AggregationKey {
 impl AggregationKey {
     /// Return an AggregationKey matching the given span.
     ///
-    /// If `peer_tags_aggregation` is true then the peer tags of the span will be included in the
-    /// key. The peer tags are computed based on the list of `peer_tag_keys`.
-    pub(super) fn from_span(
-        span: &pb::Span,
-        peer_tags_aggregation: bool,
-        peer_tag_keys: &[String],
-    ) -> Self {
+    /// If `peer_tags_keys` is not empty then the peer tags of the span will be included in the
+    /// key.
+    pub(super) fn from_span(span: &pb::Span, peer_tag_keys: &[String]) -> Self {
         let span_kind = span
             .meta
             .get(TAG_SPANKIND)
             .map(|s| s.to_string())
             .unwrap_or_default();
-        let peer_tags = if peer_tags_aggregation && client_or_producer(&span_kind) {
+        let peer_tags = if client_or_producer(&span_kind) {
             get_peer_tags(span, peer_tag_keys)
         } else {
             vec![]
@@ -504,12 +500,12 @@ mod tests {
         ];
 
         for (span, expected_key) in test_cases {
-            assert_eq!(AggregationKey::from_span(&span, false, &[]), expected_key);
+            assert_eq!(AggregationKey::from_span(&span, &[]), expected_key);
         }
 
         for (span, expected_key) in test_cases_with_peer_tags {
             assert_eq!(
-                AggregationKey::from_span(&span, true, &test_peer_tags),
+                AggregationKey::from_span(&span, &test_peer_tags),
                 expected_key
             );
         }

@@ -30,7 +30,7 @@ fn get_span(now: i64, trace_id: u64, span_id: u64) -> pb::Span {
 }
 
 fn main() {
-    let exporter = TraceExporter::builder()
+    let mut exporter = TraceExporter::builder()
         .set_url("http://localhost:8126")
         .set_hostname("test")
         .set_env("testing")

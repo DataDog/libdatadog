@@ -229,8 +229,7 @@ mod tests {
             BUCKETS_DURATION,
             // Make sure the oldest bucket will be flushed on next send
             SystemTime::now() - BUCKETS_DURATION * 3,
-            false,
-            false,
+            vec![],
             vec![],
         );
         let mut trace = vec![];

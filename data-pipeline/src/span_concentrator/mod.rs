@@ -27,20 +27,19 @@ fn align_timestamp(t: u64, bucket_size: u64) -> u64 {
 }
 
 /// Return true if the span has a span.kind that is eligible for stats computation
-fn compute_stats_for_span_kind(span: &pb::Span) -> bool {
-    span.meta.get("span.kind").is_some_and(|span_kind| {
-        matches!(
-            span_kind.to_lowercase().as_str(),
-            "server" | "consumer" | "client" | "producer"
-        )
-    })
+fn compute_stats_for_span_kind(span: &pb::Span, span_kinds_stats_computed: &[String]) -> bool {
+    !span_kinds_stats_computed.is_empty()
+        && span
+            .meta
+            .get("span.kind")
+            .is_some_and(|span_kind| span_kinds_stats_computed.contains(&span_kind.to_lowercase()))
 }
 
 /// Return true if the span should be ignored for stats computation
-fn should_ignore_span(span: &pb::Span, compute_stats_by_span_kind: bool) -> bool {
+fn should_ignore_span(span: &pb::Span, span_kinds_stats_computed: &[String]) -> bool {
     !(trace_utils::has_top_level(span)
         || trace_utils::is_measured(span)
-        || (compute_stats_by_span_kind && compute_stats_for_span_kind(span)))
+        || compute_stats_for_span_kind(span, span_kinds_stats_computed))
         || trace_utils::is_partial_snapshot(span)
 }
 
@@ -69,10 +68,8 @@ pub struct SpanConcentrator {
     oldest_timestamp: u64,
     /// bufferLen is the number stats bucket we keep when flushing.
     buffer_len: usize,
-    /// flag to enable aggregation of peer tags
-    peer_tags_aggregation: bool,
-    /// flag to enable computation of stats through checking the span.kind field
-    compute_stats_by_span_kind: bool,
+    /// span.kind field eligible for stats computation
+    span_kinds_stats_computed: Vec<String>,
     /// keys for supplementary tags that describe peer.service entities
     peer_tag_keys: Vec<String>,
 }
@@ -81,15 +78,12 @@ impl SpanConcentrator {
     /// Return a new concentrator with the given parameters
     /// - `bucket_size` is the size of the time buckets
     /// - `now` the current system time, used to define the oldest bucket
-    /// - `peer_tags_aggregation` enables aggregation based on peer_tags
-    /// - `compute_stats_by_span_kind` use span_kind to determine span eligibility to stats
-    ///   computation
-    /// - `peer_tags_keys` the list of keys considered as peer tags for aggregation
+    /// - `span_kinds_stats_computed` list of span kinds eligible for stats computation
+    /// - `peer_tags_keys` list of keys considered as peer tags for aggregation
     pub fn new(
         bucket_size: Duration,
         now: SystemTime,
-        peer_tags_aggregation: bool,
-        compute_stats_by_span_kind: bool,
+        span_kinds_stats_computed: Vec<String>,
         peer_tag_keys: Vec<String>,
     ) -> SpanConcentrator {
         SpanConcentrator {
@@ -100,17 +94,30 @@ impl SpanConcentrator {
                 bucket_size.as_nanos() as u64,
             ),
             buffer_len: 2,
-            peer_tags_aggregation,
-            compute_stats_by_span_kind,
+            span_kinds_stats_computed,
             peer_tag_keys,
         }
+    }
+
+    /// Set the list of span kinds eligible for stats computation
+    pub fn set_span_kinds(&mut self, span_kinds: Vec<String>) {
+        self.span_kinds_stats_computed = span_kinds;
+    }
+
+    /// Set the list of keys considered as peer_tags for aggregation
+    pub fn set_peer_tags(&mut self, peer_tags: Vec<String>) {
+        self.peer_tag_keys = peer_tags;
+    }
+
+    pub fn get_bucket_size(&self) -> Duration {
+        Duration::from_nanos(self.bucket_size)
     }
 
     /// Add a span into the concentrator, by computing stats if the span is elligible for stats
     /// computation.
     pub fn add_span(&mut self, span: &pb::Span) {
         // If the span is elligible for stats computation
-        if !should_ignore_span(span, self.compute_stats_by_span_kind) {
+        if !should_ignore_span(span, self.span_kinds_stats_computed.as_slice()) {
             let mut bucket_timestamp =
                 align_timestamp((span.start + span.duration) as u64, self.bucket_size);
             // If the span is to old we aggregate it in the latest bucket instead of
@@ -119,8 +126,7 @@ impl SpanConcentrator {
                 bucket_timestamp = self.oldest_timestamp;
             }
 
-            let agg_key =
-                AggregationKey::from_span(span, self.peer_tags_aggregation, &self.peer_tag_keys);
+            let agg_key = AggregationKey::from_span(span, &self.peer_tag_keys);
 
             self.buckets
                 .entry(bucket_timestamp)
