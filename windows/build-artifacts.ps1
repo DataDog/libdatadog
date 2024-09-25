@@ -22,10 +22,10 @@ Write-Host "Building project into $($output_dir)" -ForegroundColor Magenta
 
 # build inside the crate to use the config.toml file
 pushd profiling-ffi
-Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler --target i686-pc-windows-msvc --release --target-dir $output_dir }
-Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler --target i686-pc-windows-msvc --target-dir $output_dir }
-Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler --target x86_64-pc-windows-msvc --release --target-dir $output_dir }
-Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler --target x86_64-pc-windows-msvc --target-dir $output_dir }
+Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler,datadog-profiling-ffi/data-pipeline-ffi --target i686-pc-windows-msvc --release --target-dir $output_dir }
+Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler,datadog-profiling-ffi/data-pipeline-ffi --target i686-pc-windows-msvc --target-dir $output_dir }
+Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler,datadog-profiling-ffi/data-pipeline-ffi --target x86_64-pc-windows-msvc --release --target-dir $output_dir }
+Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler,datadog-profiling-ffi/data-pipeline-ffi --target x86_64-pc-windows-msvc --target-dir $output_dir }
 popd
 
 Write-Host "Building tools" -ForegroundColor Magenta
