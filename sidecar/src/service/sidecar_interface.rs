@@ -3,7 +3,6 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use crate::dogstatsd::DogStatsDAction;
 use crate::service::{
     InstanceId, QueueId, RequestIdentification, RequestIdentifier, RuntimeMetadata,
     SerializedTracerHeaderTags, SessionConfig, SidecarAction,

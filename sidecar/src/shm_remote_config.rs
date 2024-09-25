@@ -525,6 +525,20 @@ impl RemoteConfigManager {
         self.check_configs.clear();
         self.active_configs.clear();
     }
+
+    pub fn unload_configs(&mut self, configs: &[RemoteConfigProduct]) {
+        self.active_configs.retain(|key, path| {
+            if configs.contains(&path.product) {
+                // self.check_configs should generally be empty here, but be safe
+                if let Some(pos) = self.check_configs.iter().position(|x| x == key) {
+                    self.check_configs.swap_remove(pos);
+                }
+                false
+            } else {
+                true
+            }
+        });
+    }
 }
 
 #[cfg(test)]
