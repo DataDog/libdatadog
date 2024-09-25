@@ -8,6 +8,7 @@ use core::ops::Deref;
 use std::io::Write;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
+use std::ptr::NonNull;
 
 /// Holds the raw parts of a Rust Vec; it should only be created from Rust,
 /// never from C.
@@ -97,6 +98,15 @@ impl<T> Vec<T> {
     pub fn as_slice(&self) -> Slice<T> {
         unsafe { Slice::from_raw_parts(self.ptr, self.len) }
     }
+    
+    pub const fn new() -> Self {
+        Vec {
+            ptr: NonNull::dangling().as_ptr(),
+            len: 0,
+            capacity: 0,
+            _marker: PhantomData,
+        }
+    } 
 }
 
 impl<T> Deref for Vec<T> {
@@ -109,7 +119,7 @@ impl<T> Deref for Vec<T> {
 
 impl<T> Default for Vec<T> {
     fn default() -> Self {
-        Self::from(alloc::vec::Vec::new())
+        Self::new()
     }
 }
 
