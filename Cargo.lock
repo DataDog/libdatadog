@@ -1353,6 +1353,8 @@ dependencies = [
  "datadog-trace-protobuf",
  "datadog-trace-utils",
  "ddcommon",
+ "dogstatsd-client",
+ "either",
  "futures",
  "httpmock",
  "hyper 0.14.28",
@@ -1629,6 +1631,7 @@ dependencies = [
  "datadog-trace-utils",
  "ddcommon",
  "ddtelemetry",
+ "dogstatsd-client",
  "futures",
  "hashbrown 0.12.3",
  "http 0.2.12",
@@ -1680,6 +1683,7 @@ dependencies = [
  "ddcommon-ffi",
  "ddtelemetry",
  "ddtelemetry-ffi",
+ "dogstatsd-client",
  "hyper 0.14.28",
  "libc",
  "paste",
@@ -1994,6 +1998,7 @@ dependencies = [
  "mockito",
  "proptest",
  "protobuf",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
@@ -2002,6 +2007,22 @@ dependencies = [
  "tokio-util 0.7.11",
  "tracing",
  "ustr",
+]
+
+[[package]]
+name = "dogstatsd-client"
+version = "13.0.0"
+dependencies = [
+ "anyhow",
+ "cadence",
+ "datadog-ddsketch",
+ "datadog-trace-normalization",
+ "datadog-trace-protobuf",
+ "ddcommon",
+ "http 0.2.12",
+ "hyper 0.14.28",
+ "serde",
+ "tracing",
 ]
 
 [[package]]
@@ -2034,9 +2055,9 @@ dependencies = [
 
 [[package]]
 name = "either"
-version = "1.10.0"
+version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11157ac094ffbdde99aa67b23417ebdd801842852b500e395a45a9c0aac03e4a"
+checksum = "60b1af1c220855b6ceac025d3f6ecdd2b7c4894bfe9cd9bda4fbb4bc7c0d4cf0"
 
 [[package]]
 name = "ena"
@@ -4322,9 +4343,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.10.4"
+version = "1.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c117dbdfde9c8308975b6a18d71f3f385c89461f7b3fb054288ecf2a2058ba4c"
+checksum = "4219d74c6b67a3654a9fbebc4b419e22126d13d2f3c4a07ee0cb61ff79a79619"
 dependencies = [
  "aho-corasick",
  "memchr",

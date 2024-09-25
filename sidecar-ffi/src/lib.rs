@@ -12,7 +12,6 @@ use datadog_sidecar::agent_remote_config::{
 use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
 use datadog_sidecar::crashtracker::crashtracker_unix_socket_path;
-use datadog_sidecar::dogstatsd::DogStatsDAction;
 use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
 use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
@@ -28,6 +27,7 @@ use ddtelemetry::{
     worker::{LifecycleAction, TelemetryActions},
 };
 use ddtelemetry_ffi::try_c;
+use dogstatsd_client::DogStatsDActionOwned;
 use ffi::slice::AsBytes;
 use libc::c_char;
 use std::ffi::c_void;
@@ -689,7 +689,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_count(
     try_c!(blocking::send_dogstatsd_actions(
         transport,
         instance_id,
-        vec![DogStatsDAction::Count(
+        vec![DogStatsDActionOwned::Count(
             metric.to_utf8_lossy().into_owned(),
             value,
             tags.map(|tags| tags.iter().cloned().collect())
@@ -713,7 +713,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_distribution(
     try_c!(blocking::send_dogstatsd_actions(
         transport,
         instance_id,
-        vec![DogStatsDAction::Distribution(
+        vec![DogStatsDActionOwned::Distribution(
             metric.to_utf8_lossy().into_owned(),
             value,
             tags.map(|tags| tags.iter().cloned().collect())
@@ -737,7 +737,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_gauge(
     try_c!(blocking::send_dogstatsd_actions(
         transport,
         instance_id,
-        vec![DogStatsDAction::Gauge(
+        vec![DogStatsDActionOwned::Gauge(
             metric.to_utf8_lossy().into_owned(),
             value,
             tags.map(|tags| tags.iter().cloned().collect())
@@ -761,7 +761,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_histogram(
     try_c!(blocking::send_dogstatsd_actions(
         transport,
         instance_id,
-        vec![DogStatsDAction::Histogram(
+        vec![DogStatsDActionOwned::Histogram(
             metric.to_utf8_lossy().into_owned(),
             value,
             tags.map(|tags| tags.iter().cloned().collect())
@@ -785,7 +785,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
     try_c!(blocking::send_dogstatsd_actions(
         transport,
         instance_id,
-        vec![DogStatsDAction::Set(
+        vec![DogStatsDActionOwned::Set(
             metric.to_utf8_lossy().into_owned(),
             value,
             tags.map(|tags| tags.iter().cloned().collect())

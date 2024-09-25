@@ -7,6 +7,7 @@
 //! in different languages.
 
 pub mod agent_info;
+mod health_metrics;
 #[allow(missing_docs)]
 pub mod span_concentrator;
 #[allow(missing_docs)]

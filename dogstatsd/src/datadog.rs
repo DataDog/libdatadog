@@ -17,22 +17,6 @@ pub struct DdApi {
     fqdn_site: String,
     client: reqwest::Client,
 }
-/// Error relating to `ship`
-#[derive(thiserror::Error, Debug)]
-pub enum ShipError {
-    #[error("Failed to push to API with status {status}: {body}")]
-    /// Datadog API failure
-    Failure {
-        /// HTTP status code
-        status: u16,
-        /// HTTP body that failed
-        body: String,
-    },
-
-    /// Json
-    #[error(transparent)]
-    Json(#[from] serde_json::Error),
-}
 
 fn build_http_client(
     http_proxy: Option<String>,

@@ -34,6 +34,7 @@ members = [
   "data-pipeline-ffi",
   "ddsketch",
   "tinybytes",
+  "dogstatsd-client",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2

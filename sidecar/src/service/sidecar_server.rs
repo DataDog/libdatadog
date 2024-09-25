@@ -38,7 +38,6 @@ use serde::{Deserialize, Serialize};
 use tokio::task::{JoinError, JoinHandle};
 
 use crate::config::get_product_endpoint;
-use crate::dogstatsd::DogStatsDAction;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::runtime_info::ActiveApplication;
 use crate::service::telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats;
@@ -47,6 +46,7 @@ use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
 use datadog_remote_config::fetch::ConfigInvariants;
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
+use dogstatsd_client::{new_flusher, DogStatsDActionOwned};
 use tinybytes;
 
 type NoResponse = Ready<()>;
@@ -670,9 +670,8 @@ impl SidecarInterface for SidecarServer {
             cfg.set_endpoint(endpoint).ok();
         });
         session.configure_dogstatsd(|dogstatsd| {
-            dogstatsd
-                .set_endpoint(config.dogstatsd_endpoint.clone())
-                .ok();
+            let d = new_flusher(config.dogstatsd_endpoint.clone()).ok();
+            *dogstatsd = d;
         });
         session.set_remote_config_invariants(ConfigInvariants {
             language: config.language,
@@ -848,12 +847,13 @@ impl SidecarInterface for SidecarServer {
         self,
         _: Context,
         instance_id: InstanceId,
-        actions: Vec<DogStatsDAction>,
+        actions: Vec<DogStatsDActionOwned>,
     ) -> Self::SendDogstatsdActionsFut {
         tokio::spawn(async move {
             self.get_session(&instance_id.session_id)
                 .get_dogstatsd()
-                .send(actions);
+                .as_ref()
+                .inspect(|f| f.send_owned(actions));
         });
 
         no_response()
@@ -901,9 +901,10 @@ impl SidecarInterface for SidecarServer {
         session.modify_trace_config(|cfg| {
             update_cfg(cfg.endpoint.take(), |e| cfg.set_endpoint(e), &token);
         });
-        session.configure_dogstatsd(|cfg| {
-            update_cfg(cfg.endpoint.take(), |e| cfg.set_endpoint(e), &token);
-        });
+        // TODO(APMSP-1377): the dogstatsd-client doesn't support test_session tokens yet
+        // session.configure_dogstatsd(|cfg| {
+        //     update_cfg(cfg.endpoint.take(), |e| cfg.set_endpoint(e), &token);
+        // });
 
         no_response()
     }
