@@ -37,6 +37,7 @@ pub enum ShipError {
 fn build_http_client(https_proxy: Option<String>) -> Result<reqwest::Client, reqwest::Error> {
     let client = reqwest::Client::builder();
     if let Some(proxy_uri) = https_proxy {
+        println!("ASTUYVE PROXY URI: {:?}", proxy_uri);
         let proxy = reqwest::Proxy::https(proxy_uri)?;
         client.proxy(proxy).build()
     } else {
