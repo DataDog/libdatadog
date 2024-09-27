@@ -332,7 +332,7 @@ mod tests {
 
         // Wait for first fetch
         while mock_v1.hits_async().await == 0 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
         let version_1 = info.load().as_ref().unwrap().info.version.clone().unwrap();
         assert_eq!(version_1, "1");
@@ -351,7 +351,7 @@ mod tests {
 
         // Wait for second fetch
         while mock_v2.hits_async().await == 0 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
         let version_2 = info.load().as_ref().unwrap().info.version.clone().unwrap();
