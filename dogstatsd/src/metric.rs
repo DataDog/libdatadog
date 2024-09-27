@@ -22,6 +22,22 @@ pub enum MetricValue {
     Distribution(DDSketch),
 }
 
+impl MetricValue {
+    pub fn count(v: f64) -> MetricValue {
+        MetricValue::Count(v)
+    }
+
+    pub fn gauge(v: f64) -> MetricValue {
+        MetricValue::Gauge(v)
+    }
+
+    pub fn distribution(v: f64) -> MetricValue {
+        let sketch = &mut DDSketch::default();
+        sketch.insert(v);
+        MetricValue::Distribution(sketch.to_owned())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SortedTags {
     // We sort tags. This is in feature parity with DogStatsD and also means

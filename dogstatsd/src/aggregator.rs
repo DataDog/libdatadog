@@ -19,6 +19,7 @@ use ustr::Ustr;
 impl MetricValue {
     fn aggregate(&mut self, metric: Metric) {
         // safe because we know there's at least one value when we parse
+        // TODO aggregating different types should return error
         match self {
             MetricValue::Count(count) => *count += metric.value.get_value().unwrap_or_default(),
             MetricValue::Gauge(gauge) => *gauge = metric.value.get_value().unwrap_or_default(),
