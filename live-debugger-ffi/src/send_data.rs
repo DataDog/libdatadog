@@ -9,8 +9,8 @@ use std::mem::transmute;
 use crate::data::Probe;
 use datadog_live_debugger::debugger_defs::{
     Capture as DebuggerCaptureAlias, Capture, Captures, DebuggerData, DebuggerPayload, Diagnostics,
-    DiagnosticsError, Entry, Fields, ProbeStatus, Snapshot, SnapshotEvaluationError,
-    Value as DebuggerValueAlias,
+    DiagnosticsError, Entry, Fields, ProbeMetadata, ProbeMetadataLocation, ProbeStatus, Snapshot,
+    SnapshotEvaluationError, Value as DebuggerValueAlias,
 };
 use datadog_live_debugger::sender::generate_new_id;
 use datadog_live_debugger::{
@@ -94,6 +94,8 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
     exception_id: CharSlice<'a>,
     exception_hash: CharSlice<'a>,
     frame_index: u32,
+    type_name: CharSlice<'a>,
+    method_name: CharSlice<'a>,
     timestamp: u64,
 ) -> *mut DebuggerCapture<'a> {
     let snapshot = DebuggerPayload {
@@ -105,6 +107,21 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
             captures: Some(Captures {
                 r#return: Some(Capture::default()),
                 ..Default::default()
+            }),
+            probe: Some(ProbeMetadata {
+                id: Default::default(),
+                location: ProbeMetadataLocation {
+                    method: if method_name.is_empty() {
+                        None
+                    } else {
+                        Some(method_name.to_utf8_lossy())
+                    },
+                    r#type: if type_name.is_empty() {
+                        None
+                    } else {
+                        Some(type_name.to_utf8_lossy())
+                    },
+                },
             }),
             language: language.to_utf8_lossy(),
             id: id.to_utf8_lossy(),

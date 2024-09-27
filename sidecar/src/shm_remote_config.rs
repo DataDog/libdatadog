@@ -661,7 +661,7 @@ mod tests {
 
         // just one update
         assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
-        
+
         manager.unload_configs(&[PATH_FIRST.product]);
 
         if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {

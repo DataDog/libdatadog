@@ -288,7 +288,7 @@ impl SessionInfo {
                     }
                 );
             } else {
-                warn!("Did not find queue_id {queue_id:?} for runtime id {runtime_id} od session id {} - skipping live debugger data", self.session_id);
+                warn!("Did not find queue_id {queue_id:?} for runtime id {runtime_id} of session id {} - skipping live debugger data", self.session_id);
             }
         } else {
             warn!(

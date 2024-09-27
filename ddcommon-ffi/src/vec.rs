@@ -98,7 +98,7 @@ impl<T> Vec<T> {
     pub fn as_slice(&self) -> Slice<T> {
         unsafe { Slice::from_raw_parts(self.ptr, self.len) }
     }
-    
+
     pub const fn new() -> Self {
         Vec {
             ptr: NonNull::dangling().as_ptr(),
@@ -106,7 +106,7 @@ impl<T> Vec<T> {
             capacity: 0,
             _marker: PhantomData,
         }
-    } 
+    }
 }
 
 impl<T> Deref for Vec<T> {
