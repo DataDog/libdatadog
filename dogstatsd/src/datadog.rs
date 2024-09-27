@@ -34,34 +34,13 @@ pub enum ShipError {
     Json(#[from] serde_json::Error),
 }
 
-fn build_http_client(https_proxy: Option<String>) -> Result<reqwest::Client, reqwest::Error> {
-    let client = reqwest::Client::builder();
-    if let Some(proxy_uri) = https_proxy {
-        println!("ASTUYVE PROXY URI: {:?}", proxy_uri);
-        let proxy = reqwest::Proxy::https(proxy_uri)?;
-        client.proxy(proxy).build()
-    } else {
-        client.build()
-    }
-}
-
 impl DdApi {
     #[must_use]
-    pub fn new(api_key: String, site: String, https_proxy: Option<String>) -> Self {
-        let client = match build_http_client(https_proxy) {
-            Ok(client) => client,
-            Err(e) => {
-                error!(
-                    "Unable to parse proxy configuration: {}, no proxy will be used",
-                    e
-                );
-                reqwest::Client::new()
-            }
-        };
+    pub fn new(api_key: String, site: String) -> Self {
         DdApi {
             api_key,
             fqdn_site: site,
-            client,
+            client: reqwest::Client::new(),
         }
     }
 

@@ -122,7 +122,7 @@ pub struct SendData {
 pub fn build_client(http_proxy: Option<String>) -> ClientWrapper {
     let builder = Client::builder();
     if let Some(proxy) = http_proxy {
-        let proxy = Proxy::new(Intercept::All, proxy.parse().unwrap());
+        let proxy = Proxy::new(Intercept::Https, proxy.parse().unwrap());
         let proxy_connector =
             ProxyConnector::from_proxy(connector::Connector::default(), proxy).unwrap();
         ClientWrapper::Proxy(builder.build(proxy_connector))
