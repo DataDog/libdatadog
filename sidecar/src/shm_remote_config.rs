@@ -437,6 +437,8 @@ impl RemoteConfigManager {
                     if *instant < Instant::now() - Duration::from_secs(3666) {
                         let (target, _) = self.unexpired_targets.pop().unwrap();
                         self.encountered_targets.remove(&target);
+                    } else {
+                        break;
                     }
                 }
             }
@@ -526,6 +528,7 @@ impl RemoteConfigManager {
         self.active_configs.clear();
     }
 
+    /// Can be used to fast-remove configs temporarily. Will be re-applied on next fetch_update().
     pub fn unload_configs(&mut self, configs: &[RemoteConfigProduct]) {
         self.active_configs.retain(|key, path| {
             if configs.contains(&path.product) {
@@ -533,6 +536,8 @@ impl RemoteConfigManager {
                 if let Some(pos) = self.check_configs.iter().position(|x| x == key) {
                     self.check_configs.swap_remove(pos);
                 }
+                // And re-apply it on next read
+                self.last_read_configs.push(key.clone());
                 false
             } else {
                 true
@@ -650,6 +655,17 @@ mod tests {
             } else {
                 unreachable!();
             }
+        } else {
+            unreachable!();
+        }
+
+        // just one update
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+        
+        manager.unload_configs(&[PATH_FIRST.product]);
+
+        if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
+            assert_eq!(value.config_id, PATH_FIRST.config_id);
         } else {
             unreachable!();
         }
