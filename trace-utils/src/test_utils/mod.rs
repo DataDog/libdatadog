@@ -268,5 +268,6 @@ pub fn create_send_data(size: usize, target_endpoint: &Endpoint) -> SendData {
         TracerPayloadCollection::V07(vec![tracer_payload]),
         tracer_header_tags,
         target_endpoint,
+        None,
     )
 }
