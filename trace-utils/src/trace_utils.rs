@@ -686,6 +686,7 @@ mod tests {
             }]),
             TracerHeaderTags::default(),
             &Endpoint::default(),
+            None,
         );
         let coalesced = trace_utils::coalesce_send_data(vec![
             dummy.clone(),
