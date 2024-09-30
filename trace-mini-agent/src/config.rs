@@ -32,7 +32,6 @@ pub struct Config {
     pub trace_stats_intake: Endpoint,
     /// timeout for environment verification, in milliseconds
     pub verify_env_timeout: u64,
-    pub proxy_url: Option<String>,
 }
 
 impl Config {
@@ -90,7 +89,6 @@ impl Config {
                 ..Default::default()
             },
             obfuscation_config,
-            proxy_url: env::var("HTTPS_PROXY").ok(),
         })
     }
 }

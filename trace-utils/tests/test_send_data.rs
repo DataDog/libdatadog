@@ -56,7 +56,6 @@ mod tracing_integration_tests {
             TracerPayloadCollection::V04(vec![trace.clone()]),
             header_tags,
             &endpoint,
-            None,
         );
 
         let _result = data.send().await;

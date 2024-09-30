@@ -102,7 +102,6 @@ pub(crate) enum RequestResult {
 ///     let result = send_data.send().await;
 /// }
 /// ```
-
 pub struct SendData {
     pub(crate) tracer_payloads: TracerPayloadCollection,
     pub(crate) size: usize, // have a rough size estimate to force flushing if it's large
