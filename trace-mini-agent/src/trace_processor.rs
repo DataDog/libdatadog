@@ -103,6 +103,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
             payload,
             tracer_header_tags,
             &config.trace_intake,
+            config.proxy_url.clone(),
         );
 
         // send trace payload to our trace flusher
@@ -175,6 +176,7 @@ mod tests {
             env_type: trace_utils::EnvironmentType::CloudFunction,
             os: "linux".to_string(),
             obfuscation_config: ObfuscationConfig::new().unwrap(),
+            proxy_url: None,
         }
     }
 
