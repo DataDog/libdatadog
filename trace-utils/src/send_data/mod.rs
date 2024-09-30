@@ -98,7 +98,7 @@ pub enum ClientWrapper {
 ///     let tracer_header_tags = TracerHeaderTags::default(); // Replace with actual header tags
 ///     let target = Endpoint::default(); // Replace with actual endpoint
 ///
-///     let mut send_data = SendData::new(size, tracer_payload, tracer_header_tags, &target);
+///     let mut send_data = SendData::new(size, tracer_payload, tracer_header_tags, &target, None);
 ///
 ///     // Set a custom retry strategy
 ///     let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
@@ -109,7 +109,6 @@ pub enum ClientWrapper {
 ///     let result = send_data.send().await;
 /// }
 /// ```
-
 pub struct SendData {
     pub(crate) tracer_payloads: TracerPayloadCollection,
     pub(crate) size: usize, // have a rough size estimate to force flushing if it's large
