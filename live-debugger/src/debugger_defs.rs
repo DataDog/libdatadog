@@ -49,6 +49,7 @@ pub struct SnapshotStackFrame {
 }
 
 #[derive(Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Snapshot<'a> {
     pub language: Cow<'a, str>,
     pub id: Cow<'a, str>,
@@ -64,7 +65,6 @@ pub struct Snapshot<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub probe: Option<ProbeMetadata<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    #[serde(rename = "evaluationErrors")]
     pub evaluation_errors: Vec<SnapshotEvaluationError>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub stack: Vec<SnapshotStackFrame>,
