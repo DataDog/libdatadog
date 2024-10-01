@@ -58,10 +58,12 @@ pub fn strip_libraries(lib_path: &str) {
 }
 
 pub fn fix_soname(lib_path: &str) {
-    Command::new("patchelf")
+    let mut patch_soname = Command::new("patchelf")
         .arg("--set-soname")
         .arg(PROF_DYNAMIC_LIB)
         .arg(lib_path)
         .spawn()
-        .expect("failed to change the soname");
+        .expect("failed to spawn patchelf");
+
+    patch_soname.wait().expect("failed to change the soname");
 }

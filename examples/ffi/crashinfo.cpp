@@ -20,6 +20,11 @@ static ddog_CharSlice to_slice_string(std::string const &s) {
   return {.ptr = s.data(), .len = s.length()};
 }
 
+template <class T>
+static ddog_ByteSlice to_byte_slice(T const& c) {
+  return {.ptr = reinterpret_cast<const std::uint8_t*>(c.data()), .len = c.size()};
+}
+
 struct Deleter {
   void operator()(ddog_crasht_CrashInfo *object) { ddog_crasht_CrashInfo_drop(object); }
 };
@@ -73,6 +78,44 @@ void add_stacktrace(std::unique_ptr<ddog_crasht_CrashInfo, Deleter> &crashinfo) 
                                     .symbol_address = 0};
     trace.push_back(frame);
   }
+
+  std::vector<std::uint8_t> build_id = {42};
+  std::string filePath = "/usr/share/somewhere";
+  // test with normalized
+  auto elfFrameWithNormalization = ddog_crasht_StackFrame{
+    .ip = 42,
+    .module_base_address = 0,
+    .names = {.ptr = &names[0], .len = 1}, // just for the test
+    .normalized_ip = {
+      .file_offset = 1,
+      .build_id = to_byte_slice(build_id),
+      .path = to_slice_c_char(filePath.c_str(), filePath.size()),
+      .typ = DDOG_CRASHT_NORMALIZED_ADDRESS_TYPES_ELF,
+    },
+    .sp = 0,
+    .symbol_address = 0,
+  };
+
+  trace.push_back(elfFrameWithNormalization);
+
+  // Windows-kind of frame
+  auto dllFrameWithNormalization = ddog_crasht_StackFrame{
+    .ip = 42,
+    .module_base_address = 0,
+    .names = {.ptr = &names[0], .len = 1}, // just for the test
+    .normalized_ip = {
+      .file_offset = 1,
+      .build_id = to_byte_slice(build_id),
+      .age = 21,
+      .path = to_slice_c_char(filePath.c_str(), filePath.size()),
+      .typ = DDOG_CRASHT_NORMALIZED_ADDRESS_TYPES_PDB,
+    },
+    .sp = 0,
+    .symbol_address = 0,
+  };
+  
+  trace.push_back(dllFrameWithNormalization);
+
   ddog_crasht_Slice_StackFrame trace_slice = {.ptr = trace.data(), .len = trace.size()};
 
   check_result(
