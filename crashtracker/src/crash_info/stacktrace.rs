@@ -50,6 +50,11 @@ pub enum NormalizedAddressMeta {
         path: PathBuf,
         build_id: Option<Vec<u8>>,
     },
+    Pdb {
+        path: PathBuf,
+        guid: Option<Vec<u8>>,
+        age: u64,
+    },
     Unknown,
     Unexpected(String),
 }
