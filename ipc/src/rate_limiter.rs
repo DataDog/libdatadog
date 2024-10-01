@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
+use crate::platform::{FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle};
 use ddcommon::rate_limiter::{Limiter, LocalLimiter};
 use std::cell::UnsafeCell;
 use std::ffi::CString;
@@ -23,6 +23,7 @@ struct ShmLimiterData<'a, Inner> {
 
 pub struct ShmLimiterMemory<Inner = ()> {
     mem: Arc<RwLock<MappedMem<NamedShmHandle>>>,
+    last_size: AtomicU32,
     _phantom: PhantomData<Inner>,
 }
 
@@ -30,6 +31,7 @@ impl<Inner> Clone for ShmLimiterMemory<Inner> {
     fn clone(&self) -> Self {
         ShmLimiterMemory {
             mem: self.mem.clone(),
+            last_size: AtomicU32::new(self.last_size.load(Ordering::Relaxed)),
             _phantom: Default::default(),
         }
     }
@@ -55,6 +57,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
 
     fn new(handle: MappedMem<NamedShmHandle>) -> Self {
         Self {
+            last_size: AtomicU32::new(handle.get_size() as u32),
             mem: Arc::new(RwLock::new(handle)),
             _phantom: Default::default(),
         }
@@ -116,11 +119,29 @@ impl<Inner> ShmLimiterMemory<Inner> {
         reference
     }
 
+    fn ensure_index(&self, idx: u32) -> Option<()> {
+        let end = idx + std::mem::size_of::<ShmLimiterData<Inner>>() as u32;
+        if end > self.last_size.load(Ordering::Relaxed) {
+            let mut mem = self.mem.write().unwrap();
+            let mut cur_size = mem.mem.get_size() as u32;
+            if cur_size < end {
+                mem.ensure_space(end as usize);
+                cur_size = mem.mem.get_size() as u32;
+                if cur_size < end {
+                    return None;
+                }
+            }
+            self.last_size.store(cur_size, Ordering::Relaxed);
+        }
+        Some(())
+    }
+
     pub fn get(&self, idx: u32) -> Option<ShmLimiter<Inner>> {
         assert_eq!(
             idx % std::mem::size_of::<ShmLimiterData<Inner>>() as u32,
             Self::START_OFFSET
         );
+        self.ensure_index(idx)?;
         let reference = ShmLimiter {
             idx,
             memory: self.clone(),
@@ -148,6 +169,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
         let mut cur = Self::START_OFFSET;
         let mem = self.mem.read().unwrap();
         loop {
+            self.ensure_index(cur)?;
             let data: &ShmLimiterData<Inner> =
                 unsafe { &*mem.as_slice().as_ptr().add(cur as usize).cast() };
             if data.next_free.load(Ordering::Relaxed) == 0 {
