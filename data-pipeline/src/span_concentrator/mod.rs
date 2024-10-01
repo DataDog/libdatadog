@@ -109,6 +109,7 @@ impl SpanConcentrator {
         self.peer_tag_keys = peer_tags;
     }
 
+    /// Return the bucket size used for aggregation
     pub fn get_bucket_size(&self) -> Duration {
         Duration::from_nanos(self.bucket_size)
     }

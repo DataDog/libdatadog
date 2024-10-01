@@ -431,13 +431,13 @@ impl TraceExporter {
         )
     }
 
-    fn get_headers(&self) -> HashMap<&'static str, String> {
+    fn get_headers(&self) -> TracerHeaderTags<'_> {
         let mut headers: TracerHeaderTags = self.metadata.borrow().into();
         if let StatsComputationStatus::Enabled { .. } = &**self.client_side_stats.load() {
             headers.client_computed_top_level = true;
             headers.client_computed_stats = true;
         };
-        headers.into()
+        headers
     }
 
     fn send_data_to_url(
@@ -456,7 +456,7 @@ impl TraceExporter {
                     )
                     .method(Method::POST);
 
-                let headers: HashMap<&'static str, String> = self.get_headers();
+                let headers: HashMap<&'static str, String> = self.get_headers().into();
 
                 for (key, value) in &headers {
                     req_builder = req_builder.header(*key, value);
@@ -604,7 +604,7 @@ impl TraceExporter {
             drop_chunks(&mut traces);
         }
 
-        let header_tags: TracerHeaderTags<'_> = (&self.metadata).into();
+        let header_tags: TracerHeaderTags<'_> = self.get_headers();
 
         match self.output_format {
             TraceExporterOutputFormat::V04 => rmp_serde::to_vec_named(&traces)
@@ -820,7 +820,6 @@ impl TraceExporterBuilder {
         let mut stats = StatsComputationStatus::Disabled;
 
         let info_fetcher = AgentInfoFetcher::new(
-            // TODO: Add /info as path
             Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT)),
             Duration::from_secs(5 * 60),
         );
@@ -833,7 +832,7 @@ impl TraceExporterBuilder {
         // Proxy mode does not support stats
         if self.input_format != TraceExporterInputFormat::Proxy {
             if let Some(bucket_size) = self.stats_bucket_size {
-                // Client-side stats is considered not supported by the agent until we received
+                // Client-side stats is considered not supported by the agent until we receive
                 // the agent_info
                 stats = StatsComputationStatus::DisabledByAgent { bucket_size };
             }
