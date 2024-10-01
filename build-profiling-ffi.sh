@@ -136,7 +136,7 @@ cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
 
 datadog_profiling_ffi="datadog-profiling-ffi"
-FEATURES="--features crashtracker-collector,crashtracker-receiver,cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/demangler"
+FEATURES="--features crashtracker-collector,crashtracker-receiver,cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/demangler,datadog-profiling-ffi/data-pipeline-ffi"
 if [[ "$symbolizer" -eq 1 ]]; then
     FEATURES="--features crashtracker-collector,crashtracker-receiver,cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/demangler,symbolizer"
 fi
