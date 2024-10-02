@@ -126,7 +126,6 @@ pub struct SendData {
 #[cfg(feature = "proxy")]
 pub fn build_client(http_proxy: Option<String>) -> ClientWrapper {
     let builder = Client::builder();
-    let c = Client::new();
 
     if let Some(proxy) = http_proxy {
         let proxy = Proxy::new(Intercept::Https, proxy.parse().unwrap());
