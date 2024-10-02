@@ -5,6 +5,7 @@ pub mod retry_strategy;
 pub mod send_data_result;
 
 pub use crate::send_data::retry_strategy::{RetryBackoffType, RetryStrategy};
+#[cfg(feature = "proxy")]
 use ddcommon::connector::Connector;
 
 use crate::trace_utils::{SendDataResult, TracerHeaderTags};
@@ -17,6 +18,7 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hyper::header::HeaderValue;
 use hyper::{Body, Client, HeaderMap, Method, Response};
+#[cfg(feature = "proxy")]
 use hyper_proxy::{Intercept, Proxy, ProxyConnector};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -67,7 +69,9 @@ pub(crate) enum RequestResult {
     /// Treats errors coming from building the request
     BuildError((Attempts, ChunksDropped)),
 }
+
 #[derive(Debug, Clone)]
+#[cfg(feature = "proxy")]
 pub enum ClientWrapper {
     Direct(Client<Connector>),
     Proxy(Client<ProxyConnector<Connector>>),
@@ -98,7 +102,7 @@ pub enum ClientWrapper {
 ///     let tracer_header_tags = TracerHeaderTags::default(); // Replace with actual header tags
 ///     let target = Endpoint::default(); // Replace with actual endpoint
 ///
-///     let mut send_data = SendData::new(size, tracer_payload, tracer_header_tags, &target, None);
+///     let mut send_data = SendData::new(size, tracer_payload, tracer_header_tags, &target);
 ///
 ///     // Set a custom retry strategy
 ///     let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
@@ -115,11 +119,15 @@ pub struct SendData {
     target: Endpoint,
     headers: HashMap<&'static str, String>,
     retry_strategy: RetryStrategy,
+    #[cfg(feature = "proxy")]
     client: ClientWrapper,
 }
 
+#[cfg(feature = "proxy")]
 pub fn build_client(http_proxy: Option<String>) -> ClientWrapper {
     let builder = Client::builder();
+    let c = Client::new();
+
     if let Some(proxy) = http_proxy {
         let proxy = Proxy::new(Intercept::Https, proxy.parse().unwrap());
         let proxy_connector =
@@ -148,6 +156,7 @@ impl SendData {
         tracer_payload: TracerPayloadCollection,
         tracer_header_tags: TracerHeaderTags,
         target: &Endpoint,
+        #[cfg(feature = "proxy")]
         http_proxy: Option<String>,
     ) -> SendData {
         let mut headers = if let Some(api_key) = &target.api_key {
@@ -159,6 +168,7 @@ impl SendData {
             headers.insert("x-datadog-test-session-token", token.to_string());
         }
 
+        #[cfg(feature = "proxy")]
         let client = build_client(http_proxy);
 
         SendData {
@@ -167,6 +177,7 @@ impl SendData {
             target: target.clone(),
             headers,
             retry_strategy: RetryStrategy::default(),
+            #[cfg(feature = "proxy")]
             client,
         }
     }
@@ -241,10 +252,17 @@ impl SendData {
 
         match tokio::time::timeout(
             Duration::from_millis(self.target.timeout_ms),
+
+            #[cfg(feature = "proxy")]
             match &self.client {
                 ClientWrapper::Direct(client) => client.request(req),
                 ClientWrapper::Proxy(client) => client.request(req),
             },
+
+            #[cfg(not(feature = "proxy"))]
+            Client::builder()
+                .build(connector::Connector::default())
+                .request(req),
         )
         .await
         {
@@ -594,7 +612,6 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
-            None,
         );
 
         assert_eq!(data.size, 100);
@@ -620,7 +637,6 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
-            None,
         );
 
         assert_eq!(data.size, 100);
@@ -659,7 +675,6 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
-            None,
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
@@ -704,7 +719,6 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
-            None,
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
@@ -760,7 +774,6 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
-            None,
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
@@ -816,7 +829,6 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
-            None,
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
@@ -861,7 +873,6 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
-            None,
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
@@ -904,7 +915,6 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
-            None,
         );
 
         let res = data.send().await;
@@ -936,7 +946,6 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
-            None,
         );
 
         let res = data.send().await;
@@ -1001,7 +1010,6 @@ mod tests {
                 timeout_ms: 200,
                 ..Endpoint::default()
             },
-            None,
         );
 
         let res = data.send().await;
@@ -1044,7 +1052,6 @@ mod tests {
                 timeout_ms: 200,
                 ..Endpoint::default()
             },
-            None,
         );
 
         let res = data.send().await;
