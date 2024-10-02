@@ -257,7 +257,7 @@ impl TraceExporter {
             match self.runtime.block_on(async {
                 tokio::time::timeout(timeout, async {
                     let stats_status: Option<StatsComputationStatus> =
-                        std::sync::Arc::<StatsComputationStatus>::into_inner(
+                        Arc::<StatsComputationStatus>::into_inner(
                             self.client_side_stats.into_inner(),
                         );
                     if let Some(StatsComputationStatus::Enabled {
@@ -278,9 +278,7 @@ impl TraceExporter {
         } else {
             self.runtime.block_on(async {
                 let stats_status: Option<StatsComputationStatus> =
-                    std::sync::Arc::<StatsComputationStatus>::into_inner(
-                        self.client_side_stats.into_inner(),
-                    );
+                    Arc::<StatsComputationStatus>::into_inner(self.client_side_stats.into_inner());
                 if let Some(StatsComputationStatus::Enabled {
                     stats_concentrator: _,
                     cancellation_token,

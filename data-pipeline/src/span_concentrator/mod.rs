@@ -68,7 +68,7 @@ pub struct SpanConcentrator {
     oldest_timestamp: u64,
     /// bufferLen is the number stats bucket we keep when flushing.
     buffer_len: usize,
-    /// span.kind field eligible for stats computation
+    /// span.kind fields eligible for stats computation
     span_kinds_stats_computed: Vec<String>,
     /// keys for supplementary tags that describe peer.service entities
     peer_tag_keys: Vec<String>,
