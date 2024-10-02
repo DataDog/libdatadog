@@ -5,9 +5,12 @@ use super::{
     InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
     SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
-use datadog_ipc::platform::{Channel, ShmHandle};
+use datadog_ipc::platform::{Channel, FileBackedHandle, ShmHandle};
 use datadog_ipc::transport::blocking::BlockingTransport;
+use datadog_live_debugger::sender::DebuggerType;
+use ddcommon::tag::Tag;
 use dogstatsd_client::DogStatsDActionOwned;
+use serde::Serialize;
 use std::sync::Mutex;
 use std::{
     borrow::Cow,
@@ -271,6 +274,100 @@ pub fn send_trace_v04_shm(
     })
 }
 
+/// Sends raw data from shared memory to the debugger endpoint.
+///
+/// # Arguments
+///
+/// * `transport` - The transport used for communication.
+/// * `instance_id` - The ID of the instance.
+/// * `queue_id` - The unique identifier for the trace context.
+/// * `handle` - The handle to the shared memory.
+/// * `debugger_type` - Whether it's log or diagnostic data.
+///
+/// # Returns
+///
+/// An `io::Result<()>` indicating the result of the operation.
+pub fn send_debugger_data_shm(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    queue_id: QueueId,
+    handle: ShmHandle,
+    debugger_type: DebuggerType,
+) -> io::Result<()> {
+    transport.send(SidecarInterfaceRequest::SendDebuggerDataShm {
+        instance_id: instance_id.clone(),
+        queue_id,
+        handle,
+        debugger_type,
+    })
+}
+
+/// Sends a collection of debugger payloads to the debugger endpoint.
+///
+/// # Arguments
+///
+/// * `transport` - The transport used for communication.
+/// * `instance_id` - The ID of the instance.
+/// * `queue_id` - The unique identifier for the trace context.
+/// * `payloads` - The payloads to be sent
+///
+/// # Returns
+///
+/// An `anyhow::Result<()>` indicating the result of the operation.
+pub fn send_debugger_data_shm_vec(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    queue_id: QueueId,
+    payloads: Vec<datadog_live_debugger::debugger_defs::DebuggerPayload>,
+) -> anyhow::Result<()> {
+    if payloads.is_empty() {
+        return Ok(());
+    }
+    let debugger_type = DebuggerType::of_payload(&payloads[0]);
+
+    struct SizeCount(usize);
+
+    impl io::Write for SizeCount {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0 += buf.len();
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut size_serializer = serde_json::Serializer::new(SizeCount(0));
+    payloads.serialize(&mut size_serializer).unwrap();
+
+    let mut mapped = ShmHandle::new(size_serializer.into_inner().0)?.map()?;
+    let mut serializer = serde_json::Serializer::new(mapped.as_slice_mut());
+    payloads.serialize(&mut serializer).unwrap();
+
+    Ok(send_debugger_data_shm(
+        transport,
+        instance_id,
+        queue_id,
+        mapped.into(),
+        debugger_type,
+    )?)
+}
+
+/// Acquire an exception hash rate limiter
+///
+/// # Arguments
+/// * `exception_hash` - the ID
+/// * `granularity` - how much time needs to pass between two exceptions
+pub fn acquire_exception_hash_rate_limiter(
+    transport: &mut SidecarTransport,
+    exception_hash: u64,
+    granularity: Duration,
+) -> io::Result<()> {
+    transport.send(SidecarInterfaceRequest::AcquireExceptionHashRateLimiter {
+        exception_hash,
+        granularity,
+    })
+}
+
 /// Sets the state of the current remote config operation.
 /// The queue id is shared with telemetry and the associated data will be freed upon a
 /// `Lifecycle::Stop` event.
@@ -294,6 +391,7 @@ pub fn set_remote_config_data(
     service_name: String,
     env_name: String,
     app_version: String,
+    global_tags: Vec<Tag>,
 ) -> io::Result<()> {
     transport.send(SidecarInterfaceRequest::SetRemoteConfigData {
         instance_id: instance_id.clone(),
@@ -301,6 +399,7 @@ pub fn set_remote_config_data(
         service_name,
         env_name,
         app_version,
+        global_tags,
     })
 }
 

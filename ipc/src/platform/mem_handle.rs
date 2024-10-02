@@ -147,6 +147,12 @@ impl<T: MemoryHandle> MappedMem<T> {
     }
 }
 
+impl<T: MemoryHandle> AsRef<[u8]> for MappedMem<T> {
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
 impl MappedMem<NamedShmHandle> {
     pub fn get_path(&self) -> &[u8] {
         self.mem.get_path()
@@ -204,12 +210,6 @@ impl From<ShmHandle> for PlatformHandle<OwnedFileHandle> {
 
 unsafe impl<T> Sync for MappedMem<T> where T: FileBackedHandle {}
 unsafe impl<T> Send for MappedMem<T> where T: FileBackedHandle {}
-
-impl AsRef<[u8]> for MappedMem<ShmHandle> {
-    fn as_ref(&self) -> &[u8] {
-        self.as_slice()
-    }
-}
 
 #[cfg(feature = "tiny-bytes")]
 impl UnderlyingBytes for MappedMem<ShmHandle> {}

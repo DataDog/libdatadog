@@ -10,6 +10,8 @@ pub trait Limiter {
     /// Returns the effective rate per interval.
     /// Note: The rate is only guaranteed to be accurate immediately after a call to inc().
     fn rate(&self) -> f64;
+    /// Updates the rate and returns it
+    fn update_rate(&self) -> f64;
 }
 
 /// A thread-safe limiter built on Atomics.
@@ -83,16 +85,14 @@ impl LocalLimiter {
         self.last_limit.store(0, Ordering::Relaxed);
         self.granularity = TIME_PER_SECOND * seconds as i64;
     }
-}
 
-impl Limiter for LocalLimiter {
-    fn inc(&self, limit: u32) -> bool {
+    fn update(&self, limit: u32, inc: i64) -> i64 {
         let now = now();
         let last = self.last_update.swap(now, Ordering::SeqCst);
         // Make sure reducing the limit doesn't stall for a long time
         let clear_limit = limit.max(self.last_limit.load(Ordering::Relaxed));
         let clear_counter = (now as i64 - last as i64) * (clear_limit as i64);
-        let subtract = clear_counter - self.granularity;
+        let subtract = clear_counter - inc;
         let mut previous_hits = self.hit_count.fetch_sub(subtract, Ordering::SeqCst);
         // Handle where the limiter goes below zero
         if previous_hits < subtract {
@@ -100,6 +100,13 @@ impl Limiter for LocalLimiter {
             self.hit_count.fetch_add(add, Ordering::Acquire);
             previous_hits += add - clear_counter;
         }
+        previous_hits
+    }
+}
+
+impl Limiter for LocalLimiter {
+    fn inc(&self, limit: u32) -> bool {
+        let previous_hits = self.update(limit, self.granularity);
         if previous_hits / self.granularity >= limit as i64 {
             self.hit_count
                 .fetch_sub(self.granularity, Ordering::Acquire);
@@ -118,6 +125,11 @@ impl Limiter for LocalLimiter {
         let last_limit = self.last_limit.load(Ordering::Relaxed);
         let hit_count = self.hit_count.load(Ordering::Relaxed);
         (hit_count as f64 / (last_limit as i64 * self.granularity) as f64).clamp(0., 1.)
+    }
+
+    fn update_rate(&self) -> f64 {
+        self.update(0, self.granularity);
+        self.rate()
     }
 }
 

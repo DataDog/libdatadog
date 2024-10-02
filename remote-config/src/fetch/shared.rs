@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::fetch::{
-    ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState, ConfigInvariants,
-    FileStorage,
+    ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState,
+    ConfigFetcherStateStats, ConfigInvariants, FileStorage,
 };
 use crate::{RemoteConfigPath, Target};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ops::Add;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -138,6 +140,23 @@ where
     run_id: Arc<RunnersGeneration>,
 }
 
+#[derive(Default, Serialize, Deserialize)]
+pub struct RefcountingStorageStats {
+    pub inactive_files: u32,
+    pub fetcher: ConfigFetcherStateStats,
+}
+
+impl Add for RefcountingStorageStats {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        RefcountingStorageStats {
+            inactive_files: self.inactive_files + rhs.inactive_files,
+            fetcher: self.fetcher + rhs.fetcher,
+        }
+    }
+}
+
 impl<S: FileStorage + Clone> Clone for RefcountingStorage<S>
 where
     S::StoredFile: RefcountedFile,
@@ -190,6 +209,13 @@ where
 
     pub fn invariants(&self) -> &ConfigInvariants {
         &self.state.invariants
+    }
+
+    pub fn stats(&self) -> RefcountingStorageStats {
+        RefcountingStorageStats {
+            inactive_files: self.inactive.lock().unwrap().len() as u32,
+            fetcher: self.state.stats(),
+        }
     }
 }
 
