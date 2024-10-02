@@ -1,0 +1,35 @@
+# Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+# This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+
+language = "C"
+tab_width = 2
+header = """// Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+
+typedef struct ddog_DebuggerCapture ddog_DebuggerCapture;
+typedef struct ddog_DebuggerValue ddog_DebuggerValue;
+"""
+include_guard = "DDOG_LIVE_DEBUGGER_H"
+style = "both"
+
+no_includes = true
+sys_includes = ["stdbool.h", "stddef.h", "stdint.h", "stdio.h"]
+includes = ["common.h"]
+
+[export]
+prefix = "ddog_"
+renaming_overrides_prefixing = true
+
+[export.mangle]
+rename_types = "PascalCase"
+
+[enum]
+prefix_with_name = true
+rename_variants = "ScreamingSnakeCase"
+
+[fn]
+must_use = "DDOG_CHECK_RETURN"
+
+[parse]
+parse_deps = true
+include = ["datadog-live-debugger", "ddcommon-ffi"]

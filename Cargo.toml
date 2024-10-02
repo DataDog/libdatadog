@@ -18,6 +18,9 @@ members = [
   "tools",
   "ipc",
   "ipc/macros",
+  "live-debugger",
+  "live-debugger-ffi",
+  "remote-config",
   "sidecar",
   "sidecar/macros",
   "sidecar-ffi",
@@ -34,6 +37,7 @@ members = [
   "data-pipeline-ffi",
   "ddsketch",
   "tinybytes",
+  "dogstatsd-client",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2

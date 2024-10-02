@@ -31,22 +31,26 @@ use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use tracing::{debug, enabled, error, info, warn, Level};
+use std::time::Duration;
+use tracing::{debug, error, info, warn};
 
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use tokio::task::{JoinError, JoinHandle};
 
 use crate::config::get_product_endpoint;
-use crate::dogstatsd::DogStatsDAction;
+use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::runtime_info::ActiveApplication;
 use crate::service::telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats;
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
-use datadog_remote_config::fetch::ConfigInvariants;
+use datadog_live_debugger::sender::DebuggerType;
+use datadog_remote_config::fetch::{ConfigInvariants, MultiTargetStats};
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
+use ddcommon::tag::Tag;
+use dogstatsd_client::{new_flusher, DogStatsDActionOwned};
 use tinybytes;
 
 type NoResponse = Ready<()>;
@@ -66,6 +70,7 @@ struct SidecarStats {
     enqueued_apps: u32,
     enqueued_telemetry_data: EnqueuedTelemetryStats,
     remote_config_clients: u32,
+    remote_configs: MultiTargetStats,
     telemetry_metrics_contexts: u32,
     telemetry_worker: TelemetryWorkerStats,
     telemetry_worker_errors: u32,
@@ -137,7 +142,7 @@ impl SidecarServer {
         let mut executor = datadog_ipc::sequential::execute_sequential(
             server.requests(),
             self.clone().serve(),
-            100,
+            500,
         );
         let (tx, rx) = tokio::sync::mpsc::channel::<_>(100);
         let tx = executor.swap_sender(tx);
@@ -216,11 +221,8 @@ impl SidecarServer {
             Some(session) => session.clone(),
             None => {
                 let mut session = SessionInfo::default();
-                #[cfg(feature = "tracing")]
-                if enabled!(Level::INFO) {
-                    session.session_id.clone_from(session_id);
-                    info!("Initializing new session: {}", session_id);
-                }
+                session.session_id.clone_from(session_id);
+                info!("Initializing new session: {}", session_id);
                 sessions.insert(session_id.clone(), session.clone());
                 session
             }
@@ -385,6 +387,7 @@ impl SidecarServer {
                         .sum::<u32>()
                 })
                 .sum(),
+            remote_configs: self.remote_configs.stats(),
             telemetry_metrics_contexts: sessions
                 .values()
                 .map(|s| {
@@ -646,6 +649,8 @@ impl SidecarInterface for SidecarServer {
         remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
         config: SessionConfig,
     ) -> Self::SetSessionConfigFut {
+        debug!("Set session config for {session_id} to {config:?}");
+
         let session = self.get_session(&session_id);
         #[cfg(unix)]
         {
@@ -670,9 +675,19 @@ impl SidecarInterface for SidecarServer {
             cfg.set_endpoint(endpoint).ok();
         });
         session.configure_dogstatsd(|dogstatsd| {
-            dogstatsd
-                .set_endpoint(config.dogstatsd_endpoint.clone())
-                .ok();
+            let d = new_flusher(config.dogstatsd_endpoint.clone()).ok();
+            *dogstatsd = d;
+        });
+        session.modify_debugger_config(|cfg| {
+            let logs_endpoint = get_product_endpoint(
+                datadog_live_debugger::sender::PROD_LOGS_INTAKE_SUBDOMAIN,
+                &config.endpoint,
+            );
+            let diagnostics_endpoint = get_product_endpoint(
+                datadog_live_debugger::sender::PROD_DIAGNOSTICS_INTAKE_SUBDOMAIN,
+                &config.endpoint,
+            );
+            cfg.set_endpoint(logs_endpoint, diagnostics_endpoint).ok();
         });
         session.set_remote_config_invariants(ConfigInvariants {
             language: config.language,
@@ -681,6 +696,7 @@ impl SidecarInterface for SidecarServer {
             products: config.remote_config_products,
             capabilities: config.remote_config_capabilities,
         });
+        *session.remote_config_interval.lock().unwrap() = config.remote_config_poll_interval;
         self.trace_flusher
             .interval_ms
             .store(config.flush_interval.as_millis() as u64, Ordering::Relaxed);
@@ -794,6 +810,48 @@ impl SidecarInterface for SidecarServer {
         no_response()
     }
 
+    type SendDebuggerDataShmFut = NoResponse;
+
+    fn send_debugger_data_shm(
+        self,
+        _: Context,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        handle: ShmHandle,
+        debugger_type: DebuggerType,
+    ) -> Self::SendDebuggerDataShmFut {
+        let session = self.get_session(&instance_id.session_id);
+        match handle.map() {
+            Ok(mapped) => {
+                session.send_debugger_data(
+                    debugger_type,
+                    &instance_id.runtime_id,
+                    queue_id,
+                    mapped,
+                );
+            }
+            Err(e) => error!("Failed mapping shared debugger data memory: {}", e),
+        }
+
+        no_response()
+    }
+
+    type AcquireExceptionHashRateLimiterFut = NoResponse;
+
+    fn acquire_exception_hash_rate_limiter(
+        self,
+        _: Context,
+        exception_hash: u64,
+        granularity: Duration,
+    ) -> Self::AcquireExceptionHashRateLimiterFut {
+        EXCEPTION_HASH_LIMITER
+            .lock()
+            .unwrap()
+            .add(exception_hash, granularity);
+
+        no_response()
+    }
+
     type SetRemoteConfigDataFut = NoResponse;
 
     fn set_remote_config_data(
@@ -804,7 +862,10 @@ impl SidecarInterface for SidecarServer {
         service_name: String,
         env_name: String,
         app_version: String,
+        global_tags: Vec<Tag>,
     ) -> Self::SetRemoteConfigDataFut {
+        debug!("Registered remote config metadata: instance {instance_id:?}, queue_id: {queue_id:?}, service: {service_name}, env: {env_name}, version: {app_version}");
+
         let session = self.get_session(&instance_id.session_id);
         #[cfg(windows)]
         let notify_target = if let Some(handle) = self.process_handle {
@@ -820,24 +881,24 @@ impl SidecarInterface for SidecarServer {
             pid: session.pid.load(Ordering::Relaxed),
         };
         let runtime_info = session.get_runtime(&instance_id.runtime_id);
-        runtime_info
-            .lock_applications()
-            .entry(queue_id)
-            .or_default()
-            .remote_config_guard = Some(
+        let mut applications = runtime_info.lock_applications();
+        let app = applications.entry(queue_id).or_default();
+        app.remote_config_guard = Some(
             self.remote_configs.add_runtime(
                 session
                     .get_remote_config_invariants()
                     .as_ref()
                     .expect("Expecting remote config invariants to be set early")
                     .clone(),
+                *session.remote_config_interval.lock().unwrap(),
                 instance_id.runtime_id,
                 notify_target,
-                env_name,
+                env_name.clone(),
                 service_name,
-                app_version,
+                app_version.clone(),
             ),
         );
+        app.set_metadata(env_name, app_version, global_tags);
 
         no_response()
     }
@@ -848,12 +909,13 @@ impl SidecarInterface for SidecarServer {
         self,
         _: Context,
         instance_id: InstanceId,
-        actions: Vec<DogStatsDAction>,
+        actions: Vec<DogStatsDActionOwned>,
     ) -> Self::SendDogstatsdActionsFut {
         tokio::spawn(async move {
             self.get_session(&instance_id.session_id)
                 .get_dogstatsd()
-                .send(actions);
+                .as_ref()
+                .inspect(|f| f.send_owned(actions));
         });
 
         no_response()
@@ -901,9 +963,10 @@ impl SidecarInterface for SidecarServer {
         session.modify_trace_config(|cfg| {
             update_cfg(cfg.endpoint.take(), |e| cfg.set_endpoint(e), &token);
         });
-        session.configure_dogstatsd(|cfg| {
-            update_cfg(cfg.endpoint.take(), |e| cfg.set_endpoint(e), &token);
-        });
+        // TODO(APMSP-1377): the dogstatsd-client doesn't support test_session tokens yet
+        // session.configure_dogstatsd(|cfg| {
+        //     update_cfg(cfg.endpoint.take(), |e| cfg.set_endpoint(e), &token);
+        // });
 
         no_response()
     }

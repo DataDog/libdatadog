@@ -18,6 +18,7 @@ use dogstatsd::{
     flusher::{build_fqdn_metrics, Flusher},
 };
 
+use dogstatsd::metric::EMPTY_TAGS;
 use tokio_util::sync::CancellationToken;
 
 const DOGSTATSD_FLUSH_INTERVAL: u64 = 10;
@@ -105,7 +106,7 @@ async fn start_dogstatsd(
     dd_site: String,
 ) -> (CancellationToken, Option<Flusher>) {
     let metrics_aggr = Arc::new(Mutex::new(
-        MetricsAggregator::new(Vec::new(), CONTEXTS).expect("Failed to create metrics aggregator"),
+        MetricsAggregator::new(EMPTY_TAGS, CONTEXTS).expect("Failed to create metrics aggregator"),
     ));
 
     let dogstatsd_config = DogStatsDConfig {

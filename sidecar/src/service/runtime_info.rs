@@ -6,12 +6,16 @@ use crate::service::{
     telemetry::{AppInstance, AppOrQueue},
     InstanceId, QueueId,
 };
+use datadog_live_debugger::sender::{generate_tags, PayloadSender};
+use ddcommon::tag::Tag;
 use futures::{
     future::{self, join_all, Shared},
     FutureExt,
 };
 use manual_future::{ManualFuture, ManualFutureCompleter};
+use simd_json::prelude::ArrayTrait;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::{debug, info};
 
@@ -31,7 +35,6 @@ pub(crate) struct SharedAppManualFut {
 pub(crate) struct RuntimeInfo {
     pub(crate) apps: Arc<Mutex<AppMap>>,
     applications: Arc<Mutex<HashMap<QueueId, ActiveApplication>>>,
-    #[cfg(feature = "tracing")]
     pub(crate) instance_id: InstanceId,
 }
 
@@ -41,10 +44,17 @@ pub(crate) struct RuntimeInfo {
 /// Each app is represented by a shared future that may contain an `Option<AppInstance>`.
 /// Each action is represented by an `AppOrQueue` enum. Combining apps and actions are necessary
 /// because service and env names are not known until later in the initialization process.
+/// Similarly, each application has its own global tags.
 #[derive(Default)]
 pub(crate) struct ActiveApplication {
     pub app_or_actions: AppOrQueue,
     pub remote_config_guard: Option<RemoteConfigsGuard>,
+    pub env: Option<String>,
+    pub app_version: Option<String>,
+    pub global_tags: Vec<Tag>,
+    pub live_debugger_tag_cache: Option<Arc<String>>,
+    pub debugger_logs_payload_sender: Arc<tokio::sync::Mutex<Option<PayloadSender>>>,
+    pub debugger_diagnostics_payload_sender: Arc<tokio::sync::Mutex<Option<PayloadSender>>>,
 }
 
 impl RuntimeInfo {
@@ -80,7 +90,6 @@ impl RuntimeInfo {
     /// Shuts down the runtime.
     /// This involves shutting down all the instances in the runtime.
     pub(crate) async fn shutdown(self) {
-        #[cfg(feature = "tracing")]
         info!(
             "Shutting down runtime_id {} for session {}",
             self.instance_id.runtime_id, self.instance_id.session_id
@@ -105,7 +114,6 @@ impl RuntimeInfo {
             .collect();
         future::join_all(instances_shutting_down).await;
 
-        #[cfg(feature = "tracing")]
         debug!(
             "Successfully shut down runtime_id {} for session {}",
             self.instance_id.runtime_id, self.instance_id.session_id
@@ -131,6 +139,60 @@ impl RuntimeInfo {
     ///   applications map.
     pub(crate) fn lock_applications(&self) -> MutexGuard<HashMap<QueueId, ActiveApplication>> {
         self.applications.lock().unwrap()
+    }
+}
+
+impl ActiveApplication {
+    /// Sets the cached debugger tags if not set and returns them.
+    ///
+    /// # Arguments
+    ///
+    /// * `env` - The environment of the current application.
+    /// * `app_version` - The version of the current application.
+    /// * `global_tags` - The global tags of the current application.
+    pub fn set_metadata(&mut self, env: String, app_version: String, global_tags: Vec<Tag>) {
+        self.env = Some(env);
+        self.app_version = Some(app_version);
+        self.global_tags = global_tags;
+        self.live_debugger_tag_cache = None;
+    }
+
+    /// Sets the cached debugger tags if not set and returns them.
+    ///
+    /// # Arguments
+    ///
+    /// * `debugger_version` - The version of the live debugger to report.
+    /// * `queue_id` - The unique identifier for the trace context.
+    ///
+    /// # Returns
+    ///
+    /// * `Arc<String>` - A percent encoded string to be passed to
+    ///   datadog_live_debugger::sender::send.
+    /// * `bool` - Whether new tags were set and a new sender needs to be started.
+    pub fn get_debugger_tags(
+        &mut self,
+        debugger_version: &dyn Display,
+        runtime_id: &str,
+    ) -> (Arc<String>, bool) {
+        if let Some(ref cached) = self.live_debugger_tag_cache {
+            return (cached.clone(), false);
+        }
+        if let Some(env) = &self.env {
+            if let Some(version) = &self.app_version {
+                let tags = Arc::new(generate_tags(
+                    debugger_version,
+                    env,
+                    version,
+                    &runtime_id,
+                    &mut self.global_tags.iter(),
+                ));
+                self.live_debugger_tag_cache = Some(tags.clone());
+                return (tags, true);
+            }
+        }
+        let tags = Arc::new(format!("debugger_version:{debugger_version}"));
+        self.live_debugger_tag_cache = Some(tags.clone());
+        (tags, true)
     }
 }
 

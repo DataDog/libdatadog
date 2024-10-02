@@ -3,17 +3,19 @@
 
 use crate::fetch::{
     ConfigApplyState, ConfigFetcherState, ConfigInvariants, FileStorage, RefcountedFile,
-    RefcountingStorage, SharedFetcher,
+    RefcountingStorage, RefcountingStorageStats, SharedFetcher,
 };
 use crate::Target;
 use futures_util::future::Shared;
 use futures_util::FutureExt;
 use manual_future::ManualFuture;
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::default::Default;
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::ops::Add;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -52,6 +54,31 @@ where
     fetcher_semaphore: Semaphore,
 }
 
+#[derive(Default, Serialize, Deserialize)]
+pub struct MultiTargetStats {
+    known_runtimes: u32,
+    starting_fetchers: u32,
+    active_fetchers: u32,
+    inactive_fetchers: u32,
+    removing_fetchers: u32,
+    storage: RefcountingStorageStats,
+}
+
+impl Add for MultiTargetStats {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        MultiTargetStats {
+            known_runtimes: self.known_runtimes + rhs.known_runtimes,
+            starting_fetchers: self.starting_fetchers + rhs.starting_fetchers,
+            active_fetchers: self.active_fetchers + rhs.active_fetchers,
+            inactive_fetchers: self.inactive_fetchers + rhs.inactive_fetchers,
+            removing_fetchers: self.removing_fetchers + rhs.removing_fetchers,
+            storage: self.storage + rhs.storage,
+        }
+    }
+}
+
 enum KnownTargetStatus {
     Pending,
     Alive,
@@ -78,7 +105,7 @@ pub trait NotifyTarget: Sync + Send + Sized + Hash + Eq + Clone + Debug {
 }
 
 pub trait MultiTargetHandlers<S> {
-    fn fetched(&self, target: &Arc<Target>, files: &[Arc<S>]) -> bool;
+    fn fetched(&self, runtime_id: &Arc<String>, target: &Arc<Target>, files: &[Arc<S>]) -> bool;
 
     fn expired(&self, target: &Arc<Target>);
 
@@ -134,7 +161,7 @@ where
                     known_service.runtimes.remove(runtime_id);
                     let mut status = known_service.status.lock().unwrap();
                     *status = match *status {
-                        KnownTargetStatus::Pending => break 'drop_service,
+                        KnownTargetStatus::Pending => KnownTargetStatus::Alive, // not really
                         KnownTargetStatus::Alive => {
                             KnownTargetStatus::RemoveAt(Instant::now() + Duration::from_secs(3666))
                         }
@@ -142,6 +169,10 @@ where
                             unreachable!()
                         }
                     };
+                    // We've marked it Alive so that the Pending check in start_fetcher() will fail
+                    if matches!(*status, KnownTargetStatus::Alive) {
+                        break 'drop_service;
+                    }
                     0
                 } else {
                     if *known_service.fetcher.runtime_id.lock().unwrap() == runtime_id {
@@ -164,6 +195,7 @@ where
                 };
                 break 'service_handling;
             }
+            trace!("Remove {target:?} from services map while in pending state");
             services.remove(target);
         }
 
@@ -366,10 +398,12 @@ where
                 .run(
                     this.storage.clone(),
                     Box::new(move |files| {
-                        let notify = inner_this
-                            .storage
-                            .storage
-                            .fetched(&inner_fetcher.target, files);
+                        let runtime_id = Arc::new(inner_fetcher.runtime_id.lock().unwrap().clone());
+                        let notify = inner_this.storage.storage.fetched(
+                            &runtime_id,
+                            &inner_fetcher.target,
+                            files,
+                        );
 
                         if notify {
                             // notify_targets is Hash + Eq + Clone, allowing us to deduplicate. Also
@@ -431,6 +465,10 @@ where
 
             {
                 // scope lock before await
+                trace!(
+                    "Remove {:?} from services map at fetcher end",
+                    fetcher.target
+                );
                 let mut services = this.services.lock().unwrap();
                 services.remove(&fetcher.target);
                 if services.is_empty() && this.pending_async_insertions.load(Ordering::Relaxed) == 0
@@ -456,6 +494,41 @@ where
                 }
                 KnownTargetStatus::Removing(_) => {}
             }
+        }
+    }
+
+    pub fn active_runtimes(&self) -> usize {
+        self.runtimes.lock().unwrap().len()
+    }
+
+    pub fn invariants(&self) -> &ConfigInvariants {
+        self.storage.invariants()
+    }
+
+    pub fn stats(&self) -> MultiTargetStats {
+        let (starting_fetchers, active_fetchers, inactive_fetchers, removing_fetchers) = {
+            let services = self.services.lock().unwrap();
+            let mut starting = 0;
+            let mut active = 0;
+            let mut inactive = 0;
+            let mut removing = 0;
+            for (_, known_target) in services.iter() {
+                match *known_target.status.lock().unwrap() {
+                    KnownTargetStatus::Pending => starting += 1,
+                    KnownTargetStatus::Alive => active += 1,
+                    KnownTargetStatus::RemoveAt(_) => inactive += 1,
+                    KnownTargetStatus::Removing(_) => removing += 1,
+                }
+            }
+            (starting, active, inactive, removing)
+        };
+        MultiTargetStats {
+            known_runtimes: self.runtimes.lock().unwrap().len() as u32,
+            starting_fetchers,
+            active_fetchers,
+            inactive_fetchers,
+            removing_fetchers,
+            storage: self.storage.stats(),
         }
     }
 }
@@ -504,7 +577,12 @@ mod tests {
     }
 
     impl MultiTargetHandlers<RcPathStore> for MultiFileStorage {
-        fn fetched(&self, target: &Arc<Target>, files: &[Arc<RcPathStore>]) -> bool {
+        fn fetched(
+            &self,
+            _runtime_id: &Arc<String>,
+            target: &Arc<Target>,
+            files: &[Arc<RcPathStore>],
+        ) -> bool {
             match self.recent_fetches.lock().unwrap().entry(target.clone()) {
                 Entry::Occupied(_) => panic!("Double fetch without recent_fetches clear"),
                 Entry::Vacant(e) => {
