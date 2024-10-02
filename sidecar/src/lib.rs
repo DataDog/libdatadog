@@ -11,7 +11,7 @@ pub mod one_way_shared_memory;
 mod self_telemetry;
 pub mod setup;
 pub mod shm_remote_config;
-mod tracer;
+pub mod tracer;
 mod watchdog;
 
 pub use entry::*;
@@ -22,6 +22,7 @@ mod unix;
 pub use unix::*;
 
 pub mod service;
+mod tokio_util;
 #[cfg(windows)]
 mod windows;
 

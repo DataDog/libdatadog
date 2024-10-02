@@ -36,7 +36,7 @@ impl WatchdogHandle {
 impl Watchdog {
     pub fn from_receiver(shutdown_receiver: Receiver<()>) -> Self {
         Watchdog {
-            interval: tokio::time::interval(Duration::from_secs(5)),
+            interval: tokio::time::interval(Duration::from_secs(10)),
             max_memory_usage_bytes: 1024 * 1024 * 1024, // 1 GB
             shutdown_receiver,
         }

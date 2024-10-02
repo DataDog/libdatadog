@@ -25,6 +25,7 @@ datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-utils = { path = "../trace-utils" }
 datadog-trace-normalization = { path = "../trace-normalization" }
 datadog-remote-config = { path = "../remote-config" }
+datadog-live-debugger = { path = "../live-debugger" }
 datadog-crashtracker = { path = "../crashtracker" }
 dogstatsd-client = { path = "../dogstatsd-client" }
 tinybytes = { path = "../tinybytes" }
@@ -97,6 +98,7 @@ sendfd = { version = "0.4", features = ["tokio"] }
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.9", features = ["securitybaseapi", "sddl"] }
+windows-sys = { version = "0.52.0", features = ["Win32_System_SystemInformation"] }
 
 [target.'cfg(windows_seh_wrapper)'.dependencies]
 microseh = "0.1.1"

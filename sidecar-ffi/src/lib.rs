@@ -4,6 +4,7 @@
 use datadog_ipc::platform::{
     FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle,
 };
+use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_remote_config::fetch::ConfigInvariants;
 use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use datadog_sidecar::agent_remote_config::{
@@ -487,6 +488,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     language: ffi::CharSlice,
     tracer_version: ffi::CharSlice,
     flush_interval_milliseconds: u32,
+    remote_config_poll_interval_millis: u32,
     telemetry_heartbeat_interval_millis: u32,
     force_flush_size: usize,
     force_drop_size: usize,
@@ -513,6 +515,9 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             language: language.to_utf8_lossy().into(),
             tracer_version: tracer_version.to_utf8_lossy().into(),
             flush_interval: Duration::from_millis(flush_interval_milliseconds as u64),
+            remote_config_poll_interval: Duration::from_millis(
+                remote_config_poll_interval_millis as u64
+            ),
             telemetry_heartbeat_interval: Duration::from_millis(
                 telemetry_heartbeat_interval_millis as u64
             ),
@@ -622,6 +627,41 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
 
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
+#[allow(improper_ctypes_definitions)] // DebuggerPayload is just a pointer, we hide its internals
+pub unsafe extern "C" fn ddog_sidecar_send_debugger_data(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    queue_id: QueueId,
+    payloads: Vec<DebuggerPayload>,
+) -> MaybeError {
+    if payloads.is_empty() {
+        return MaybeError::None;
+    }
+
+    try_c!(blocking::send_debugger_data_shm_vec(
+        transport,
+        instance_id,
+        queue_id,
+        payloads,
+    ));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+#[allow(improper_ctypes_definitions)] // DebuggerPayload is just a pointer, we hide its internals
+pub unsafe extern "C" fn ddog_sidecar_send_debugger_datum(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    queue_id: QueueId,
+    payload: Box<DebuggerPayload>,
+) -> MaybeError {
+    ddog_sidecar_send_debugger_data(transport, instance_id, queue_id, vec![*payload])
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_set_remote_config_data(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
@@ -629,6 +669,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_remote_config_data(
     service_name: ffi::CharSlice,
     env_name: ffi::CharSlice,
     app_version: ffi::CharSlice,
+    global_tags: &ddcommon_ffi::Vec<Tag>,
 ) -> MaybeError {
     try_c!(blocking::set_remote_config_data(
         transport,
@@ -637,6 +678,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_remote_config_data(
         service_name.to_utf8_lossy().into(),
         env_name.to_utf8_lossy().into(),
         app_version.to_utf8_lossy().into(),
+        global_tags.to_vec(),
     ));
 
     MaybeError::None

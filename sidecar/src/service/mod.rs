@@ -28,6 +28,7 @@ use session_info::SessionInfo;
 use sidecar_interface::{SidecarInterface, SidecarInterfaceRequest, SidecarInterfaceResponse};
 
 pub mod blocking;
+pub mod exception_hash_rate_limiter;
 mod instance_id;
 mod queue_id;
 mod remote_configs;
@@ -48,6 +49,7 @@ pub struct SessionConfig {
     pub language: String,
     pub tracer_version: String,
     pub flush_interval: Duration,
+    pub remote_config_poll_interval: Duration,
     pub telemetry_heartbeat_interval: Duration,
     pub force_flush_size: usize,
     pub force_drop_size: usize,
