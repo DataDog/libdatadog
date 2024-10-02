@@ -102,7 +102,7 @@ pub enum ClientWrapper {
 ///     let tracer_header_tags = TracerHeaderTags::default(); // Replace with actual header tags
 ///     let target = Endpoint::default(); // Replace with actual endpoint
 ///
-///     let mut send_data = SendData::new(size, tracer_payload, tracer_header_tags, &target);
+///     let mut send_data = SendData::new(size, tracer_payload, tracer_header_tags, &target, None);
 ///
 ///     // Set a custom retry strategy
 ///     let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
