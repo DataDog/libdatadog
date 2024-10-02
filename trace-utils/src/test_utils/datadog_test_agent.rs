@@ -131,6 +131,7 @@ impl DatadogTestAgentContainer {
 ///         TracerPayloadCollection::V04(vec![trace.clone()]),
 ///         TracerHeaderTags::default(),
 ///         &endpoint,
+///         None,
 ///     );
 ///
 ///     let _result = data.send().await;

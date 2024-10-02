@@ -155,7 +155,7 @@ impl SendData {
         tracer_payload: TracerPayloadCollection,
         tracer_header_tags: TracerHeaderTags,
         target: &Endpoint,
-        #[cfg(feature = "proxy")] http_proxy: Option<String>,
+        http_proxy: Option<String>,
     ) -> SendData {
         let mut headers = if let Some(api_key) = &target.api_key {
             HashMap::from([(DD_API_KEY, api_key.as_ref().to_string())])
@@ -608,6 +608,7 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
+            None,
         );
 
         assert_eq!(data.size, 100);
@@ -633,6 +634,7 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
+            None,
         );
 
         assert_eq!(data.size, 100);
@@ -671,6 +673,7 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
+            None,
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
@@ -715,6 +718,7 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
+            None,
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
@@ -770,6 +774,7 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
+            None,
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
@@ -825,6 +830,7 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
+            None,
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
@@ -869,6 +875,7 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
+            None,
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
@@ -911,6 +918,7 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
+            None,
         );
 
         let res = data.send().await;
@@ -942,6 +950,7 @@ mod tests {
                 timeout_ms: ONE_SECOND,
                 ..Endpoint::default()
             },
+            None,
         );
 
         let res = data.send().await;
@@ -1006,6 +1015,7 @@ mod tests {
                 timeout_ms: 200,
                 ..Endpoint::default()
             },
+            None,
         );
 
         let res = data.send().await;
@@ -1048,6 +1058,7 @@ mod tests {
                 timeout_ms: 200,
                 ..Endpoint::default()
             },
+            None,
         );
 
         let res = data.send().await;
