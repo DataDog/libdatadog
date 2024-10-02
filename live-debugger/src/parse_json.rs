@@ -400,11 +400,9 @@ impl TryInto<Result<NumberSource, RawExpr>> for RawExpr {
     fn try_into(self) -> Result<Result<NumberSource, RawExpr>, Self::Error> {
         Ok(Ok(match self {
             RawExpr::Number(num) => NumberSource::Number(num),
-            RawExpr::Expr(Some(RawExprValue::Count(source))) => {
+            RawExpr::Expr(Some(RawExprValue::Count(source)))
+            | RawExpr::Expr(Some(RawExprValue::Len(source))) => {
                 NumberSource::CollectionSize((*source).try_into()?)
-            }
-            RawExpr::Expr(Some(RawExprValue::Len(source))) => {
-                NumberSource::StringLength((*source).try_into()?)
             }
             expr => return Ok(Err(expr)),
         }))

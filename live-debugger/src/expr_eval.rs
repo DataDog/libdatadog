@@ -264,10 +264,6 @@ impl<'a, 'e, I, E: Evaluator<'e, I>> Eval<'a, 'e, I, E> {
                     }
                 }))
             }
-            NumberSource::StringLength(reference) => {
-                let immediate = self.reference(reference)?.try_use(self)?;
-                InternalImm::Def(IntermediateValue::Number(self.eval.length(immediate) as f64))
-            }
             NumberSource::Reference(reference) => self.reference(reference)?.into_imm(),
         })
     }
@@ -1290,15 +1286,15 @@ mod tests {
         );
         assert_val_eq!(
             vars,
-            Value::Number(NumberSource::StringLength(Reference::Base(
-                "var".to_string()
+            Value::Number(NumberSource::CollectionSize(CollectionSource::Reference(
+                Reference::Base("var".to_string())
             ))),
             "3"
         );
         assert_val_eq!(
             vars,
-            Value::Number(NumberSource::StringLength(Reference::Base(
-                "null".to_string()
+            Value::Number(NumberSource::CollectionSize(CollectionSource::Reference(
+                Reference::Base("null".to_string())
             ))),
             "0"
         );

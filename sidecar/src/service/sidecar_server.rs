@@ -142,7 +142,7 @@ impl SidecarServer {
         let mut executor = datadog_ipc::sequential::execute_sequential(
             server.requests(),
             self.clone().serve(),
-            100,
+            500,
         );
         let (tx, rx) = tokio::sync::mpsc::channel::<_>(100);
         let tx = executor.swap_sender(tx);

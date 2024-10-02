@@ -180,7 +180,6 @@ impl Display for Condition {
 pub enum NumberSource {
     Number(f64),
     CollectionSize(CollectionSource),
-    StringLength(Reference),
     Reference(Reference),
 }
 
@@ -188,8 +187,7 @@ impl Display for NumberSource {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             NumberSource::Number(n) => n.fmt(f),
-            NumberSource::CollectionSize(s) => write!(f, "count({s})"),
-            NumberSource::StringLength(s) => write!(f, "len({s})"),
+            NumberSource::CollectionSize(s) => write!(f, "len({s})"),
             NumberSource::Reference(r) => r.fmt(f),
         }
     }
