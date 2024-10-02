@@ -150,6 +150,7 @@ impl SendData {
     /// # Returns
     ///
     /// A new `SendData` instance.
+    #[allow(unused_variables)]
     pub fn new(
         size: usize,
         tracer_payload: TracerPayloadCollection,
