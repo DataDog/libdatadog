@@ -156,8 +156,7 @@ impl SendData {
         tracer_payload: TracerPayloadCollection,
         tracer_header_tags: TracerHeaderTags,
         target: &Endpoint,
-        #[cfg(feature = "proxy")]
-        http_proxy: Option<String>,
+        #[cfg(feature = "proxy")] http_proxy: Option<String>,
     ) -> SendData {
         let mut headers = if let Some(api_key) = &target.api_key {
             HashMap::from([(DD_API_KEY, api_key.as_ref().to_string())])
@@ -252,13 +251,11 @@ impl SendData {
 
         match tokio::time::timeout(
             Duration::from_millis(self.target.timeout_ms),
-
             #[cfg(feature = "proxy")]
             match &self.client {
                 ClientWrapper::Direct(client) => client.request(req),
                 ClientWrapper::Proxy(client) => client.request(req),
             },
-
             #[cfg(not(feature = "proxy"))]
             Client::builder()
                 .build(connector::Connector::default())
