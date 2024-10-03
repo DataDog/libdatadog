@@ -47,7 +47,8 @@ use tinybytes::{Bytes, BytesString};
 /// };
 /// let encoded_data = to_vec_named(&vec![vec![span]]).unwrap();
 /// let encoded_data_as_tinybytes = tinybytes::Bytes::from(encoded_data);
-/// let (decoded_traces, _) = from_slice(encoded_data_as_tinybytes).expect("Decoding failed");
+/// let (decoded_traces, _payload_size) =
+///     from_slice(encoded_data_as_tinybytes).expect("Decoding failed");
 ///
 /// assert_eq!(1, decoded_traces.len());
 /// assert_eq!(1, decoded_traces[0].len());
@@ -276,10 +277,13 @@ mod tests {
             name: BytesString::from_slice(expected_string.as_ref()).unwrap(),
             ..Default::default()
         };
-        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let (decoded_traces, _) =
+        let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+        let expected_size = encoded_data.len() - 1; // rmp_serde adds additional 0 byte
+        encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
+        let (decoded_traces, decoded_size) =
             from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
+        assert_eq!(expected_size, decoded_size);
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
