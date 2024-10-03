@@ -22,6 +22,22 @@ pub enum MetricValue {
     Distribution(DDSketch),
 }
 
+impl MetricValue {
+    pub fn count(v: f64) -> MetricValue {
+        MetricValue::Count(v)
+    }
+
+    pub fn gauge(v: f64) -> MetricValue {
+        MetricValue::Gauge(v)
+    }
+
+    pub fn distribution(v: f64) -> MetricValue {
+        let sketch = &mut DDSketch::default();
+        sketch.insert(v);
+        MetricValue::Distribution(sketch.to_owned())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SortedTags {
     // We sort tags. This is in feature parity with DogStatsD and also means
@@ -121,10 +137,22 @@ pub struct Metric {
     /// the parser. We assume here that tags are not sent in random order by the
     /// clien or that, if they are, the API will tidy that up. That is `a:1,b:2`
     /// is a different tagset from `b:2,a:1`.
-    pub tags: SortedTags,
+    pub tags: Option<SortedTags>,
 
     /// ID given a name and tagset.
-    pub(crate) id: u64,
+    pub id: u64,
+}
+
+impl Metric {
+    pub fn new(name: Ustr, value: MetricValue, tags: Option<SortedTags>) -> Metric {
+        let id = id(name, &tags);
+        Metric {
+            name,
+            value,
+            tags,
+            id,
+        }
+    }
 }
 
 /// Parse a metric from given input.
@@ -148,9 +176,9 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
 
             let tags;
             if let Some(tags_section) = caps.name("tags") {
-                tags = SortedTags::parse(tags_section.as_str())?;
+                tags = Some(SortedTags::parse(tags_section.as_str())?);
             } else {
-                tags = EMPTY_TAGS;
+                tags = None;
             }
             let val = first_value(caps.name("values").unwrap().as_str())?;
             let metric_value = match caps.name("type").unwrap().as_str() {
@@ -202,13 +230,15 @@ fn first_value(values: &str) -> Result<f64, ParseError> {
 /// from the point of view of this function.
 #[inline]
 #[must_use]
-pub fn id(name: Ustr, tags: &SortedTags) -> u64 {
+pub fn id(name: Ustr, tags: &Option<SortedTags>) -> u64 {
     let mut hasher = FnvHasher::default();
 
     name.hash(&mut hasher);
-    for kv in tags.values.iter() {
-        kv.0.as_bytes().hash(&mut hasher);
-        kv.1.as_bytes().hash(&mut hasher);
+    if let Some(tags_present) = tags {
+        for kv in tags_present.values.iter() {
+            kv.0.as_bytes().hash(&mut hasher);
+            kv.1.as_bytes().hash(&mut hasher);
+        }
     }
     hasher.finish()
 }
@@ -274,7 +304,7 @@ mod tests {
             assert_eq!(name, metric.name.as_str());
 
             if let Some(tags) = tagset {
-                let parsed_metric_tags : SortedTags= metric.tags.clone();
+                let parsed_metric_tags : SortedTags = metric.tags.unwrap();
                 assert_eq!(tags.split(',').count(), parsed_metric_tags.values.len());
                 tags.split(',').for_each(|kv| {
                     let (original_key, original_value) = kv.split_once(':').unwrap();
@@ -288,7 +318,7 @@ mod tests {
                     assert!(found);
                 });
             } else {
-                assert!(metric.tags.is_empty());
+                assert!(metric.tags.is_none());
             }
 
             match mtype.as_str() {
@@ -409,8 +439,8 @@ mod tests {
                 tagset2.pop();
             }
 
-            let id1 = id(Ustr::from(&name), &SortedTags::parse(&tagset1).unwrap());
-            let id2 = id(Ustr::from(&name), &SortedTags::parse(&tagset2).unwrap());
+            let id1 = id(Ustr::from(&name), &Some(SortedTags::parse(&tagset1).unwrap()));
+            let id2 = id(Ustr::from(&name), &Some(SortedTags::parse(&tagset2).unwrap()));
 
             assert_eq!(id1, id2);
         }
