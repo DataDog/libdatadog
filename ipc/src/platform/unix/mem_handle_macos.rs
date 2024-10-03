@@ -10,7 +10,7 @@ use nix::fcntl::OFlag;
 use nix::sys::mman::{mmap, munmap, shm_open, shm_unlink, MapFlags, ProtFlags};
 use nix::sys::stat::Mode;
 use nix::unistd::ftruncate;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::io;
 use std::num::NonZeroUsize;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, RawFd};
@@ -87,9 +87,9 @@ impl ShmHandle {
         })
     }
 }
-fn path_slice(path: &CString) -> &[u8] {
-    assert_eq!(path.as_bytes()[0], b'/');
-    &path.as_bytes()[1..]
+fn path_slice(path: &CStr) -> &[u8] {
+    assert_eq!(path.to_bytes()[0], b'/');
+    &path.to_bytes()[1..]
 }
 
 impl NamedShmHandle {
@@ -109,7 +109,7 @@ impl NamedShmHandle {
         Self::new(fd, Some(path), size)
     }
 
-    pub fn open(path: &CString) -> io::Result<NamedShmHandle> {
+    pub fn open(path: &CStr) -> io::Result<NamedShmHandle> {
         let fd = shm_open(path_slice(path), OFlag::O_RDWR, Mode::empty())?;
         Self::new(fd, None, 0)
     }

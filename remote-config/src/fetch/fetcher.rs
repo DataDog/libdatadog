@@ -51,7 +51,7 @@ pub trait FileStorage {
 }
 
 /// Fundamental configuration of the RC client, which always must be set.
-#[derive(Clone, Hash, Eq, PartialEq)]
+#[derive(Clone, Hash, Eq, PartialEq, Debug)]
 pub struct ConfigInvariants {
     pub language: String,
     pub tracer_version: String,

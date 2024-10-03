@@ -33,6 +33,7 @@ pub struct AgentInfoStruct {
     pub config: Option<Config>,
     /// List of keys mapped to peer tags
     pub peer_tags: Option<Vec<String>>,
+    /// List of span kinds eligible for stats computation
     pub span_kinds_stats_computed: Option<Vec<String>>,
 }
 

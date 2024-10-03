@@ -9,6 +9,7 @@ use datadog_live_debugger::LiveDebuggingData;
 pub enum RemoteConfigData {
     DynamicConfig(DynamicConfigFile),
     LiveDebugger(LiveDebuggingData),
+    Ignored(RemoteConfigProduct),
 }
 
 impl RemoteConfigData {
@@ -24,6 +25,7 @@ impl RemoteConfigData {
                 let parsed = datadog_live_debugger::parse_json(&String::from_utf8_lossy(data))?;
                 RemoteConfigData::LiveDebugger(parsed)
             }
+            _ => RemoteConfigData::Ignored(product),
         })
     }
 }
@@ -33,6 +35,7 @@ impl From<&RemoteConfigData> for RemoteConfigProduct {
         match value {
             RemoteConfigData::DynamicConfig(_) => RemoteConfigProduct::ApmTracing,
             RemoteConfigData::LiveDebugger(_) => RemoteConfigProduct::LiveDebugger,
+            RemoteConfigData::Ignored(product) => *product,
         }
     }
 }

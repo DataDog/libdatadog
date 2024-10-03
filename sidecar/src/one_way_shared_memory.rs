@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -101,7 +101,7 @@ where
     }
 }
 
-pub fn open_named_shm(path: &CString) -> io::Result<MappedMem<NamedShmHandle>> {
+pub fn open_named_shm(path: &CStr) -> io::Result<MappedMem<NamedShmHandle>> {
     NamedShmHandle::open(path)?.map()
 }
 
