@@ -47,49 +47,57 @@ use tinybytes::{Bytes, BytesString};
 /// };
 /// let encoded_data = to_vec_named(&vec![vec![span]]).unwrap();
 /// let encoded_data_as_tinybytes = tinybytes::Bytes::from(encoded_data);
-/// let decoded_traces = from_slice(encoded_data_as_tinybytes).expect("Decoding failed");
+/// let (decoded_traces, _payload_size) =
+///     from_slice(encoded_data_as_tinybytes).expect("Decoding failed");
 ///
 /// assert_eq!(1, decoded_traces.len());
 /// assert_eq!(1, decoded_traces[0].len());
 /// let decoded_span = &decoded_traces[0][0];
 /// assert_eq!("test-span", decoded_span.name.as_str());
 /// ```
-pub fn from_slice(mut data: tinybytes::Bytes) -> Result<Vec<Vec<Span>>, DecodeError> {
+pub fn from_slice(mut data: tinybytes::Bytes) -> Result<(Vec<Vec<Span>>, usize), DecodeError> {
     let trace_count =
         rmp::decode::read_array_len(unsafe { data.as_mut_slice() }).map_err(|_| {
             DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
         })?;
 
-    (0..trace_count).try_fold(
-        Vec::with_capacity(
-            trace_count
-                .try_into()
-                .expect("Unable to cast trace_count to usize"),
-        ),
-        |mut traces, _| {
-            let span_count =
-                rmp::decode::read_array_len(unsafe { data.as_mut_slice() }).map_err(|_| {
-                    DecodeError::InvalidFormat("Unable to read array len for span count".to_owned())
-                })?;
+    let start_len = data.len();
 
-            let trace = (0..span_count).try_fold(
-                Vec::with_capacity(
-                    span_count
-                        .try_into()
-                        .expect("Unable to cast span_count to usize"),
-                ),
-                |mut trace, _| {
-                    let span = decode_span(&mut data)?;
-                    trace.push(span);
-                    Ok(trace)
-                },
-            )?;
+    Ok((
+        (0..trace_count).try_fold(
+            Vec::with_capacity(
+                trace_count
+                    .try_into()
+                    .expect("Unable to cast trace_count to usize"),
+            ),
+            |mut traces, _| {
+                let span_count = rmp::decode::read_array_len(unsafe { data.as_mut_slice() })
+                    .map_err(|_| {
+                        DecodeError::InvalidFormat(
+                            "Unable to read array len for span count".to_owned(),
+                        )
+                    })?;
 
-            traces.push(trace);
+                let trace = (0..span_count).try_fold(
+                    Vec::with_capacity(
+                        span_count
+                            .try_into()
+                            .expect("Unable to cast span_count to usize"),
+                    ),
+                    |mut trace, _| {
+                        let span = decode_span(&mut data)?;
+                        trace.push(span);
+                        Ok(trace)
+                    },
+                )?;
 
-            Ok(traces)
-        },
-    )
+                traces.push(trace);
+
+                Ok(traces)
+            },
+        )?,
+        start_len - data.len(),
+    ))
 }
 
 #[inline]
@@ -269,10 +277,13 @@ mod tests {
             name: BytesString::from_slice(expected_string.as_ref()).unwrap(),
             ..Default::default()
         };
-        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let decoded_traces =
+        let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+        let expected_size = encoded_data.len() - 1; // rmp_serde adds additional 0 byte
+        encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
+        let (decoded_traces, decoded_size) =
             from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
+        assert_eq!(expected_size, decoded_size);
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
@@ -290,7 +301,7 @@ mod tests {
         span["meta_struct"] = json!(expected_meta_struct.clone());
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let decoded_traces =
+        let (decoded_traces, _) =
             from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
@@ -314,7 +325,7 @@ mod tests {
         span["meta_struct"] = json!(expected_meta_struct.clone());
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let decoded_traces =
+        let (decoded_traces, _) =
             from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
@@ -340,7 +351,7 @@ mod tests {
         span["meta"] = json!(expected_meta.clone());
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let decoded_traces =
+        let (decoded_traces, _) =
             from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
@@ -370,7 +381,7 @@ mod tests {
         span["meta"] = json!(expected_meta.clone());
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let decoded_traces =
+        let (decoded_traces, _) =
             from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
@@ -392,7 +403,7 @@ mod tests {
         let mut span = create_test_json_span(1, 2, 0, 0);
         span["metrics"] = json!(expected_metrics.clone());
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let decoded_traces =
+        let (decoded_traces, _) =
             from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
@@ -416,7 +427,7 @@ mod tests {
         let mut span = create_test_json_span(1, 2, 0, 0);
         span["metrics"] = json!(expected_metrics.clone());
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let decoded_traces =
+        let (decoded_traces, _) =
             from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
@@ -449,7 +460,7 @@ mod tests {
         span["span_links"] = json!([expected_span_link]);
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let decoded_traces =
+        let (decoded_traces, _) =
             from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
