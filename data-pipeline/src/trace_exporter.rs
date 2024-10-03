@@ -401,12 +401,12 @@ impl TraceExporter {
                                     .info
                                     .span_kinds_stats_computed
                                     .clone()
-                                    .unwrap_or_default(),
+                                    .unwrap_or_else(|| {
+                                        DEFAULT_STATS_ELIGIBLE_SPAN_KINDS.map(String::from).to_vec()
+                                    }),
                             );
                             concentrator.set_peer_tags(
-                                agent_info.info.peer_tags.clone().unwrap_or_else(|| {
-                                    DEFAULT_STATS_ELIGIBLE_SPAN_KINDS.map(String::from).to_vec()
-                                }),
+                                agent_info.info.peer_tags.clone().unwrap_or_default(),
                             );
                         } else {
                             self.stop_stats_computation();
