@@ -312,7 +312,8 @@ mod tests {
                 "signum:11",
                 "signame:SIGSEGV",
                 "collecting_sample:1",
-                "not_profiling:0"
+                "not_profiling:0",
+                "crash_address:0x0000000000001234",
             ]),
             tags
         );
