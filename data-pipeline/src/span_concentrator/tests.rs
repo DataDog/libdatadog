@@ -7,6 +7,15 @@ use rand::{thread_rng, Rng};
 
 const BUCKET_SIZE: u64 = Duration::from_secs(2).as_nanos() as u64;
 
+fn get_span_kinds() -> Vec<String> {
+    vec![
+        "client".to_string(),
+        "server".to_string(),
+        "consumer".to_string(),
+        "producer".to_string(),
+    ]
+}
+
 /// Return a random timestamp within the corresponding bucket (now - offset)
 fn get_timestamp_in_bucket(aligned_now: u64, bucket_size: u64, offset: u64) -> u64 {
     aligned_now - bucket_size * offset + thread_rng().gen_range(0..BUCKET_SIZE)
@@ -89,7 +98,7 @@ fn assert_counts_equal(expected: Vec<pb::ClientGroupedStats>, actual: Vec<pb::Cl
 fn test_concentrator_oldest_timestamp_cold() {
     let now = SystemTime::now();
     let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, false, vec![]);
+        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
     let mut spans = vec![
         get_test_span(now, 1, 0, 50, 5, "A1", "resource1", 0),
         get_test_span(now, 1, 0, 40, 4, "A1", "resource1", 0),
@@ -139,7 +148,7 @@ fn test_concentrator_oldest_timestamp_cold() {
 fn test_concentrator_oldest_timestamp_hot() {
     let now = SystemTime::now();
     let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, false, vec![]);
+        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
     let mut spans = vec![
         get_test_span(now, 1, 0, 50, 5, "A1", "resource1", 0),
         get_test_span(now, 1, 0, 40, 4, "A1", "resource1", 0),
@@ -212,7 +221,7 @@ fn test_concentrator_oldest_timestamp_hot() {
 fn test_concentrator_stats_totals() {
     let now = SystemTime::now();
     let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, false, vec![]);
+        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,
         concentrator.bucket_size,
@@ -272,7 +281,7 @@ fn test_concentrator_stats_totals() {
 fn test_concentrator_stats_counts() {
     let now = SystemTime::now();
     let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, false, vec![]);
+        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,
         concentrator.bucket_size,
@@ -562,8 +571,12 @@ fn test_span_should_be_included_in_stats() {
         ),
     ];
     compute_top_level_span(spans.as_mut_slice());
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, true, vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+    );
     for span in &spans {
         concentrator.add_span(span);
     }
@@ -636,8 +649,12 @@ fn test_ignore_partial_spans() {
         .metrics
         .insert("_dd.partial_version".to_string(), 830604.0);
     compute_top_level_span(spans.as_mut_slice());
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, true, vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+    );
     for span in &spans {
         concentrator.add_span(span);
     }
@@ -655,8 +672,12 @@ fn test_force_flush() {
     let now = SystemTime::now();
     let mut spans = vec![get_test_span(now, 1, 0, 50, 5, "A1", "resource1", 0)];
     compute_top_level_span(spans.as_mut_slice());
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, false, true, vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+    );
     for span in &spans {
         concentrator.add_span(span);
     }
@@ -732,13 +753,16 @@ fn test_peer_tags_aggregation() {
         ),
     ];
     compute_top_level_span(spans.as_mut_slice());
-    let mut concentrator_without_peer_tags =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, true, true, vec![]);
+    let mut concentrator_without_peer_tags = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+    );
     let mut concentrator_with_peer_tags = SpanConcentrator::new(
         Duration::from_nanos(BUCKET_SIZE),
         now,
-        true,
-        false,
+        get_span_kinds(),
         vec!["db.instance".to_string(), "db.system".to_string()],
     );
     for span in &spans {
@@ -976,6 +1000,6 @@ fn test_compute_stats_for_span_kind() {
     ];
 
     for (span, is_eligible) in test_cases {
-        assert!(compute_stats_for_span_kind(&span) == is_eligible)
+        assert!(compute_stats_for_span_kind(&span, &get_span_kinds()) == is_eligible)
     }
 }
