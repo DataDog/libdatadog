@@ -229,6 +229,7 @@ impl<'a> TryFrom<&StackFrame<'a>> for datadog_crashtracker::StackFrame {
 pub struct SigInfo<'a> {
     pub signum: u64,
     pub signame: CharSlice<'a>,
+    pub crash_address: CharSlice<'a>,
 }
 
 impl<'a> TryFrom<SigInfo<'a>> for datadog_crashtracker::SigInfo {
@@ -237,7 +238,12 @@ impl<'a> TryFrom<SigInfo<'a>> for datadog_crashtracker::SigInfo {
     fn try_from(value: SigInfo<'a>) -> Result<Self, Self::Error> {
         let signum = value.signum;
         let signame = option_from_char_slice(value.signame)?;
-        Ok(Self { signum, signame })
+        let crash_address = option_from_char_slice(value.crash_address)?;
+        Ok(Self {
+            signum,
+            signame,
+            crash_address,
+        })
     }
 }
 

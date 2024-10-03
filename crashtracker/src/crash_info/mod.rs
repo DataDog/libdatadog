@@ -23,6 +23,9 @@ pub struct SigInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub signame: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub crash_address: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

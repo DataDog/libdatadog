@@ -104,7 +104,7 @@ fn test_crash_tracking_bin(
     assert_eq!(
         serde_json::json!({
           "signum": 11,
-          "signame": "SIGSEGV"
+          "signame": "SIGSEGV",
         }),
         crash_payload["siginfo"]
     );

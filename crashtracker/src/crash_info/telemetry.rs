@@ -191,6 +191,9 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
         if let Some(signame) = &siginfo.signame {
             write!(&mut tags, ",signame:{}", signame)?;
         }
+        if let Some(crash_address) = &siginfo.crash_address {
+            write!(&mut tags, ",crash_address:{}", crash_address)?;
+        }
     }
     for (counter, value) in &crash_info.counters {
         write!(&mut tags, ",{}:{}", counter, value)?;
@@ -276,6 +279,7 @@ mod tests {
             siginfo: Some(SigInfo {
                 signum: 11,
                 signame: Some("SIGSEGV".to_owned()),
+                crash_address: Some("0x0000000000001234".to_owned()),
             }),
             proc_info: None,
             stacktrace: vec![],

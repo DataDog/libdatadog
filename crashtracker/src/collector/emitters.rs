@@ -101,10 +101,11 @@ pub(crate) fn emit_crashreport(
     config_str: &str,
     metadata_string: &str,
     signum: i32,
+    crash_address: Option<usize>,
 ) -> anyhow::Result<()> {
     emit_metadata(pipe, metadata_string)?;
     emit_config(pipe, config_str)?;
-    emit_siginfo(pipe, signum)?;
+    emit_siginfo(pipe, signum, crash_address)?;
     emit_procinfo(pipe)?;
     pipe.flush()?;
     emit_counters(pipe)?;
@@ -163,7 +164,11 @@ fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn emit_siginfo(w: &mut impl Write, signum: i32) -> anyhow::Result<()> {
+fn emit_siginfo(
+    w: &mut impl Write,
+    signum: i32,
+    crash_address: Option<usize>,
+) -> anyhow::Result<()> {
     let signame = if signum == libc::SIGSEGV {
         "SIGSEGV"
     } else if signum == libc::SIGBUS {
@@ -172,8 +177,16 @@ fn emit_siginfo(w: &mut impl Write, signum: i32) -> anyhow::Result<()> {
         "UNKNOWN"
     };
 
+    let crash_address_str = match crash_address {
+        Some(addr) => format!("{:#018x}", addr), // // Fixed width with 0x prefix
+        None => "None".to_string(),
+    };
+
     writeln!(w, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
-    writeln!(w, "{{\"signum\": {signum}, \"signame\": \"{signame}\"}}")?;
+    writeln!(
+        w,
+        "{{\"signum\": {signum}, \"signame\": \"{signame}\", \"crash_address\": \"{crash_address_str}\"}}"
+    )?;
     writeln!(w, "{DD_CRASHTRACK_END_SIGINFO}")?;
     Ok(())
 }
