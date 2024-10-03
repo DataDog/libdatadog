@@ -18,6 +18,9 @@ members = [
   "tools",
   "ipc",
   "ipc/macros",
+  "live-debugger",
+  "live-debugger-ffi",
+  "remote-config",
   "sidecar",
   "sidecar/macros",
   "sidecar-ffi",
@@ -46,7 +49,7 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.76.0"
 edition = "2021"
-version = "13.0.0"
+version = "13.1.0"
 license = "Apache-2.0"
 
 [profile.dev]

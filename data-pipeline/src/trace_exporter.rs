@@ -633,7 +633,7 @@ impl TraceExporter {
                     url: self.output_format.add_path(&self.endpoint.url),
                     ..self.endpoint.clone()
                 };
-                let send_data = SendData::new(size, tracer_payload, header_tags, &endpoint);
+                let send_data = SendData::new(size, tracer_payload, header_tags, &endpoint, None);
                 self.runtime.block_on(async {
                     match send_data.send().await.last_result {
                         Ok(response) => match hyper::body::to_bytes(response.into_body()).await {

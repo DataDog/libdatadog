@@ -495,6 +495,12 @@ dependencies = [
 
 [[package]]
 name = "base64"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
+
+[[package]]
+name = "base64"
 version = "0.21.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
@@ -786,7 +792,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -795,7 +801,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1126,6 +1132,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "constcat"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d5cd0c57ef83705837b1cb872c973eff82b070846d3e23668322b2c0f8246d0"
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1286,6 +1298,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ct-logs"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1a816186fa68d9e426e3cb4ae4dff1fcd8e4a2c34b781bf7a822574a0d0aac8"
+dependencies = [
+ "sct",
+]
+
+[[package]]
 name = "current_platform"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1341,7 +1362,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1370,7 +1391,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline-ffi"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "build_common",
  "bytes",
@@ -1381,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-alloc"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "allocator-api2",
  "bolero",
@@ -1391,7 +1412,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "anyhow",
  "backtrace",
@@ -1416,7 +1437,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker-ffi"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1430,7 +1451,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ddsketch"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "prost 0.11.9",
  "prost-build 0.11.9",
@@ -1487,8 +1508,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-live-debugger"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "constcat",
+ "ddcommon",
+ "hyper 0.14.28",
+ "json",
+ "lazy_static",
+ "percent-encoding",
+ "regex",
+ "regex-automata 0.4.6",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "sys-info",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "datadog-live-debugger-ffi"
+version = "0.0.1"
+dependencies = [
+ "build_common",
+ "datadog-live-debugger",
+ "ddcommon",
+ "ddcommon-ffi",
+ "log",
+ "percent-encoding",
+ "serde_json",
+ "tokio",
+ "tokio-util 0.7.11",
+ "uuid",
+]
+
+[[package]]
 name = "datadog-profiling"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -1525,7 +1583,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-ffi"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1547,7 +1605,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "anyhow",
  "clap 4.4.18",
@@ -1576,6 +1634,7 @@ dependencies = [
  "anyhow",
  "base64 0.21.7",
  "datadog-dynamic-configuration",
+ "datadog-live-debugger",
  "datadog-trace-protobuf",
  "ddcommon",
  "futures",
@@ -1624,6 +1683,7 @@ dependencies = [
  "datadog-dynamic-configuration",
  "datadog-ipc",
  "datadog-ipc-macros",
+ "datadog-live-debugger",
  "datadog-remote-config",
  "datadog-sidecar-macros",
  "datadog-trace-normalization",
@@ -1668,6 +1728,7 @@ dependencies = [
  "uuid",
  "winapi 0.3.9",
  "windows 0.51.1",
+ "windows-sys 0.52.0",
  "zwohash",
 ]
 
@@ -1676,6 +1737,7 @@ name = "datadog-sidecar-ffi"
 version = "0.0.1"
 dependencies = [
  "datadog-ipc",
+ "datadog-live-debugger",
  "datadog-remote-config",
  "datadog-sidecar",
  "datadog-trace-utils",
@@ -1700,7 +1762,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-mini-agent"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1722,7 +1784,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1733,7 +1795,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1751,7 +1813,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "prost 0.11.9",
  "prost-build 0.11.9",
@@ -1764,7 +1826,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-utils"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1781,6 +1843,7 @@ dependencies = [
  "futures",
  "httpmock",
  "hyper 0.14.28",
+ "hyper-proxy",
  "hyper-rustls 0.27.2",
  "log",
  "prost 0.11.9",
@@ -1797,7 +1860,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -1826,7 +1889,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-ffi"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1851,7 +1914,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1877,7 +1940,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry-ffi"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "build_common",
  "ddcommon",
@@ -1989,7 +2052,7 @@ dependencies = [
 
 [[package]]
 name = "dogstatsd"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "datadog-protos",
  "ddsketch-agent",
@@ -2011,7 +2074,7 @@ dependencies = [
 
 [[package]]
 name = "dogstatsd-client"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "anyhow",
  "cadence",
@@ -2546,6 +2609,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "headers"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06683b93020a07e3dbcf5f8c0f6d40080d725bea7936fc01ad345c01b97dc270"
+dependencies = [
+ "base64 0.21.7",
+ "bytes",
+ "headers-core",
+ "http 0.2.12",
+ "httpdate",
+ "mime",
+ "sha1",
+]
+
+[[package]]
+name = "headers-core"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7f66481bfee273957b1f20485a4ff3362987f85b2c236580d81b4eb7a326429"
+dependencies = [
+ "http 0.2.12",
+]
+
+[[package]]
 name = "heck"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2760,6 +2847,42 @@ dependencies = [
  "tokio",
  "tower-service",
  "winapi 0.3.9",
+]
+
+[[package]]
+name = "hyper-proxy"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca815a891b24fdfb243fa3239c86154392b0953ee584aa1a2a1f66d20cbe75cc"
+dependencies = [
+ "bytes",
+ "futures",
+ "headers",
+ "http 0.2.12",
+ "hyper 0.14.28",
+ "hyper-rustls 0.22.1",
+ "rustls-native-certs 0.5.0",
+ "tokio",
+ "tokio-rustls 0.22.0",
+ "tower-service",
+ "webpki",
+]
+
+[[package]]
+name = "hyper-rustls"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f9f7a97316d44c0af9b0301e65010573a853a9fc97046d7331d7f6bc0fd5a64"
+dependencies = [
+ "ct-logs",
+ "futures-util",
+ "hyper 0.14.28",
+ "log",
+ "rustls 0.19.1",
+ "rustls-native-certs 0.5.0",
+ "tokio",
+ "tokio-rustls 0.22.0",
+ "webpki",
 ]
 
 [[package]]
@@ -3003,6 +3126,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "json"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "078e285eafdfb6c4b434e0d31e8cfcb5115b651496faca5749b88fafd4f23bfd"
+
+[[package]]
 name = "kernel32-sys"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3054,9 +3183,9 @@ dependencies = [
 
 [[package]]
 name = "lazy_static"
-version = "1.4.0"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
+checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "lazycell"
@@ -4429,6 +4558,21 @@ dependencies = [
 
 [[package]]
 name = "ring"
+version = "0.16.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3053cf52e236a3ed746dfc745aa9cacf1b791d846bdaf412f60a8d7d6e17c8fc"
+dependencies = [
+ "cc",
+ "libc",
+ "once_cell",
+ "spin 0.5.2",
+ "untrusted 0.7.1",
+ "web-sys",
+ "winapi 0.3.9",
+]
+
+[[package]]
+name = "ring"
 version = "0.17.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c17fa4cb658e3583423e915b9f3acc01cceaee1860e33d59ebae66adc3a2dc0d"
@@ -4437,8 +4581,8 @@ dependencies = [
  "cfg-if",
  "getrandom",
  "libc",
- "spin",
- "untrusted",
+ "spin 0.9.8",
+ "untrusted 0.9.0",
  "windows-sys 0.52.0",
 ]
 
@@ -4524,12 +4668,25 @@ dependencies = [
 
 [[package]]
 name = "rustls"
+version = "0.19.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35edb675feee39aec9c99fa5ff985081995a06d594114ae14cbe797ad7b7a6d7"
+dependencies = [
+ "base64 0.13.1",
+ "log",
+ "ring 0.16.20",
+ "sct",
+ "webpki",
+]
+
+[[package]]
+name = "rustls"
 version = "0.22.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf4ef73721ac7bcd79b2b315da7779d8fc09718c6b3d2d1b2d94850eb8c18432"
 dependencies = [
  "log",
- "ring",
+ "ring 0.17.8",
  "rustls-pki-types",
  "rustls-webpki",
  "subtle",
@@ -4544,11 +4701,23 @@ checksum = "a218f0f6d05669de4eabfb24f31ce802035c952429d037507b4a4a39f0e60c5b"
 dependencies = [
  "aws-lc-rs",
  "once_cell",
- "ring",
+ "ring 0.17.8",
  "rustls-pki-types",
  "rustls-webpki",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "rustls-native-certs"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a07b7c1885bd8ed3831c289b7870b13ef46fe0e856d288c30d9cc17d75a2092"
+dependencies = [
+ "openssl-probe",
+ "rustls 0.19.1",
+ "schannel",
+ "security-framework",
 ]
 
 [[package]]
@@ -4608,9 +4777,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff448f7e92e913c4b7d4c6d8e4540a1724b319b4152b8aef6d4cf8339712b33e"
 dependencies = [
  "aws-lc-rs",
- "ring",
+ "ring 0.17.8",
  "rustls-pki-types",
- "untrusted",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -4671,6 +4840,16 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "sct"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b362b83898e0e69f38515b82ee15aa80636befe47c3b6d3d89a911e78fc228ce"
+dependencies = [
+ "ring 0.16.20",
+ "untrusted 0.7.1",
+]
 
 [[package]]
 name = "security-framework"
@@ -4853,6 +5032,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
 name = "sha2"
 version = "0.10.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4988,6 +5178,12 @@ dependencies = [
 
 [[package]]
 name = "spin"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
+
+[[package]]
+name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
@@ -5100,7 +5296,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5405,7 +5601,7 @@ dependencies = [
 
 [[package]]
 name = "tinybytes"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "once_cell",
  "pretty_assertions",
@@ -5484,6 +5680,17 @@ dependencies = [
 
 [[package]]
 name = "tokio-rustls"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc6844de72e57df1980054b38be3a9f4702aba4858be64dd700181a8a6d0e1b6"
+dependencies = [
+ "rustls 0.19.1",
+ "tokio",
+ "webpki",
+]
+
+[[package]]
+name = "tokio-rustls"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "775e0c0f0adb3a2f22a00c4745d728b479985fc15ee7ca6a2608388c5569860f"
@@ -5554,6 +5761,8 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
+ "hashbrown 0.14.3",
  "pin-project-lite",
  "slab",
  "tokio",
@@ -5677,7 +5886,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "lazy_static",
  "regex",
@@ -5871,6 +6080,12 @@ checksum = "f962df74c8c05a667b5ee8bcf162993134c104e96440b663c8daa176dc772d8c"
 
 [[package]]
 name = "untrusted"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
+
+[[package]]
+name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
@@ -6059,6 +6274,16 @@ checksum = "77afa9a11836342370f4817622a2f0f418b134426d91a82dfb48f532d2ec13ef"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webpki"
+version = "0.21.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8e38c0608262c46d4a56202ebabdeb094cef7e560ca7a226c6bf055188aa4ea"
+dependencies = [
+ "ring 0.16.20",
+ "untrusted 0.7.1",
 ]
 
 [[package]]

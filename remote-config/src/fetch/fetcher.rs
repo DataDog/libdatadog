@@ -12,11 +12,14 @@ use datadog_trace_protobuf::remoteconfig::{
     TargetFileHash, TargetFileMeta,
 };
 use ddcommon::{connector, Endpoint};
+use http::uri::Scheme;
 use hyper::http::uri::PathAndQuery;
 use hyper::{Client, StatusCode};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use std::collections::{HashMap, HashSet};
 use std::mem::transmute;
+use std::ops::Add;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tracing::{debug, trace, warn};
@@ -76,6 +79,21 @@ pub struct ConfigFetcherState<S> {
     pub invariants: ConfigInvariants,
     endpoint: Endpoint,
     pub expire_unused_files: bool,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct ConfigFetcherStateStats {
+    pub active_files: u32,
+}
+
+impl Add for ConfigFetcherStateStats {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        ConfigFetcherStateStats {
+            active_files: self.active_files + rhs.active_files,
+        }
+    }
 }
 
 pub struct ConfigFetcherFilesLock<'a, S> {
@@ -143,6 +161,12 @@ impl<S> ConfigFetcherState<S> {
                     target_file.state.apply_error = error;
                 }
             }
+        }
+    }
+
+    pub fn stats(&self) -> ConfigFetcherStateStats {
+        ConfigFetcherStateStats {
+            active_files: self.target_files_by_path.lock().unwrap().len() as u32,
         }
     }
 }
@@ -397,6 +421,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
             } else {
                 None
             };
+            // If the file isn't there, it's not meant for us.
             if let Some(raw_file) = incoming_files.get(path) {
                 if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(raw_file) {
                     let computed_hash = hasher(decoded.as_slice());
@@ -450,11 +475,6 @@ impl<S: FileStorage> ConfigFetcher<S> {
                         String::from_utf8_lossy(raw_file)
                     )
                 }
-            } else {
-                anyhow::bail!(
-                    "Found changed config data for path {path}, but no file; existing files: {:?}",
-                    incoming_files.keys().collect::<Vec<_>>()
-                )
             }
         }
 
@@ -475,8 +495,16 @@ impl<S: FileStorage> ConfigFetcher<S> {
     }
 }
 
-fn get_product_endpoint(_subdomain: &str, endpoint: &Endpoint) -> Endpoint {
+fn get_product_endpoint(subdomain: &str, endpoint: &Endpoint) -> Endpoint {
     let mut parts = endpoint.url.clone().into_parts();
+    if parts.authority.is_some() && parts.scheme.is_none() {
+        parts.scheme = Some(Scheme::HTTPS);
+        parts.authority = Some(
+            format!("{}.{}", subdomain, parts.authority.unwrap())
+                .parse()
+                .unwrap(),
+        );
+    }
     parts.path_and_query = Some(PathAndQuery::from_static("/v0.7/config"));
     Endpoint {
         url: hyper::Uri::from_parts(parts).unwrap(),

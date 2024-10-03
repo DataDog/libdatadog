@@ -124,13 +124,14 @@ impl Aggregator {
             .unwrap_or_default();
         let mut sketch_payload = SketchPayload::new();
 
-        self.map
+        sketch_payload.sketches = self
+            .map
             .iter()
             .filter_map(|entry| match entry.value {
                 MetricValue::Distribution(_) => build_sketch(now, entry, &self.tags),
                 _ => None,
             })
-            .for_each(|sketch| sketch_payload.sketches.push(sketch));
+            .collect();
         sketch_payload
     }
 
@@ -345,6 +346,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn insertion() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
@@ -359,6 +361,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn distribution_insertion() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
@@ -373,6 +376,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn overflow() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
@@ -402,6 +406,7 @@ pub mod tests {
 
     #[test]
     #[allow(clippy::float_cmp)]
+    #[cfg_attr(miri, ignore)]
     fn clear() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
@@ -433,6 +438,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn to_series() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
@@ -454,6 +460,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn distributions_to_protobuf() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
@@ -471,6 +478,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn consume_distributions_ignore_single_metrics() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 1_000).unwrap();
         assert_eq!(aggregator.distributions_to_protobuf().sketches.len(), 0);
@@ -487,6 +495,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn consume_distributions_batch_entries() {
         let max_batch = 5;
         let tot = 12;
@@ -511,6 +520,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn consume_distributions_batch_bytes() {
         let expected_distribution_per_batch = 2;
         let total_number_of_distributions = 5;
@@ -555,6 +565,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn consume_distribution_one_element_bigger_than_max_size() {
         let max_bytes = 1;
         let tot = 5;
@@ -589,6 +600,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn consume_series_ignore_distribution() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 1_000).unwrap();
 
@@ -613,6 +625,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn consume_series_batch_entries() {
         let max_batch = 5;
         let tot = 13;
@@ -638,6 +651,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn consume_metrics_batch_bytes() {
         let expected_metrics_per_batch = 2;
         let total_number_of_metrics = 5;
@@ -675,6 +689,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn consume_series_one_element_bigger_than_max_size() {
         let max_bytes = 1;
         let tot = 5;
@@ -701,6 +716,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn distribution_serialized_deserialized() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 1_000).unwrap();
 

@@ -77,6 +77,7 @@ fn write_to_tmp_file(data: &[u8]) -> anyhow::Result<tempfile::NamedTempFile> {
 
 use std::fs::File;
 
+#[cfg(target_os = "linux")]
 use std::ffi::CStr;
 use std::io;
 use std::ops::RangeInclusive;
