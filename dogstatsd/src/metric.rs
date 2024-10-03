@@ -258,6 +258,7 @@ mod tests {
         // For any valid name, tags et al the parse routine is able to parse an
         // encoded metric line.
         #[test]
+        #[cfg_attr(miri, ignore)]
         fn parse_valid_inputs(
             name in metric_name(),
             values in metric_values(),
@@ -319,6 +320,7 @@ mod tests {
         }
 
         #[test]
+        #[cfg_attr(miri, ignore)]
         fn parse_missing_name_and_value(
             mtype in metric_type(),
             tagset in metric_tagset()
@@ -334,6 +336,7 @@ mod tests {
         }
 
         #[test]
+        #[cfg_attr(miri, ignore)]
         fn parse_invalid_name_and_value_format(
             name in metric_name(),
             values in metric_values(),
@@ -357,6 +360,7 @@ mod tests {
         }
 
         #[test]
+        #[cfg_attr(miri, ignore)]
         fn parse_unsupported_metric_type(
             name in metric_name(),
             values in metric_values(),
@@ -381,6 +385,7 @@ mod tests {
         // For any valid name, tags et al the parse routine is able to parse an
         // encoded metric line.
         #[test]
+        #[cfg_attr(miri, ignore)]
         fn id_consistent(name in metric_name(),
                          mut tags in metric_tags()) {
             let mut tagset1 = String::new();
@@ -412,6 +417,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn parse_too_many_tags() {
         // 33
         assert_eq!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3").unwrap_err(),
@@ -428,6 +434,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn invalid_dogstatsd_no_panic() {
         assert!(parse("somerandomstring|c+a;slda").is_err());
     }
