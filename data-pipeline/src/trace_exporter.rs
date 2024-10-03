@@ -358,7 +358,6 @@ impl TraceExporter {
 
     /// Check for a new state of agent_info and update the trace exporter if needed
     fn check_agent_info(&self) {
-        dbg!(self.agent_info.load().clone());
         if let Some(agent_info) = self.agent_info.load().as_deref() {
             if Some(agent_info.state_hash.as_str())
                 != self
