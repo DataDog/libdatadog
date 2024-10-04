@@ -177,16 +177,18 @@ fn emit_siginfo(
         "UNKNOWN"
     };
 
-    let crash_address_str = match crash_address {
-        Some(addr) => format!("{:#018x}", addr), // // Fixed width with 0x prefix
-        None => "None".to_string(),
-    };
-
     writeln!(w, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
-    writeln!(
-        w,
-        "{{\"signum\": {signum}, \"signame\": \"{signame}\", \"crash_address\": \"{crash_address_str}\"}}"
-    )?;
+    match crash_address {
+        Some(addr) => {
+            writeln!(
+                w,
+                "{{\"signum\": {signum}, \"signame\": \"{signame}\", \"crash_address\": {addr}}}"
+            )?;
+        }
+        None => {
+            writeln!(w, "{{\"signum\": {signum}, \"signame\": \"{signame}\"}}")?;
+        }
+    };
     writeln!(w, "{DD_CRASHTRACK_END_SIGINFO}")?;
     Ok(())
 }

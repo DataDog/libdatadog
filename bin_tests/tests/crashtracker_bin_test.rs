@@ -105,7 +105,7 @@ fn test_crash_tracking_bin(
         serde_json::json!({
           "signum": 11,
           "signame": "SIGSEGV",
-          "crash_address": "0x0000000000000000",
+          "crash_address": 0,
         }),
         crash_payload["siginfo"]
     );
