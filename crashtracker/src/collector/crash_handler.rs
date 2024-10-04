@@ -255,14 +255,14 @@ extern "C" fn handle_posix_sigaction(signum: i32, sig_info: *mut siginfo_t, ucon
     // Handle the signal.  Note this has a guard to ensure that we only generate
     // one crash report per process.
 
-    let crash_address: Option<usize> =
+    let faulting_address: Option<usize> =
         if !sig_info.is_null() && (signum == libc::SIGSEGV || signum == libc::SIGBUS) {
             unsafe { Some((*sig_info).si_addr() as usize) }
         } else {
             None
         };
 
-    let _ = handle_posix_signal_impl(signum, crash_address);
+    let _ = handle_posix_signal_impl(signum, faulting_address);
 
     // Once we've handled the signal, chain to any previous handlers.
     // SAFETY: This was created by [register_crash_handlers].  There is a tiny
@@ -311,7 +311,7 @@ extern "C" fn handle_posix_sigaction(signum: i32, sig_info: *mut siginfo_t, ucon
     };
 }
 
-fn handle_posix_signal_impl(signum: i32, crash_address: Option<usize>) -> anyhow::Result<()> {
+fn handle_posix_signal_impl(signum: i32, faulting_address: Option<usize>) -> anyhow::Result<()> {
     static NUM_TIMES_CALLED: AtomicU64 = AtomicU64::new(0);
     if NUM_TIMES_CALLED.fetch_add(1, SeqCst) > 0 {
         // In the case where some lower-level signal handler recovered the error
@@ -344,7 +344,7 @@ fn handle_posix_signal_impl(signum: i32, crash_address: Option<usize>) -> anyhow
                 config_str,
                 metadata_string,
                 signum,
-                crash_address,
+                faulting_address,
             );
             let _ = pipe.flush();
             if config.wait_for_receiver {
@@ -377,7 +377,7 @@ fn handle_posix_signal_impl(signum: i32, crash_address: Option<usize>) -> anyhow
                 config_str,
                 metadata_string,
                 signum,
-                crash_address,
+                faulting_address,
             );
             let _ = unix_stream.flush();
             unix_stream

@@ -105,7 +105,7 @@ fn test_crash_tracking_bin(
         serde_json::json!({
           "signum": 11,
           "signame": "SIGSEGV",
-          "crash_address": 0,
+          "faulting_address": 0,
         }),
         crash_payload["siginfo"]
     );
@@ -148,7 +148,7 @@ fn assert_telemetry_message(crash_telemetry: &[u8]) {
             "profiler_inactive:0",
             "profiler_serializing:0",
             "signame:SIGSEGV",
-            "crash_address:0x0000000000000000",
+            "faulting_address:0x0000000000000000",
         ]),
         tags
     );

@@ -101,11 +101,11 @@ pub(crate) fn emit_crashreport(
     config_str: &str,
     metadata_string: &str,
     signum: i32,
-    crash_address: Option<usize>,
+    faulting_address: Option<usize>,
 ) -> anyhow::Result<()> {
     emit_metadata(pipe, metadata_string)?;
     emit_config(pipe, config_str)?;
-    emit_siginfo(pipe, signum, crash_address)?;
+    emit_siginfo(pipe, signum, faulting_address)?;
     emit_procinfo(pipe)?;
     pipe.flush()?;
     emit_counters(pipe)?;
@@ -167,7 +167,7 @@ fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
 fn emit_siginfo(
     w: &mut impl Write,
     signum: i32,
-    crash_address: Option<usize>,
+    faulting_address: Option<usize>,
 ) -> anyhow::Result<()> {
     let signame = if signum == libc::SIGSEGV {
         "SIGSEGV"
@@ -178,11 +178,11 @@ fn emit_siginfo(
     };
 
     writeln!(w, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
-    match crash_address {
+    match faulting_address {
         Some(addr) => {
             writeln!(
                 w,
-                "{{\"signum\": {signum}, \"signame\": \"{signame}\", \"crash_address\": {addr}}}"
+                "{{\"signum\": {signum}, \"signame\": \"{signame}\", \"faulting_address\": {addr}}}"
             )?;
         }
         None => {
