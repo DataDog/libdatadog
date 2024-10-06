@@ -17,7 +17,7 @@ pub trait TraceFlusher {
     /// implementing flushing logic that calls flush_traces.
     async fn start_trace_flusher(&self, config: Arc<Config>, mut rx: Receiver<SendData>);
     /// Flushes traces to the Datadog trace intake.
-    async fn flush_traces(&self, traces: Vec<SendData>);
+    async fn flush_traces(&self, traces: Vec<SendData>, config: Arc<Config>);
 }
 
 #[derive(Clone)]
@@ -43,20 +43,24 @@ impl TraceFlusher for ServerlessTraceFlusher {
 
             let mut buffer = buffer_consumer.lock().await;
             if !buffer.is_empty() {
-                self.flush_traces(buffer.to_vec()).await;
+                self.flush_traces(buffer.to_vec(), config.clone()).await;
                 buffer.clear();
             }
         }
     }
 
-    async fn flush_traces(&self, traces: Vec<SendData>) {
+    async fn flush_traces(&self, traces: Vec<SendData>, config: Arc<Config>) {
         if traces.is_empty() {
             return;
         }
         info!("Flushing {} traces", traces.len());
 
         for traces in trace_utils::coalesce_send_data(traces) {
-            match traces.send().await.last_result {
+            match traces
+                .send_proxy(config.proxy_url.as_deref())
+                .await
+                .last_result
+            {
                 Ok(_) => info!("Successfully flushed traces"),
                 Err(e) => {
                     error!("Error sending trace: {e:?}")
