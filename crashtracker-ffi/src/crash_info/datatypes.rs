@@ -237,7 +237,12 @@ impl<'a> TryFrom<SigInfo<'a>> for datadog_crashtracker::SigInfo {
     fn try_from(value: SigInfo<'a>) -> Result<Self, Self::Error> {
         let signum = value.signum;
         let signame = option_from_char_slice(value.signame)?;
-        Ok(Self { signum, signame })
+        let faulting_address = None; // TODO: Expose this to FFI
+        Ok(Self {
+            signum,
+            signame,
+            faulting_address,
+        })
     }
 }
 

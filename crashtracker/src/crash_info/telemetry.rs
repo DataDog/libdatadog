@@ -191,6 +191,9 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
         if let Some(signame) = &siginfo.signame {
             write!(&mut tags, ",signame:{}", signame)?;
         }
+        if let Some(faulting_address) = &siginfo.faulting_address {
+            write!(&mut tags, ",faulting_address:{:#018x}", faulting_address)?;
+        }
     }
     for (counter, value) in &crash_info.counters {
         write!(&mut tags, ",{}:{}", counter, value)?;
@@ -276,6 +279,7 @@ mod tests {
             siginfo: Some(SigInfo {
                 signum: 11,
                 signame: Some("SIGSEGV".to_owned()),
+                faulting_address: Some(0x1234),
             }),
             proc_info: None,
             stacktrace: vec![],
@@ -308,7 +312,8 @@ mod tests {
                 "signum:11",
                 "signame:SIGSEGV",
                 "collecting_sample:1",
-                "not_profiling:0"
+                "not_profiling:0",
+                "faulting_address:0x0000000000001234",
             ]),
             tags
         );
