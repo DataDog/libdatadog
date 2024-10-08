@@ -45,8 +45,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let concentrator = SpanConcentrator::new(
         Duration::from_secs(10),
         now,
-        true,
-        true,
+        vec![],
         vec!["db_name".to_string(), "bucket_s3".to_string()],
     );
     let mut spans = vec![];

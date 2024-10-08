@@ -117,6 +117,17 @@ struct RuntimeInfo<N: NotifyTarget> {
     targets: HashMap<Arc<Target>, u32>,
 }
 
+type InProcNotifyFn = extern "C" fn(*const ConfigInvariants, *const Arc<Target>);
+static mut IN_PROC_NOTIFY_FUN: Option<InProcNotifyFn> = None;
+
+/// # Safety
+/// This function modifies a global without synchronization.
+/// It is designed to be called by the main thread before other threads are spawned.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_set_rc_notify_fn(notify_fn: Option<InProcNotifyFn>) {
+    IN_PROC_NOTIFY_FUN = notify_fn;
+}
+
 impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static>
     MultiTargetFetcher<N, S>
 where
@@ -392,6 +403,7 @@ where
             let (remove_future, remove_completer) = ManualFuture::new();
             let shared_future = remove_future.shared();
 
+            let invariants = this.storage.invariants().clone();
             let inner_fetcher = fetcher.clone();
             let inner_this = this.clone();
             let fetcher_fut = fetcher
@@ -427,6 +439,13 @@ where
                             debug!("Notify {:?} about remote config changes", notify_targets);
                             for notify_target in notify_targets {
                                 notify_target.notify();
+                            }
+
+                            if let Some(in_proc_notify) = unsafe { IN_PROC_NOTIFY_FUN } {
+                                in_proc_notify(
+                                    &invariants as *const ConfigInvariants,
+                                    &inner_fetcher.target as *const Arc<Target>,
+                                );
                             }
                         }
                     }),

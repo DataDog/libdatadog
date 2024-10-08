@@ -171,6 +171,8 @@ pub struct TracerPayloadParams<'a, T: TraceChunkProcessor + 'a> {
     data: tinybytes::Bytes,
     /// Reference to `TracerHeaderTags` containing metadata for the trace.
     tracer_header_tags: &'a TracerHeaderTags<'a>,
+    /// Amount of data consumed from buffer
+    size: Option<&'a mut usize>,
     /// A mutable reference to an implementation of `TraceChunkProcessor` that processes each
     /// `TraceChunk` after it is constructed but before it is added to the TracerPayloadCollection.
     /// TraceChunks are only available for v07 traces.
@@ -194,10 +196,15 @@ impl<'a, T: TraceChunkProcessor + 'a> TracerPayloadParams<'a, T> {
         TracerPayloadParams {
             data,
             tracer_header_tags,
+            size: None,
             chunk_processor,
             is_agentless,
             encoding_type,
         }
+    }
+
+    pub fn measure_size(&mut self, size: &'a mut usize) {
+        self.size = Some(size);
     }
 }
 // TODO: APMSP-1282 - Implement TryInto for other encoding types. Supporting TraceChunkProcessor but
@@ -253,13 +260,16 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
     fn try_into(self) -> Result<TracerPayloadCollection, Self::Error> {
         match self.encoding_type {
             TraceEncoding::V04 => {
-                let traces: Vec<Vec<Span>> =
-                    match msgpack_decoder::v04::decoder::from_slice(self.data) {
-                        Ok(res) => res,
-                        Err(e) => {
-                            anyhow::bail!("Error deserializing trace from request body: {e}")
-                        }
-                    };
+                let (traces, size) = match msgpack_decoder::v04::decoder::from_slice(self.data) {
+                    Ok(res) => res,
+                    Err(e) => {
+                        anyhow::bail!("Error deserializing trace from request body: {e}")
+                    }
+                };
+
+                if let Some(size_ref) = self.size {
+                    *size_ref = size;
+                }
 
                 if traces.is_empty() {
                     anyhow::bail!("No traces deserialized from the request body.");

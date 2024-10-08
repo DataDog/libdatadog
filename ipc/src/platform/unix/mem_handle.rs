@@ -10,7 +10,7 @@ use nix::fcntl::OFlag;
 use nix::sys::mman::{mmap, munmap, shm_open, shm_unlink, MapFlags, ProtFlags};
 use nix::sys::stat::Mode;
 use nix::unistd::ftruncate;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io;
 use std::num::NonZeroUsize;
@@ -92,8 +92,8 @@ impl NamedShmHandle {
         Self::new(fd, Some(path), size)
     }
 
-    pub fn open(path: &CString) -> io::Result<NamedShmHandle> {
-        let fd = shm_open(path.as_bytes(), OFlag::O_RDWR, Mode::empty())?;
+    pub fn open(path: &CStr) -> io::Result<NamedShmHandle> {
+        let fd = shm_open(path, OFlag::O_RDWR, Mode::empty())?;
         let file: File = unsafe { OwnedFd::from_raw_fd(fd) }.into();
         let size = file.metadata()?.size() as usize;
         Self::new(file.into_raw_fd(), None, size)
