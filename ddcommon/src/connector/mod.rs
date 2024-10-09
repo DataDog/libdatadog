@@ -114,8 +114,6 @@ fn load_root_certs() -> anyhow::Result<rustls::RootCertStore> {
     let mut roots = rustls::RootCertStore::empty();
 
     for cert in rustls_native_certs::load_native_certs()? {
-        let cert = CertificateDer::from(cert.0);
-
         //TODO: log when invalid cert is loaded
         roots.add(cert).ok();
     }
