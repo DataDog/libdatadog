@@ -4,8 +4,6 @@
 use crate::handles::{HandlesTransport, TransferHandles};
 use crate::platform::{mmap_handle, munmap_handle, OwnedFileHandle, PlatformHandle};
 use serde::{Deserialize, Serialize};
-#[cfg(all(unix, not(target_os = "macos")))]
-use std::os::unix::prelude::AsRawFd;
 use std::{ffi::CString, io};
 #[cfg(feature = "tiny-bytes")]
 use tinybytes::UnderlyingBytes;
@@ -90,7 +88,7 @@ where
             self.set_mapping_size(size)?;
         }
         nix::unistd::ftruncate(
-            self.get_shm().handle.as_raw_fd(),
+            self.get_shm().handle.as_owned_fd()?,
             self.get_shm().size as libc::off_t,
         )?;
         Ok(())
