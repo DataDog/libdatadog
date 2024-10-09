@@ -13,6 +13,7 @@ use nix::unistd::ftruncate;
 use std::ffi::{CStr, CString};
 use std::io;
 use std::num::NonZeroUsize;
+use std::os::fd::OwnedFd;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, RawFd};
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
@@ -21,7 +22,7 @@ const NOT_COMMITTED: usize = 1 << (usize::BITS - 1);
 
 pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<MappedMem<T>> {
     let shm = handle.get_shm_mut();
-    let fd: RawFd = shm.handle.as_raw_fd();
+    let fd = shm.handle.as_owned_fd()?;
     if shm.size & NOT_COMMITTED != 0 {
         shm.size &= !NOT_COMMITTED;
         let page_size = NonZeroUsize::try_from(page_size::get()).unwrap();
@@ -31,7 +32,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
                 page_size,
                 ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
                 MapFlags::MAP_SHARED,
-                fd,
+                Some(fd),
                 (MAPPING_MAX_SIZE - usize::from(page_size)) as off_t,
             )?;
             if shm.size == 0 {
@@ -50,7 +51,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
                 NonZeroUsize::new(shm.size).unwrap(),
                 ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
                 MapFlags::MAP_SHARED,
-                fd,
+                Some(fd),
                 0,
             )?
         },
@@ -78,11 +79,10 @@ impl ShmHandle {
             OFlag::O_CREAT | OFlag::O_RDWR,
             Mode::empty(),
         )?;
-        ftruncate(fd, MAPPING_MAX_SIZE as off_t)?;
+        ftruncate(&fd, MAPPING_MAX_SIZE as off_t)?;
         _ = shm_unlink(path.as_bytes());
-        let handle = unsafe { PlatformHandle::from_raw_fd(fd) };
         Ok(ShmHandle {
-            handle,
+            handle: fd.into(),
             size: size | NOT_COMMITTED,
         })
     }
@@ -99,7 +99,7 @@ impl NamedShmHandle {
 
     pub fn create_mode(path: CString, size: usize, mode: Mode) -> io::Result<NamedShmHandle> {
         let fd = shm_open(path_slice(&path), OFlag::O_CREAT | OFlag::O_RDWR, mode)?;
-        let truncate = ftruncate(fd, MAPPING_MAX_SIZE as off_t);
+        let truncate = ftruncate(&fd, MAPPING_MAX_SIZE as off_t);
         if let Err(error) = truncate {
             // ignore if already exists
             if error != Errno::EINVAL {
@@ -114,10 +114,10 @@ impl NamedShmHandle {
         Self::new(fd, None, 0)
     }
 
-    fn new(fd: RawFd, path: Option<CString>, size: usize) -> io::Result<NamedShmHandle> {
+    fn new(fd: OwnedFd, path: Option<CString>, size: usize) -> io::Result<NamedShmHandle> {
         Ok(NamedShmHandle {
             inner: ShmHandle {
-                handle: unsafe { PlatformHandle::from_raw_fd(fd) },
+                handle: fd.into(),
                 size: size | NOT_COMMITTED,
             },
             path: path.map(|path| ShmPath { name: path }),
@@ -149,7 +149,7 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
                 page_size,
                 ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
                 MapFlags::MAP_SHARED,
-                handle.get_shm().handle.fd,
+                Some(handle.get_shm().handle.as_owned_fd().unwrap()),
                 (MAPPING_MAX_SIZE - usize::from(page_size)) as off_t,
             )
             .unwrap();
