@@ -33,6 +33,7 @@ use std::time::Duration;
 use tokio::time::Instant;
 use tracing::{debug, error, trace, warn};
 use zwohash::ZwoHasher;
+use ddcommon::tag::Tag;
 
 pub struct RemoteConfigWriter(OneWayShmWriter<NamedShmHandle>);
 pub struct RemoteConfigReader(OneWayShmReader<NamedShmHandle, CString>);
@@ -329,11 +330,13 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         env: String,
         service: String,
         app_version: String,
+        tags: Vec<Tag>,
     ) -> ShmRemoteConfigsGuard<N> {
         let target = Arc::new(Target {
             service,
             env,
             app_version,
+            tags,
         });
         self.0
             .add_runtime(runtime_id.clone(), notify_target, &target);
@@ -603,6 +606,7 @@ mod tests {
             service: "service".to_string(),
             env: "env".to_string(),
             app_version: "1.3.5".to_string(),
+            tags: vec![],
         });
     }
 
@@ -670,6 +674,7 @@ mod tests {
             DUMMY_TARGET.env.to_string(),
             DUMMY_TARGET.service.to_string(),
             DUMMY_TARGET.app_version.to_string(),
+            DUMMY_TARGET.tags.clone(),
         );
 
         receiver.recv().await;

@@ -9,6 +9,7 @@ use datadog_remote_config::{RemoteConfigData, Target};
 use ddcommon::Endpoint;
 use std::time::Duration;
 use tokio::time::sleep;
+use ddcommon::tag::Tag;
 
 const RUNTIME_ID: &str = "23e76587-5ae1-410c-a05c-137cae600a10";
 const SERVICE: &str = "testservice";
@@ -31,6 +32,7 @@ async fn main() {
             service: SERVICE.to_string(),
             env: ENV.to_string(),
             app_version: VERSION.to_string(),
+            tags: vec![Tag::new("test", "value").unwrap()]
         },
         RUNTIME_ID.to_string(),
         ConfigInvariants {

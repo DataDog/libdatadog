@@ -238,6 +238,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
             service,
             env,
             app_version,
+            tags,
         } = (*target).clone();
 
         let mut cached_target_files = vec![];
@@ -287,7 +288,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
                     extra_services: vec![],
                     env,
                     app_version,
-                    tags: vec![],
+                    tags: tags.iter().map(|t| t.to_string()).collect(),
                 }),
                 is_agent: false,
                 client_agent: None,
@@ -546,6 +547,7 @@ pub mod tests {
             service: "service".to_string(),
             env: "env".to_string(),
             app_version: "1.3.5".to_string(),
+            tags: vec![],
         });
     }
 

@@ -896,6 +896,7 @@ impl SidecarInterface for SidecarServer {
                 env_name.clone(),
                 service_name,
                 app_version.clone(),
+                global_tags.clone(),
             ),
         );
         app.set_metadata(env_name, app_version, global_tags);

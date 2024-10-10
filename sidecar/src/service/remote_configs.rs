@@ -8,6 +8,7 @@ use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use zwohash::HashMap;
+use ddcommon::tag::Tag;
 
 #[cfg(windows)]
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -104,6 +105,7 @@ impl RemoteConfigs {
         env: String,
         service: String,
         app_version: String,
+        tags: Vec<Tag>,
     ) -> RemoteConfigsGuard {
         match self.0.lock().unwrap().entry(invariants) {
             Entry::Occupied(e) => e.into_mut(),
@@ -119,7 +121,7 @@ impl RemoteConfigs {
                 ))
             }
         }
-        .add_runtime(runtime_id, notify_target, env, service, app_version)
+        .add_runtime(runtime_id, notify_target, env, service, app_version, tags)
     }
 
     pub fn shutdown(&self) {

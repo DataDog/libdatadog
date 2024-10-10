@@ -11,12 +11,14 @@ mod targets;
 pub use parse::*;
 pub use path::*;
 use serde::{Deserialize, Serialize};
+use ddcommon::tag::Tag;
 
 #[derive(Debug, Deserialize, Serialize, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Target {
     pub service: String,
     pub env: String,
     pub app_version: String,
+    pub tags: Vec<Tag>,
 }
 
 #[repr(C)]
