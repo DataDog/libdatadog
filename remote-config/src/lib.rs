@@ -8,6 +8,7 @@ mod parse;
 mod path;
 mod targets;
 
+use ddcommon::tag::Tag;
 pub use parse::*;
 pub use path::*;
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,7 @@ pub struct Target {
     pub service: String,
     pub env: String,
     pub app_version: String,
+    pub tags: Vec<Tag>,
 }
 
 #[repr(C)]
