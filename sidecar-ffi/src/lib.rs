@@ -204,6 +204,7 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
     service_name: ffi::CharSlice,
     env_name: ffi::CharSlice,
     app_version: ffi::CharSlice,
+    tags: &ddcommon_ffi::Vec<Tag>,
     remote_config_products: *const RemoteConfigProduct,
     remote_config_products_count: usize,
     remote_config_capabilities: *const RemoteConfigCapabilities,
@@ -226,6 +227,7 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
             service: service_name.to_utf8_lossy().into(),
             env: env_name.to_utf8_lossy().into(),
             app_version: app_version.to_utf8_lossy().into(),
+            tags: tags.as_slice().to_vec(),
         }),
     ))
 }
