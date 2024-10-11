@@ -45,6 +45,8 @@ jobs:
     name: Zip and Release
     needs: [build-windows, build-linux-musl]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -59,8 +61,12 @@ jobs:
             chmod +x "$file"
             upx "$file" --lzma
           done
-      - name: Upload binaries
-        uses: actions/upload-artifact@v4
+      - name: Zip binaries
+        run: zip -r datadog-serverless-agent.zip ./*
+        working-directory: target/release/binaries
+      - name: Release
+        uses: softprops/action-gh-release@v1
         with:
-          name: datadog-serverless-agent
-          path: target/release/binaries/*/*
+          draft: true
+          generate_release_notes: true
+          files: target/release/binaries/datadog-serverless-agent.zip
