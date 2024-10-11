@@ -435,7 +435,7 @@ fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
 
 pub fn set_serverless_root_span_tags(
     span: &mut pb::Span,
-    function_name: Option<String>,
+    app_name: Option<String>,
     env_type: &EnvironmentType,
 ) {
     span.r#type = "serverless".to_string();
@@ -450,8 +450,15 @@ pub fn set_serverless_root_span_tags(
     span.meta
         .insert("origin".to_string(), origin_tag.to_string());
 
-    if let Some(function_name) = function_name {
-        span.meta.insert("functionname".to_string(), function_name);
+    if let Some(function_name) = app_name {
+        match env_type {
+            EnvironmentType::CloudFunction
+            | EnvironmentType::AzureFunction
+            | EnvironmentType::LambdaFunction => {
+                span.meta.insert("functionname".to_string(), function_name);
+            }
+            _ => {}
+        }
     }
 }
 
@@ -471,6 +478,8 @@ pub enum EnvironmentType {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MiniAgentMetadata {
+    pub azure_spring_app_hostname: Option<String>,
+    pub azure_spring_app_name: Option<String>,
     pub gcp_project_id: Option<String>,
     pub gcp_region: Option<String>,
     pub version: Option<String>,
@@ -479,6 +488,8 @@ pub struct MiniAgentMetadata {
 impl Default for MiniAgentMetadata {
     fn default() -> Self {
         MiniAgentMetadata {
+            azure_spring_app_hostname: Default::default(),
+            azure_spring_app_name: Default::default(),
             gcp_project_id: Default::default(),
             gcp_region: Default::default(),
             version: env::var("DD_MINI_AGENT_VERSION").ok(),
@@ -490,6 +501,18 @@ pub fn enrich_span_with_mini_agent_metadata(
     span: &mut pb::Span,
     mini_agent_metadata: &MiniAgentMetadata,
 ) {
+    if let Some(azure_spring_app_hostname) = &mini_agent_metadata.azure_spring_app_hostname {
+        span.meta.insert(
+            "azurespringapp.hostname".to_string(),
+            azure_spring_app_hostname.to_string(),
+        );
+    }
+    if let Some(azure_spring_app_name) = &mini_agent_metadata.azure_spring_app_name {
+        span.meta.insert(
+            "azurespringapp.name".to_string(),
+            azure_spring_app_name.to_string(),
+        );
+    }
     if let Some(gcp_project_id) = &mini_agent_metadata.gcp_project_id {
         span.meta
             .insert("project_id".to_string(), gcp_project_id.to_string());
@@ -506,7 +529,7 @@ pub fn enrich_span_with_mini_agent_metadata(
     }
 }
 
-pub fn enrich_span_with_azure_metadata(span: &mut pb::Span) {
+pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
     if let Some(aas_metadata) = azure_app_services::get_function_metadata() {
         let aas_tags = [
             ("aas.resource.id", aas_metadata.get_resource_id()),
