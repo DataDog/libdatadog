@@ -476,8 +476,8 @@ mod tests {
         assert_eq!(
             res,
             trace_utils::MiniAgentMetadata {
-                azure_spring_app_hostname: Some("unknown".to_string()),
-                azure_spring_app_name: Some("unknown".to_string()),
+                azure_spring_app_hostname: None,
+                azure_spring_app_name: None,
                 gcp_project_id: Some("unknown".to_string()),
                 gcp_region: Some("unknown".to_string()),
                 version: None
