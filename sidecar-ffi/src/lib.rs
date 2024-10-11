@@ -18,7 +18,7 @@ use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
     InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
-use datadog_sidecar::shm_remote_config::RemoteConfigReader;
+use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddcommon_ffi as ffi;
@@ -31,7 +31,7 @@ use ddtelemetry_ffi::try_c;
 use dogstatsd_client::DogStatsDActionOwned;
 use ffi::slice::AsBytes;
 use libc::c_char;
-use std::ffi::c_void;
+use std::ffi::{c_void, CStr, CString};
 use std::fs::File;
 #[cfg(unix)]
 use std::os::unix::prelude::FromRawFd;
@@ -204,6 +204,7 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
     service_name: ffi::CharSlice,
     env_name: ffi::CharSlice,
     app_version: ffi::CharSlice,
+    tags: &ddcommon_ffi::Vec<Tag>,
     remote_config_products: *const RemoteConfigProduct,
     remote_config_products_count: usize,
     remote_config_capabilities: *const RemoteConfigCapabilities,
@@ -226,8 +227,32 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
             service: service_name.to_utf8_lossy().into(),
             env: env_name.to_utf8_lossy().into(),
             app_version: app_version.to_utf8_lossy().into(),
+            tags: tags.as_slice().to_vec(),
         }),
     ))
+}
+
+/// # Safety
+/// Argument should point to a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_remote_config_reader_for_path(
+    path: *const c_char,
+) -> Box<RemoteConfigReader> {
+    Box::new(RemoteConfigReader::from_path(CStr::from_ptr(path)))
+}
+
+#[no_mangle]
+extern "C" fn ddog_remote_config_path(
+    id: *const ConfigInvariants,
+    target: *const Arc<Target>,
+) -> *mut c_char {
+    let id = unsafe { &*id };
+    let target = unsafe { &*target };
+    path_for_remote_config(id, target).into_raw()
+}
+#[no_mangle]
+unsafe extern "C" fn ddog_remote_config_path_free(path: *mut c_char) {
+    drop(CString::from_raw(path));
 }
 
 #[no_mangle]

@@ -51,7 +51,7 @@ pub trait FileStorage {
 }
 
 /// Fundamental configuration of the RC client, which always must be set.
-#[derive(Clone, Hash, Eq, PartialEq)]
+#[derive(Clone, Hash, Eq, PartialEq, Debug)]
 pub struct ConfigInvariants {
     pub language: String,
     pub tracer_version: String,
@@ -78,6 +78,7 @@ pub struct ConfigFetcherState<S> {
     target_files_by_path: Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
     pub invariants: ConfigInvariants,
     endpoint: Endpoint,
+    encoded_capabilities: Vec<u8>,
     pub expire_unused_files: bool,
 }
 
@@ -124,10 +125,21 @@ impl<'a, S> ConfigFetcherFilesLock<'a, S> {
 
 impl<S> ConfigFetcherState<S> {
     pub fn new(invariants: ConfigInvariants) -> Self {
+        let capability_len = invariants
+            .capabilities
+            .iter()
+            .map(|c| *c as usize / 8 + 1)
+            .max()
+            .unwrap_or(0);
+        let mut encoded_capabilities = vec![0; capability_len];
+        for capability in invariants.capabilities.iter().map(|c| *c as usize) {
+            encoded_capabilities[capability_len - (capability >> 3) - 1] |= 1 << (capability & 7);
+        }
         ConfigFetcherState {
             target_files_by_path: Default::default(),
             endpoint: get_product_endpoint(PROD_INTAKE_SUBDOMAIN, &invariants.endpoint),
             invariants,
+            encoded_capabilities,
             expire_unused_files: true,
         }
     }
@@ -226,6 +238,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
             service,
             env,
             app_version,
+            tags,
         } = (*target).clone();
 
         let mut cached_target_files = vec![];
@@ -275,18 +288,12 @@ impl<S: FileStorage> ConfigFetcher<S> {
                     extra_services: vec![],
                     env,
                     app_version,
-                    tags: vec![],
+                    tags: tags.iter().map(|t| t.to_string()).collect(),
                 }),
                 is_agent: false,
                 client_agent: None,
                 last_seen: 0,
-                capabilities: self
-                    .state
-                    .invariants
-                    .capabilities
-                    .iter()
-                    .map(|c| *c as u8)
-                    .collect(),
+                capabilities: self.state.encoded_capabilities.clone(),
             }),
             cached_target_files,
         };
@@ -540,6 +547,7 @@ pub mod tests {
             service: "service".to_string(),
             env: "env".to_string(),
             app_version: "1.3.5".to_string(),
+            tags: vec![],
         });
     }
 
@@ -683,10 +691,7 @@ pub mod tests {
             assert!(req.cached_target_files.is_empty());
 
             let client = req.client.as_ref().unwrap();
-            assert_eq!(
-                client.capabilities,
-                &[RemoteConfigCapabilities::ApmTracingCustomTags as u8]
-            );
+            assert_eq!(client.capabilities, &[128, 0]);
             assert_eq!(client.products, &["APM_TRACING", "LIVE_DEBUGGING"]);
             assert!(client.is_tracer);
             assert!(!client.is_agent);
@@ -738,10 +743,7 @@ pub mod tests {
             assert_eq!(req.cached_target_files.len(), 1);
 
             let client = req.client.as_ref().unwrap();
-            assert_eq!(
-                client.capabilities,
-                &[RemoteConfigCapabilities::ApmTracingCustomTags as u8]
-            );
+            assert_eq!(client.capabilities, &[128, 0]);
             assert_eq!(client.products, &["APM_TRACING", "LIVE_DEBUGGING"]);
             assert!(client.is_tracer);
             assert!(!client.is_agent);
@@ -831,5 +833,28 @@ pub mod tests {
             assert_eq!(fetched.len(), 1);
             assert_eq!(storage.files.lock().unwrap().len(), 1);
         }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_capability_encoding() {
+        let state = ConfigFetcherState::<()>::new(ConfigInvariants {
+            language: "".to_string(),
+            tracer_version: "".to_string(),
+            endpoint: Default::default(),
+            products: vec![],
+            capabilities: unsafe {
+                vec![
+                    transmute::<u32, RemoteConfigCapabilities>(1u32),
+                    transmute::<u32, RemoteConfigCapabilities>(24u32),
+                    transmute::<u32, RemoteConfigCapabilities>(31u32),
+                ]
+            },
+        });
+        assert_eq!(state.encoded_capabilities.len(), 4);
+        assert_eq!(
+            state.encoded_capabilities,
+            (2u32 | 1 << 24 | 1 << 31).to_be_bytes()
+        );
     }
 }

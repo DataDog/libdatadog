@@ -19,6 +19,7 @@ use ustr::Ustr;
 impl MetricValue {
     fn aggregate(&mut self, metric: Metric) {
         // safe because we know there's at least one value when we parse
+        // TODO aggregating different types should return error
         match self {
             MetricValue::Count(count) => *count += metric.value.get_value().unwrap_or_default(),
             MetricValue::Gauge(gauge) => *gauge = metric.value.get_value().unwrap_or_default(),
@@ -124,13 +125,14 @@ impl Aggregator {
             .unwrap_or_default();
         let mut sketch_payload = SketchPayload::new();
 
-        self.map
+        sketch_payload.sketches = self
+            .map
             .iter()
             .filter_map(|entry| match entry.value {
-                MetricValue::Distribution(_) => build_sketch(now, entry, &self.tags),
+                MetricValue::Distribution(_) => build_sketch(now, entry, self.tags.clone()),
                 _ => None,
             })
-            .for_each(|sketch| sketch_payload.sketches.push(sketch));
+            .collect();
         sketch_payload
     }
 
@@ -153,7 +155,7 @@ impl Aggregator {
                 }
                 false
             })
-            .filter_map(|entry| build_sketch(now, &entry, &self.tags))
+            .filter_map(|entry| build_sketch(now, &entry, self.tags.clone()))
         {
             let next_chunk_size = sketch.compute_size();
 
@@ -187,7 +189,7 @@ impl Aggregator {
             .iter()
             .filter_map(|entry| match entry.value {
                 MetricValue::Distribution(_) => None,
-                _ => build_metric(entry, &self.tags),
+                _ => build_metric(entry, self.tags.clone()),
             })
             .for_each(|metric| series_payload.series.push(metric));
         series_payload
@@ -208,7 +210,7 @@ impl Aggregator {
                 }
                 true
             })
-            .filter_map(|entry| build_metric(&entry, &self.tags))
+            .filter_map(|entry| build_metric(&entry, self.tags.clone()))
         {
             // TODO serialization is made twice for each point. If we return a Vec<u8> we can avoid
             // that
@@ -246,13 +248,13 @@ impl Aggregator {
         batched_payloads
     }
 
-    pub fn get_entry_by_id(&self, name: Ustr, tags: &SortedTags) -> Option<&Metric> {
+    pub fn get_entry_by_id(&self, name: Ustr, tags: &Option<SortedTags>) -> Option<&Metric> {
         let id = metric::id(name, tags);
         self.map.find(id, |m| m.id == id)
     }
 }
 
-fn build_sketch(now: i64, entry: &Metric, base_tag_vec: &SortedTags) -> Option<Sketch> {
+fn build_sketch(now: i64, entry: &Metric, mut base_tag_vec: SortedTags) -> Option<Sketch> {
     let sketch = entry.value.get_sketch()?;
     let mut dogsketch = Dogsketch::default();
     sketch.merge_to_dogsketch(&mut dogsketch);
@@ -262,14 +264,20 @@ fn build_sketch(now: i64, entry: &Metric, base_tag_vec: &SortedTags) -> Option<S
     sketch.set_dogsketches(vec![dogsketch]);
     let name = entry.name.to_string();
     sketch.set_metric(name.clone().into());
-    let mut tags = entry.tags.clone();
-    tags.extend(base_tag_vec);
-    sketch.set_tags(tags.to_chars());
+    if let Some(tags) = entry.tags.clone() {
+        base_tag_vec.extend(&tags);
+    }
+    sketch.set_tags(base_tag_vec.to_chars());
     Some(sketch)
 }
 
-fn build_metric(entry: &Metric, base_tag_vec: &SortedTags) -> Option<MetricToShip> {
-    let resources = entry.tags.to_resources();
+fn build_metric(entry: &Metric, mut base_tag_vec: SortedTags) -> Option<MetricToShip> {
+    let resources;
+    if let Some(tags) = entry.tags.clone() {
+        resources = tags.to_resources();
+    } else {
+        resources = Vec::new();
+    }
     let kind = match entry.value {
         MetricValue::Count(_) => datadog::DdMetricKind::Count,
         MetricValue::Gauge(_) => datadog::DdMetricKind::Gauge,
@@ -284,15 +292,16 @@ fn build_metric(entry: &Metric, base_tag_vec: &SortedTags) -> Option<MetricToShi
             .as_secs(),
     };
 
-    let mut tags = entry.tags.clone();
-    tags.extend(base_tag_vec);
+    if let Some(tags) = entry.tags.clone() {
+        base_tag_vec.extend(&tags);
+    }
 
     Some(MetricToShip {
         metric: entry.name.as_str(),
         resources,
         kind,
         points: [point; 1],
-        tags: tags.to_strings(),
+        tags: base_tag_vec.to_strings(),
     })
 }
 
@@ -322,7 +331,7 @@ pub mod tests {
     ) {
         let aggregator = aggregator_mutex.lock().unwrap();
         if let Some(e) =
-            aggregator.get_entry_by_id(metric_id.into(), &SortedTags::parse(tags).unwrap())
+            aggregator.get_entry_by_id(metric_id.into(), &Some(SortedTags::parse(tags).unwrap()))
         {
             let metric = e.value.get_value().unwrap();
             assert!((metric - value).abs() < PRECISION);
@@ -333,7 +342,7 @@ pub mod tests {
 
     pub fn assert_sketch(aggregator_mutex: &Mutex<Aggregator>, metric_id: &str, value: f64) {
         let aggregator = aggregator_mutex.lock().unwrap();
-        if let Some(e) = aggregator.get_entry_by_id(metric_id.into(), &EMPTY_TAGS) {
+        if let Some(e) = aggregator.get_entry_by_id(metric_id.into(), &None) {
             let metric = e.value.get_sketch().unwrap();
             assert!((metric.max().unwrap() - value).abs() < PRECISION);
             assert!((metric.min().unwrap() - value).abs() < PRECISION);
@@ -345,6 +354,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn insertion() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
@@ -359,6 +369,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn distribution_insertion() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
@@ -373,6 +384,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn overflow() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
@@ -402,6 +414,7 @@ pub mod tests {
 
     #[test]
     #[allow(clippy::float_cmp)]
+    #[cfg_attr(miri, ignore)]
     fn clear() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
@@ -413,7 +426,7 @@ pub mod tests {
 
         assert_eq!(aggregator.map.len(), 2);
         if let Some(v) =
-            aggregator.get_entry_by_id("foo".into(), &SortedTags::parse("k2:v2").unwrap())
+            aggregator.get_entry_by_id("foo".into(), &Some(SortedTags::parse("k2:v2").unwrap()))
         {
             assert_eq!(v.value.get_value().unwrap(), 5f64);
         } else {
@@ -421,7 +434,7 @@ pub mod tests {
         }
 
         if let Some(v) =
-            aggregator.get_entry_by_id("test".into(), &SortedTags::parse("k1:v1").unwrap())
+            aggregator.get_entry_by_id("test".into(), &Some(SortedTags::parse("k1:v1").unwrap()))
         {
             assert_eq!(v.value.get_value().unwrap(), 3f64);
         } else {
@@ -433,6 +446,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn to_series() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
@@ -454,6 +468,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn distributions_to_protobuf() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
@@ -471,6 +486,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn consume_distributions_ignore_single_metrics() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 1_000).unwrap();
         assert_eq!(aggregator.distributions_to_protobuf().sketches.len(), 0);
@@ -487,6 +503,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn consume_distributions_batch_entries() {
         let max_batch = 5;
         let tot = 12;
@@ -511,6 +528,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn consume_distributions_batch_bytes() {
         let expected_distribution_per_batch = 2;
         let total_number_of_distributions = 5;
@@ -555,6 +573,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn consume_distribution_one_element_bigger_than_max_size() {
         let max_bytes = 1;
         let tot = 5;
@@ -589,6 +608,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn consume_series_ignore_distribution() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 1_000).unwrap();
 
@@ -613,6 +633,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn consume_series_batch_entries() {
         let max_batch = 5;
         let tot = 13;
@@ -638,6 +659,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn consume_metrics_batch_bytes() {
         let expected_metrics_per_batch = 2;
         let total_number_of_metrics = 5;
@@ -675,6 +697,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn consume_series_one_element_bigger_than_max_size() {
         let max_bytes = 1;
         let tot = 5;
@@ -701,6 +724,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn distribution_serialized_deserialized() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 1_000).unwrap();
 

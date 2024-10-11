@@ -1,9 +1,12 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+use crate::agent_info::{AgentInfoArc, AgentInfoFetcher};
+use crate::stats_exporter::LibraryMetadata;
 use crate::{
     health_metrics, health_metrics::HealthMetric, span_concentrator::SpanConcentrator,
     stats_exporter,
 };
+use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils::{
@@ -17,12 +20,16 @@ use dogstatsd_client::{new_flusher, Client, DogStatsDAction};
 use either::Either;
 use hyper::http::uri::PathAndQuery;
 use hyper::{Body, Method, Uri};
-use log::error;
+use log::{error, info};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr, time};
 use tokio::{runtime::Runtime, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
+
+const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] = ["client", "server", "producer", "consumer"];
+const STATS_ENDPOINT: &str = "/v0.6/stats";
+const INFO_ENDPOINT: &str = "/info";
 
 /// TraceExporterInputFormat represents the format of the input traces.
 /// The input format can be either Proxy or V0.4, where V0.4 is the default.
@@ -125,7 +132,13 @@ fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) {
     })
 }
 
-struct TracerTags {
+#[derive(Clone, Default)]
+struct TracerMetadata {
+    hostname: String,
+    env: String,
+    version: String,
+    runtime_id: String,
+    service: String,
     tracer_version: String,
     language: String,
     language_version: String,
@@ -134,8 +147,8 @@ struct TracerTags {
     client_computed_top_level: bool,
 }
 
-impl<'a> From<&'a TracerTags> for TracerHeaderTags<'a> {
-    fn from(tags: &'a TracerTags) -> TracerHeaderTags<'a> {
+impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
+    fn from(tags: &'a TracerMetadata) -> TracerHeaderTags<'a> {
         TracerHeaderTags::<'_> {
             lang: &tags.language,
             lang_version: &tags.language_version,
@@ -148,15 +161,38 @@ impl<'a> From<&'a TracerTags> for TracerHeaderTags<'a> {
     }
 }
 
-impl<'a> From<&'a TracerTags> for HashMap<&'static str, String> {
-    fn from(tags: &'a TracerTags) -> HashMap<&'static str, String> {
+impl<'a> From<&'a TracerMetadata> for HashMap<&'static str, String> {
+    fn from(tags: &'a TracerMetadata) -> HashMap<&'static str, String> {
         TracerHeaderTags::from(tags).into()
     }
 }
 
+impl From<&TracerMetadata> for LibraryMetadata {
+    fn from(tags: &TracerMetadata) -> Self {
+        LibraryMetadata {
+            hostname: tags.hostname.clone(),
+            lang: tags.language.clone(),
+            env: tags.env.clone(),
+            version: tags.version.clone(),
+            tracer_version: tags.tracer_version.clone(),
+            runtime_id: tags.runtime_id.clone(),
+            service: tags.service.clone(),
+            git_commit_sha: String::new(),
+            container_id: String::new(),
+            tags: Vec::new(),
+        }
+    }
+}
+
 enum StatsComputationStatus {
-    StatsDisabled,
-    StatsEnabled {
+    /// Client-side stats has been disabled by the tracer
+    Disabled,
+    /// Client-side stats has been disabled by the agent or is not supported. It can be enabled
+    /// later if the agent configuration changes. This is also the state used when waiting for the
+    /// /info response.
+    DisabledByAgent { bucket_size: Duration },
+    /// Client-side stats is enabled
+    Enabled {
         stats_concentrator: Arc<Mutex<SpanConcentrator>>,
         cancellation_token: CancellationToken,
         exporter_handle: JoinHandle<()>,
@@ -184,7 +220,7 @@ enum StatsComputationStatus {
 #[allow(missing_docs)]
 pub struct TraceExporter {
     endpoint: Endpoint,
-    tags: TracerTags,
+    metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     // TODO - do something with the response callback - https://datadoghq.atlassian.net/browse/APMSP-1019
@@ -194,7 +230,9 @@ pub struct TraceExporter {
     dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
     client_computed_top_level: bool,
-    stats: StatsComputationStatus,
+    client_side_stats: ArcSwap<StatsComputationStatus>,
+    agent_info: AgentInfoArc,
+    previous_info_state: ArcSwapOption<String>,
 }
 
 impl TraceExporter {
@@ -206,6 +244,7 @@ impl TraceExporter {
     /// Send msgpack serialized traces to the agent
     #[allow(missing_docs)]
     pub fn send(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
+        self.check_agent_info();
         match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data, trace_count),
             TraceExporterInputFormat::V04 => self.send_deser_ser(data),
@@ -214,32 +253,170 @@ impl TraceExporter {
 
     /// Safely shutdown the TraceExporter and all related tasks
     pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), String> {
-        match self.stats {
-            StatsComputationStatus::StatsEnabled {
-                stats_concentrator: _,
-                cancellation_token: cancelation_token,
-                exporter_handle,
-            } => {
-                if let Some(timeout) = timeout {
-                    match self.runtime.block_on(async {
-                        tokio::time::timeout(timeout, async {
-                            cancelation_token.cancel();
-                            let _ = exporter_handle.await;
-                        })
-                        .await
-                    }) {
-                        Ok(_) => Ok(()),
-                        Err(_) => Err("Shutdown timed out".to_string()),
-                    }
-                } else {
-                    self.runtime.block_on(async {
-                        cancelation_token.cancel();
+        if let Some(timeout) = timeout {
+            match self.runtime.block_on(async {
+                tokio::time::timeout(timeout, async {
+                    let stats_status: Option<StatsComputationStatus> =
+                        Arc::<StatsComputationStatus>::into_inner(
+                            self.client_side_stats.into_inner(),
+                        );
+                    if let Some(StatsComputationStatus::Enabled {
+                        stats_concentrator: _,
+                        cancellation_token,
+                        exporter_handle,
+                    }) = stats_status
+                    {
+                        cancellation_token.cancel();
                         let _ = exporter_handle.await;
-                    });
-                    Ok(())
-                }
+                    }
+                })
+                .await
+            }) {
+                Ok(()) => Ok(()),
+                Err(_) => Err("Shutdown timed out".to_string()),
             }
-            StatsComputationStatus::StatsDisabled => Ok(()),
+        } else {
+            self.runtime.block_on(async {
+                let stats_status: Option<StatsComputationStatus> =
+                    Arc::<StatsComputationStatus>::into_inner(self.client_side_stats.into_inner());
+                if let Some(StatsComputationStatus::Enabled {
+                    stats_concentrator: _,
+                    cancellation_token,
+                    exporter_handle,
+                }) = stats_status
+                {
+                    cancellation_token.cancel();
+                    let _ = exporter_handle.await;
+                }
+            });
+            Ok(())
+        }
+    }
+
+    /// Start the stats exporter and enable stats computation
+    ///
+    /// Should only be used if the agent enabled stats computation
+    fn start_stats_computation(
+        &self,
+        span_kinds: Vec<String>,
+        peer_tags: Vec<String>,
+    ) -> anyhow::Result<()> {
+        if let StatsComputationStatus::DisabledByAgent { bucket_size } =
+            **self.client_side_stats.load()
+        {
+            let stats_concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
+                bucket_size,
+                time::SystemTime::now(),
+                span_kinds,
+                peer_tags,
+            )));
+
+            let cancellation_token = CancellationToken::new();
+
+            let mut stats_exporter = stats_exporter::StatsExporter::new(
+                bucket_size,
+                stats_concentrator.clone(),
+                self.metadata.borrow().into(),
+                Endpoint::from_url(add_path(&self.endpoint.url, STATS_ENDPOINT)),
+                cancellation_token.clone(),
+            );
+
+            let exporter_handle = self.runtime.spawn(async move {
+                stats_exporter.run().await;
+            });
+
+            self.client_side_stats
+                .store(Arc::new(StatsComputationStatus::Enabled {
+                    stats_concentrator,
+                    cancellation_token,
+                    exporter_handle,
+                }));
+        };
+        Ok(())
+    }
+
+    /// Stops the stats exporter and disable stats computation
+    ///
+    /// Used when client-side stats is disabled by the agent
+    fn stop_stats_computation(&self) {
+        if let StatsComputationStatus::Enabled {
+            stats_concentrator,
+            cancellation_token,
+            exporter_handle: _,
+        } = &**self.client_side_stats.load()
+        {
+            self.runtime.block_on(async {
+                cancellation_token.cancel();
+            });
+            let bucket_size = stats_concentrator.lock().unwrap().get_bucket_size();
+            self.client_side_stats
+                .store(Arc::new(StatsComputationStatus::DisabledByAgent {
+                    bucket_size,
+                }));
+        }
+    }
+
+    /// Check for a new state of agent_info and update the trace exporter if needed
+    fn check_agent_info(&self) {
+        if let Some(agent_info) = self.agent_info.load().as_deref() {
+            if Some(agent_info.state_hash.as_str())
+                != self
+                    .previous_info_state
+                    .load()
+                    .as_deref()
+                    .map(|s| s.as_str())
+            {
+                match &**self.client_side_stats.load() {
+                    StatsComputationStatus::Disabled => {}
+                    StatsComputationStatus::DisabledByAgent { .. } => {
+                        if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
+                            // Client-side stats is supported by the agent
+                            let status = self.start_stats_computation(
+                                agent_info
+                                    .info
+                                    .span_kinds_stats_computed
+                                    .clone()
+                                    .unwrap_or_else(|| {
+                                        DEFAULT_STATS_ELIGIBLE_SPAN_KINDS.map(String::from).to_vec()
+                                    }),
+                                agent_info.info.peer_tags.clone().unwrap_or_default(),
+                            );
+                            match status {
+                                Ok(()) => info!("Client-side stats enabled"),
+                                Err(_) => error!("Failed to start stats computation"),
+                            }
+                        } else {
+                            info!("Client-side stats computation has been disabled by the agent")
+                        }
+                    }
+                    StatsComputationStatus::Enabled {
+                        stats_concentrator,
+                        cancellation_token: _,
+                        exporter_handle: _,
+                    } => {
+                        if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
+                            let mut concentrator = stats_concentrator.lock().unwrap();
+                            concentrator.set_span_kinds(
+                                agent_info
+                                    .info
+                                    .span_kinds_stats_computed
+                                    .clone()
+                                    .unwrap_or_else(|| {
+                                        DEFAULT_STATS_ELIGIBLE_SPAN_KINDS.map(String::from).to_vec()
+                                    }),
+                            );
+                            concentrator.set_peer_tags(
+                                agent_info.info.peer_tags.clone().unwrap_or_default(),
+                            );
+                        } else {
+                            self.stop_stats_computation();
+                            info!("Client-side stats computation has been disabled by the agent")
+                        }
+                    }
+                }
+                self.previous_info_state
+                    .store(Some(agent_info.state_hash.clone().into()))
+            }
         }
     }
 
@@ -249,6 +426,15 @@ impl TraceExporter {
             trace_count,
             self.output_format.add_path(&self.endpoint.url),
         )
+    }
+
+    fn get_headers(&self) -> TracerHeaderTags<'_> {
+        let mut headers: TracerHeaderTags = self.metadata.borrow().into();
+        if let StatsComputationStatus::Enabled { .. } = &**self.client_side_stats.load() {
+            headers.client_computed_top_level = true;
+            headers.client_computed_stats = true;
+        };
+        headers
     }
 
     fn send_data_to_url(
@@ -267,7 +453,7 @@ impl TraceExporter {
                     )
                     .method(Method::POST);
 
-                let headers: HashMap<&'static str, String> = self.tags.borrow().into();
+                let headers: HashMap<&'static str, String> = self.get_headers().into();
 
                 for (key, value) in &headers {
                     req_builder = req_builder.header(*key, value);
@@ -364,11 +550,11 @@ impl TraceExporter {
     /// # Panic
     /// Will panic if another thread panicked will holding the lock on `stats_concentrator`
     fn add_spans_to_stats<'a>(&self, spans: impl Iterator<Item = &'a pb::Span>) {
-        if let StatsComputationStatus::StatsEnabled {
+        if let StatsComputationStatus::Enabled {
             stats_concentrator,
             cancellation_token: _,
             exporter_handle: _,
-        } = &self.stats
+        } = &**self.client_side_stats.load()
         {
             let mut stats_concentrator = stats_concentrator.lock().unwrap();
             for span in spans {
@@ -403,7 +589,7 @@ impl TraceExporter {
         );
 
         // Stats computation
-        if let StatsComputationStatus::StatsEnabled { .. } = &self.stats {
+        if let StatsComputationStatus::Enabled { .. } = &**self.client_side_stats.load() {
             if !self.client_computed_top_level {
                 for chunk in traces.iter_mut() {
                     compute_top_level_span(chunk);
@@ -415,7 +601,7 @@ impl TraceExporter {
             drop_chunks(&mut traces);
         }
 
-        let header_tags: TracerHeaderTags<'_> = (&self.tags).into();
+        let header_tags: TracerHeaderTags<'_> = self.get_headers();
 
         match self.output_format {
             TraceExporterOutputFormat::V04 => rmp_serde::to_vec_named(&traces)
@@ -447,7 +633,7 @@ impl TraceExporter {
                     url: self.output_format.add_path(&self.endpoint.url),
                     ..self.endpoint.clone()
                 };
-                let send_data = SendData::new(size, tracer_payload, header_tags, &endpoint);
+                let send_data = SendData::new(size, tracer_payload, header_tags, &endpoint, None);
                 self.runtime.block_on(async {
                     match send_data.send().await.last_result {
                         Ok(response) => match hyper::body::to_bytes(response.into_body()).await {
@@ -499,7 +685,7 @@ pub struct TraceExporterBuilder {
 
     // Stats specific fields
     /// A Some value enables stats-computation, None if it is disabled
-    stats_bucket_size: Option<time::Duration>,
+    stats_bucket_size: Option<Duration>,
     peer_tags_aggregation: bool,
     compute_stats_by_span_kind: bool,
     peer_tags: Vec<String>,
@@ -594,7 +780,7 @@ impl TraceExporterBuilder {
     }
 
     /// Enable stats computation on traces sent through this exporter
-    pub fn enable_stats(mut self, bucket_size: time::Duration) -> Self {
+    pub fn enable_stats(mut self, bucket_size: Duration) -> Self {
         self.stats_bucket_size = Some(bucket_size);
         self
     }
@@ -625,65 +811,44 @@ impl TraceExporterBuilder {
                                                        // None
         });
 
+        let agent_url: hyper::Uri = self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL).parse()?;
+
         let libdatadog_version = tag!("libdatadog_version", env!("CARGO_PKG_VERSION"));
-        let mut stats = StatsComputationStatus::StatsDisabled;
+        let mut stats = StatsComputationStatus::Disabled;
+
+        let info_fetcher = AgentInfoFetcher::new(
+            Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT)),
+            Duration::from_secs(5 * 60),
+        );
+
+        let agent_info = info_fetcher.get_info();
+        runtime.spawn(async move {
+            info_fetcher.run().await;
+        });
 
         // Proxy mode does not support stats
         if self.input_format != TraceExporterInputFormat::Proxy {
             if let Some(bucket_size) = self.stats_bucket_size {
-                let stats_concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
-                    bucket_size,
-                    time::SystemTime::now(),
-                    self.peer_tags_aggregation,
-                    self.compute_stats_by_span_kind,
-                    self.peer_tags,
-                )));
-
-                let cancellation_token = CancellationToken::new();
-
-                let mut stats_exporter = stats_exporter::StatsExporter::new(
-                    self.stats_bucket_size.unwrap(),
-                    stats_concentrator.clone(),
-                    stats_exporter::LibraryMetadata {
-                        hostname: self.hostname,
-                        env: self.env,
-                        version: self.version,
-                        lang: self.language.clone(),
-                        tracer_version: self.tracer_version.clone(),
-                        runtime_id: uuid::Uuid::new_v4().to_string(),
-                        service: self.service,
-                        ..Default::default()
-                    },
-                    Endpoint::from_url(stats_exporter::stats_url_from_agent_url(
-                        self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL),
-                    )?),
-                    cancellation_token.clone(),
-                );
-
-                let exporter_handle = runtime.spawn(async move {
-                    stats_exporter.run().await;
-                });
-
-                stats = StatsComputationStatus::StatsEnabled {
-                    stats_concentrator,
-                    cancellation_token,
-                    exporter_handle,
-                }
+                // Client-side stats is considered not supported by the agent until we receive
+                // the agent_info
+                stats = StatsComputationStatus::DisabledByAgent { bucket_size };
             }
         }
 
         Ok(TraceExporter {
-            endpoint: Endpoint::from_slice(self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL)),
-            tags: TracerTags {
+            endpoint: Endpoint::from_url(agent_url),
+            metadata: TracerMetadata {
                 tracer_version: self.tracer_version,
                 language_version: self.language_version,
                 language_interpreter: self.language_interpreter,
                 language: self.language,
-                client_computed_stats: self.client_computed_stats
-                    || self.stats_bucket_size.is_some(),
-                client_computed_top_level: self.client_computed_top_level
-                    || self.stats_bucket_size.is_some(), /* Client side stats enforce client
-                                                          * computed top level */
+                client_computed_stats: self.client_computed_stats,
+                client_computed_top_level: self.client_computed_top_level,
+                hostname: self.hostname,
+                env: self.env,
+                version: self.version,
+                runtime_id: uuid::Uuid::new_v4().to_string(),
+                service: self.service,
             },
             input_format: self.input_format,
             output_format: self.output_format,
@@ -692,7 +857,9 @@ impl TraceExporterBuilder {
             runtime,
             dogstatsd,
             common_stats_tags: vec![libdatadog_version],
-            stats,
+            client_side_stats: ArcSwap::new(stats.into()),
+            agent_info,
+            previous_info_state: ArcSwapOption::new(None),
         })
     }
 }
@@ -711,6 +878,7 @@ mod tests {
     use std::collections::HashMap;
     use std::net;
     use std::time::Duration;
+    use tokio::time::sleep;
 
     #[test]
     fn new() {
@@ -734,11 +902,11 @@ mod tests {
             "http://192.168.1.1:8127/v0.7/traces"
         );
         assert_eq!(exporter.input_format, TraceExporterInputFormat::Proxy);
-        assert_eq!(exporter.tags.tracer_version, "v0.1");
-        assert_eq!(exporter.tags.language, "nodejs");
-        assert_eq!(exporter.tags.language_version, "1.0");
-        assert_eq!(exporter.tags.language_interpreter, "v8");
-        assert!(!exporter.tags.client_computed_stats);
+        assert_eq!(exporter.metadata.tracer_version, "v0.1");
+        assert_eq!(exporter.metadata.language, "nodejs");
+        assert_eq!(exporter.metadata.language_version, "1.0");
+        assert_eq!(exporter.metadata.language_interpreter, "v8");
+        assert!(!exporter.metadata.client_computed_stats);
     }
 
     #[test]
@@ -749,7 +917,7 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8")
-            .enable_stats(Duration::from_secs(10))
+            .set_client_computed_stats()
             .build()
             .unwrap();
 
@@ -761,22 +929,23 @@ mod tests {
             "http://127.0.0.1:8126/v0.4/traces"
         );
         assert_eq!(exporter.input_format, TraceExporterInputFormat::V04);
-        assert_eq!(exporter.tags.tracer_version, "v0.1");
-        assert_eq!(exporter.tags.language, "nodejs");
-        assert_eq!(exporter.tags.language_version, "1.0");
-        assert_eq!(exporter.tags.language_interpreter, "v8");
-        assert!(exporter.tags.client_computed_stats);
+        assert_eq!(exporter.metadata.tracer_version, "v0.1");
+        assert_eq!(exporter.metadata.language, "nodejs");
+        assert_eq!(exporter.metadata.language_version, "1.0");
+        assert_eq!(exporter.metadata.language_interpreter, "v8");
+        assert!(exporter.metadata.client_computed_stats);
     }
 
     #[test]
     fn test_from_tracer_tags_to_tracer_header_tags() {
-        let tracer_tags = TracerTags {
+        let tracer_tags = TracerMetadata {
             tracer_version: "v0.1".to_string(),
             language: "rust".to_string(),
             language_version: "1.52.1".to_string(),
             language_interpreter: "rustc".to_string(),
             client_computed_stats: true,
             client_computed_top_level: true,
+            ..Default::default()
         };
 
         let tracer_header_tags: TracerHeaderTags = (&tracer_tags).into();
@@ -791,13 +960,14 @@ mod tests {
 
     #[test]
     fn test_from_tracer_tags_to_hashmap() {
-        let tracer_tags = TracerTags {
+        let tracer_tags = TracerMetadata {
             tracer_version: "v0.1".to_string(),
             language: "rust".to_string(),
             language_version: "1.52.1".to_string(),
             language_interpreter: "rustc".to_string(),
             client_computed_stats: true,
             client_computed_top_level: true,
+            ..Default::default()
         };
 
         let hashmap: HashMap<&'static str, String> = (&tracer_tags).into();
@@ -921,9 +1091,7 @@ mod tests {
             if expected_count == 0 {
                 assert!(traces.is_empty());
             } else {
-                println!("{:?}", traces[0]);
                 assert_eq!(traces[0].len(), expected_count);
-                println!("----")
             }
         }
     }
@@ -946,6 +1114,15 @@ mod tests {
                 .path("/v0.6/stats");
             then.status(200).body("");
         });
+
+        let mock_info = server.mock(|when, then| {
+            when.method(GET).path("/info");
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-agent-state", "1")
+                .body(r#"{"version":"1","client_drop_p0s":true}"#);
+        });
+
         let builder = TraceExporterBuilder::default();
         let exporter = builder
             .set_url(&server.url("/"))
@@ -959,14 +1136,19 @@ mod tests {
             .build()
             .unwrap();
 
-        let mut trace_chunk = vec![pb::Span {
+        let trace_chunk = vec![pb::Span {
             duration: 10,
             ..Default::default()
         }];
 
-        trace_utils::compute_top_level_span(&mut trace_chunk);
-
         let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
+
+        // Wait for the info fetcher to get the config
+        while mock_info.hits() == 0 {
+            exporter.runtime.block_on(async {
+                sleep(Duration::from_millis(100)).await;
+            })
+        }
 
         exporter.send(data.as_slice(), 1).unwrap();
         exporter.shutdown(None).unwrap();
@@ -993,6 +1175,15 @@ mod tests {
                 .path("/v0.6/stats");
             then.delay(Duration::from_secs(10)).status(200).body("");
         });
+
+        let mock_info = server.mock(|when, then| {
+            when.method(GET).path("/info");
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-agent-state", "1")
+                .body(r#"{"version":"1","client_drop_p0s":true}"#);
+        });
+
         let builder = TraceExporterBuilder::default();
         let exporter = builder
             .set_url(&server.url("/"))
@@ -1006,14 +1197,19 @@ mod tests {
             .build()
             .unwrap();
 
-        let mut trace_chunk = vec![pb::Span {
+        let trace_chunk = vec![pb::Span {
             duration: 10,
             ..Default::default()
         }];
 
-        trace_utils::compute_top_level_span(&mut trace_chunk);
-
         let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
+
+        // Wait for the info fetcher to get the config
+        while mock_info.hits() == 0 {
+            exporter.runtime.block_on(async {
+                sleep(Duration::from_millis(100)).await;
+            })
+        }
 
         exporter.send(data.as_slice(), 1).unwrap();
         exporter

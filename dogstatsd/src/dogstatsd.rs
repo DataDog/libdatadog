@@ -116,6 +116,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_dogstatsd_multi_distribution() {
         let locked_aggregator = setup_dogstatsd(
             "single_machine_performance.rouster.api.series_v2.payload_size_bytes:269942|d
@@ -150,6 +151,7 @@ single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_dogstatsd_multi_metric() {
         let locked_aggregator = setup_dogstatsd(
             "metric3:3|c|#tag3:val3,tag4:val4\nmetric1:1|c\nmetric2:2|c|#tag2:val2\n",
@@ -169,6 +171,7 @@ single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_dogstatsd_single_metric() {
         let locked_aggregator = setup_dogstatsd("metric123:99123|c").await;
         let aggregator = locked_aggregator.lock().expect("lock poisoned");
