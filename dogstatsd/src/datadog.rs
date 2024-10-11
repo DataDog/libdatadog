@@ -24,7 +24,7 @@ impl DdApi {
         let client = match Self::build_client(https_proxy) {
             Ok(client) => client,
             Err(e) => {
-                error!("Unable to parse proxy URL, no proxy will be use");
+                error!("Unable to parse proxy URL, no proxy will be used. {:?}", e);
                 reqwest::Client::new()
             }
         };
@@ -107,7 +107,7 @@ impl DdApi {
     fn build_client(https_proxy: Option<String>) -> Result<reqwest::Client, reqwest::Error> {
         let mut builder = reqwest::Client::builder();
         if let Some(proxy) = https_proxy {
-            builder = builder.proxy(reqwest::Proxy::https(&proxy)?);
+            builder = builder.proxy(reqwest::Proxy::https(proxy)?);
         }
         builder.build()
     }
