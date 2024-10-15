@@ -265,19 +265,19 @@ impl SidecarServer {
             }
         };
 
-        let size = data.len();
-
-        match tracer_payload::TracerPayloadParams::new(
+        let mut size = 0;
+        let mut processor = tracer_payload::DefaultTraceChunkProcessor;
+        let mut payload_params = tracer_payload::TracerPayloadParams::new(
             data,
             &headers,
-            &mut tracer_payload::DefaultTraceChunkProcessor,
+            &mut processor,
             target.api_key.is_some(),
             TraceEncoding::V04,
-        )
-        .try_into()
-        {
+        );
+        payload_params.measure_size(&mut size);
+        match payload_params.try_into() {
             Ok(payload) => {
-                let data = SendData::new(size, payload, headers, target);
+                let data = SendData::new(size, payload, headers, target, None);
                 self.trace_flusher.enqueue(data);
             }
             Err(e) => {
@@ -896,6 +896,7 @@ impl SidecarInterface for SidecarServer {
                 env_name.clone(),
                 service_name,
                 app_version.clone(),
+                global_tags.clone(),
             ),
         );
         app.set_metadata(env_name, app_version, global_tags);

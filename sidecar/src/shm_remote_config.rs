@@ -15,13 +15,14 @@ use datadog_remote_config::fetch::{
     MultiTargetStats, NotifyTarget, RefcountedFile,
 };
 use datadog_remote_config::{RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue, Target};
+use ddcommon::tag::Tag;
 use priority_queue::PriorityQueue;
 use sha2::{Digest, Sha224};
 use std::cmp::Reverse;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::default::Default;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::hash::{Hash, Hasher};
 use std::io;
 #[cfg(windows)]
@@ -37,7 +38,27 @@ use zwohash::ZwoHasher;
 pub struct RemoteConfigWriter(OneWayShmWriter<NamedShmHandle>);
 pub struct RemoteConfigReader(OneWayShmReader<NamedShmHandle, CString>);
 
-fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CString {
+/// Function to dump the invariants and target, and the corresponding path.
+/// This is useful for debugging purposes.
+///
+/// # Safety
+/// Pointers should be valid and non-null.
+#[no_mangle]
+pub unsafe extern "C" fn debug_dump_inv_tar(
+    id: *const ConfigInvariants,
+    target: *const Arc<Target>,
+) {
+    let id = &*id;
+    let target = &*target;
+    debug!("ConfigInvariants: {:#?}", id);
+    debug!("Target: {:#?}", target);
+    debug!(
+        "Shared memory path: {:?}",
+        path_for_remote_config(id, target)
+    );
+}
+
+pub fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CString {
     // We need a stable hash so that the outcome is independent of the process
     let mut hasher = ZwoHasher::default();
     id.hash(&mut hasher);
@@ -55,6 +76,17 @@ impl RemoteConfigReader {
     pub fn new(id: &ConfigInvariants, target: &Arc<Target>) -> RemoteConfigReader {
         let path = path_for_remote_config(id, target);
         RemoteConfigReader(OneWayShmReader::new(open_named_shm(&path).ok(), path))
+    }
+
+    pub fn from_path(path: &CStr) -> Self {
+        RemoteConfigReader(OneWayShmReader::new(
+            open_named_shm(path).ok(),
+            CString::new(path.to_bytes()).unwrap(),
+        ))
+    }
+
+    pub fn get_path(&self) -> &CStr {
+        &self.0.extra
     }
 
     pub fn read(&mut self) -> (bool, &[u8]) {
@@ -298,11 +330,13 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         env: String,
         service: String,
         app_version: String,
+        tags: Vec<Tag>,
     ) -> ShmRemoteConfigsGuard<N> {
         let target = Arc::new(Target {
             service,
             env,
             app_version,
+            tags,
         });
         self.0
             .add_runtime(runtime_id.clone(), notify_target, &target);
@@ -350,7 +384,7 @@ fn read_config(path: &str) -> anyhow::Result<(RemoteConfigValue, u32)> {
 pub struct RemoteConfigManager {
     invariants: ConfigInvariants,
     active_target: Option<Arc<Target>>,
-    active_reader: Option<RemoteConfigReader>,
+    pub active_reader: Option<RemoteConfigReader>,
     encountered_targets: HashMap<Arc<Target>, (RemoteConfigReader, Vec<String>)>,
     unexpired_targets: PriorityQueue<Arc<Target>, Reverse<Instant>>,
     active_configs: HashMap<String, RemoteConfigPath>,
@@ -572,6 +606,7 @@ mod tests {
             service: "service".to_string(),
             env: "env".to_string(),
             app_version: "1.3.5".to_string(),
+            tags: vec![],
         });
     }
 
@@ -639,6 +674,7 @@ mod tests {
             DUMMY_TARGET.env.to_string(),
             DUMMY_TARGET.service.to_string(),
             DUMMY_TARGET.app_version.to_string(),
+            DUMMY_TARGET.tags.clone(),
         );
 
         receiver.recv().await;

@@ -15,6 +15,13 @@ Otherwise, this is possibly not the droid you were looking for.
 Run `bundle exec rake` to run the tests and the style autofixer.
 You can also run `bundle exec pry` for an interactive prompt that will allow you to experiment.
 
+### Testing packaging locally
+
+You can use `bundle exec rake package` to generate packages locally without publishing them.
+
+TIP: If the test that checks for permissions ("gem release process ... sets the right permissions on the gem files"), you
+may need to run `umask 0022 && bundle exec rake package` so that the generated packages have the correct permissions.
+
 ## Releasing a new version to rubygems.org
 
 Note: No Ruby needed to run this! It all runs inside docker :)

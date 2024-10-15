@@ -17,6 +17,10 @@ pub enum RemoteConfigSource {
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum RemoteConfigProduct {
     ApmTracing,
+    AsmData,
+    Asm,
+    AsmDD,
+    AsmFeatures,
     LiveDebugger,
 }
 
@@ -25,6 +29,10 @@ impl Display for RemoteConfigProduct {
         let str = match self {
             RemoteConfigProduct::ApmTracing => "APM_TRACING",
             RemoteConfigProduct::LiveDebugger => "LIVE_DEBUGGING",
+            RemoteConfigProduct::Asm => "ASM",
+            RemoteConfigProduct::AsmDD => "ASM_DD",
+            RemoteConfigProduct::AsmData => "ASM_DATA",
+            RemoteConfigProduct::AsmFeatures => "ASM_FEATURES",
         };
         write!(f, "{}", str)
     }
@@ -68,6 +76,10 @@ impl RemoteConfigPath {
             product: match parts[parts.len() - 3] {
                 "APM_TRACING" => RemoteConfigProduct::ApmTracing,
                 "LIVE_DEBUGGING" => RemoteConfigProduct::LiveDebugger,
+                "ASM" => RemoteConfigProduct::Asm,
+                "ASM_DD" => RemoteConfigProduct::AsmDD,
+                "ASM_DATA" => RemoteConfigProduct::AsmData,
+                "ASM_FEATURES" => RemoteConfigProduct::AsmFeatures,
                 product => anyhow::bail!("Unknown product {}", product),
             },
             config_id: parts[parts.len() - 2],
