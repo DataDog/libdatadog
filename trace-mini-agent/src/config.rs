@@ -20,7 +20,7 @@ pub struct Config {
     pub dd_site: String,
     pub dd_dogstatsd_port: u16,
     pub env_type: trace_utils::EnvironmentType,
-    pub function_name: Option<String>,
+    pub app_name: Option<String>,
     pub max_request_content_length: usize,
     pub obfuscation_config: obfuscation_config::ObfuscationConfig,
     pub os: String,
@@ -41,7 +41,7 @@ impl Config {
             .map_err(|_| anyhow::anyhow!("DD_API_KEY environment variable is not set"))?
             .into();
 
-        let (function_name, env_type) = read_cloud_env().ok_or_else(|| {
+        let (app_name, env_type) = read_cloud_env().ok_or_else(|| {
             anyhow::anyhow!("Unable to identify environment. Shutting down Mini Agent.")
         })?;
 
@@ -70,7 +70,7 @@ impl Config {
         })?;
 
         Ok(Config {
-            function_name: Some(function_name),
+            app_name: Some(app_name),
             env_type,
             os: env::consts::OS.to_string(),
             max_request_content_length: 10 * 1024 * 1024, // 10MB in Bytes
