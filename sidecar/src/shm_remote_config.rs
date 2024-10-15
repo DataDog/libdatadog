@@ -63,13 +63,14 @@ pub fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CS
     let mut hasher = ZwoHasher::default();
     id.hash(&mut hasher);
     target.hash(&mut hasher);
-    // datadog remote config, on macos we're restricted to 31 chars
-    CString::new(format!(
+    let mut path = format!(
         "/ddrc{}-{}",
         primary_sidecar_identifier(),
-        hasher.finish()
-    ))
-    .unwrap()
+        BASE64_URL_SAFE_NO_PAD.encode(hasher.finish().to_ne_bytes()),
+    );
+    // datadog remote config, on macos we're restricted to 31 chars
+    path.truncate(31); // should not be larger than 31 chars, but be sure.
+    CString::new(path).unwrap()
 }
 
 impl RemoteConfigReader {
