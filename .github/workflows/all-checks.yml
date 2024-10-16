@@ -16,4 +16,3 @@ jobs:
                 delay: '3'
                 retries: '30'
                 polling_interval: '1'
-                checks_exclude: 'coverage'
