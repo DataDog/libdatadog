@@ -41,12 +41,12 @@ impl TraceChunkProcessor for ChunkProcessor {
     fn process(&mut self, chunk: &mut pb::TraceChunk, root_span_index: usize) {
         trace_utils::set_serverless_root_span_tags(
             &mut chunk.spans[root_span_index],
-            self.config.function_name.clone(),
+            self.config.app_name.clone(),
             &self.config.env_type,
         );
         for span in chunk.spans.iter_mut() {
             trace_utils::enrich_span_with_mini_agent_metadata(span, &self.mini_agent_metadata);
-            trace_utils::enrich_span_with_azure_metadata(span);
+            trace_utils::enrich_span_with_azure_function_metadata(span);
             obfuscate_span(span, &self.config.obfuscation_config);
         }
     }
@@ -156,7 +156,7 @@ mod tests {
 
     fn create_test_config() -> Config {
         Config {
-            function_name: Some("dummy_function_name".to_string()),
+            app_name: Some("dummy_function_name".to_string()),
             max_request_content_length: 10 * 1024 * 1024,
             trace_flush_interval: 3,
             stats_flush_interval: 3,
