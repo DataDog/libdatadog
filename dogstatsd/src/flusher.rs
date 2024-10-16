@@ -18,8 +18,13 @@ pub fn build_fqdn_metrics(site: String) -> String {
 
 #[allow(clippy::await_holding_lock)]
 impl Flusher {
-    pub fn new(api_key: String, aggregator: Arc<Mutex<Aggregator>>, site: String) -> Self {
-        let dd_api = datadog::DdApi::new(api_key, site);
+    pub fn new(
+        api_key: String,
+        aggregator: Arc<Mutex<Aggregator>>,
+        site: String,
+        https_proxy: Option<String>,
+    ) -> Self {
+        let dd_api = datadog::DdApi::new(api_key, site, https_proxy);
         Flusher { dd_api, aggregator }
     }
 

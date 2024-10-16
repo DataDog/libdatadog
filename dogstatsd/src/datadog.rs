@@ -8,7 +8,7 @@ use protobuf::Message;
 use reqwest;
 use serde::{Serialize, Serializer};
 use serde_json;
-use tracing::debug;
+use tracing::{debug, error};
 
 /// Interface for the `DogStatsD` metrics intake API.
 #[derive(Debug)]
@@ -20,11 +20,18 @@ pub struct DdApi {
 
 impl DdApi {
     #[must_use]
-    pub fn new(api_key: String, site: String) -> Self {
+    pub fn new(api_key: String, site: String, https_proxy: Option<String>) -> Self {
+        let client = match Self::build_client(https_proxy) {
+            Ok(client) => client,
+            Err(e) => {
+                error!("Unable to parse proxy URL, no proxy will be used. {:?}", e);
+                reqwest::Client::new()
+            }
+        };
         DdApi {
             api_key,
             fqdn_site: site,
-            client: reqwest::Client::new(),
+            client,
         }
     }
 
@@ -95,6 +102,14 @@ impl DdApi {
                 debug!("500: Failed to push to API: {:?}", e);
             }
         };
+    }
+
+    fn build_client(https_proxy: Option<String>) -> Result<reqwest::Client, reqwest::Error> {
+        let mut builder = reqwest::Client::builder();
+        if let Some(proxy) = https_proxy {
+            builder = builder.proxy(reqwest::Proxy::https(proxy)?);
+        }
+        builder.build()
     }
 }
 
