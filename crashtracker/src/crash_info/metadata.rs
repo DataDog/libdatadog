@@ -3,7 +3,7 @@
 use ddcommon::tag::Tag;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashtrackerMetadata {
     pub library_name: String,
     pub library_version: String,
