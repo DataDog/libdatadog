@@ -13,7 +13,7 @@ benchmarks:
   script:
     - chmod +x ./scripts/install-protoc.sh && . ./scripts/install-protoc.sh $HOME/usr/local
     - export ARTIFACTS_DIR="$(pwd)/reports" && (mkdir "${ARTIFACTS_DIR}" || :)
-    - git clone --branch libdatadog/benchmarks https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ddbuild.io/DataDog/benchmarking-platform /platform && cd /platform
+    - git clone --branch fayssal/test-benches https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ddbuild.io/DataDog/benchmarking-platform /platform && cd /platform
     - ./steps/capture-hardware-software-info.sh
     - ./steps/run-benchmarks.sh
     - ./steps/analyze-results.sh
