@@ -24,6 +24,7 @@ void agent_response_callback(const char* response)
 int main(int argc, char** argv)
 {
     ddog_TraceExporter* trace_exporter;
+    ddog_TraceExporterConfig* trace_exporter_config;
     ddog_CharSlice url = DDOG_CHARSLICE_C("http://localhost:8126/");
     ddog_CharSlice tracer_version = DDOG_CHARSLICE_C("v0.1");
     ddog_CharSlice language = DDOG_CHARSLICE_C("dotnet");
@@ -33,22 +34,37 @@ int main(int argc, char** argv)
     ddog_CharSlice env = DDOG_CHARSLICE_C("staging");
     ddog_CharSlice version = DDOG_CHARSLICE_C("1.0");
     ddog_CharSlice service = DDOG_CHARSLICE_C("test_app");
-    TRY(ddog_trace_exporter_new(
-        &trace_exporter,
-        url,
-        tracer_version,
-        language,
-        language_version,
-        language_interpreter,
-        hostname,
-        env,
-        version,
-        service,
-        DDOG_TRACE_EXPORTER_INPUT_FORMAT_PROXY,
-        DDOG_TRACE_EXPORTER_OUTPUT_FORMAT_V04,
-        true,
-        &agent_response_callback
-        ));
+
+    TRY(ddog_trace_exporter_config_new(&trace_exporter_config));
+
+    TRY(ddog_trace_exporter_config_set_option(trace_exporter_config, (struct ddog_TraceExporterConfigOption) {
+                .tag = DDOG_TRACE_EXPORTER_CONFIG_OPTION_URL, .url = url }));
+
+    TRY(ddog_trace_exporter_config_set_option(trace_exporter_config, (struct ddog_TraceExporterConfigOption) {
+                .tag = DDOG_TRACE_EXPORTER_CONFIG_OPTION_URL, .language = language }));
+
+    TRY(ddog_trace_exporter_config_set_option(trace_exporter_config, (struct ddog_TraceExporterConfigOption) {
+        .tag = DDOG_TRACE_EXPORTER_CONFIG_OPTION_TRACER_VERSION, .language = tracer_version }));
+
+    TRY(ddog_trace_exporter_config_set_option(trace_exporter_config, (struct ddog_TraceExporterConfigOption) {
+        .tag = DDOG_TRACE_EXPORTER_CONFIG_OPTION_LANGUAGE_INTERPRETER, .language = language_interpreter }));
+
+    TRY(ddog_trace_exporter_config_set_option(trace_exporter_config, (struct ddog_TraceExporterConfigOption) {
+        .tag = DDOG_TRACE_EXPORTER_CONFIG_OPTION_LANGUAGE_VERSION, .language = language_version }));
+
+    TRY(ddog_trace_exporter_config_set_option(trace_exporter_config, (struct ddog_TraceExporterConfigOption) {
+        .tag = DDOG_TRACE_EXPORTER_CONFIG_OPTION_HOSTNAME, .language = hostname }));
+
+    TRY(ddog_trace_exporter_config_set_option(trace_exporter_config, (struct ddog_TraceExporterConfigOption) {
+        .tag = DDOG_TRACE_EXPORTER_CONFIG_OPTION_ENV, .language = env }));
+
+    TRY(ddog_trace_exporter_config_set_option(trace_exporter_config, (struct ddog_TraceExporterConfigOption) {
+        .tag = DDOG_TRACE_EXPORTER_CONFIG_OPTION_VERSION, .language = version }));
+
+    TRY(ddog_trace_exporter_config_set_option(trace_exporter_config, (struct ddog_TraceExporterConfigOption) {
+        .tag = DDOG_TRACE_EXPORTER_CONFIG_OPTION_SERVICE, .language = service }));
+
+    TRY(ddog_trace_exporter_new(&trace_exporter, trace_exporter_config));
 
     if (trace_exporter == NULL)
     {
