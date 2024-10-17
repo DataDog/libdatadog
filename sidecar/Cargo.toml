@@ -33,7 +33,7 @@ tinybytes = { path = "../tinybytes" }
 futures = { version = "0.3", default-features = false }
 manual_future = "0.1.1"
 http = "0.2"
-hyper = { version = "0.14", features = ["client"], default-features = false }
+hyper = { version = "0.14", features = ["client", "backports", "deprecated"], default-features = false }
 lazy_static = "1.4"
 pin-project = "1"
 

@@ -13,7 +13,7 @@ autobenches = false
 anyhow = { version = "1.0" }
 arc-swap = "1.7.1"
 futures = { version = "0.3", default-features = false }
-hyper = {version = "0.14", features = ["client"], default-features = false}
+hyper = {version = "0.14", features = ["client", "backports", "deprecated"], default-features = false}
 log = "0.4"
 rmp-serde = "1.1.1"
 serde = "1.0.209"
