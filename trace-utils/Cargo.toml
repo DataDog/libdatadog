@@ -52,5 +52,6 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 datadog-trace-utils = { path = ".", features = ["test-utils"] }
 
 [features]
+default = ["proxy"]
 test-utils = ["httpmock", "testcontainers", "cargo_metadata", "cargo-platform"]
 proxy = ["hyper-proxy"]

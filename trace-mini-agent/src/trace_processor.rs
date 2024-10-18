@@ -98,13 +98,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
             true, // In mini agent, we always send agentless
         );
 
-        let send_data = SendData::new(
-            body_size,
-            payload,
-            tracer_header_tags,
-            &config.trace_intake,
-            config.proxy_url.clone(),
-        );
+        let send_data = SendData::new(body_size, payload, tracer_header_tags, &config.trace_intake);
 
         // send trace payload to our trace flusher
         match tx.send(send_data).await {
