@@ -481,6 +481,7 @@ mod tests {
     use super::*;
     use ddcommon::tag;
     use ddcommon_ffi::Slice;
+    use hyper::body::HttpBody;
     use serde_json::json;
 
     fn profiling_library_name() -> CharSlice<'static> {
@@ -512,7 +513,9 @@ mod tests {
         // in the profiling tests, please update there too :)
         let body = request.body();
         let body_bytes: String = String::from_utf8_lossy(
-            &futures::executor::block_on(hyper::body::to_bytes(body)).unwrap(),
+            &futures::executor::block_on(body.collect())
+                .unwrap()
+                .to_bytes(),
         )
         .to_string();
         let event_json = body_bytes

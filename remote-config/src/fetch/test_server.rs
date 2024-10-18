@@ -10,6 +10,7 @@ use datadog_trace_protobuf::remoteconfig::{
 };
 use ddcommon::Endpoint;
 use http::{Request, Response};
+use hyper::body::HttpBody;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Server};
 use serde_json::value::to_raw_value;
@@ -52,7 +53,7 @@ impl RemoteConfigServer {
                     Ok::<_, Infallible>(service_fn(move |req: Request<Body>| {
                         let this = this.clone();
                         async move {
-                            let body_bytes = hyper::body::to_bytes(req.into_body()).await.unwrap();
+                            let body_bytes = req.into_body().collect().await.unwrap().to_bytes();
                             let request: ClientGetConfigsRequest =
                                 serde_json::from_str(core::str::from_utf8(&body_bytes).unwrap())
                                     .unwrap();

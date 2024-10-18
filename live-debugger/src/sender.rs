@@ -6,7 +6,7 @@ use constcat::concat;
 use ddcommon::connector::Connector;
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
-use hyper::body::{Bytes, Sender};
+use hyper::body::{Bytes, HttpBody, Sender};
 use hyper::client::ResponseFuture;
 use hyper::http::uri::PathAndQuery;
 use hyper::{Body, Client, Method, Response, Uri};
@@ -231,7 +231,7 @@ impl PayloadSender {
                 Ok(response) => {
                     let status = response.status().as_u16();
                     if status >= 400 {
-                        let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+                        let body_bytes = response.into_body().collect().await?.to_bytes();
                         let response_body =
                             String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
                         anyhow::bail!(

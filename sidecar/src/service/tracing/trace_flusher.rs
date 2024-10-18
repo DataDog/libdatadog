@@ -9,6 +9,7 @@ use datadog_trace_utils::trace_utils::SendData;
 use datadog_trace_utils::trace_utils::SendDataResult;
 use ddcommon::Endpoint;
 use futures::future::join_all;
+use hyper::body::HttpBody;
 use manual_future::{ManualFuture, ManualFutureCompleter};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
@@ -247,9 +248,9 @@ impl TraceFlusher {
             Ok(response) => {
                 if endpoint.api_key.is_none() {
                     // not when intake
-                    match hyper::body::to_bytes(response.into_body()).await {
-                        Ok(body_bytes) => {
-                            self.write_remote_configs(endpoint.clone(), body_bytes.to_vec())
+                    match response.into_body().collect().await {
+                        Ok(body) => {
+                            self.write_remote_configs(endpoint.clone(), body.to_bytes().to_vec())
                         }
                         Err(e) => error!("Error receiving agent configuration: {e:?}"),
                     }

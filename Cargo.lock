@@ -515,7 +515,6 @@ dependencies = [
  "datadog-crashtracker",
  "datadog-profiling",
  "ddcommon",
- "hyper 0.14.28",
  "once_cell",
  "serde_json",
  "strum",
@@ -2043,7 +2042,6 @@ dependencies = [
  "datadog-trace-protobuf",
  "ddcommon",
  "http 0.2.12",
- "hyper 0.14.28",
  "serde",
  "tracing",
 ]
