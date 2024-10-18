@@ -13,6 +13,7 @@ use datadog_trace_protobuf::remoteconfig::{
 };
 use ddcommon::{connector, Endpoint};
 use http::uri::Scheme;
+use hyper::body::HttpBody;
 use hyper::http::uri::PathAndQuery;
 use hyper::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -320,7 +321,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
         .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?
         .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?;
         let status = response.status();
-        let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+        let body_bytes = response.into_body().collect().await?.to_bytes();
         if status != StatusCode::OK {
             // Not active
             if status == StatusCode::NOT_FOUND {

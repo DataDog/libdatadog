@@ -3,6 +3,7 @@
 
 use anyhow::anyhow;
 use bytes::buf::Reader;
+use hyper::body::HttpBody;
 use hyper::{body::Buf, Body};
 use log::error;
 use rmp::decode::read_array_len;
@@ -36,7 +37,7 @@ const SPAN_ELEMENT_COUNT: usize = 12;
 pub async fn get_traces_from_request_body(
     body: Body,
 ) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
-    let buffer = hyper::body::aggregate(body).await?;
+    let buffer = body.collect().await?.aggregate();
     let size = buffer.remaining();
 
     let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_read(buffer.reader()) {
@@ -230,7 +231,7 @@ fn get_v05_string(
 pub async fn get_v05_traces_from_request_body(
     body: Body,
 ) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
-    let buffer = hyper::body::aggregate(body).await?;
+    let buffer = body.collect().await?.aggregate();
     let body_size = buffer.remaining();
     let mut reader = buffer.reader();
     let wrapper_size = read_array_len(&mut reader)?;

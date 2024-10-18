@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
+use hyper::body::HttpBody;
 use hyper::{Body, Client, Method, Request, Response};
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
@@ -233,7 +234,7 @@ async fn ensure_gcp_function_environment(
 }
 
 async fn get_gcp_metadata_from_body(body: hyper::Body) -> anyhow::Result<GCPMetadata> {
-    let bytes = hyper::body::to_bytes(body).await?;
+    let bytes = body.collect().await?.to_bytes();
     let body_str = String::from_utf8(bytes.to_vec())?;
     let gcp_metadata: GCPMetadata = serde_json::from_str(&body_str)?;
     Ok(gcp_metadata)
