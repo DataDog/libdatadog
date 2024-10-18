@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// is_card_number checks if b could be a credit card number by checking the digit count and IIN
-/// prefix. If validateLuhn is true, the Luhn checksum is also applied to potential candidates.
+/// prefix. If validate_luhn is true, the Luhn checksum is also applied to potential candidates.
 /// Note: This code is based on the code from datadog-agent/pkg/obfuscate/credit_cards.go
 pub fn is_card_number<T: AsRef<str>>(s: T, validate_luhn: bool) -> bool {
     let s = s.as_ref();
@@ -11,19 +11,29 @@ pub fn is_card_number<T: AsRef<str>>(s: T, validate_luhn: bool) -> bool {
         return false;
     }
 
-    let mut num_s = Vec::with_capacity(s.len());
+    let mut num_s = [0; 17];
+    let mut len = 0;
     for c in s.chars() {
         // Only valid characters are 0-9, space (" ") and dash("-")
         match c {
             ' ' | '-' => continue,
-            '0'..='9' => num_s.push(c.to_digit(10).unwrap()),
+            '0'..='9' => {
+                num_s[len] = c.to_digit(10).unwrap();
+                len += 1;
+            }
             _ => return false,
         };
+        if len > 16 {
+            // too long for any known card number; stop looking
+            return false;
+        }
     }
-    if num_s.len() < 12 || num_s.len() > 16 {
+    if len < 12 {
+        // need at least 12 digits to be a valid card number
         return false;
     }
 
+    let num_s = &num_s[..len];
     let mut is_valid_iin = FuzzyBool::Maybe;
     let mut cs = num_s.iter();
     let mut prefix: u32 = *cs.next().unwrap();
@@ -33,7 +43,7 @@ pub fn is_card_number<T: AsRef<str>>(s: T, validate_luhn: bool) -> bool {
     }
 
     if is_valid_iin == FuzzyBool::True && validate_luhn {
-        return luhn_valid(num_s.as_slice());
+        return luhn_valid(num_s);
     }
     is_valid_iin == FuzzyBool::True
 }
