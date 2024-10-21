@@ -11,7 +11,7 @@ pub struct Thread {
     pub name: String,
     pub stack: StackTrace,
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    /// "Platform-specific state of the thread when its state was captured (CPU registers dump for
-    /// iOS, thread state enum for Android, etc.)."
+    /// Platform-specific state of the thread when its state was captured (CPU registers dump for
+    /// iOS, thread state enum for Android, etc.).
     pub state: String,
 }
