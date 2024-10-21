@@ -954,7 +954,7 @@ impl SidecarInterface for SidecarServer {
             token: &Option<Cow<'static, str>>,
         ) {
             if let Some(mut endpoint) = endpoint {
-                endpoint.test_token = token.clone();
+                endpoint.test_token.clone_from(token);
                 set(endpoint).ok();
             }
         }
