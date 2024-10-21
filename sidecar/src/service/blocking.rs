@@ -5,9 +5,12 @@ use super::{
     InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
     SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
-use crate::dogstatsd::DogStatsDAction;
-use datadog_ipc::platform::{Channel, ShmHandle};
+use datadog_ipc::platform::{Channel, FileBackedHandle, ShmHandle};
 use datadog_ipc::transport::blocking::BlockingTransport;
+use datadog_live_debugger::sender::DebuggerType;
+use ddcommon::tag::Tag;
+use dogstatsd_client::DogStatsDActionOwned;
+use serde::Serialize;
 use std::sync::Mutex;
 use std::{
     borrow::Cow,
@@ -191,6 +194,8 @@ pub fn register_service_and_flush_queued_actions(
 /// # Arguments
 ///
 /// * `transport` - The transport used for communication.
+/// * `remote_config_notify_function` (windows): a function pointer to be invoked
+/// * `pid` (unix): the pid of the remote process
 /// * `session_id` - The ID of the session.
 /// * `config` - The configuration to be set.
 ///
@@ -199,11 +204,19 @@ pub fn register_service_and_flush_queued_actions(
 /// An `io::Result<()>` indicating the result of the operation.
 pub fn set_session_config(
     transport: &mut SidecarTransport,
+    #[cfg(unix)] pid: libc::pid_t,
+    #[cfg(windows)] remote_config_notify_function: *mut libc::c_void,
     session_id: String,
     config: &SessionConfig,
 ) -> io::Result<()> {
+    #[cfg(unix)]
+    let remote_config_notify_target = pid;
+    #[cfg(windows)]
+    let remote_config_notify_target =
+        crate::service::remote_configs::RemoteConfigNotifyFunction(remote_config_notify_function);
     transport.send(SidecarInterfaceRequest::SetSessionConfig {
         session_id,
+        remote_config_notify_target,
         config: config.clone(),
     })
 }
@@ -261,6 +274,135 @@ pub fn send_trace_v04_shm(
     })
 }
 
+/// Sends raw data from shared memory to the debugger endpoint.
+///
+/// # Arguments
+///
+/// * `transport` - The transport used for communication.
+/// * `instance_id` - The ID of the instance.
+/// * `queue_id` - The unique identifier for the trace context.
+/// * `handle` - The handle to the shared memory.
+/// * `debugger_type` - Whether it's log or diagnostic data.
+///
+/// # Returns
+///
+/// An `io::Result<()>` indicating the result of the operation.
+pub fn send_debugger_data_shm(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    queue_id: QueueId,
+    handle: ShmHandle,
+    debugger_type: DebuggerType,
+) -> io::Result<()> {
+    transport.send(SidecarInterfaceRequest::SendDebuggerDataShm {
+        instance_id: instance_id.clone(),
+        queue_id,
+        handle,
+        debugger_type,
+    })
+}
+
+/// Sends a collection of debugger payloads to the debugger endpoint.
+///
+/// # Arguments
+///
+/// * `transport` - The transport used for communication.
+/// * `instance_id` - The ID of the instance.
+/// * `queue_id` - The unique identifier for the trace context.
+/// * `payloads` - The payloads to be sent
+///
+/// # Returns
+///
+/// An `anyhow::Result<()>` indicating the result of the operation.
+pub fn send_debugger_data_shm_vec(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    queue_id: QueueId,
+    payloads: Vec<datadog_live_debugger::debugger_defs::DebuggerPayload>,
+) -> anyhow::Result<()> {
+    if payloads.is_empty() {
+        return Ok(());
+    }
+    let debugger_type = DebuggerType::of_payload(&payloads[0]);
+
+    struct SizeCount(usize);
+
+    impl io::Write for SizeCount {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0 += buf.len();
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut size_serializer = serde_json::Serializer::new(SizeCount(0));
+    payloads.serialize(&mut size_serializer).unwrap();
+
+    let mut mapped = ShmHandle::new(size_serializer.into_inner().0)?.map()?;
+    let mut serializer = serde_json::Serializer::new(mapped.as_slice_mut());
+    payloads.serialize(&mut serializer).unwrap();
+
+    Ok(send_debugger_data_shm(
+        transport,
+        instance_id,
+        queue_id,
+        mapped.into(),
+        debugger_type,
+    )?)
+}
+
+/// Acquire an exception hash rate limiter
+///
+/// # Arguments
+/// * `exception_hash` - the ID
+/// * `granularity` - how much time needs to pass between two exceptions
+pub fn acquire_exception_hash_rate_limiter(
+    transport: &mut SidecarTransport,
+    exception_hash: u64,
+    granularity: Duration,
+) -> io::Result<()> {
+    transport.send(SidecarInterfaceRequest::AcquireExceptionHashRateLimiter {
+        exception_hash,
+        granularity,
+    })
+}
+
+/// Sets the state of the current remote config operation.
+/// The queue id is shared with telemetry and the associated data will be freed upon a
+/// `Lifecycle::Stop` event.
+///
+/// # Arguments
+///
+/// * `transport` - The transport used for communication.
+/// * `instance_id` - The ID of the instance.
+/// * `queue_id` - The unique identifier for the action in the queue.
+/// * `service_name` - The name of the service.
+/// * `env_name` - The name of the environment.
+/// * `app_version` - The metadata of the runtime.
+///
+/// # Returns
+///
+/// An `io::Result<()>` indicating the result of the operation.
+pub fn set_remote_config_data(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    queue_id: &QueueId,
+    service_name: String,
+    env_name: String,
+    app_version: String,
+    global_tags: Vec<Tag>,
+) -> io::Result<()> {
+    transport.send(SidecarInterfaceRequest::SetRemoteConfigData {
+        instance_id: instance_id.clone(),
+        queue_id: *queue_id,
+        service_name,
+        env_name,
+        app_version,
+        global_tags,
+    })
+}
+
 /// Sends DogStatsD actions.
 ///
 /// # Arguments
@@ -275,12 +417,29 @@ pub fn send_trace_v04_shm(
 pub fn send_dogstatsd_actions(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
-    actions: Vec<DogStatsDAction>,
+    actions: Vec<DogStatsDActionOwned>,
 ) -> io::Result<()> {
     transport.send(SidecarInterfaceRequest::SendDogstatsdActions {
         instance_id: instance_id.clone(),
         actions,
     })
+}
+
+/// Sets x-datadog-test-session-token on all requests for the given session.
+///
+/// # Arguments
+///
+/// * `session_id` - The ID of the session.
+/// * `token` - The session token.
+/// # Returns
+///
+/// An `io::Result<()>` indicating the result of the operation.
+pub fn set_test_session_token(
+    transport: &mut SidecarTransport,
+    session_id: String,
+    token: String,
+) -> io::Result<()> {
+    transport.send(SidecarInterfaceRequest::SetTestSessionToken { session_id, token })
 }
 
 /// Dumps the current state of the service.

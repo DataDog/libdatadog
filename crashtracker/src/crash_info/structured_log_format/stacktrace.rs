@@ -59,6 +59,7 @@ impl From<crate::crash_info::internal::NormalizedAddressMeta> for NormalizedAddr
             }
             crate::NormalizedAddressMeta::Unknown => NormalizedAddressMeta::Unknown,
             crate::NormalizedAddressMeta::Unexpected(msg) => NormalizedAddressMeta::Unexpected(msg),
+            crate::NormalizedAddressMeta::Pdb { path, guid, age } => todo!(),
         }
     }
 }

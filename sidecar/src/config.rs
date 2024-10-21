@@ -12,6 +12,8 @@ const ENV_SIDECAR_IPC_MODE: &str = "_DD_DEBUG_SIDECAR_IPC_MODE";
 const SIDECAR_IPC_MODE_SHARED: &str = "shared";
 const SIDECAR_IPC_MODE_PER_PROCESS: &str = "instance_per_process";
 
+const ENV_SIDECAR_LOG_LEVEL: &str = "_DD_DEBUG_SIDECAR_LOG_LEVEL";
+
 const ENV_SIDECAR_LOG_METHOD: &str = "_DD_DEBUG_SIDECAR_LOG_METHOD";
 const SIDECAR_LOG_METHOD_DISABLED: &str = "disabled";
 const SIDECAR_LOG_METHOD_STDOUT: &str = "stdout";
@@ -80,6 +82,7 @@ impl std::fmt::Display for LogMethod {
 pub struct Config {
     pub ipc_mode: IpcMode,
     pub log_method: LogMethod,
+    pub log_level: String,
     pub idle_linger_time: Duration,
     pub self_telemetry: bool,
     pub library_dependencies: Vec<LibDependency>,
@@ -185,6 +188,10 @@ impl FromEnv {
         }
     }
 
+    pub fn log_level() -> String {
+        std::env::var(ENV_SIDECAR_LOG_LEVEL).unwrap_or_default()
+    }
+
     fn idle_linger_time() -> Duration {
         std::env::var(ENV_IDLE_LINGER_TIME_SECS)
             .unwrap_or_default()
@@ -205,6 +212,7 @@ impl FromEnv {
         Config {
             ipc_mode: Self::ipc_mode(),
             log_method: Self::log_method(),
+            log_level: Self::log_level(),
             idle_linger_time: Self::idle_linger_time(),
             self_telemetry: Self::self_telemetry(),
             library_dependencies: vec![],
@@ -245,6 +253,7 @@ pub fn get_product_endpoint(subdomain: &str, endpoint: &Endpoint) -> Endpoint {
         Endpoint {
             url: hyper::Uri::from_parts(parts).unwrap(),
             api_key: Some(api_key.clone()),
+            test_token: endpoint.test_token.clone(),
             ..*endpoint
         }
     } else {

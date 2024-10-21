@@ -1,4 +1,4 @@
-ARG ALPINE_BASE_IMAGE="alpine:3.18"
+ARG ALPINE_BASE_IMAGE="alpine:3.19.3"
 ARG CARGO_BUILD_INCREMENTAL="true"
 ARG CARGO_NET_RETRY="2"
 ARG BUILDER_IMAGE=debian_builder
@@ -44,13 +44,7 @@ SHELL ["/bin/bash", "-c"]
 #RUN rustup-init -y --no-modify-path --default-toolchain stable
 
 FROM alpine_base as alpine_aws_cli
-RUN apk add --no-cache \
-    python3 \
-    py3-pip \
-    groff \
-  && pip3 install --upgrade pip \
-  && pip3 install --no-cache-dir \
-    awscli \
+RUN apk add --no-cache aws-cli \
   && rm -rf /var/cache/apk/*
 
 RUN aws --version   # Just to make sure its installed alright
@@ -60,7 +54,7 @@ ENV PATH="/root/.cargo/bin:$PATH"
 ARG CARGO_BUILD_INCREMENTAL
 ARG CARGO_NET_RETRY
 ENV CARGO_NET_RETRY="${CARGO_NET_RETRY}"
-RUN cargo install cbindgen && cargo install bindgen-cli --locked && rm -rf /root/.cargo/registry /root/.cargo/git
+RUN cargo install cbindgen --version "^0.26" && cargo install bindgen-cli --locked && rm -rf /root/.cargo/registry /root/.cargo/git
 
 FROM alpine_aws_cli as alpine_builder
 COPY --from=alpine_cbindgen /root/.cargo/bin/cbindgen /usr/local/bin/cbindgen
@@ -83,9 +77,15 @@ COPY "ddcommon-ffi/Cargo.toml" "ddcommon-ffi/"
 COPY "ddtelemetry/Cargo.toml" "ddtelemetry/"
 COPY "ddtelemetry-ffi/Cargo.toml" "ddtelemetry-ffi/"
 COPY "ddsketch/Cargo.toml" "ddsketch/"
+COPY "dogstatsd/Cargo.toml" "dogstatsd/"
+COPY "dogstatsd-client/Cargo.toml" "dogstatsd-client/"
+COPY "dynamic-configuration/Cargo.toml" "dynamic-configuration/"
+COPY "live-debugger/Cargo.toml" "live-debugger/"
+COPY "live-debugger-ffi/Cargo.toml" "live-debugger-ffi/"
 COPY "profiling/Cargo.toml" "profiling/"
 COPY "profiling-ffi/Cargo.toml" "profiling-ffi/"
 COPY "profiling-replayer/Cargo.toml" "profiling-replayer/"
+COPY "remote-config/Cargo.toml" "remote-config/"
 COPY "sidecar/Cargo.toml" "sidecar/"
 COPY "sidecar/macros/Cargo.toml" "sidecar/macros/"
 COPY "sidecar-ffi/Cargo.toml" "sidecar-ffi/"
@@ -109,12 +109,15 @@ COPY "ipc/tarpc/plugins/Cargo.toml" "ipc/tarpc/plugins/"
 COPY "data-pipeline/Cargo.toml" "data-pipeline/"
 COPY "data-pipeline-ffi/Cargo.toml" "data-pipeline-ffi/"
 COPY "bin_tests/Cargo.toml"  "bin_tests/"
+COPY "tinybytes/Cargo.toml" "tinybytes/"
+COPY "builder/Cargo.toml"  "builder/"
 RUN find -name "Cargo.toml" | sed -e s#Cargo.toml#src/lib.rs#g | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
 RUN echo \
     bin_tests/src/bin/crashtracker_bin_test.rs \
     bin_tests/src/bin/crashtracker_receiver.rs \
     bin_tests/src/bin/crashtracker_unix_socket_receiver.rs \
     bin_tests/src/bin/test_the_tests.rs \
+    builder/src/bin/dummy.rs \
     ddtelemetry/examples/tm-worker-test.rs \
     ipc/benches/ipc.rs \
     ipc/tarpc/tarpc/examples/compression.rs \
@@ -151,12 +154,12 @@ COPY --from=ffi_build_platform_agnostic_cache /root/.cargo /root/.cargo/
 COPY --from=ffi_build_platform_agnostic_cache /build /build
 WORKDIR /build
 # cache debug dependency build
-RUN cargo build --lib --all
+RUN cargo build --lib --workspace --exclude builder
 # cache release dependency build
-RUN cargo build --release --lib --all
+RUN cargo build --release --lib --workspace --exclude builder
 
 COPY ./ ./
-RUN ./build-profiling-ffi.sh /build/output
+RUN LIBDD_OUTPUT_FOLDER=/build/output cargo build -p builder --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release 
 
 FROM scratch as ffi_build_output
 

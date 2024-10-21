@@ -238,35 +238,45 @@ impl CrashInfo {
 
 impl CrashInfo {
     /// Emit the CrashInfo as structured json in file `path`.
-    /// SIGNAL SAFETY:
-    ///     I believe but have not verified this is signal safe.
     pub fn to_file(&self, path: &Path) -> anyhow::Result<()> {
-        let file =
-            File::create(path).with_context(|| format!("Failed to create {}", path.display()))?;
+        let file = File::options()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("Failed to create {}", path.display()))?;
         serde_json::to_writer_pretty(file, self)
             .with_context(|| format!("Failed to write json to {}", path.display()))?;
         Ok(())
     }
 
     pub fn upload_to_endpoint(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+
+        rt.block_on(async { self.async_upload_to_endpoint(endpoint).await })
+    }
+
+    pub async fn async_upload_to_endpoint(
+        &self,
+        endpoint: &Option<Endpoint>,
+    ) -> anyhow::Result<()> {
         // If we're debugging to a file, dump the actual crashinfo into a json
         if let Some(endpoint) = endpoint {
             if Some("file") == endpoint.url.scheme_str() {
                 let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
                     .context("crash output file was not correctly formatted")?;
                 self.to_file(&path)?;
-                let structured: crate::crash_info::structured_log_format::StructuredCrashInfo =
-                    self.clone().into();
-                structured.to_file(&path.with_extension("structured.json"))?;
             }
         }
-        self.upload_to_telemetry(endpoint)
+
+        self.upload_to_telemetry(endpoint).await
     }
 
-    fn upload_to_telemetry(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
+    async fn upload_to_telemetry(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
         if let Some(metadata) = &self.metadata {
             if let Ok(uploader) = TelemetryCrashUploader::new(metadata, endpoint) {
-                uploader.upload_to_telemetry(self)?;
+                uploader.upload_to_telemetry(self).await?
             }
         }
         Ok(())

@@ -7,13 +7,71 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::send_data::SendData;
+use crate::span_v04::Span;
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use datadog_trace_protobuf::pb;
 use ddcommon::Endpoint;
 use httpmock::Mock;
 use serde_json::json;
+use tinybytes::BytesString;
 use tokio::time::sleep;
+
+pub fn create_test_no_alloc_span(
+    trace_id: u64,
+    span_id: u64,
+    parent_id: u64,
+    start: i64,
+    is_top_level: bool,
+) -> Span {
+    let mut span = Span {
+        trace_id,
+        span_id,
+        service: BytesString::from_slice("test-service".as_ref()).unwrap(),
+        name: BytesString::from_slice("test_name".as_ref()).unwrap(),
+        resource: BytesString::from_slice("test-resource".as_ref()).unwrap(),
+        parent_id,
+        start,
+        duration: 5,
+        error: 0,
+        meta: HashMap::from([
+            (
+                BytesString::from_slice("service".as_ref()).unwrap(),
+                BytesString::from_slice("test-service".as_ref()).unwrap(),
+            ),
+            (
+                BytesString::from_slice("env".as_ref()).unwrap(),
+                BytesString::from_slice("test-env".as_ref()).unwrap(),
+            ),
+            (
+                BytesString::from_slice("runtime-id".as_ref()).unwrap(),
+                BytesString::from_slice("test-runtime-id-value".as_ref()).unwrap(),
+            ),
+        ]),
+        metrics: HashMap::new(),
+        r#type: BytesString::default(),
+        meta_struct: HashMap::new(),
+        span_links: vec![],
+    };
+    if is_top_level {
+        span.metrics
+            .insert(BytesString::from_slice("_top_level".as_ref()).unwrap(), 1.0);
+        span.meta.insert(
+            BytesString::from_slice("_dd.origin".as_ref()).unwrap(),
+            BytesString::from_slice("cloudfunction".as_ref()).unwrap(),
+        );
+        span.meta.insert(
+            BytesString::from_slice("origin".as_ref()).unwrap(),
+            BytesString::from_slice("cloudfunction".as_ref()).unwrap(),
+        );
+        span.meta.insert(
+            BytesString::from_slice("functionname".as_ref()).unwrap(),
+            BytesString::from_slice("dummy_function_name".as_ref()).unwrap(),
+        );
+        span.r#type = BytesString::from_slice("serverless".as_ref()).unwrap();
+    }
+    span
+}
 
 pub fn create_test_span(
     trace_id: u64,
@@ -210,5 +268,6 @@ pub fn create_send_data(size: usize, target_endpoint: &Endpoint) -> SendData {
         TracerPayloadCollection::V07(vec![tracer_payload]),
         tracer_header_tags,
         target_endpoint,
+        None,
     )
 }

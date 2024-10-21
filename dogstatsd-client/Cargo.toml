@@ -1,0 +1,21 @@
+[package]
+name = "dogstatsd-client"
+description = "A dogstatsd client for sending metrics to a dogstatsd server."
+rust-version.workspace = true
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+bench = false
+
+[dependencies]
+ddcommon = { path = "../ddcommon" }
+datadog-trace-protobuf = { path = "../trace-protobuf" }
+datadog-trace-normalization = { path = "../trace-normalization" }
+datadog-ddsketch = { path = "../ddsketch"}
+cadence = "1.3.0"
+serde = { version = "1.0", features = ["derive", "rc"] }
+tracing = { version = "0.1", default-features = false }
+anyhow = { version = "1.0" }
+http = "0.2"

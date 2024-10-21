@@ -9,6 +9,7 @@ use crate::Result;
 use anyhow::Context;
 pub use counters::*;
 pub use datatypes::*;
+use ddcommon_ffi::{slice::AsBytes, CharSlice};
 pub use spans::*;
 
 #[no_mangle]
@@ -93,5 +94,32 @@ pub unsafe extern "C" fn ddog_crasht_init_with_receiver(
         datadog_crashtracker::init_with_receiver(config, receiver_config, metadata)
     })()
     .context("ddog_crasht_init_with_receiver failed")
+    .into()
+}
+
+#[no_mangle]
+#[must_use]
+/// Initialize the crash-tracking infrastructure, writing to an unix socket in case of crash.
+///
+/// # Preconditions
+///   None.
+/// # Safety
+///   Crash-tracking functions are not reentrant.
+///   No other crash-handler functions should be called concurrently.
+/// # Atomicity
+///   This function is not atomic. A crash during its execution may lead to
+///   unexpected crash-handling behaviour.
+pub unsafe extern "C" fn ddog_crasht_init_with_unix_socket(
+    config: Config,
+    socket_path: CharSlice,
+    metadata: Metadata,
+) -> Result {
+    (|| {
+        let config = config.try_into()?;
+        let socket_path = socket_path.try_to_utf8()?;
+        let metadata = metadata.try_into()?;
+        datadog_crashtracker::init_with_unix_socket(config, socket_path, metadata)
+    })()
+    .context("ddog_crasht_init_with_unix_socket failed")
     .into()
 }

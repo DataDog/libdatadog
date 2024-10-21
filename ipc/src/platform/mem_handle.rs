@@ -4,9 +4,9 @@
 use crate::handles::{HandlesTransport, TransferHandles};
 use crate::platform::{mmap_handle, munmap_handle, OwnedFileHandle, PlatformHandle};
 use serde::{Deserialize, Serialize};
-#[cfg(all(unix, not(target_os = "macos")))]
-use std::os::unix::prelude::AsRawFd;
 use std::{ffi::CString, io};
+#[cfg(feature = "tiny-bytes")]
+use tinybytes::UnderlyingBytes;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ShmHandle {
@@ -88,7 +88,7 @@ where
             self.set_mapping_size(size)?;
         }
         nix::unistd::ftruncate(
-            self.get_shm().handle.as_raw_fd(),
+            self.get_shm().handle.as_owned_fd()?,
             self.get_shm().size as libc::off_t,
         )?;
         Ok(())
@@ -142,6 +142,12 @@ impl<T: MemoryHandle> MappedMem<T> {
 
     pub fn get_size(&self) -> usize {
         self.mem.get_size()
+    }
+}
+
+impl<T: MemoryHandle> AsRef<[u8]> for MappedMem<T> {
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
     }
 }
 
@@ -203,6 +209,9 @@ impl From<ShmHandle> for PlatformHandle<OwnedFileHandle> {
 unsafe impl<T> Sync for MappedMem<T> where T: FileBackedHandle {}
 unsafe impl<T> Send for MappedMem<T> where T: FileBackedHandle {}
 
+#[cfg(feature = "tiny-bytes")]
+impl UnderlyingBytes for MappedMem<ShmHandle> {}
+
 #[cfg(test)]
 mod tests {
     use crate::platform::{FileBackedHandle, NamedShmHandle, ShmHandle};
@@ -215,7 +224,7 @@ mod tests {
         let shm = ShmHandle::new(5).unwrap();
         let mut mapped = shm.map().unwrap();
         _ = mapped.as_slice_mut().write(&[1, 2, 3, 4, 5]).unwrap();
-        let mapped = mapped.ensure_space(100000);
+        mapped.ensure_space(100000);
         assert!(mapped.as_slice().len() >= 100000);
         let mut exp = vec![0u8; mapped.as_slice().len()];
         _ = (&mut exp[..5]).write(&[1, 2, 3, 4, 5]).unwrap();
@@ -229,7 +238,7 @@ mod tests {
         let shm = NamedShmHandle::create(path.clone(), 5).unwrap();
         let mut mapped = shm.map().unwrap();
         _ = mapped.as_slice_mut().write(&[1, 2, 3, 4, 5]).unwrap();
-        let mapped = mapped.ensure_space(100000);
+        mapped.ensure_space(100000);
         assert!(mapped.as_slice().len() >= 100000);
 
         let other = NamedShmHandle::open(&path).unwrap().map().unwrap();

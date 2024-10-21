@@ -12,6 +12,7 @@ macro_rules! assert_maybe_no_error {
 }
 
 use ddcommon::Endpoint;
+use std::ptr::{null, null_mut};
 use std::time::Duration;
 #[cfg(unix)]
 use std::{
@@ -90,12 +91,20 @@ fn test_ddog_sidecar_register_app() {
                 ..Default::default()
             },
             &Endpoint::default(),
+            "".into(),
+            "".into(),
             1000,
-            60000,
             1000000,
+            1,
+            10000000,
             10000000,
             "".into(),
             "".into(),
+            null_mut(),
+            null(),
+            0,
+            null(),
+            0,
         );
 
         let meta = ddog_sidecar_runtimeMeta_build(
@@ -135,12 +144,20 @@ fn test_ddog_sidecar_register_app() {
                 ..Default::default()
             },
             &Endpoint::default(),
+            "".into(),
+            "".into(),
             1000,
-            60000,
             1000000,
+            1,
+            10000000,
             10000000,
             "".into(),
             "".into(),
+            null_mut(),
+            null(),
+            0,
+            null(),
+            0,
         );
 
         //TODO: Shutdown the service

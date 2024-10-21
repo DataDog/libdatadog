@@ -40,6 +40,11 @@ pub enum NormalizedAddressMeta {
         path: PathBuf,
         build_id: Option<Vec<u8>>,
     },
+    Pdb {
+        path: PathBuf,
+        guid: Option<Vec<u8>>,
+        age: u64,
+    },
     Unknown,
     Unexpected(String),
 }
@@ -53,9 +58,11 @@ pub struct NormalizedAddress {
 #[cfg(unix)]
 mod unix {
     use super::*;
+    use anyhow::anyhow;
     use blazesym::{
+        helper::ElfResolver,
         normalize::{Normalizer, UserMeta},
-        symbolize::{Input, Source, Sym, Symbolized, Symbolizer},
+        symbolize::{Input, Source, Sym, Symbolized, Symbolizer, TranslateFileOffset},
         Pid,
     };
 
@@ -94,8 +101,16 @@ mod unix {
                 let normed = normalizer.normalize_user_addrs(pid, &[ip])?;
                 anyhow::ensure!(normed.outputs.len() == 1);
                 let (file_offset, meta_idx) = normed.outputs[0];
-                let meta = (&normed.meta[meta_idx]).into();
-                self.normalized_ip = Some(NormalizedAddress { file_offset, meta });
+                let meta = &normed.meta[meta_idx];
+                let elf = meta.elf().ok_or(anyhow::anyhow!("Not elf"))?;
+                let resolver = ElfResolver::open(&elf.path)?;
+                let virt_address = resolver
+                    .file_offset_to_virt_offset(file_offset)?
+                    .ok_or(anyhow!("No matching segment found"))?;
+                self.normalized_ip = Some(NormalizedAddress {
+                    file_offset: virt_address,
+                    meta: meta.into(),
+                });
             }
             Ok(())
         }

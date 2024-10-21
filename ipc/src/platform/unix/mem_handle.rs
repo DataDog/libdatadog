@@ -10,17 +10,15 @@ use nix::fcntl::OFlag;
 use nix::sys::mman::{mmap, munmap, shm_open, shm_unlink, MapFlags, ProtFlags};
 use nix::sys::stat::Mode;
 use nix::unistd::ftruncate;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io;
 use std::num::NonZeroUsize;
 use std::os::unix::fs::MetadataExt;
-use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
-#[cfg(not(target_os = "linux"))]
 use std::sync::atomic::{AtomicI32, Ordering};
 
 pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMem<T>> {
-    let fd: RawFd = handle.get_shm().handle.as_raw_fd();
+    let fd = handle.get_shm().handle.as_owned_fd()?;
     Ok(MappedMem {
         ptr: unsafe {
             mmap(
@@ -28,7 +26,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMe
                 NonZeroUsize::new(handle.get_shm().size).unwrap(),
                 ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
                 MapFlags::MAP_SHARED,
-                fd,
+                Some(fd),
                 0,
             )?
         },
@@ -42,19 +40,19 @@ pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
 static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
 
 impl ShmHandle {
     #[cfg(target_os = "linux")]
-    fn open_anon_shm() -> anyhow::Result<RawFd> {
-        Ok(memfd::MemfdOptions::default()
-            .create("anon-shm-handle")?
-            .into_raw_fd())
+    fn open_anon_shm() -> anyhow::Result<OwnedFd> {
+        if let Ok(memfd) = memfd::MemfdOptions::default().create("anon-shm-handle") {
+            Ok(memfd.into_file().into())
+        } else {
+            Self::open_anon_shm_generic()
+        }
     }
 
-    #[cfg(not(target_os = "linux"))]
-    fn open_anon_shm() -> anyhow::Result<RawFd> {
+    fn open_anon_shm_generic() -> anyhow::Result<OwnedFd> {
         let path = format!(
             "/libdatadog-shm-anon-{}-{}",
             unsafe { libc::getpid() },
@@ -69,10 +67,15 @@ impl ShmHandle {
         Ok(result?)
     }
 
+    #[cfg(not(target_os = "linux"))]
+    fn open_anon_shm() -> anyhow::Result<OwnedFd> {
+        Self::open_anon_shm_generic()
+    }
+
     pub fn new(size: usize) -> anyhow::Result<ShmHandle> {
         let fd = Self::open_anon_shm()?;
-        let handle = unsafe { PlatformHandle::from_raw_fd(fd) };
-        ftruncate(fd, size as off_t)?;
+        let handle: PlatformHandle<OwnedFd> = fd.into();
+        ftruncate(handle.as_owned_fd()?, size as off_t)?;
         Ok(ShmHandle { handle, size })
     }
 }
@@ -84,21 +87,20 @@ impl NamedShmHandle {
 
     pub fn create_mode(path: CString, size: usize, mode: Mode) -> io::Result<NamedShmHandle> {
         let fd = shm_open(path.as_bytes(), OFlag::O_CREAT | OFlag::O_RDWR, mode)?;
-        ftruncate(fd, size as off_t)?;
+        ftruncate(&fd, size as off_t)?;
         Self::new(fd, Some(path), size)
     }
 
-    pub fn open(path: &CString) -> io::Result<NamedShmHandle> {
-        let fd = shm_open(path.as_bytes(), OFlag::O_RDWR, Mode::empty())?;
-        let file: File = unsafe { OwnedFd::from_raw_fd(fd) }.into();
+    pub fn open(path: &CStr) -> io::Result<NamedShmHandle> {
+        let file: File = shm_open(path, OFlag::O_RDWR, Mode::empty())?.into();
         let size = file.metadata()?.size() as usize;
-        Self::new(file.into_raw_fd(), None, size)
+        Self::new(file.into(), None, size)
     }
 
-    fn new(fd: RawFd, path: Option<CString>, size: usize) -> io::Result<NamedShmHandle> {
+    fn new(fd: OwnedFd, path: Option<CString>, size: usize) -> io::Result<NamedShmHandle> {
         Ok(NamedShmHandle {
             inner: ShmHandle {
-                handle: unsafe { PlatformHandle::from_raw_fd(fd) },
+                handle: fd.into(),
                 size,
             },
             path: path.map(|path| ShmPath { name: path }),
@@ -107,14 +109,15 @@ impl NamedShmHandle {
 }
 
 impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
-    pub fn ensure_space(self, expected_size: usize) -> MappedMem<T> {
+    pub fn ensure_space(&mut self, expected_size: usize) {
         if expected_size <= self.mem.get_shm().size {
-            return self;
+            return;
         }
 
-        let mut handle: T = self.into();
+        // SAFETY: we'll overwrite the original memory later
+        let mut handle: T = unsafe { std::ptr::read(self) }.into();
         _ = handle.resize(expected_size);
-        handle.map().unwrap()
+        unsafe { std::ptr::write(self, handle.map().unwrap()) };
     }
 }
 

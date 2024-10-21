@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
+#[cfg(unix)]
+use datadog_crashtracker;
 use spawn_worker::{entrypoint, Stdio};
 use std::fs::File;
 use std::future::Future;
@@ -15,6 +17,8 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+#[cfg(unix)]
+use crate::crashtracker::crashtracker_unix_socket_path;
 use crate::service::blocking::SidecarTransport;
 use crate::service::SidecarServer;
 use datadog_ipc::platform::AsyncChannel;
@@ -23,6 +27,7 @@ use crate::setup::{self, IpcClient, IpcServer, Liaison};
 
 use crate::config::{self, Config};
 use crate::self_telemetry::self_telemetry;
+use crate::tracer::SHM_LIMITER;
 use crate::watchdog::Watchdog;
 use crate::{ddog_daemon_entry_point, setup_daemon_process};
 
@@ -65,6 +70,19 @@ where
         cancel();
     });
 
+    #[cfg(unix)]
+    tokio::spawn(async move {
+        let socket_path = crashtracker_unix_socket_path();
+        let _ = datadog_crashtracker::async_receiver_entry_point_unix_socket(
+            socket_path.to_str().unwrap_or_default(),
+            false,
+        )
+        .await;
+    });
+
+    // Init. Early, before we start listening.
+    drop(SHM_LIMITER.lock());
+
     let server = SidecarServer::default();
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
 
@@ -98,6 +116,7 @@ where
 
     // Await everything else to completion
     _ = telemetry_handle.await;
+    server.shutdown();
     _ = server.trace_flusher.join().await;
 
     Ok(())
@@ -113,9 +132,6 @@ where
     #[cfg(feature = "tokio-console")]
     console_subscriber::init();
 
-    #[cfg(unix)]
-    let mut builder = tokio::runtime::Builder::new_current_thread();
-    #[cfg(windows)]
     let mut builder = tokio::runtime::Builder::new_multi_thread();
     let runtime = builder.enable_all().build()?;
     let _g = runtime.enter();
@@ -127,15 +143,11 @@ where
         .map_err(|e| e.into())
 }
 
-pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
+pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
     #[allow(unused_unsafe)] // the unix method is unsafe
     let mut spawn_cfg = unsafe { spawn_worker::SpawnWorker::new() };
 
     spawn_cfg.target(entrypoint!(ddog_daemon_entry_point));
-
-    for (env, val) in cfg.to_env().into_iter() {
-        spawn_cfg.append_env(env, val);
-    }
 
     match cfg.log_method {
         config::LogMethod::File(ref path) => {
@@ -152,6 +164,7 @@ pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
                 }
                 Err(e) => {
                     tracing::warn!("Failed to open logfile for sidecar: {:?}", e);
+                    cfg.log_method = config::LogMethod::Disabled;
                     spawn_cfg.stdout(Stdio::Null);
                     spawn_cfg.stderr(Stdio::Null);
                 }
@@ -163,6 +176,11 @@ pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
         }
         _ => {}
     }
+
+    for (env, val) in cfg.to_env().into_iter() {
+        spawn_cfg.append_env(env, val);
+    }
+    spawn_cfg.append_env("LSAN_OPTIONS", "detect_leaks=0");
 
     setup_daemon_process(listener, &mut spawn_cfg)?;
 

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 pub mod agent_remote_config;
 pub mod config;
-pub mod dogstatsd;
+pub mod crashtracker;
 mod dump;
 pub mod entry;
 #[cfg(feature = "tracing")]
@@ -10,7 +10,8 @@ pub mod log;
 pub mod one_way_shared_memory;
 mod self_telemetry;
 pub mod setup;
-mod tracer;
+pub mod shm_remote_config;
+pub mod tracer;
 mod watchdog;
 
 pub use entry::*;
@@ -21,6 +22,7 @@ mod unix;
 pub use unix::*;
 
 pub mod service;
+mod tokio_util;
 #[cfg(windows)]
 mod windows;
 

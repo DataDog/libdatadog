@@ -77,6 +77,8 @@ fn write_to_tmp_file(data: &[u8]) -> anyhow::Result<tempfile::NamedTempFile> {
 
 use std::fs::File;
 
+#[cfg(target_os = "linux")]
+use std::ffi::CStr;
 use std::io;
 use std::ops::RangeInclusive;
 use std::{
@@ -383,7 +385,8 @@ impl SpawnWorker {
 
         // setup final spawn
 
-        let spawn_method = match &self.spawn_method {
+        #[allow(unused_mut)]
+        let mut spawn_method = match &self.spawn_method {
             Some(m) => m.clone(),
             None => self.target.detect_spawn_method()?,
         };
@@ -415,13 +418,17 @@ impl SpawnWorker {
                     };
                     #[cfg(target_os = "linux")]
                     if matches!(spawn_method, SpawnMethod::FdExec) {
-                        let memfd = linux::write_memfd("trampoline_dependencies.so", bin)?;
-                        let basefds = if fd_to_pass.is_some() { 4 } else { 3 };
-                        argv.push(CString::new(format!(
-                            "/proc/self/fd/{}",
-                            temp_memfds.len() + basefds
-                        ))?);
-                        temp_memfds.push(memfd);
+                        if let Ok(memfd) = linux::write_memfd("trampoline_dependencies.so", bin) {
+                            let basefds = if fd_to_pass.is_some() { 4 } else { 3 };
+                            argv.push(CString::new(format!(
+                                "/proc/self/fd/{}",
+                                temp_memfds.len() + basefds
+                            ))?);
+                            temp_memfds.push(memfd);
+                        } else {
+                            spawn_method = SpawnMethod::Exec;
+                            tempfile()?;
+                        }
                     } else {
                         tempfile()?;
                     }
@@ -439,18 +446,67 @@ impl SpawnWorker {
         #[cfg(not(target_os = "linux"))]
         let skip_close_fd = 0;
 
-        let spawn: Box<dyn Fn()> = match spawn_method {
+        let mut spawn: Box<dyn FnMut()> = match spawn_method {
             #[cfg(target_os = "linux")]
             SpawnMethod::FdExec => {
                 let fd = linux::write_trampoline()?;
                 skip_close_fd = fd.as_raw_fd();
-                Box::new(move || {
+                Box::new(move || unsafe {
                     // not using nix crate here, as it would allocate args after fork, which will
                     // lead to crashes on systems where allocator is not
                     // fork+thread safe
-                    unsafe { libc::fexecve(fd.as_raw_fd(), argv.as_ptr(), envp.as_ptr()) };
+                    libc::fexecve(fd.as_raw_fd(), argv.as_ptr(), envp.as_ptr());
+
                     // if we're here then exec has failed
-                    panic!("{}", std::io::Error::last_os_error());
+                    let fexecve_error = std::io::Error::last_os_error();
+
+                    let mut temp_path = [0u8; 256];
+                    let tmpdir = libc::getenv("TMPDIR".as_ptr() as *const libc::c_char)
+                        as *const libc::c_char;
+                    let tmpdir = if tmpdir.is_null() {
+                        b"/tmp"
+                    } else {
+                        CStr::from_ptr(tmpdir).to_bytes()
+                    };
+                    if tmpdir.len() < 220 {
+                        temp_path[..tmpdir.len()].copy_from_slice(tmpdir);
+                        let mut off = tmpdir.len();
+                        let spawn_prefix = b"/dd-ipc-spawn_";
+                        temp_path[off..off + spawn_prefix.len()].copy_from_slice(spawn_prefix);
+                        off += spawn_prefix.len();
+                        for _ in 0..8 {
+                            temp_path[off] = fastrand::alphanumeric() as u8;
+                            off += 1;
+                        }
+
+                        let path = Vec::from_raw_parts(temp_path.as_mut_ptr(), off, off);
+                        let path = CString::from_vec_with_nul_unchecked(path);
+                        let path_ptr = path.as_ptr();
+                        let tmpfd = libc::open(
+                            path_ptr,
+                            libc::O_CREAT | libc::O_RDWR,
+                            libc::S_IRWXU as libc::c_uint,
+                        );
+                        if tmpfd < 0 {
+                            // We'll leak it, executing Drop of path is forbidden.
+                            std::mem::forget(path);
+                        } else {
+                            libc::sendfile(
+                                tmpfd,
+                                fd.as_raw_fd(),
+                                std::ptr::null_mut(),
+                                crate::TRAMPOLINE_BIN.len(),
+                            );
+                            libc::close(tmpfd);
+                            argv.set(1, path);
+
+                            libc::execve(path_ptr, argv.as_ptr(), envp.as_ptr());
+
+                            libc::unlink(temp_path.as_ptr() as *const libc::c_char);
+                        }
+                    }
+
+                    panic!("Failed lauching via fexecve(): {fexecve_error}");
                 })
             }
             #[cfg(not(target_os = "macos"))]
@@ -579,8 +635,8 @@ impl SpawnWorker {
                 }
                 unsafe {
                     libc::close(skip_close_fd);
+                    libc::_exit(0);
                 }
-                std::process::exit(0);
             }
         }
 

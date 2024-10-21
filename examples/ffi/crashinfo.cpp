@@ -15,8 +15,14 @@ extern "C" {
 #include <vector>
 
 static ddog_CharSlice to_slice_c_char(const char *s) { return {.ptr = s, .len = strlen(s)}; }
-static ddog_CharSlice to_slice_string(std::string &s) {
+static ddog_CharSlice to_slice_c_char(const char *s, std::size_t size) { return {.ptr = s, .len = size}; }
+static ddog_CharSlice to_slice_string(std::string const &s) {
   return {.ptr = s.data(), .len = s.length()};
+}
+
+template <class T>
+static ddog_ByteSlice to_byte_slice(T const& c) {
+  return {.ptr = reinterpret_cast<const std::uint8_t*>(c.data()), .len = c.size()};
 }
 
 struct Deleter {
@@ -39,19 +45,28 @@ void check_result(ddog_crasht_Result result, const char *msg) {
 void add_stacktrace(std::unique_ptr<ddog_crasht_CrashInfo, Deleter> &crashinfo) {
 
   // Collect things into vectors so they stay alive till the function exits
-  std::vector<std::string> filenames;
-  std::vector<std::string> function_names;
-  for (uintptr_t i = 0; i < 20; ++i) {
-    filenames.push_back("/path/to/code/file_" + std::to_string(i));
-    function_names.push_back("func_" + std::to_string(i));
+  constexpr std::size_t nb_elements = 20;
+  std::vector<std::pair<std::string, std::string>> functions_and_filenames{nb_elements};
+  for (uintptr_t i = 0; i < nb_elements; ++i) {
+    functions_and_filenames.push_back({"func_" + std::to_string(i), "/path/to/code/file_" + std::to_string(i)});
   }
 
-  std::vector<ddog_crasht_StackFrameNames> names;
-  for (uintptr_t i = 0; i < 20; ++i) {
+  std::vector<ddog_crasht_StackFrameNames> names{nb_elements};
+  for (auto i = 0; i < nb_elements; i++) {
+    auto const& [function_name, filename] = functions_and_filenames[i];
+
+    auto function_name_slice = to_slice_string(function_name);
+    auto res = ddog_crasht_demangle(function_name_slice, DDOG_CRASHT_DEMANGLE_OPTIONS_COMPLETE);
+    if (res.tag == DDOG_CRASHT_STRING_WRAPPER_RESULT_OK)
+    {
+      auto string_result = res.ok.message;
+      function_name_slice = to_slice_c_char((const char*)string_result.ptr, string_result.len);
+    }
+
     names.push_back({.colno = ddog_Option_U32_some(i),
-                     .filename = to_slice_string(filenames[i]),
+                     .filename = to_slice_string(filename),
                      .lineno = ddog_Option_U32_some(2 * i + 3),
-                     .name = to_slice_string(function_names[i])});
+                     .name = function_name_slice});
   }
 
   std::vector<ddog_crasht_StackFrame> trace;
@@ -63,6 +78,44 @@ void add_stacktrace(std::unique_ptr<ddog_crasht_CrashInfo, Deleter> &crashinfo) 
                                     .symbol_address = 0};
     trace.push_back(frame);
   }
+
+  std::vector<std::uint8_t> build_id = {42};
+  std::string filePath = "/usr/share/somewhere";
+  // test with normalized
+  auto elfFrameWithNormalization = ddog_crasht_StackFrame{
+    .ip = 42,
+    .module_base_address = 0,
+    .names = {.ptr = &names[0], .len = 1}, // just for the test
+    .normalized_ip = {
+      .file_offset = 1,
+      .build_id = to_byte_slice(build_id),
+      .path = to_slice_c_char(filePath.c_str(), filePath.size()),
+      .typ = DDOG_CRASHT_NORMALIZED_ADDRESS_TYPES_ELF,
+    },
+    .sp = 0,
+    .symbol_address = 0,
+  };
+
+  trace.push_back(elfFrameWithNormalization);
+
+  // Windows-kind of frame
+  auto dllFrameWithNormalization = ddog_crasht_StackFrame{
+    .ip = 42,
+    .module_base_address = 0,
+    .names = {.ptr = &names[0], .len = 1}, // just for the test
+    .normalized_ip = {
+      .file_offset = 1,
+      .build_id = to_byte_slice(build_id),
+      .age = 21,
+      .path = to_slice_c_char(filePath.c_str(), filePath.size()),
+      .typ = DDOG_CRASHT_NORMALIZED_ADDRESS_TYPES_PDB,
+    },
+    .sp = 0,
+    .symbol_address = 0,
+  };
+  
+  trace.push_back(dllFrameWithNormalization);
+
   ddog_crasht_Slice_StackFrame trace_slice = {.ptr = trace.data(), .len = trace.size()};
 
   check_result(

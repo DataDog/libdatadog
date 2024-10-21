@@ -11,7 +11,7 @@ require "rubygems/package"
 
 RSpec::Core::RakeTask.new(:spec)
 
-LIB_VERSION_TO_PACKAGE = "11.0.0"
+LIB_VERSION_TO_PACKAGE = "13.1.0"
 unless LIB_VERSION_TO_PACKAGE.start_with?(Libdatadog::LIB_VERSION)
   raise "`LIB_VERSION_TO_PACKAGE` setting in <Rakefile> (#{LIB_VERSION_TO_PACKAGE}) does not match " \
     "`LIB_VERSION` setting in <lib/libdatadog/version.rb> (#{Libdatadog::LIB_VERSION})"
@@ -20,22 +20,22 @@ end
 LIB_GITHUB_RELEASES = [
   {
     file: "libdatadog-aarch64-alpine-linux-musl.tar.gz",
-    sha256: "81017bdc4634163151272539e98700e5e0fb076d4aa88a004087c4a01be0cfc3",
+    sha256: "9cddbc9ece4c2fe9a1f0ab5a7cfed218d617c5154f318e0bce9a6102b265c989",
     ruby_platform: "aarch64-linux-musl"
   },
   {
     file: "libdatadog-aarch64-unknown-linux-gnu.tar.gz",
-    sha256: "9b06e0dced2cfa72279a1f50bf12bb485eaa54d54b6d09764cc297d79a7ce0da",
+    sha256: "db17a5873d82ef772f969582949b272dcd04044a0cd08b196d3820172a19814d",
     ruby_platform: "aarch64-linux"
   },
   {
     file: "libdatadog-x86_64-alpine-linux-musl.tar.gz",
-    sha256: "96ed601629feb33ce3b1acf6ffd0c30eacb04c4353c8a52388eccd6b4027c2f1",
+    sha256: "46d0e6445fa1b0fbe8d079e6fa997fa10a4fef4084fe10f4b5886c92effc7be8",
     ruby_platform: "x86_64-linux-musl"
   },
   {
     file: "libdatadog-x86_64-unknown-linux-gnu.tar.gz",
-    sha256: "cac9b7c4c0f791d8618426bac81f14c0be40bfeecb2d01a98dcae67ba217eca5",
+    sha256: "adaf79470fd0b06ce6d63ae8f231e555fa12b70d5bf82565a96a25f59ea8071d",
     ruby_platform: "x86_64-linux"
   }
 ]

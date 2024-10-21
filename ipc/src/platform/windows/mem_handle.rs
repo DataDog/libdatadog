@@ -4,7 +4,7 @@
 use crate::platform::{
     FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle, PlatformHandle, ShmHandle, ShmPath,
 };
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::io::Error;
 use std::mem::MaybeUninit;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
@@ -109,13 +109,13 @@ impl ShmHandle {
 }
 
 impl NamedShmHandle {
-    fn format_name(path: &CString) -> CString {
+    fn format_name(path: &CStr) -> CString {
         // Global\ namespace is reserved for Session ID 0.
         // We cannot rely on our PHP process having permissions to have access to Session 0.
         // This requires us to have one sidecar per Session ID. That's good enough though.
         CString::new(format!(
             "Local\\{}",
-            String::from_utf8_lossy(&path.as_bytes()[1..])
+            String::from_utf8_lossy(&path.to_bytes()[1..])
         ))
         .unwrap() // strip leading slash
     }
@@ -129,14 +129,14 @@ impl NamedShmHandle {
         )
     }
 
-    pub fn open(path: &CString) -> io::Result<NamedShmHandle> {
+    pub fn open(path: &CStr) -> io::Result<NamedShmHandle> {
         let name = Self::format_name(path);
         let handle = unsafe { OpenFileMappingA(FILE_MAP_WRITE, 0, name.as_ptr() as LPCSTR) };
         if handle.is_null() {
             return Err(Error::last_os_error());
         }
         // We need to map the handle to query its size, hence starting out with NOT_COMMITTED
-        Self::new(handle as RawHandle, path.clone(), NOT_COMMITTED)
+        Self::new(handle as RawHandle, path.to_owned(), NOT_COMMITTED)
     }
 
     fn new(handle: RawHandle, name: CString, size: usize) -> io::Result<NamedShmHandle> {
@@ -151,10 +151,10 @@ impl NamedShmHandle {
 }
 
 impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
-    pub fn ensure_space(mut self, expected_size: usize) -> MappedMem<T> {
+    pub fn ensure_space(&mut self, expected_size: usize) {
         let current_size = self.mem.get_shm().size;
         if expected_size <= current_size {
-            return self;
+            return;
         }
         if expected_size > MAPPING_MAX_SIZE {
             panic!(
@@ -175,6 +175,5 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
                 PAGE_READWRITE,
             )
         };
-        self
     }
 }
