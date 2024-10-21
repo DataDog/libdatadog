@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::platform::{
-    FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle, PlatformHandle, ShmHandle, ShmPath,
+    FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle, ShmHandle, ShmPath,
 };
 use libc::off_t;
 use nix::errno::Errno;
@@ -14,7 +14,6 @@ use std::ffi::{CStr, CString};
 use std::io;
 use std::num::NonZeroUsize;
 use std::os::fd::OwnedFd;
-use std::os::unix::prelude::{AsRawFd, FromRawFd, RawFd};
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 const MAPPING_MAX_SIZE: usize = 1 << 17; // 128 MiB ought to be enough for everybody?
