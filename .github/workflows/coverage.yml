@@ -24,7 +24,7 @@ jobs:
           swap-storage: true
       - uses: actions/checkout@v4
       - name: Install Rust
-        run: rustup install nightly && rustup default nightly
+        run: rustup install nightly-2024-10-21 && rustup default nightly-2024-10-21
       - name: Install Protoc Binary
         shell: bash
         run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh $HOME

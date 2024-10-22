@@ -16,7 +16,7 @@ pub struct CharSliceVec<'a> {
     pub string_count: usize,
 }
 
-impl<'a> Drop for CharSliceVec<'a> {
+impl Drop for CharSliceVec<'_> {
     fn drop(&mut self) {
         unsafe {
             Vec::from_raw_parts(
@@ -131,7 +131,7 @@ impl<'a> From<&'a datadog_live_debugger::SpanDecorationProbe> for SpanDecoration
 #[no_mangle]
 extern "C" fn drop_span_decoration_probe(_: SpanDecorationProbe) {}
 
-impl<'a> Drop for SpanDecorationProbe<'a> {
+impl Drop for SpanDecorationProbe<'_> {
     fn drop(&mut self) {
         unsafe {
             let tags = Vec::from_raw_parts(

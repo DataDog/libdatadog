@@ -88,7 +88,7 @@ impl RemoteConfigPath {
     }
 }
 
-impl<'a> Display for RemoteConfigPathRef<'a> {
+impl Display for RemoteConfigPathRef<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self.source {
             RemoteConfigSource::Datadog(id) => write!(

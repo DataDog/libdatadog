@@ -14,14 +14,14 @@ jobs:
       run: |
         set -e
         rustup set profile minimal
-        rustup toolchain install nightly --component miri 
-        rustup default nightly
+        rustup toolchain install nightly-2024-10-21 --component miri 
+        rustup default nightly-2024-10-21
     - name: Install Protoc Binary
       shell: bash
       run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh $HOME
     - uses: taiki-e/install-action@v2
       with: 
-        tool: nextest@0.9.68
+        tool: nextest@0.9.81
     - run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run
     # We need to disable isolation because 
     # "unsupported operation: `clock_gettime` with `REALTIME` clocks not available when isolation is enabled" 
