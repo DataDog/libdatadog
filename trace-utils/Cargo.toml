@@ -16,7 +16,7 @@ path = "benches/main.rs"
 
 [dependencies]
 anyhow = "1.0"
-hyper = { version = "0.14", features = ["client", "server", "backports", "deprecated"] }
+hyper = { version = "0.14", features = ["client", "server", "runtime", "backports", "deprecated"] }
 hyper-proxy = { version = "0.9.1", default-features = false, features = ["rustls"], optional = true }
 hyper-rustls = {version = "0.27", default-features = false, features = ["native-tokio", "http1", "tls12"]}
 serde = { version = "1.0.145", features = ["derive"] }
