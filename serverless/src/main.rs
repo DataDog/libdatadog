@@ -40,6 +40,9 @@ pub async fn main() {
         .map(|val| val.to_lowercase() != "false")
         .unwrap_or(true);
 
+    let https_proxy = env::var("DD_PROXY_HTTPS")
+        .or_else(|_| env::var("HTTPS_PROXY"))
+        .ok();
     debug!("Starting serverless trace mini agent");
 
     let mini_agent_version = env!("CARGO_PKG_VERSION").to_string();
@@ -79,7 +82,8 @@ pub async fn main() {
 
     let mut metrics_flusher = if dd_use_dogstatsd {
         debug!("Starting dogstatsd");
-        let (_, metrics_flusher) = start_dogstatsd(dd_dogstatsd_port, dd_api_key, dd_site).await;
+        let (_, metrics_flusher) =
+            start_dogstatsd(dd_dogstatsd_port, dd_api_key, dd_site, https_proxy).await;
         info!("dogstatsd-udp: starting to listen on port {dd_dogstatsd_port}");
         metrics_flusher
     } else {
@@ -104,6 +108,7 @@ async fn start_dogstatsd(
     port: u16,
     dd_api_key: Option<String>,
     dd_site: String,
+    https_proxy: Option<String>,
 ) -> (CancellationToken, Option<Flusher>) {
     let metrics_aggr = Arc::new(Mutex::new(
         MetricsAggregator::new(EMPTY_TAGS, CONTEXTS).expect("Failed to create metrics aggregator"),
@@ -131,6 +136,7 @@ async fn start_dogstatsd(
                 dd_api_key,
                 Arc::clone(&metrics_aggr),
                 build_fqdn_metrics(dd_site),
+                https_proxy,
             );
             Some(metrics_flusher)
         }

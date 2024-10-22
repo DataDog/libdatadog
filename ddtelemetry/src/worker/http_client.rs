@@ -3,6 +3,7 @@
 
 use ddcommon::HttpRequestBuilder;
 use http::{Request, Response};
+use hyper::body::HttpBody;
 use hyper::Body;
 use std::{
     fs::OpenOptions,
@@ -79,10 +80,10 @@ pub struct MockClient {
 }
 
 impl HttpClient for MockClient {
-    fn request(&self, mut req: Request<hyper::Body>) -> ResponseFuture {
+    fn request(&self, req: Request<hyper::Body>) -> ResponseFuture {
         let s = self.clone();
         Box::pin(async move {
-            let mut body = hyper::body::to_bytes(req.body_mut()).await?.to_vec();
+            let mut body = req.collect().await?.to_bytes().to_vec();
             body.push(b'\n');
 
             {

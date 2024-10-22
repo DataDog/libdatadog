@@ -14,7 +14,7 @@ pub const BUILD_CRASHTRACKER: bool = true;
 
 pub fn fix_rpath(lib_path: &str) {
     if REMOVE_RPATH {
-        let lib_name = lib_path.split("/").last().unwrap();
+        let lib_name = lib_path.split('/').last().unwrap();
 
         Command::new("install_name_tool")
             .arg("-id")

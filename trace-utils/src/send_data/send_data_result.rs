@@ -3,6 +3,7 @@
 
 use crate::send_data::RequestResult;
 use anyhow::anyhow;
+use hyper::body::HttpBody;
 use hyper::{Body, Response};
 use std::collections::HashMap;
 
@@ -73,9 +74,9 @@ impl SendDataResult {
                 self.chunks_dropped += chunks;
                 self.requests_count += u64::from(attempts);
 
-                let body_bytes = hyper::body::to_bytes(response.into_body()).await;
-                let response_body =
-                    String::from_utf8(body_bytes.unwrap_or_default().to_vec()).unwrap_or_default();
+                let body = response.into_body().collect().await;
+                let response_body = String::from_utf8(body.unwrap_or_default().to_bytes().to_vec())
+                    .unwrap_or_default();
                 self.last_result = Err(anyhow::format_err!(
                     "{} - Server did not accept traces: {}",
                     status_code,

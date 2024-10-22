@@ -16,7 +16,7 @@ fn is_card_number_no_luhn_bench(c: &mut Criterion) {
     bench_is_card_number(c, "is_card_number_no_luhn", false);
 }
 
-#[inline]
+#[inline(always)]
 fn bench_is_card_number(c: &mut Criterion, function_name: &str, validate_luhn: bool) {
     let mut group = c.benchmark_group("credit_card");
     // Measure over a number of calls to minimize impact of OS noise
@@ -41,14 +41,19 @@ fn bench_is_card_number(c: &mut Criterion, function_name: &str, validate_luhn: b
             b.iter_batched(
                 || {},
                 |_| {
-                    (0..elements).for_each(|_| {
-                        black_box(is_card_number(black_box(i), black_box(validate_luhn)));
-                    })
+                    for _ in 0..elements {
+                        black_box(is_card_number_uninlined(i, validate_luhn));
+                    }
                 },
                 BatchSize::SmallInput,
             )
         });
     }
+}
+
+#[inline(never)]
+fn is_card_number_uninlined<T: AsRef<str>>(s: T, validate_luhn: bool) -> bool {
+    black_box(is_card_number(black_box(s), black_box(validate_luhn)))
 }
 
 criterion_group!(benches, is_card_number_bench, is_card_number_no_luhn_bench);
