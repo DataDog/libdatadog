@@ -59,6 +59,7 @@ fn compute_entity_id(
 
 fn get_cgroup_path() -> &'static str {
     // Safety: we assume set_cgroup_file is not called when it shouldn't
+    #[allow(static_mut_refs)]
     unsafe {
         TESTING_CGROUP_PATH
             .as_deref()
@@ -68,6 +69,7 @@ fn get_cgroup_path() -> &'static str {
 
 fn get_cgroup_mount_path() -> &'static str {
     // Safety: we assume set_cgroup_file is not called when it shouldn't
+    #[allow(static_mut_refs)]
     unsafe {
         TESTING_CGROUP_MOUNT_PATH
             .as_deref()

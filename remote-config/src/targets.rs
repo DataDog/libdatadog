@@ -56,7 +56,7 @@ impl<'a> TargetsList<'a> {
     }
 }
 
-impl<'a> TargetData<'a> {
+impl TargetData<'_> {
     pub fn try_parse_version(&self) -> Option<u64> {
         self.custom
             .get("v")

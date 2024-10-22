@@ -129,7 +129,7 @@ where
     map: &'a TemporarilyRetainedMap<K, V>,
 }
 
-impl<'a, K, V> Drop for TemporarilyRetainedMapGuard<'a, K, V>
+impl<K, V> Drop for TemporarilyRetainedMapGuard<'_, K, V>
 where
     K: TemporarilyRetainedKeyParser<V> + Clone + Eq + Hash,
 {
