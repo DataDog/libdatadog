@@ -99,22 +99,29 @@ fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) {
     traces.retain_mut(|chunk| {
         let mut sampled_indexes = Vec::new();
         for (index, span) in chunk.iter().enumerate() {
+            // ErrorSampler
             if span.error == 1 {
                 // We send chunks containing an error
                 return true;
             }
+
+            // PrioritySampler and NoPrioritySampler
             let priority = span.metrics.get("_sampling_priority_v1");
-            if priority.is_some_and(|p| *p > 0.0) {
-                if has_top_level(span) {
-                    // We send chunks with positive priority
-                    return true;
-                }
-                // We send single spans with positive priority
-                sampled_indexes.push(index);
-            } else if priority.is_none() && has_top_level(span) {
-                // We send chunks with no priority
+            if has_top_level(span) && (priority.is_none() || priority.is_some_and(|p| *p > 0.0)) {
+                // We send chunks with positive priority or no priority
                 return true;
-            } else if span.metrics.contains_key("_dd.sr.eausr") {
+            }
+            // SingleSpanSampler
+            else if span
+                .metrics
+                .get("_dd.span_sampling.mechanism")
+                .is_some_and(|m| *m == 8.0)
+            {
+                // We send spans sampled by single-span sampling
+                sampled_indexes.push(index);
+            }
+            // AnalyzedSpansSampler
+            else if span.metrics.contains_key("_dd.sr.eausr") {
                 // We send analyzed spans
                 sampled_indexes.push(index);
             }
