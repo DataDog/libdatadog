@@ -45,9 +45,10 @@ pub mod headers {
         new_content_parts
     }
 
-    pub fn dedup_headers(base: &str, headers: &[String]) {
+    pub fn dedup_headers(base: &str, headers: &[&str]) {
         let mut unique_child_defs: Vec<String> = Vec::new();
         let mut present = HashSet::new();
+
         for child_def in headers.iter().flat_map(|p| {
             let child_header = OpenOptions::new().read(true).write(true).open(p).unwrap();
 
@@ -69,7 +70,6 @@ pub mod headers {
             present.insert(child_def);
         }
 
-        println!("base: {:?}", base);
         let base_header = OpenOptions::new()
             .read(true)
             .write(true)
