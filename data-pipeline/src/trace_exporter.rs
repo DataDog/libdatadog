@@ -110,25 +110,20 @@ fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) {
                 // We send chunks containing an error
                 return true;
             }
-
             // PrioritySampler and NoPrioritySampler
             let priority = span.metrics.get(SAMPLING_PRIORITY_KEY);
             if has_top_level(span) && (priority.is_none() || priority.is_some_and(|p| *p > 0.0)) {
                 // We send chunks with positive priority or no priority
                 return true;
             }
-            // SingleSpanSampler
+            // SingleSpanSampler and AnalyzedSpansSampler
             else if span
                 .metrics
                 .get(SINGLE_SPAN_SAMPLING_MECHANISM)
                 .is_some_and(|m| *m == 8.0)
+                || span.metrics.contains_key(ANALYTICS_SAMPLE_RATE_KEY)
             {
-                // We send spans sampled by single-span sampling
-                sampled_indexes.push(index);
-            }
-            // AnalyzedSpansSampler
-            else if span.metrics.contains_key(ANALYTICS_SAMPLE_RATE_KEY) {
-                // We send analyzed spans
+                // We send spans sampled by single-span sampling or analyzed spans
                 sampled_indexes.push(index);
             }
         }
