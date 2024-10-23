@@ -56,7 +56,7 @@ impl Channel {
     }
 
     pub fn probe_readable(&self) -> bool {
-        let raw_fd = self.inner.as_raw_fd();
+        let raw_fd = self.inner.as_owned_fd().unwrap();
         let mut fds = FdSet::new();
         fds.insert(raw_fd);
         nix::sys::select::select(None, Some(&mut fds), None, None, Some(&mut TimeVal::zero()))

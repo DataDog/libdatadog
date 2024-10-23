@@ -7,6 +7,7 @@ use super::{schema::AgentInfo, AgentInfoArc};
 use anyhow::{anyhow, Result};
 use arc_swap::ArcSwapOption;
 use ddcommon::{connector::Connector, Endpoint};
+use hyper::body::HttpBody;
 use hyper::{self, body::Buf, header::HeaderName};
 use log::{error, info};
 use std::sync::Arc;
@@ -46,7 +47,7 @@ async fn fetch_info_with_state(
         return Ok(FetchInfoStatus::SameState);
     }
     let state_hash = new_state_hash.to_string();
-    let body_bytes = hyper::body::aggregate(res.into_body()).await?;
+    let body_bytes = res.into_body().collect().await?.aggregate();
     let info = Box::new(AgentInfo {
         state_hash,
         info: serde_json::from_reader(body_bytes.reader())?,

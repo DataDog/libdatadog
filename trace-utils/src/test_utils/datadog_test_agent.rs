@@ -6,7 +6,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use cargo_metadata::MetadataCommand;
-use hyper::body::to_bytes;
+use hyper::body::HttpBody;
 use hyper::{Client, Uri};
 use testcontainers::core::AccessMode;
 use testcontainers::{
@@ -217,7 +217,12 @@ impl DatadogTestAgent {
             .await;
         let res = client.get(uri).await.expect("Request failed");
         let status_code = res.status();
-        let body_bytes = to_bytes(res.into_body()).await.expect("Read failed");
+        let body_bytes = res
+            .into_body()
+            .collect()
+            .await
+            .expect("Read failed")
+            .to_bytes();
         let body_string = String::from_utf8(body_bytes.to_vec()).expect("Conversion failed");
 
         assert_eq!(

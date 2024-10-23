@@ -18,6 +18,7 @@ use ddcommon::tag::Tag;
 use ddcommon::{connector, tag, Endpoint};
 use dogstatsd_client::{new_flusher, Client, DogStatsDAction};
 use either::Either;
+use hyper::body::HttpBody;
 use hyper::http::uri::PathAndQuery;
 use hyper::{Body, Method, Uri};
 use log::{error, info};
@@ -481,7 +482,7 @@ impl TraceExporter {
                     Ok(response) => {
                         let response_status = response.status();
                         if !response_status.is_success() {
-                            let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+                            let body_bytes = response.into_body().collect().await?.to_bytes();
                             let response_body =
                                 String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
                             let resp_tag_res = &Tag::new("response_code", response_status.as_str());
@@ -504,7 +505,7 @@ impl TraceExporter {
                             }
                             anyhow::bail!("Agent did not accept traces: {response_body}");
                         }
-                        match hyper::body::to_bytes(response.into_body()).await {
+                        match response.into_body().collect().await {
                             Ok(body) => {
                                 self.emit_metric(
                                     HealthMetric::Count(
@@ -513,7 +514,7 @@ impl TraceExporter {
                                     ),
                                     None,
                                 );
-                                Ok(String::from_utf8_lossy(&body).to_string())
+                                Ok(String::from_utf8_lossy(&body.to_bytes()).to_string())
                             }
                             Err(err) => {
                                 self.emit_metric(
@@ -644,8 +645,8 @@ impl TraceExporter {
                 let send_data = SendData::new(size, tracer_payload, header_tags, &endpoint, None);
                 self.runtime.block_on(async {
                     match send_data.send().await.last_result {
-                        Ok(response) => match hyper::body::to_bytes(response.into_body()).await {
-                            Ok(body) => Ok(String::from_utf8_lossy(&body).to_string()),
+                        Ok(response) => match response.into_body().collect().await {
+                            Ok(body) => Ok(String::from_utf8_lossy(&body.to_bytes()).to_string()),
                             Err(err) => {
                                 error!("Error reading agent response body: {err}");
                                 self.emit_metric(

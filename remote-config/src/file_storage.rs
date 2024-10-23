@@ -47,7 +47,7 @@ pub struct RawFile<P> {
 
 pub struct RawFileContentsGuard<'a, P>(MutexGuard<'a, RawFileData<P>>);
 
-impl<'a, P> Deref for RawFileContentsGuard<'a, P> {
+impl<P> Deref for RawFileContentsGuard<'_, P> {
     type Target = P;
 
     fn deref(&self) -> &Self::Target {

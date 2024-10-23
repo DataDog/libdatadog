@@ -6,6 +6,7 @@ use datadog_remote_config::file_change_tracker::{Change, FilePath};
 use datadog_remote_config::file_storage::ParsedFileStorage;
 use datadog_remote_config::RemoteConfigProduct::ApmTracing;
 use datadog_remote_config::{RemoteConfigData, Target};
+use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -31,6 +32,7 @@ async fn main() {
             service: SERVICE.to_string(),
             env: ENV.to_string(),
             app_version: VERSION.to_string(),
+            tags: vec![Tag::new("test", "value").unwrap()],
         },
         RUNTIME_ID.to_string(),
         ConfigInvariants {

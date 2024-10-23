@@ -896,6 +896,7 @@ impl SidecarInterface for SidecarServer {
                 env_name.clone(),
                 service_name,
                 app_version.clone(),
+                global_tags.clone(),
             ),
         );
         app.set_metadata(env_name, app_version, global_tags);
@@ -953,7 +954,7 @@ impl SidecarInterface for SidecarServer {
             token: &Option<Cow<'static, str>>,
         ) {
             if let Some(mut endpoint) = endpoint {
-                endpoint.test_token = token.clone();
+                endpoint.test_token.clone_from(token);
                 set(endpoint).ok();
             }
         }

@@ -3,5 +3,4 @@
 
 /// This is an empty binary used to test the machinery of building bins
 /// in cargo test works
-
 fn main() {}

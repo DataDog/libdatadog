@@ -15,6 +15,7 @@ use datadog_remote_config::fetch::{
     MultiTargetStats, NotifyTarget, RefcountedFile,
 };
 use datadog_remote_config::{RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue, Target};
+use ddcommon::tag::Tag;
 use priority_queue::PriorityQueue;
 use sha2::{Digest, Sha224};
 use std::cmp::Reverse;
@@ -62,13 +63,14 @@ pub fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CS
     let mut hasher = ZwoHasher::default();
     id.hash(&mut hasher);
     target.hash(&mut hasher);
-    // datadog remote config, on macos we're restricted to 31 chars
-    CString::new(format!(
+    let mut path = format!(
         "/ddrc{}-{}",
         primary_sidecar_identifier(),
-        hasher.finish()
-    ))
-    .unwrap()
+        BASE64_URL_SAFE_NO_PAD.encode(hasher.finish().to_ne_bytes()),
+    );
+    // datadog remote config, on macos we're restricted to 31 chars
+    path.truncate(31); // should not be larger than 31 chars, but be sure.
+    CString::new(path).unwrap()
 }
 
 impl RemoteConfigReader {
@@ -329,11 +331,13 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         env: String,
         service: String,
         app_version: String,
+        tags: Vec<Tag>,
     ) -> ShmRemoteConfigsGuard<N> {
         let target = Arc::new(Target {
             service,
             env,
             app_version,
+            tags,
         });
         self.0
             .add_runtime(runtime_id.clone(), notify_target, &target);
@@ -603,6 +607,7 @@ mod tests {
             service: "service".to_string(),
             env: "env".to_string(),
             app_version: "1.3.5".to_string(),
+            tags: vec![],
         });
     }
 
@@ -670,6 +675,7 @@ mod tests {
             DUMMY_TARGET.env.to_string(),
             DUMMY_TARGET.service.to_string(),
             DUMMY_TARGET.app_version.to_string(),
+            DUMMY_TARGET.tags.clone(),
         );
 
         receiver.recv().await;
