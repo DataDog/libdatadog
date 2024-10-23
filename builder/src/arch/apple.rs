@@ -3,6 +3,8 @@
 
 use std::process::Command;
 
+use std::ffi::OsStr;
+
 pub const NATIVE_LIBS: &str =
     " -framework Security -framework CoreFoundation -liconv -lSystem -lresolv -lc -lm -liconv";
 pub const PROF_DYNAMIC_LIB: &str = "libdatadog_profiling.dylib";
@@ -38,3 +40,5 @@ pub fn strip_libraries(lib_path: &str) {
 }
 
 pub fn fix_soname(_lib_path: &str) {}
+
+pub fn add_additional_files(_lib_path: &str, _target_path: &OsStr) {}

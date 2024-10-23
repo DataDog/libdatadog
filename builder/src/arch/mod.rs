@@ -22,7 +22,9 @@ pub mod apple;
 #[cfg(target_os = "macos")]
 pub use crate::arch::apple::*;
 
-#[cfg(all(target_arch = "x86_64", target_os = "windows"))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_os = "windows")]
 pub mod windows;
-#[cfg(all(target_arch = "x86_64", target_os = "windows"))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(target_os = "windows")]
 pub use crate::arch::windows::*;

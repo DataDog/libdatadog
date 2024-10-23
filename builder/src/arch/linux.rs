@@ -3,6 +3,8 @@
 
 use std::process::Command;
 
+use std::ffi::OsStr;
+
 pub const NATIVE_LIBS: &str = " -ldl -lrt -lpthread -lc -lm -lrt -lpthread -lutil -ldl -lutil";
 pub const PROF_DYNAMIC_LIB: &str = "libdatadog_profiling.so";
 pub const PROF_STATIC_LIB: &str = "libdatadog_profiling.a";
@@ -11,14 +13,15 @@ pub const PROF_STATIC_LIB_FFI: &str = "libdatadog_profiling_ffi.a";
 pub const REMOVE_RPATH: bool = false;
 pub const BUILD_CRASHTRACKER: bool = true;
 
-#[allow(clippy::zombie_processes)]
 pub fn fix_rpath(lib_path: &str) {
     if REMOVE_RPATH {
-        Command::new("patchelf")
+        let mut patchelf = Command::new("patchelf")
             .arg("--remove-rpath")
             .arg(lib_path)
             .spawn()
-            .expect("failed to remove rpath");
+            .expect("failed to spawn patchelf");
+
+        patchelf.wait().expect("failed to remove rpath");
     }
 }
 
@@ -68,3 +71,5 @@ pub fn fix_soname(lib_path: &str) {
 
     patch_soname.wait().expect("failed to change the soname");
 }
+
+pub fn add_additional_files(_lib_path: &str, _target_path: &OsStr) {}
