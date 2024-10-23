@@ -43,5 +43,6 @@ use anyhow::Result;
 /// }
 /// ```
 pub trait Module {
+    fn build(&self) -> Result<()>;
     fn install(&self) -> Result<()>;
 }

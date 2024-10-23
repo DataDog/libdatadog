@@ -3,6 +3,8 @@
 
 use std::process::Command;
 
+use std::ffi::OsStr;
+
 pub const NATIVE_LIBS: &str = " -lssp_nonshared -lc";
 pub const PROF_DYNAMIC_LIB: &str = "libdatadog_profiling.so";
 pub const PROF_STATIC_LIB: &str = "libdatadog_profiling.a";
@@ -67,3 +69,5 @@ pub fn fix_soname(lib_path: &str) {
 
     patch_soname.wait().expect("failed to change the soname");
 }
+
+pub fn add_additional_files(_lib_path: &str, _target_path: &OsStr) {}
