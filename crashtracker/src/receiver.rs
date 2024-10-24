@@ -18,7 +18,7 @@ pub fn resolve_frames(
             .proc_info
             .as_ref()
             .context("Unable to resolve frames: No PID specified")?;
-        crash_info.resolve_names_from_process(proc_info.pid)?
+        crash_info.resolve_names_from_process(proc_info.pid)?;
     }
     Ok(())
 }
