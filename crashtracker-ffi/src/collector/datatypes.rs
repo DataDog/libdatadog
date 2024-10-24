@@ -81,12 +81,7 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
         let create_alt_stack = value.create_alt_stack;
         let endpoint = value.endpoint.cloned();
         let resolve_frames = value.resolve_frames;
-        Self::new(
-            additional_files,
-            create_alt_stack,
-            endpoint,
-            resolve_frames,
-        )
+        Self::new(additional_files, create_alt_stack, endpoint, resolve_frames)
     }
 }
 

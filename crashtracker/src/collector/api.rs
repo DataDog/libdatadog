@@ -4,9 +4,7 @@
 
 use crate::{
     clear_spans, clear_traces,
-    collector::crash_handler::{
-        configure_receiver, register_crash_handlers, restore_old_handlers,
-    },
+    collector::crash_handler::{configure_receiver, register_crash_handlers, restore_old_handlers},
     crash_info::CrashtrackerMetadata,
     reset_counters,
     shared::configuration::CrashtrackerReceiverConfig,
@@ -125,12 +123,8 @@ fn test_crash() -> anyhow::Result<()> {
         stderr_filename,
         stdout_filename,
     )?;
-    let config = CrashtrackerConfiguration::new(
-        vec![],
-        create_alt_stack,
-        endpoint,
-        resolve_frames,
-    )?;
+    let config =
+        CrashtrackerConfiguration::new(vec![], create_alt_stack, endpoint, resolve_frames)?;
     let metadata = CrashtrackerMetadata::new(
         "libname".to_string(),
         "version".to_string(),

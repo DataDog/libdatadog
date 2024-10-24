@@ -24,9 +24,9 @@
 //! 2. The receiver process, which is spawned by the signal handler.  It is connected by an
 //!    anynomous AF_UNIX `socketpair()` to the parent process. When a crash occurs, the receiver
 //!    gathers the information from the pipe, adds additional data about the system state (e.g.
-//!    /proc/cpuinfo and /proc/meminfo), formats it into a crash report, uploads it to the
-//!    backend, and then exits. The signal handler must wait for the receiver in order to reap its
-//!    exit status.
+//!    /proc/cpuinfo and /proc/meminfo), formats it into a crash report, uploads it to the backend,
+//!    and then exits. The signal handler must wait for the receiver in order to reap its exit
+//!    status.
 //!
 //! Data collected:
 //! 1. The data collected by the crash-handler includes:
@@ -54,9 +54,9 @@ mod shared;
 
 #[cfg(all(unix, feature = "collector"))]
 pub use collector::{
-    begin_op, clear_spans, clear_traces, end_op, init,
-    insert_span, insert_trace, on_fork, remove_span, remove_trace, reset_counters,
-    shutdown_crash_handler, update_config, update_metadata, OpTypes,
+    begin_op, clear_spans, clear_traces, end_op, init, insert_span, insert_trace, on_fork,
+    remove_span, remove_trace, reset_counters, shutdown_crash_handler, update_config,
+    update_metadata, OpTypes,
 };
 
 pub use crash_info::*;

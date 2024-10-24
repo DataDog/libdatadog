@@ -9,18 +9,21 @@ use crate::crash_info::CrashtrackerMetadata;
 use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
 use anyhow::Context;
 use libc::{
-    c_void, dup2, execve, mmap, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE, PROT_READ,
-    PROT_WRITE, SIGSTKSZ, vfork, _exit,
+    _exit, c_void, dup2, execve, mmap, sigaltstack, siginfo_t, vfork, MAP_ANON, MAP_FAILED,
+    MAP_PRIVATE, PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ,
 };
-use nix::sys::signal::{SaFlags, SigAction, SigHandler, self};
-use nix::sys::socket;
-use nix::sys::wait::{waitpid, WaitStatus, WaitPidFlag};
-use nix::unistd::{close, Pid};
 use nix::poll::{poll, PollFd, PollFlags};
+use nix::sys::signal::{self, SaFlags, SigAction, SigHandler};
+use nix::sys::socket;
+use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+use nix::unistd::{close, Pid};
 use std::ffi::CString;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
-use std::os::unix::{io::{BorrowedFd, FromRawFd, IntoRawFd, RawFd}, net::UnixStream};
+use std::os::unix::{
+    io::{BorrowedFd, FromRawFd, IntoRawFd, RawFd},
+    net::UnixStream,
+};
 use std::ptr;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64};
@@ -61,24 +64,41 @@ impl<const N: usize> SaGuard<N> {
 
         // Save the current signal mask and block all signals except the suppressed ones
         let mut old_sigmask = signal::SigSet::empty();
-        signal::sigprocmask(signal::SigmaskHow::SIG_BLOCK, Some(&suppressed_signals), Some(&mut old_sigmask))?;
+        signal::sigprocmask(
+            signal::SigmaskHow::SIG_BLOCK,
+            Some(&suppressed_signals),
+            Some(&mut old_sigmask),
+        )?;
 
         // Initialize array for saving old signal actions
-        let mut old_sigactions = [(signal::Signal::SIGINT, SigAction::new(SigHandler::SigIgn, SaFlags::empty(), signal::SigSet::empty())); N];
+        let mut old_sigactions = [(
+            signal::Signal::SIGINT,
+            SigAction::new(
+                SigHandler::SigIgn,
+                SaFlags::empty(),
+                signal::SigSet::empty(),
+            ),
+        ); N];
 
         // Set SIG_IGN for the specified signals and save old handlers
         for (i, &signal) in signals.iter().enumerate() {
             let old_sigaction = unsafe {
-                signal::sigaction(signal, &SigAction::new(
-                    SigHandler::SigIgn,
-                    SaFlags::empty(),
-                    signal::SigSet::empty(),
-                ))?
+                signal::sigaction(
+                    signal,
+                    &SigAction::new(
+                        SigHandler::SigIgn,
+                        SaFlags::empty(),
+                        signal::SigSet::empty(),
+                    ),
+                )?
             };
             old_sigactions[i] = (signal, old_sigaction);
         }
 
-        Ok(Self { old_sigactions, old_sigmask })
+        Ok(Self {
+            old_sigactions,
+            old_sigmask,
+        })
     }
 }
 
@@ -92,40 +112,40 @@ impl<const N: usize> Drop for SaGuard<N> {
         }
 
         // Restore the original signal mask
-        let _ = signal::sigprocmask(signal::SigmaskHow::SIG_SETMASK, Some(&self.old_sigmask), None);
+        let _ = signal::sigprocmask(
+            signal::SigmaskHow::SIG_SETMASK,
+            Some(&self.old_sigmask),
+            None,
+        );
     }
 }
 
 /// Opens a file for writing (in append mode) or opens /dev/null
 /// * If the filename is provided, it will try to open (creating if needed) the specified file.
 ///   Failure to do so is an error.
-/// * If the filename is not provided, it will open /dev/null
-///   Some systems can fail to provide `/dev/null` (e.g., chroot jails), so this failure is also an
-///   error.
-/// * Using Stdio::null() is more direct, but it will cause a panic in environments where
-///   /dev/null is not available.
+/// * If the filename is not provided, it will open /dev/null Some systems can fail to provide
+///   `/dev/null` (e.g., chroot jails), so this failure is also an error.
+/// * Using Stdio::null() is more direct, but it will cause a panic in environments where /dev/null
+///   is not available.
 fn open_file_or_quiet(filename: Option<&str>) -> anyhow::Result<RawFd> {
-    let file = filename
-        .map_or_else(
-            || {
-                File::open("/dev/null").context("Failed to open /dev/null")
-            },
-            |f| {
-                OpenOptions::new()
-                    .append(true)
-                    .create(true)
-                    .open(f)
-                    .with_context(|| format!("Failed to open or create file: {f}"))
-            }
-        )?;
+    let file = filename.map_or_else(
+        || File::open("/dev/null").context("Failed to open /dev/null"),
+        |f| {
+            OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(f)
+                .with_context(|| format!("Failed to open or create file: {f}"))
+        },
+    )?;
     Ok(file.into_raw_fd())
 }
 
 /// Non-blocking child reaper
 /// * If the child process has exited, return true
 /// * If the child process cannot be found, return false
-/// * If the child is still alive, or some other error occurs, return an error
-///   Either way, after this returns, you probably don't have to do anything else.
+/// * If the child is still alive, or some other error occurs, return an error Either way, after
+///   this returns, you probably don't have to do anything else.
 fn reap_child_non_blocking(pid: Pid, timeout_ms: u64) -> anyhow::Result<bool> {
     let timeout = Duration::from_millis(timeout_ms);
     let start_time = Instant::now();
@@ -155,7 +175,13 @@ fn reap_child_non_blocking(pid: Pid, timeout_ms: u64) -> anyhow::Result<bool> {
 
 /// Wrapper around the child process that will run the crash receiver
 /// TODO the execve arg coersion requires allocation, which we should avoid from a signal handler.
-fn run_receiver_child(uds_parent: RawFd, uds_child: RawFd, stderr: RawFd, stdout: RawFd, config: &CrashtrackerReceiverConfig) -> ! {
+fn run_receiver_child(
+    uds_parent: RawFd,
+    uds_child: RawFd,
+    stderr: RawFd,
+    stdout: RawFd,
+    config: &CrashtrackerReceiverConfig,
+) -> ! {
     // File descriptor management
     unsafe {
         dup2(uds_child, 0);
@@ -171,7 +197,8 @@ fn run_receiver_child(uds_parent: RawFd, uds_child: RawFd, stderr: RawFd, stdout
 
     // Conform inputs to execve calling convention
     // Bind the CString to a variable to extend its lifetime
-    let binary_path = CString::new(config.path_to_receiver_binary.as_str()).expect("Failed to convert binary path to CString");
+    let binary_path = CString::new(config.path_to_receiver_binary.as_str())
+        .expect("Failed to convert binary path to CString");
 
     // Collect arguments as CString and store them in a Vec to extend their lifetimes
     let args_cstrings: Vec<CString> = config
@@ -181,40 +208,43 @@ fn run_receiver_child(uds_parent: RawFd, uds_child: RawFd, stderr: RawFd, stdout
         .collect();
 
     // Collect pointers to each argument
-    let mut args_ptrs: Vec<*const i8> = args_cstrings
-        .iter()
-        .map(|arg| arg.as_ptr())
-        .collect();
+    let mut args_ptrs: Vec<*const i8> = args_cstrings.iter().map(|arg| arg.as_ptr()).collect();
     args_ptrs.push(std::ptr::null()); // Null-terminate the argument list
 
     // Collect environment variables as CString and store them in a Vec to extend their lifetimes
     let mut env_vars_cstrings = Vec::with_capacity(config.env.len());
     for (key, value) in &config.env {
         let env_str = format!("{key}={value}");
-        let cstring = CString::new(env_str).expect("Failed to convert environment variable to CString");
+        let cstring =
+            CString::new(env_str).expect("Failed to convert environment variable to CString");
         env_vars_cstrings.push(cstring);
     }
-    let mut env_vars_ptrs: Vec<*const i8> = env_vars_cstrings
-        .iter()
-        .map(|env| env.as_ptr())
-        .collect();
+    let mut env_vars_ptrs: Vec<*const i8> =
+        env_vars_cstrings.iter().map(|env| env.as_ptr()).collect();
     env_vars_ptrs.push(std::ptr::null()); // Null-terminate the environment variable list
 
     // Change into the crashtracking receiver
     unsafe {
         execve(
-            binary_path.as_ptr(),  // Binary path CString pointer
-            args_ptrs.as_ptr(),    // Argument list pointers
-            env_vars_ptrs.as_ptr() // Environment variable pointers
+            binary_path.as_ptr(),   // Binary path CString pointer
+            args_ptrs.as_ptr(),     // Argument list pointers
+            env_vars_ptrs.as_ptr(), // Environment variable pointers
         );
     }
 
     // If we reach this point, execve failed, so just exit
-    unsafe { _exit(-1); }
+    unsafe {
+        _exit(-1);
+    }
 }
 
-
-fn run_receiver_parent(_uds_parent: RawFd, uds_child: RawFd, _stderr: RawFd, _stdout: RawFd, _config: &CrashtrackerReceiverConfig) {
+fn run_receiver_parent(
+    _uds_parent: RawFd,
+    uds_child: RawFd,
+    _stderr: RawFd,
+    _stdout: RawFd,
+    _config: &CrashtrackerReceiverConfig,
+) {
     let _ = close(uds_child);
 }
 
@@ -226,7 +256,10 @@ fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<bool> {
     match poll(&mut [poll_fd], timeout_ms)? {
         -1 => Err(anyhow::anyhow!("poll failed")),
         0 => Ok(false),
-        _ => match poll_fd.revents().ok_or_else(|| anyhow::anyhow!("No revents found"))? {
+        _ => match poll_fd
+            .revents()
+            .ok_or_else(|| anyhow::anyhow!("No revents found"))?
+        {
             revents if revents.contains(PollFlags::POLLHUP) => Ok(true),
             _ => Err(anyhow::anyhow!("poll returned unexpected result")),
         },
@@ -255,8 +288,9 @@ fn make_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<Receiver
         socket::SockType::Stream,
         None,
         socket::SockFlag::empty(),
-    ).context("Failed to create Unix domain socket pair")
-        .map(|(a, b)| (a.into_raw_fd(), b.into_raw_fd()))?;
+    )
+    .context("Failed to create Unix domain socket pair")
+    .map(|(a, b)| (a.into_raw_fd(), b.into_raw_fd()))?;
 
     // We need to spawn a process without calling atfork handlers, since this is happening inside
     // of a signal handler.  Moreover, preference is given to multiplatform-uniform solutions.
@@ -273,7 +307,10 @@ fn make_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<Receiver
         pid if pid > 0 => {
             // Parent
             run_receiver_parent(uds_parent, uds_child, stderr, stdout, config);
-            Ok(Receiver { receiver_uds: uds_parent, receiver_pid: pid })
+            Ok(Receiver {
+                receiver_uds: uds_parent,
+                receiver_pid: pid,
+            })
         }
         _ => {
             // Error
@@ -281,7 +318,6 @@ fn make_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<Receiver
         }
     }
 }
-
 
 /// Updates the crashtracker metadata for this process
 /// Metadata is stored in a global variable and sent to the crashtracking
@@ -428,7 +464,10 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     let (_metadata, metadata_string) = unsafe { metadata_ptr.as_ref().context("metadata ptr")? };
 
     let receiver_config = RECEIVER_CONFIG.swap(ptr::null_mut(), SeqCst);
-    anyhow::ensure!(!receiver_config.is_null(), "No crashtracking receiver config");
+    anyhow::ensure!(
+        !receiver_config.is_null(),
+        "No crashtracking receiver config"
+    );
     let receiver_config = unsafe { receiver_config.as_ref().context("receiver config")? };
 
     // During the execution of this signal handler, block ALL other signals, especially because we
@@ -568,10 +607,9 @@ unsafe fn set_alt_stack() -> anyhow::Result<()> {
     }
 
     let page_size = page_size::get();
-    let sigalstack_base_size = std::cmp::max(SIGSTKSZ, 10 * page_size);
     let stackp = mmap(
         ptr::null_mut(),
-        sigalstack_base_size + page_size,
+        SIGSTKSZ + page_size::get(),
         PROT_READ | PROT_WRITE,
         MAP_PRIVATE | MAP_ANON,
         -1,
@@ -591,7 +629,7 @@ unsafe fn set_alt_stack() -> anyhow::Result<()> {
     let stack = libc::stack_t {
         ss_sp: stackp,
         ss_flags: 0,
-        ss_size: sigalstack_base_size,
+        ss_size: SIGSTKSZ,
     };
     let rval = sigaltstack(&stack, ptr::null_mut());
     anyhow::ensure!(rval == 0, "sigaltstack failed {rval}");
