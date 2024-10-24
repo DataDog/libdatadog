@@ -11,6 +11,7 @@ pub const PROF_STATIC_LIB_FFI: &str = "libdatadog_profiling_ffi.a";
 pub const REMOVE_RPATH: bool = false;
 pub const BUILD_CRASHTRACKER: bool = true;
 
+#[allow(clippy::zombie_processes)]
 pub fn fix_rpath(lib_path: &str) {
     if REMOVE_RPATH {
         Command::new("patchelf")

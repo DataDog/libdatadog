@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-/// health_metrics holds data to emit info about the health of the data-pipeline
+//! health_metrics holds data to emit info about the health of the data-pipeline
 
 pub(crate) const STAT_SEND_TRACES: &str = "datadog.libdatadog.send.traces";
 pub(crate) const STAT_SEND_TRACES_ERRORS: &str = "datadog.libdatadog.send.traces.errors";

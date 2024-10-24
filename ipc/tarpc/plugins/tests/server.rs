@@ -14,6 +14,7 @@ trait Foo {
 
 #[test]
 fn type_generation_works() {
+    #[allow(non_local_definitions)]
     #[tarpc::server]
     impl Foo for () {
         async fn two_part(self, _: context::Context, s: String, i: i32) -> (String, i32) {

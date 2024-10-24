@@ -25,7 +25,7 @@ jobs:
           android: true
           dotnet: true
           haskell: true
-          large-packages: false
+          large-packages: true
           docker-images: false
           swap-storage: true
 
@@ -47,7 +47,7 @@ jobs:
       - name: Install cargo nextest
         uses: taiki-e/install-action@v2
         with: 
-          tool: nextest@0.9.72
+          tool: nextest@0.9.81
       - name: "Remove nextest CI report"
         shell: bash
         run: rm -rf target/nextest/ci/junit.xml
@@ -127,9 +127,6 @@ jobs:
         with:
           rust_version: ${{ matrix.rust_version }}
           build_profile: "release"
-
-      - name: Install nightly toolchain
-        run: rustup install nightly
 
       - name: Install Rust ${{ matrix.rust_version }}
         if: matrix.rust_version != ''

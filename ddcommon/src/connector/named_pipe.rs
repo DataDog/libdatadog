@@ -34,10 +34,10 @@ pub fn named_pipe_path_from_uri(uri: &hyper::Uri) -> anyhow::Result<PathBuf> {
     )
     .map_err(|_| super::errors::Error::InvalidUrl)?;
 
-    return match String::from_utf8(path) {
+    match String::from_utf8(path) {
         Ok(s) => Ok(PathBuf::from(s.as_str())),
         _ => Err(super::errors::Error::InvalidUrl.into()),
-    };
+    }
 }
 
 #[test]
