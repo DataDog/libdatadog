@@ -375,7 +375,7 @@ pub fn update_config(config: CrashtrackerConfiguration) -> anyhow::Result<()> {
 ///   No other crash-handler functions should be called concurrently.
 /// ATOMICITY:
 ///     This function uses a swap on an atomic pointer.
-pub fn configure_receiver(config: CrashtrackerReceiverConfig) -> () {
+pub fn configure_receiver(config: CrashtrackerReceiverConfig) {
     let box_ptr = Box::into_raw(Box::new(config));
     let old = RECEIVER_CONFIG.swap(box_ptr, SeqCst);
     if !old.is_null() {
@@ -478,11 +478,7 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     // disrupted.
     let res: Result<(), anyhow::Error>;
     {
-        let guard = SaGuard::<2>::new(&[signal::SIGCHLD, signal::SIGPIPE]);
-        // Check whether guard is an error
-        if let Err(e) = guard {
-            return Err(e);
-        }
+        let guard = SaGuard::<2>::new(&[signal::SIGCHLD, signal::SIGPIPE])?;
 
         // Launch the receiver process
         let receiver = make_receiver(receiver_config)?;
