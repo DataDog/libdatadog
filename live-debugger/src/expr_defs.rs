@@ -124,7 +124,7 @@ pub enum Condition {
 
 struct NonAssocBoolOp<'a>(&'a Condition, bool);
 
-impl<'a> Display for NonAssocBoolOp<'a> {
+impl Display for NonAssocBoolOp<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         if self.1 {
             write!(f, "({})", self.0)

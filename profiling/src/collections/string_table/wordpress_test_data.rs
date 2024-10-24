@@ -8,7 +8,7 @@
 ///
 /// For various tests such as using MIRI, it's too slow to decompress, open,
 /// parse, and extract the strings on-demand.
-pub const WORDPRESS_STRINGS: [&str; 1059] = [
+pub static WORDPRESS_STRINGS: [&str; 1059] = [
 	"",
 	"sample",
 	"count",

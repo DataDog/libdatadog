@@ -33,19 +33,19 @@ impl<'a, T: 'a> core::ops::Deref for Slice<'a, T> {
     }
 }
 
-impl<'a, T: Debug> Debug for Slice<'a, T> {
+impl<T: Debug> Debug for Slice<'_, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.as_slice().fmt(f)
     }
 }
 
-impl<'a, T: Eq> PartialEq<Self> for Slice<'a, T> {
+impl<T: Eq> PartialEq<Self> for Slice<'_, T> {
     fn eq(&self, other: &Self) -> bool {
         **self == **other
     }
 }
 
-impl<'a, T: Eq> Eq for Slice<'a, T> {}
+impl<T: Eq> Eq for Slice<'_, T> {}
 
 /// Use to represent strings -- should be valid UTF-8.
 pub type CharSlice<'a> = Slice<'a, c_char>;
@@ -147,7 +147,7 @@ impl<'a, T: 'a> Slice<'a, T> {
     }
 }
 
-impl<'a, T> Default for Slice<'a, T> {
+impl<T> Default for Slice<'_, T> {
     fn default() -> Self {
         Self::empty()
     }

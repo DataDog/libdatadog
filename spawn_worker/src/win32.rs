@@ -231,6 +231,7 @@ impl SpawnWorker {
         }
     }
 
+    #[allow(clippy::manual_c_str_literals)] // c"NUL" from 1.77 and up
     fn open_null(read: bool) -> HANDLE {
         let mut sa = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as DWORD,

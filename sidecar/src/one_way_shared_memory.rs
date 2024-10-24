@@ -118,7 +118,7 @@ where
     OneWayShmReader<T, D>: ReaderOpener<T>,
 {
     // bool is true when it changed
-    pub fn read<'a>(&'a mut self) -> (bool, &[u8]) {
+    pub fn read<'a>(&'a mut self) -> (bool, &'a [u8]) {
         if let Some(ref handle) = self.handle {
             let source_data: &RawData =
                 unsafe { reinterpret_u8_as_u64_slice(handle.as_slice()) }.into();

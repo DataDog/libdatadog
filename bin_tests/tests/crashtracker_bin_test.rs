@@ -130,6 +130,7 @@ fn assert_telemetry_message(crash_telemetry: &[u8]) {
 #[test]
 #[cfg_attr(miri, ignore)]
 #[cfg(unix)]
+#[allow(clippy::zombie_processes)]
 fn crash_tracking_empty_endpoint() {
     use std::os::unix::net::UnixListener;
 
