@@ -33,7 +33,3 @@ bench = false
 [[bin]]
 name = "crashtracker_receiver"
 bench = false
-
-[[bin]]
-name = "crashtracker_unix_socket_receiver"
-bench = false

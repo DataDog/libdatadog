@@ -66,7 +66,6 @@ pub struct Config<'a> {
     pub endpoint: Option<&'a Endpoint>,
     pub resolve_frames: StacktraceCollection,
     pub timeout_secs: u64,
-    pub wait_for_receiver: bool,
 }
 
 impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration {
@@ -82,13 +81,11 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
         let create_alt_stack = value.create_alt_stack;
         let endpoint = value.endpoint.cloned();
         let resolve_frames = value.resolve_frames;
-        let wait_for_receiver = value.wait_for_receiver;
         Self::new(
             additional_files,
             create_alt_stack,
             endpoint,
             resolve_frames,
-            wait_for_receiver,
         )
     }
 }

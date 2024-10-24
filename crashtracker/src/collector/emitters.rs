@@ -34,7 +34,7 @@ unsafe fn emit_backtrace_by_frames(
     backtrace::trace_unsynchronized(|frame| {
         // Write the values we can get without resolving, since these seem to
         // be crash safe in my experiments.
-        write! {w, "{{"}.unwrap();
+        write!(w, "{{").unwrap();
         write!(w, "\"ip\": \"{:?}\", ", frame.ip()).unwrap();
         if let Some(module_base_address) = frame.module_base_address() {
             write!(w, "\"module_base_address\": \"{module_base_address:?}\", ",).unwrap();
@@ -91,7 +91,7 @@ unsafe fn emit_backtrace_by_frames(
         writeln!(w, "}}").unwrap();
         true // keep going to the next frame
     });
-    writeln! {w, "{DD_CRASHTRACK_END_STACKTRACE}"}.unwrap();
+    writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}").unwrap();
     Ok(())
 }
 

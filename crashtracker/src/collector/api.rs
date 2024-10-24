@@ -5,8 +5,7 @@
 use crate::{
     clear_spans, clear_traces,
     collector::crash_handler::{
-        ensure_receiver, ensure_socket, register_crash_handlers, restore_old_handlers,
-        shutdown_receiver, update_receiver_after_fork,
+        configure_receiver, register_crash_handlers, restore_old_handlers,
     },
     crash_info::CrashtrackerMetadata,
     reset_counters,
@@ -31,18 +30,13 @@ use crate::{
 ///     unexpected crash-handling behaviour.
 pub fn shutdown_crash_handler() -> anyhow::Result<()> {
     restore_old_handlers(false)?;
-    shutdown_receiver()?;
     Ok(())
 }
 
 /// Reinitialize the crash-tracking infrastructure after a fork.
 /// This should be one of the first things done after a fork, to minimize the
 /// chance that a crash occurs between the fork, and this call.
-/// In particular, reset the counters that track the profiler state machine,
-/// and start a new receiver to collect data from this fork.
-/// NOTE: An alternative design would be to have a 1:many sidecar listening on a
-/// socket instead of 1:1 receiver listening on a pipe, but the only real
-/// advantage would be to have fewer processes in `ps -a`.
+/// In particular, reset the counters that track the profiler state machine.
 ///
 /// PRECONDITIONS:
 ///     This function assumes that the crash-tracker has previously been
@@ -68,9 +62,7 @@ pub fn on_fork(
 
     update_metadata(metadata)?;
     update_config(config)?;
-
-    // See function level comment about why we do this.
-    update_receiver_after_fork(&receiver_config)?;
+    configure_receiver(receiver_config);
     Ok(())
 }
 
@@ -84,7 +76,7 @@ pub fn on_fork(
 /// ATOMICITY:
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
-pub fn init_with_receiver(
+pub fn init(
     config: CrashtrackerConfiguration,
     receiver_config: CrashtrackerReceiverConfig,
     metadata: CrashtrackerMetadata,
@@ -94,32 +86,7 @@ pub fn init_with_receiver(
     let create_alt_stack = config.create_alt_stack;
     update_metadata(metadata)?;
     update_config(config)?;
-    ensure_receiver(&receiver_config)?;
-    register_crash_handlers(create_alt_stack)?;
-    Ok(())
-}
-
-/// Initialize the crash-tracking infrastructure.
-///
-/// PRECONDITIONS:
-///     None.
-/// SAFETY:
-///     Crash-tracking functions are not reentrant.
-///     No other crash-handler functions should be called concurrently.
-/// ATOMICITY:
-///     This function is not atomic. A crash during its execution may lead to
-///     unexpected crash-handling behaviour.
-pub fn init_with_unix_socket(
-    config: CrashtrackerConfiguration,
-    socket_path: &str,
-    metadata: CrashtrackerMetadata,
-) -> anyhow::Result<()> {
-    // Setup the receiver first, so that if there is a crash detected it has
-    // somewhere to go.
-    let create_alt_stack = config.create_alt_stack;
-    update_metadata(metadata)?;
-    update_config(config)?;
-    ensure_socket(socket_path)?;
+    configure_receiver(receiver_config);
     register_crash_handlers(create_alt_stack)?;
     Ok(())
 }
@@ -146,12 +113,11 @@ fn test_crash() -> anyhow::Result<()> {
     let endpoint = Some(Endpoint::from_slice(&output_url));
 
     let path_to_receiver_binary =
-        "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
+        "/home/ubuntu/dev/libdatadog_ct/target/release/build/builder-5add66ea14bef616/out/build/libdatadog-crashtracking-receiver".to_string();
     let create_alt_stack = true;
     let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
-    let wait_for_receiver = true;
     let receiver_config = CrashtrackerReceiverConfig::new(
         vec![],
         vec![],
@@ -164,7 +130,6 @@ fn test_crash() -> anyhow::Result<()> {
         create_alt_stack,
         endpoint,
         resolve_frames,
-        wait_for_receiver,
     )?;
     let metadata = CrashtrackerMetadata::new(
         "libname".to_string(),
@@ -172,7 +137,7 @@ fn test_crash() -> anyhow::Result<()> {
         "family".to_string(),
         vec![],
     );
-    init_with_receiver(config, receiver_config, metadata)?;
+    init(config, receiver_config, metadata)?;
     begin_op(crate::OpTypes::ProfilerCollectingSample)?;
     super::insert_span(42)?;
     super::insert_trace(u128::MAX)?;
