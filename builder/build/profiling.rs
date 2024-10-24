@@ -3,12 +3,25 @@
 
 use crate::arch;
 use crate::module::Module;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::ffi::OsStr;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::rc::Rc;
+
+fn file_replace(file_in: &str, file_out: &str, target: &str, replace: &str) -> Result<()> {
+    let content = fs::read_to_string(file_in)?;
+    let new = content.replace(target, replace);
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(file_out)?;
+    file.write_all(new.as_bytes())
+        .map_err(|err| anyhow!("failed to write file: {}", err))
+}
 
 pub struct Profiling {
     pub source_include: Rc<str>,
@@ -76,30 +89,19 @@ impl Profiling {
         ];
 
         //Create directory
-        // let pc_dir: PathBuf = [&self, "lib/pkgconfig"].iter().collect();
         let pc_dir = Path::new(self.target_pkconfig.as_ref());
         fs::create_dir_all(pc_dir).expect("Failed to create pkgconfig directory");
 
         // Create files
         for file in files.iter() {
             let file_in = "../profiling-ffi/".to_string() + file + ".in";
-            let output = Command::new("sed")
-                .arg("s/@Datadog_VERSION@/".to_string() + &self.version + "/g")
-                .arg(&file_in)
-                .output()
-                .expect("sed command failed");
 
-            let pc_file: PathBuf = [pc_dir.as_os_str(), OsStr::new(file)].iter().collect();
-            fs::write(&pc_file, &output.stdout).expect("writing pc file failed");
+            let pc_file = pc_dir.to_str().unwrap().to_string() + "/" + *file;
+
+            file_replace(&file_in, &pc_file, "@Datadog_VERSION@", &self.version)?;
 
             if *file == files[2] {
-                let output = Command::new("sed")
-                    .arg("s/@Datadog_LIBRARIES@/".to_string() + arch::NATIVE_LIBS + "/g")
-                    .arg(&file_in)
-                    .output()
-                    .expect("sed command failed");
-
-                fs::write(&pc_file, &output.stdout).expect("writing pc file failed");
+                file_replace(&file_in, &pc_file, "@Datadog_LIBRARIES@", arch::NATIVE_LIBS)?;
             }
         }
         Ok(())
