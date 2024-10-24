@@ -34,8 +34,8 @@ const INFO_ENDPOINT: &str = "/info";
 
 // Keys used for sampling
 const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
-const SINGLE_SPAN_SAMPLING_MECHANISM: &str = "_dd.span_sampling.mechanism";
-const ANALYTICS_SAMPLE_RATE_KEY: &str = "_dd1.sr.eausr";
+const SAMPLING_SINGLE_SPAN_MECHANISM: &str = "_dd.span_sampling.mechanism";
+const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 
 /// TraceExporterInputFormat represents the format of the input traces.
 /// The input format can be either Proxy or V0.4, where V0.4 is the default.
@@ -120,9 +120,9 @@ fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) {
             // SingleSpanSampler and AnalyzedSpansSampler
             else if span
                 .metrics
-                .get(SINGLE_SPAN_SAMPLING_MECHANISM)
+                .get(SAMPLING_SINGLE_SPAN_MECHANISM)
                 .is_some_and(|m| *m == 8.0)
-                || span.metrics.contains_key(ANALYTICS_SAMPLE_RATE_KEY)
+                || span.metrics.contains_key(SAMPLING_ANALYTICS_RATE_KEY)
             {
                 // We send spans sampled by single-span sampling or analyzed spans
                 sampled_indexes.push(index);
@@ -1064,7 +1064,7 @@ mod tests {
             pb::Span {
                 span_id: 2,
                 parent_id: 1,
-                metrics: HashMap::from([(SINGLE_SPAN_SAMPLING_MECHANISM.to_string(), 8.0)]),
+                metrics: HashMap::from([(SAMPLING_SINGLE_SPAN_MECHANISM.to_string(), 8.0)]),
                 ..Default::default()
             },
         ];
@@ -1080,7 +1080,7 @@ mod tests {
             pb::Span {
                 span_id: 2,
                 parent_id: 1,
-                metrics: HashMap::from([(ANALYTICS_SAMPLE_RATE_KEY.to_string(), 1.0)]),
+                metrics: HashMap::from([(SAMPLING_ANALYTICS_RATE_KEY.to_string(), 1.0)]),
                 ..Default::default()
             },
         ];
