@@ -46,7 +46,10 @@ impl<'a> From<TracerHeaderTags<'a>> for HashMap<&'static str, String> {
                 "datadog-meta-lang-interpreter",
                 tags.lang_interpreter.to_string(),
             ),
-            ("datadog-meta-lang-vendor", tags.lang_vendor.to_string()),
+            (
+                "datadog-meta-lang-interpreter-vendor",
+                tags.lang_vendor.to_string(),
+            ),
             (
                 "datadog-meta-tracer-version",
                 tags.tracer_version.to_string(),
@@ -83,7 +86,7 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
                 "datadog-meta-lang" => tags.lang,
                 "datadog-meta-lang-version" => tags.lang_version,
                 "datadog-meta-lang-interpreter" => tags.lang_interpreter,
-                "datadog-meta-lang-vendor" => tags.lang_vendor,
+                "datadog-meta-lang-interpreter-vendor" => tags.lang_vendor,
                 "datadog-meta-tracer-version" => tags.tracer_version,
                 "datadog-container-id" => tags.container_id,
             }
@@ -125,7 +128,10 @@ mod tests {
             map.get("datadog-meta-lang-interpreter").unwrap(),
             "interpreter"
         );
-        assert_eq!(map.get("datadog-meta-lang-vendor").unwrap(), "vendor");
+        assert_eq!(
+            map.get("datadog-meta-lang-interpreter-vendor").unwrap(),
+            "vendor"
+        );
         assert_eq!(map.get("datadog-meta-tracer-version").unwrap(), "1.0");
         assert_eq!(map.get("datadog-container-id").unwrap(), "id");
         assert_eq!(
@@ -156,7 +162,10 @@ mod tests {
             map.get("datadog-meta-lang-interpreter").unwrap(),
             "interpreter"
         );
-        assert_eq!(map.get("datadog-meta-lang-vendor").unwrap(), "vendor");
+        assert_eq!(
+            map.get("datadog-meta-lang-interpreter-vendor").unwrap(),
+            "vendor"
+        );
         assert_eq!(map.get("datadog-meta-tracer-version").unwrap(), "1.0");
         assert_eq!(map.get("datadog-container-id"), None);
         assert_eq!(map.get("datadog-client-computed-top-level"), None);
@@ -173,7 +182,10 @@ mod tests {
             "datadog-meta-lang-interpreter",
             "interpreter".parse().unwrap(),
         );
-        header_map.insert("datadog-meta-lang-vendor", "vendor".parse().unwrap());
+        header_map.insert(
+            "datadog-meta-lang-interpreter-vendor",
+            "vendor".parse().unwrap(),
+        );
         header_map.insert("datadog-meta-tracer-version", "1.0".parse().unwrap());
         header_map.insert("datadog-container-id", "id".parse().unwrap());
         header_map.insert("datadog-client-computed-stats", "true".parse().unwrap());
