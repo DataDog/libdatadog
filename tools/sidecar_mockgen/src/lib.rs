@@ -62,7 +62,13 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
                     #[cfg(target_os = "macos")]
                     let name = &name[1..];
                     _ = match sym.kind() {
-                        SymbolKind::Text => writeln!(generated, "void {}() {{}}", name),
+                        SymbolKind::Text => {
+                            if !sym.is_weak() {
+                                writeln!(generated, "void {}() {{}}", name)
+                            } else {
+                                Ok(())
+                            }
+                        }
                         // Ignore symbols of size 0, like _GLOBAL_OFFSET_TABLE_ on alpine
                         SymbolKind::Data | SymbolKind::Unknown => {
                             if sym.size() > 0 {

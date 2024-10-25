@@ -170,6 +170,7 @@ fn crash_tracking_empty_endpoint_stdin() {
 }
 
 #[cfg(unix)]
+#[allow(clippy::zombie_processes)]
 fn crash_tracking_empty_endpoint_inner(receiver_type: ReceiverType) {
     use std::os::unix::net::UnixListener;
 

@@ -48,7 +48,7 @@ pub enum IntermediateValue<'a, I> {
     Referenced(&'a I),
 }
 
-impl<'a, I> Clone for IntermediateValue<'a, I> {
+impl<I> Clone for IntermediateValue<'_, I> {
     fn clone(&self) -> Self {
         match self {
             IntermediateValue::String(s) => IntermediateValue::String(s.clone()),
@@ -235,7 +235,7 @@ struct Eval<'a, 'e, I, E: Evaluator<'e, I>> {
     it: Option<&'e I>,
 }
 
-impl<'a, 'e, I, E: Evaluator<'e, I>> Eval<'a, 'e, I, E> {
+impl<'e, I, E: Evaluator<'e, I>> Eval<'_, 'e, I, E> {
     fn iref_string(&mut self, value: &'e I) -> Cow<'e, str> {
         self.eval.get_string(value)
     }

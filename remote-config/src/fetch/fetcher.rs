@@ -102,7 +102,7 @@ pub struct ConfigFetcherFilesLock<'a, S> {
     inner: MutexGuard<'a, HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
 }
 
-impl<'a, S> ConfigFetcherFilesLock<'a, S> {
+impl<S> ConfigFetcherFilesLock<'_, S> {
     /// Actually remove the file from the known files.
     /// It may only be expired if already marked as expiring.
     pub fn expire_file(&mut self, path: &RemoteConfigPath) {

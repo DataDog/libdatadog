@@ -480,10 +480,15 @@ unsafe fn set_alt_stack() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Ensure that the altstack size is the greater of 16 pages or SIGSTKSZ. This is necessary
+    // because the default SIGSTKSZ is 8KB, which we're starting to run into. This new size is
+    // arbitrary, but at least it's large enough for our purposes, and yet a small enough part of
+    // the process RSS that it shouldn't be a problem.
     let page_size = page_size::get();
+    let sigalstack_base_size = std::cmp::max(SIGSTKSZ, 16 * page_size);
     let stackp = mmap(
         ptr::null_mut(),
-        SIGSTKSZ + page_size::get(),
+        sigalstack_base_size + page_size,
         PROT_READ | PROT_WRITE,
         MAP_PRIVATE | MAP_ANON,
         -1,
@@ -503,7 +508,7 @@ unsafe fn set_alt_stack() -> anyhow::Result<()> {
     let stack = libc::stack_t {
         ss_sp: stackp,
         ss_flags: 0,
-        ss_size: SIGSTKSZ,
+        ss_size: sigalstack_base_size,
     };
     let rval = sigaltstack(&stack, ptr::null_mut());
     anyhow::ensure!(rval == 0, "sigaltstack failed {rval}");

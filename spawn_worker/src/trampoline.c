@@ -67,6 +67,16 @@ int main(int argc, char *argv[]) {
           unlink_next = true;
           continue;
       }
+#ifndef _WIN32
+      char buf[30];
+      // Redirect the symlinked /proc/self/X to the actual /proc/<pid>/X - as otherwise debugging tooling may try to read it
+      // And reading /proc/self from the debugging tooling will usually lead to it reading from itself, which may be flatly wrong
+      // E.g. gdb will just hang up for e.g. /proc/self/fd/4, which is an open pipe...
+      if (strncmp(lib_path, "/proc/self/", strlen("/proc/self/")) == 0 && strlen(lib_path) < 20) {
+        sprintf(buf, "/proc/%d/%s", getpid(), lib_path + strlen("/proc/self/"));
+        lib_path = buf;
+      }
+#endif
       if (!(handles[additional_shared_libraries_count++] = dlopen(lib_path, RTLD_LAZY | RTLD_GLOBAL))) {
           fputs(dlerror(), error_fd());
           return 9;

@@ -452,7 +452,7 @@ struct ServiceGenerator<'a> {
     derive_serialize: Option<&'a TokenStream2>,
 }
 
-impl<'a> ServiceGenerator<'a> {
+impl ServiceGenerator<'_> {
     fn trait_service(&self) -> TokenStream2 {
         let &Self {
             attrs,
@@ -762,7 +762,7 @@ impl<'a> ServiceGenerator<'a> {
     }
 }
 
-impl<'a> ToTokens for ServiceGenerator<'a> {
+impl ToTokens for ServiceGenerator<'_> {
     fn to_tokens(&self, output: &mut TokenStream2) {
         output.extend(vec![
             self.trait_service(),

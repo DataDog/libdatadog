@@ -173,7 +173,7 @@ pub struct MetricContextGuard<'a> {
     guard: MutexGuard<'a, InnerMetricContexts>,
 }
 
-impl<'a> MetricContextGuard<'a> {
+impl MetricContextGuard<'_> {
     pub fn read(&self, key: ContextKey) -> Option<&MetricContext> {
         self.guard.store.get(key.0 as usize)
     }

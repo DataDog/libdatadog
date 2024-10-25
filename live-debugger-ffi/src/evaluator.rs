@@ -82,6 +82,7 @@ struct EvalCtx<'e> {
 
 impl<'e> EvalCtx<'e> {
     fn new(context: &'e mut c_void) -> Self {
+        #[allow(static_mut_refs)]
         EvalCtx {
             context,
             eval: unsafe { FFI_EVALUATOR.as_ref().unwrap() },

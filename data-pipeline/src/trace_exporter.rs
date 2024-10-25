@@ -32,6 +32,11 @@ const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] = ["client", "server", "produ
 const STATS_ENDPOINT: &str = "/v0.6/stats";
 const INFO_ENDPOINT: &str = "/info";
 
+// Keys used for sampling
+const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
+const SAMPLING_SINGLE_SPAN_MECHANISM: &str = "_dd.span_sampling.mechanism";
+const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
+
 /// TraceExporterInputFormat represents the format of the input traces.
 /// The input format can be either Proxy or V0.4, where V0.4 is the default.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
@@ -98,25 +103,28 @@ fn add_path(url: &Uri, path: &str) -> Uri {
 /// Remove spans and chunks only keeping the ones that may be sampled by the agent
 fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) {
     traces.retain_mut(|chunk| {
+        // List of spans to keep even if the chunk is dropped
         let mut sampled_indexes = Vec::new();
         for (index, span) in chunk.iter().enumerate() {
+            // ErrorSampler
             if span.error == 1 {
                 // We send chunks containing an error
                 return true;
             }
-            let priority = span.metrics.get("_sampling_priority_v1");
-            if priority.is_some_and(|p| *p > 0.0) {
-                if has_top_level(span) {
-                    // We send chunks with positive priority
-                    return true;
-                }
-                // We send single spans with positive priority
-                sampled_indexes.push(index);
-            } else if priority.is_none() && has_top_level(span) {
-                // We send chunks with no priority
+            // PrioritySampler and NoPrioritySampler
+            let priority = span.metrics.get(SAMPLING_PRIORITY_KEY);
+            if has_top_level(span) && (priority.is_none() || priority.is_some_and(|p| *p > 0.0)) {
+                // We send chunks with positive priority or no priority
                 return true;
-            } else if span.metrics.contains_key("_dd.sr.eausr") {
-                // We send analyzed spans
+            }
+            // SingleSpanSampler and AnalyzedSpansSampler
+            else if span
+                .metrics
+                .get(SAMPLING_SINGLE_SPAN_MECHANISM)
+                .is_some_and(|m| *m == 8.0)
+                || span.metrics.contains_key(SAMPLING_ANALYTICS_RATE_KEY)
+            {
+                // We send spans sampled by single-span sampling or analyzed spans
                 sampled_indexes.push(index);
             }
         }
@@ -990,7 +998,7 @@ mod tests {
             pb::Span {
                 span_id: 1,
                 metrics: HashMap::from([
-                    ("_sampling_priority_v1".to_string(), 1.0),
+                    (SAMPLING_PRIORITY_KEY.to_string(), 1.0),
                     ("_dd.top_level".to_string(), 1.0),
                 ]),
                 ..Default::default()
@@ -1005,7 +1013,7 @@ mod tests {
             pb::Span {
                 span_id: 1,
                 metrics: HashMap::from([
-                    ("_sampling_priority_v1".to_string(), 0.0),
+                    (SAMPLING_PRIORITY_KEY.to_string(), 0.0),
                     ("_dd.top_level".to_string(), 1.0),
                 ]),
                 ..Default::default()
@@ -1033,7 +1041,7 @@ mod tests {
                 span_id: 1,
                 error: 1,
                 metrics: HashMap::from([
-                    ("_sampling_priority_v1".to_string(), 0.0),
+                    (SAMPLING_PRIORITY_KEY.to_string(), 0.0),
                     ("_dd.top_level".to_string(), 1.0),
                 ]),
                 ..Default::default()
@@ -1048,7 +1056,7 @@ mod tests {
             pb::Span {
                 span_id: 1,
                 metrics: HashMap::from([
-                    ("_sampling_priority_v1".to_string(), 0.0),
+                    (SAMPLING_PRIORITY_KEY.to_string(), 0.0),
                     ("_dd.top_level".to_string(), 1.0),
                 ]),
                 ..Default::default()
@@ -1056,7 +1064,7 @@ mod tests {
             pb::Span {
                 span_id: 2,
                 parent_id: 1,
-                metrics: HashMap::from([("_sampling_priority_v1".to_string(), 1.0)]),
+                metrics: HashMap::from([(SAMPLING_SINGLE_SPAN_MECHANISM.to_string(), 8.0)]),
                 ..Default::default()
             },
         ];
@@ -1064,7 +1072,7 @@ mod tests {
             pb::Span {
                 span_id: 1,
                 metrics: HashMap::from([
-                    ("_sampling_priority_v1".to_string(), 0.0),
+                    (SAMPLING_PRIORITY_KEY.to_string(), 0.0),
                     ("_dd.top_level".to_string(), 1.0),
                 ]),
                 ..Default::default()
@@ -1072,7 +1080,7 @@ mod tests {
             pb::Span {
                 span_id: 2,
                 parent_id: 1,
-                metrics: HashMap::from([("_dd.sr.eausr".to_string(), 1.0)]),
+                metrics: HashMap::from([(SAMPLING_ANALYTICS_RATE_KEY.to_string(), 1.0)]),
                 ..Default::default()
             },
         ];
