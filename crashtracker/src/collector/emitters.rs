@@ -178,16 +178,13 @@ fn emit_siginfo(
     };
 
     writeln!(w, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
-    match faulting_address {
-        Some(addr) => {
-            writeln!(
-                w,
-                "{{\"signum\": {signum}, \"signame\": \"{signame}\", \"faulting_address\": {addr}}}"
-            )?;
-        }
-        None => {
-            writeln!(w, "{{\"signum\": {signum}, \"signame\": \"{signame}\"}}")?;
-        }
+    if let Some(addr) = faulting_address {
+        writeln!(
+            w,
+            "{{\"signum\": {signum}, \"signame\": \"{signame}\", \"faulting_address\": {addr}}}"
+        )?;
+    } else {
+        writeln!(w, "{{\"signum\": {signum}, \"signame\": \"{signame}\"}}")?;
     };
     writeln!(w, "{DD_CRASHTRACK_END_SIGINFO}")?;
     Ok(())
