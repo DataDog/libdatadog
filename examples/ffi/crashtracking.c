@@ -68,7 +68,7 @@ int main(int argc, char **argv) {
       .tags = NULL,
   };
 
-  handle_result(ddog_crasht_init_with_receiver(config, receiver_config, metadata));
+  handle_result(ddog_crasht_init(config, receiver_config, metadata));
   ddog_endpoint_drop(endpoint);
 
   handle_result(ddog_crasht_begin_op(DDOG_CRASHT_OP_TYPES_PROFILER_COLLECTING_SAMPLE));
