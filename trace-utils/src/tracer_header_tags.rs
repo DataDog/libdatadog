@@ -35,6 +35,10 @@ pub struct TracerHeaderTags<'a> {
     // specifies whether the client has computed stats so that the agent doesn't have to. Any
     // non-empty value will mean 'yes'.
     pub client_computed_stats: bool,
+    // number of trace chunks dropped in the tracer
+    pub dropped_p0_traces: usize,
+    // number of spans dropped in the tracer
+    pub dropped_p0_spans: usize,
 }
 
 impl<'a> From<TracerHeaderTags<'a>> for HashMap<&'static str, String> {
@@ -68,6 +72,22 @@ impl<'a> From<TracerHeaderTags<'a>> for HashMap<&'static str, String> {
                     String::new()
                 },
             ),
+            (
+                "datadog-client-dropped-p0-traces",
+                if tags.dropped_p0_traces > 0 {
+                    tags.dropped_p0_traces.to_string()
+                } else {
+                    String::new()
+                },
+            ),
+            (
+                "datadog-client-dropped-p0-spans",
+                if tags.dropped_p0_spans > 0 {
+                    tags.dropped_p0_spans.to_string()
+                } else {
+                    String::new()
+                },
+            ),
         ]);
         headers.retain(|_, v| !v.is_empty());
         headers
@@ -94,6 +114,16 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
         if headers.get("datadog-client-computed-stats").is_some() {
             tags.client_computed_stats = true;
         }
+        if let Some(count) = headers.get("datadog-client-dropped-p0-traces") {
+            tags.dropped_p0_traces = count
+                .to_str()
+                .unwrap_or_default()
+                .parse()
+                .unwrap_or_default();
+        }
+        if let Some(count) = headers.get("datadog-client-dropped-p0-spans") {
+            tags.dropped_p0_spans = count.to_str().map_or(0, |c| c.parse().unwrap_or(0));
+        }
         tags
     }
 }
@@ -114,6 +144,8 @@ mod tests {
             container_id: "id",
             client_computed_top_level: true,
             client_computed_stats: true,
+            dropped_p0_traces: 12,
+            dropped_p0_spans: 120,
         };
 
         let map: HashMap<&'static str, String> = header_tags.into();
@@ -133,6 +165,8 @@ mod tests {
             "true"
         );
         assert_eq!(map.get("datadog-client-computed-stats").unwrap(), "true");
+        assert_eq!(map.get("datadog-client-dropped-p0-traces").unwrap(), "12");
+        assert_eq!(map.get("datadog-client-dropped-p0-spans").unwrap(), "120");
     }
     #[test]
     fn tags_to_hashmap_empty_value() {
@@ -145,6 +179,8 @@ mod tests {
             container_id: "",
             client_computed_top_level: false,
             client_computed_stats: false,
+            dropped_p0_spans: 0,
+            dropped_p0_traces: 0,
         };
 
         let map: HashMap<&'static str, String> = header_tags.into();
@@ -161,6 +197,8 @@ mod tests {
         assert_eq!(map.get("datadog-container-id"), None);
         assert_eq!(map.get("datadog-client-computed-top-level"), None);
         assert_eq!(map.get("datadog-client-computed-stats"), None);
+        assert_eq!(map.get("datadog-client-dropped-p0-traces"), None);
+        assert_eq!(map.get("datadog-client-dropped-p0-spans"), None);
     }
 
     #[test]
@@ -177,6 +215,7 @@ mod tests {
         header_map.insert("datadog-meta-tracer-version", "1.0".parse().unwrap());
         header_map.insert("datadog-container-id", "id".parse().unwrap());
         header_map.insert("datadog-client-computed-stats", "true".parse().unwrap());
+        header_map.insert("datadog-client-dropped-p0-traces", "12".parse().unwrap());
 
         let tags: TracerHeaderTags = (&header_map).into();
 
@@ -188,5 +227,7 @@ mod tests {
         assert_eq!(tags.container_id, "id");
         assert!(tags.client_computed_stats);
         assert!(!tags.client_computed_top_level);
+        assert_eq!(tags.dropped_p0_traces, 12);
+        assert_eq!(tags.dropped_p0_spans, 0);
     }
 }
