@@ -524,6 +524,8 @@ mod tests {
         container_id: "id",
         client_computed_top_level: false,
         client_computed_stats: false,
+        dropped_p0_traces: 0,
+        dropped_p0_spans: 0,
     };
 
     fn setup_payload(header_tags: &TracerHeaderTags) -> TracerPayload {

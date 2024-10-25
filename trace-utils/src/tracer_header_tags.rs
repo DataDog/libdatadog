@@ -150,7 +150,7 @@ mod tests {
 
         let map: HashMap<&'static str, String> = header_tags.into();
 
-        assert_eq!(map.len(), 8);
+        assert_eq!(map.len(), 10);
         assert_eq!(map.get("datadog-meta-lang").unwrap(), "test-lang");
         assert_eq!(map.get("datadog-meta-lang-version").unwrap(), "2.0");
         assert_eq!(
