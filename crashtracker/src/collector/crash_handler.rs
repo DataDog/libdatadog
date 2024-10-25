@@ -478,7 +478,9 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     // disrupted.
     let res: Result<(), anyhow::Error>;
     {
-        let guard = SaGuard::<2>::new(&[signal::SIGCHLD, signal::SIGPIPE])?;
+        // `_guard` is a lexically-scoped object whose instantiation blocks/suppresses signals and
+        // whose destruction restores the original state
+        let _guard = SaGuard::<2>::new(&[signal::SIGCHLD, signal::SIGPIPE])?;
 
         // Launch the receiver process
         let receiver = make_receiver(receiver_config)?;
