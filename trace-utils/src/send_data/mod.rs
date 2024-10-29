@@ -756,7 +756,10 @@ mod tests {
                         header_tags.lang_interpreter,
                     )
                     .header("datadog-meta-lang-version", header_tags.lang_version)
-                    .header("datadog-meta-lang-vendor", header_tags.lang_vendor)
+                    .header(
+                        "datadog-meta-lang-interpreter-vendor",
+                        header_tags.lang_vendor,
+                    )
                     .header("datadog-meta-tracer-version", header_tags.tracer_version)
                     .header("datadog-container-id", header_tags.container_id)
                     .path("/");
@@ -812,7 +815,10 @@ mod tests {
                         header_tags.lang_interpreter,
                     )
                     .header("datadog-meta-lang-version", header_tags.lang_version)
-                    .header("datadog-meta-lang-vendor", header_tags.lang_vendor)
+                    .header(
+                        "datadog-meta-lang-interpreter-vendor",
+                        header_tags.lang_vendor,
+                    )
                     .header("datadog-meta-tracer-version", header_tags.tracer_version)
                     .header("datadog-container-id", header_tags.container_id)
                     .path("/");
@@ -997,7 +1003,10 @@ mod tests {
                         header_tags.lang_interpreter,
                     )
                     .header("datadog-meta-lang-version", header_tags.lang_version)
-                    .header("datadog-meta-lang-vendor", header_tags.lang_vendor)
+                    .header(
+                        "datadog-meta-lang-interpreter-vendor",
+                        header_tags.lang_vendor,
+                    )
                     .header("datadog-meta-tracer-version", header_tags.tracer_version)
                     .header("datadog-container-id", header_tags.container_id)
                     .path("/");
