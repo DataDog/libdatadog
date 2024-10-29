@@ -595,6 +595,7 @@ impl<'a> TryInto<SerializedTracerHeaderTags> for &'a TracerHeaderTags<'a> {
             container_id: &self.container_id.to_utf8_lossy(),
             client_computed_top_level: self.client_computed_top_level,
             client_computed_stats: self.client_computed_stats,
+            ..Default::default()
         };
 
         tags.try_into().map_err(|_| {

@@ -24,8 +24,7 @@ mod tracing_integration_tests {
             lang_vendor: "vendor",
             tracer_version: "1.0",
             container_id: "id",
-            client_computed_top_level: false,
-            client_computed_stats: false,
+            ..Default::default()
         };
 
         let endpoint = Endpoint::from_url(

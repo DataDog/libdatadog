@@ -34,6 +34,7 @@ pub struct SerializedTracerHeaderTags {
 ///     container_id: "1234567890",
 ///     client_computed_top_level: true,
 ///     client_computed_stats: false,
+///     ..Default::default()
 /// };
 ///
 /// let serialized: SerializedTracerHeaderTags = tracer_header_tags.try_into().unwrap();
@@ -73,6 +74,7 @@ impl<'a> TryFrom<&'a SerializedTracerHeaderTags> for TracerHeaderTags<'a> {
 ///     container_id: "1234567890",
 ///     client_computed_top_level: true,
 ///     client_computed_stats: false,
+///     ..Default::default()
 /// };
 ///
 /// let serialized: Result<SerializedTracerHeaderTags, _> = tracer_header_tags.try_into();
@@ -106,6 +108,7 @@ mod tests {
             container_id: "1234567890",
             client_computed_top_level: true,
             client_computed_stats: false,
+            ..Default::default()
         };
 
         let serialized: Result<SerializedTracerHeaderTags, _> = tracer_header_tags.try_into();
@@ -124,6 +127,7 @@ mod tests {
             container_id: "1234567890",
             client_computed_top_level: true,
             client_computed_stats: false,
+            ..Default::default()
         };
 
         let data = bincode::serialize(&tracer_header_tags).unwrap();
