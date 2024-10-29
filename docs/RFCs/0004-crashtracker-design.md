@@ -8,6 +8,8 @@ On the other hand, a crashtracker, like other instrumentation technology, should
 These aims are in tension: design decisions which increase the quality and reliability of data-collection often increase the (potential) for impact on the customer system.
 
 This document lays out the design priorities of the crashtracker, describes how the current architecture affects/implements those priorities, and then lays out a plan for future improvements to the crashtracking ecosystem.
+It focuses on the design and implementation of the current (version 1) crashtracker: i.e., either features that are already implemented, or are scheduled to be implemented in the near future.
+Additional improvements will be the subject for future RFCs.
 
 ## Design Priorities
 
@@ -22,14 +24,14 @@ This document lays out the design priorities of the crashtracker, describes how 
 For all languages other than .Net and Java, this is a signal handler.
 The collector interacts with the system in the following ways:
 
-1.  Registers a signal handler (`sigaction`).
+1.  Registers a signal handler (`sigaction`) to capture `sigsegv`, `sigbus` and (planned but not yet implemented) `sigabort`.
     The old handler is saved into a global variable to enable changing.
     - Risks to normal operation
       - Chaining handlers is not atomic.
         It is possible for concurrent races to occur.
         Mitigation: doing this operation once, early during system initialization.
-      - If the system expects and handles `sigsegv`, `sigbus` and `sigabort` as part of its ordinary functioning, this can violate principle 1.
-        This is not common for most languages, but Java and .Net turn some crashes into recoverable user exceptions.
+      - If the system expects and handles as part of its ordinary functioning, this can violate principle 1.
+        This is not common for most languages, but Java and .Net use signals .
         A crashtracker signal handler risks breaking that mechanism.
         Mitigation: not using signal handler based crashtracking for these languages.
     - Risks during a crash
@@ -71,8 +73,7 @@ The collector interacts with the system in the following ways:
         This will prevent the collection and reporting of any additional crash info.
         Mitigation:
         Collect the backtrace last, allowing less risky operations to complete first.
-        As a stretch mitigation, we could do out-of-process unwinding.
-        This would increase the complexity of the crashtracker, but would avoid this issue.
+        As a stretch mitigation, we could do out-of-process unwinding (see below).
 4.  Results written to a pipe (unix socket)
     - Risks to normal operation
       - Maintaining the open pipe requires a file-descriptor.
@@ -80,7 +81,9 @@ The collector interacts with the system in the following ways:
     - Risks during a crash
       - If the pipe/socket is not drained, the collector will stall when attempting to write.
         This could hang the crashing process.
-        Mitigation: Minimize the amount of data sent.
+        Mitigation:
+        Minimize the amount of data sent.
+        Todo: use nonblocking read/writes, and bail if there is an issue.
       - If the pipe/socket is not available or is closed early, data could not be sent, or the crashtracker could hang.
         Mitigation:
         Data is sent to the receiver in priority order.
@@ -96,7 +99,10 @@ The collector interacts with the system in the following ways:
         None currently.
         In the future, we could add a file size limit and only send the first `n` bytes.
       - These files could contain sensitive data
-        Mitigation: only send a select set of files which do not contain sensitive data.
+        Mitigation:
+        only send a select set of files which do not contain sensitive data.
+        At present, this is based on careful coding and audit of which files are sent.
+        Stretch mitigation: redact potentially sensitive data either client-side or server-side (see below).
 
 ### Receiver
 
@@ -110,7 +116,7 @@ The receiver interacts with the system in the following ways:
     - Risks to normal operation
       - Eager initialization consumes a PID and a slot in the process table.
         This can cause either initialization to fail, or block the creation of another process on the customer system.
-        Mitigation: This is unlikely to occur.
+        Mitigation: This is [unlikely to occur](https://github.com/DataDog/libdatadog/pull/696#discussion_r1819230509).
       - Eager initialization can lead to an additional child process.
         This was originally believed to be harmless.
         However, it turns out that some frameworks assume that they are the only thing that can spawn workers, and do a `waitpid` on all children.
@@ -138,9 +144,48 @@ The receiver interacts with the system in the following ways:
       - NA
     - Risks during a crash
       - The endpoint may be inaccessible.
-      Mitigation: None.
+        Mitigation: None.
       - It may take a signifcant amount of time to transmit the crashreport.
-      This could cause the user process to hang.
-      Mitigation: a configurable timeout on transmission (default 3s).
-      - The message could be modified or corrupted in transit
-      Mitigation: allow the optional use of `tls`.
+        This could cause the user process to hang.
+        Mitigation: a configurable timeout on transmission (default 3s).
+
+## Potential future improvements.
+
+There are a number of potential which could improve the reliability of the crashtracker, at the cost of increased design and implementation complexity.
+These are not in scope for the current document, but could be valuable improvements in followup RFCs.
+
+### Out of process stack collection
+
+Currently, we collect the stack within the signal handler in the crashing process.
+This is inherently dangerous: the crashing process may have a corrupted stack, in which case stack walking itself may crash or hang the process.
+Additionally, stack-walking routines are generally not guaranteed to be signal-safe.
+They may allocate, touch code which uses mutexes, or other non signal-safe activities.
+To minimize the effect of stack walking, the crashtracker support out of process _symbolization_ of stacks collected in process.
+A next step would be to support out of process collection of the stack.
+
+Options include:
+
+- Using an existing out-of band crash-tracker such as ptrace, [discussed here](https://github.com/DataDog/libdatadog/pull/696#discussion_r1819070836).
+- Forking the process, and doing the stack walk in the fork, as [discussed here](https://github.com/DataDog/libdatadog/pull/696#discussion_r1819322727).
+
+### Injecting `sigaction` to enable more reliable handler chaining
+
+POSIX lacks a proper mechanism to chain signal handlers.
+We currently make a best-effort attempt to do so by storing the return value of `sigaction` in a global variable, and then chaining a call to the old handler at the end of the crashtracker handler.
+This is a best effort attempt, which is not guaranteed to work.  
+Conversely, if the user attempts to set a new signal handler after the crashtracker is registered, there is currently no notification of this fact to the crashtracker, and hence no way for the crashtracker to control what happens in this situation.
+One proposal, discussed [here](https://github.com/DataDog/libdatadog/pull/696#discussion_r1819265900) and [here](https://github.com/DataDog/libdatadog/pull/696#discussion_r1819192232), is to inject our own wrapper for `sigaction`, giving the crashtracker full knowledge of what signal handlers are registered, and allowing it to programmatically take action.
+
+### Eliminating the need for a receiver process
+
+As discussed above, transmitting data from within a crashing process is difficult to do in a signal safe manner.
+The current mitigation is to fork a separate receiver binary which gets data from the collector over a socket/pipe and then formats and transmits it to the endpoint.
+Other options include
+
+- [Adding support for this to the agent](https://github.com/DataDog/libdatadog/pull/696#discussion_r1820226183), avoiding the need for a seperate process on the machine.
+- [Forking the crashing process](https://github.com/DataDog/libdatadog/pull/696#discussion_r1819312104), and then directly use the forked process to collect and transmit the crash report, avoiding the need for a separate binary and IPC.
+
+### Scrubbing potentially sensitive data
+The crashtracker transmits data about the state of the customer process.
+
+
