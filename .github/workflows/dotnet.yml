@@ -1,0 +1,102 @@
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+name: .NET
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: Install rustup using win.rustup.rs
+        run: |
+          # disable download progress bar
+          $ProgressPreference = "SilentlyContinue"
+          Invoke-WebRequest https://win.rustup.rs/ -OutFile rustup-init.exe
+          .\rustup-init.exe -y --default-host=x86_64-pc-windows-msvc --default-toolchain=none
+          del rustup-init.exe
+          rustup target add x86_64-pc-windows-msvc
+          rustup target add i686-pc-windows-msvc
+        shell: powershell
+
+      - name: build
+        run: |
+          .\windows\build\build.ps1 -output_dir .\bin
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-bin
+          path: |
+            bin/x86_64-pc-windows-msvc/*/datadog_profiling_ffi.dll
+            bin/x86_64-pc-windows-msvc/*/datadog_profiling_ffi.lib
+            bin/x86_64-pc-windows-msvc/*/datadog_profiling_ffi.pdb
+            bin/i686-pc-windows-msvc/*/datadog_profiling_ffi.dll
+            bin/i686-pc-windows-msvc/*/datadog_profiling_ffi.lib
+            bin/i686-pc-windows-msvc/*/datadog_profiling_ffi.pdb
+          if-no-files-found: error
+
+  macos-build:
+    runs-on: macos-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: Install rustup using rustup.rs
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
+          rustup target add x86_64-apple-darwin
+          rustup target add aarch64-apple-darwin
+        shell: bash
+
+      - name: build
+        run: |
+          chmod +x ./windows/build/build.sh
+          ./windows/build/build.sh -o ./bin
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-bin
+          path: |
+            bin/x86_64-apple-darwin/*/libdatadog_profiling_ffi.dylib
+            bin/x86_64-apple-darwin/*/libdatadog_profiling_ffi.a
+            bin/aarch64-apple-darwin/*/libdatadog_profiling_ffi.dylib
+            bin/aarch64-apple-darwin/*/libdatadog_profiling_ffi.a
+          if-no-files-found: error
+
+  pack:
+    runs-on: windows-latest
+    needs: [windows-build, macos-build]
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-bin
+          path: bin
+
+      - name: Download mac artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-bin
+          path: bin
+
+      - name: pack
+        run: |
+          dotnet pack .\windows\libdatadog.csproj -p:LibDatadogBinariesOutputDir=..\bin -p:LibDatadogVersion="42.0.0" -o .nuget\packages\
+
+      - name: store artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: .nuget/packages/*
+          if-no-files-found: error
