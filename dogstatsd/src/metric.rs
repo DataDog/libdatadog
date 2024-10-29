@@ -168,7 +168,7 @@ impl Metric {
 pub fn parse(input: &str) -> Result<Metric, ParseError> {
     // TODO must enforce / exploit constraints given in `constants`.
     if let Ok(re) = Regex::new(
-        r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[cgd])(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?$",
+        r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[cgd])(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?(?:\|c:(?P<container_id>[^|]+))?$",
     ) {
         if let Some(caps) = re.captures(input) {
             // unused for now
