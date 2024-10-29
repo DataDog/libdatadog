@@ -32,7 +32,7 @@ impl BufferReader {
         match self {
             BufferReader::UdpSocketReader(socket) => {
                 // TODO(astuyve) this should be dynamic
-                let mut buf = [0; 1024]; // todo, do we want to make this dynamic? (not sure)
+                let mut buf = [0; 8192]; // todo, do we want to make this dynamic? (not sure)
                 let (amt, src) = socket
                     .recv_from(&mut buf)
                     .await
