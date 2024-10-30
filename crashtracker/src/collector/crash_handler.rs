@@ -9,7 +9,7 @@ use crate::crash_info::CrashtrackerMetadata;
 use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
 use anyhow::Context;
 use libc::{
-    c_void, dup2, execve, mmap, sigaltstack, siginfo_t, vfork, MAP_ANON, MAP_FAILED, MAP_PRIVATE,
+    c_void, dup2, execve, mmap, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE,
     PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ,
 };
 use nix::poll::{poll, PollFd, PollFlags};
@@ -28,6 +28,16 @@ use std::ptr;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64};
 use std::time::{Duration, Instant};
+
+// The use of fork or vfork is influenced by the availability of the function in the host libc.
+// Macos seems to have deprecated vfork.  The reason to prefer vfork is to suppress atfork
+// handlers.  This is OK because macos is primarily a test platform, and we have system-level
+// testing on Linux in various CI environments.
+#[cfg(target_os = "macos")]
+use libc::fork as vfork;
+
+#[cfg(target_os = "linux")]
+use libc::vfork;
 
 #[derive(Debug)]
 struct OldHandlers {
@@ -302,6 +312,8 @@ fn make_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<Receiver
     // * There is no guarantee that `posix_spawn()` will not call `fork()` internally
     // * `clone()`/`clone3()` are Linux-specific
     // Accordingly, use `vfork()` for now
+    // NB -- on macos the underlying implementation here is actually `fork()`!  See the top of this
+    // file for details.
     match unsafe { vfork() } {
         0 => {
             // Child (noreturn)
