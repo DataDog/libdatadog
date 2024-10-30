@@ -1,11 +1,19 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+//
+// This is a simple test to make sure that crashtracking can be chained properly by other signals.
+// This covers the case where the user code sets a signal handler after crashtracking has been
+// enabled.
+// Note that in this test, the user code doesn't do anything outrageous, like trying to call the
+// signal handler after doing a lonjump back into their normal stack, or doing absurd th ings to
+// the signal within the signal.
 use crate::modes::behavior::Behavior;
 
-use crate::modes::behavior::{atom_to_clone, file_append_msg, remove_file_permissive, set_atomic};
+use crate::modes::behavior::{atom_to_clone, file_append_msg, remove_permissive, set_atomic};
 use datadog_crashtracker::CrashtrackerConfiguration;
 use libc;
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicPtr, Ordering::SeqCst};
 
 pub struct Test;
@@ -13,26 +21,26 @@ pub struct Test;
 impl Behavior for Test {
     fn setup(
         &self,
-        _output_dir: &str,
+        _output_dir: &Path,
         _config: &mut CrashtrackerConfiguration,
     ) -> anyhow::Result<()> {
         Ok(())
     }
 
-    fn pre(&self, _output_dir: &str) -> anyhow::Result<()> {
+    fn pre(&self, _output_dir: &Path) -> anyhow::Result<()> {
         // There's no pretest since we don't really want to write a complex segfault handler with
         // recovery
         Ok(())
     }
 
-    fn post(&self, output_dir: &str) -> anyhow::Result<()> {
+    fn post(&self, output_dir: &Path) -> anyhow::Result<()> {
         // Test to make sure the crashtracker can be chained without issue.
         // This DOES NOT test that the crashtracker's chaining mechanism works.
         test(output_dir)
     }
 }
 
-static OUTPUT_FILE: AtomicPtr<String> = AtomicPtr::new(std::ptr::null_mut());
+static OUTPUT_FILE: AtomicPtr<PathBuf> = AtomicPtr::new(std::ptr::null_mut());
 static OLD_ACTION: AtomicPtr<SigAction> = AtomicPtr::new(std::ptr::null_mut());
 
 extern "C" fn segfault_sigaction(
@@ -59,7 +67,7 @@ extern "C" fn segfault_sigaction(
             return;
         }
     };
-    remove_file_permissive(&filepath);
+    remove_permissive(&filepath);
 
     match old_action.handler() {
         SigHandler::SigDfl => {
@@ -71,7 +79,7 @@ extern "C" fn segfault_sigaction(
     }
 }
 
-fn test(output_dir: &str) -> anyhow::Result<()> {
+fn test(output_dir: &Path) -> anyhow::Result<()> {
     // First, check that OLD_ACTION is null
     if !OLD_ACTION.load(SeqCst).is_null() {
         anyhow::bail!("Test found invalid condition: OLD_ACTION was not null");
@@ -95,7 +103,7 @@ fn test(output_dir: &str) -> anyhow::Result<()> {
     // will be deleted by the signal handler, as a preventative check in case the handler fails to
     // trigger in the first place.  Otherwise, this test will pass as long as the crashtracking
     // data is received correctly.
-    set_atomic(&OUTPUT_FILE, format!("{output_dir}/INVALID"));
+    set_atomic(&OUTPUT_FILE, output_dir.join("INVALID"));
     let filepath = match atom_to_clone(&OUTPUT_FILE) {
         Ok(f) => f,
         Err(_) => {
@@ -103,7 +111,7 @@ fn test(output_dir: &str) -> anyhow::Result<()> {
             anyhow::bail!("Error: OUTPUT_FILE was null");
         }
     };
-    remove_file_permissive(&filepath);
+    remove_permissive(&filepath);
     file_append_msg(&filepath, "File not cleared by handler")?;
 
     Ok(())

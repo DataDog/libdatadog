@@ -2,32 +2,41 @@
 // SPDX-License-Identifier: Apache-2.0
 use anyhow::{Context, Result};
 use datadog_crashtracker::CrashtrackerConfiguration;
+use std::fs::OpenOptions;
 use std::io::Write;
+use std::path::Path;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::modes::unix::*;
 
 /// Defines the additional behavior for a given crashtracking test
 pub trait Behavior {
-    fn setup(&self, output_dir: &str, config: &mut CrashtrackerConfiguration) -> Result<()>;
-    fn pre(&self, output_dir: &str) -> Result<()>;
-    fn post(&self, output_dir: &str) -> Result<()>;
+    fn setup(&self, output_dir: &Path, config: &mut CrashtrackerConfiguration) -> Result<()>;
+    fn pre(&self, output_dir: &Path) -> Result<()>;
+    fn post(&self, output_dir: &Path) -> Result<()>;
 }
 
-pub fn does_file_contain_msg(filepath: &str, contents: &str) -> anyhow::Result<bool> {
+pub fn fileat_content_equals(dir: &Path, filename: &str, contents: &str) -> anyhow::Result<bool> {
+    let filepath = dir.join(filename);
+    file_content_equals(&filepath, contents)
+}
+
+pub fn file_content_equals(filepath: &Path, contents: &str) -> anyhow::Result<bool> {
     let file_contents = std::fs::read_to_string(filepath)
-        .with_context(|| format!("Failed to read file: {filepath}"))?;
+        .with_context(|| format!("Failed to read file: {}", filepath.display()))?;
     Ok(file_contents.trim() == contents)
 }
 
-pub fn file_append_msg(filepath: &str, contents: &str) -> anyhow::Result<()> {
-    let mut file = std::fs::OpenOptions::new()
+pub fn file_append_msg(filepath: &Path, contents: &str) -> Result<()> {
+    let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(filepath)
-        .with_context(|| format!("Failed to open file: {filepath}"))?;
+        .with_context(|| format!("Failed to open file: {}", filepath.display()))?;
+
     file.write_all(contents.as_bytes())
-        .with_context(|| format!("Failed to write to file: {filepath}"))?;
+        .with_context(|| format!("Failed to write to file: {}", filepath.display()))?;
+
     Ok(())
 }
 
@@ -56,11 +65,14 @@ pub fn set_atomic<T>(atom: &AtomicPtr<T>, value: T) {
     }
 }
 
-pub fn remove_file_permissive(filepath: &String) {
+pub fn removeat_permissive(dir: &Path, filename: &str) {
+    let filepath = dir.join(filename);
+    remove_permissive(&filepath);
+}
+
+pub fn remove_permissive(filepath: &Path) {
     // Removes the file if it exists.  If it doesn't exist, it's not an error or anything.
-    if !filepath.is_empty() {
-        let _ = std::fs::remove_file(filepath);
-    }
+    let _ = std::fs::remove_file(filepath);
 }
 
 pub fn get_behavior(mode_str: &str) -> Box<dyn Behavior> {

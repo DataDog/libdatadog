@@ -14,12 +14,15 @@ mod unix {
     use anyhow::Context;
     use bin_tests::modes::behavior::get_behavior;
     use std::env;
+    use std::path::Path;
 
     use datadog_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerMetadata,
         CrashtrackerReceiverConfig,
     };
     use ddcommon::{tag, Endpoint};
+
+    const TEST_COLLECTOR_TIMEOUT: u32 = 10_000;
 
     #[inline(never)]
     unsafe fn deref_ptr(p: *mut u8) {
@@ -36,6 +39,7 @@ mod unix {
 
         let stderr_filename = format!("{output_dir}/out.stderr");
         let stdout_filename = format!("{output_dir}/out.stdout");
+        let output_dir: &Path = output_dir.as_ref();
 
         let endpoint = if output_url.is_empty() {
             None
@@ -43,13 +47,16 @@ mod unix {
             Some(Endpoint::from_slice(&output_url))
         };
 
+        // The configuration can be modified by a Behavior (testing plan), so it is mut here.
+        // Unlike a normal harness, in this harness tests are run in individual processes, so race
+        // issues are avoided.
         let mut config = CrashtrackerConfiguration {
             additional_files: vec![],
             create_alt_stack: true,
             use_alt_stack: true,
             resolve_frames: crashtracker::StacktraceCollection::WithoutSymbols,
             endpoint,
-            timeout_ms: 10_000,
+            timeout_ms: TEST_COLLECTOR_TIMEOUT,
         };
 
         let metadata = CrashtrackerMetadata {
@@ -66,8 +73,8 @@ mod unix {
 
         // Set the behavior of the test, run setup, and do the pre-init test
         let behavior = get_behavior(&mode_str);
-        behavior.setup(&output_dir, &mut config)?;
-        behavior.pre(&output_dir)?;
+        behavior.setup(output_dir, &mut config)?;
+        behavior.pre(output_dir)?;
 
         crashtracker::init(
             config,
@@ -82,7 +89,7 @@ mod unix {
         )?;
 
         // Conduct the post-init test
-        behavior.post(&output_dir)?;
+        behavior.post(output_dir)?;
 
         crashtracker::begin_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
         unsafe {

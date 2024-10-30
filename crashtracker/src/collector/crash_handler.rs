@@ -16,7 +16,6 @@ use libc::{
 use nix::poll::{poll, PollFd, PollFlags};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler};
 use nix::sys::socket;
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{close, Pid};
 use std::ffi::CString;
 use std::fs::{File, OpenOptions};
@@ -122,32 +121,27 @@ fn open_file_or_quiet(filename: Option<&str>) -> anyhow::Result<RawFd> {
 }
 
 /// Non-blocking child reaper
-/// * If the child process has exited, return true
-/// * If the child process cannot be found, return false
-/// * If the child is still alive, or some other error occurs, return an error Either way, after
-///   this returns, you probably don't have to do anything else.
+/// Calling `waitpid()` on some systems (macos) is not allowed in async-signal contexts. Since we
+/// just need a liveness check, we use kill 0 instead.
 fn reap_child_non_blocking(pid: Pid, timeout_ms: u32) -> anyhow::Result<bool> {
     let timeout = Duration::from_millis(timeout_ms as u64);
     let start_time = Instant::now();
 
     loop {
-        match waitpid(pid, Some(WaitPidFlag::WNOHANG)) {
-            Ok(WaitStatus::StillAlive) => {
+        // Use kill 0 instead of waitpid
+        match unsafe { libc::kill(pid.into(), 0) } {
+            0 => {
+                // If `kill` succeeded, then we assume the process is still alive. One could
+                // manufacture a situation where (e.g., using `clone3` with `set_tid`) we're
+                // actually looking at a _different_ process now, but in any contemporary system
+                // using normal spawning mechanisms, this is extraordinarily unlikely.
                 if Instant::now().duration_since(start_time) > timeout {
                     return Err(anyhow::anyhow!("Timeout waiting for child process to exit"));
                 }
             }
-            Ok(_status) => {
-                return Ok(true);
-            }
-            Err(nix::Error::ECHILD) => {
-                // Non-availability of the specified process is weird, since we should have
-                // exclusive access to reaping its exit, but at the very least means there is
-                // nothing further for us to do.
-                return Ok(true);
-            }
             _ => {
-                return Err(anyhow::anyhow!("Error waiting for child process to exit"));
+                // If the process doesn't exist, assume it's been killed.
+                return Ok(true);
             }
         }
     }
@@ -505,9 +499,7 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
         // SIGKILL will ensure that the process ends eventually, but there's
         // no bound on that time.
         // We emit SIGKILL and try to reap its exit status for the remaining time, then just give
-        // up. Since the state of the process is checked through `waitpid()`, no check is
-        // made for the return of `kill()` (which would also reveal the equivalent of
-        // ECHILD).
+        // up.
         unsafe {
             libc::kill(receiver.receiver_pid, libc::SIGKILL);
         }
