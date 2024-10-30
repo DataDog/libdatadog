@@ -112,9 +112,11 @@ fn test_crash() -> anyhow::Result<()> {
     let path_to_receiver_binary =
         "/home/ubuntu/dev/libdatadog_ct/target/release/build/builder-5add66ea14bef616/out/build/libdatadog-crashtracking-receiver".to_string();
     let create_alt_stack = true;
+    let use_alt_stack = true;
     let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
+    let timeout_ms = 10_000;
     let receiver_config = CrashtrackerReceiverConfig::new(
         vec![],
         vec![],
@@ -122,8 +124,14 @@ fn test_crash() -> anyhow::Result<()> {
         stderr_filename,
         stdout_filename,
     )?;
-    let config =
-        CrashtrackerConfiguration::new(vec![], create_alt_stack, endpoint, resolve_frames)?;
+    let config = CrashtrackerConfiguration::new(
+        vec![],
+        create_alt_stack,
+        use_alt_stack,
+        endpoint,
+        resolve_frames,
+        timeout_ms,
+    )?;
     let metadata = CrashtrackerMetadata::new(
         "libname".to_string(),
         "version".to_string(),
