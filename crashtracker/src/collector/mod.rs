@@ -6,6 +6,7 @@ mod counters;
 mod crash_handler;
 mod emitters;
 mod spans;
+mod saguard;
 
 pub use api::*;
 pub use counters::{begin_op, end_op, reset_counters, OpTypes};
