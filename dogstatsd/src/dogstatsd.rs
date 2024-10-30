@@ -32,8 +32,9 @@ impl BufferReader {
         match self {
             BufferReader::UdpSocketReader(socket) => {
                 // TODO(astuyve) this should be dynamic
-                // use 8KB max buffer size to match default value in Go Agent
-                let mut buf = [0; 8192]; // todo, do we want to make this dynamic? (not sure)
+                // Max buffer size is configurable in Go Agent and the default is 8KB
+                // https://github.com/DataDog/datadog-agent/blob/85939a62b5580b2a15549f6936f257e61c5aa153/pkg/config/config_template.yaml#L2154-L2158
+                let mut buf = [0; 8192];
                 let (amt, src) = socket
                     .recv_from(&mut buf)
                     .await
@@ -86,8 +87,7 @@ impl DogStatsD {
 
     fn insert_metrics(&self, msg: Split<char>) {
         let all_valid_metrics: Vec<Metric> = msg
-            .filter(|m| !m.is_empty())
-            .filter(|m| !m.starts_with("_sc|") && !m.starts_with("_e{")) // exclude service checks and events
+            .filter(|m| !m.is_empty() && !m.starts_with("_sc|") && !m.starts_with("_e{")) // exclude service checks and events
             .map(|m| m.replace('\n', ""))
             .filter_map(|m| match parse(m.as_str()) {
                 Ok(metric) => Some(metric),

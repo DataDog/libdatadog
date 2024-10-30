@@ -14,7 +14,7 @@ use ustr::Ustr;
 pub const EMPTY_TAGS: SortedTags = SortedTags { values: Vec::new() };
 
 lazy_static! {
-    pub static ref METRIC_REGEX: regex::Regex = Regex::new(
+    static ref METRIC_REGEX: regex::Regex = Regex::new(
         r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[cgd])(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?(?:\|c:(?P<container_id>[^|]+))?$",
     ).expect("Failed to create metric regex");
 }
