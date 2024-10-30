@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::modes::behavior::Behavior;
 
-use crate::modes::behavior::{atom_to_clone, file_append_msg, remove_file};
+use crate::modes::behavior::{atom_to_clone, set_atomic, file_append_msg, remove_file_permissive};
 use datadog_crashtracker::CrashtrackerConfiguration;
 use libc;
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
@@ -25,10 +25,10 @@ impl Behavior for Test {
         Ok(())
     }
 
-    fn post(&self, _output_dir: &str) -> anyhow::Result<()> {
+    fn post(&self, output_dir: &str) -> anyhow::Result<()> {
         // Test to make sure the crashtracker can be chained without issue.
         // This DOES NOT test that the crashtracker's chaining mechanism works.
-        test()
+        test(output_dir)
     }
 }
 
@@ -40,6 +40,7 @@ extern "C" fn segfault_sigaction(
     sig_info: *mut libc::siginfo_t,
     ucontext: *mut libc::c_void,
 ) {
+    println!("Segfault handler triggered");
     // Set up the chaining with the old handler.  This is written in a generic way, emulating how
     // chaining is frequently done in the wild.
     let old_action = match atom_to_clone(&OLD_ACTION) {
@@ -47,6 +48,7 @@ extern "C" fn segfault_sigaction(
         Err(_) => {
             // This is undesirable.  We stop now, which will cause the test to fail because the
             // crashtracking data won't get written (and the INVALID file still exists)
+            println!("Error: OLD_ACTION was null");
             return;
         }
     };
@@ -56,10 +58,11 @@ extern "C" fn segfault_sigaction(
         Ok(f) => f,
         Err(_) => {
             // Fails the test, as above
+            println!("Error: OUTPUT_FILE was null");
             return;
         }
     };
-    remove_file(&filepath);
+    remove_file_permissive(&filepath);
 
     match old_action.handler() {
         SigHandler::SigDfl => {
@@ -71,7 +74,7 @@ extern "C" fn segfault_sigaction(
     }
 }
 
-fn test() -> anyhow::Result<()> {
+fn test(output_dir: &str) -> anyhow::Result<()> {
     // First, check that OLD_ACTION is null
     if !OLD_ACTION.load(SeqCst).is_null() {
         anyhow::bail!("Test found invalid condition: OLD_ACTION was not null");
@@ -95,13 +98,15 @@ fn test() -> anyhow::Result<()> {
     // will be deleted by the signal handler, as a preventative check in case the handler fails to
     // trigger in the first place.  Otherwise, this test will pass as long as the crashtracking
     // data is received correctly.
+    set_atomic(&OUTPUT_FILE, format!("{output_dir}/INVALID"));
     let filepath = match atom_to_clone(&OUTPUT_FILE) {
         Ok(f) => f,
         Err(_) => {
-            return Ok(());
+            // Uh, if we can't read the value, then that's a problem
+            anyhow::bail!("Error: OUTPUT_FILE was null");
         }
     };
-    remove_file(&filepath);
+    remove_file_permissive(&filepath);
     file_append_msg(&filepath, "File not cleared by handler")?;
 
     Ok(())

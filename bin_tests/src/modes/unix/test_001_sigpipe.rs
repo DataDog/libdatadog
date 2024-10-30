@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::modes::behavior::Behavior;
 use crate::modes::behavior::{
-    atom_to_clone, does_file_contain_msg, file_append_msg, set_atomic_string,
+    atom_to_clone, does_file_contain_msg, file_append_msg, set_atomic, remove_file_permissive,
 };
 
 use datadog_crashtracker::CrashtrackerConfiguration;
@@ -57,7 +57,7 @@ fn inner(output_dir: &str, filename: &str) -> anyhow::Result<()> {
     // We're going to cause a SIGPIPE and check
 
     // Set the output file so the handler can pick up on it
-    set_atomic_string(&OUTPUT_FILE, format!("{output_dir}/{filename}"));
+    set_atomic(&OUTPUT_FILE, format!("{output_dir}/{filename}"));
     let ofile = atom_to_clone(&OUTPUT_FILE)?;
 
     // Cause a SIGPIPE to occur by opening a socketpair, closing the read side, and writing into
@@ -84,11 +84,11 @@ fn inner(output_dir: &str, filename: &str) -> anyhow::Result<()> {
     }
 
     // Delete the file and the INVALID file to remove any previous state
-    std::fs::remove_file(&ofile).ok();
-    std::fs::remove_file(format!("{output_dir}/INVALID")).ok();
+    remove_file_permissive(&ofile);
+    remove_file_permissive(&format!("{output_dir}/INVALID"));
 
     // OK, we're done.  Return the output file name
-    set_atomic_string(&OUTPUT_FILE, format!("{output_dir}/INVALID"));
+    set_atomic(&OUTPUT_FILE, format!("{output_dir}/INVALID"));
     Ok(())
 }
 
@@ -115,7 +115,7 @@ pub fn setup(output_dir: &str) -> anyhow::Result<()> {
     }
 
     // Additional setup logic for the output file
-    set_atomic_string(&OUTPUT_FILE, format!("{output_dir}/INVALID"));
+    set_atomic(&OUTPUT_FILE, format!("{output_dir}/INVALID"));
 
     Ok(())
 }

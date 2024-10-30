@@ -45,19 +45,21 @@ pub fn atom_to_clone<T: Clone>(atom: &AtomicPtr<T>) -> Result<T> {
     }
 }
 
-pub fn set_atomic_string(atom: &AtomicPtr<String>, value: String) {
+pub fn set_atomic<T>(atom: &AtomicPtr<T>, value: T) {
     let box_ptr = Box::into_raw(Box::new(value));
     let old = atom.swap(box_ptr, Ordering::SeqCst);
     if !old.is_null() {
         unsafe {
-            std::mem::drop(Box::from_raw(old));
+            // Drop the previous value safely
+            let _ = Box::from_raw(old);
         }
     }
 }
 
-pub fn remove_file(filepath: &String) {
+pub fn remove_file_permissive(filepath: &String) {
+    // Removes the file if it exists.  If it doesn't exist, it's not an error or anything.
     if !filepath.is_empty() {
-        std::fs::remove_file(filepath).unwrap();
+        let _ = std::fs::remove_file(filepath);
     }
 }
 
