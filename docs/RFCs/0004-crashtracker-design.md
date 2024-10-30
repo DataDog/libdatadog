@@ -107,6 +107,14 @@ The collector interacts with the system in the following ways:
         only send a select set of files which do not contain sensitive data.
         At present, this is based on careful coding and audit of which files are sent.
         Stretch mitigation: redact potentially sensitive data either client-side or server-side (see below).
+6.  Returns and chains the previous handlers, if any.
+    - Risks to normal operation
+      - N/A
+    - Risks during a crash
+      - Resulting core dumps are sometimes a bit corrupted / contain the crashtracker handler.
+        This can be confusing when viewing the core dumps and registers are not quite what they were before the handler was invoked.
+        Mitigation: Unset the crashtracker handler and return from the signal handler, so that the OS will fall back to the default action of creating a core dump ... at the original sigsegv location.
+        Stretch: It may be possible to do magic using `sigsetjmp`/`siglongjmp`, as discussed [here](https://github.com/DataDog/libdatadog/pull/696#discussion_r1819149232).
 
 ### Receiver
 
@@ -139,14 +147,14 @@ The receiver interacts with the system in the following ways:
       - May consume a small amount of resources.
         Mitigation: None.
     - Risks during a crash
-
       - If the pipe is not drained fast enough, the crashtracker collector will hang.
         Mitigation:
         Currently, none, other than careful coding to limit work done while draining the socket.
         In the future we might wish to play with process niceness to increase the chance of the receiver running and draining the socket.
         We can increase the size
       - The collector might crash or be terminated, truncating the message.
-
+        Note that this is an issue for the receiver, because a partial (and potentially malformed) message will be received.
+        The receiver must ensure that it does not hang or crash in this case, and transmit as much information as possible to the backend.
         Mitigation: If an unexpected input is received, including EOF, make a best effort attempt to format and send a partial crash report.
 
 3.  Transmits the message to the backend.
