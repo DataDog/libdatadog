@@ -86,7 +86,7 @@ impl DogStatsD {
     fn insert_metrics(&self, msg: Split<char>) {
         let all_valid_metrics: Vec<Metric> = msg
             .filter(|m| !m.is_empty())
-            .filter(|m| !m.starts_with("_sc|")) // exclude service checks
+            .filter(|m| !m.starts_with("_sc|") && !m.starts_with("_e{")) // exclude service checks and events
             .map(|m| m.replace('\n', ""))
             .filter_map(|m| match parse(m.as_str()) {
                 Ok(metric) => Some(metric),
