@@ -31,8 +31,8 @@ The collector interacts with the system in the following ways:
         It is possible for concurrent races to occur.
         Mitigation: doing this operation once, early during system initialization.
       - If the system expects and handles as part of its ordinary functioning, this can violate principle 1.
-        This is not common for most languages, but Java and .Net use signals .
-        A crashtracker signal handler risks breaking that mechanism.
+        This is not common for most languages, but Java and .Net use signals for internal VM mechanisms (e.g. GC optimizations and the like).
+        A crashtracker signal handler risks breaking these mechanisms.
         Mitigation: not using signal handler based crashtracking for these languages.
     - Risks during a crash
       - If user code installs signal handlers, these can conflict with the crashtracker.
@@ -62,6 +62,8 @@ The collector interacts with the system in the following ways:
         Operating inside a crashing process is inherently risky.
         We do our best to limit the operations we perform, and to move as much as possible across a process boundary, but there will always be a risk here.
         Provide an environment variable to enable customers to disable the crashtracker.
+        Implementing a foolproof timeout in a crash handler is difficult.
+        However, we SHOULD provide checkpoints where we exit early if a user-specified amount of time has been exceeded.
 3.  Backtrace collected.
     - Risks to normal operation
       - N/A
@@ -83,7 +85,9 @@ The collector interacts with the system in the following ways:
         This could hang the crashing process.
         Mitigation:
         Minimize the amount of data sent.
+        Todo: allow the specification of a max file-size to upload.
         Todo: use nonblocking read/writes, and bail if there is an issue.
+        Todo: increase the buffer size to mitigate this issue, as discussed [here](https://github.com/DataDog/libdatadog/pull/696#discussion_r1819070556).
       - If the pipe/socket is not available or is closed early, data could not be sent, or the crashtracker could hang.
         Mitigation:
         Data is sent to the receiver in priority order.
@@ -121,7 +125,8 @@ The receiver interacts with the system in the following ways:
         This was originally believed to be harmless.
         However, it turns out that some frameworks assume that they are the only thing that can spawn workers, and do a `waitpid` on all children.
         The existence of an additional child process hangs the framework.
-        Mitigation: Either do lazy initialization, or use a proper daemonized sidecar.
+        Mitigation: do lazy initilization.
+        The possibility of using a sidecar or updated agent is discussed in future work below.
     - Risks during a crash
       - Lazy initialization consumes a PID and a slot in the process table.
         This can cause either initialization to fail, or block the creation of another process on the customer system.
@@ -129,23 +134,29 @@ The receiver interacts with the system in the following ways:
       - Forking inside a signal handler is unsafe (see Notes on [signal-safety(7) \- Linux manual page](https://man7.org/linux/man-pages/man7/signal-safety.7.html)).
         Mitigation: Do cursed heroics to avoid triggering `at_fork` handlers.
 2.  Listens for a crashreport a socket/pipe.
+
     - Risks to normal operation
       - May consume a small amount of resources.
         Mitigation: None.
     - Risks during a crash
+
       - If the pipe is not drained fast enough, the crashtracker collector will hang.
         Mitigation:
         Currently, none, other than careful coding to limit work done while draining the socket.
         In the future we might wish to play with process niceness to increase the chance of the receiver running and draining the socket.
+        We can increase the size
       - The collector might crash or be terminated, truncating the message.
+
         Mitigation: If an unexpected input is received, including EOF, make a best effort attempt to format and send a partial crash report.
+
 3.  Transmits the message to the backend.
     - Risks to normal operation
       - NA
     - Risks during a crash
       - The endpoint may be inaccessible.
-        Mitigation: None.
-      - It may take a signifcant amount of time to transmit the crashreport.
+        Mitigation: drop the report.
+        As a future mitigation, if this is a common problem, explore posting a failure metric to a different endpoint, increasing the chance of some message getting out.
+      - It may take a significant amount of time to transmit the crash report.
         This could cause the user process to hang.
         Mitigation: a configurable timeout on transmission (default 3s).
 
@@ -182,10 +193,16 @@ As discussed above, transmitting data from within a crashing process is difficul
 The current mitigation is to fork a separate receiver binary which gets data from the collector over a socket/pipe and then formats and transmits it to the endpoint.
 Other options include
 
+- Using a daemonized sidecar.
+  This is supported for PHP, but [still has gotchas in a containerized environment where process 1 is non reaping](https://github.com/DataDog/libdatadog/pull/696#discussion_r1819075313).
 - [Adding support for this to the agent](https://github.com/DataDog/libdatadog/pull/696#discussion_r1820226183), avoiding the need for a seperate process on the machine.
 - [Forking the crashing process](https://github.com/DataDog/libdatadog/pull/696#discussion_r1819312104), and then directly use the forked process to collect and transmit the crash report, avoiding the need for a separate binary and IPC.
 
 ### Scrubbing potentially sensitive data
+
 The crashtracker transmits data about the state of the customer process.
+Although we make every effort to only upload non-sensitive data, it is possible that something might slip through the cracks.
 
-
+- As a future task, investigate using a sensitive-data redaction tool, either client side or on the backend, as an additional mitigation.
+- Limit the data we upload by doing client-side preprocessing.
+  For example, instead of sending `/proc/self/maps`, send normalized addresses as discussed [here](https://github.com/DataDog/libdatadog/pull/696#discussion_r1819293109).
