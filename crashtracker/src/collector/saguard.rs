@@ -84,4 +84,3 @@ impl<const N: usize> Drop for SaGuard<N> {
         );
     }
 }
-

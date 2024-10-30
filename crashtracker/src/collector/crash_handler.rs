@@ -51,6 +51,55 @@ struct Receiver {
     receiver_pid: i32,
 }
 
+// The args_cstrings and env_vars_strings fields are just storage.  Even though they're
+// unreferenced, they're a necessary part of the struct.
+#[allow(dead_code)]
+struct PreparedExecve {
+    binary_path: CString,
+    args_cstrings: Vec<CString>,
+    args_ptrs: Vec<*const i8>,
+    env_vars_cstrings: Vec<CString>,
+    env_vars_ptrs: Vec<*const i8>,
+}
+
+impl PreparedExecve {
+    fn new(config: &CrashtrackerReceiverConfig) -> Self {
+        // Allocate and store binary path
+        let binary_path = CString::new(config.path_to_receiver_binary.as_str())
+            .expect("Failed to convert binary path to CString");
+
+        // Allocate and store arguments
+        let args_cstrings: Vec<CString> = config
+            .args
+            .iter()
+            .map(|s| CString::new(s.as_str()).expect("Failed to convert argument to CString"))
+            .collect();
+        let mut args_ptrs: Vec<*const i8> = args_cstrings.iter().map(|arg| arg.as_ptr()).collect();
+        args_ptrs.push(std::ptr::null()); // Null-terminate the argument list
+
+        // Allocate and store environment variables
+        let env_vars_cstrings: Vec<CString> = config
+            .env
+            .iter()
+            .map(|(key, value)| {
+                let env_str = format!("{key}={value}");
+                CString::new(env_str).expect("Failed to convert environment variable to CString")
+            })
+            .collect();
+        let mut env_vars_ptrs: Vec<*const i8> =
+            env_vars_cstrings.iter().map(|env| env.as_ptr()).collect();
+        env_vars_ptrs.push(std::ptr::null()); // Null-terminate the environment list
+
+        Self {
+            binary_path,
+            args_cstrings,
+            args_ptrs,
+            env_vars_cstrings,
+            env_vars_ptrs,
+        }
+    }
+}
+
 /// Opens a file for writing (in append mode) or opens /dev/null
 /// * If the filename is provided, it will try to open (creating if needed) the specified file.
 ///   Failure to do so is an error.
@@ -105,14 +154,7 @@ fn reap_child_non_blocking(pid: Pid, timeout_ms: u32) -> anyhow::Result<bool> {
 }
 
 /// Wrapper around the child process that will run the crash receiver
-/// TODO the execve arg coersion requires allocation, which we should avoid from a signal handler.
-fn run_receiver_child(
-    uds_parent: RawFd,
-    uds_child: RawFd,
-    stderr: RawFd,
-    stdout: RawFd,
-    config: &CrashtrackerReceiverConfig,
-) -> ! {
+fn run_receiver_child(uds_parent: RawFd, uds_child: RawFd, stderr: RawFd, stdout: RawFd) -> ! {
     // File descriptor management
     unsafe {
         dup2(uds_child, 0);
@@ -126,40 +168,32 @@ fn run_receiver_child(
     let _ = close(stderr);
     let _ = close(stdout);
 
-    // Conform inputs to execve calling convention
-    // Bind the CString to a variable to extend its lifetime
-    let binary_path = CString::new(config.path_to_receiver_binary.as_str())
-        .expect("Failed to convert binary path to CString");
+    // We've already prepared the arguments and environment variable
+    // If we've reached this point, it means we've prepared the arguments and environment variables
+    // ahead of time.  Extract them now.  This was prepared in advance in order to avoid heap
+    // allocations in the signal handler.
+    let receiver_args = RECEIVER_ARGS.load(SeqCst);
+    let (binary_path, args_ptrs, env_vars_ptrs) = unsafe {
+        let receiver_args = receiver_args.as_ref().expect("No receiver arguments");
+        (
+            &receiver_args.binary_path,
+            &receiver_args.args_ptrs,
+            &receiver_args.env_vars_ptrs,
+        )
+    };
 
-    // Collect arguments as CString and store them in a Vec to extend their lifetimes
-    let args_cstrings: Vec<CString> = config
-        .args
-        .iter()
-        .map(|s| CString::new(s.as_str()).expect("Failed to convert argument to CString"))
-        .collect();
-
-    // Collect pointers to each argument
-    let mut args_ptrs: Vec<*const i8> = args_cstrings.iter().map(|arg| arg.as_ptr()).collect();
-    args_ptrs.push(std::ptr::null()); // Null-terminate the argument list
-
-    // Collect environment variables as CString and store them in a Vec to extend their lifetimes
-    let mut env_vars_cstrings = Vec::with_capacity(config.env.len());
-    for (key, value) in &config.env {
-        let env_str = format!("{key}={value}");
-        let cstring =
-            CString::new(env_str).expect("Failed to convert environment variable to CString");
-        env_vars_cstrings.push(cstring);
-    }
-    let mut env_vars_ptrs: Vec<*const i8> =
-        env_vars_cstrings.iter().map(|env| env.as_ptr()).collect();
-    env_vars_ptrs.push(std::ptr::null()); // Null-terminate the environment variable list
+    // Print the first string in the environment variables to stderr
+    // This is a way to check that the environment variables are being passed correctly
+    println!("Crashtracker receiver environment variable: {:?}", unsafe {
+        CString::from_raw(*env_vars_ptrs.first().unwrap() as *mut i8)
+    });
 
     // Change into the crashtracking receiver
     unsafe {
         execve(
-            binary_path.as_ptr(),   // Binary path CString pointer
-            args_ptrs.as_ptr(),     // Argument list pointers
-            env_vars_ptrs.as_ptr(), // Environment variable pointers
+            binary_path.as_ptr(),
+            args_ptrs.as_ptr(),
+            env_vars_ptrs.as_ptr(),
         );
     }
 
@@ -169,13 +203,7 @@ fn run_receiver_child(
     }
 }
 
-fn run_receiver_parent(
-    _uds_parent: RawFd,
-    uds_child: RawFd,
-    _stderr: RawFd,
-    _stdout: RawFd,
-    _config: &CrashtrackerReceiverConfig,
-) {
+fn run_receiver_parent(_uds_parent: RawFd, uds_child: RawFd, _stderr: RawFd, _stdout: RawFd) {
     let _ = close(uds_child);
 }
 
@@ -208,6 +236,7 @@ static OLD_HANDLERS: AtomicPtr<OldHandlers> = AtomicPtr::new(ptr::null_mut());
 static METADATA: AtomicPtr<(CrashtrackerMetadata, String)> = AtomicPtr::new(ptr::null_mut());
 static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
 static RECEIVER_CONFIG: AtomicPtr<CrashtrackerReceiverConfig> = AtomicPtr::new(ptr::null_mut());
+static RECEIVER_ARGS: AtomicPtr<PreparedExecve> = AtomicPtr::new(ptr::null_mut());
 
 fn make_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<Receiver> {
     let stderr = open_file_or_quiet(config.stderr_filename.as_deref())?;
@@ -235,11 +264,11 @@ fn make_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<Receiver
     match unsafe { vfork() } {
         0 => {
             // Child (noreturn)
-            run_receiver_child(uds_parent, uds_child, stderr, stdout, config);
+            run_receiver_child(uds_parent, uds_child, stderr, stdout)
         }
         pid if pid > 0 => {
             // Parent
-            run_receiver_parent(uds_parent, uds_child, stderr, stdout, config);
+            run_receiver_parent(uds_parent, uds_child, stderr, stdout);
             Ok(Receiver {
                 receiver_uds: uds_parent,
                 receiver_pid: pid,
@@ -309,8 +338,23 @@ pub fn update_config(config: CrashtrackerConfiguration) -> anyhow::Result<()> {
 /// ATOMICITY:
 ///     This function uses a swap on an atomic pointer.
 pub fn configure_receiver(config: CrashtrackerReceiverConfig) {
-    let box_ptr = Box::into_raw(Box::new(config));
+    // First, propagate the configuration
+    let box_ptr = Box::into_raw(Box::new(config.clone()));
     let old = RECEIVER_CONFIG.swap(box_ptr, SeqCst);
+    if !old.is_null() {
+        // Safety: This can only come from a box above.
+        unsafe {
+            std::mem::drop(Box::from_raw(old));
+        }
+    }
+
+    // Next, heap-allocate the parts of the configuration that relate to execve
+    // This needs to be done because the execve call requires a specific layout, and achieving this
+    // layout requires allocations.  We should strive not to allocate from within a signal handler,
+    // so we do it now.
+    let prepared_execve = PreparedExecve::new(&config);
+    let box_ptr = Box::into_raw(Box::new(prepared_execve));
+    let old = RECEIVER_ARGS.swap(box_ptr, SeqCst);
     if !old.is_null() {
         // Safety: This can only come from a box above.
         unsafe {
@@ -387,7 +431,7 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
         return Ok(());
     }
 
-    // Leak config, receiver config, and metadata to avoid calling 'drop' during a crash
+    // Leak config and metadata to avoid calling `drop` during a crash
     // Note that these operations also replace the global states.  When the one-time guard is
     // passed, all global configuration and metadata becomes invalid.
     let config = CONFIG.swap(ptr::null_mut(), SeqCst);
@@ -441,7 +485,8 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
         let mut unix_stream = unsafe { UnixStream::from_raw_fd(receiver.receiver_uds) };
 
         // Currently the emission of the crash report doesn't have a firm time guarantee
-        // TODO: `timeout_ms` should be propagated here and used in the internal loop
+        // In a future patch, the timeout parameter should be passed into the IPC loop here and
+        // checked periodically.
         res = emit_crashreport(
             &mut unix_stream,
             config,

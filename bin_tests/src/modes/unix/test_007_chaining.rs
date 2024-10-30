@@ -40,7 +40,6 @@ extern "C" fn segfault_sigaction(
     sig_info: *mut libc::siginfo_t,
     ucontext: *mut libc::c_void,
 ) {
-    println!("Segfault handler triggered");
     // Set up the chaining with the old handler.  This is written in a generic way, emulating how
     // chaining is frequently done in the wild.
     let old_action = match atom_to_clone(&OLD_ACTION) {
@@ -48,7 +47,6 @@ extern "C" fn segfault_sigaction(
         Err(_) => {
             // This is undesirable.  We stop now, which will cause the test to fail because the
             // crashtracking data won't get written (and the INVALID file still exists)
-            println!("Error: OLD_ACTION was null");
             return;
         }
     };
@@ -58,7 +56,6 @@ extern "C" fn segfault_sigaction(
         Ok(f) => f,
         Err(_) => {
             // Fails the test, as above
-            println!("Error: OUTPUT_FILE was null");
             return;
         }
     };
