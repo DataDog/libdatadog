@@ -100,8 +100,15 @@ fn add_path(url: &Uri, path: &str) -> Uri {
     Uri::from_parts(parts).unwrap()
 }
 
+struct DroppedP0Counts {
+    pub dropped_p0_traces: usize,
+    pub dropped_p0_spans: usize,
+}
+
 /// Remove spans and chunks only keeping the ones that may be sampled by the agent
-fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) {
+fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) -> DroppedP0Counts {
+    let mut dropped_p0_traces = 0;
+    let mut dropped_p0_spans = 0;
     traces.retain_mut(|chunk| {
         // List of spans to keep even if the chunk is dropped
         let mut sampled_indexes = Vec::new();
@@ -128,8 +135,10 @@ fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) {
                 sampled_indexes.push(index);
             }
         }
+        dropped_p0_spans += chunk.len() - sampled_indexes.len();
         if sampled_indexes.is_empty() {
             // If no spans were sampled we can drop the whole chunk
+            dropped_p0_traces += 1;
             return false;
         }
         let sampled_spans = sampled_indexes
@@ -138,7 +147,11 @@ fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) {
             .collect();
         *chunk = sampled_spans;
         true
-    })
+    });
+    DroppedP0Counts {
+        dropped_p0_traces,
+        dropped_p0_spans,
+    }
 }
 
 #[derive(Clone, Default)]
@@ -437,15 +450,6 @@ impl TraceExporter {
         )
     }
 
-    fn get_headers(&self) -> TracerHeaderTags<'_> {
-        let mut headers: TracerHeaderTags = self.metadata.borrow().into();
-        if let StatsComputationStatus::Enabled { .. } = &**self.client_side_stats.load() {
-            headers.client_computed_top_level = true;
-            headers.client_computed_stats = true;
-        };
-        headers
-    }
-
     fn send_data_to_url(
         &self,
         data: &[u8],
@@ -462,7 +466,7 @@ impl TraceExporter {
                     )
                     .method(Method::POST);
 
-                let headers: HashMap<&'static str, String> = self.get_headers().into();
+                let headers: HashMap<&'static str, String> = self.metadata.borrow().into();
 
                 for (key, value) in &headers {
                     req_builder = req_builder.header(*key, value);
@@ -597,6 +601,8 @@ impl TraceExporter {
             None,
         );
 
+        let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
+
         // Stats computation
         if let StatsComputationStatus::Enabled { .. } = &**self.client_side_stats.load() {
             if !self.client_computed_top_level {
@@ -607,10 +613,12 @@ impl TraceExporter {
             self.add_spans_to_stats(traces.iter().flat_map(|trace| trace.iter()));
             // Once stats have been computed we can drop all chunks that are not going to be
             // sampled by the agent
-            drop_chunks(&mut traces);
+            let dropped_counts = drop_chunks(&mut traces);
+            header_tags.client_computed_top_level = true;
+            header_tags.client_computed_stats = true;
+            header_tags.dropped_p0_traces = dropped_counts.dropped_p0_traces;
+            header_tags.dropped_p0_spans = dropped_counts.dropped_p0_spans;
         }
-
-        let header_tags: TracerHeaderTags<'_> = self.get_headers();
 
         match self.output_format {
             TraceExporterOutputFormat::V04 => rmp_serde::to_vec_named(&traces)
