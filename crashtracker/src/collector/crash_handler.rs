@@ -182,12 +182,6 @@ fn run_receiver_child(uds_parent: RawFd, uds_child: RawFd, stderr: RawFd, stdout
         )
     };
 
-    // Print the first string in the environment variables to stderr
-    // This is a way to check that the environment variables are being passed correctly
-    println!("Crashtracker receiver environment variable: {:?}", unsafe {
-        CString::from_raw(*env_vars_ptrs.first().unwrap() as *mut i8)
-    });
-
     // Change into the crashtracking receiver
     unsafe {
         execve(
