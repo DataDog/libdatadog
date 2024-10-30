@@ -5,12 +5,19 @@ use crate::errors::ParseError;
 use crate::{constants, datadog};
 use ddsketch_agent::DDSketch;
 use fnv::FnvHasher;
+use lazy_static::lazy_static;
 use protobuf::Chars;
 use regex::Regex;
 use std::hash::{Hash, Hasher};
 use ustr::Ustr;
 
 pub const EMPTY_TAGS: SortedTags = SortedTags { values: Vec::new() };
+
+lazy_static! {
+    static ref METRIC_REGEX: regex::Regex = Regex::new(
+        r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[cgd])(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?(?:\|c:(?P<container_id>[^|]+))?$",
+    ).expect("Failed to create metric regex");
+}
 
 #[derive(Clone, Debug)]
 pub enum MetricValue {
@@ -167,41 +174,37 @@ impl Metric {
 /// example aj-test.increment:1|c|#user:aj-test from 127.0.0.1:50983
 pub fn parse(input: &str) -> Result<Metric, ParseError> {
     // TODO must enforce / exploit constraints given in `constants`.
-    if let Ok(re) = Regex::new(
-        r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[cgd])(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?$",
-    ) {
-        if let Some(caps) = re.captures(input) {
-            // unused for now
-            // let sample_rate = caps.name("sample_rate").map(|m| m.as_str());
+    if let Some(caps) = METRIC_REGEX.captures(input) {
+        // unused for now
+        // let sample_rate = caps.name("sample_rate").map(|m| m.as_str());
 
-            let tags;
-            if let Some(tags_section) = caps.name("tags") {
-                tags = Some(SortedTags::parse(tags_section.as_str())?);
-            } else {
-                tags = None;
-            }
-            let val = first_value(caps.name("values").unwrap().as_str())?;
-            let metric_value = match caps.name("type").unwrap().as_str() {
-                "c" => MetricValue::Count(val),
-                "g" => MetricValue::Gauge(val),
-                "d" => {
-                    let sketch = &mut DDSketch::default();
-                    sketch.insert(val);
-                    MetricValue::Distribution(sketch.to_owned())
-                }
-                _ => {
-                    return Err(ParseError::Raw("Unsupported metric type"));
-                }
-            };
-            let name = Ustr::from(caps.name("name").unwrap().as_str());
-            let id = id(name, &tags);
-            return Ok(Metric {
-                name,
-                value: metric_value,
-                tags,
-                id,
-            });
+        let tags;
+        if let Some(tags_section) = caps.name("tags") {
+            tags = Some(SortedTags::parse(tags_section.as_str())?);
+        } else {
+            tags = None;
         }
+        let val = first_value(caps.name("values").unwrap().as_str())?;
+        let metric_value = match caps.name("type").unwrap().as_str() {
+            "c" => MetricValue::Count(val),
+            "g" => MetricValue::Gauge(val),
+            "d" => {
+                let sketch = &mut DDSketch::default();
+                sketch.insert(val);
+                MetricValue::Distribution(sketch.to_owned())
+            }
+            _ => {
+                return Err(ParseError::Raw("Unsupported metric type"));
+            }
+        };
+        let name = Ustr::from(caps.name("name").unwrap().as_str());
+        let id = id(name, &tags);
+        return Ok(Metric {
+            name,
+            value: metric_value,
+            tags,
+            id,
+        });
     }
     Err(ParseError::Raw("Invalid metric format"))
 }
@@ -467,5 +470,11 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn invalid_dogstatsd_no_panic() {
         assert!(parse("somerandomstring|c+a;slda").is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn parse_container_id() {
+        assert!(parse("containerid.metric:0|c|#env:dev,client_transport:udp|c:0000000000000000000000000000000000000000000000000000000000000000").is_ok());
     }
 }
