@@ -1,10 +1,11 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use env_logger::{Builder, Env, Target};
+use env_logger::Builder;
 use log::{debug, error, info};
-use std::{env, sync::Arc, sync::Mutex};
+use std::{env, str::FromStr, sync::Arc, sync::Mutex};
 use tokio::time::{interval, Duration};
+use tracing_subscriber::EnvFilter;
 
 use datadog_trace_mini_agent::{
     config, env_verifier, mini_agent, stats_flusher, stats_processor, trace_flusher,
@@ -27,8 +28,11 @@ const AGENT_HOST: &str = "0.0.0.0";
 
 #[tokio::main]
 pub async fn main() {
-    let env = Env::new().filter_or("DD_LOG_LEVEL", "info");
-    Builder::from_env(env).target(Target::Stdout).init();
+    let log_level = env::var("DD_LOG_LEVEL")
+        .map(|val| val.to_lowercase())
+        .unwrap_or("info".to_string());
+    let level_filter = log::LevelFilter::from_str(&log_level).unwrap_or(log::LevelFilter::Info);
+    Builder::new().filter_level(level_filter).init();
 
     let dd_api_key: Option<String> = env::var("DD_API_KEY").ok();
     let dd_dogstatsd_port: u16 = env::var("DD_DOGSTATSD_PORT")
@@ -47,6 +51,25 @@ pub async fn main() {
 
     let mini_agent_version = env!("CARGO_PKG_VERSION").to_string();
     env::set_var("DD_MINI_AGENT_VERSION", mini_agent_version);
+
+    let env_filter = format!("h2=off,hyper=off,rustls=off,{}", log_level);
+
+    let subscriber = tracing_subscriber::fmt::Subscriber::builder()
+        .with_env_filter(
+            EnvFilter::try_new(env_filter).expect("could not parse log level in configuration"),
+        )
+        .with_level(true)
+        .with_thread_names(false)
+        .with_thread_ids(false)
+        .with_line_number(false)
+        .with_file(false)
+        .with_target(false)
+        .without_time()
+        .finish();
+
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+
+    debug!("Logging subsystem enabled");
 
     let env_verifier = Arc::new(env_verifier::ServerlessEnvVerifier::default());
 
