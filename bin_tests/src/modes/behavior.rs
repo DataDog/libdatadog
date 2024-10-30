@@ -42,9 +42,7 @@ pub fn file_append_msg(filepath: &Path, contents: &str) -> Result<()> {
 
 pub fn atom_to_clone<T: Clone>(atom: &AtomicPtr<T>) -> Result<T> {
     let ptr = atom.load(Ordering::SeqCst);
-    if ptr.is_null() {
-        anyhow::bail!("Pointer was null");
-    }
+    anyhow::ensure!(!ptr.is_null(), "Pointer was null");
 
     // If not null, clone the referenced value
     unsafe {

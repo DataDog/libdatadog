@@ -10,8 +10,8 @@ use crate::crash_info::CrashtrackerMetadata;
 use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
 use anyhow::Context;
 use libc::{
-    c_void, dup2, execve, mmap, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE,
-    PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ,
+    c_void, execve, mmap, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE,
+    PROT_READ, PROT_WRITE, SIGSTKSZ,
 };
 use nix::poll::{poll, PollFd, PollFlags};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler};
@@ -28,6 +28,19 @@ use std::ptr;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64};
 use std::time::{Duration, Instant};
+
+// Note that this file makes use the following async-signal safe functions in a signal handler.
+// <https://man7.org/linux/man-pages/man7/signal-safety.7.html>
+// - clock_gettime
+// - close (although Rust may call `free` because we call the higher-level nix interface)
+// - dup2
+// - fork (but specifically only because it does so without calling atfork handlers)
+// - kill
+// - poll
+// - raise
+// - read
+// - sigaction
+// - write
 
 // The use of fork or vfork is influenced by the availability of the function in the host libc.
 // Macos seems to have deprecated vfork.  The reason to prefer vfork is to suppress atfork
@@ -151,9 +164,9 @@ fn reap_child_non_blocking(pid: Pid, timeout_ms: u32) -> anyhow::Result<bool> {
 fn run_receiver_child(uds_parent: RawFd, uds_child: RawFd, stderr: RawFd, stdout: RawFd) -> ! {
     // File descriptor management
     unsafe {
-        dup2(uds_child, 0);
-        dup2(stdout, 1);
-        dup2(stderr, 2);
+        let _ = libc::dup2(uds_child, 0);
+        let _ = libc::dup2(stdout, 1);
+        let _ = libc::dup2(stderr, 2);
     }
 
     // Close unused file descriptors
@@ -543,7 +556,7 @@ pub fn register_crash_handlers() -> anyhow::Result<()> {
 
     unsafe {
         if config.create_alt_stack {
-            set_alt_stack()?;
+            create_alt_stack()?;
         }
         let sigbus = register_signal_handler(signal::SIGBUS, config)?;
         let sigsegv = register_signal_handler(signal::SIGSEGV, config)?;
@@ -562,7 +575,7 @@ unsafe fn register_signal_handler(
     signal_type: signal::Signal,
     config: &CrashtrackerConfiguration,
 ) -> anyhow::Result<SigAction> {
-    // Between this and `set_alt_stack()`, there are a few things going on.
+    // Between this and `create_alt_stack()`, there are a few things going on.
     // - It is generally preferable to run in an altstack, given the choice.
     // - Crashtracking does not currently provide any particular guarantees around stack usage; in
     //   fact, it has been observed to frequently exceed 8192 bytes (default SIGSTKSZ) in practice.
@@ -608,7 +621,7 @@ pub fn restore_old_handlers(inside_signal_handler: bool) -> anyhow::Result<()> {
 
 /// Allocates a signal altstack, and puts a guard page at the end.
 /// Inspired by https://github.com/rust-lang/rust/pull/69969/files
-unsafe fn set_alt_stack() -> anyhow::Result<()> {
+unsafe fn create_alt_stack() -> anyhow::Result<()> {
     if ALTSTACK_INIT.load(SeqCst) {
         return Ok(());
     }

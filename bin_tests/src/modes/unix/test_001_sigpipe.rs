@@ -72,7 +72,9 @@ extern "C" fn sigpipe_handler(_: libc::c_int) {
 static OUTPUT_FILE: AtomicPtr<PathBuf> = AtomicPtr::new(std::ptr::null_mut());
 
 fn inner(output_dir: &Path, filename: &str) -> anyhow::Result<()> {
-    // We're going to cause a SIGPIPE and check
+    // We're going to cause a SIGPIPE and then check that the handler actually triggered. At the
+    // end of this function, we transition the current file to INVALID, so if a SIGPIPE happens
+    // outside of our control, we can detect it and mark a failure.
 
     // Set the output file so the handler can pick up on it
     set_atomic(&OUTPUT_FILE, output_dir.join(filename));
