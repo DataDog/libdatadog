@@ -32,7 +32,9 @@ impl BufferReader {
         match self {
             BufferReader::UdpSocketReader(socket) => {
                 // TODO(astuyve) this should be dynamic
-                let mut buf = [0; 1024]; // todo, do we want to make this dynamic? (not sure)
+                // Max buffer size is configurable in Go Agent and the default is 8KB
+                // https://github.com/DataDog/datadog-agent/blob/85939a62b5580b2a15549f6936f257e61c5aa153/pkg/config/config_template.yaml#L2154-L2158
+                let mut buf = [0; 8192];
                 let (amt, src) = socket
                     .recv_from(&mut buf)
                     .await
@@ -85,7 +87,7 @@ impl DogStatsD {
 
     fn insert_metrics(&self, msg: Split<char>) {
         let all_valid_metrics: Vec<Metric> = msg
-            .filter(|m| !m.is_empty())
+            .filter(|m| !m.is_empty() && !m.starts_with("_sc|") && !m.starts_with("_e{")) // exclude empty messages, service checks, and events
             .map(|m| m.replace('\n', ""))
             .filter_map(|m| match parse(m.as_str()) {
                 Ok(metric) => Some(metric),
@@ -114,6 +116,7 @@ mod tests {
     use crate::metric::EMPTY_TAGS;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::sync::{Arc, Mutex};
+    use tracing_test::traced_test;
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
@@ -182,6 +185,30 @@ single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
         drop(aggregator);
 
         assert_value(&locked_aggregator, "metric123", 99_123.0, "");
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_dogstatsd_filter_service_check() {
+        let locked_aggregator = setup_dogstatsd("_sc|servicecheck|0").await;
+        let aggregator = locked_aggregator.lock().expect("lock poisoned");
+        let parsed_metrics = aggregator.to_series();
+
+        assert!(!logs_contain("Failed to parse metric"));
+        assert_eq!(parsed_metrics.len(), 0);
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_dogstatsd_filter_event() {
+        let locked_aggregator = setup_dogstatsd("_e{5,10}:event|test event").await;
+        let aggregator = locked_aggregator.lock().expect("lock poisoned");
+        let parsed_metrics = aggregator.to_series();
+
+        assert!(!logs_contain("Failed to parse metric"));
+        assert_eq!(parsed_metrics.len(), 0);
     }
 
     async fn setup_dogstatsd(statsd_string: &str) -> Arc<Mutex<Aggregator>> {

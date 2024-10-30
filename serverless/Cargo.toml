@@ -12,6 +12,9 @@ datadog-trace-utils = { path = "../trace-utils" }
 dogstatsd = { path = "../dogstatsd" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"]}
 tokio-util = { version = "0.7", default-features = false }
+tracing = { version = "0.1", default-features = false }
+tracing-core = { version = "0.1", default-features = false }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "registry", "fmt", "env-filter", "tracing-log"] }
 
 [[bin]]
 name = "datadog-serverless-trace-mini-agent"
