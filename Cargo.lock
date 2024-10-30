@@ -2020,6 +2020,7 @@ dependencies = [
  "ddsketch-agent",
  "fnv",
  "hashbrown 0.14.3",
+ "lazy_static",
  "mockito",
  "proptest",
  "protobuf",
