@@ -471,4 +471,10 @@ mod tests {
     fn invalid_dogstatsd_no_panic() {
         assert!(parse("somerandomstring|c+a;slda").is_err());
     }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn parse_container_id() {
+        assert!(parse("containerid.metric:0|c|#env:dev,client_transport:udp|c:0000000000000000000000000000000000000000000000000000000000000000").is_ok());
+    }
 }

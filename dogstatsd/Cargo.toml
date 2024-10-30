@@ -28,3 +28,4 @@ regex = { version = "1.10.6", default-features = false }
 [dev-dependencies]
 mockito = { version = "1.5.0", default-features = false }
 proptest = "1.4.0"
+tracing-test = { version = "0.2.5", default-features = false }

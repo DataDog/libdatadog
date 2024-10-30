@@ -87,7 +87,7 @@ impl DogStatsD {
 
     fn insert_metrics(&self, msg: Split<char>) {
         let all_valid_metrics: Vec<Metric> = msg
-            .filter(|m| !m.is_empty() && !m.starts_with("_sc|") && !m.starts_with("_e{")) // exclude service checks and events
+            .filter(|m| !m.is_empty() && !m.starts_with("_sc|") && !m.starts_with("_e{")) // exclude empty messages, service checks, and events
             .map(|m| m.replace('\n', ""))
             .filter_map(|m| match parse(m.as_str()) {
                 Ok(metric) => Some(metric),
@@ -116,6 +116,7 @@ mod tests {
     use crate::metric::EMPTY_TAGS;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::sync::{Arc, Mutex};
+    use tracing_test::traced_test;
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
@@ -184,6 +185,34 @@ single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
         drop(aggregator);
 
         assert_value(&locked_aggregator, "metric123", 99_123.0, "");
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_dogstatsd_filter_service_check() {
+        let locked_aggregator = setup_dogstatsd("_sc|servicecheck|0").await;
+        let aggregator = locked_aggregator.lock().expect("lock poisoned");
+        let parsed_metrics = aggregator.to_series();
+
+        assert!(!logs_contain("Failed to parse metric"));
+        assert_eq!(parsed_metrics.len(), 0);
+
+        drop(aggregator);
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_dogstatsd_filter_event() {
+        let locked_aggregator = setup_dogstatsd("_e{5,10}:event|test event").await;
+        let aggregator = locked_aggregator.lock().expect("lock poisoned");
+        let parsed_metrics = aggregator.to_series();
+
+        assert!(!logs_contain("Failed to parse metric"));
+        assert_eq!(parsed_metrics.len(), 0);
+
+        drop(aggregator);
     }
 
     async fn setup_dogstatsd(statsd_string: &str) -> Arc<Mutex<Aggregator>> {
