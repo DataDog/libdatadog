@@ -109,8 +109,7 @@ fn test_crash() -> anyhow::Result<()> {
 
     let endpoint = Some(Endpoint::from_slice(&output_url));
 
-    let path_to_receiver_binary =
-        "/home/ubuntu/dev/libdatadog_ct/target/release/build/builder-5add66ea14bef616/out/build/libdatadog-crashtracking-receiver".to_string();
+    let path_to_receiver_binary = "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
     let create_alt_stack = true;
     let use_alt_stack = true;
     let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
