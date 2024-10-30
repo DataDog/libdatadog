@@ -197,8 +197,6 @@ single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
 
         assert!(!logs_contain("Failed to parse metric"));
         assert_eq!(parsed_metrics.len(), 0);
-
-        drop(aggregator);
     }
 
     #[tokio::test]
@@ -211,8 +209,6 @@ single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
 
         assert!(!logs_contain("Failed to parse metric"));
         assert_eq!(parsed_metrics.len(), 0);
-
-        drop(aggregator);
     }
 
     async fn setup_dogstatsd(statsd_string: &str) -> Arc<Mutex<Aggregator>> {
