@@ -474,7 +474,7 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
         // Launch the receiver process
         let receiver = make_receiver(receiver_config)?;
 
-        // Creating this tream means the underlying RawFD is now owned by the stream, so
+        // Creating this stream means the underlying RawFD is now owned by the stream, so
         // we shouldn't close it manually.
         let mut unix_stream = unsafe { UnixStream::from_raw_fd(receiver.receiver_uds) };
 
