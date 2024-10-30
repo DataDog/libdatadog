@@ -9,8 +9,8 @@ use crate::crash_info::CrashtrackerMetadata;
 use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
 use anyhow::Context;
 use libc::{
-    _exit, c_void, dup2, execve, mmap, sigaltstack, siginfo_t, vfork, MAP_ANON, MAP_FAILED,
-    MAP_PRIVATE, PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ,
+    c_void, dup2, execve, mmap, sigaltstack, siginfo_t, vfork, MAP_ANON, MAP_FAILED, MAP_PRIVATE,
+    PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ,
 };
 use nix::poll::{poll, PollFd, PollFlags};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler};
@@ -71,10 +71,13 @@ impl<const N: usize> SaGuard<N> {
         )?;
 
         // Initialize array for saving old signal actions
+        // Except for SigChld and SigPipe, which are instantiated to SigIgn by default on all
+        // (most?) systems, the rest are instantiated to SigDfl.  This section attempts to restore
+        // that defaulting behavior.
         let mut old_sigactions = [(
             signal::Signal::SIGINT,
             SigAction::new(
-                SigHandler::SigIgn,
+                SigHandler::SigDfl,
                 SaFlags::empty(),
                 signal::SigSet::empty(),
             ),
@@ -146,8 +149,8 @@ fn open_file_or_quiet(filename: Option<&str>) -> anyhow::Result<RawFd> {
 /// * If the child process cannot be found, return false
 /// * If the child is still alive, or some other error occurs, return an error Either way, after
 ///   this returns, you probably don't have to do anything else.
-fn reap_child_non_blocking(pid: Pid, timeout_ms: u64) -> anyhow::Result<bool> {
-    let timeout = Duration::from_millis(timeout_ms);
+fn reap_child_non_blocking(pid: Pid, timeout_ms: u32) -> anyhow::Result<bool> {
+    let timeout = Duration::from_millis(timeout_ms as u64);
     let start_time = Instant::now();
 
     loop {
@@ -234,7 +237,7 @@ fn run_receiver_child(
 
     // If we reach this point, execve failed, so just exit
     unsafe {
-        _exit(-1);
+        libc::_exit(-1);
     }
 }
 
@@ -455,6 +458,8 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
     }
 
     // Leak config, receiver config, and metadata to avoid calling 'drop' during a crash
+    // Note that these operations also replace the global states.  When the one-time guard is
+    // passed, all global configuration and metadata becomes invalid.
     let config = CONFIG.swap(ptr::null_mut(), SeqCst);
     anyhow::ensure!(!config.is_null(), "No crashtracking config");
     let (config, config_str) = unsafe { config.as_ref().context("No crashtracking receiver")? };
@@ -469,6 +474,14 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
         "No crashtracking receiver config"
     );
     let receiver_config = unsafe { receiver_config.as_ref().context("receiver config")? };
+
+    // Since we've gotten this far, we're going to start working on the crash report. This
+    // operation needs to be mindful of the total walltime elapsed during handling. This isn't only
+    // to prevent hanging, but also because services capable of restarting after a crash experience
+    // crashes as probabalistic queue-holding events, and so crash handling represents dead time
+    // which makes the overall service increasingly incompetent at handling load.
+    let timeout_ms = config.timeout_ms;
+    let start_time = Instant::now(); // This is the time at which the signal was received
 
     // During the execution of this signal handler, block ALL other signals, especially because we
     // cannot control whether or not we run with SA_NODEFER (crashtracker might have been chained).
@@ -489,6 +502,8 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
         // we shouldn't close it manually.
         let mut unix_stream = unsafe { UnixStream::from_raw_fd(receiver.receiver_uds) };
 
+        // Currently the emission of the crash report doesn't have a firm time guarantee
+        // TODO: `timeout_ms` should be propagated here and used in the internal loop
         res = emit_crashreport(
             &mut unix_stream,
             config,
@@ -503,18 +518,25 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
             .context("Could not shutdown writing on the stream")?;
 
         // We have to wait for the receiver process and reap its exit status.
-        let _ = wait_for_pollhup(receiver.receiver_uds, 1000);
+        let pollhup_allowed_ms = timeout_ms as i32 - start_time.elapsed().as_millis() as i32;
+        let _ = wait_for_pollhup(receiver.receiver_uds, pollhup_allowed_ms)
+            .context("Failed to wait for pollhup")?;
 
         // Either the receiver is done, it timed out, or something failed.
         // In any case, can't guarantee that the receiver will exit.
         // SIGKILL will ensure that the process ends eventually, but there's
         // no bound on that time.
-        // We emit SIGKILL and try to reap its exit status for 25ms, then just give up.
+        // We emit SIGKILL and try to reap its exit status for the remaining time, then just give
+        // up. Since the state of the process is checked through `waitpid()`, no check is
+        // made for the return of `kill()` (which would also reveal the equivalent of
+        // ECHILD).
         unsafe {
             libc::kill(receiver.receiver_pid, libc::SIGKILL);
         }
         let receiver_pid_as_pid = Pid::from_raw(receiver.receiver_pid);
-        let _ = reap_child_non_blocking(receiver_pid_as_pid, 25);
+        let reaping_allowed_ms = timeout_ms - start_time.elapsed().as_millis() as u32;
+        let _ = reap_child_non_blocking(receiver_pid_as_pid, reaping_allowed_ms)
+            .context("Failed to reap receiver process")?;
     } // Drop the guard
 
     res
@@ -526,6 +548,7 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
 /// However, note the restriction below:
 /// PRECONDITIONS:
 ///     The signal handlers should be restored before removing the receiver.
+///     `configure_receiver()` needs to be called before this function.
 /// SAFETY:
 ///     Crash-tracking functions are not guaranteed to be reentrant.
 ///     No other crash-handler functions should be called concurrently.
@@ -539,17 +562,21 @@ fn handle_posix_signal_impl(signum: i32) -> anyhow::Result<()> {
 ///     will not yet be stored.  This would lead to unexpected behaviour for the
 ///     user.  This should only matter if something crashes concurrently with
 ///     this function executing.
-pub fn register_crash_handlers(create_alt_stack: bool) -> anyhow::Result<()> {
+pub fn register_crash_handlers() -> anyhow::Result<()> {
     if !OLD_HANDLERS.load(SeqCst).is_null() {
         return Ok(());
     }
 
+    let config_ptr = CONFIG.load(SeqCst);
+    anyhow::ensure!(!config_ptr.is_null(), "No crashtracking config");
+    let (config, _config_str) = unsafe { config_ptr.as_ref().context("config ptr")? };
+
     unsafe {
-        if create_alt_stack {
+        if config.create_alt_stack {
             set_alt_stack()?;
         }
-        let sigbus = register_signal_handler(signal::SIGBUS)?;
-        let sigsegv = register_signal_handler(signal::SIGSEGV)?;
+        let sigbus = register_signal_handler(signal::SIGBUS, config)?;
+        let sigsegv = register_signal_handler(signal::SIGSEGV, config)?;
         let boxed_ptr = Box::into_raw(Box::new(OldHandlers { sigbus, sigsegv }));
 
         let res = OLD_HANDLERS.compare_exchange(ptr::null_mut(), boxed_ptr, SeqCst, SeqCst);
@@ -561,19 +588,31 @@ pub fn register_crash_handlers(create_alt_stack: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-unsafe fn register_signal_handler(signal_type: signal::Signal) -> anyhow::Result<SigAction> {
-    // https://www.gnu.org/software/libc/manual/html_node/Flags-for-Sigaction.html
-    // ===============
-    // If this flag is set for a particular signal number, the system uses the
-    // signal stack when delivering that kind of signal.
-    // See Using a Separate Signal Stack.
-    // If a signal with this flag arrives and you have not set a signal stack,
-    // the normal user stack is used instead, as if the flag had not been set.
-    // ===============
-    // This implies that it is always safe to set SA_ONSTACK.
+unsafe fn register_signal_handler(
+    signal_type: signal::Signal,
+    config: &CrashtrackerConfiguration,
+) -> anyhow::Result<SigAction> {
+    // Between this and `set_alt_stack()`, there are a few things going on.
+    // - It is generally preferable to run in an altstack, given the choice.
+    // - Crashtracking does not currently provide any particular guarantees around stack usage; in
+    //   fact, it has been observed to frequently exceed 8192 bytes (default SIGSTKSZ) in practice.
+    // - Some runtimes (Ruby) will set the altstack to a respectable size (~16k), but will check the
+    //   value of the SP during their chained handler and become upset if the altstack is not what
+    //   they expect--in these cases, it is necessary to USE the altstack without creating it.
+    // - Some runtimes (Python, Rust) will set the altstack to the default size (8k), but will not
+    //   check the value of the SP during their chained handler--in these cases, for correct
+    //   operation it is necessary to CREATE and USE the altstack.
+    // - There are no known cases where it is useful to crate but not use the altstack--this case
+    //   handled in `new()` for CrashtrackerConfiguration.
+    let extra_saflags = if config.create_alt_stack {
+        SaFlags::SA_ONSTACK
+    } else {
+        SaFlags::empty()
+    };
+
     let sig_action = SigAction::new(
         SigHandler::SigAction(handle_posix_sigaction),
-        SaFlags::SA_NODEFER | SaFlags::SA_ONSTACK,
+        SaFlags::SA_NODEFER | extra_saflags,
         signal::SigSet::empty(),
     );
 

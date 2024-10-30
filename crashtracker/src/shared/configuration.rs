@@ -23,8 +23,10 @@ pub struct CrashtrackerConfiguration {
     // Paths to any additional files to track, if any
     pub additional_files: Vec<String>,
     pub create_alt_stack: bool,
+    pub use_alt_stack: bool,
     pub endpoint: Option<Endpoint>,
     pub resolve_frames: StacktraceCollection,
+    pub timeout_ms: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -69,14 +71,22 @@ impl CrashtrackerConfiguration {
     pub fn new(
         additional_files: Vec<String>,
         create_alt_stack: bool,
+        use_alt_stack: bool,
         endpoint: Option<Endpoint>,
         resolve_frames: StacktraceCollection,
+        timeout_ms: u32,
     ) -> anyhow::Result<Self> {
+        // Requesting to create, but not use, the altstack is considered paradoxical.
+        if create_alt_stack && !use_alt_stack {
+            anyhow::bail!("Cannot create an altstack without using it");
+        }
         Ok(Self {
             additional_files,
             create_alt_stack,
+            use_alt_stack,
             endpoint,
             resolve_frames,
+            timeout_ms,
         })
     }
 }

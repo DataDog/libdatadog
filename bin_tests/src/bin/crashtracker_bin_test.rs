@@ -12,6 +12,7 @@ fn main() -> anyhow::Result<()> {
 #[cfg(unix)]
 mod unix {
     use anyhow::Context;
+    use bin_tests::modes::behavior::get_behavior;
     use std::env;
 
     use datadog_crashtracker::{
@@ -29,9 +30,12 @@ mod unix {
         let mut args = env::args().skip(1);
         let output_url = args.next().context("Unexpected number of arguments")?;
         let receiver_binary = args.next().context("Unexpected number of arguments")?;
-        let stderr_filename = args.next().context("Unexpected number of arguments")?;
-        let stdout_filename = args.next().context("Unexpected number of arguments")?;
+        let output_dir = args.next().context("Unexpected number of arguments")?;
+        let mode_str = args.next().context("Unexpected number of arguments")?;
         anyhow::ensure!(args.next().is_none(), "unexpected extra arguments");
+
+        let stderr_filename = format!("{output_dir}/out.stderr");
+        let stdout_filename = format!("{output_dir}/out.stdout");
 
         let endpoint = if output_url.is_empty() {
             None
@@ -39,11 +43,13 @@ mod unix {
             Some(Endpoint::from_slice(&output_url))
         };
 
-        let config = CrashtrackerConfiguration {
+        let mut config = CrashtrackerConfiguration {
             additional_files: vec![],
             create_alt_stack: true,
+            use_alt_stack: true,
             resolve_frames: crashtracker::StacktraceCollection::WithoutSymbols,
             endpoint,
+            timeout_ms: 10_000,
         };
 
         let metadata = CrashtrackerMetadata {
@@ -58,6 +64,11 @@ mod unix {
             ],
         };
 
+        // Set the behavior of the test, run setup, and do the pre-init test
+        let behavior = get_behavior(&mode_str);
+        behavior.setup(&output_dir, &mut config)?;
+        behavior.pre(&output_dir)?;
+
         crashtracker::init(
             config,
             CrashtrackerReceiverConfig::new(
@@ -70,11 +81,15 @@ mod unix {
             metadata,
         )?;
 
+        // Conduct the post-init test
+        behavior.post(&output_dir)?;
+
         crashtracker::begin_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
         unsafe {
             deref_ptr(std::ptr::null_mut::<u8>());
         }
         crashtracker::end_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
+
         Ok(())
     }
 }

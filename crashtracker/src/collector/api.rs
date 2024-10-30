@@ -81,11 +81,10 @@ pub fn init(
 ) -> anyhow::Result<()> {
     // Setup the receiver first, so that if there is a crash detected it has
     // somewhere to go.
-    let create_alt_stack = config.create_alt_stack;
     update_metadata(metadata)?;
     update_config(config)?;
     configure_receiver(receiver_config);
-    register_crash_handlers(create_alt_stack)?;
+    register_crash_handlers()?;
     Ok(())
 }
 

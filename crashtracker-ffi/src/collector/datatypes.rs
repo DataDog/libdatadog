@@ -61,11 +61,15 @@ impl<'a> TryFrom<ReceiverConfig<'a>> for datadog_crashtracker::CrashtrackerRecei
 pub struct Config<'a> {
     pub additional_files: Slice<'a, CharSlice<'a>>,
     pub create_alt_stack: bool,
+    pub use_alt_stack: bool,
     /// The endpoint to send the crash report to (can be a file://).
     /// If None, the crashtracker will infer the agent host from env variables.
     pub endpoint: Option<&'a Endpoint>,
     pub resolve_frames: StacktraceCollection,
-    pub timeout_secs: u64,
+    /// Timeout in milliseconds before the signal handler starts tearing things down to return.
+    /// This is given as a uint32_t, but the actual timeout needs to fit inside of an i32 (max 2^31-1).
+    /// This is a limitation of the various interfaces used to guarantee the timeout.
+    pub timeout_ms: u32,
 }
 
 impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration {
@@ -78,10 +82,24 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
             }
             vec
         };
+        // Verify that the timeout is within the bounds of an i32
+        let timeout_ms = {
+            if value.timeout_ms > i32::MAX as u32 {
+                return Err(anyhow::anyhow!(
+                    "Timeout value {} is too large to fit in an i32",
+                    value.timeout_ms
+                ));
+            } else if value.timeout_ms == 0 {
+                // This is a common way of specifying a default, so choose 10s.
+                return Ok(10_000);
+            }
+            value.timeout_ms
+        };
         let create_alt_stack = value.create_alt_stack;
+        let use_alt_stack = value.use_alt_stack;
         let endpoint = value.endpoint.cloned();
         let resolve_frames = value.resolve_frames;
-        Self::new(additional_files, create_alt_stack, endpoint, resolve_frames)
+        Self::new(additional_files, create_alt_stack, use_alt_stack, endpoint, resolve_frames, timeout_ms)
     }
 }
 
