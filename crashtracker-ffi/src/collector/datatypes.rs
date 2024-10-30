@@ -82,21 +82,11 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
             }
             vec
         };
-        // Verify that the timeout is within the bounds of an i32
-        let timeout_ms = if value.timeout_ms > i32::MAX as u32 {
-            return Err(anyhow::anyhow!(
-                "Timeout value {} is too large to fit in an i32",
-                value.timeout_ms
-            ));
-        } else if value.timeout_ms == 0 {
-            10_000 // We hardcode a magical default of 10s here
-        } else {
-            value.timeout_ms
-        };
         let create_alt_stack = value.create_alt_stack;
         let use_alt_stack = value.use_alt_stack;
         let endpoint = value.endpoint.cloned();
         let resolve_frames = value.resolve_frames;
+        let timeout_ms = value.timeout_ms as u32;
         Self::new(
             additional_files,
             create_alt_stack,

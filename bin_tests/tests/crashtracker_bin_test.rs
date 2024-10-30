@@ -136,7 +136,7 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: 
     // - Tests are free to output additional information in the file in case of a failure; it'll be
     //   read here
     let invalid_path = format!("{0}/INVALID", fixtures.output_dir.display());
-    if let Ok(invalid) = fs::read(&invalid_path) {
+    if let Ok(invalid) = fs::read(invalid_path) {
         assert_eq!(invalid, b"O");
     }
 }

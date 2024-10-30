@@ -80,6 +80,13 @@ impl CrashtrackerConfiguration {
         if create_alt_stack && !use_alt_stack {
             anyhow::bail!("Cannot create an altstack without using it");
         }
+        let timeout_ms = if timeout_ms == 0 {
+            5_000
+        } else if timeout_ms > i32::MAX as u32 {
+            anyhow::bail!("Timeout must be less than i32::MAX")
+        } else {
+            timeout_ms
+        };
         Ok(Self {
             additional_files,
             create_alt_stack,
