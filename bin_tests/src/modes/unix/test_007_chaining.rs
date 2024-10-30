@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::modes::behavior::Behavior;
 
-use crate::modes::behavior::{atom_to_clone, set_atomic, file_append_msg, remove_file_permissive};
+use crate::modes::behavior::{atom_to_clone, file_append_msg, remove_file_permissive, set_atomic};
 use datadog_crashtracker::CrashtrackerConfiguration;
 use libc;
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};

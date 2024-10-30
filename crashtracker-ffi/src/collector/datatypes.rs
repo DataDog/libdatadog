@@ -67,8 +67,8 @@ pub struct Config<'a> {
     pub endpoint: Option<&'a Endpoint>,
     pub resolve_frames: StacktraceCollection,
     /// Timeout in milliseconds before the signal handler starts tearing things down to return.
-    /// This is given as a uint32_t, but the actual timeout needs to fit inside of an i32 (max 2^31-1).
-    /// This is a limitation of the various interfaces used to guarantee the timeout.
+    /// This is given as a uint32_t, but the actual timeout needs to fit inside of an i32 (max
+    /// 2^31-1). This is a limitation of the various interfaces used to guarantee the timeout.
     pub timeout_ms: u32,
 }
 
@@ -97,7 +97,14 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
         let use_alt_stack = value.use_alt_stack;
         let endpoint = value.endpoint.cloned();
         let resolve_frames = value.resolve_frames;
-        Self::new(additional_files, create_alt_stack, use_alt_stack, endpoint, resolve_frames, timeout_ms)
+        Self::new(
+            additional_files,
+            create_alt_stack,
+            use_alt_stack,
+            endpoint,
+            resolve_frames,
+            timeout_ms,
+        )
     }
 }
 
