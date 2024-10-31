@@ -7,6 +7,7 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
+#[cfg(unix)]
 use crate::modes::unix::*;
 
 /// Defines the additional behavior for a given crashtracking test
