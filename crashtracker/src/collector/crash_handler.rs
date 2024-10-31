@@ -518,7 +518,9 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
             .context("Could not shutdown writing on the stream")?;
 
         // We have to wait for the receiver process and reap its exit status.
-        let pollhup_allowed_ms = timeout_ms as i32 - start_time.elapsed().as_millis() as i32;
+        let pollhup_allowed_ms = timeout_ms
+            .saturating_sub(start_time.elapsed().as_millis() as u32)
+            .min(i32::MAX as u32) as i32;
         let _ = wait_for_pollhup(receiver.receiver_uds, pollhup_allowed_ms)
             .context("Failed to wait for pollhup")?;
 
@@ -532,7 +534,7 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
             libc::kill(receiver.receiver_pid, libc::SIGKILL);
         }
         let receiver_pid_as_pid = Pid::from_raw(receiver.receiver_pid);
-        let reaping_allowed_ms = timeout_ms - start_time.elapsed().as_millis() as u32;
+        let reaping_allowed_ms = timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32);
         let _ = reap_child_non_blocking(receiver_pid_as_pid, reaping_allowed_ms)
             .context("Failed to reap receiver process")?;
     } // Drop the guard
