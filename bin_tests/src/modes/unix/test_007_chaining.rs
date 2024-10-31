@@ -5,7 +5,7 @@
 // This covers the case where the user code sets a signal handler after crashtracking has been
 // enabled.
 // Note that in this test, the user code doesn't do anything outrageous, like trying to call the
-// signal handler after doing a lonjump back into their normal stack, or doing absurd th ings to
+// signal handler after doing a longjump back into their normal stack, or doing absurd th ings to
 // the signal within the signal.
 use crate::modes::behavior::Behavior;
 

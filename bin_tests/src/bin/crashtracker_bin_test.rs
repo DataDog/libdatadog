@@ -56,7 +56,7 @@ mod unix {
             use_alt_stack: true,
             resolve_frames: crashtracker::StacktraceCollection::WithoutSymbols,
             endpoint,
-            timeout_ms: TEST_COLLECTOR_TIMEOUT,
+            timeout_ms: TEST_COLLECTOR_TIMEOUT_MS,
         };
 
         let metadata = CrashtrackerMetadata {
