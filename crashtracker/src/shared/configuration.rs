@@ -1,5 +1,6 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+use crate::shared::constants;
 use ddcommon::Endpoint;
 use serde::{Deserialize, Serialize};
 
@@ -77,11 +78,12 @@ impl CrashtrackerConfiguration {
         timeout_ms: u32,
     ) -> anyhow::Result<Self> {
         // Requesting to create, but not use, the altstack is considered paradoxical.
-        if create_alt_stack && !use_alt_stack {
-            anyhow::bail!("Cannot create an altstack without using it");
-        }
+        anyhow::ensure!(
+            !create_alt_stack || use_alt_stack,
+            "Cannot create an altstack without using it"
+        );
         let timeout_ms = if timeout_ms == 0 {
-            5_000
+            constants::DD_CRASHTRACK_DEFAULT_TIMEOUT_MS
         } else if timeout_ms > i32::MAX as u32 {
             anyhow::bail!("Timeout must be less than i32::MAX")
         } else {

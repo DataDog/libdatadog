@@ -4,6 +4,7 @@
 #![cfg(unix)]
 #![allow(deprecated)]
 
+use super::atomguard::AtomGuard;
 use super::emitters::emit_crashreport;
 use super::saguard::SaGuard;
 use crate::crash_info::CrashtrackerMetadata;
@@ -154,7 +155,7 @@ fn reap_child_non_blocking(pid: Pid, timeout_ms: u32) -> anyhow::Result<bool> {
                 // actually looking at a _different_ process now, but in any contemporary system
                 // using normal spawning mechanisms, this is extraordinarily unlikely.
                 if Instant::now().duration_since(start_time) > timeout {
-                    return Err(anyhow::anyhow!("Timeout waiting for child process to exit"));
+                    anyhow::bail!("Timeout waiting for child process to exit");
                 }
             }
             _ => {
@@ -551,6 +552,9 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
 ///     user.  This should only matter if something crashes concurrently with
 ///     this function executing.
 pub fn register_crash_handlers() -> anyhow::Result<()> {
+    static RUNNERS: AtomicU64 = AtomicU64::new(0);
+    let _ = AtomGuard::new(&RUNNERS)?; // Will return from this function if it's currently being
+                                       // called
     if !OLD_HANDLERS.load(SeqCst).is_null() {
         return Ok(());
     }

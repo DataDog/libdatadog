@@ -86,7 +86,7 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
         let use_alt_stack = value.use_alt_stack;
         let endpoint = value.endpoint.cloned();
         let resolve_frames = value.resolve_frames;
-        let timeout_ms = value.timeout_ms as u32;
+        let timeout_ms = value.timeout_ms;
         Self::new(
             additional_files,
             create_alt_stack,

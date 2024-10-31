@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 mod api;
+mod atomguard;
 mod counters;
 mod crash_handler;
 mod emitters;
