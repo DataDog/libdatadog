@@ -486,57 +486,52 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
     // to the execution of this handler.
     // SaGuard ensures that signals are restored to their original state even if control flow is
     // disrupted.
-    let res: Result<(), anyhow::Error>;
-    {
-        // `_guard` is a lexically-scoped object whose instantiation blocks/suppresses signals and
-        // whose destruction restores the original state
-        let _guard = SaGuard::<2>::new(&[signal::SIGCHLD, signal::SIGPIPE])?;
+    let _guard = SaGuard::<2>::new(&[signal::SIGCHLD, signal::SIGPIPE])?;
 
-        // Launch the receiver process
-        let receiver = make_receiver(receiver_config)?;
+    // Launch the receiver process
+    let receiver = make_receiver(receiver_config)?;
 
-        // Creating this stream means the underlying RawFD is now owned by the stream, so
-        // we shouldn't close it manually.
-        let mut unix_stream = unsafe { UnixStream::from_raw_fd(receiver.receiver_uds) };
+    // Creating this stream means the underlying RawFD is now owned by the stream, so
+    // we shouldn't close it manually.
+    let mut unix_stream = unsafe { UnixStream::from_raw_fd(receiver.receiver_uds) };
 
-        // Currently the emission of the crash report doesn't have a firm time guarantee
-        // In a future patch, the timeout parameter should be passed into the IPC loop here and
-        // checked periodically.
-        res = emit_crashreport(
-            &mut unix_stream,
-            config,
-            config_str,
-            metadata_string,
-            signum,
-            faulting_address,
-        );
+    // Currently the emission of the crash report doesn't have a firm time guarantee
+    // In a future patch, the timeout parameter should be passed into the IPC loop here and
+    // checked periodically.
+    let res = emit_crashreport(
+        &mut unix_stream,
+        config,
+        config_str,
+        metadata_string,
+        signum,
+        faulting_address,
+    );
 
-        let _ = unix_stream.flush();
-        unix_stream
-            .shutdown(std::net::Shutdown::Write)
-            .context("Could not shutdown writing on the stream")?;
+    let _ = unix_stream.flush();
+    unix_stream
+        .shutdown(std::net::Shutdown::Write)
+        .context("Could not shutdown writing on the stream")?;
 
-        // We have to wait for the receiver process and reap its exit status.
-        let pollhup_allowed_ms = timeout_ms
-            .saturating_sub(start_time.elapsed().as_millis() as u32)
-            .min(i32::MAX as u32) as i32;
-        let _ = wait_for_pollhup(receiver.receiver_uds, pollhup_allowed_ms)
-            .context("Failed to wait for pollhup")?;
+    // We have to wait for the receiver process and reap its exit status.
+    let pollhup_allowed_ms = timeout_ms
+        .saturating_sub(start_time.elapsed().as_millis() as u32)
+        .min(i32::MAX as u32) as i32;
+    let _ = wait_for_pollhup(receiver.receiver_uds, pollhup_allowed_ms)
+        .context("Failed to wait for pollhup")?;
 
-        // Either the receiver is done, it timed out, or something failed.
-        // In any case, can't guarantee that the receiver will exit.
-        // SIGKILL will ensure that the process ends eventually, but there's
-        // no bound on that time.
-        // We emit SIGKILL and try to reap its exit status for the remaining time, then just give
-        // up.
-        unsafe {
-            libc::kill(receiver.receiver_pid, libc::SIGKILL);
-        }
-        let receiver_pid_as_pid = Pid::from_raw(receiver.receiver_pid);
-        let reaping_allowed_ms = timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32);
-        let _ = reap_child_non_blocking(receiver_pid_as_pid, reaping_allowed_ms)
-            .context("Failed to reap receiver process")?;
-    } // Drop the guard
+    // Either the receiver is done, it timed out, or something failed.
+    // In any case, can't guarantee that the receiver will exit.
+    // SIGKILL will ensure that the process ends eventually, but there's
+    // no bound on that time.
+    // We emit SIGKILL and try to reap its exit status for the remaining time, then just give
+    // up.
+    unsafe {
+        libc::kill(receiver.receiver_pid, libc::SIGKILL);
+    }
+    let receiver_pid_as_pid = Pid::from_raw(receiver.receiver_pid);
+    let reaping_allowed_ms = timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32);
+    let _ = reap_child_non_blocking(receiver_pid_as_pid, reaping_allowed_ms)
+        .context("Failed to reap receiver process")?;
 
     res
 }
