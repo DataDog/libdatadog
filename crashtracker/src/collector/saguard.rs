@@ -10,6 +10,10 @@ use nix::sys::signal::{self, SaFlags, SigAction, SigHandler};
 // given the chance to execute after ours. Thus, we need to prevent the emission of signals we
 // might create (and cannot be created during a signal handler except by our own execution) and
 // defer any other signals.
+// To put it another way, it is conceivable that the crash handling code will emit SIGCHLD or
+// SIGPIPE, and instead of risking responding to those signals, it needs to suppress them. On the
+// other hand, it can't just "block" (`sigprocmask()`) those signals because this will only defer
+// them to the next handler.
 pub struct SaGuard<const N: usize> {
     old_sigactions: [(signal::Signal, signal::SigAction); N],
     old_sigmask: signal::SigSet,
@@ -32,12 +36,6 @@ impl<const N: usize> SaGuard<N> {
         )?;
 
         // Initialize array for saving old signal actions
-        // Except for SigChld and SigPipe, which are instantiated to SigIgn by default on all
-        // (most?) systems, the rest are instantiated to SigDfl.  This section attempts to restore
-        // that defaulting behavior.
-        // See <https://man7.org/linux/man-pages/man7/signal.7.html> for details on which signals
-        // get which default action and what the different defaults mean.  We follow the guidance
-        // that SIGPIPE and SIGCHLD and somewhat special.
         let mut old_sigactions = [(
             signal::Signal::SIGINT,
             SigAction::new(
