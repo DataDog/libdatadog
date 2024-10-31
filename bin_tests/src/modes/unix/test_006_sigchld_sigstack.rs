@@ -120,6 +120,7 @@ pub fn setup(output_dir: &Path) -> anyhow::Result<()> {
         sa_sigaction: sigchld_handler as usize,
         sa_mask: sigset,
         sa_flags: libc::SA_RESTART | libc::SA_SIGINFO,
+        #[cfg(not(target_os = "macos"))]
         sa_restorer: None,
     };
 
