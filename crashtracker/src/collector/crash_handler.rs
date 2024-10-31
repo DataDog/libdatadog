@@ -4,7 +4,6 @@
 #![cfg(unix)]
 #![allow(deprecated)]
 
-use super::atomguard::AtomGuard;
 use super::emitters::emit_crashreport;
 use super::saguard::SaGuard;
 use crate::crash_info::CrashtrackerMetadata;
@@ -563,9 +562,6 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
 ///     user.  This should only matter if something crashes concurrently with
 ///     this function executing.
 pub fn register_crash_handlers() -> anyhow::Result<()> {
-    static RUNNERS: AtomicU64 = AtomicU64::new(0);
-    let _ = AtomGuard::new(&RUNNERS)?; // Will return from this function if it's currently being
-                                       // called
     if !OLD_HANDLERS.load(SeqCst).is_null() {
         return Ok(());
     }
