@@ -1,4 +1,4 @@
-# RFC 0004: Crashtracker design
+# RFC 0003: Crashtracker design
 
 ## Background
 
