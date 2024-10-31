@@ -70,9 +70,9 @@ struct Receiver {
 struct PreparedExecve {
     binary_path: CString,
     args_cstrings: Vec<CString>,
-    args_ptrs: Vec<*const i8>,
+    args_ptrs: Vec<*const libc::c_char>,
     env_vars_cstrings: Vec<CString>,
-    env_vars_ptrs: Vec<*const i8>,
+    env_vars_ptrs: Vec<*const libc::c_char>,
 }
 
 impl PreparedExecve {
@@ -87,7 +87,7 @@ impl PreparedExecve {
             .iter()
             .map(|s| CString::new(s.as_str()).expect("Failed to convert argument to CString"))
             .collect();
-        let args_ptrs: Vec<*const i8> = args_cstrings
+        let args_ptrs: Vec<*const libc::c_char> = args_cstrings
             .iter()
             .map(|arg| arg.as_ptr())
             .chain(std::iter::once(std::ptr::null())) // Adds a null pointer to the end of the list
@@ -102,7 +102,7 @@ impl PreparedExecve {
                 CString::new(env_str).expect("Failed to convert environment variable to CString")
             })
             .collect();
-        let env_vars_ptrs: Vec<*const i8> = env_vars_cstrings
+        let env_vars_ptrs: Vec<*const libc::c_char> = env_vars_cstrings
             .iter()
             .map(|env| env.as_ptr())
             .chain(std::iter::once(std::ptr::null())) // Adds a null pointer to the end of the list
