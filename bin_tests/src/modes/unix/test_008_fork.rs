@@ -10,10 +10,10 @@
 // - If the crashtracking data was received, then yay it worked!
 use crate::modes::behavior::Behavior;
 use datadog_crashtracker::{self as crashtracker, CrashtrackerConfiguration};
+use nix::sys::wait::{waitpid, WaitStatus};
+use nix::unistd::Pid;
 use std::path::Path;
 use std::time::{Duration, Instant};
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
-use nix::unistd::Pid;
 
 pub struct Test;
 
@@ -59,16 +59,9 @@ fn post() -> anyhow::Result<()> {
             // Parent
             let start_time = Instant::now();
             let max_wait = Duration::from_millis(1_000);
-            loop {
-                match waitpid(Pid::from_raw(pid), Some(WaitPidFlag::WNOHANG)) {
-                    Ok(WaitStatus::StillAlive) => {
-                        if start_time.elapsed() > max_wait {
-                            anyhow::bail!("Child process did not exit within 1 second");
-                        }
-                    }
-                    _ => {
-                        break;
-                    }
+            while let WaitStatus::StillAlive = waitpid(Pid::from_raw(pid), None)? {
+                if start_time.elapsed() > max_wait {
+                    anyhow::bail!("Child process did not exit within 1 second");
                 }
             }
 

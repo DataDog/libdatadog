@@ -17,7 +17,7 @@ use libc::{
 use nix::poll::{poll, PollFd, PollFlags};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler};
 use nix::sys::socket;
-use nix::sys::wait::{waitpid, WaitStatus, WaitPidFlag};
+use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{close, Pid};
 use std::ffi::CString;
 use std::fs::{File, OpenOptions};
@@ -143,11 +143,11 @@ fn open_file_or_quiet(filename: Option<&str>) -> anyhow::Result<RawFd> {
 /// Non-blocking child reaper
 /// * If the child process has exited, return true
 /// * If the child process cannot be found, return false
-/// * If the child is still alive, or some other error occurs, return an error
-///   Either way, after this returns, you probably don't have to do anything else.
-/// Note: some resources indicate it is unsafe to call `waitpid` from a signal handler, especially
-///       on macos, where the OS will terminate an offending process.  This appears to be untrue
-///       and `waitpid()` is characterized as async-signal safe by POSIX.
+/// * If the child is still alive, or some other error occurs, return an error Either way, after
+///   this returns, you probably don't have to do anything else.
+// Note: some resources indicate it is unsafe to call `waitpid` from a signal handler, especially
+//       on macos, where the OS will terminate an offending process.  This appears to be untrue
+//       and `waitpid()` is characterized as async-signal safe by POSIX.
 fn reap_child_non_blocking(pid: Pid, timeout_ms: u32) -> anyhow::Result<bool> {
     let timeout = Duration::from_millis(timeout_ms as u64);
     let start_time = Instant::now();
