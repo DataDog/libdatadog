@@ -515,6 +515,8 @@ dependencies = [
  "datadog-crashtracker",
  "datadog-profiling",
  "ddcommon",
+ "libc",
+ "nix 0.27.1",
  "once_cell",
  "serde_json",
  "strum",

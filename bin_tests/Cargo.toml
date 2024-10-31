@@ -18,6 +18,8 @@ ddcommon = { path = "../ddcommon" }
 tempfile = "3.3"
 serde_json = { version = "1.0" }
 strum = { version = "0.26.2", features = ["derive"] }
+libc = "0.2"
+nix = { version = "0.27.1", features = ["socket"] }
 
 [lib]
 bench = false
@@ -32,8 +34,4 @@ bench = false
 
 [[bin]]
 name = "crashtracker_receiver"
-bench = false
-
-[[bin]]
-name = "crashtracker_unix_socket_receiver"
 bench = false

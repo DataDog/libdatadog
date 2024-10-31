@@ -55,7 +55,7 @@ static OP_COUNTERS: [AtomicI64; OpTypes::SIZE as usize] = [ATOMIC_ZERO; OpTypes:
 /// PRECONDITIONS:
 ///     This function assumes that the crash-tracker is initialized.
 /// ATOMICITY:
-///     This function is atomic.  
+///     This function is atomic.
 pub fn begin_op(op: OpTypes) -> anyhow::Result<()> {
     // TODO: I'm making everything SeqCst for now.  Could possibly gain some
     // performance by using a weaker ordering.
