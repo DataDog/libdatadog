@@ -36,7 +36,7 @@ impl<'a> AtomGuard<'a> {
     }
 }
 
-impl<'a> Drop for AtomGuard<'a> {
+impl Drop for AtomGuard<'_> {
     fn drop(&mut self) {
         // Decrement the counter when the guard is dropped
         // If the CAS did what it said it would do, then in reality we could probably just set it

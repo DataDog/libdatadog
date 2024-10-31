@@ -17,6 +17,7 @@ use libc::{
 use nix::poll::{poll, PollFd, PollFlags};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler};
 use nix::sys::socket;
+use nix::sys::wait::{waitpid, WaitStatus, WaitPidFlag};
 use nix::unistd::{close, Pid};
 use std::ffi::CString;
 use std::fs::{File, OpenOptions};
@@ -140,27 +141,35 @@ fn open_file_or_quiet(filename: Option<&str>) -> anyhow::Result<RawFd> {
 }
 
 /// Non-blocking child reaper
-/// Calling `waitpid()` on some systems (macos) is not allowed in async-signal contexts. Since we
-/// just need a liveness check, we use kill 0 instead.
+/// * If the child process has exited, return true
+/// * If the child process cannot be found, return false
+/// * If the child is still alive, or some other error occurs, return an error
+///   Either way, after this returns, you probably don't have to do anything else.
+/// Note: some resources indicate it is unsafe to call `waitpid` from a signal handler, especially
+///       on macos, where the OS will terminate an offending process.  This appears to be untrue
+///       and `waitpid()` is characterized as async-signal safe by POSIX.
 fn reap_child_non_blocking(pid: Pid, timeout_ms: u32) -> anyhow::Result<bool> {
     let timeout = Duration::from_millis(timeout_ms as u64);
     let start_time = Instant::now();
 
     loop {
-        // Use kill 0 instead of waitpid
-        match unsafe { libc::kill(pid.into(), 0) } {
-            0 => {
-                // If `kill` succeeded, then we assume the process is still alive. One could
-                // manufacture a situation where (e.g., using `clone3` with `set_tid`) we're
-                // actually looking at a _different_ process now, but in any contemporary system
-                // using normal spawning mechanisms, this is extraordinarily unlikely.
+        match waitpid(pid, Some(WaitPidFlag::WNOHANG)) {
+            Ok(WaitStatus::StillAlive) => {
                 if Instant::now().duration_since(start_time) > timeout {
-                    anyhow::bail!("Timeout waiting for child process to exit");
+                    return Err(anyhow::anyhow!("Timeout waiting for child process to exit"));
                 }
             }
-            _ => {
-                // If the process doesn't exist, assume it's been killed.
+            Ok(_status) => {
                 return Ok(true);
+            }
+            Err(nix::Error::ECHILD) => {
+                // Non-availability of the specified process is weird, since we should have
+                // exclusive access to reaping its exit, but at the very least means there is
+                // nothing further for us to do.
+                return Ok(true);
+            }
+            _ => {
+                return Err(anyhow::anyhow!("Error waiting for child process to exit"));
             }
         }
     }

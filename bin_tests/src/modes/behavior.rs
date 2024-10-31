@@ -83,6 +83,7 @@ pub fn get_behavior(mode_str: &str) -> Box<dyn Behavior> {
         "sigpipe_sigstack" => Box::new(test_005_sigpipe_sigstack::Test),
         "sigchld_sigstack" => Box::new(test_006_sigchld_sigstack::Test),
         "chained" => Box::new(test_007_chaining::Test),
+        "fork" => Box::new(test_008_fork::Test),
         _ => panic!("Unknown mode: {}", mode_str),
     }
 }

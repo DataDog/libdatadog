@@ -60,6 +60,12 @@ fn test_crash_tracking_bin_chained() {
     test_crash_tracking_bin(BuildProfile::Release, "chained");
 }
 
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_fork() {
+    test_crash_tracking_bin(BuildProfile::Release, "fork");
+}
+
 fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: &str) {
     let (crashtracker_bin, crashtracker_receiver) =
         setup_crashtracking_crates(crash_tracking_receiver_profile);
