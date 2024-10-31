@@ -14,7 +14,7 @@ use libc::{
     PROT_READ, PROT_WRITE, SIGSTKSZ,
 };
 use nix::poll::{poll, PollFd, PollFlags};
-use nix::sys::signal::{self, SaFlags, SigAction, SigHandler};
+use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use nix::sys::socket;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{close, Pid};
@@ -203,6 +203,14 @@ fn run_receiver_child(uds_parent: RawFd, uds_child: RawFd, stderr: RawFd, stdout
         )
     };
 
+    // Before we actually execve, let's make sure that the signal handler in the receiver is set to
+    // a default disposition.
+    let sig_action = SigAction::new(SigHandler::SigDfl, SaFlags::empty(), SigSet::empty());
+    unsafe {
+        // If this fails there isn't much we can do, so just try anyway.
+        let _ = signal::sigaction(signal::SIGCHLD, &sig_action);
+    }
+
     // Change into the crashtracking receiver
     unsafe {
         execve(
@@ -216,10 +224,6 @@ fn run_receiver_child(uds_parent: RawFd, uds_child: RawFd, stderr: RawFd, stdout
     unsafe {
         libc::_exit(-1);
     }
-}
-
-fn run_receiver_parent(_uds_parent: RawFd, uds_child: RawFd, _stderr: RawFd, _stdout: RawFd) {
-    let _ = close(uds_child);
 }
 
 fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<bool> {
@@ -283,7 +287,7 @@ fn make_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<Receiver
         }
         pid if pid > 0 => {
             // Parent
-            run_receiver_parent(uds_parent, uds_child, stderr, stdout);
+            let _ = close(uds_child);
             Ok(Receiver {
                 receiver_uds: uds_parent,
                 receiver_pid: pid,
@@ -488,7 +492,9 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
     // disrupted.
     let _guard = SaGuard::<2>::new(&[signal::SIGCHLD, signal::SIGPIPE])?;
 
-    // Launch the receiver process
+    // Even though we just set a guard, we'll have to undo part of it in the receiver process in
+    // order to let it reap its own children properly.  We have to do this anyway, so do it here in
+    // order to ensure that _this_ process has the right flags (especially for SIGCHLD).
     let receiver = make_receiver(receiver_config)?;
 
     // Creating this stream means the underlying RawFD is now owned by the stream, so
