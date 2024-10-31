@@ -122,7 +122,7 @@ A signal handler is fundamentally limited in what operations it can perform (see
 This is made worse by the fact that the collector operates in the context of a crashing process whose state may be corrupted, causing even seemingly safe operations to crash/  
 The receiver interacts with the system in the following ways:
 
-1.  Forks a new process.
+1.  Forks a new process
     This can either occur eagerly, at process initialization or lazily, as part of crash handling.
     Both options have issues.
     - Risks to normal operation
@@ -141,8 +141,7 @@ The receiver interacts with the system in the following ways:
         Mitigation: This is unlikely to occur.
       - Forking inside a signal handler is unsafe (see Notes on [signal-safety(7) \- Linux manual page](https://man7.org/linux/man-pages/man7/signal-safety.7.html)).
         Mitigation: Do cursed heroics to avoid triggering `at_fork` handlers.
-2.  Listens for a crashreport a socket/pipe.
-
+2.  Listens for a crashreport a socket/pipe
     - Risks to normal operation
       - May consume a small amount of resources.
         Mitigation: None.
@@ -156,8 +155,9 @@ The receiver interacts with the system in the following ways:
         Note that this is an issue for the receiver, because a partial (and potentially malformed) message will be received.
         The receiver must ensure that it does not hang or crash in this case, and transmit as much information as possible to the backend.
         Mitigation: If an unexpected input is received, including EOF, make a best effort attempt to format and send a partial crash report.
-
-3.  Transmits the message to the backend.
+      - The collector may hang.
+        Mitigation: TODO add timeout to the loop recieving the crash report, and then treat as a collector crash.
+3.  Transmits the message to the backend
     - Risks to normal operation
       - NA
     - Risks during a crash
