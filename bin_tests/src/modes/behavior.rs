@@ -1,5 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+
+#![cfg(unix)]
 use anyhow::{Context, Result};
 use datadog_crashtracker::CrashtrackerConfiguration;
 use std::fs::OpenOptions;
@@ -7,7 +9,6 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
-#[cfg(unix)]
 use crate::modes::unix::*;
 
 /// Defines the additional behavior for a given crashtracking test
