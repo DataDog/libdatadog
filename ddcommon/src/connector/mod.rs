@@ -10,9 +10,6 @@ use hyper_rustls::ConfigBuilderExt;
 
 use lazy_static::lazy_static;
 
-#[cfg(not(feature = "use_webpki_roots"))]
-use rustls::pki_types::CertificateDer;
-
 use rustls::ClientConfig;
 use std::future::Future;
 use std::pin::Pin;
