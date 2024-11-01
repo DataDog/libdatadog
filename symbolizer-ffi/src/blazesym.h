@@ -1,10 +1,10 @@
 // BSD-3-Clause License
 // Synchronized from blazesym repository
-// https://github.com/libbpf/blazesym/blob/capi-v0.1.0-rc.0/capi/include/blazesym.h
+// https://github.com/libbpf/blazesym/blob/capi-v0.1.0-rc.1/capi/include/blazesym.h
 /*
  * Please refer to the documentation hosted at
  *
- *   https://docs.rs/blazesym-c/0.1.0-rc.0
+ *   https://docs.rs/blazesym-c/0.1.0-rc.1
  */
 
 
@@ -223,7 +223,7 @@ typedef struct blaze_sym_info {
   /**
    * See [`inspect::SymInfo::addr`].
    */
-  uintptr_t addr;
+  uint64_t addr;
   /**
    * See [`inspect::SymInfo::size`].
    */
@@ -297,6 +297,27 @@ typedef struct blaze_normalizer_opts {
    */
   size_t type_size;
   /**
+   * Whether or not to use the `PROCMAP_QUERY` ioctl instead of
+   * parsing `/proc/<pid>/maps` for getting available VMA ranges.
+   *
+   * Refer to
+   * [`blaze_supports_procmap_query`][crate::helper::blaze_supports_procmap_query]
+   * as a way to check whether your system supports this
+   * functionality.
+   *
+   * # Notes
+   *
+   * Support for this ioctl is only present in very recent kernels
+   * (likely: 6.11+). See <https://lwn.net/Articles/979931/> for
+   * details.
+   *
+   * Furthermore, the ioctl will also be used for retrieving build
+   * IDs (if enabled). Build ID reading logic in the kernel is known
+   * to be incomplete, with a fix slated to be included only with
+   * 6.12.
+   */
+  bool use_procmap_query;
+  /**
    * Whether or not to cache `/proc/<pid>/maps` contents.
    *
    * Setting this flag to `true` is not generally recommended, because it
@@ -304,10 +325,13 @@ typedef struct blaze_normalizer_opts {
    * may not be normalized successfully, as there is no reasonable way of
    * detecting staleness.
    */
-  bool cache_maps;
+  bool cache_vmas;
   /**
    * Whether to read and report build IDs as part of the normalization
    * process.
+   *
+   * Note that build ID read failures will be swallowed without
+   * failing the normalization operation.
    */
   bool build_ids;
   /**
@@ -319,7 +343,7 @@ typedef struct blaze_normalizer_opts {
    * Unused member available for future expansion. Must be initialized
    * to zero.
    */
-  uint8_t reserved[5];
+  uint8_t reserved[4];
 } blaze_normalizer_opts;
 
 /**
@@ -350,7 +374,7 @@ typedef struct blaze_user_meta_elf {
    */
   size_t build_id_len;
   /**
-   * The optional build ID of the ELF file, if found.
+   * The optional build ID of the ELF file, if found and readable.
    */
   uint8_t *build_id;
   /**
@@ -627,7 +651,7 @@ typedef struct blaze_sym {
    * the file (and reported by tools such as `readelf(1)`,
    * `llvm-gsymutil`, or similar).
    */
-  uintptr_t addr;
+  uint64_t addr;
   /**
    * The byte offset of the address that got symbolized from the
    * start of the symbol (i.e., from `addr`).
@@ -664,12 +688,12 @@ typedef struct blaze_sym {
 } blaze_sym;
 
 /**
- * `blaze_result` is the result of symbolization for C API.
+ * `blaze_syms` is the result of symbolization of a list of addresses.
  *
- * Instances of [`blaze_result`] are returned by any of the `blaze_symbolize_*`
- * variants. They should be freed by calling [`blaze_result_free`].
+ * Instances of [`blaze_syms`] are returned by any of the `blaze_symbolize_*`
+ * variants. They should be freed by calling [`blaze_syms_free`].
  */
-typedef struct blaze_result {
+typedef struct blaze_syms {
   /**
    * The number of symbols being reported.
    */
@@ -681,7 +705,7 @@ typedef struct blaze_result {
    * Therefore, every input address has an associated symbol.
    */
   struct blaze_sym syms[0];
-} blaze_result;
+} blaze_syms;
 
 /**
  * The parameters to load symbols and debug information from a process.
@@ -863,6 +887,43 @@ enum blaze_err blaze_err_last(void);
 const char *blaze_err_str(enum blaze_err err);
 
 /**
+ * Check whether the `PROCMAP_QUERY` ioctl is supported by the system.
+ *
+ * This function returns `true` if the system supports the
+ * `PROCMAP_QUERY` ioctl and `false` in all other cases, including when
+ * an error occurred. Use [`blaze_err_last`] to optionally retrieve
+ * this error.
+ */
+bool blaze_supports_procmap_query(void);
+
+/**
+ * Read the build ID of an ELF file located at the given path.
+ *
+ * Build IDs can have variable length, depending on which flavor is
+ * used (e.g., 20 bytes for `sha1` flavor). Build IDs are
+ * reported as "raw" bytes. If you need a hexadecimal representation as
+ * reported by tools such as `readelf(1)`, a post processing step is
+ * necessary.
+ *
+ * On success and when a build ID present, the function returns a
+ * pointer to the "raw" build ID bytes and `len`, if provided, is set
+ * to the build ID's length. The resulting buffer should be released
+ * using libc's `free` function once it is no longer needed.
+ *
+ * On error, the function returns `NULL` and sets the thread's last
+ * error to indicate the problem encountered. Use [`blaze_err_last`] to
+ * retrieve this error.
+ *
+ * Similarly, if no build ID is present `NULL` is returned and the last
+ * error will be set to [`BLAZE_ERR_OK`][blaze_err::BLAZE_ERR_OK].
+ *
+ * # Safety
+ * - `path` needs to be a valid pointer to a NUL terminated string
+ */
+uint8_t *blaze_read_elf_build_id(const char *path,
+                                 size_t *len);
+
+/**
  * Lookup symbol information in an ELF file.
  *
  * On success, returns an array with `name_cnt` elements. Each such element, in
@@ -993,7 +1054,7 @@ const char *blaze_normalize_reason_str(blaze_normalize_reason err);
  */
 struct blaze_normalized_user_output *blaze_normalize_user_addrs(const blaze_normalizer *normalizer,
                                                                 uint32_t pid,
-                                                                const uintptr_t *addrs,
+                                                                const uint64_t *addrs,
                                                                 size_t addr_cnt);
 
 /**
@@ -1019,7 +1080,7 @@ struct blaze_normalized_user_output *blaze_normalize_user_addrs(const blaze_norm
  */
 struct blaze_normalized_user_output *blaze_normalize_user_addrs_opts(const blaze_normalizer *normalizer,
                                                                      uint32_t pid,
-                                                                     const uintptr_t *addrs,
+                                                                     const uint64_t *addrs,
                                                                      size_t addr_cnt,
                                                                      const struct blaze_normalize_opts *opts);
 
@@ -1085,9 +1146,9 @@ void blaze_symbolizer_free(blaze_symbolizer *symbolizer);
 /**
  * Symbolize a list of process absolute addresses.
  *
- * On success, the function returns a [`blaze_result`] containing an
+ * On success, the function returns a [`blaze_syms`] containing an
  * array of `abs_addr_cnt` [`blaze_sym`] objects. The returned object
- * should be released using [`blaze_result_free`] once it is no longer
+ * should be released using [`blaze_syms_free`] once it is no longer
  * needed.
  *
  * On error, the function returns `NULL` and sets the thread's last error to
@@ -1097,19 +1158,19 @@ void blaze_symbolizer_free(blaze_symbolizer *symbolizer);
  * # Safety
  * - `symbolizer` needs to point to a valid [`blaze_symbolizer`] object
  * - `src` needs to point to a valid [`blaze_symbolize_src_process`] object
- * -`abs_addrs` point to an array of `abs_addr_cnt` addresses
+ * - `abs_addrs` point to an array of `abs_addr_cnt` addresses
  */
-const struct blaze_result *blaze_symbolize_process_abs_addrs(blaze_symbolizer *symbolizer,
-                                                             const struct blaze_symbolize_src_process *src,
-                                                             const uintptr_t *abs_addrs,
-                                                             size_t abs_addr_cnt);
+const struct blaze_syms *blaze_symbolize_process_abs_addrs(blaze_symbolizer *symbolizer,
+                                                           const struct blaze_symbolize_src_process *src,
+                                                           const uint64_t *abs_addrs,
+                                                           size_t abs_addr_cnt);
 
 /**
  * Symbolize a list of kernel absolute addresses.
  *
- * On success, the function returns a [`blaze_result`] containing an
+ * On success, the function returns a [`blaze_syms`] containing an
  * array of `abs_addr_cnt` [`blaze_sym`] objects. The returned object
- * should be released using [`blaze_result_free`] once it is no longer
+ * should be released using [`blaze_syms_free`] once it is no longer
  * needed.
  *
  * On error, the function returns `NULL` and sets the thread's last error to
@@ -1119,19 +1180,19 @@ const struct blaze_result *blaze_symbolize_process_abs_addrs(blaze_symbolizer *s
  * # Safety
  * - `symbolizer` needs to point to a valid [`blaze_symbolizer`] object
  * - `src` needs to point to a valid [`blaze_symbolize_src_kernel`] object
- * -`abs_addrs` point to an array of `abs_addr_cnt` addresses
+ * - `abs_addrs` point to an array of `abs_addr_cnt` addresses
  */
-const struct blaze_result *blaze_symbolize_kernel_abs_addrs(blaze_symbolizer *symbolizer,
-                                                            const struct blaze_symbolize_src_kernel *src,
-                                                            const uintptr_t *abs_addrs,
-                                                            size_t abs_addr_cnt);
+const struct blaze_syms *blaze_symbolize_kernel_abs_addrs(blaze_symbolizer *symbolizer,
+                                                          const struct blaze_symbolize_src_kernel *src,
+                                                          const uint64_t *abs_addrs,
+                                                          size_t abs_addr_cnt);
 
 /**
  * Symbolize virtual offsets in an ELF file.
  *
- * On success, the function returns a [`blaze_result`] containing an
+ * On success, the function returns a [`blaze_syms`] containing an
  * array of `virt_offset_cnt` [`blaze_sym`] objects. The returned
- * object should be released using [`blaze_result_free`] once it is no
+ * object should be released using [`blaze_syms_free`] once it is no
  * longer needed.
  *
  * On error, the function returns `NULL` and sets the thread's last error to
@@ -1141,19 +1202,19 @@ const struct blaze_result *blaze_symbolize_kernel_abs_addrs(blaze_symbolizer *sy
  * # Safety
  * - `symbolizer` needs to point to a valid [`blaze_symbolizer`] object
  * - `src` needs to point to a valid [`blaze_symbolize_src_elf`] object
- * -`virt_offsets` point to an array of `virt_offset_cnt` addresses
+ * - `virt_offsets` point to an array of `virt_offset_cnt` addresses
  */
-const struct blaze_result *blaze_symbolize_elf_virt_offsets(blaze_symbolizer *symbolizer,
-                                                            const struct blaze_symbolize_src_elf *src,
-                                                            const uintptr_t *virt_offsets,
-                                                            size_t virt_offset_cnt);
+const struct blaze_syms *blaze_symbolize_elf_virt_offsets(blaze_symbolizer *symbolizer,
+                                                          const struct blaze_symbolize_src_elf *src,
+                                                          const uint64_t *virt_offsets,
+                                                          size_t virt_offset_cnt);
 
 /**
  * Symbolize file offsets in an ELF file.
  *
- * On success, the function returns a [`blaze_result`] containing an
+ * On success, the function returns a [`blaze_syms`] containing an
  * array of `file_offset_cnt` [`blaze_sym`] objects. The returned
- * object should be released using [`blaze_result_free`] once it is no
+ * object should be released using [`blaze_syms_free`] once it is no
  * longer needed.
  *
  * On error, the function returns `NULL` and sets the thread's last error to
@@ -1163,19 +1224,19 @@ const struct blaze_result *blaze_symbolize_elf_virt_offsets(blaze_symbolizer *sy
  * # Safety
  * - `symbolizer` needs to point to a valid [`blaze_symbolizer`] object
  * - `src` needs to point to a valid [`blaze_symbolize_src_elf`] object
- * -`file_offsets` point to an array of `file_offset_cnt` addresses
+ * - `file_offsets` point to an array of `file_offset_cnt` addresses
  */
-const struct blaze_result *blaze_symbolize_elf_file_offsets(blaze_symbolizer *symbolizer,
-                                                            const struct blaze_symbolize_src_elf *src,
-                                                            const uintptr_t *file_offsets,
-                                                            size_t file_offset_cnt);
+const struct blaze_syms *blaze_symbolize_elf_file_offsets(blaze_symbolizer *symbolizer,
+                                                          const struct blaze_symbolize_src_elf *src,
+                                                          const uint64_t *file_offsets,
+                                                          size_t file_offset_cnt);
 
 /**
  * Symbolize virtual offsets using "raw" Gsym data.
  *
- * On success, the function returns a [`blaze_result`] containing an
+ * On success, the function returns a [`blaze_syms`] containing an
  * array of `virt_offset_cnt` [`blaze_sym`] objects. The returned
- * object should be released using [`blaze_result_free`] once it is no
+ * object should be released using [`blaze_syms_free`] once it is no
  * longer needed.
  *
  * On error, the function returns `NULL` and sets the thread's last error to
@@ -1185,19 +1246,19 @@ const struct blaze_result *blaze_symbolize_elf_file_offsets(blaze_symbolizer *sy
  * # Safety
  * - `symbolizer` needs to point to a valid [`blaze_symbolizer`] object
  * - `src` needs to point to a valid [`blaze_symbolize_src_gsym_data`] object
- * -`virt_offsets` point to an array of `virt_offset_cnt` addresses
+ * - `virt_offsets` point to an array of `virt_offset_cnt` addresses
  */
-const struct blaze_result *blaze_symbolize_gsym_data_virt_offsets(blaze_symbolizer *symbolizer,
-                                                                  const struct blaze_symbolize_src_gsym_data *src,
-                                                                  const uintptr_t *virt_offsets,
-                                                                  size_t virt_offset_cnt);
+const struct blaze_syms *blaze_symbolize_gsym_data_virt_offsets(blaze_symbolizer *symbolizer,
+                                                                const struct blaze_symbolize_src_gsym_data *src,
+                                                                const uint64_t *virt_offsets,
+                                                                size_t virt_offset_cnt);
 
 /**
  * Symbolize virtual offsets in a Gsym file.
  *
- * On success, the function returns a [`blaze_result`] containing an
+ * On success, the function returns a [`blaze_syms`] containing an
  * array of `virt_offset_cnt` [`blaze_sym`] objects. The returned
- * object should be released using [`blaze_result_free`] once it is no
+ * object should be released using [`blaze_syms_free`] once it is no
  * longer needed.
  *
  * On error, the function returns `NULL` and sets the thread's last error to
@@ -1207,12 +1268,12 @@ const struct blaze_result *blaze_symbolize_gsym_data_virt_offsets(blaze_symboliz
  * # Safety
  * - `symbolizer` needs to point to a valid [`blaze_symbolizer`] object
  * - `src` needs to point to a valid [`blaze_symbolize_src_gsym_file`] object
- * -`virt_offsets` point to an array of `virt_offset_cnt` addresses
+ * - `virt_offsets` point to an array of `virt_offset_cnt` addresses
  */
-const struct blaze_result *blaze_symbolize_gsym_file_virt_offsets(blaze_symbolizer *symbolizer,
-                                                                  const struct blaze_symbolize_src_gsym_file *src,
-                                                                  const uintptr_t *virt_offsets,
-                                                                  size_t virt_offset_cnt);
+const struct blaze_syms *blaze_symbolize_gsym_file_virt_offsets(blaze_symbolizer *symbolizer,
+                                                                const struct blaze_symbolize_src_gsym_file *src,
+                                                                const uint64_t *virt_offsets,
+                                                                size_t virt_offset_cnt);
 
 /**
  * Free an array returned by any of the `blaze_symbolize_*` variants.
@@ -1221,10 +1282,10 @@ const struct blaze_result *blaze_symbolize_gsym_file_virt_offsets(blaze_symboliz
  * The pointer must have been returned by any of the `blaze_symbolize_*`
  * variants.
  */
-void blaze_result_free(const struct blaze_result *results);
+void blaze_syms_free(const struct blaze_syms *syms);
 
 #ifdef __cplusplus
-} // extern "C"
-#endif // __cplusplus
+}  // extern "C"
+#endif  // __cplusplus
 
-#endif /* __blazesym_h_ */
+#endif  /* __blazesym_h_ */

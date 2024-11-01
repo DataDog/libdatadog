@@ -112,7 +112,7 @@ mod unix {
                 anyhow::ensure!(normed.outputs.len() == 1);
                 let (file_offset, meta_idx) = normed.outputs[0];
                 let meta = &normed.meta[meta_idx];
-                let elf = meta.elf().ok_or(anyhow::anyhow!("Not elf"))?;
+                let elf = meta.as_elf().ok_or(anyhow::anyhow!("Not elf"))?;
                 let resolver = ElfResolver::open(&elf.path)?;
                 let virt_address = resolver
                     .file_offset_to_virt_offset(file_offset)?
