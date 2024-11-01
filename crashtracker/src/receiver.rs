@@ -425,6 +425,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_receive_report_short_timeout() -> anyhow::Result<()> {
         let (sender, receiver) = tokio::net::UnixStream::pair()?;
 
@@ -445,6 +446,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_receive_report_long_timeout() -> anyhow::Result<()> {
         let (sender, receiver) = tokio::net::UnixStream::pair()?;
 
