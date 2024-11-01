@@ -35,6 +35,10 @@ lazy_static! {
     static ref DEFAULT_CONNECTOR: Connector = Connector::new();
 }
 
+// When using aws-lc-rs, rustls needs to be initialized with the default CryptoProvider; sometimes
+// this is done as a side-effect of other operations, but we need to ensure it happens here.  On
+// non-unix platforms, ddcommon uses `ring` instead, which handles this at rustls initialization.
+#[cfg(unix)]
 #[cfg(feature = "use_webpki_roots")]
 lazy_static! {
     static ref INIT_CRYPTO_PROVIDER: () = {
