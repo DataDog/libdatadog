@@ -10,9 +10,6 @@ use hyper_rustls::ConfigBuilderExt;
 
 use lazy_static::lazy_static;
 
-#[cfg(not(feature = "use_webpki_roots"))]
-use rustls::pki_types::CertificateDer;
-
 use rustls::ClientConfig;
 use std::future::Future;
 use std::pin::Pin;
@@ -36,6 +33,15 @@ pub enum Connector {
 
 lazy_static! {
     static ref DEFAULT_CONNECTOR: Connector = Connector::new();
+}
+
+#[cfg(feature = "use_webpki_roots")]
+lazy_static! {
+    static ref INIT_CRYPTO_PROVIDER: () = {
+        rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .expect("Failed to install default CryptoProvider");
+    };
 }
 
 impl Default for Connector {
@@ -99,6 +105,7 @@ fn build_https_connector(
 fn build_https_connector_with_webpki_roots(
 ) -> anyhow::Result<hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>>
 {
+    let _ = *INIT_CRYPTO_PROVIDER; // One-time initialization of a crypto provider if needed
     let client_config = ClientConfig::builder()
         .with_webpki_roots()
         .with_no_client_auth();
