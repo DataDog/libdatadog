@@ -18,7 +18,7 @@
 
 void symbolize_and_print_abs(blaze_symbolizer* symbolizer, uintptr_t addr) {
     std::vector<uintptr_t> addrs = {addr};
-    
+
     blaze_symbolize_src_process src = {
       .type_size = sizeof(blaze_symbolize_src_process),
       .pid = static_cast<uint32_t>(getpid()),
@@ -27,19 +27,19 @@ void symbolize_and_print_abs(blaze_symbolizer* symbolizer, uintptr_t addr) {
       .map_files = false,
       .reserved = {},
     };
-    const blaze_result* results = blaze_symbolize_process_abs_addrs(
+    const blaze_syms* syms = blaze_symbolize_process_abs_addrs(
         symbolizer, &src, addrs.data(), addrs.size());
-    assert(results);
+    assert(syms);
     bool found = false;
     for (size_t i = 0; i < addrs.size(); ++i) {
-        std::cout << "Address: " << addrs[i] << ", Symbolized: " << results->syms[i].name << std::endl;
-        if (std::string(results->syms[i].name).find("test_symbolizer") != std::string::npos){
+        std::cout << "Address: " << addrs[i] << ", Symbolized: " << syms->syms[i].name << std::endl;
+        if (std::string(syms->syms[i].name).find("test_symbolizer") != std::string::npos){
             found = true;
         }
     }
     assert(found);
-    // Free the results
-    blaze_result_free(results);
+    // Free the syms
+    blaze_syms_free(syms);
 }
 
 void test_symbolizer() {
