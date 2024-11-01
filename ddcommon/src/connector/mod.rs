@@ -109,7 +109,7 @@ fn build_https_connector(
 fn build_https_connector_with_webpki_roots(
 ) -> anyhow::Result<hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>>
 {
-    let _ = *INIT_CRYPTO_PROVIDER; // One-time initialization of a crypto provider if needed
+    *INIT_CRYPTO_PROVIDER; // One-time initialization of a crypto provider if needed
     let client_config = ClientConfig::builder()
         .with_webpki_roots()
         .with_no_client_auth();
