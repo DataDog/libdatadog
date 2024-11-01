@@ -18,7 +18,7 @@ pub fn resolve_frames(
             .proc_info
             .as_ref()
             .context("Unable to resolve frames: No PID specified")?;
-        crash_info.resolve_names_from_process(proc_info.pid)?
+        crash_info.resolve_names_from_process(proc_info.pid)?;
     }
     Ok(())
 }
@@ -89,7 +89,7 @@ pub async fn async_receiver_entry_point_unix_socket(
     }
 }
 
-/// Receives data from a crash collector via a pipe on `stdin`, formats it into
+/// Receives data from a crash collector via a stream, formats it into
 /// `CrashInfo` json, and emits it to the endpoint/file defined in `config`.
 ///
 /// At a high-level, this exists because doing anything in a
