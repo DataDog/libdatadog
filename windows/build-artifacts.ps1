@@ -30,17 +30,18 @@ $x86_64_debug_dir = "$($output_dir)-x86_64-debug"
 # build inside the crate to use the config.toml file
 #pushd profiling-ffi
 
+# cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release -- --out $LIBDD_OUTPUT_FOLDER
 Write-Host "Building project into $($x86_release_dir)" -ForegroundColor Magenta
-Invoke-Call -LddOutputFolder $x86_release_dir -ScriptBlock { cargo build -p builder --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --target i686-pc-windows-msvc --release}
+Invoke-Call -ScriptBlock { cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release --target i686-pc-windows-msvc -- --out $x86_release_dir }
 
 Write-Host "Building project into $($x86_debug_dir)" -ForegroundColor Magenta
-Invoke-Call -LddOutputFolder $x86_debug_dir -ScriptBlock { cargo build -p builder --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --target i686-pc-windows-msvc }
+Invoke-Call -ScriptBlock { cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --target i686-pc-windows-msvc -- --out $x86_debug_dir }
 
 Write-Host "Building project into $($x86_64_release_dir)" -ForegroundColor Magenta
-Invoke-Call -LddOutputFolder $x86_64_release_dir -ScriptBlock { cargo build -p builder --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --target x86_64-pc-windows-msvc --release}
+Invoke-Call -ScriptBlock { cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release  --target x86_64-pc-windows-msvc -- --out $x86_64_release_dir }
 
 Write-Host "Building project into $($x86_64_debug_dir)" -ForegroundColor Magenta
-Invoke-Call -LddOutputFolder $x86_64_debug_dir -ScriptBlock { cargo build -p builder --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --target x86_64-pc-windows-msvc }
+Invoke-Call -ScriptBlock { cargo build -p builder --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --target x86_64-pc-windows-msvc -- --out $x86_64_debug_dir }
 
 #Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler --target i686-pc-windows-msvc --release --target-dir $output_dir }
 #Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler --target i686-pc-windows-msvc --target-dir $output_dir }
