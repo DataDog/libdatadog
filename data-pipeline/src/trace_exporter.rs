@@ -1,7 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 use crate::agent_info::{AgentInfoArc, AgentInfoFetcher};
-use crate::stats_exporter::LibraryMetadata;
 use crate::{
     health_metrics, health_metrics::HealthMetric, span_concentrator::SpanConcentrator,
     stats_exporter,
@@ -154,19 +153,19 @@ fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) -> DroppedP0Counts {
     }
 }
 
-#[derive(Clone, Default)]
-struct TracerMetadata {
-    hostname: String,
-    env: String,
-    version: String,
-    runtime_id: String,
-    service: String,
-    tracer_version: String,
-    language: String,
-    language_version: String,
-    language_interpreter: String,
-    client_computed_stats: bool,
-    client_computed_top_level: bool,
+#[derive(Clone, Default, Debug)]
+pub struct TracerMetadata {
+    pub hostname: String,
+    pub env: String,
+    pub version: String,
+    pub runtime_id: String,
+    pub service: String,
+    pub tracer_version: String,
+    pub language: String,
+    pub language_version: String,
+    pub language_interpreter: String,
+    pub client_computed_stats: bool,
+    pub client_computed_top_level: bool,
 }
 
 impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
@@ -186,23 +185,6 @@ impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
 impl<'a> From<&'a TracerMetadata> for HashMap<&'static str, String> {
     fn from(tags: &'a TracerMetadata) -> HashMap<&'static str, String> {
         TracerHeaderTags::from(tags).into()
-    }
-}
-
-impl From<&TracerMetadata> for LibraryMetadata {
-    fn from(tags: &TracerMetadata) -> Self {
-        LibraryMetadata {
-            hostname: tags.hostname.clone(),
-            lang: tags.language.clone(),
-            env: tags.env.clone(),
-            version: tags.version.clone(),
-            tracer_version: tags.tracer_version.clone(),
-            runtime_id: tags.runtime_id.clone(),
-            service: tags.service.clone(),
-            git_commit_sha: String::new(),
-            container_id: String::new(),
-            tags: Vec::new(),
-        }
     }
 }
 
@@ -338,7 +320,7 @@ impl TraceExporter {
             let mut stats_exporter = stats_exporter::StatsExporter::new(
                 bucket_size,
                 stats_concentrator.clone(),
-                self.metadata.borrow().into(),
+                self.metadata.clone(),
                 Endpoint::from_url(add_path(&self.endpoint.url, STATS_ENDPOINT)),
                 cancellation_token.clone(),
             );
