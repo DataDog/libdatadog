@@ -164,6 +164,8 @@ pub struct TracerMetadata {
     pub language: String,
     pub language_version: String,
     pub language_interpreter: String,
+    pub language_interpreter_vendor: String,
+    pub git_commit_sha: String,
     pub client_computed_stats: bool,
     pub client_computed_top_level: bool,
 }
@@ -175,6 +177,7 @@ impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
             lang_version: &tags.language_version,
             tracer_version: &tags.tracer_version,
             lang_interpreter: &tags.language_interpreter,
+            lang_vendor: &tags.language_interpreter_vendor,
             client_computed_stats: tags.client_computed_stats,
             client_computed_top_level: tags.client_computed_top_level,
             ..Default::default()
@@ -667,14 +670,16 @@ const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
 #[derive(Default)]
 pub struct TraceExporterBuilder {
     url: Option<String>,
-    tracer_version: String,
     hostname: String,
     env: String,
     version: String,
     service: String,
+    tracer_version: String,
     language: String,
     language_version: String,
     language_interpreter: String,
+    language_interpreter_vendor: String,
+    git_commit_sha: String,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     response_callback: Option<Box<dyn ResponseCallback>>,
@@ -713,6 +718,7 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Set the app version which corresponds to the `version` meta tag
     pub fn set_version(mut self, version: &str) -> Self {
         version.clone_into(&mut self.version);
         self
@@ -723,27 +729,39 @@ impl TraceExporterBuilder {
         self
     }
 
-    #[allow(missing_docs)]
+    /// Set the `Datadog-Meta-Tracer-Version` on traces payload
     pub fn set_tracer_version(mut self, tracer_version: &str) -> Self {
         tracer_version.clone_into(&mut self.tracer_version);
         self
     }
 
-    #[allow(missing_docs)]
+    /// Set the `Datadog-Meta-Lang` on traces payload
     pub fn set_language(mut self, lang: &str) -> Self {
         lang.clone_into(&mut self.language);
         self
     }
 
-    #[allow(missing_docs)]
+    /// Set the `Datadog-Meta-Lang-Version` on traces payload
     pub fn set_language_version(mut self, lang_version: &str) -> Self {
         lang_version.clone_into(&mut self.language_version);
         self
     }
 
-    #[allow(missing_docs)]
+    /// Set the `Datadog-Meta-Lang-Interpreter` on traces payload
     pub fn set_language_interpreter(mut self, lang_interpreter: &str) -> Self {
         lang_interpreter.clone_into(&mut self.language_interpreter);
+        self
+    }
+
+    /// Set the `Datadog-Meta-Lang-Interpreter-Vendor` on traces payload
+    pub fn set_language_interpreter_vendor(mut self, lang_interpreter_vendor: &str) -> Self {
+        lang_interpreter_vendor.clone_into(&mut self.language_interpreter_vendor);
+        self
+    }
+
+    /// Set the `git_commit_sha` corresponding to the `_dd.git.commit.sha` meta tag
+    pub fn set_git_commit_sha(mut self, git_commit_sha: &str) -> Self {
+        git_commit_sha.clone_into(&mut self.git_commit_sha);
         self
     }
 
@@ -840,7 +858,9 @@ impl TraceExporterBuilder {
                 tracer_version: self.tracer_version,
                 language_version: self.language_version,
                 language_interpreter: self.language_interpreter,
+                language_interpreter_vendor: self.language_interpreter_vendor,
                 language: self.language,
+                git_commit_sha: self.git_commit_sha,
                 client_computed_stats: self.client_computed_stats,
                 client_computed_top_level: self.client_computed_top_level,
                 hostname: self.hostname,
@@ -888,6 +908,8 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8")
+            .set_language_interpreter_vendor("node")
+            .set_git_commit_sha("797e9ea")
             .set_input_format(TraceExporterInputFormat::Proxy)
             .set_output_format(TraceExporterOutputFormat::V07)
             .build()
@@ -905,6 +927,8 @@ mod tests {
         assert_eq!(exporter.metadata.language, "nodejs");
         assert_eq!(exporter.metadata.language_version, "1.0");
         assert_eq!(exporter.metadata.language_interpreter, "v8");
+        assert_eq!(exporter.metadata.language_interpreter_vendor, "node");
+        assert_eq!(exporter.metadata.git_commit_sha, "797e9ea");
         assert!(!exporter.metadata.client_computed_stats);
     }
 
@@ -942,6 +966,7 @@ mod tests {
             language: "rust".to_string(),
             language_version: "1.52.1".to_string(),
             language_interpreter: "rustc".to_string(),
+            language_interpreter_vendor: "rust-lang".to_string(),
             client_computed_stats: true,
             client_computed_top_level: true,
             ..Default::default()
@@ -953,6 +978,7 @@ mod tests {
         assert_eq!(tracer_header_tags.lang, "rust");
         assert_eq!(tracer_header_tags.lang_version, "1.52.1");
         assert_eq!(tracer_header_tags.lang_interpreter, "rustc");
+        assert_eq!(tracer_header_tags.lang_vendor, "rust-lang");
         assert!(tracer_header_tags.client_computed_stats);
         assert!(tracer_header_tags.client_computed_top_level);
     }

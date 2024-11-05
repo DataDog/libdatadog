@@ -38,7 +38,7 @@ impl StatsExporter {
     ///
     /// - `flush_interval` the interval on which the concentrator is flushed
     /// - `concentrator` SpanConcentrator storing the stats to be sent to the agent
-    /// - `meta` metadata used in ClientStatsPayload and as headers to send stats to the agent.
+    /// - `meta` metadata used in ClientStatsPayload and as headers to send stats to the agent
     /// - `endpoint` the Endpoint used to send stats to the agent
     /// - `cancellation_token` Token used to safely shutdown the exporter by force flushing the
     ///   concentrator
@@ -166,9 +166,9 @@ fn encode_stats_payload(
         service: meta.service.clone(),
         sequence,
         stats: buckets,
+        git_commit_sha: meta.git_commit_sha.clone(),
         // These fields will be set by the Agent
         container_id: String::new(),
-        git_commit_sha: String::new(),
         tags: Vec::new(),
         agent_aggregation: String::new(),
         image_tag: String::new(),
