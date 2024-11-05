@@ -7,6 +7,7 @@ mod fuzz_tests;
 use self::api::UpscalingInfo;
 use super::*;
 use crate::api;
+use crate::api::PersistentStringId;
 use crate::collections::identifiable::*;
 use crate::collections::string_storage::ManagedStringStorage;
 use crate::collections::string_table::StringTable;
@@ -19,7 +20,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::RwLock;
 use std::time::{Duration, SystemTime};
-use crate::api::PersistentStringId;
 
 pub struct Profile {
     /// When profiles are reset, the sample-types need to be preserved. This
@@ -650,7 +650,7 @@ impl Profile {
             }
 
             // FIXME
-/*            if label.key == "local root span id" {
+            /*            if label.key == "local root span id" {
                 anyhow::ensure!(
                     label.str.is_none() && label.num != 0,
                     "Invalid \"local root span id\" label: {:?}",
