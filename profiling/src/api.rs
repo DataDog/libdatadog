@@ -30,6 +30,12 @@ pub struct PersistentStringId {
     pub value: u32,
 }
 
+impl PersistentStringId {
+    pub fn new(value: u32) -> Self {
+        PersistentStringId { value }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct Mapping<'a> {
     /// Address at which the binary (or DLL) is loaded into memory.
