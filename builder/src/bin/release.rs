@@ -46,7 +46,7 @@ pub fn main() {
 
     let profile = env::var("PROFILE").unwrap();
     let version = env::var("CARGO_PKG_VERSION").unwrap();
-    let host = env::var("HOST").unwrap();
+    let host = env::var("TARGET").unwrap();
     let out_dir = if let Some(out) = args.out_dir {
         out
     } else {
