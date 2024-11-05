@@ -1,5 +1,13 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+
+//! This file contains code for fetching and sharing the info from the Datadog Agent.
+//! It will keep one fetcher per Endpoint. The SidecarServer is expected to keep the AgentInfoGuard
+//! alive for the lifetime of the session.
+//! The fetcher will remain alive for a short while after all guards have been dropped.
+//! It writes the raw agent response to shared memory at a fixed per-endpoint location, to be
+//! consumed be tracers.
+
 use crate::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
 use crate::primary_sidecar_identifier;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
@@ -24,6 +32,8 @@ use zwohash::{HashMap, ZwoHasher};
 pub struct AgentInfos(Arc<Mutex<HashMap<Endpoint, AgentInfoFetcher>>>);
 
 impl AgentInfos {
+    /// Ensures a fetcher for the endpoints agent info and keeps it alive for at least as long as
+    /// the returned guard exists.
     pub fn query_for(&self, endpoint: Endpoint) -> AgentInfoGuard {
         let mut infos_guard = self.0.lock().unwrap();
         if let Some(info) = infos_guard.get_mut(&endpoint) {
@@ -65,8 +75,12 @@ impl Drop for AgentInfoGuard {
 }
 
 pub struct AgentInfoFetcher {
+    /// Once the last_update is too old, we'll stop the fetcher.
     last_update: Instant,
+    /// Will be kept alive forever if rc > 0.
     rc: u32,
+    /// The initial fetch is an unresolved future (to be able to await on it), subsequent fetches
+    /// are simply directly replacing this with a resolved future.
     infos: Shared<ManualFuture<AgentInfoStruct>>,
 }
 
@@ -116,6 +130,8 @@ impl AgentInfoFetcher {
                             completer = None;
                         }
                         Err(e) => {
+                            // We'll just return the old values as long as the endpoint is
+                            // unreachable.
                             warn!(
                                 "The agent info for {} could not be fetched: {}",
                                 fetch_endpoint.url, e
@@ -175,5 +191,53 @@ impl AgentInfoReader {
             }
         }
         (updated, &self.info)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use httpmock::prelude::*;
+
+    const TEST_INFO: &str = r#"{
+        "config": {
+            "default_env": "testenv"
+        }
+        }"#;
+
+    const TEST_INFO_HASH: &str = "8c732aba385d605b010cd5bd12c03fef402eaefce989f0055aa4c7e92fe30077";
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_fetch_info_without_state() {
+        let server = MockServer::start();
+        let mock = server
+            .mock_async(|when, then| {
+                when.path("/info");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .header("datadog-agent-state", TEST_INFO_HASH)
+                    .body(TEST_INFO);
+            })
+            .await;
+        let endpoint = Endpoint::from_url(server.url("/").parse().unwrap());
+        let agent_infos = AgentInfos::default();
+
+        let mut reader = AgentInfoReader::new(&endpoint);
+        assert_eq!(reader.read(), (false, &None));
+
+        let info = agent_infos.query_for(endpoint).get().await;
+        mock.assert();
+        assert_eq!(
+            info.config.unwrap().default_env,
+            Some("testenv".to_string())
+        );
+
+        let (updated, info) = reader.read();
+        assert!(updated);
+        assert_eq!(
+            info.as_ref().unwrap().config.as_ref().unwrap().default_env,
+            Some("testenv".to_string())
+        );
     }
 }
