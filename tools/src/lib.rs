@@ -45,7 +45,7 @@ pub mod headers {
         new_content_parts
     }
 
-    pub fn dedup_headers(base: &str, headers: &Vec<&str>) {
+    pub fn dedup_headers(base: &str, headers: &[&str]) {
         let mut unique_child_defs: Vec<String> = Vec::new();
         let mut present = HashSet::new();
 

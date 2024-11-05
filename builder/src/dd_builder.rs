@@ -39,6 +39,7 @@ pub struct Builder {
     pub arch: Rc<str>,
     pub features: Rc<str>,
     pub main_header: Rc<str>,
+    pub profile: Rc<str>,
     pub source_inc: Rc<str>,
     pub source_lib: Rc<str>,
     pub target_dir: Rc<str>,
@@ -74,6 +75,7 @@ impl Builder {
             arch: target_arch.into(),
             features: features.into(),
             main_header: (target_dir.to_string() + "/" + HEADER_PATH + "/" + "common.h").into(),
+            profile: profile.into(),
             source_lib: (source_dir.to_string() + "/" + target_arch + "/" + profile + "/deps")
                 .into(),
             source_inc: (source_dir.to_string() + "/" + HEADER_PATH).into(),
@@ -146,7 +148,6 @@ impl Builder {
     pub fn build(&self) -> Result<()> {
         for module in &self.modules {
             module.build()?;
-            // self.deduplicate_headers();
             module.install()?;
         }
         Ok(())
