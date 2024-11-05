@@ -15,7 +15,10 @@ use crate::serializer::CompressedProtobufSerializer;
 use anyhow::Context;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::RwLock;
 use std::time::{Duration, SystemTime};
+use crate::collections::string_storage::ManagedStringStorage;
 
 pub struct Profile {
     /// When profiles are reset, the sample-types need to be preserved. This
@@ -38,6 +41,7 @@ pub struct Profile {
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: StringTable,
+    string_storage: Option<Rc<RwLock<ManagedStringStorage>>>,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
 }
@@ -198,6 +202,22 @@ impl Profile {
             Self::backup_period(period),
             Self::backup_sample_types(sample_types),
             start_time,
+            None,
+        )
+    }
+
+    #[inline]
+    pub fn with_string_storage(
+        start_time: SystemTime,
+        sample_types: &[api::ValueType],
+        period: Option<api::Period>,
+        string_storage: Rc<RwLock<ManagedStringStorage>>,
+    ) -> Self {
+        Self::new_internal(
+            Self::backup_period(period),
+            Self::backup_sample_types(sample_types),
+            start_time,
+            Some(string_storage),
         )
     }
 
@@ -212,6 +232,7 @@ impl Profile {
             self.owned_period.take(),
             self.owned_sample_types.take(),
             start_time.unwrap_or_else(SystemTime::now),
+            self.string_storage.clone(),
         );
 
         std::mem::swap(&mut *self, &mut profile);
@@ -505,6 +526,7 @@ impl Profile {
         owned_period: Option<owned_types::Period>,
         owned_sample_types: Option<Box<[owned_types::ValueType]>>,
         start_time: SystemTime,
+        string_storage: Option<Rc<RwLock<ManagedStringStorage>>>,
     ) -> Self {
         let mut profile = Self {
             owned_period,
@@ -521,6 +543,7 @@ impl Profile {
             stack_traces: Default::default(),
             start_time,
             strings: Default::default(),
+            string_storage,
             timestamp_key: Default::default(),
             upscaling_rules: Default::default(),
         };
