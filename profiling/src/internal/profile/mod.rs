@@ -8,6 +8,7 @@ use self::api::UpscalingInfo;
 use super::*;
 use crate::api;
 use crate::collections::identifiable::*;
+use crate::collections::string_storage::ManagedStringStorage;
 use crate::collections::string_table::StringTable;
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::pprof::sliced_proto::*;
@@ -18,7 +19,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::RwLock;
 use std::time::{Duration, SystemTime};
-use crate::collections::string_storage::ManagedStringStorage;
 
 pub struct Profile {
     /// When profiles are reset, the sample-types need to be preserved. This
@@ -121,7 +121,7 @@ impl Profile {
         Ok(())
     }
 
-        pub fn add_string_id_sample(
+    pub fn add_string_id_sample(
         &mut self,
         sample: api::StringIdSample,
         timestamp: Option<Timestamp>,
@@ -627,8 +627,11 @@ impl Profile {
         Ok(())
     }
 
-        /// Validates labels
-    fn validate_string_id_sample_labels(&mut self, sample: &api::StringIdSample) -> anyhow::Result<()> {
+    /// Validates labels
+    fn validate_string_id_sample_labels(
+        &mut self,
+        sample: &api::StringIdSample,
+    ) -> anyhow::Result<()> {
         let mut seen: HashMap<&str, &api::StringIdLabel> = HashMap::new();
 
         for label in sample.labels.iter() {
