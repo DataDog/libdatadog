@@ -146,8 +146,6 @@ impl Module for Profiling {
 
         let mut cargo_args = vec![
             "build",
-            "-p",
-            "datadog-profiling-ffi",
             "--features",
             &features,
             "--target",
@@ -158,8 +156,11 @@ impl Module for Profiling {
             cargo_args.push("--release");
         }
 
+        let mut profiling_path: PathBuf = project_root();
+        profiling_path.push("profiling-ffi");
+
         let mut cargo = Command::new("cargo")
-            .current_dir(project_root())
+            .current_dir(profiling_path)
             .args(cargo_args)
             .spawn()
             .expect("failed to spawn cargo");
