@@ -117,6 +117,50 @@ impl Profile {
         Ok(())
     }
 
+        pub fn add_string_id_sample(
+        &mut self,
+        sample: api::StringIdSample,
+        timestamp: Option<Timestamp>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            sample.values.len() == self.sample_types.len(),
+            "expected {} sample types, but sample had {} sample types",
+            self.sample_types.len(),
+            sample.values.len(),
+        );
+
+        self.validate_string_id_sample_labels(&sample)?;
+        let labels: Vec<_> = sample
+            .labels
+            .iter()
+            .map(|label| {
+                let key = self.intern(label.key);
+                let internal_label = if let Some(s) = label.str {
+                    let str = self.intern(s);
+                    Label::str(key, str)
+                } else {
+                    let num = label.num;
+                    let num_unit = label.num_unit.map(|s| self.intern(s));
+                    Label::num(key, num, num_unit)
+                };
+
+                self.labels.dedup(internal_label)
+            })
+            .collect();
+        let labels = self.label_sets.dedup(LabelSet::new(labels));
+
+        let locations = sample
+            .locations
+            .iter()
+            .map(|l| self.add_string_id_location(l))
+            .collect();
+
+        let stacktrace = self.add_stacktrace(locations);
+        self.observations
+            .add(Sample::new(labels, stacktrace), timestamp, sample.values)?;
+        Ok(())
+    }
+
     pub fn add_upscaling_rule(
         &mut self,
         offset_values: &[usize],
@@ -306,6 +350,20 @@ impl Profile {
         })
     }
 
+    fn add_string_id_function(&mut self, function: &api::StringIdFunction) -> FunctionId {
+        let name = self.intern(function.name);
+        let system_name = self.intern(function.system_name);
+        let filename = self.intern(function.filename);
+
+        let start_line = function.start_line;
+        self.functions.dedup(Function {
+            name,
+            system_name,
+            filename,
+            start_line,
+        })
+    }
+
     fn add_location(&mut self, location: &api::Location) -> LocationId {
         let mapping_id = self.add_mapping(&location.mapping);
         let function_id = self.add_function(&location.function);
@@ -317,7 +375,31 @@ impl Profile {
         })
     }
 
+    fn add_string_id_location(&mut self, location: &api::StringIdLocation) -> LocationId {
+        let mapping_id = self.add_string_id_mapping(&location.mapping);
+        let function_id = self.add_string_id_function(&location.function);
+        self.locations.dedup(Location {
+            mapping_id,
+            function_id,
+            address: location.address,
+            line: location.line,
+        })
+    }
+
     fn add_mapping(&mut self, mapping: &api::Mapping) -> MappingId {
+        let filename = self.intern(mapping.filename);
+        let build_id = self.intern(mapping.build_id);
+
+        self.mappings.dedup(Mapping {
+            memory_start: mapping.memory_start,
+            memory_limit: mapping.memory_limit,
+            file_offset: mapping.file_offset,
+            filename,
+            build_id,
+        })
+    }
+
+    fn add_string_id_mapping(&mut self, mapping: &api::StringIdMapping) -> MappingId {
         let filename = self.intern(mapping.filename);
         let build_id = self.intern(mapping.build_id);
 
@@ -499,6 +581,32 @@ impl Profile {
     /// Validates labels
     fn validate_sample_labels(&mut self, sample: &api::Sample) -> anyhow::Result<()> {
         let mut seen: HashMap<&str, &api::Label> = HashMap::new();
+
+        for label in sample.labels.iter() {
+            if let Some(duplicate) = seen.insert(label.key, label) {
+                anyhow::bail!("Duplicate label on sample: {:?} {:?}", duplicate, label);
+            }
+
+            if label.key == "local root span id" {
+                anyhow::ensure!(
+                    label.str.is_none() && label.num != 0,
+                    "Invalid \"local root span id\" label: {:?}",
+                    label
+                );
+            }
+
+            anyhow::ensure!(
+                label.key != "end_timestamp_ns",
+                "Timestamp should not be passed as a label {:?}",
+                label
+            );
+        }
+        Ok(())
+    }
+
+        /// Validates labels
+    fn validate_string_id_sample_labels(&mut self, sample: &api::StringIdSample) -> anyhow::Result<()> {
+        let mut seen: HashMap<&str, &api::StringIdLabel> = HashMap::new();
 
         for label in sample.labels.iter() {
             if let Some(duplicate) = seen.insert(label.key, label) {
