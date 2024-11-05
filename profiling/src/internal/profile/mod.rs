@@ -611,7 +611,6 @@ impl Profile {
             .collect()
     }
 
-    /// Validates labels
     fn validate_sample_labels(&mut self, sample: &api::Sample) -> anyhow::Result<()> {
         let mut seen: HashMap<&str, &api::Label> = HashMap::new();
 
@@ -637,7 +636,6 @@ impl Profile {
         Ok(())
     }
 
-    /// Validates labels
     fn validate_string_id_sample_labels(
         &mut self,
         sample: &api::StringIdSample,
@@ -649,8 +647,9 @@ impl Profile {
                 anyhow::bail!("Duplicate label on sample: {:?} {:?}", duplicate, label);
             }
 
-            // FIXME
-            /*            if label.key == "local root span id" {
+            let key_id: StringId = self.resolve(label.key);
+
+            if key_id == self.endpoints.local_root_span_id_label {
                 anyhow::ensure!(
                     label.str.is_none() && label.num != 0,
                     "Invalid \"local root span id\" label: {:?}",
@@ -659,10 +658,10 @@ impl Profile {
             }
 
             anyhow::ensure!(
-                label.key != "end_timestamp_ns",
+                key_id != self.timestamp_key,
                 "Timestamp should not be passed as a label {:?}",
                 label
-            );*/
+            );
         }
         Ok(())
     }
