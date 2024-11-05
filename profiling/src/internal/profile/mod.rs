@@ -15,6 +15,7 @@ use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::pprof::sliced_proto::*;
 use crate::serializer::CompressedProtobufSerializer;
 use anyhow::Context;
+use libc::time;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -83,13 +84,6 @@ impl Profile {
         sample: api::Sample,
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            sample.values.len() == self.sample_types.len(),
-            "expected {} sample types, but sample had {} sample types",
-            self.sample_types.len(),
-            sample.values.len(),
-        );
-
         self.validate_sample_labels(&sample)?;
         let labels: Vec<_> = sample
             .labels
@@ -108,7 +102,6 @@ impl Profile {
                 self.labels.dedup(internal_label)
             })
             .collect();
-        let labels = self.label_sets.dedup(LabelSet::new(labels));
 
         let locations = sample
             .locations
@@ -116,10 +109,7 @@ impl Profile {
             .map(|l| self.add_location(l))
             .collect();
 
-        let stacktrace = self.add_stacktrace(locations);
-        self.observations
-            .add(Sample::new(labels, stacktrace), timestamp, sample.values)?;
-        Ok(())
+        self.add_sample_internal(sample.values, labels, locations, timestamp)
     }
 
     pub fn add_string_id_sample(
@@ -127,13 +117,6 @@ impl Profile {
         sample: api::StringIdSample,
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            sample.values.len() == self.sample_types.len(),
-            "expected {} sample types, but sample had {} sample types",
-            self.sample_types.len(),
-            sample.values.len(),
-        );
-
         self.validate_string_id_sample_labels(&sample)?;
         let labels: Vec<_> = sample
             .labels
@@ -152,7 +135,6 @@ impl Profile {
                 self.labels.dedup(internal_label)
             })
             .collect();
-        let labels = self.label_sets.dedup(LabelSet::new(labels));
 
         let locations = sample
             .locations
@@ -160,9 +142,28 @@ impl Profile {
             .map(|l| self.add_string_id_location(l))
             .collect();
 
+        self.add_sample_internal(sample.values, labels, locations, timestamp)
+    }
+
+    fn add_sample_internal(
+        &mut self,
+        values: Vec<i64>,
+        labels: Vec<LabelId>,
+        locations: Vec<LocationId>,
+        timestamp: Option<Timestamp>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            values.len() == self.sample_types.len(),
+            "expected {} sample types, but sample had {} sample types",
+            self.sample_types.len(),
+            values.len(),
+        );
+
+        let labels = self.label_sets.dedup(LabelSet::new(labels));
+
         let stacktrace = self.add_stacktrace(locations);
         self.observations
-            .add(Sample::new(labels, stacktrace), timestamp, sample.values)?;
+            .add(Sample::new(labels, stacktrace), timestamp, values)?;
         Ok(())
     }
 
