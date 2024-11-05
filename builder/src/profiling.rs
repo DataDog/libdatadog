@@ -17,6 +17,7 @@ pub struct Profiling {
     pub arch: Rc<str>,
     pub base_header: Rc<str>,
     pub features: Rc<str>,
+    pub profile: Rc<str>,
     pub source_include: Rc<str>,
     pub source_lib: Rc<str>,
     pub target_include: Rc<str>,
@@ -54,7 +55,10 @@ impl Profiling {
 
         dedup_headers(
             self.base_header.as_ref(),
-            &(to_dedup.iter().map(|i| i.to_str().unwrap()).collect()),
+            &(to_dedup
+                .iter()
+                .map(|i| i.to_str().unwrap())
+                .collect::<Vec<&str>>()),
         );
 
         Ok(())
@@ -71,6 +75,7 @@ impl Profiling {
         let to_dyn: PathBuf = [lib_dir.as_os_str(), OsStr::new(arch::PROF_DYNAMIC_LIB)]
             .iter()
             .collect();
+
         fs::copy(from_dyn, to_dyn).expect("unable to copy dynamic lib");
 
         let from_static: PathBuf = [&self.source_lib, arch::PROF_STATIC_LIB_FFI]
@@ -138,17 +143,24 @@ impl Module for Profiling {
         let features = self.features.to_string() + "," + "cbindgen";
         #[cfg(feature = "crashtracker")]
         let features = features.add(",crashtracker-collector,crashtracker-receiver,demangler");
+
+        let mut cargo_args = vec![
+            "build",
+            "-p",
+            "datadog-profiling-ffi",
+            "--features",
+            &features,
+            "--target",
+            &self.arch,
+        ];
+
+        if self.profile.as_ref() == "release" {
+            cargo_args.push("--release");
+        }
+
         let mut cargo = Command::new("cargo")
             .current_dir(project_root())
-            .args([
-                "build",
-                "-p",
-                "datadog-profiling-ffi",
-                "--features",
-                &features,
-                "--target",
-                &self.arch,
-            ])
+            .args(cargo_args)
             .spawn()
             .expect("failed to spawn cargo");
 

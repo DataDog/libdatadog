@@ -14,6 +14,7 @@ use tools::headers::dedup_headers;
 pub struct CrashTracker {
     pub arch: Rc<str>,
     pub base_header: Rc<str>,
+    pub profile: Rc<str>,
     pub source_include: Rc<str>,
     pub target_dir: Rc<str>,
     pub target_include: Rc<str>,
@@ -50,15 +51,21 @@ impl CrashTracker {
 
 impl Module for CrashTracker {
     fn build(&self) -> Result<()> {
+        let mut cargo_args = vec![
+            "build",
+            "-p",
+            "datadog-crashtracker-ffi",
+            "--target",
+            &self.arch,
+        ];
+
+        if self.profile.as_ref() == "release" {
+            cargo_args.push("--release");
+        }
+
         let mut cargo = Command::new("cargo")
             .current_dir(project_root())
-            .args([
-                "build",
-                "-p",
-                "datadog-crashtracker-ffi",
-                "--target",
-                &self.arch,
-            ])
+            .args(cargo_args)
             .spawn()
             .expect("failed to spawn cargo");
 

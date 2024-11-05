@@ -96,6 +96,7 @@ pub fn main() {
         arch: builder.arch.clone(),
         base_header: builder.main_header.clone(),
         features: builder.features.clone(),
+        profile: builder.profile.clone(),
         source_include: builder.source_inc.clone(),
         source_lib: builder.source_lib.clone(),
         target_include: builder.target_include.clone(),
@@ -108,6 +109,7 @@ pub fn main() {
     builder.add_module(Box::new(CrashTracker {
         arch: builder.arch.clone(),
         base_header: builder.main_header.clone(),
+        profile: builder.profile.clone(),
         source_include: builder.source_inc.clone(),
         target_include: builder.target_include.clone(),
         target_dir: builder.target_dir.clone(),
@@ -118,7 +120,6 @@ pub fn main() {
     match res {
         Ok(_) => {
             builder.sanitize_libraries();
-            // builder.deduplicate_headers();
             builder.pack().unwrap()
         }
         Err(err) => panic!("{}", format!("Building failed: {}", err)),
