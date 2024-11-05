@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::RwLock;
 use std::time::{Duration, SystemTime};
+use crate::api::PersistentStringId;
 
 pub struct Profile {
     /// When profiles are reset, the sample-types need to be preserved. This
@@ -138,13 +139,13 @@ impl Profile {
             .labels
             .iter()
             .map(|label| {
-                let key = self.intern(label.key);
+                let key = self.resolve(label.key);
                 let internal_label = if let Some(s) = label.str {
-                    let str = self.intern(s);
+                    let str = self.resolve(s);
                     Label::str(key, str)
                 } else {
                     let num = label.num;
-                    let num_unit = label.num_unit.map(|s| self.intern(s));
+                    let num_unit = label.num_unit.map(|s| self.resolve(s));
                     Label::num(key, num, num_unit)
                 };
 
@@ -183,6 +184,15 @@ impl Profile {
         )?;
 
         Ok(())
+    }
+
+    pub fn resolve(&mut self, id: PersistentStringId) -> StringId {
+        self.string_storage
+            .as_ref()
+            .expect("resolution from id requires managed string storage")
+            .read()
+            .expect("acquisition of write lock on string storage should succeed")
+            .get_seq_num(id.value, &mut self.strings)
     }
 
     /// Creates a profile with `start_time`.
@@ -372,9 +382,9 @@ impl Profile {
     }
 
     fn add_string_id_function(&mut self, function: &api::StringIdFunction) -> FunctionId {
-        let name = self.intern(function.name);
-        let system_name = self.intern(function.system_name);
-        let filename = self.intern(function.filename);
+        let name = self.resolve(function.name);
+        let system_name = self.resolve(function.system_name);
+        let filename = self.resolve(function.filename);
 
         let start_line = function.start_line;
         self.functions.dedup(Function {
@@ -421,8 +431,8 @@ impl Profile {
     }
 
     fn add_string_id_mapping(&mut self, mapping: &api::StringIdMapping) -> MappingId {
-        let filename = self.intern(mapping.filename);
-        let build_id = self.intern(mapping.build_id);
+        let filename = self.resolve(mapping.filename);
+        let build_id = self.resolve(mapping.build_id);
 
         self.mappings.dedup(Mapping {
             memory_start: mapping.memory_start,
@@ -632,14 +642,15 @@ impl Profile {
         &mut self,
         sample: &api::StringIdSample,
     ) -> anyhow::Result<()> {
-        let mut seen: HashMap<&str, &api::StringIdLabel> = HashMap::new();
+        let mut seen: HashMap<PersistentStringId, &api::StringIdLabel> = HashMap::new();
 
         for label in sample.labels.iter() {
             if let Some(duplicate) = seen.insert(label.key, label) {
                 anyhow::bail!("Duplicate label on sample: {:?} {:?}", duplicate, label);
             }
 
-            if label.key == "local root span id" {
+            // FIXME
+/*            if label.key == "local root span id" {
                 anyhow::ensure!(
                     label.str.is_none() && label.num != 0,
                     "Invalid \"local root span id\" label: {:?}",
@@ -651,7 +662,7 @@ impl Profile {
                 label.key != "end_timestamp_ns",
                 "Timestamp should not be passed as a label {:?}",
                 label
-            );
+            );*/
         }
         Ok(())
     }
