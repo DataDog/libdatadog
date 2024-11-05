@@ -8,7 +8,7 @@ use build_common::determine_paths;
 use builder::common::Common;
 #[cfg(feature = "crashtracker")]
 use builder::crashtracker::CrashTracker;
-use builder::dd_builder::Builder;
+use builder::builder::Builder;
 #[cfg(feature = "profiling")]
 use builder::profiling::Profiling;
 use builder::utils::project_root;
@@ -41,6 +41,7 @@ impl From<pico_args::Arguments> for ReleaseArgs {
 pub fn main() {
     let args: ReleaseArgs = pico_args::Arguments::from_env().into();
 
+    println!("{:?}", std::env::vars());
     let (_, source_path) = determine_paths();
 
     let profile = env::var("PROFILE").unwrap();
@@ -60,6 +61,7 @@ pub fn main() {
 
     #[allow(clippy::vec_init_then_push)]
     let features = {
+        #[allow(unused_mut)]
         let mut f: Vec<String> = vec![];
         #[cfg(feature = "telemetry")]
         f.push("ddtelemetry-ffi".to_string());

@@ -21,4 +21,8 @@ fn main() {
         std::env::var("CARGO_PKG_VERSION").unwrap()
     );
     println!("cargo:rustc-env=HOST={}", std::env::var("HOST").unwrap());
+    println!(
+        "cargo:rustc-env=OUT_DIR={}",
+        std::env::var("OUT_DIR").unwrap()
+    );
 }
