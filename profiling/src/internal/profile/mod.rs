@@ -191,7 +191,7 @@ impl Profile {
             .as_ref()
             .expect("resolution from id requires managed string storage")
             .read()
-            .expect("acquisition of write lock on string storage should succeed")
+            .expect("acquisition of read lock on string storage should succeed")
             .get_seq_num(id.value, &mut self.strings)
     }
 
