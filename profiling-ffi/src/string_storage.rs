@@ -38,6 +38,8 @@ pub enum ManagedStringStorageInternResult {
 
 #[must_use]
 #[no_mangle]
+// TODO: Consider having a variant of intern (and unintern?) that takes an array as input, instead of
+// just a single string at a time.
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
     storage: ManagedStringStorage,
     string: Option<&CharSlice>,
