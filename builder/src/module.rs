@@ -12,6 +12,12 @@ use anyhow::Result;
 /// Assuming there is a crate inside the workspace named core-ffi and this crate produces a library
 /// `libcore_ffi.so` and a header file `core-ffi.h`:
 /// ```
+/// use anyhow::Result;
+/// use builder::module::Module;
+/// use std::fs;
+/// use std::path::{Path, PathBuf};
+/// use std::rc::Rc;
+///
 /// struct Core {
 ///     pub source_include: Rc<str>,
 ///     pub source_lib: Rc<str>,
@@ -31,10 +37,14 @@ use anyhow::Result;
 ///         let mut origin_path: PathBuf = [&self.source_lib, "libcore_ffi.so"].iter().collect();
 ///         let mut target_path: PathBuf = [&self.target_lib, "libcore_ffi.so"].iter().collect();
 ///         fs::copy(&origin_path, &target_path).expect("Failed to copy the library");
+///         Ok(())
 ///     }
 /// }
 ///
 /// impl Module for Core {
+///     fn build(&self) -> Result<()> {
+///         Ok(())
+///     }
 ///     fn install(&self) -> Result<()> {
 ///         self.add_header()?;
 ///         self.add_lib()?;

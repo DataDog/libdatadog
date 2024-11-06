@@ -6,7 +6,7 @@ pub mod builder;
 pub mod common;
 #[cfg(feature = "crashtracker")]
 pub mod crashtracker;
-mod module;
+pub mod module;
 pub mod utils;
 
 #[cfg(feature = "profiling")]

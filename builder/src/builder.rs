@@ -24,15 +24,28 @@ use crate::utils::{file_replace, project_root};
 /// # Example
 ///
 /// ```rust
-/// use crate::core::Core;
+/// use anyhow::Result;
+/// use builder::builder::Builder;
+/// use builder::module::Module;
+/// use std::rc::Rc;
+/// struct Core {
+///     version: Rc<str>,
+/// }
 ///
-/// let mut builder = Builder::new(&path, &profile, &version);
+/// impl Module for Core {
+///     fn build(&self) -> Result<()> {
+///         Ok(())
+///     }
+///     fn install(&self) -> Result<()> {
+///         Ok(())
+///     }
+/// }
+/// let mut builder = Builder::new("source", "target", "arch", "features", "profile", "version");
 /// let core = Box::new(Core {
 ///     version: builder.version.clone(),
 /// });
 /// builder.add_module(core);
-/// builder.build()?;
-/// builder.pack()?;
+/// builder.build();
 /// ```
 pub struct Builder {
     modules: Vec<Box<dyn Module>>,
