@@ -87,7 +87,7 @@ mod experimental {
 #[derive(PartialEq, Debug)]
 struct ManagedStringData {
     str: Rc<str>,
-    last_usage_gen: Cell<Option<u32>>,
+    last_usage_gen: Cell<Option<u32>>, // TODO: This is not actually being used; maybe remove?
     cached_seq_num_for: Cell<Option<*const StringTable>>,
     cached_seq_num: Cell<Option<StringId>>,
     usage_count: Cell<u32>,
