@@ -29,8 +29,7 @@ Remove-Item -Recurse -Force -ErrorAction Ignore $x86_debug_dir
 Remove-Item -Recurse -Force -ErrorAction Ignore $x86_64_release_dir
 Remove-Item -Recurse -Force -ErrorAction Ignore $x86_64_debug_dir
 
-# build inside the crate to use the config.toml file
-#pushd profiling-ffi
+
 
 # cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release -- --out $LIBDD_OUTPUT_FOLDER
 Write-Host "Building project into $($x86_64_release_dir)" -ForegroundColor Magenta
@@ -39,17 +38,23 @@ Invoke-Call -ScriptBlock { cargo run --bin release --features profiling,telemetr
 Write-Host "Building project into $($x86_64_debug_dir)" -ForegroundColor Magenta
 Invoke-Call -ScriptBlock { cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --target x86_64-pc-windows-msvc -- --out $x86_64_debug_dir }
 
+# Write-Host "Building project into $($x86_release_dir)" -ForegroundColor Magenta
+#Invoke-Call -ScriptBlock { cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release --target i686-pc-windows-msvc -- --out $x86_release_dir }
+
+# Write-Host "Building project into $($x86_debug_dir)" -ForegroundColor Magenta
+# Invoke-Call -ScriptBlock { cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --target i686-pc-windows-msvc -- --out $x86_debug_dir }
+
+# build inside the crate to use the config.toml file
+pushd profiling-ffi
 Write-Host "Building project into $($x86_release_dir)" -ForegroundColor Magenta
-Invoke-Call -ScriptBlock { cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release --target i686-pc-windows-msvc -- --out $x86_release_dir }
+Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler --target i686-pc-windows-msvc --release --target-dir $x86_release_dir }
 
 Write-Host "Building project into $($x86_debug_dir)" -ForegroundColor Magenta
-Invoke-Call -ScriptBlock { cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --target i686-pc-windows-msvc -- --out $x86_debug_dir }
+Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler --target i686-pc-windows-msvc --target-dir $x86_debug_dir }
 
-#Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler --target i686-pc-windows-msvc --release --target-dir $output_dir }
-#Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler --target i686-pc-windows-msvc --target-dir $output_dir }
 #Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler --target x86_64-pc-windows-msvc --release --target-dir $output_dir }
 #Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler --target x86_64-pc-windows-msvc --target-dir $output_dir }
-#popd
+popd
 
 # Write-Host "Building tools" -ForegroundColor Magenta
 # Set-Location tools
@@ -59,8 +64,17 @@ Invoke-Call -ScriptBlock { cargo run --bin release --features profiling,telemetr
 Write-Host "Copying artifacts" -ForegroundColor Magenta
 Copy-Item -Path $x86_64_release_dir $output_dir\x64\release\ -Recurse
 Copy-Item -Path $x86_64_debug_dir $output_dir\x64\debug\ -Recurse
-Copy-Item -Path $x86_release_dir $output_dir\x86\release -Recurse
-Copy-Item -Path $x86_debug_dir $output_dir\x86\debug\ -Recurse
+mkdir -p $output_dir\x86\release\lib
+mkdir -p $output_dir\x86\debug\lib
+Copy-Item -Path $x86_release_dir\i686-pc-windows-msvc\release\datadog_profiling_ffi.lib $output_dir\x86\release\lib\datadog_profiling.lib
+Copy-Item -Path $x86_release_dir\i686-pc-windows-msvc\release\datadog_profiling_ffi.dll $output_dir\x86\release\lib\datadog_profiling.dll
+Copy-Item -Path $x86_release_dir\i686-pc-windows-msvc\release\datadog_profiling_ffi.pdb $output_dir\x86\release\lib\datadog_profiling.pdb
+Copy-Item -Path $x86_debug_dir\i686-pc-windows-msvc\debug\datadog_profiling_ffi.lib $output_dir\x86\debug\lib\datadog_profiling.lib
+Copy-Item -Path $x86_debug_dir\i686-pc-windows-msvc\debug\datadog_profiling_ffi.dll $output_dir\x86\debug\lib\datadog_profiling.dll
+Copy-Item -Path $x86_debug_dir\i686-pc-windows-msvc\debug\datadog_profiling_ffi.pdb $output_dir\x86\debug\lib\datadog_profiling.pdb
+# Copy-Item -Path $x86_release_dir $output_dir\x86\release -Recurse
+# Copy-Item -Path $x86_debug_dir $output_dir\x86\debug\ -Recurse
+
 
 # Write-Host "Generating headers" -ForegroundColor Magenta
 # Invoke-Call -ScriptBlock { cbindgen --crate ddcommon-ffi --config ddcommon-ffi/cbindgen.toml --output $output_dir\common.h }
