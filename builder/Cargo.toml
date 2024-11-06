@@ -14,6 +14,9 @@ telemetry = []
 data-pipeline = []
 symbolizer = []
 
+[lib]
+bench = false
+
 
 [dependencies]
 anyhow = { version = "1.0" }
