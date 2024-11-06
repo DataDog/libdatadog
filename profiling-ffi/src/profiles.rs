@@ -480,6 +480,8 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
 }
 
 /// Same as `ddog_profile_new` but also configures a `string_storage` for the profile.
+#[no_mangle]
+#[must_use]
 pub unsafe extern "C" fn ddog_prof_Profile_with_string_storage(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
