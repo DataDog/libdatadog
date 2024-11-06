@@ -170,16 +170,6 @@ pub struct Function<'a> {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
-pub struct Line<'a> {
-    /// The corresponding profile.Function for this line.
-    pub function: Function<'a>,
-
-    /// Line number in source code.
-    pub line: i64,
-}
-
-#[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct Location<'a> {
     /// todo: how to handle unknown mapping?
