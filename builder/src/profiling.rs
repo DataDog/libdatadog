@@ -144,14 +144,21 @@ impl Module for Profiling {
         #[cfg(feature = "crashtracker")]
         let features = features.add(",crashtracker-collector,crashtracker-receiver,demangler");
 
-        let mut cargo_args = vec!["build", "--features", &features, "--target", &self.arch];
+        let mut cargo_args = vec![
+            "build",
+            "-p",
+            "datadog-profiling-ffi",
+            "--features",
+            &features,
+            "--target",
+            &self.arch,
+        ];
 
         if self.profile.as_ref() == "release" {
             cargo_args.push("--release");
         }
 
         let mut profiling_path: PathBuf = project_root();
-        profiling_path.push("profiling-ffi");
 
         let mut cargo = Command::new("cargo")
             .env("RUSTFLAGS", arch::RUSTFLAGS.join(" "))
