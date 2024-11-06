@@ -152,6 +152,8 @@ impl Module for Profiling {
             &features,
             "--target",
             &self.arch,
+            "--verbose",
+            "--verbose",
         ];
 
         if self.profile.as_ref() == "release" {
