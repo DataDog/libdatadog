@@ -139,22 +139,28 @@ impl Profiling {
 
 impl Module for Profiling {
     fn build(&self) -> Result<()> {
-        //TODO: create anywhow error
         let features = self.features.to_string() + "," + "cbindgen";
         #[cfg(feature = "crashtracker")]
         let features = features.add(",crashtracker-collector,crashtracker-receiver,demangler");
 
-        let mut cargo_args = vec!["build", "--features", &features, "--target", &self.arch];
+        let mut cargo_args = vec![
+            "build",
+            "-p",
+            "datadog-profiling-ffi",
+            "--features",
+            &features,
+            "--target",
+            &self.arch,
+            "-vv",
+        ];
 
         if self.profile.as_ref() == "release" {
             cargo_args.push("--release");
         }
 
-        let mut profiling_path: PathBuf = project_root();
-        profiling_path.push("profiling-ffi");
-
         let mut cargo = Command::new("cargo")
-            .current_dir(profiling_path)
+            .env("RUSTFLAGS", arch::RUSTFLAGS.join(" "))
+            .current_dir(project_root())
             .args(cargo_args)
             .spawn()
             .expect("failed to spawn cargo");

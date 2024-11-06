@@ -7,7 +7,6 @@ use crate::utils::project_root;
 use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 use std::rc::Rc;
 use tools::headers::dedup_headers;
 
@@ -21,17 +20,6 @@ pub struct CrashTracker {
 }
 
 impl CrashTracker {
-    fn add_binaries(&self) -> Result<()> {
-        let mut crashtracker_dir = project_root();
-        crashtracker_dir.push("crashtracker");
-        let _dst = cmake::Config::new(crashtracker_dir.to_str().unwrap())
-            .define("Datadog_ROOT", self.target_dir.as_ref())
-            .define("CMAKE_INSTALL_PREFIX", self.target_dir.as_ref())
-            .build();
-
-        Ok(())
-    }
-
     fn add_headers(&self) -> Result<()> {
         let origin_path: PathBuf = [self.source_include.as_ref(), "crashtracker.h"]
             .iter()
@@ -51,33 +39,20 @@ impl CrashTracker {
 
 impl Module for CrashTracker {
     fn build(&self) -> Result<()> {
-        let mut cargo_args = vec![
-            "build",
-            "-p",
-            "datadog-crashtracker-ffi",
-            "--target",
-            &self.arch,
-        ];
-
-        if self.profile.as_ref() == "release" {
-            cargo_args.push("--release");
+        if arch::BUILD_CRASHTRACKER {
+            let mut crashtracker_dir = project_root();
+            crashtracker_dir.push("crashtracker");
+            let _dst = cmake::Config::new(crashtracker_dir.to_str().unwrap())
+                .define("Datadog_ROOT", self.target_dir.as_ref())
+                .define("CMAKE_INSTALL_PREFIX", self.target_dir.as_ref())
+                .build();
         }
 
-        let mut cargo = Command::new("cargo")
-            .current_dir(project_root())
-            .args(cargo_args)
-            .spawn()
-            .expect("failed to spawn cargo");
-
-        cargo.wait().expect("Cargo failed");
         Ok(())
     }
 
     fn install(&self) -> Result<()> {
         self.add_headers()?;
-        if arch::BUILD_CRASHTRACKER {
-            self.add_binaries()?;
-        }
         Ok(())
     }
 }

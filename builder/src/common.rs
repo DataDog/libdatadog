@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::arch;
 use crate::module::Module;
 use crate::utils::project_root;
 use anyhow::Result;
@@ -18,6 +19,7 @@ pub struct Common {
 impl Module for Common {
     fn build(&self) -> Result<()> {
         let mut cargo = Command::new("cargo")
+            .env("RUSTFLAGS", arch::RUSTFLAGS.join(" "))
             .current_dir(project_root())
             .args([
                 "build",
