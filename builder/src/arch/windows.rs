@@ -14,7 +14,7 @@ pub const PROF_STATIC_LIB_FFI: &str = "datadog_profiling_ffi.lib";
 pub const PROF_PDB_FFI: &str = "datadog_profiling_ffi.pdb";
 pub const REMOVE_RPATH: bool = false;
 pub const BUILD_CRASHTRACKER: bool = false;
-pub const RUSTFLAGS: [&str] = [
+pub const RUSTFLAGS: [&str; 4] = [
     "-C",
     "relocation-model=pic",
     "-C",
