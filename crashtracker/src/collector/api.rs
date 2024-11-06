@@ -211,6 +211,7 @@ fn get_sigaltstack() -> Option<libc::stack_t> {
     }
 }
 
+#[cfg_attr(miri, ignore)]
 #[cfg(target_os = "linux")]
 #[test]
 fn test_altstack_use_create() -> anyhow::Result<()> {
@@ -337,6 +338,7 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg_attr(miri, ignore)]
 #[cfg(target_os = "linux")]
 #[test]
 fn test_altstack_use_nocreate() -> anyhow::Result<()> {
@@ -463,6 +465,7 @@ fn test_altstack_use_nocreate() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg_attr(miri, ignore)]
 #[cfg(target_os = "linux")]
 #[test]
 fn test_altstack_nouse() -> anyhow::Result<()> {
