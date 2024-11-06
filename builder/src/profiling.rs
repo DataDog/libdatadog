@@ -144,13 +144,7 @@ impl Module for Profiling {
         #[cfg(feature = "crashtracker")]
         let features = features.add(",crashtracker-collector,crashtracker-receiver,demangler");
 
-        let mut cargo_args = vec![
-            "build",
-            "--features",
-            &features,
-            "--target",
-            &self.arch,
-        ];
+        let mut cargo_args = vec!["build", "--features", &features, "--target", &self.arch];
 
         if self.profile.as_ref() == "release" {
             cargo_args.push("--release");
