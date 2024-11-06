@@ -22,59 +22,65 @@ pub trait StringStorage {
     fn clone_empty(&self) -> Box<dyn StringStorage>;
 }
 
-pub struct SimpleStringStorage {
-    set: FxIndexSet<Rc<str>>,
-}
+mod experimental {
+    use crate::collections::identifiable::{FxIndexSet, Id, StringId};
+    use crate::collections::string_storage::StringStorage;
+    use std::rc::Rc;
 
-impl SimpleStringStorage {
-    pub fn new() -> Self {
-        SimpleStringStorage {
-            set: Default::default(),
+    pub struct SimpleStringStorage {
+        set: FxIndexSet<Rc<str>>,
+    }
+
+    impl SimpleStringStorage {
+        pub fn new() -> Self {
+            SimpleStringStorage {
+                set: Default::default(),
+            }
         }
     }
-}
 
-impl Default for SimpleStringStorage {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl StringStorage for SimpleStringStorage {
-    fn intern(&mut self, item: Rc<str>) -> StringId {
-        // For performance, delay converting the [&str] to a [String] until
-        // after it has been determined to not exist in the set. This avoids
-        // temporary allocations.
-        let index = match self.set.get_index_of(&item) {
-            Some(index) => index,
-            None => {
-                let (index, _inserted) = self.set.insert_full(item.clone());
-                // This wouldn't make any sense; the item couldn't be found so
-                // we try to insert it, but suddenly it exists now?
-                debug_assert!(_inserted);
-                index
-            }
-        };
-        StringId::from_offset(index)
+    impl Default for SimpleStringStorage {
+        fn default() -> Self {
+            Self::new()
+        }
     }
 
-    fn get_string(&self, id: StringId) -> Rc<str> {
-        self.set
-            .get_index(id.to_offset())
-            .expect("StringId to have a valid interned index")
-            .clone()
-    }
+    impl StringStorage for SimpleStringStorage {
+        fn intern(&mut self, item: Rc<str>) -> StringId {
+            // For performance, delay converting the [&str] to a [String] until
+            // after it has been determined to not exist in the set. This avoids
+            // temporary allocations.
+            let index = match self.set.get_index_of(&item) {
+                Some(index) => index,
+                None => {
+                    let (index, _inserted) = self.set.insert_full(item.clone());
+                    // This wouldn't make any sense; the item couldn't be found so
+                    // we try to insert it, but suddenly it exists now?
+                    debug_assert!(_inserted);
+                    index
+                }
+            };
+            StringId::from_offset(index)
+        }
 
-    fn len(&self) -> usize {
-        self.set.len()
-    }
+        fn get_string(&self, id: StringId) -> Rc<str> {
+            self.set
+                .get_index(id.to_offset())
+                .expect("StringId to have a valid interned index")
+                .clone()
+        }
 
-    fn into_iter(self: Box<Self>) -> Box<dyn Iterator<Item = Rc<str>>> {
-        Box::new(self.set.into_iter())
-    }
+        fn len(&self) -> usize {
+            self.set.len()
+        }
 
-    fn clone_empty(&self) -> Box<dyn StringStorage> {
-        Box::new(SimpleStringStorage::new())
+        fn into_iter(self: Box<Self>) -> Box<dyn Iterator<Item = Rc<str>>> {
+            Box::new(self.set.into_iter())
+        }
+
+        fn clone_empty(&self) -> Box<dyn StringStorage> {
+            Box::new(SimpleStringStorage::new())
+        }
     }
 }
 
