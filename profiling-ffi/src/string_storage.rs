@@ -57,7 +57,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
 
         anyhow::Ok(string_id)
     })()
-    .context("ddog_prof_Profile_serialize failed")
+    .context("ddog_prof_ManagedStringStorage_intern failed")
     .into()
 }
 
@@ -75,7 +75,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
             .unintern(id);
         anyhow::Ok(())
     })()
-    .context("ddog_prof_Profile_serialize failed")
+    .context("ddog_prof_ManagedStringStorage_unintern failed")
     .into()
 }
 
@@ -102,7 +102,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_get_string(
 
         anyhow::Ok(string)
     })()
-    .context("ddog_prof_Profile_serialize failed")
+    .context("ddog_prof_ManagedStringStorage_get_string failed")
     .into()
 }
 
@@ -128,7 +128,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_advance_gen(
 
         anyhow::Ok(())
     })()
-    .context("ddog_prof_Profile_serialize failed")
+    .context("ddog_prof_ManagedStringStorage_advance_gen failed")
     .into()
 }
 
