@@ -5,10 +5,8 @@
 use super::*;
 use crate::shared::constants::*;
 use anyhow::Context;
-use std::time::Duration;
-use std::time::Instant;
-use tokio::io::AsyncBufReadExt;
-use tokio::io::BufReader;
+use std::time::{Duration, Instant};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixListener;
 
 pub fn resolve_frames(
@@ -67,13 +65,14 @@ pub fn receiver_entry_point_unix_socket(socket_path: impl AsRef<str>) -> anyhow:
 }
 
 pub fn receiver_timeout() -> Duration {
+    // https://github.com/DataDog/libdatadog/issues/717
     if let Ok(s) = std::env::var("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS") {
         if let Ok(v) = s.parse() {
             return Duration::from_millis(v);
         }
     }
     // Default value
-    Duration::from_millis(5000)
+    Duration::from_millis(4000)
 }
 
 pub fn receiver_entry_point_stdin() -> anyhow::Result<()> {
