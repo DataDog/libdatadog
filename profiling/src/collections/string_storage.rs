@@ -4,8 +4,6 @@ use std::hash::BuildHasherDefault;
 use std::ptr;
 use std::rc::Rc;
 
-use super::identifiable::FxIndexSet;
-use super::identifiable::Id;
 use super::identifiable::StringId;
 use super::string_table::StringTable;
 
