@@ -189,9 +189,12 @@ fn test_altstack_paradox() -> anyhow::Result<()> {
         timeout_ms,
     );
 
-    assert!(
-        config.is_err(),
-        "Expected error when creating altstack without using it"
+    // This is slightly over-tuned to the language of the error message, but it'd require some
+    // novel engineering just for this test in order to tighten this up.
+    let err = config.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Cannot create an altstack without using it"
     );
     Ok(())
 }
