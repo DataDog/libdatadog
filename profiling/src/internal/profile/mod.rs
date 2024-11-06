@@ -15,7 +15,6 @@ use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::pprof::sliced_proto::*;
 use crate::serializer::CompressedProtobufSerializer;
 use anyhow::Context;
-use libc::time;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::rc::Rc;
