@@ -139,7 +139,7 @@ impl Profiling {
 
 impl Module for Profiling {
     fn build(&self) -> Result<()> {
-        //TODO: create anywhow error
+        //Set features
         let features = self.features.to_string() + "," + "cbindgen";
         #[cfg(feature = "crashtracker")]
         let features = features.add(",crashtracker-collector,crashtracker-receiver,demangler");
@@ -154,6 +154,7 @@ impl Module for Profiling {
         profiling_path.push("profiling-ffi");
 
         let mut cargo = Command::new("cargo")
+            .env("RUSTFLAGS", arch::RUSTFLAGS.join(" "))
             .current_dir(profiling_path)
             .args(cargo_args)
             .spawn()
