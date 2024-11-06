@@ -161,3 +161,426 @@ fn test_crash() -> anyhow::Result<()> {
     assert_eq!(q, 3);
     Ok(())
 }
+
+#[test]
+fn test_altstack_paradox() -> anyhow::Result<()> {
+    use crate::StacktraceCollection;
+    use chrono::Utc;
+    use ddcommon::Endpoint;
+
+    let time = Utc::now().to_rfc3339();
+    let dir = "/tmp/crashreports/";
+    let output_url = format!("file://{dir}{time}.txt");
+
+    let endpoint = Some(Endpoint::from_slice(&output_url));
+
+    let create_alt_stack = true;
+    let use_alt_stack = false;
+    let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
+    let timeout_ms = 10_000;
+
+    // This should return an error, because we're creating an altstack without using it
+    let config = CrashtrackerConfiguration::new(
+        vec![],
+        create_alt_stack,
+        use_alt_stack,
+        endpoint,
+        resolve_frames,
+        timeout_ms,
+    );
+
+    assert!(
+        config.is_err(),
+        "Expected error when creating altstack without using it"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+fn get_sigaltstack() -> Option<libc::stack_t> {
+    let mut sigaltstack = libc::stack_t {
+        ss_sp: std::ptr::null_mut(),
+        ss_flags: 0,
+        ss_size: 0,
+    };
+    let res = unsafe { libc::sigaltstack(std::ptr::null(), &mut sigaltstack) };
+    if res == 0 {
+        Some(sigaltstack)
+    } else {
+        None
+    }
+}
+
+#[test]
+fn test_altstack_use_create() -> anyhow::Result<()> {
+    // This test initializes crashtracking in a fork, then waits on the exit status of the child.
+    // We check for an atypical exit status in order to ensure that only our desired exit path is
+    // taken.
+    use crate::StacktraceCollection;
+    use chrono::Utc;
+    use ddcommon::Endpoint;
+
+    let time = Utc::now().to_rfc3339();
+    let dir = "/tmp/crashreports/";
+    let output_url = format!("file://{dir}{time}.txt");
+
+    let endpoint = Some(Endpoint::from_slice(&output_url));
+
+    let path_to_receiver_binary =
+        "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
+    let create_alt_stack = true;
+    let use_alt_stack = true;
+    let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
+    let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
+    let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
+    let timeout_ms = 10_000;
+    let receiver_config = CrashtrackerReceiverConfig::new(
+        vec![],
+        vec![],
+        path_to_receiver_binary,
+        stderr_filename,
+        stdout_filename,
+    )?;
+    let config = CrashtrackerConfiguration::new(
+        vec![],
+        create_alt_stack,
+        use_alt_stack,
+        endpoint,
+        resolve_frames,
+        timeout_ms,
+    )?;
+    let metadata = CrashtrackerMetadata::new(
+        "libname".to_string(),
+        "version".to_string(),
+        "family".to_string(),
+        vec![],
+    );
+
+    // At this point we fork, because we're going to be looking at process-level state
+    match unsafe { libc::fork() } {
+        -1 => {
+            panic!("Failed to fork");
+        }
+        0 => {
+            // Child process
+            // Get the current state of the altstack
+            let initial_sigaltstack = get_sigaltstack();
+            assert!(
+                initial_sigaltstack.is_some(),
+                "Failed to get initial sigaltstack"
+            );
+
+            // Initialize crashtracking.  This will
+            // - create a new altstack
+            // - set the SIGUBS/SIGSEGV handlers with SA_ONSTACK
+            init(config, receiver_config, metadata)?;
+
+            // Get the state of the altstack after initialization
+            let after_init_sigaltstack = get_sigaltstack();
+
+            // Compare the initial and after-init sigaltstacks
+            if initial_sigaltstack == after_init_sigaltstack {
+                eprintln!("Initial sigaltstack: {:?}", initial_sigaltstack);
+                std::process::exit(-5);
+            }
+
+            // Check the SIGBUS and SIGSEGV handlers are set with SA_ONSTACK
+            let mut sigaction = libc::sigaction {
+                sa_sigaction: 0,
+                sa_mask: unsafe { std::mem::zeroed::<libc::sigset_t>() },
+                sa_flags: 0,
+                sa_restorer: None,
+            };
+
+            // First, SIGBUS
+            let res = unsafe { libc::sigaction(libc::SIGBUS, std::ptr::null(), &mut sigaction) };
+            if res != 0 {
+                eprintln!("Failed to get SIGBUS handler");
+                std::process::exit(-6);
+            }
+            if sigaction.sa_flags & libc::SA_ONSTACK != libc::SA_ONSTACK {
+                eprintln!("Expected SIGBUS handler to have SA_ONSTACK");
+                std::process::exit(-7);
+            }
+
+            // Second, SIGSEGV
+            let res = unsafe { libc::sigaction(libc::SIGSEGV, std::ptr::null(), &mut sigaction) };
+            if res != 0 {
+                eprintln!("Failed to get SIGSEGV handler");
+                std::process::exit(-8);
+            }
+            if sigaction.sa_flags & libc::SA_ONSTACK != libc::SA_ONSTACK {
+                eprintln!("Expected SIGSEGV handler to have SA_ONSTACK");
+                std::process::exit(-9);
+            }
+
+            // OK, we're done
+            std::process::exit(42);
+        }
+        pid => {
+            // Parent process
+            let mut status = 0;
+            let _ = unsafe { libc::waitpid(pid, &mut status, 0) };
+
+            // `status` is not the exit code, gotta unwrap some layers
+            if libc::WIFEXITED(status) {
+                let exit_code = libc::WEXITSTATUS(status);
+                assert_eq!(exit_code, 42, "Child process exited with unexpected status");
+            } else {
+                panic!("Child process did not exit normally");
+            }
+        }
+    }
+
+    // OK, we're done
+    Ok(())
+}
+
+#[test]
+fn test_altstack_use_nocreate() -> anyhow::Result<()> {
+    // Similar to the other test, this one operates inside of a fork in order to prevent poisoning
+    // the main process state.
+    use crate::StacktraceCollection;
+    use chrono::Utc;
+    use ddcommon::Endpoint;
+
+    let time = Utc::now().to_rfc3339();
+    let dir = "/tmp/crashreports/";
+    let output_url = format!("file://{dir}{time}.txt");
+
+    let endpoint = Some(Endpoint::from_slice(&output_url));
+
+    let path_to_receiver_binary =
+        "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
+    let create_alt_stack = false; // Use, but do _not_ create
+    let use_alt_stack = true;
+    let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
+    let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
+    let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
+    let timeout_ms = 10_000;
+    let receiver_config = CrashtrackerReceiverConfig::new(
+        vec![],
+        vec![],
+        path_to_receiver_binary,
+        stderr_filename,
+        stdout_filename,
+    )?;
+    let config = CrashtrackerConfiguration::new(
+        vec![],
+        create_alt_stack,
+        use_alt_stack,
+        endpoint,
+        resolve_frames,
+        timeout_ms,
+    )?;
+    let metadata = CrashtrackerMetadata::new(
+        "libname".to_string(),
+        "version".to_string(),
+        "family".to_string(),
+        vec![],
+    );
+
+    // At this point we fork, because we're going to be looking at process-level state
+    match unsafe { libc::fork() } {
+        -1 => {
+            panic!("Failed to fork");
+        }
+        0 => {
+            // Child process
+            // Get the current state of the altstack
+            let initial_sigaltstack = get_sigaltstack();
+            assert!(
+                initial_sigaltstack.is_some(),
+                "Failed to get initial sigaltstack"
+            );
+
+            // Initialize crashtracking.  This will
+            // - create a new altstack
+            // - set the SIGUBS/SIGSEGV handlers with SA_ONSTACK
+            init(config, receiver_config, metadata)?;
+
+            // Get the state of the altstack after initialization
+            let after_init_sigaltstack = get_sigaltstack();
+
+            // Compare the initial and after-init sigaltstacks:  they should be the same!
+            if initial_sigaltstack != after_init_sigaltstack {
+                eprintln!("Initial sigaltstack: {:?}", initial_sigaltstack);
+                std::process::exit(-5);
+            }
+
+            // Even though the other test checks for the SA_ONSTACK flag on the signal handlers, we
+            // double-check here because the options need to be decoupled
+            let mut sigaction = libc::sigaction {
+                sa_sigaction: 0,
+                sa_mask: unsafe { std::mem::zeroed::<libc::sigset_t>() },
+                sa_flags: 0,
+                sa_restorer: None,
+            };
+
+            // First, SIGBUS
+            let res = unsafe { libc::sigaction(libc::SIGBUS, std::ptr::null(), &mut sigaction) };
+            if res != 0 {
+                eprintln!("Failed to get SIGBUS handler");
+                std::process::exit(-6);
+            }
+            if sigaction.sa_flags & libc::SA_ONSTACK != libc::SA_ONSTACK {
+                eprintln!("Expected SIGBUS handler to have SA_ONSTACK");
+                std::process::exit(-7);
+            }
+
+            // Second, SIGSEGV
+            let res = unsafe { libc::sigaction(libc::SIGSEGV, std::ptr::null(), &mut sigaction) };
+            if res != 0 {
+                eprintln!("Failed to get SIGSEGV handler");
+                std::process::exit(-8);
+            }
+            if sigaction.sa_flags & libc::SA_ONSTACK != libc::SA_ONSTACK {
+                eprintln!("Expected SIGSEGV handler to have SA_ONSTACK");
+                std::process::exit(-9);
+            }
+
+            // OK, we're done
+            std::process::exit(42);
+        }
+        pid => {
+            // Parent process
+            let mut status = 0;
+            let _ = unsafe { libc::waitpid(pid, &mut status, 0) };
+
+            // `status` is not the exit code, gotta unwrap some layers
+            if libc::WIFEXITED(status) {
+                let exit_code = libc::WEXITSTATUS(status);
+                assert_eq!(exit_code, 42, "Child process exited with unexpected status");
+            } else {
+                panic!("Child process did not exit normally");
+            }
+        }
+    }
+
+    // OK, we're done
+    Ok(())
+}
+
+#[test]
+fn test_altstack_nouse() -> anyhow::Result<()> {
+    // This checks that when we do not request the altstack, we do not get the altstack
+    use crate::StacktraceCollection;
+    use chrono::Utc;
+    use ddcommon::Endpoint;
+
+    let time = Utc::now().to_rfc3339();
+    let dir = "/tmp/crashreports/";
+    let output_url = format!("file://{dir}{time}.txt");
+
+    let endpoint = Some(Endpoint::from_slice(&output_url));
+
+    let path_to_receiver_binary =
+        "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
+    let create_alt_stack = false;
+    let use_alt_stack = false;
+    let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
+    let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
+    let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
+    let timeout_ms = 10_000;
+    let receiver_config = CrashtrackerReceiverConfig::new(
+        vec![],
+        vec![],
+        path_to_receiver_binary,
+        stderr_filename,
+        stdout_filename,
+    )?;
+    let config = CrashtrackerConfiguration::new(
+        vec![],
+        create_alt_stack,
+        use_alt_stack,
+        endpoint,
+        resolve_frames,
+        timeout_ms,
+    )?;
+    let metadata = CrashtrackerMetadata::new(
+        "libname".to_string(),
+        "version".to_string(),
+        "family".to_string(),
+        vec![],
+    );
+
+    // At this point we fork, because we're going to be looking at process-level state
+    match unsafe { libc::fork() } {
+        -1 => {
+            panic!("Failed to fork");
+        }
+        0 => {
+            // Child process
+            // Get the current state of the altstack
+            let initial_sigaltstack = get_sigaltstack();
+            assert!(
+                initial_sigaltstack.is_some(),
+                "Failed to get initial sigaltstack"
+            );
+
+            // Initialize crashtracking.  This will
+            // - create a new altstack
+            // - set the SIGUBS/SIGSEGV handlers with SA_ONSTACK
+            init(config, receiver_config, metadata)?;
+
+            // Get the state of the altstack after initialization
+            let after_init_sigaltstack = get_sigaltstack();
+
+            // Compare the initial and after-init sigaltstacks:  they should be the same because we
+            // did not enable anything!  This checks that we don't erroneously build the altstack.
+            if initial_sigaltstack != after_init_sigaltstack {
+                eprintln!("Initial sigaltstack: {:?}", initial_sigaltstack);
+                std::process::exit(-5);
+            }
+
+            // Similarly, we need to be extra sure that SA_ONSTACK is not present.
+            let mut sigaction = libc::sigaction {
+                sa_sigaction: 0,
+                sa_mask: unsafe { std::mem::zeroed::<libc::sigset_t>() },
+                sa_flags: 0,
+                sa_restorer: None,
+            };
+
+            // First, SIGBUS
+            let res = unsafe { libc::sigaction(libc::SIGBUS, std::ptr::null(), &mut sigaction) };
+            if res != 0 {
+                eprintln!("Failed to get SIGBUS handler");
+                std::process::exit(-6);
+            }
+            if sigaction.sa_flags & libc::SA_ONSTACK == libc::SA_ONSTACK {
+                eprintln!("Expected SIGBUS handler not to have SA_ONSTACK");
+                std::process::exit(-7);
+            }
+
+            // Second, SIGSEGV
+            let res = unsafe { libc::sigaction(libc::SIGSEGV, std::ptr::null(), &mut sigaction) };
+            if res != 0 {
+                eprintln!("Failed to get SIGSEGV handler");
+                std::process::exit(-8);
+            }
+            if sigaction.sa_flags & libc::SA_ONSTACK == libc::SA_ONSTACK {
+                eprintln!("Expected SIGSEGV handler not to have SA_ONSTACK");
+                std::process::exit(-9);
+            }
+
+            // OK, we're done
+            std::process::exit(42);
+        }
+        pid => {
+            // Parent process
+            let mut status = 0;
+            let _ = unsafe { libc::waitpid(pid, &mut status, 0) };
+
+            // `status` is not the exit code, gotta unwrap some layers
+            if libc::WIFEXITED(status) {
+                let exit_code = libc::WEXITSTATUS(status);
+                assert_eq!(exit_code, 42, "Child process exited with unexpected status");
+            } else {
+                panic!("Child process did not exit normally");
+            }
+        }
+    }
+
+    // OK, we're done
+    Ok(())
+}
