@@ -44,17 +44,17 @@ static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
 
 impl ShmHandle {
     #[cfg(target_os = "linux")]
-    fn open_anon_shm() -> anyhow::Result<OwnedFd> {
-        if let Ok(memfd) = memfd::MemfdOptions::default().create("anon-shm-handle") {
+    fn open_anon_shm(name: &str) -> anyhow::Result<OwnedFd> {
+        if let Ok(memfd) = memfd::MemfdOptions::default().create(name) {
             Ok(memfd.into_file().into())
         } else {
-            Self::open_anon_shm_generic()
+            Self::open_anon_shm_generic(name)
         }
     }
 
-    fn open_anon_shm_generic() -> anyhow::Result<OwnedFd> {
+    fn open_anon_shm_generic(name: &str) -> anyhow::Result<OwnedFd> {
         let path = format!(
-            "/libdatadog-shm-anon-{}-{}",
+            "/libdatadog-shm-{name}-{}-{}",
             unsafe { libc::getpid() },
             ANON_SHM_ID.fetch_add(1, Ordering::SeqCst)
         );
@@ -68,12 +68,16 @@ impl ShmHandle {
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn open_anon_shm() -> anyhow::Result<OwnedFd> {
-        Self::open_anon_shm_generic()
+    fn open_anon_shm(name: &str) -> anyhow::Result<OwnedFd> {
+        Self::open_anon_shm_generic(name)
     }
 
     pub fn new(size: usize) -> anyhow::Result<ShmHandle> {
-        let fd = Self::open_anon_shm()?;
+        Self::new_named(size, "anon-handle")
+    }
+
+    pub fn new_named(size: usize, name: &str) -> anyhow::Result<ShmHandle> {
+        let fd = Self::open_anon_shm(name)?;
         let handle: PlatformHandle<OwnedFd> = fd.into();
         ftruncate(handle.as_owned_fd()?, size as off_t)?;
         Ok(ShmHandle { handle, size })
