@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 //! This module provides struct representing the info endpoint response
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Wrapper for an agent info response storing the state hash from the agent
@@ -15,7 +15,7 @@ pub struct AgentInfo {
 
 /// Schema of an agent info response
 #[allow(missing_docs)]
-#[derive(Clone, Deserialize, Default, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
 pub struct AgentInfoStruct {
     /// Version of the agent
     pub version: Option<String>,
@@ -38,7 +38,7 @@ pub struct AgentInfoStruct {
 }
 
 #[allow(missing_docs)]
-#[derive(Clone, Deserialize, Default, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
 pub struct Config {
     pub default_env: Option<String>,
     pub target_tps: Option<f64>,

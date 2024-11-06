@@ -14,6 +14,7 @@ use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
 use datadog_sidecar::crashtracker::crashtracker_unix_socket_path;
 use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
+use datadog_sidecar::service::agent_info::AgentInfoReader;
 use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
     InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
@@ -911,3 +912,35 @@ pub unsafe extern "C" fn ddog_sidecar_get_crashtracker_unix_socket_path() -> ffi
     buf.copy_from_slice(str.as_bytes());
     ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
 }
+
+/// Gets an agent info reader.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_get_agent_info_reader(endpoint: &Endpoint) -> Box<AgentInfoReader> {
+    Box::new(AgentInfoReader::new(endpoint))
+}
+
+/// Gets the current agent info environment (or empty if not existing)
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_get_agent_info_env<'a>(
+    reader: &'a mut AgentInfoReader,
+    changed: &mut bool,
+) -> ffi::CharSlice<'a> {
+    let (has_changed, info) = reader.read();
+    *changed = has_changed;
+    let config = if let Some(info) = info {
+        info.config.as_ref()
+    } else {
+        None
+    };
+    config
+        .and_then(|c| c.default_env.as_ref())
+        .map(|s| ffi::CharSlice::from(s.as_str()))
+        .unwrap_or(ffi::CharSlice::empty())
+}
+
+/// Drops the agent info reader.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_drop_agent_info_reader(_: Box<AgentInfoReader>) {}

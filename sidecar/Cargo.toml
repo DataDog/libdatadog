@@ -21,6 +21,7 @@ ddcommon = { path = "../ddcommon" }
 datadog-sidecar-macros = { path = "macros" }
 
 ddtelemetry = { path = "../ddtelemetry", features = ["tracing"] }
+data-pipeline = { path = "../data-pipeline" }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-utils = { path = "../trace-utils" }
 datadog-trace-normalization = { path = "../trace-normalization" }
