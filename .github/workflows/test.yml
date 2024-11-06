@@ -1,6 +1,6 @@
 name: Test
 on: [push]
-env: 
+env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: 1.76.0
 
@@ -10,7 +10,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
     strategy:
       matrix:
-        platform: [windows-latest, ubuntu-latest, macos-12]
+        platform: [windows-latest, ubuntu-latest, macos-13]
         rust_version: [""]
         include:
           - platform: "ubuntu-latest"
@@ -46,7 +46,7 @@ jobs:
         run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh $HOME
       - name: Install cargo nextest
         uses: taiki-e/install-action@v2
-        with: 
+        with:
           tool: nextest@0.9.81
       - name: "Remove nextest CI report"
         shell: bash
@@ -73,7 +73,7 @@ jobs:
           RUSTFLAGS: "-C prefer-dynamic"
           RUST_BACKTRACE: 1
       - name: Report Test Results
-        if: success() || failure() 
+        if: success() || failure()
         uses: mikepenz/action-junit-report@v4
         with:
           report_paths: "target/nextest/ci/junit.xml"
@@ -85,14 +85,14 @@ jobs:
     runs-on: ${{ matrix.platform }}
     strategy:
       matrix:
-        platform: [windows-latest, ubuntu-latest, macos-12]
+        platform: [windows-latest, ubuntu-latest, macos-13]
         rust_version: [""]
         include:
           - platform: "ubuntu-latest"
             rust_version: "${RUST_VERSION}"
           - platform: "ubuntu-latest"
             flags: "-C relocation-model=pic"
-          - platform: "macos-12"
+          - platform: "macos-13"
             flags: "-C relocation-model=pic"
           - platform: "windows-latest"
             flags: "-C target-feature=+crt-static"
@@ -195,7 +195,7 @@ jobs:
   cross-centos7:
     name: build and test using cross - on centos7
     runs-on: ubuntu-latest
-    concurrency: 
+    concurrency:
       group: ci-${{ github.ref }}-cross-centos7
       cancel-in-progress: true
     steps:
@@ -216,7 +216,7 @@ jobs:
         with:
           rust_version: cross-centos7
       - run: cargo install cross || true
-      - run: cross build --workspace --target x86_64-unknown-linux-gnu --exclude builder 
+      - run: cross build --workspace --target x86_64-unknown-linux-gnu --exclude builder
       - run: cross test --workspace --target x86_64-unknown-linux-gnu --exclude builder  -- --skip "::single_threaded_tests::" --skip "tracing_integration_tests::"
       - run: cross test --workspace --target x86_64-unknown-linux-gnu --exclude builder --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1 --skip "tracing_integration_tests::"
 
@@ -226,7 +226,7 @@ jobs:
         target: [alpine-build] # debian-build-aarch64 is oom killed at the moment
     name: "FFI ${{ matrix.target }} via docker bake"
 
-    concurrency: 
+    concurrency:
       group: ci-${{ github.ref }}-${{ matrix.target }}
       cancel-in-progress: true
 

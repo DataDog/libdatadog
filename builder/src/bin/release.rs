@@ -5,10 +5,10 @@ use std::env;
 
 use build_common::determine_paths;
 
-use builder::builder::Builder;
 use builder::common::Common;
 #[cfg(feature = "crashtracker")]
 use builder::crashtracker::CrashTracker;
+use builder::builder::Builder;
 #[cfg(feature = "profiling")]
 use builder::profiling::Profiling;
 use builder::utils::project_root;
