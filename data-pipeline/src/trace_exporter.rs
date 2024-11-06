@@ -696,7 +696,7 @@ pub struct TraceExporterBuilder {
 }
 
 impl TraceExporterBuilder {
-    #[allow(missing_docs)]
+    /// Set url of the agent
     pub fn set_url(mut self, url: &str) -> Self {
         self.url = Some(url.to_owned());
         self
@@ -708,11 +708,15 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Set the hostname used for stats payload
+    /// Only used when client-side stats is enabled
     pub fn set_hostname(mut self, hostname: &str) -> Self {
         hostname.clone_into(&mut self.hostname);
         self
     }
 
+    /// Set the env used for stats payloads
+    /// Only used when client-side stats is enabled
     pub fn set_env(mut self, env: &str) -> Self {
         env.clone_into(&mut self.env);
         self
@@ -724,44 +728,47 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Set the service name used for stats payloads.
+    /// Only used when client-side stats is enabled
     pub fn set_service(mut self, service: &str) -> Self {
         service.clone_into(&mut self.service);
         self
     }
 
-    /// Set the `Datadog-Meta-Tracer-Version` on traces payload
+    /// Set the `git_commit_sha` corresponding to the `_dd.git.commit.sha` meta tag
+    /// Only used when client-side stats is enabled
+    pub fn set_git_commit_sha(mut self, git_commit_sha: &str) -> Self {
+        git_commit_sha.clone_into(&mut self.git_commit_sha);
+        self
+    }
+
+    /// Set the `Datadog-Meta-Tracer-Version` header
     pub fn set_tracer_version(mut self, tracer_version: &str) -> Self {
         tracer_version.clone_into(&mut self.tracer_version);
         self
     }
 
-    /// Set the `Datadog-Meta-Lang` on traces payload
+    /// Set the `Datadog-Meta-Lang` header
     pub fn set_language(mut self, lang: &str) -> Self {
         lang.clone_into(&mut self.language);
         self
     }
 
-    /// Set the `Datadog-Meta-Lang-Version` on traces payload
+    /// Set the `Datadog-Meta-Lang-Version` header
     pub fn set_language_version(mut self, lang_version: &str) -> Self {
         lang_version.clone_into(&mut self.language_version);
         self
     }
 
-    /// Set the `Datadog-Meta-Lang-Interpreter` on traces payload
+    /// Set the `Datadog-Meta-Lang-Interpreter` header
     pub fn set_language_interpreter(mut self, lang_interpreter: &str) -> Self {
         lang_interpreter.clone_into(&mut self.language_interpreter);
         self
     }
 
-    /// Set the `Datadog-Meta-Lang-Interpreter-Vendor` on traces payload
+    /// Set the `Datadog-Meta-Lang-Interpreter-Vendor` header
     pub fn set_language_interpreter_vendor(mut self, lang_interpreter_vendor: &str) -> Self {
         lang_interpreter_vendor.clone_into(&mut self.language_interpreter_vendor);
-        self
-    }
-
-    /// Set the `git_commit_sha` corresponding to the `_dd.git.commit.sha` meta tag
-    pub fn set_git_commit_sha(mut self, git_commit_sha: &str) -> Self {
-        git_commit_sha.clone_into(&mut self.git_commit_sha);
         self
     }
 
