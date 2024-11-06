@@ -17,9 +17,12 @@ use tokio::time::sleep;
 #[allow(clippy::declare_interior_mutable_const)]
 const DATADOG_AGENT_STATE: HeaderName = HeaderName::from_static("datadog-agent-state");
 
+/// Whether the agent reported the same value or not.
 #[derive(Debug)]
-enum FetchInfoStatus {
+pub enum FetchInfoStatus {
+    /// Unchanged
     SameState,
+    /// Has a new state
     NewState(Box<AgentInfo>),
 }
 
@@ -28,7 +31,7 @@ enum FetchInfoStatus {
 /// If the state hash is different from the current one:
 /// - Return a `FetchInfoStatus::NewState` of the info struct
 /// - Else return `FetchInfoStatus::SameState`
-async fn fetch_info_with_state(
+pub async fn fetch_info_with_state(
     info_endpoint: &Endpoint,
     current_state_hash: Option<&str>,
 ) -> Result<FetchInfoStatus> {

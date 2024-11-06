@@ -1611,6 +1611,7 @@ dependencies = [
  "cadence",
  "chrono",
  "console-subscriber",
+ "data-pipeline",
  "datadog-crashtracker",
  "datadog-dynamic-configuration",
  "datadog-ipc",
