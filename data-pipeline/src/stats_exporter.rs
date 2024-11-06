@@ -160,7 +160,7 @@ fn encode_stats_payload(
         hostname: meta.hostname.clone(),
         env: meta.env.clone(),
         lang: meta.language.clone(),
-        version: meta.version.clone(),
+        version: meta.app_version.clone(),
         runtime_id: meta.runtime_id.clone(),
         tracer_version: meta.tracer_version.clone(),
         service: meta.service.clone(),
@@ -209,7 +209,7 @@ mod tests {
         TracerMetadata {
             hostname: "libdatadog-test".into(),
             env: "test".into(),
-            version: "0.0.0".into(),
+            app_version: "0.0.0".into(),
             language: "rust".into(),
             tracer_version: "0.0.0".into(),
             runtime_id: "e39d6d12-0752-489f-b488-cf80006c0378".into(),

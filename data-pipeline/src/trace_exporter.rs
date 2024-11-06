@@ -157,7 +157,7 @@ fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) -> DroppedP0Counts {
 pub struct TracerMetadata {
     pub hostname: String,
     pub env: String,
-    pub version: String,
+    pub app_version: String,
     pub runtime_id: String,
     pub service: String,
     pub tracer_version: String,
@@ -672,7 +672,7 @@ pub struct TraceExporterBuilder {
     url: Option<String>,
     hostname: String,
     env: String,
-    version: String,
+    app_version: String,
     service: String,
     tracer_version: String,
     language: String,
@@ -723,8 +723,9 @@ impl TraceExporterBuilder {
     }
 
     /// Set the app version which corresponds to the `version` meta tag
-    pub fn set_version(mut self, version: &str) -> Self {
-        version.clone_into(&mut self.version);
+    /// Only used when client-side stats is enabled
+    pub fn set_app_version(mut self, app_version: &str) -> Self {
+        app_version.clone_into(&mut self.app_version);
         self
     }
 
@@ -872,7 +873,7 @@ impl TraceExporterBuilder {
                 client_computed_top_level: self.client_computed_top_level,
                 hostname: self.hostname,
                 env: self.env,
-                version: self.version,
+                app_version: self.app_version,
                 runtime_id: uuid::Uuid::new_v4().to_string(),
                 service: self.service,
             },
