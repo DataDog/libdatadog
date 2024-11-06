@@ -211,6 +211,7 @@ fn get_sigaltstack() -> Option<libc::stack_t> {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn test_altstack_use_create() -> anyhow::Result<()> {
     // This test initializes crashtracking in a fork, then waits on the exit status of the child.
@@ -336,6 +337,7 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn test_altstack_use_nocreate() -> anyhow::Result<()> {
     // Similar to the other test, this one operates inside of a fork in order to prevent poisoning
@@ -461,6 +463,7 @@ fn test_altstack_use_nocreate() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn test_altstack_nouse() -> anyhow::Result<()> {
     // This checks that when we do not request the altstack, we do not get the altstack
