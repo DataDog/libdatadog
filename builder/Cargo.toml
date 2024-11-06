@@ -16,6 +16,8 @@ symbolizer = []
 
 [lib]
 bench = false
+test = false
+doctest = false
 
 
 [dependencies]
