@@ -56,12 +56,12 @@ Each component has a total timeout budget, which it must enforce.
 Since each component conducts a series of operations, the total budget will typically be subdivided among those operations, in a hierarchical fashion.
 This increases the probability that some operations will succeed, maximizing the total amount of actionable data that makes it to the backend.
 The values for these timeout budgets SHOULD be configurable, either through an explicit configuration object, or through documented environment variables.
-This RFC is probably the best place to document such variables: implementers who add a configuration variable SHOULD make an amendment to this RFC to document it,
+This RFC is probably the best place to document such variables: implementers who add a configuration variable SHOULD make an amendment to this RFC to document it.
 
 #### Watchdog
 
 The watchdog is the fundamental defence against process hangs in this scheme.
-The recommended default overall timeout budget is ?.
+The recommended default overall timeout budget is 5 seconds.
 
 It MUST ensure that the crashing process cleanly calls the next signal-handler/default/abort when the overall crashtracker timeout budget is exceeded.
 The watchdog SHOULD make a best effort attempt to cleanup its child processes before exiting.
@@ -71,32 +71,44 @@ The watchdog MAY maintain separate timeout budgets for the collector and receive
 #### Collector
 
 As a defence in depth mechanism, the collector SHOULD maintain its own timeout budget, and cleanly exit if that budget is exceeded.
-The recommended default overall timeout budget is ?.
+This timeout should leave sufficient room for the receiver to transmit to the backend without exceeding the overall timeout budget.
+The recommended default overall timeout budget is 2 seconds.
 
 It is RECOMMENDED that the collector attempt to limit the time spent in any one operation, in order to ensure that as much data as possible overall is collected.
 For example, if the collector stalls while reading/transmitting `/proc/self/maps`, then no subsequent data will be collected.
 System calls SHOULD, when possible, take advantage of OS level timeout mechanisms.
 Loops SHOULD track their timeout budget at every iteration, and exit when the budget it exceeded.
 The collector SHOULD proactively flush its output channel to increase the probability that data will be received even if the collector is terminated.
-TODO: list of operations here, with recommended defaults.
 
 #### Receiver
 
 As a defence in depth mechanism, the receiver SHOULD maintain its own timeout budget, and cleanly exit if that budget is exceeded.
-The recommended default overall timeout budget is ?.
+It is RECOMMENDED that the receiver have the same timeout budget as the overall watchdog budget.
+This means that if the receiver finishes early, the collector can continue and use all of the remaining budget.
+Hence, the recommended default overall timeout budget is 5 seconds.
 
 It is RECOMMENDED that the receiver attempt to limit the time spent in any one operation, in order to ensure that as much data as possible overall is collected.
 In particular, the expensive operations undertaken by the receiver are:
 
 1. Receive the crash report from the collector.
-   Recommended default: ?
+   This should be the same as the receiver timeout budget.
+   Recommended default: 2 seconds.
 2. Collect additional system info.
-   Recommended default: ?
+   This is of lower importance, and should have a lower timeout.
+   Recommended default: 0.5 seconds
 3. Resolve debug symbols, if requested.
-   Recommended default: ?
+   This is of lower importance, and should have a lower timeout.
+   Recommended default: 0.5 seconds.
 4. Upload the crash-report to the endpoint.
-   Recommended default: ?
+   Recommended default: 3
 
 The receiver SHOULD maintain separate timeouts for each of these operations, to maximize the probability that some useful message will successfully reach the backend in the overall timeout budget available to the receiver.
 
-If the backend supports it, the receiver MAY choose to send a partial crash-report or metric at checkpoints during this process.
+### Heartbeat 
+
+Knowing that a crash has occurred is valuable, even if we do not have full information.
+Furthermore, it is useful to know when the crashtracker itself crashes or hangs.
+We can get this information by having the crashtracker send a small heartbeat message as soon as it can.
+The crashtracker SHOULD send such a message.
+
+One possible design would be to have the receiver spawn a thread which uploads either a metric, or a small log line, as soon as the crash metadata has been received.
