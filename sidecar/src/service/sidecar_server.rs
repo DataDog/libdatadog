@@ -39,6 +39,7 @@ use serde::{Deserialize, Serialize};
 use tokio::task::{JoinError, JoinHandle};
 
 use crate::config::get_product_endpoint;
+use crate::service::agent_info::AgentInfos;
 use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::runtime_info::ActiveApplication;
@@ -105,6 +106,8 @@ pub struct SidecarServer {
         Arc<Mutex<Option<ManualFutureCompleter<ddtelemetry::config::Config>>>>,
     /// Keeps track of the number of submitted payloads.
     pub submitted_payloads: Arc<AtomicU64>,
+    /// All tracked agent infos per endpoint
+    pub agent_infos: AgentInfos,
     /// All remote config handling
     remote_configs: RemoteConfigs,
     /// The ProcessHandle tied to the connection
@@ -689,6 +692,11 @@ impl SidecarInterface for SidecarServer {
             );
             cfg.set_endpoint(logs_endpoint, diagnostics_endpoint).ok();
         });
+        if config.endpoint.api_key.is_none() {
+            // no agent info if agentless
+            *session.agent_infos.lock().unwrap() =
+                Some(self.agent_infos.query_for(config.endpoint.clone()));
+        }
         session.set_remote_config_invariants(ConfigInvariants {
             language: config.language,
             tracer_version: config.tracer_version,

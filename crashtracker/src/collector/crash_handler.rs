@@ -604,7 +604,7 @@ unsafe fn register_signal_handler(
     //   operation it is necessary to CREATE and USE the altstack.
     // - There are no known cases where it is useful to crate but not use the altstack--this case
     //   handled in `new()` for CrashtrackerConfiguration.
-    let extra_saflags = if config.create_alt_stack {
+    let extra_saflags = if config.use_alt_stack {
         SaFlags::SA_ONSTACK
     } else {
         SaFlags::empty()
