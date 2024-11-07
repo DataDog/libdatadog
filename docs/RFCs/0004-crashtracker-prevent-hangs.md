@@ -27,7 +27,7 @@ Care should be taken during this process to avoid
 This child process (referred to as the **collector** in this RFC) is responsible for collecting the data required for crashtracking, while the parent operates as a watchdog (and is hence referred to as the **watchdog** process in the RFC).
 The **receiver** process remains as in RFC 3, either running as an [execve](https://man7.org/linux/man-pages/man2/execve.2.html) fork of the watchdog, or as an independent sidecar.
 If the child process completes successfully, the parent process reaps its PID, waits for the receiver process to finish uploading, and then chains the next signal handler, as it does currently.
-If the new child process, or the receiver process exceed their timeout budget, the watchdog [kills](https://man7.org/linux/man-pages/man2/kill.2.html) the offending child process, and then and then chains the next signal handler.
+If the collector or the receiver exceed their timeout budget, the watchdog [kills](https://man7.org/linux/man-pages/man2/kill.2.html) the offending child process, and then chains the next signal handler.
 
 ### Timeouts
 
