@@ -7,7 +7,7 @@ use crate::utils::project_root;
 use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+// use std::process::Command;
 use std::rc::Rc;
 use tools::headers::dedup_headers;
 
@@ -51,25 +51,25 @@ impl CrashTracker {
 
 impl Module for CrashTracker {
     fn build(&self) -> Result<()> {
-        let mut cargo_args = vec![
-            "build",
-            "-p",
-            "datadog-crashtracker-ffi",
-            "--target",
-            &self.arch,
-        ];
+        // let mut cargo_args = vec![
+        //     "build",
+        //     "-p",
+        //     "datadog-crashtracker-ffi",
+        //     "--target",
+        //     &self.arch,
+        // ];
 
-        if self.profile.as_ref() == "release" {
-            cargo_args.push("--release");
-        }
+        // if self.profile.as_ref() == "release" {
+        //     cargo_args.push("--release");
+        // }
 
-        let mut cargo = Command::new("cargo")
-            .current_dir(project_root())
-            .args(cargo_args)
-            .spawn()
-            .expect("failed to spawn cargo");
+        // let mut cargo = Command::new("cargo")
+        //     .current_dir(project_root())
+        //     .args(cargo_args)
+        //     .spawn()
+        //     .expect("failed to spawn cargo");
 
-        cargo.wait().expect("Cargo failed");
+        // cargo.wait().expect("Cargo failed");
         Ok(())
     }
 

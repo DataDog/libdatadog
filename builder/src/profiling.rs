@@ -160,7 +160,7 @@ impl Module for Profiling {
             cargo_args.push("--release");
         }
 
-        let mut profiling_path: PathBuf = project_root();
+        let profiling_path: PathBuf = project_root();
 
         let mut cargo = Command::new("cargo")
             .env("RUSTFLAGS", arch::RUSTFLAGS.join(" "))
