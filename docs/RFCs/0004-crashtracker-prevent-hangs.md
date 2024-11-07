@@ -1,4 +1,4 @@
-# RFC 0004: Mitigate hangs in the Crashtracker
+# RFC 0004: Mitigate hangs and crashes in the Crashtracker
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in [IETF RFC 2119](https://datatracker.ietf.org/doc/html/rfc2119).
 
@@ -16,18 +16,39 @@ This is difficult, since some operations (e.g. stack walking), may do non signal
 Even if the code does avoid all non-signal-safe operations, the program itself may be in such a corrupted state that the crashtracker will itself crash or hang.
 
 In the context of a crashing customer process, a crash within the crashtracker is bad because it can disrupt existing debugging workflows.
+This could be a frustrating and impactful situation for end-users. Imagine that you have a crashing application and it turns out that it's due to a dependency, but you have absolutely no means by which to deduce this fact. You might waste an extreme amount of engineering time trying to figure out why it's crashing.
+Moreover, if we crash, then we're not getting a crash report, so our ability to intervene on the behalf of such a user is limited.
 However, since the process was crashing anyway, it does not affect the overall availability of the service.
-A hang is worse, because it can prevent the process/pod from being restarted for a significant amount of time, potentially affecting the availability of the entire service.
+
+A hang is even worse, because it can prevent the process/pod from being restarted for a significant amount of time, potentially affecting the availability of the entire service.
 This RFC proposes an architectural mechanism to mitigate the risk of crashtracker hangs.
 
 ## Proposed Architecture
 
-In the proposed architecture, the crashing process [clones](https://man7.org/linux/man-pages/man2/clone.2.html) a child process.
-Care should be taken during this process to avoid
-This child process (referred to as the **collector** in this RFC) is responsible for collecting the data required for crashtracking, while the parent operates as a watchdog (and is hence referred to as the **watchdog** process in the RFC).
-The **receiver** process remains as in RFC 3, either running as an [execve](https://man7.org/linux/man-pages/man2/execve.2.html) fork of the watchdog, or as an independent sidecar.
-If the child process completes successfully, the parent process reaps its PID, waits for the receiver process to finish uploading, and then chains the next signal handler, as it does currently.
-If the collector or the receiver exceed their timeout budget, the watchdog [kills](https://man7.org/linux/man-pages/man2/kill.2.html) the offending child process, and then chains the next signal handler.
+The proposed architecture consists of three processes.
+By splitting dangerous operations out across a process boundary, the blast-radius of both crashes and hangs can be limited.
+
+1. The crashing process, referred to as the **watchdog** process in this RFC.
+   The purpose of the watchdog is to split dangerous operations off into child processes, monitor those processes, recover from any failures, and then cleanly chain any preexisting signal handlers.
+   The watchdog SHOULD carefully limit the operations it performs in process to maximize the chance that it will succeed even if the state of the crashing process is corrupted.
+   The watchdog has the following tasks:
+   1. [fork](https://man7.org/linux/man-pages/man2/fork.2.html) a child process to collect the (referred to as the **collector** in this RFC).
+      The watchdog MUST NOT perform non-signal-safe operations such as `malloc` and `at_fork` handlers during this step.
+      There are [several potential system calls](https://github.com/DataDog/libdatadog/pull/716#discussion_r1832076807) that could be used here, including `clone`, `fork`, `vfork`, etc.
+      The key requirement is that whichever operation is used, it MUST maintain the information required by the collector to report a crash.
+   2. Spawn (`fork/exec`) a receiver process if necessary (unless there is already a long-lived receiver side-process).
+   3. Monitor and cleanup the child processes
+      - If the child processes (collector and receiver) complete successfully, the watchdog process reaps their PIDs, and then chains the next signal handler, as it does currently.
+      - If the collector or the receiver exceed their timeout budget, the watchdog [kills](https://man7.org/linux/man-pages/man2/kill.2.html) the offending child process, and then chains the next signal handler.
+      - Similarly, if either the collector or receiver crash (), the watchdog cleans up its child processes, and then chains the next signal handler.
+2. The **collector** child process is responsible for collecting the data required for crashtracking, and forwarding it to the receiver.
+   Since it runs in a clone of the crashing process, it has access to all data necessary to do so.
+   The collector SHOULD limit its use of non-signal-safe operations, but MAY use them when necessary (e.g. during stack unwinding).
+   The collector SHOULD maximize the chance of getting at least a partial crash report by performing operations in ranked order of risk, leaving riskiest operations for last
+   Note that in this model, the collector process does NOT chain signal handlers when it finishes.
+   Instead, it SHOULD simply `abort` on failure, and `exit(SUCCESS)` if it succeeds.
+3. The **receiver** is responsible for receiving crash information from the collector, formatting it into a crash report, and forwarding it to the backend.
+   The receiver SHOULD be written to be resilient even if the collector crashes or hangs, to increase the probability of getting at least a partial crash report out.
 
 ### Timeouts
 
