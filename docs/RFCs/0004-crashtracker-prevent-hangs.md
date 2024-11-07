@@ -44,8 +44,8 @@ By splitting dangerous operations out across a process boundary, the blast-radiu
 2. The **collector** child process is responsible for collecting the data required for crashtracking, and forwarding it to the receiver.
    Since it runs in a clone of the crashing process, it has access to all data necessary to do so.
    The collector SHOULD limit its use of non-signal-safe operations, but MAY use them when necessary (e.g. during stack unwinding).
-   The collector SHOULD maximize the chance of getting at least a partial crash report by performing operations in ranked order of risk, leaving riskiest operations for last
-   Note that in this model, the collector process does NOT chain signal handlers when it finishes.
+   The collector SHOULD maximize the chance of getting at least a partial crash report by performing operations in ranked order of risk, leaving riskiest operations for last.
+   Note that in this model, the collector process MUST NOT chain signal handlers when it finishes.
    Instead, it SHOULD simply `abort` on failure, and `exit(SUCCESS)` if it succeeds.
 3. The **receiver** is responsible for receiving crash information from the collector, formatting it into a crash report, and forwarding it to the backend.
    The receiver SHOULD be written to be resilient even if the collector crashes or hangs, to increase the probability of getting at least a partial crash report out.
