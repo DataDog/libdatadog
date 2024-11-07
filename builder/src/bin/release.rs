@@ -22,7 +22,6 @@ struct ReleaseArgs {
 impl From<pico_args::Arguments> for ReleaseArgs {
     fn from(mut args: pico_args::Arguments) -> Self {
         let release_args = ReleaseArgs {
-            // out_dir: args.value_from_str("--out").map_or(None, Some),
             out_dir: match args.value_from_str("--out") {
                 Ok(v) => Some(v),
                 Err(_) => None,
@@ -41,7 +40,6 @@ impl From<pico_args::Arguments> for ReleaseArgs {
 pub fn main() {
     let args: ReleaseArgs = pico_args::Arguments::from_env().into();
 
-    println!("{:?}", std::env::vars());
     let (_, source_path) = determine_paths();
 
     let profile = env::var("PROFILE").unwrap();

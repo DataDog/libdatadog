@@ -20,6 +20,18 @@ pub struct CrashTracker {
 }
 
 impl CrashTracker {
+    fn gen_binaries(&self) -> Result<()> {
+        if arch::BUILD_CRASHTRACKER {
+            let mut crashtracker_dir = project_root();
+            crashtracker_dir.push("crashtracker");
+            let _dst = cmake::Config::new(crashtracker_dir.to_str().unwrap())
+                .define("Datadog_ROOT", self.target_dir.as_ref())
+                .define("CMAKE_INSTALL_PREFIX", self.target_dir.as_ref())
+                .build();
+        }
+
+        Ok(())
+    }
     fn add_headers(&self) -> Result<()> {
         let origin_path: PathBuf = [self.source_include.as_ref(), "crashtracker.h"]
             .iter()
@@ -39,20 +51,12 @@ impl CrashTracker {
 
 impl Module for CrashTracker {
     fn build(&self) -> Result<()> {
-        if arch::BUILD_CRASHTRACKER {
-            let mut crashtracker_dir = project_root();
-            crashtracker_dir.push("crashtracker");
-            let _dst = cmake::Config::new(crashtracker_dir.to_str().unwrap())
-                .define("Datadog_ROOT", self.target_dir.as_ref())
-                .define("CMAKE_INSTALL_PREFIX", self.target_dir.as_ref())
-                .build();
-        }
-
         Ok(())
     }
 
     fn install(&self) -> Result<()> {
         self.add_headers()?;
+        self.gen_binaries()?;
         Ok(())
     }
 }

@@ -108,7 +108,6 @@ impl Profiling {
 
         // Create files
         for file in files.iter() {
-            // let file_in = "../profiling-ffi/".to_string() + file + ".in";
             let file_in = file.to_string() + ".in";
 
             let mut pc_origin: PathBuf = project_root();

@@ -27,46 +27,43 @@
     <None Include="..\LICENSE" Pack="true" PackagePath="\" />
     <None Include="libdatadog.props" Pack="true" PackagePath="build\native\libdatadog.props" />
 
-  <!-- header files are the same between x64/x86/debug/release, so taking it from x64/release it's enough -->
-    <None Include="$(LibDatadogBinariesOutputDir)\x64\release\include\datadog\common.h" Pack="true"
+    <None Include="$(LibDatadogBinariesOutputDir)\common.h" Pack="true"
       PackagePath="include\native\datadog\common.h" />
-    <None Include="$(LibDatadogBinariesOutputDir)\x64\release\include\datadog\profiling.h" Pack="true"
+    <None Include="$(LibDatadogBinariesOutputDir)\profiling.h" Pack="true"
       PackagePath="include\native\datadog\profiling.h" />
-    <None Include="$(LibDatadogBinariesOutputDir)\x64\release\include\datadog\telemetry.h" Pack="true"
+    <None Include="$(LibDatadogBinariesOutputDir)\telemetry.h" Pack="true"
       PackagePath="include\native\datadog\telemetry.h" />
-    <None Include="$(LibDatadogBinariesOutputDir)\x64\release\include\datadog\blazesym.h" Pack="true"
-      PackagePath="include\native\datadog\blazesym.h" />
-    <None Include="$(LibDatadogBinariesOutputDir)\x64\release\include\datadog\crashtracker.h" Pack="true"
+    <None Include="$(LibDatadogBinariesOutputDir)\crashtracker.h" Pack="true"
       PackagePath="include\native\datadog\crashtracker.h" />
-    <None Include="$(LibDatadogBinariesOutputDir)\x64\release\include\datadog\data-pipeline.h" Pack="true"
+    <None Include="$(LibDatadogBinariesOutputDir)\data-pipeline.h" Pack="true"
       PackagePath="include\native\datadog\data-pipeline.h" />
 
-    <None Include="$(LibDatadogBinariesOutputDir)\x64\debug\lib\datadog_profiling.lib"
-      Pack="true" PackagePath="build\native\lib\x64\debug\datadog_profiling.lib" />
-    <None Include="$(LibDatadogBinariesOutputDir)\x64\debug\lib\datadog_profiling.dll"
-      Pack="true" PackagePath="build\native\lib\x64\debug\datadog_profiling.dll" />
-    <None Include="$(LibDatadogBinariesOutputDir)\x64\debug\lib\datadog_profiling.pdb"
-      Pack="true" PackagePath="build\native\lib\x64\debug\datadog_profiling.pdb" />
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\debug\datadog_profiling_ffi.lib"
+      Pack="true" PackagePath="build\native\lib\x64\debug\datadog_profiling_ffi.lib" />
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\debug\datadog_profiling_ffi.dll"
+      Pack="true" PackagePath="build\native\lib\x64\debug\datadog_profiling_ffi.dll" />
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\debug\datadog_profiling_ffi.pdb"
+      Pack="true" PackagePath="build\native\lib\x64\debug\datadog_profiling_ffi.pdb" />
 
-    <None Include="$(LibDatadogBinariesOutputDir)\x64\release\lib\datadog_profiling.lib"
-      Pack="true" PackagePath="build\native\lib\x64\release\datadog_profiling.lib" />
-    <None Include="$(LibDatadogBinariesOutputDir)\x64\release\lib\datadog_profiling.dll"
-      Pack="true" PackagePath="build\native\lib\x64\release\datadog_profiling.dll" />
-    <None Include="$(LibDatadogBinariesOutputDir)\x64\release\lib\datadog_profiling.pdb"
-      Pack="true" PackagePath="build\native\lib\x64\release\datadog_profiling.pdb" />
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\release\datadog_profiling_ffi.lib"
+      Pack="true" PackagePath="build\native\lib\x64\release\datadog_profiling_ffi.lib" />
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\release\datadog_profiling_ffi.dll"
+      Pack="true" PackagePath="build\native\lib\x64\release\datadog_profiling_ffi.dll" />
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\release\datadog_profiling_ffi.pdb"
+      Pack="true" PackagePath="build\native\lib\x64\release\datadog_profiling_ffi.pdb" />
 
-    <None Include="$(LibDatadogBinariesOutputDir)\x86\debug\lib\datadog_profiling.lib"
-      Pack="true" PackagePath="build\native\lib\x86\debug\datadog_profiling.lib" />
-    <None Include="$(LibDatadogBinariesOutputDir)\x86\debug\lib\datadog_profiling.dll"
-      Pack="true" PackagePath="build\native\lib\x86\debug\datadog_profiling.dll" />
-    <None Include="$(LibDatadogBinariesOutputDir)\x86\debug\lib\datadog_profiling.pdb"
-      Pack="true" PackagePath="build\native\lib\x86\debug\datadog_profiling.pdb" />
+    <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\debug\datadog_profiling_ffi.lib"
+      Pack="true" PackagePath="build\native\lib\x86\debug\datadog_profiling_ffi.lib" />
+    <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\debug\datadog_profiling_ffi.dll"
+      Pack="true" PackagePath="build\native\lib\x86\debug\datadog_profiling_ffi.dll" />
+    <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\debug\datadog_profiling_ffi.pdb"
+      Pack="true" PackagePath="build\native\lib\x86\debug\datadog_profiling_ffi.pdb" />
 
-    <None Include="$(LibDatadogBinariesOutputDir)\x86\release\lib\datadog_profiling.lib"
-      Pack="true" PackagePath="build\native\lib\x86\release\datadog_profiling.lib" />
-    <None Include="$(LibDatadogBinariesOutputDir)\x86\release\lib\datadog_profiling.dll"
-      Pack="true" PackagePath="build\native\lib\x86\release\datadog_profiling.dll" />
-    <None Include="$(LibDatadogBinariesOutputDir)\x86\release\lib\datadog_profiling.pdb"
-      Pack="true" PackagePath="build\native\lib\x86\release\datadog_profiling.pdb" />
+    <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\release\datadog_profiling_ffi.lib"
+      Pack="true" PackagePath="build\native\lib\x86\release\datadog_profiling_ffi.lib" />
+    <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\release\datadog_profiling_ffi.dll"
+      Pack="true" PackagePath="build\native\lib\x86\release\datadog_profiling_ffi.dll" />
+    <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\release\datadog_profiling_ffi.pdb"
+      Pack="true" PackagePath="build\native\lib\x86\release\datadog_profiling_ffi.pdb" />
   </ItemGroup>
 </Project>
